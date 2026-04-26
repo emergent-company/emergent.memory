@@ -285,10 +285,12 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 		)
 	}
 
-	// Get project ID from session or user context
-	projectID := session.ProjectID
+	// Get project ID: prefer the per-request header (auth-middleware-resolved) so that
+	// callers with org-level tokens can target different projects on the same session.
+	// Fall back to the session value set at initialize time only when the header is absent.
+	projectID := user.ProjectID
 	if projectID == "" {
-		projectID = user.ProjectID
+		projectID = session.ProjectID
 	}
 
 	if projectID == "" {

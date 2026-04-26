@@ -330,6 +330,30 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		slog.Int("max_steps", maxSteps),
 	)
 
+	// Inject auth token into context so internal loopback calls (e.g. search-knowledge → /query)
+	// can authenticate. For HTTP-triggered runs the raw token is already in ctx via auth middleware;
+	// for background/scheduled runs there is none, so mint a short-lived ephemeral token.
+	{
+		effectiveToken := req.AuthToken
+		if effectiveToken == "" {
+			effectiveToken = auth.RawTokenFromContext(ctx)
+		}
+		if effectiveToken == "" && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+			if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
+				effectiveToken = ephToken
+				req.EphemeralTokenID = ephID
+			} else {
+				ae.log.Warn("failed to mint ephemeral token for background agent run",
+					slog.String("project_id", req.ProjectID),
+					slog.String("error", mintErr.Error()),
+				)
+			}
+		}
+		if effectiveToken != "" {
+			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
+		}
+	}
+
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
@@ -646,6 +670,28 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		slog.Int("max_steps", maxSteps),
 	)
 
+	// Inject auth token into context (same logic as Execute — handles background/scheduled resumes).
+	{
+		effectiveToken := req.AuthToken
+		if effectiveToken == "" {
+			effectiveToken = auth.RawTokenFromContext(ctx)
+		}
+		if effectiveToken == "" && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+			if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
+				effectiveToken = ephToken
+				req.EphemeralTokenID = ephID
+			} else {
+				ae.log.Warn("failed to mint ephemeral token for background agent resume",
+					slog.String("project_id", req.ProjectID),
+					slog.String("error", mintErr.Error()),
+				)
+			}
+		}
+		if effectiveToken != "" {
+			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
+		}
+	}
+
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
@@ -855,6 +901,22 @@ func (ae *AgentExecutor) runPipeline(
 	effectiveToken := req.AuthToken
 	if effectiveToken == "" {
 		effectiveToken = auth.RawTokenFromContext(ctx)
+	}
+	// For background/scheduled runs there is no HTTP request context, so no token
+	// is stored yet. Mint a short-lived ephemeral token so internal loopback calls
+	// (e.g. search-knowledge → /query) can authenticate. The token is revoked at
+	// teardown via req.EphemeralTokenID.
+	if effectiveToken == "" && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+		if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
+			effectiveToken = ephToken
+			// Store on req so teardownWorkspace can revoke it.
+			req.EphemeralTokenID = ephID
+		} else {
+			ae.log.Warn("failed to mint ephemeral token for background agent run",
+				slog.String("project_id", req.ProjectID),
+				slog.String("error", mintErr.Error()),
+			)
+		}
 	}
 	if effectiveToken != "" {
 		ctx = auth.ContextWithRawToken(ctx, effectiveToken)
