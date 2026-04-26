@@ -5,6 +5,29 @@ import (
 	"time"
 )
 
+// acpSessionIDKey is the context key for propagating ACP session ID into tool execution.
+type acpSessionIDKey struct{}
+
+// SessionTitleHandler is the interface for updating ACP session titles.
+// Implemented by the agents domain to avoid circular imports.
+type SessionTitleHandler interface {
+	UpdateACPSessionTitle(ctx context.Context, projectID, sessionID, title string) error
+}
+
+// ContextWithACPSessionID stores the ACP session ID in context.
+// Called by the agent executor before running tools so that built-in tools
+// like set_session_title can update session metadata.
+func ContextWithACPSessionID(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, acpSessionIDKey{}, sessionID)
+}
+
+// ACPSessionIDFromContext retrieves the ACP session ID from context.
+// Returns empty string if not set.
+func ACPSessionIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(acpSessionIDKey{}).(string)
+	return v
+}
+
 // MCPRegistryToolHandler is the interface for executing MCP registry management tools.
 // Implemented by the mcpregistry domain to avoid circular imports (mcpregistry → mcp).
 type MCPRegistryToolHandler interface {

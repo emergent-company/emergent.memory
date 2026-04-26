@@ -218,15 +218,15 @@ type AgentRun struct {
 
 // CreateRunOptions holds options for creating an agent run with coordination support
 type CreateRunOptions struct {
-	AgentID          string
-	ParentRunID      *string
-	MaxSteps         *int
-	ResumedFrom      *string
-	InitialStepCount int // for resumed runs, start from prior run's step_count
-	TriggerSource    *string
-	TriggerMetadata  map[string]any
-	TriggerMessage   *string // optional message injected as user message on wakeup
-	Model            *string // model override for this run
+	AgentID           string
+	ParentRunID       *string
+	MaxSteps          *int
+	ResumedFrom       *string
+	InitialStepCount  int // for resumed runs, start from prior run's step_count
+	TriggerSource     *string
+	TriggerMetadata   map[string]any
+	TriggerMessage    *string // optional message injected as user message on wakeup
+	Model             *string // model override for this run
 	AgentDefinitionID *string
 }
 
@@ -444,6 +444,7 @@ type ACPSession struct {
 	ID        string    `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	ProjectID string    `bun:"project_id,type:uuid,notnull" json:"projectId"`
 	AgentName *string   `bun:"agent_name" json:"agentName,omitempty"`
+	Title     *string   `bun:"title" json:"title,omitempty"`
 	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }

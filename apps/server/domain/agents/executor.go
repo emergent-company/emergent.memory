@@ -21,6 +21,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/skills"
@@ -112,6 +113,12 @@ func callerRunIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(callerRunIDKey{}).(string)
 	return v
 }
+
+// acpSessionIDKey is the context key used to propagate the ACP session ID
+// through the execution pipeline so that built-in tools (e.g. set_session_title)
+// can update session metadata without needing it in their function signatures.
+// NOTE: defined here as a bridge — mcp.ContextWithACPSessionID / mcp.ACPSessionIDFromContext
+// use this same exported mechanism via the mcp package.
 
 // ExecuteRequest defines the parameters for executing an agent.
 type ExecuteRequest struct {
@@ -879,6 +886,11 @@ func (ae *AgentExecutor) runPipeline(
 	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
 	// can propagate it as the parent_run_id when spawning child runs.
 	ctx = contextWithCallerRunID(ctx, run.ID)
+	// Inject ACP session ID into context so built-in tools (e.g. set_session_title)
+	// can update session metadata.
+	if run.ACPSessionID != nil && *run.ACPSessionID != "" {
+		ctx = mcp.ContextWithACPSessionID(ctx, *run.ACPSessionID)
+	}
 	// Also inject into the provider context so the tracking model can attribute
 	// LLM usage events to this run.
 	ctx = provider.ContextWithRunID(ctx, run.ID)

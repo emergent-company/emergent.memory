@@ -45,6 +45,7 @@ var Module = fx.Module("agents",
 		registerOrphanRecovery,
 		registerWorkerPool,
 		registerAgentToolHandler,
+		registerSessionTitleHandler,
 		registerToolPoolInvalidator,
 		registerOrgToolPoolInvalidator,
 		registerStaleRunReaper,
@@ -135,6 +136,12 @@ func provideMCPToolHandler(repo *Repository, executor *AgentExecutor, log *slog.
 // via setter injection to break the circular dependency (agents → mcp).
 func registerAgentToolHandler(mcpService *mcp.Service, handler *MCPToolHandler) {
 	mcpService.SetAgentToolHandler(handler)
+}
+
+// registerSessionTitleHandler injects the Repository (as SessionTitleHandler) into
+// the MCP Service so the set_session_title built-in tool can update session metadata.
+func registerSessionTitleHandler(mcpService *mcp.Service, repo *Repository) {
+	mcpService.SetSessionTitleHandler(repo)
 }
 
 // registerOrphanRecovery marks any agent runs that were left in "running" status

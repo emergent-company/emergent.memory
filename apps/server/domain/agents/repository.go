@@ -2515,6 +2515,21 @@ func (r *Repository) SetRunCancelling(ctx context.Context, runID string) error {
 	return nil
 }
 
+// UpdateACPSessionTitle sets the title field on an ACP session.
+func (r *Repository) UpdateACPSessionTitle(ctx context.Context, projectID, sessionID, title string) error {
+	_, err := r.db.NewUpdate().
+		Model((*ACPSession)(nil)).
+		Set("title = ?", title).
+		Set("updated_at = now()").
+		Where("id = ?", sessionID).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("UpdateACPSessionTitle: %w", err)
+	}
+	return nil
+}
+
 // UpdateRunACPSessionID sets the acp_session_id column on an agent run.
 func (r *Repository) UpdateRunACPSessionID(ctx context.Context, runID, sessionID string) error {
 	_, err := r.db.NewUpdate().

@@ -261,7 +261,30 @@ func (tp *ToolPool) ResolveTools(projectID string, agentDef *AgentDefinition, de
 	resolvedDefs := tp.filterToolDefs(cache, agentDef, depth, maxDepth)
 
 	// Wrap resolved definitions as ADK tools
-	return tp.wrapTools(projectID, resolvedDefs)
+	tools, err := tp.wrapTools(projectID, resolvedDefs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Always inject hidden built-in tools — these bypass all whitelist/scope filters.
+	// set_session_title: lets agents update the ACP session display title.
+	if tp.mcpService != nil {
+		tools = append(tools, tp.wrapHiddenBuiltin(projectID, "set_session_title",
+			"Update the display title for the current session. Call this when you can infer a meaningful title from the conversation (e.g. '🐛 Login Timeout Bug' or '✨ Export to PDF Feature').",
+			map[string]any{
+				"type":     "object",
+				"required": []string{"title"},
+				"properties": map[string]any{
+					"title": map[string]any{
+						"type":        "string",
+						"description": "The display title for the session, e.g. '🐛 Login Timeout Bug' or '✨ Export to PDF Feature'",
+					},
+				},
+			},
+		))
+	}
+
+	return tools, nil
 }
 
 // filterToolDefs selects tool definitions from the cache based on the agent
@@ -701,4 +724,29 @@ func mapToInputSchema(m map[string]any) mcp.InputSchema {
 		schema.Type = "object"
 	}
 	return schema
+}
+
+// wrapHiddenBuiltin creates an ADK tool for a hidden built-in tool (one that is always
+// available but never listed in tools/list or any discovery endpoint).
+// The schema is passed as a plain map and converted internally.
+func (tp *ToolPool) wrapHiddenBuiltin(projectID, name, description string, schemaMap map[string]any) tool.Tool {
+	svc := tp.mcpService
+	pid := projectID
+	inputSchema := mapToInputSchema(schemaMap)
+	adkSchema := convertMCPSchemaToADK(inputSchema)
+	t, _ := functiontool.New(
+		functiontool.Config{
+			Name:        name,
+			Description: description,
+			InputSchema: adkSchema,
+		},
+		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			result, err := svc.ExecuteTool(ctx, pid, name, args)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return convertToolResult(result)
+		},
+	)
+	return t
 }

@@ -128,6 +128,7 @@ type ACPAwaitRequest struct {
 type ACPSessionObject struct {
 	ID        string          `json:"id"`
 	AgentName *string         `json:"agent_name,omitempty"`
+	Title     *string         `json:"title,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
 	History   []ACPRunSummary `json:"history"`
@@ -387,6 +388,7 @@ func SessionToACPObject(session *ACPSession, runs []*AgentRun) ACPSessionObject 
 	obj := ACPSessionObject{
 		ID:        session.ID,
 		AgentName: session.AgentName,
+		Title:     session.Title,
 		CreatedAt: session.CreatedAt,
 		UpdatedAt: session.UpdatedAt,
 		History:   make([]ACPRunSummary, 0, len(runs)),

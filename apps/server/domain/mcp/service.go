@@ -82,6 +82,9 @@ type Service struct {
 	// Typed as interface to avoid import cycle with extraction package.
 	embeddingCtl EmbeddingControlHandler
 
+	// Session title handler (injected to break import cycle with agents domain)
+	sessionTitleHandler SessionTitleHandler
+
 	// Tempo base URL for trace proxy (empty when tracing disabled)
 	tempoBaseURL string
 
@@ -143,6 +146,11 @@ func NewService(p ServiceParams) *Service {
 // SetAgentToolHandler sets the agent tool handler (called after construction to break circular init)
 func (s *Service) SetAgentToolHandler(h AgentToolHandler) {
 	s.agentToolHandler = h
+}
+
+// SetSessionTitleHandler sets the session title handler (called after construction to break circular init)
+func (s *Service) SetSessionTitleHandler(h SessionTitleHandler) {
+	s.sessionTitleHandler = h
 }
 
 // SetMCPRegistryToolHandler sets the MCP registry tool handler (called after construction to break circular init)
@@ -1195,6 +1203,11 @@ func (s *Service) GetPromptDefinitions() []PromptDefinition {
 
 // ExecuteTool executes an MCP tool and returns the result
 func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
+	// Handle hidden built-in tools first — these are always available, never listed,
+	// and cannot be blocked by scope filters or tool whitelists.
+	if toolName == "set_session_title" {
+		return s.executeSetSessionTitle(ctx, projectID, args)
+	}
 	switch toolName {
 	case "project-get":
 		return s.executeGetProjectInfo(ctx, projectID)
@@ -3857,4 +3870,50 @@ func parseJournalSince(s string) (time.Time, error) {
 		}
 	}
 	return time.Parse(time.RFC3339, s)
+}
+
+// executeSetSessionTitle is the hidden built-in tool that updates the title of the
+// current ACP session. It reads the session ID from context (injected by the agent
+// executor) and updates the title in the database.
+func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	title, _ := args["title"].(string)
+	if title == "" {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: `{"error":"title is required"}`}},
+			IsError: true,
+		}, nil
+	}
+	if len(title) > 512 {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: `{"error":"title exceeds maximum length of 512 characters"}`}},
+			IsError: true,
+		}, nil
+	}
+
+	sessionID := ACPSessionIDFromContext(ctx)
+	if sessionID == "" {
+		// No session in context — silently succeed so agents don't fail when called
+		// outside of an ACP session (e.g. direct MCP tool invocation).
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: `{"ok":true,"note":"no active session"}`}},
+		}, nil
+	}
+
+	if s.sessionTitleHandler == nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: `{"error":"session title handler not configured"}`}},
+			IsError: true,
+		}, nil
+	}
+
+	if err := s.sessionTitleHandler.UpdateACPSessionTitle(ctx, projectID, sessionID, title); err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf(`{"error":"failed to update session title: %s"}`, err.Error())}},
+			IsError: true,
+		}, nil
+	}
+
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: `{"ok":true}`}},
+	}, nil
 }
