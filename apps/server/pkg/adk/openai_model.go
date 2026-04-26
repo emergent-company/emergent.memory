@@ -309,6 +309,15 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 		choice := result.Choices[0]
 		var parts []*genai.Part
 
+		// Emit reasoning content (DeepSeek thinking tokens) as a Thought part
+		// so it's stored in the ADK content and echoed back in subsequent requests.
+		if choice.Message.ReasoningContent != "" {
+			parts = append(parts, &genai.Part{
+				Text:    choice.Message.ReasoningContent,
+				Thought: true,
+			})
+		}
+
 		// Emit text content when present.
 		if choice.Message.Content != "" {
 			parts = append(parts, &genai.Part{Text: choice.Message.Content})
