@@ -1353,3 +1353,231 @@ func doRequest(c *Client, req *http.Request, v interface{}) error {
 	}
 	return json.NewDecoder(resp.Body).Decode(v)
 }
+
+// --- Full trace, stats, and session stats types ---
+
+// AgentRunFull bundles run + messages + toolCalls + optional parentRun.
+type AgentRunFull struct {
+	Run       *AgentRun          `json:"run"`
+	Messages  []AgentRunMessage  `json:"messages"`
+	ToolCalls []AgentRunToolCall `json:"toolCalls"`
+	ParentRun *AgentRun          `json:"parentRun,omitempty"`
+}
+
+// RunStatsOverview holds aggregate run counts and cost.
+type RunStatsOverview struct {
+	TotalRuns     int64   `json:"totalRuns"`
+	SuccessCount  int64   `json:"successCount"`
+	FailedCount   int64   `json:"failedCount"`
+	ErrorCount    int64   `json:"errorCount"`
+	SuccessRate   float64 `json:"successRate"`
+	AvgDurationMs float64 `json:"avgDurationMs"`
+	TotalCostUSD  float64 `json:"totalCostUsd"`
+}
+
+// RunStatsAgent holds per-agent aggregated metrics.
+type RunStatsAgent struct {
+	Total           int64   `json:"total"`
+	Success         int64   `json:"success"`
+	Failed          int64   `json:"failed"`
+	Errored         int64   `json:"errored"`
+	AvgDurationMs   float64 `json:"avgDurationMs"`
+	MaxDurationMs   int64   `json:"maxDurationMs"`
+	AvgCostUSD      float64 `json:"avgCostUsd"`
+	TotalCostUSD    float64 `json:"totalCostUsd"`
+	AvgInputTokens  float64 `json:"avgInputTokens"`
+	AvgOutputTokens float64 `json:"avgOutputTokens"`
+}
+
+// RunStatsTool holds per-tool aggregated metrics.
+type RunStatsTool struct {
+	Total         int64   `json:"total"`
+	Success       int64   `json:"success"`
+	Failed        int64   `json:"failed"`
+	AvgDurationMs float64 `json:"avgDurationMs"`
+	MaxDurationMs int64   `json:"maxDurationMs"`
+}
+
+// RunStatsError is an entry in the topErrors list.
+type RunStatsError struct {
+	Message string `json:"message"`
+	Count   int64  `json:"count"`
+}
+
+// RunStatsTimePoint is a single hourly bucket in the time series.
+type RunStatsTimePoint struct {
+	Hour    time.Time        `json:"hour"`
+	Runs    int64            `json:"runs"`
+	ByAgent map[string]int64 `json:"byAgent,omitempty"`
+}
+
+// RunStats is the full response for GetProjectRunStats.
+type RunStats struct {
+	Period     RunStatsPeriod           `json:"period"`
+	Overview   RunStatsOverview         `json:"overview"`
+	ByAgent    map[string]RunStatsAgent `json:"byAgent"`
+	TopErrors  []RunStatsError          `json:"topErrors"`
+	ToolStats  RunStatsTools            `json:"toolStats"`
+	TimeSeries RunStatsTimeSeries       `json:"timeSeries"`
+}
+
+// RunStatsPeriod captures the analysis window.
+type RunStatsPeriod struct {
+	Since time.Time `json:"since"`
+	Until time.Time `json:"until"`
+}
+
+// RunStatsTools holds aggregate tool call statistics.
+type RunStatsTools struct {
+	TotalToolCalls int64                   `json:"totalToolCalls"`
+	ByTool         map[string]RunStatsTool `json:"byTool"`
+}
+
+// RunStatsTimeSeries holds hourly run counts.
+type RunStatsTimeSeries struct {
+	ByHour []RunStatsTimePoint `json:"byHour"`
+}
+
+// RunSessionStats is the full response for GetProjectRunSessionStats.
+type RunSessionStats struct {
+	Period             RunStatsPeriod      `json:"period"`
+	TotalSessions      int64               `json:"totalSessions"`
+	ActiveSessions     int64               `json:"activeSessions"`
+	AvgRunsPerSession  float64             `json:"avgRunsPerSession"`
+	MaxRunsPerSession  int64               `json:"maxRunsPerSession"`
+	SessionsByPlatform map[string]int64    `json:"sessionsByPlatform"`
+	TopSessions        []RunSessionSummary `json:"topSessions"`
+}
+
+// RunSessionSummary summarises a single logical session.
+type RunSessionSummary struct {
+	Platform      string    `json:"platform"`
+	ChannelID     string    `json:"channelId,omitempty"`
+	ThreadID      string    `json:"threadId,omitempty"`
+	TotalRuns     int64     `json:"totalRuns"`
+	LastRunAt     time.Time `json:"lastRunAt"`
+	AvgDurationMs float64   `json:"avgDurationMs"`
+	TotalCostUSD  float64   `json:"totalCostUsd"`
+}
+
+// RunStatsOptions holds query parameters for GetProjectRunStats / GetProjectRunSessionStats.
+type RunStatsOptions struct {
+	Since    *time.Time
+	Until    *time.Time
+	AgentID  string
+	Platform string // session stats only
+	TopN     int    // session stats only; default 20
+}
+
+// GetProjectRunFull calls GET /api/projects/:projectId/agent-runs/:runId/full
+// and returns run + messages + toolCalls + optional parentRun in one request.
+func (c *Client) GetProjectRunFull(ctx context.Context, projectID, runID string) (*APIResponse[AgentRunFull], error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"GET",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/agent-runs/"+url.PathEscape(runID)+"/full",
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var result APIResponse[AgentRunFull]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetProjectRunStats calls GET /api/projects/:projectId/agent-runs/stats
+// and returns aggregate analytics for the project.
+func (c *Client) GetProjectRunStats(ctx context.Context, projectID string, opts *RunStatsOptions) (*APIResponse[RunStats], error) {
+	u, _ := url.Parse(c.base + "/api/projects/" + url.PathEscape(projectID) + "/agent-runs/stats")
+	q := u.Query()
+	if opts != nil {
+		if opts.Since != nil {
+			q.Set("since", opts.Since.Format(time.RFC3339))
+		}
+		if opts.Until != nil {
+			q.Set("until", opts.Until.Format(time.RFC3339))
+		}
+		if opts.AgentID != "" {
+			q.Set("agentId", opts.AgentID)
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var result APIResponse[RunStats]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetProjectRunSessionStats calls GET /api/projects/:projectId/agent-runs/stats/sessions
+// and returns session-level analytics grouped by trigger metadata.
+func (c *Client) GetProjectRunSessionStats(ctx context.Context, projectID string, opts *RunStatsOptions) (*APIResponse[RunSessionStats], error) {
+	u, _ := url.Parse(c.base + "/api/projects/" + url.PathEscape(projectID) + "/agent-runs/stats/sessions")
+	q := u.Query()
+	if opts != nil {
+		if opts.Since != nil {
+			q.Set("since", opts.Since.Format(time.RFC3339))
+		}
+		if opts.Until != nil {
+			q.Set("until", opts.Until.Format(time.RFC3339))
+		}
+		if opts.Platform != "" {
+			q.Set("platform", opts.Platform)
+		}
+		if opts.TopN > 0 {
+			q.Set("topN", fmt.Sprintf("%d", opts.TopN))
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+	var result APIResponse[RunSessionStats]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &result, nil
+}

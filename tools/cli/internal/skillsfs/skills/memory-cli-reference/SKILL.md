@@ -2447,6 +2447,24 @@ memory graph branches update <id> [flags]
       --name string          New branch name
 ```
 
+## memory graph events
+
+Stream real-time graph object events via SSE
+
+### Synopsis
+
+Opens a Server-Sent Events stream and prints graph object create/update/delete events as they occur.
+
+```
+memory graph events [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for events
+```
+
 ## memory graph explore
 
 Explore the knowledge graph visually in the browser
@@ -2652,10 +2670,10 @@ memory graph objects create [flags]
 
 ```
       --branch string        Branch ID to create the object on (omit for main branch)
-      --description string   Set properties.description
+      --description string   Shorthand for --properties '{"description": "..."}' (subject to schema validation)
   -h, --help                 help for create
       --key string           Stable key for idempotent operations
-      --name string          Set properties.name
+      --name string          Shorthand for --properties '{"name": "..."}' (subject to schema validation)
       --properties string    JSON properties object
       --status string        Object status (e.g. active, planned, deprecated)
       --type string          Object type (required)
@@ -2904,11 +2922,13 @@ memory graph objects update <id> [flags]
 ### Options
 
 ```
-      --branch string       Branch ID to update the object on (omit for main branch)
-  -h, --help                help for update
-      --key string          Set a stable key on the object (enables cross-session src_key/dst_key references)
-      --properties string   JSON properties object to merge
-      --status string       Set object status (e.g. active, planned, deprecated)
+      --branch string        Branch ID to update the object on (omit for main branch)
+      --description string   Shorthand for --properties '{"description": "..."}' (subject to schema validation)
+  -h, --help                 help for update
+      --key string           Set a stable key on the object (enables cross-session src_key/dst_key references)
+      --name string          Shorthand for --properties '{"name": "..."}' (subject to schema validation)
+      --properties string    JSON properties object to merge
+      --status string        Set object status (e.g. active, planned, deprecated)
 ```
 
 ## memory graph relationships
@@ -3276,6 +3296,59 @@ memory mcp-guide [flags]
 
 ```
   -h, --help   help for mcp-guide
+```
+
+## memory mcp-relay
+
+Inspect and interact with connected MCP relay instances
+
+### Options
+
+```
+  -h, --help   help for mcp-relay
+```
+
+## memory mcp-relay call
+
+Invoke a tool on a connected relay instance
+
+```
+memory mcp-relay call <instance-id> <tool-name> [flags]
+```
+
+### Options
+
+```
+      --args string   Tool arguments as a JSON object, e.g. '{"key":"value"}'
+  -h, --help          help for call
+```
+
+## memory mcp-relay sessions
+
+List connected MCP relay instances for the current project
+
+```
+memory mcp-relay sessions [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for sessions
+```
+
+## memory mcp-relay tools
+
+List tools exposed by a connected relay instance
+
+```
+memory mcp-relay tools <instance-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for tools
 ```
 
 ## memory orgs
@@ -4940,6 +5013,24 @@ memory sessions messages list [session-id] [flags]
       --cursor string   Pagination cursor
   -h, --help            help for list
       --limit int       Max messages to return (default 50)
+```
+
+## memory sessions recount
+
+Recount message_count and total_tokens for a session
+
+### Synopsis
+
+Scans all messages for a session and updates message_count and total_tokens on the Session object. Useful for backfilling existing sessions.
+
+```
+memory sessions recount <session-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for recount
 ```
 
 ## memory sessions spawn

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -364,18 +365,18 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 	}
 
 	agent := &Agent{
-		ProjectID:      dto.ProjectID,
-		Name:           dto.Name,
-		StrategyType:   dto.StrategyType,
-		Prompt:         dto.Prompt,
-		CronSchedule:   dto.CronSchedule,
-		Enabled:        enabled,
-		TriggerType:    triggerType,
-		ReactionConfig: dto.ReactionConfig,
-		ExecutionMode:  executionMode,
-		Capabilities:   dto.Capabilities,
-		Config:         config,
-		Description:    dto.Description,
+		ProjectID:         dto.ProjectID,
+		Name:              dto.Name,
+		StrategyType:      dto.StrategyType,
+		Prompt:            dto.Prompt,
+		CronSchedule:      dto.CronSchedule,
+		Enabled:           enabled,
+		TriggerType:       triggerType,
+		ReactionConfig:    dto.ReactionConfig,
+		ExecutionMode:     executionMode,
+		Capabilities:      dto.Capabilities,
+		Config:            config,
+		Description:       dto.Description,
 		AgentDefinitionID: dto.AgentDefinitionID,
 	}
 
@@ -1751,6 +1752,305 @@ func (h *Handler) GetRunToolCalls(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(dtos))
+}
+
+// GetProjectRunFull handles GET /api/projects/:projectId/agent-runs/:runId/full
+// Returns run + messages + toolCalls + parentRun in a single response (issue #192).
+func (h *Handler) GetProjectRunFull(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+	runID := c.Param("runId")
+	if runID == "" {
+		return apperror.NewBadRequest("runId is required")
+	}
+
+	ctx := c.Request().Context()
+
+	run, err := h.repo.FindRunByIDForProject(ctx, runID, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to get agent run", err)
+	}
+	if run == nil {
+		return apperror.NewNotFound("AgentRun", runID)
+	}
+
+	messages, err := h.repo.FindMessagesByRunID(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run messages", err)
+	}
+
+	toolCalls, err := h.repo.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		return apperror.NewInternal("failed to get run tool calls", err)
+	}
+
+	dto := run.ToDTO()
+	dto.TokenUsage = h.getTokenUsage(ctx, runID, run.TraceID)
+	dto.Workspace = h.getWorkspaceInfo(ctx, runID)
+
+	msgDTOs := make([]*AgentRunMessageDTO, len(messages))
+	for i, m := range messages {
+		msgDTOs[i] = m.ToDTO()
+	}
+	tcDTOs := make([]*AgentRunToolCallDTO, len(toolCalls))
+	for i, tc := range toolCalls {
+		tcDTOs[i] = tc.ToDTO()
+	}
+
+	full := &AgentRunFullDTO{
+		Run:       dto,
+		Messages:  msgDTOs,
+		ToolCalls: tcDTOs,
+	}
+
+	// Attach parent run if this run was spawned by another run.
+	if run.ParentRunID != nil {
+		parent, perr := h.repo.FindRunByID(ctx, *run.ParentRunID)
+		if perr == nil && parent != nil {
+			parentDTO := parent.ToDTO()
+			parentDTO.TokenUsage = h.getTokenUsage(ctx, parent.ID, parent.TraceID)
+			full.ParentRun = parentDTO
+		}
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(full))
+}
+
+// GetProjectRunStats handles GET /api/projects/:projectId/agent-runs/stats
+// Returns aggregate analytics computed server-side (issue #193).
+func (h *Handler) GetProjectRunStats(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	ctx := c.Request().Context()
+	now := time.Now().UTC()
+
+	// Parse time window — default last 24h.
+	since := now.Add(-24 * time.Hour)
+	until := now
+	if s := c.QueryParam("since"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			since = t
+		}
+	}
+	if u := c.QueryParam("until"); u != "" {
+		if t, err := time.Parse(time.RFC3339, u); err == nil {
+			until = t
+		}
+	}
+
+	var agentID *string
+	if a := c.QueryParam("agentId"); a != "" {
+		agentID = &a
+	}
+
+	// Per-agent aggregates.
+	agentRows, err := h.repo.GetRunStatsOverview(ctx, projectID, agentID, since, until)
+	if err != nil {
+		return apperror.NewInternal("failed to compute run stats", err)
+	}
+
+	// Top errors.
+	errRows, err := h.repo.GetRunStatsTopErrors(ctx, projectID, agentID, since, until, 20)
+	if err != nil {
+		return apperror.NewInternal("failed to compute run error stats", err)
+	}
+
+	// Tool call aggregates.
+	toolRows, err := h.repo.GetRunStatsTools(ctx, projectID, agentID, since, until)
+	if err != nil {
+		return apperror.NewInternal("failed to compute tool stats", err)
+	}
+
+	// Hourly time series.
+	tsRows, err := h.repo.GetRunStatsTimeSeries(ctx, projectID, agentID, since, until)
+	if err != nil {
+		return apperror.NewInternal("failed to compute time series", err)
+	}
+
+	// --- Build response ---
+	overview := RunStatsOverviewDTO{}
+	byAgent := make(map[string]RunStatsAgentDTO)
+	for _, r := range agentRows {
+		overview.TotalRuns += r.Total
+		overview.SuccessCount += r.Success
+		overview.FailedCount += r.Failed
+		overview.ErrorCount += r.Errored
+		byAgent[r.AgentName] = RunStatsAgentDTO{
+			Total:           r.Total,
+			Success:         r.Success,
+			Failed:          r.Failed,
+			Errored:         r.Errored,
+			AvgDurationMs:   r.AvgDurationMs,
+			MaxDurationMs:   r.MaxDurationMs,
+			AvgCostUSD:      r.AvgCostUSD,
+			TotalCostUSD:    r.TotalCostUSD,
+			AvgInputTokens:  r.AvgInputTokens,
+			AvgOutputTokens: r.AvgOutputTokens,
+		}
+		overview.AvgDurationMs += r.AvgDurationMs * float64(r.Total)
+		overview.TotalCostUSD += r.TotalCostUSD
+	}
+	if overview.TotalRuns > 0 {
+		overview.AvgDurationMs = overview.AvgDurationMs / float64(overview.TotalRuns)
+		overview.SuccessRate = float64(overview.SuccessCount) / float64(overview.TotalRuns)
+	}
+
+	topErrors := make([]RunStatsErrorDTO, len(errRows))
+	for i, r := range errRows {
+		topErrors[i] = RunStatsErrorDTO{Message: r.Message, Count: r.Count}
+	}
+
+	byTool := make(map[string]RunStatsToolDTO)
+	var totalToolCalls int64
+	for _, r := range toolRows {
+		totalToolCalls += r.Total
+		byTool[r.ToolName] = RunStatsToolDTO{
+			Total:         r.Total,
+			Success:       r.Success,
+			Failed:        r.Failed,
+			AvgDurationMs: r.AvgDurationMs,
+			MaxDurationMs: r.MaxDurationMs,
+		}
+	}
+
+	// Build hourly time series: merge per-agent rows into per-hour points.
+	type hourKey = time.Time
+	hourMap := make(map[hourKey]*RunStatsTimePointDTO)
+	for _, r := range tsRows {
+		pt, ok := hourMap[r.Hour]
+		if !ok {
+			pt = &RunStatsTimePointDTO{Hour: r.Hour, ByAgent: make(map[string]int64)}
+			hourMap[r.Hour] = pt
+		}
+		pt.Runs += r.Runs
+		pt.ByAgent[r.AgentName] = r.Runs
+	}
+	// Sort hours ascending.
+	hours := make([]time.Time, 0, len(hourMap))
+	for h := range hourMap {
+		hours = append(hours, h)
+	}
+	sort.Slice(hours, func(i, j int) bool { return hours[i].Before(hours[j]) })
+	byHour := make([]RunStatsTimePointDTO, len(hours))
+	for i, h := range hours {
+		byHour[i] = *hourMap[h]
+	}
+
+	result := RunStatsDTO{
+		Period:     RunStatsPeriodDTO{Since: since, Until: until},
+		Overview:   overview,
+		ByAgent:    byAgent,
+		TopErrors:  topErrors,
+		ToolStats:  RunStatsToolsDTO{TotalToolCalls: totalToolCalls, ByTool: byTool},
+		TimeSeries: RunStatsTimeSeriesDTO{ByHour: byHour},
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(result))
+}
+
+// GetProjectRunSessionStats handles GET /api/projects/:projectId/agent-runs/stats/sessions
+// Returns session-level analytics grouped by trigger metadata (issue #194).
+func (h *Handler) GetProjectRunSessionStats(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	ctx := c.Request().Context()
+	now := time.Now().UTC()
+
+	since := now.Add(-24 * time.Hour)
+	until := now
+	if s := c.QueryParam("since"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			since = t
+		}
+	}
+	if u := c.QueryParam("until"); u != "" {
+		if t, err := time.Parse(time.RFC3339, u); err == nil {
+			until = t
+		}
+	}
+
+	var platform *string
+	if p := c.QueryParam("platform"); p != "" {
+		platform = &p
+	}
+
+	topN := 20
+	if n := c.QueryParam("topN"); n != "" {
+		if parsed, err := strconv.Atoi(n); err == nil && parsed > 0 && parsed <= 100 {
+			topN = parsed
+		}
+	}
+
+	rows, err := h.repo.GetRunSessionStats(ctx, projectID, platform, since, until, topN)
+	if err != nil {
+		return apperror.NewInternal("failed to compute session stats", err)
+	}
+
+	platformCounts := make(map[string]int64)
+	var totalSessions, activeSessions, maxRuns int64
+	var totalRunsSum int64
+	tops := make([]RunSessionSummaryDTO, 0, len(rows))
+
+	for _, r := range rows {
+		totalSessions++
+		if r.ActiveRuns > 0 {
+			activeSessions++
+		}
+		if r.TotalRuns > maxRuns {
+			maxRuns = r.TotalRuns
+		}
+		totalRunsSum += r.TotalRuns
+		platformCounts[r.Platform]++
+		tops = append(tops, RunSessionSummaryDTO{
+			Platform:      r.Platform,
+			ChannelID:     r.ChannelID,
+			ThreadID:      r.ThreadID,
+			TotalRuns:     r.TotalRuns,
+			LastRunAt:     r.LastRunAt,
+			AvgDurationMs: r.AvgDurationMs,
+			TotalCostUSD:  r.TotalCostUSD,
+		})
+	}
+
+	var avg float64
+	if totalSessions > 0 {
+		avg = float64(totalRunsSum) / float64(totalSessions)
+	}
+
+	result := RunSessionStatsDTO{
+		Period:             RunStatsPeriodDTO{Since: since, Until: until},
+		TotalSessions:      totalSessions,
+		ActiveSessions:     activeSessions,
+		AvgRunsPerSession:  avg,
+		MaxRunsPerSession:  maxRuns,
+		SessionsByPlatform: platformCounts,
+		TopSessions:        tops,
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(result))
 }
 
 // GetRunSteps handles GET /api/projects/:projectId/agent-runs/:runId/steps

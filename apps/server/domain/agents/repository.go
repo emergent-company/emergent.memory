@@ -2527,3 +2527,251 @@ func (r *Repository) UpdateRunACPSessionID(ctx context.Context, runID, sessionID
 	}
 	return nil
 }
+
+// --- Analytics store methods ---
+
+// RunStatsRow is an intermediate struct for scanning per-agent run aggregates.
+type RunStatsRow struct {
+	AgentName       string  `bun:"agent_name"`
+	Total           int64   `bun:"total"`
+	Success         int64   `bun:"success"`
+	Failed          int64   `bun:"failed"`
+	Errored         int64   `bun:"errored"`
+	AvgDurationMs   float64 `bun:"avg_duration_ms"`
+	MaxDurationMs   int64   `bun:"max_duration_ms"`
+	AvgCostUSD      float64 `bun:"avg_cost_usd"`
+	TotalCostUSD    float64 `bun:"total_cost_usd"`
+	AvgInputTokens  float64 `bun:"avg_input_tokens"`
+	AvgOutputTokens float64 `bun:"avg_output_tokens"`
+}
+
+// GetRunStatsOverview returns aggregate run counts/cost for a project within a time window.
+func (r *Repository) GetRunStatsOverview(ctx context.Context, projectID string, agentID *string, since, until time.Time) ([]RunStatsRow, error) {
+	agentFilter := ""
+	args := []interface{}{projectID, since, until}
+	if agentID != nil {
+		agentFilter = " AND ar.agent_id = ?"
+		args = append(args, *agentID)
+	}
+	var rows []RunStatsRow
+	err := r.db.NewRaw(`
+		SELECT
+			a.name                                                   AS agent_name,
+			COUNT(*)                                                  AS total,
+			COUNT(*) FILTER (WHERE ar.status = 'success')            AS success,
+			COUNT(*) FILTER (WHERE ar.status = 'failed')             AS failed,
+			COUNT(*) FILTER (WHERE ar.status = 'error')              AS errored,
+			COALESCE(AVG(ar.duration_ms), 0)                         AS avg_duration_ms,
+			COALESCE(MAX(ar.duration_ms), 0)                         AS max_duration_ms,
+			COALESCE(AVG(u.total_cost), 0)                           AS avg_cost_usd,
+			COALESCE(SUM(u.total_cost), 0)                           AS total_cost_usd,
+			COALESCE(AVG(u.total_input), 0)                          AS avg_input_tokens,
+			COALESCE(AVG(u.total_output), 0)                         AS avg_output_tokens
+		FROM kb.agent_runs ar
+		JOIN kb.agents a ON a.id = ar.agent_id
+		LEFT JOIN (
+			SELECT run_id,
+				SUM(estimated_cost_usd) AS total_cost,
+				SUM(text_input_tokens + image_input_tokens + video_input_tokens + audio_input_tokens) AS total_input,
+				SUM(output_tokens) AS total_output
+			FROM kb.llm_usage_events
+			GROUP BY run_id
+		) u ON u.run_id = ar.id
+		WHERE a.project_id = ?
+		  AND ar.started_at >= ?
+		  AND ar.started_at <= ?`+agentFilter+`
+		GROUP BY a.name
+		ORDER BY total DESC`,
+		args...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunStatsOverview: %w", err)
+	}
+	return rows, nil
+}
+
+// RunStatsErrorRow is an intermediate struct for scanning top error messages.
+type RunStatsErrorRow struct {
+	Message string `bun:"message"`
+	Count   int64  `bun:"cnt"`
+}
+
+// GetRunStatsTopErrors returns the most frequent error messages within the window.
+func (r *Repository) GetRunStatsTopErrors(ctx context.Context, projectID string, agentID *string, since, until time.Time, limit int) ([]RunStatsErrorRow, error) {
+	agentFilter := ""
+	// Base args for first half of UNION (runs) and second half (tool calls).
+	// Both halves use: projectID, since, until [, agentID]
+	halfArgs := []interface{}{projectID, since, until}
+	if agentID != nil {
+		agentFilter = " AND ar.agent_id = ?"
+		halfArgs = append(halfArgs, *agentID)
+	}
+	// Full args = first half + second half + limit
+	allArgs := append(append(halfArgs, halfArgs...), limit)
+	var rows []RunStatsErrorRow
+	err := r.db.NewRaw(`
+		SELECT message, COUNT(*) AS cnt FROM (
+			SELECT ar.error_message AS message
+			FROM kb.agent_runs ar
+			JOIN kb.agents a ON a.id = ar.agent_id
+			WHERE a.project_id = ?
+			  AND ar.started_at >= ?
+			  AND ar.started_at <= ?
+			  AND ar.error_message IS NOT NULL`+agentFilter+`
+			UNION ALL
+			SELECT tc.output->>'error' AS message
+			FROM kb.agent_run_tool_calls tc
+			JOIN kb.agent_runs ar ON ar.id = tc.run_id
+			JOIN kb.agents a ON a.id = ar.agent_id
+			WHERE a.project_id = ?
+			  AND ar.started_at >= ?
+			  AND ar.started_at <= ?
+			  AND tc.status = 'error'
+			  AND tc.output->>'error' IS NOT NULL`+agentFilter+`
+		) AS errs
+		WHERE message IS NOT NULL AND message <> ''
+		GROUP BY message
+		ORDER BY cnt DESC
+		LIMIT ?`,
+		allArgs...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunStatsTopErrors: %w", err)
+	}
+	return rows, nil
+}
+
+// RunStatsToolRow is an intermediate struct for scanning per-tool aggregates.
+type RunStatsToolRow struct {
+	ToolName      string  `bun:"tool_name"`
+	Total         int64   `bun:"total"`
+	Success       int64   `bun:"success"`
+	Failed        int64   `bun:"failed"`
+	AvgDurationMs float64 `bun:"avg_duration_ms"`
+	MaxDurationMs int64   `bun:"max_duration_ms"`
+}
+
+// GetRunStatsTools returns per-tool call aggregates within the time window.
+func (r *Repository) GetRunStatsTools(ctx context.Context, projectID string, agentID *string, since, until time.Time) ([]RunStatsToolRow, error) {
+	agentFilter := ""
+	args := []interface{}{projectID, since, until}
+	if agentID != nil {
+		agentFilter = " AND ar.agent_id = ?"
+		args = append(args, *agentID)
+	}
+	var rows []RunStatsToolRow
+	err := r.db.NewRaw(`
+		SELECT
+			tc.tool_name,
+			COUNT(*)                                              AS total,
+			COUNT(*) FILTER (WHERE tc.status = 'completed')      AS success,
+			COUNT(*) FILTER (WHERE tc.status = 'error')          AS failed,
+			COALESCE(AVG(tc.duration_ms), 0)                     AS avg_duration_ms,
+			COALESCE(MAX(tc.duration_ms), 0)                     AS max_duration_ms
+		FROM kb.agent_run_tool_calls tc
+		JOIN kb.agent_runs ar ON ar.id = tc.run_id
+		JOIN kb.agents a ON a.id = ar.agent_id
+		WHERE a.project_id = ?
+		  AND ar.started_at >= ?
+		  AND ar.started_at <= ?`+agentFilter+`
+		GROUP BY tc.tool_name
+		ORDER BY total DESC`,
+		args...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunStatsTools: %w", err)
+	}
+	return rows, nil
+}
+
+// RunStatsHourRow is an intermediate struct for scanning hourly run counts.
+type RunStatsHourRow struct {
+	Hour      time.Time `bun:"hour"`
+	AgentName string    `bun:"agent_name"`
+	Runs      int64     `bun:"runs"`
+}
+
+// GetRunStatsTimeSeries returns hourly run counts by agent within the time window.
+func (r *Repository) GetRunStatsTimeSeries(ctx context.Context, projectID string, agentID *string, since, until time.Time) ([]RunStatsHourRow, error) {
+	agentFilter := ""
+	args := []interface{}{projectID, since, until}
+	if agentID != nil {
+		agentFilter = " AND ar.agent_id = ?"
+		args = append(args, *agentID)
+	}
+	var rows []RunStatsHourRow
+	err := r.db.NewRaw(`
+		SELECT
+			date_trunc('hour', ar.started_at) AS hour,
+			a.name                             AS agent_name,
+			COUNT(*)                           AS runs
+		FROM kb.agent_runs ar
+		JOIN kb.agents a ON a.id = ar.agent_id
+		WHERE a.project_id = ?
+		  AND ar.started_at >= ?
+		  AND ar.started_at <= ?`+agentFilter+`
+		GROUP BY hour, a.name
+		ORDER BY hour ASC`,
+		args...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunStatsTimeSeries: %w", err)
+	}
+	return rows, nil
+}
+
+// RunSessionRow is an intermediate struct for scanning session-level aggregates.
+type RunSessionRow struct {
+	Platform      string    `bun:"platform"`
+	ChannelID     string    `bun:"channel_id"`
+	ThreadID      string    `bun:"thread_id"`
+	TotalRuns     int64     `bun:"total_runs"`
+	ActiveRuns    int64     `bun:"active_runs"`
+	LastRunAt     time.Time `bun:"last_run_at"`
+	AvgDurationMs float64   `bun:"avg_duration_ms"`
+	TotalCostUSD  float64   `bun:"total_cost_usd"`
+}
+
+// GetRunSessionStats returns session-level analytics grouped by trigger metadata.
+// A "session" is the unique (platform, channelId, threadId) tuple from trigger_metadata.
+func (r *Repository) GetRunSessionStats(ctx context.Context, projectID string, platform *string, since, until time.Time, topN int) ([]RunSessionRow, error) {
+	platformFilter := ""
+	args := []interface{}{projectID, since, until}
+	if platform != nil {
+		platformFilter = " AND ar.trigger_metadata->>'platform' = ?"
+		args = append(args, *platform)
+	}
+	args = append(args, topN)
+	var rows []RunSessionRow
+	err := r.db.NewRaw(`
+		SELECT
+			COALESCE(ar.trigger_metadata->>'platform', 'unknown')  AS platform,
+			COALESCE(ar.trigger_metadata->>'channelId', '')        AS channel_id,
+			COALESCE(ar.trigger_metadata->>'threadId', '')         AS thread_id,
+			COUNT(*)                                               AS total_runs,
+			COUNT(*) FILTER (WHERE ar.status IN ('running','queued','paused')) AS active_runs,
+			MAX(ar.started_at)                                     AS last_run_at,
+			COALESCE(AVG(ar.duration_ms), 0)                       AS avg_duration_ms,
+			COALESCE(SUM(u.total_cost), 0)                         AS total_cost_usd
+		FROM kb.agent_runs ar
+		JOIN kb.agents a ON a.id = ar.agent_id
+		LEFT JOIN (
+			SELECT run_id, SUM(estimated_cost_usd) AS total_cost
+			FROM kb.llm_usage_events
+			GROUP BY run_id
+		) u ON u.run_id = ar.id
+		WHERE a.project_id = ?
+		  AND ar.started_at >= ?
+		  AND ar.started_at <= ?
+		  AND ar.trigger_metadata IS NOT NULL
+		  AND ar.trigger_metadata->>'platform' IS NOT NULL`+platformFilter+`
+		GROUP BY platform, channel_id, thread_id
+		ORDER BY total_runs DESC
+		LIMIT ?`,
+		args...,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunSessionStats: %w", err)
+	}
+	return rows, nil
+}

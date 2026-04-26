@@ -92,33 +92,33 @@ type RunTokenUsage struct {
 
 // CreateAgentDTO is the request DTO for creating an agent
 type CreateAgentDTO struct {
-	ProjectID      string             `json:"projectId" validate:"required,uuid"`
-	Name           string             `json:"name" validate:"required"`
-	StrategyType   string             `json:"strategyType" validate:"required"`
-	Prompt         *string            `json:"prompt"`
-	CronSchedule   string             `json:"cronSchedule" validate:"required"`
-	Enabled        *bool              `json:"enabled"`
-	TriggerType    AgentTriggerType   `json:"triggerType"`
-	ReactionConfig *ReactionConfig    `json:"reactionConfig"`
-	ExecutionMode  AgentExecutionMode `json:"executionMode"`
-	Capabilities   *AgentCapabilities `json:"capabilities"`
-	Config         map[string]any     `json:"config"`
-	Description    *string            `json:"description"`
+	ProjectID         string             `json:"projectId" validate:"required,uuid"`
+	Name              string             `json:"name" validate:"required"`
+	StrategyType      string             `json:"strategyType" validate:"required"`
+	Prompt            *string            `json:"prompt"`
+	CronSchedule      string             `json:"cronSchedule" validate:"required"`
+	Enabled           *bool              `json:"enabled"`
+	TriggerType       AgentTriggerType   `json:"triggerType"`
+	ReactionConfig    *ReactionConfig    `json:"reactionConfig"`
+	ExecutionMode     AgentExecutionMode `json:"executionMode"`
+	Capabilities      *AgentCapabilities `json:"capabilities"`
+	Config            map[string]any     `json:"config"`
+	Description       *string            `json:"description"`
 	AgentDefinitionID *string            `json:"agentDefinitionId,omitempty"`
 }
 
 // UpdateAgentDTO is the request DTO for updating an agent
 type UpdateAgentDTO struct {
-	Name           *string             `json:"name"`
-	Prompt         *string             `json:"prompt"`
-	Enabled        *bool               `json:"enabled"`
-	CronSchedule   *string             `json:"cronSchedule"`
-	TriggerType    *AgentTriggerType   `json:"triggerType"`
-	ReactionConfig *ReactionConfig     `json:"reactionConfig"`
-	ExecutionMode  *AgentExecutionMode `json:"executionMode"`
-	Capabilities   *AgentCapabilities  `json:"capabilities"`
-	Config         map[string]any      `json:"config"`
-	Description    *string             `json:"description"`
+	Name              *string             `json:"name"`
+	Prompt            *string             `json:"prompt"`
+	Enabled           *bool               `json:"enabled"`
+	CronSchedule      *string             `json:"cronSchedule"`
+	TriggerType       *AgentTriggerType   `json:"triggerType"`
+	ReactionConfig    *ReactionConfig     `json:"reactionConfig"`
+	ExecutionMode     *AgentExecutionMode `json:"executionMode"`
+	Capabilities      *AgentCapabilities  `json:"capabilities"`
+	Config            map[string]any      `json:"config"`
+	Description       *string             `json:"description"`
 	AgentDefinitionID *string             `json:"agentDefinitionId,omitempty"`
 }
 
@@ -210,24 +210,24 @@ func (a *Agent) ToDTO() *AgentDTO {
 // ToDTO converts an AgentRun entity to AgentRunDTO
 func (r *AgentRun) ToDTO() *AgentRunDTO {
 	dto := &AgentRunDTO{
-		ID:            r.ID,
-		AgentID:       r.AgentID,
-		Status:        r.Status,
-		SessionStatus: r.SessionStatus,
-		StartedAt:     r.StartedAt,
-		CompletedAt:   r.CompletedAt,
-		DurationMs:    r.DurationMs,
-		Summary:       r.Summary,
-		ErrorMessage:  r.ErrorMessage,
-		SkipReason:    r.SkipReason,
-		ParentRunID:   r.ParentRunID,
-		StepCount:     r.StepCount,
-		MaxSteps:      r.MaxSteps,
-		ResumedFrom:   r.ResumedFrom,
-		TraceID:       r.TraceID,
-		RootRunID:     r.RootRunID,
+		ID:                r.ID,
+		AgentID:           r.AgentID,
+		Status:            r.Status,
+		SessionStatus:     r.SessionStatus,
+		StartedAt:         r.StartedAt,
+		CompletedAt:       r.CompletedAt,
+		DurationMs:        r.DurationMs,
+		Summary:           r.Summary,
+		ErrorMessage:      r.ErrorMessage,
+		SkipReason:        r.SkipReason,
+		ParentRunID:       r.ParentRunID,
+		StepCount:         r.StepCount,
+		MaxSteps:          r.MaxSteps,
+		ResumedFrom:       r.ResumedFrom,
+		TraceID:           r.TraceID,
+		RootRunID:         r.RootRunID,
 		AgentDefinitionID: r.AgentDefinitionID,
-		Tools:         r.Tools,
+		Tools:             r.Tools,
 	}
 	if r.Agent != nil {
 		dto.AgentName = r.Agent.Name
@@ -580,6 +580,117 @@ type ADKEventDTO struct {
 	ErrorCode              *string        `json:"errorCode,omitempty"`
 	ErrorMessage           *string        `json:"errorMessage,omitempty"`
 	Interrupted            *bool          `json:"interrupted,omitempty"`
+}
+
+// --- Issue #192: Full run trace DTO ---
+
+// AgentRunFullDTO is the response for GET /agent-runs/:runId/full.
+// It bundles the run, messages, tool calls, and parent run in a single response.
+type AgentRunFullDTO struct {
+	Run       *AgentRunDTO           `json:"run"`
+	Messages  []*AgentRunMessageDTO  `json:"messages"`
+	ToolCalls []*AgentRunToolCallDTO `json:"toolCalls"`
+	ParentRun *AgentRunDTO           `json:"parentRun,omitempty"`
+}
+
+// --- Issue #193: Run stats DTOs ---
+
+// RunStatsDTO is the response for GET /agent-runs/stats.
+type RunStatsDTO struct {
+	Period     RunStatsPeriodDTO           `json:"period"`
+	Overview   RunStatsOverviewDTO         `json:"overview"`
+	ByAgent    map[string]RunStatsAgentDTO `json:"byAgent"`
+	TopErrors  []RunStatsErrorDTO          `json:"topErrors"`
+	ToolStats  RunStatsToolsDTO            `json:"toolStats"`
+	TimeSeries RunStatsTimeSeriesDTO       `json:"timeSeries"`
+}
+
+// RunStatsPeriodDTO captures the analysis window.
+type RunStatsPeriodDTO struct {
+	Since time.Time `json:"since"`
+	Until time.Time `json:"until"`
+}
+
+// RunStatsOverviewDTO holds aggregate run counts and cost.
+type RunStatsOverviewDTO struct {
+	TotalRuns     int64   `json:"totalRuns"`
+	SuccessCount  int64   `json:"successCount"`
+	FailedCount   int64   `json:"failedCount"`
+	ErrorCount    int64   `json:"errorCount"`
+	SuccessRate   float64 `json:"successRate"`
+	AvgDurationMs float64 `json:"avgDurationMs"`
+	TotalCostUSD  float64 `json:"totalCostUsd"`
+}
+
+// RunStatsAgentDTO holds per-agent aggregates.
+type RunStatsAgentDTO struct {
+	Total           int64   `json:"total"`
+	Success         int64   `json:"success"`
+	Failed          int64   `json:"failed"`
+	Errored         int64   `json:"errored"`
+	AvgDurationMs   float64 `json:"avgDurationMs"`
+	MaxDurationMs   int64   `json:"maxDurationMs"`
+	AvgCostUSD      float64 `json:"avgCostUsd"`
+	TotalCostUSD    float64 `json:"totalCostUsd"`
+	AvgInputTokens  float64 `json:"avgInputTokens"`
+	AvgOutputTokens float64 `json:"avgOutputTokens"`
+}
+
+// RunStatsErrorDTO is an entry in the topErrors list.
+type RunStatsErrorDTO struct {
+	Message string `json:"message"`
+	Count   int64  `json:"count"`
+}
+
+// RunStatsToolsDTO holds aggregate tool call statistics.
+type RunStatsToolsDTO struct {
+	TotalToolCalls int64                      `json:"totalToolCalls"`
+	ByTool         map[string]RunStatsToolDTO `json:"byTool"`
+}
+
+// RunStatsToolDTO is per-tool aggregated metrics.
+type RunStatsToolDTO struct {
+	Total         int64   `json:"total"`
+	Success       int64   `json:"success"`
+	Failed        int64   `json:"failed"`
+	AvgDurationMs float64 `json:"avgDurationMs"`
+	MaxDurationMs int64   `json:"maxDurationMs"`
+}
+
+// RunStatsTimeSeriesDTO holds time-bucketed run counts.
+type RunStatsTimeSeriesDTO struct {
+	ByHour []RunStatsTimePointDTO `json:"byHour"`
+}
+
+// RunStatsTimePointDTO is a single time bucket with per-agent counts.
+type RunStatsTimePointDTO struct {
+	Hour    time.Time        `json:"hour"`
+	Runs    int64            `json:"runs"`
+	ByAgent map[string]int64 `json:"byAgent,omitempty"`
+}
+
+// --- Issue #194: Session analytics DTOs ---
+
+// RunSessionStatsDTO is the response for GET /agent-runs/stats/sessions.
+type RunSessionStatsDTO struct {
+	Period             RunStatsPeriodDTO      `json:"period"`
+	TotalSessions      int64                  `json:"totalSessions"`
+	ActiveSessions     int64                  `json:"activeSessions"`
+	AvgRunsPerSession  float64                `json:"avgRunsPerSession"`
+	MaxRunsPerSession  int64                  `json:"maxRunsPerSession"`
+	SessionsByPlatform map[string]int64       `json:"sessionsByPlatform"`
+	TopSessions        []RunSessionSummaryDTO `json:"topSessions"`
+}
+
+// RunSessionSummaryDTO summarises a single logical session.
+type RunSessionSummaryDTO struct {
+	Platform      string    `json:"platform"`
+	ChannelID     string    `json:"channelId,omitempty"`
+	ThreadID      string    `json:"threadId,omitempty"`
+	TotalRuns     int64     `json:"totalRuns"`
+	LastRunAt     time.Time `json:"lastRunAt"`
+	AvgDurationMs float64   `json:"avgDurationMs"`
+	TotalCostUSD  float64   `json:"totalCostUsd"`
 }
 
 // ADKSessionDTO represents an ADK session.
