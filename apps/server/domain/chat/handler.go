@@ -1001,6 +1001,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			AgentDefinition:  def,
 			ProjectID:        projectID,
 			OrgID:            orgID,
+			UserID:           userID, // propagate for ask_user notifications
 			UserMessage:      userMessage,
 			StreamCallback:   streamCallback,
 			AuthToken:        authToken,

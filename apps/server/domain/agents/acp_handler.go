@@ -282,11 +282,18 @@ func (h *ACPHandler) CreateRun(c echo.Context) error {
 		}
 	}
 
+	user := auth.GetUser(c)
+	var userID string
+	if user != nil {
+		userID = user.ID
+	}
+
 	execReq := ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: def,
 		ProjectID:       projectID,
 		OrgID:           orgID,
+		UserID:          userID, // propagate for ask_user notifications
 		UserMessage:     userMessage,
 		EnvVars:         req.EnvVars,
 	}
@@ -846,6 +853,7 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 		AgentDefinition: def,
 		ProjectID:       projectID,
 		OrgID:           orgID,
+		UserID:          userID, // propagate for ask_user notifications on resumed run
 		UserMessage:     userMessage,
 	}
 
