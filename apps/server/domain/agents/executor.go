@@ -157,6 +157,12 @@ type ExecuteRequest struct {
 	// UserID is the authenticated user who initiated this run (empty for system/background runs).
 	// Passed to ask_user tool so notifications target the correct user.
 	UserID string
+
+	// SessionID is a caller-supplied stable key for sharing the ADK conversation session
+	// across multiple trigger calls (cross-run conversation history). When set, the ADK
+	// session key is derived from this value instead of the run ID, so successive triggers
+	// with the same SessionID share the same session events. Empty = per-run session (default).
+	SessionID string
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -903,8 +909,17 @@ func (ae *AgentExecutor) runPipeline(
 ) (*ExecuteResult, error) {
 	dbCtx := context.Background()
 
-	// Identify the root session ID
-	sessionID := ae.getRootRunID(ctx, run)
+	// Identify the ADK session ID.
+	// If the caller supplied a stable SessionID (cross-run conversation history),
+	// derive a namespaced key from it so triggers with the same SessionID share
+	// the same ADK session and accumulate conversation history.
+	// Otherwise fall back to the root run ID (current per-run behavior).
+	var sessionID string
+	if req.SessionID != "" {
+		sessionID = "session:" + req.ProjectID + ":" + req.SessionID
+	} else {
+		sessionID = ae.getRootRunID(ctx, run)
+	}
 
 	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
 	// can propagate it as the parent_run_id when spawning child runs.

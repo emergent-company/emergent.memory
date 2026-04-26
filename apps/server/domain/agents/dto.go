@@ -164,6 +164,11 @@ type TriggerRequestDTO struct {
 	Model    string            `json:"model,omitempty"`
 	EnvVars  map[string]string `json:"env_vars,omitempty"`
 	MaxSteps *int              `json:"maxSteps,omitempty"`
+	// SessionID ties this trigger to a persistent ADK conversation session.
+	// When provided, the ADK runner reuses the session associated with this ID,
+	// accumulating all prior turns as conversation history for the agent.
+	// When empty, each trigger starts a fresh session (current behavior).
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 // TriggerResponseDTO is the response for triggering an agent

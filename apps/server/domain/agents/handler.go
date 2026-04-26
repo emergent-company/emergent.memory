@@ -700,6 +700,7 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 			EnvVars:         triggerReq.EnvVars,
 			MaxSteps:        triggerReq.MaxSteps,
 			AuthToken:       triggerAuthToken,
+			SessionID:       triggerReq.SessionID,
 		})
 		if execResult != nil && execResult.Cleanup != nil {
 			execResult.Cleanup()
