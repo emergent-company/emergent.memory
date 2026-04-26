@@ -1723,6 +1723,8 @@ func (h *MCPToolHandler) ExecuteACPTriggerRun(ctx context.Context, projectID str
 		// Link to ACP session if provided
 		if sessionID != "" {
 			_ = h.repo.UpdateRunACPSessionID(ctx, run.ID, sessionID)
+			// Also set in-memory so runPipeline can inject it into context without a DB roundtrip.
+			run.ACPSessionID = &sessionID
 		}
 
 		// Launch execution in background
@@ -1763,6 +1765,7 @@ func (h *MCPToolHandler) ExecuteACPTriggerRun(ctx context.Context, projectID str
 		ProjectID:       agent.ProjectID,
 		OrgID:           orgID,
 		UserMessage:     message,
+		ACPSessionID:    sessionID,
 	})
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()

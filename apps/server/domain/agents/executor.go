@@ -148,6 +148,10 @@ type ExecuteRequest struct {
 	// They are merged into the sandbox container environment with lower priority
 	// than system keys (MEMORY_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
 	EnvVars map[string]string
+
+	// ACPSessionID links this run to an ACP session so built-in tools like
+	// set_session_title can update session metadata during execution.
+	ACPSessionID string
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -295,6 +299,17 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	run, err := ae.repo.CreateRunWithOptions(dbCtx, createOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent run: %w", err)
+	}
+
+	// Link to ACP session if provided via request (e.g. trigger_agent sync path).
+	if req.ACPSessionID != "" {
+		run.ACPSessionID = &req.ACPSessionID
+		if updateErr := ae.repo.UpdateRunACPSessionID(dbCtx, run.ID, req.ACPSessionID); updateErr != nil {
+			ae.log.Warn("failed to persist acp_session_id on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", updateErr.Error()),
+			)
+		}
 	}
 
 	// Establish root_run_id: top-level runs own it; sub-agents receive it from the parent.
@@ -887,9 +902,15 @@ func (ae *AgentExecutor) runPipeline(
 	// can propagate it as the parent_run_id when spawning child runs.
 	ctx = contextWithCallerRunID(ctx, run.ID)
 	// Inject ACP session ID into context so built-in tools (e.g. set_session_title)
-	// can update session metadata.
+	// can update session metadata. If the run was created without the session ID set
+	// in-memory (e.g. via trigger_agent async path), fetch it from DB as a fallback.
 	if run.ACPSessionID != nil && *run.ACPSessionID != "" {
 		ctx = mcp.ContextWithACPSessionID(ctx, *run.ACPSessionID)
+	} else if run.ID != "" {
+		if freshRun, fetchErr := ae.repo.FindRunByID(dbCtx, run.ID); fetchErr == nil && freshRun != nil && freshRun.ACPSessionID != nil && *freshRun.ACPSessionID != "" {
+			run.ACPSessionID = freshRun.ACPSessionID
+			ctx = mcp.ContextWithACPSessionID(ctx, *freshRun.ACPSessionID)
+		}
 	}
 	// Also inject into the provider context so the tracking model can attribute
 	// LLM usage events to this run.
