@@ -292,23 +292,24 @@ func (r *Repository) DeleteSupportedModelsNotIn(ctx context.Context, provider Pr
 	return nil
 }
 
-// UpdateModelOutputLimits bulk-updates max_output_tokens in provider_supported_models
-// by model name (provider-agnostic, since the same model has the same token limit
-// regardless of whether it's accessed via google or google-vertex).
-func (r *Repository) UpdateModelOutputLimits(ctx context.Context, limits map[string]int) error {
+// UpdateModelLimits bulk-updates max_output_tokens and max_input_tokens in
+// provider_supported_models by model name (provider-agnostic).
+func (r *Repository) UpdateModelLimits(ctx context.Context, limits map[string]modelLimits) error {
 	if len(limits) == 0 {
 		return nil
 	}
 
-	for modelName, maxTokens := range limits {
-		tokens := maxTokens // capture loop var
+	for modelName, lim := range limits {
+		out := lim.MaxOutputTokens
+		in := lim.MaxInputTokens
 		_, err := r.db.NewUpdate().
 			TableExpr("kb.provider_supported_models").
-			Set("max_output_tokens = ?", tokens).
+			Set("max_output_tokens = ?", out).
+			Set("max_input_tokens = ?", in).
 			Where("model_name = ?", modelName).
 			Exec(ctx)
 		if err != nil {
-			r.log.Error("failed to update model output limit",
+			r.log.Error("failed to update model limits",
 				logger.Error(err),
 				slog.String("model", modelName),
 			)
@@ -336,6 +337,32 @@ func (r *Repository) GetModelOutputLimit(ctx context.Context, modelName string) 
 			return 0, nil
 		}
 		r.log.Error("failed to get model output limit",
+			logger.Error(err),
+			slog.String("model", modelName),
+		)
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return limit, nil
+}
+
+// GetModelInputLimit returns the max_input_tokens (context window) for a given
+// model name, or 0 if not found / not set.
+func (r *Repository) GetModelInputLimit(ctx context.Context, modelName string) (int, error) {
+	var limit int
+	err := r.db.NewSelect().
+		TableExpr("kb.provider_supported_models").
+		ColumnExpr("max_input_tokens").
+		Where("model_name = ?", modelName).
+		Where("max_input_tokens IS NOT NULL").
+		OrderExpr("max_input_tokens DESC").
+		Limit(1).
+		Scan(ctx, &limit)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		r.log.Error("failed to get model input limit",
 			logger.Error(err),
 			slog.String("model", modelName),
 		)

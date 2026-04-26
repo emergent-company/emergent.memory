@@ -24,24 +24,31 @@ const (
 	modelLimitsFetchTimeout = 15 * time.Second
 )
 
-// staticModelLimits maps model name → max output tokens.
-// These are fallback values from models.dev as of 2025 for the 6 platform-known models.
+// modelLimits holds both the context-window (max input) and max output token
+// counts for a single model.
+type modelLimits struct {
+	MaxInputTokens  int
+	MaxOutputTokens int
+}
+
+// staticModelLimits maps model name → token limits.
+// These are fallback values from models.dev as of 2025 for the platform-known models.
 // Only generative models are included (embeddings are excluded).
-var staticModelLimits = map[string]int{
-	"gemini-1.5-flash":              8192,
-	"gemini-1.5-flash-8b":           8192,
-	"gemini-1.5-pro":                8192,
-	"gemini-2.0-flash":              8192,
-	"gemini-2.5-flash":              65536,
-	"gemini-2.5-pro":                65536,
-	"gemini-3.1-flash-lite-preview": 65536,
-	"gemini-3.1-flash":              65536,
-	"gemini-3.1-pro":                65536,
+var staticModelLimits = map[string]modelLimits{
+	"gemini-1.5-flash":              {MaxInputTokens: 1_000_000, MaxOutputTokens: 8192},
+	"gemini-1.5-flash-8b":           {MaxInputTokens: 1_000_000, MaxOutputTokens: 8192},
+	"gemini-1.5-pro":                {MaxInputTokens: 2_000_000, MaxOutputTokens: 8192},
+	"gemini-2.0-flash":              {MaxInputTokens: 1_000_000, MaxOutputTokens: 8192},
+	"gemini-2.5-flash":              {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	"gemini-2.5-pro":                {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	"gemini-3.1-flash-lite-preview": {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	"gemini-3.1-flash":              {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	"gemini-3.1-pro":                {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
 	// DeepSeek models
-	"deepseek-v4-flash": 393216, // 384K output
-	"deepseek-v4-pro":   393216, // 384K output
-	"deepseek-chat":     8192,
-	"deepseek-reasoner": 65536,
+	"deepseek-v4-flash": {MaxInputTokens: 65536, MaxOutputTokens: 393216},
+	"deepseek-v4-pro":   {MaxInputTokens: 65536, MaxOutputTokens: 393216},
+	"deepseek-chat":     {MaxInputTokens: 65536, MaxOutputTokens: 8192},
+	"deepseek-reasoner": {MaxInputTokens: 65536, MaxOutputTokens: 65536},
 }
 
 // modelsDevResponse is the top-level shape of the models.dev /api.json response.
@@ -65,8 +72,8 @@ type modelsDevLimit struct {
 	Output  int `json:"output"`
 }
 
-// ModelLimitsSyncService fetches the latest per-model output token limits from
-// models.dev and stores them in provider_supported_models.max_output_tokens.
+// ModelLimitsSyncService fetches the latest per-model token limits from
+// models.dev and stores them in provider_supported_models.
 // A daily cron job drives this sync.
 type ModelLimitsSyncService struct {
 	repo   *Repository
@@ -97,7 +104,7 @@ func NewModelLimitsSyncService(repo *Repository, sched *scheduler.Scheduler, log
 	return s
 }
 
-// Sync fetches the latest model output limits from models.dev and upserts them
+// Sync fetches the latest model token limits from models.dev and upserts them
 // into provider_supported_models. Falls back to static values if the fetch fails.
 func (s *ModelLimitsSyncService) Sync(ctx context.Context) error {
 	limits, err := s.fetchRemoteLimits(ctx)
@@ -111,17 +118,17 @@ func (s *ModelLimitsSyncService) Sync(ctx context.Context) error {
 		limits = staticModelLimits
 	}
 
-	if err := s.repo.UpdateModelOutputLimits(ctx, limits); err != nil {
-		return fmt.Errorf("failed to update model output limits: %w", err)
+	if err := s.repo.UpdateModelLimits(ctx, limits); err != nil {
+		return fmt.Errorf("failed to update model limits: %w", err)
 	}
 
-	s.log.Info("model output limits synced", slog.Int("models", len(limits)))
+	s.log.Info("model limits synced", slog.Int("models", len(limits)))
 	return nil
 }
 
 // fetchRemoteLimits downloads models.dev/api.json and extracts generative model
-// output token limits for the "google" provider.
-func (s *ModelLimitsSyncService) fetchRemoteLimits(ctx context.Context) (map[string]int, error) {
+// token limits for all providers.
+func (s *ModelLimitsSyncService) fetchRemoteLimits(ctx context.Context) (map[string]modelLimits, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelLimitsFetchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)
@@ -150,13 +157,13 @@ func (s *ModelLimitsSyncService) fetchRemoteLimits(ctx context.Context) (map[str
 	return parseModelLimits(raw), nil
 }
 
-// parseModelLimits extracts generative model output limits from the models.dev
+// parseModelLimits extracts generative model token limits from the models.dev
 // API response. Only "generative" type models are included; embeddings are
 // excluded because their limit.output is a vector dimension, not tokens.
-// Model IDs are provider-agnostic (same model name is the same limit across
+// Model IDs are provider-agnostic (same model name → same limits across
 // google and google-vertex), so we deduplicate by model ID.
-func parseModelLimits(raw modelsDevResponse) map[string]int {
-	limits := make(map[string]int)
+func parseModelLimits(raw modelsDevResponse) map[string]modelLimits {
+	limits := make(map[string]modelLimits)
 	for _, providerEntry := range raw {
 		for modelID, m := range providerEntry.Models {
 			if m.Type != "generative" {
@@ -165,7 +172,10 @@ func parseModelLimits(raw modelsDevResponse) map[string]int {
 			if modelID == "" || m.Limit.Output <= 0 {
 				continue
 			}
-			limits[modelID] = m.Limit.Output
+			limits[modelID] = modelLimits{
+				MaxInputTokens:  m.Limit.Context,
+				MaxOutputTokens: m.Limit.Output,
+			}
 		}
 	}
 	return limits

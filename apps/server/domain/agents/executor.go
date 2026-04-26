@@ -62,12 +62,13 @@ type StreamEvent struct {
 // When set on ExecuteRequest, it enables real-time streaming of text tokens and tool calls.
 type StreamCallback func(event StreamEvent)
 
-// ModelLimitsLookup is a narrow interface for querying the max output token limit
-// for a given model name from the provider catalog. It is satisfied by
-// *provider.Repository but declared here to avoid a direct import of the provider
-// domain package into the agents package.
+// ModelLimitsLookup is a narrow interface for querying model token limits
+// from the provider catalog. It is satisfied by *provider.Repository but
+// declared here to avoid a direct import of the provider domain package into
+// the agents package.
 type ModelLimitsLookup interface {
 	GetModelOutputLimit(ctx context.Context, modelName string) (int, error)
+	GetModelInputLimit(ctx context.Context, modelName string) (int, error)
 }
 
 // BudgetExceededError is returned by Execute when a project's monthly spending
@@ -1387,27 +1388,108 @@ func (ae *AgentExecutor) runPipeline(
 	var sess session.Session
 
 	if sessionID != run.ID {
-		// It's a resumed run, attempt to load the existing session.
-		// Apply a sliding window so long-lived sessions don't exceed the model's
-		// context window. Prefer the agent definition's MaxSessionEvents; fall
-		// back to a safe default of 50 when a shared sessionID is in use.
+		// It's a resumed run — load the existing session with a token-aware
+		// sliding window so long-lived sessions don't exceed the model's
+		// context window.
+		//
+		// Strategy (2-pass):
+		//   1. Fetch the full history (no NumRecentEvents limit).
+		//   2. Walk backwards to find the most recent LLM event with
+		//      UsageMetadata.PromptTokenCount (cumulative context size).
+		//   3. If current context ≥ 80 % of the model's context window,
+		//      binary-search backwards to find how many trailing events fit
+		//      within 75 % of the context window, then re-fetch with that count.
+		//   4. Fall back to a safe default of 50 events when the context
+		//      window is unknown or on any error.
 		const defaultMaxSessionEvents = 50
-		numRecentEvents := defaultMaxSessionEvents
-		if req.AgentDefinition != nil && req.AgentDefinition.MaxSessionEvents != nil && *req.AgentDefinition.MaxSessionEvents > 0 {
-			numRecentEvents = *req.AgentDefinition.MaxSessionEvents
-		}
+
+		// --- Pass 1: full fetch ---
 		getResp, err := sessionService.Get(ctx, &session.GetRequest{
-			AppName:         "agents",
-			UserID:          "system",
-			SessionID:       sessionID,
-			NumRecentEvents: numRecentEvents,
+			AppName:   "agents",
+			UserID:    "system",
+			SessionID: sessionID,
 		})
 		if err == nil && getResp != nil && getResp.Session != nil {
 			sess = getResp.Session
-			ae.log.Info("resumed ADK session from database",
-				slog.String("session_id", sessionID),
-				slog.Int("history_events", sess.Events().Len()),
-			)
+
+			// --- Token-aware trim (Pass 2) ---
+			trimmed := false
+			if ae.modelLimits != nil && modelName != "" {
+				contextWindow, limErr := ae.modelLimits.GetModelInputLimit(ctx, modelName)
+				if limErr != nil {
+					ae.log.Warn("failed to look up model context window, skipping token trim",
+						slog.String("model", modelName), logger.Error(limErr))
+				} else if contextWindow > 0 {
+					events := sess.Events()
+					n := events.Len()
+
+					// Find most recent LLM event that has usage metadata.
+					var lastPromptTokens int32
+					for i := n - 1; i >= 0; i-- {
+						ev := events.At(i)
+						if ev.UsageMetadata != nil && ev.UsageMetadata.PromptTokenCount > 0 {
+							lastPromptTokens = ev.UsageMetadata.PromptTokenCount
+							break
+						}
+					}
+
+					highWatermark := int32(float64(contextWindow) * 0.80)
+					if lastPromptTokens > 0 && lastPromptTokens >= highWatermark {
+						// Need to trim. Find N trailing events whose cumulative
+						// token budget fits within 75 % of the context window.
+						targetTokens := int32(float64(contextWindow) * 0.75)
+
+						// Walk backwards accumulating token counts until we
+						// exceed the target; the answer is the number of events
+						// from that point to the end.
+						numKeep := 0
+						for i := n - 1; i >= 0; i-- {
+							ev := events.At(i)
+							if ev.UsageMetadata != nil && ev.UsageMetadata.PromptTokenCount > 0 {
+								if ev.UsageMetadata.PromptTokenCount <= targetTokens {
+									numKeep = n - i
+									break
+								}
+							}
+						}
+						if numKeep < 1 {
+							numKeep = defaultMaxSessionEvents
+						}
+
+						// Pass 2: re-fetch with the computed event count.
+						trimResp, trimErr := sessionService.Get(ctx, &session.GetRequest{
+							AppName:         "agents",
+							UserID:          "system",
+							SessionID:       sessionID,
+							NumRecentEvents: numKeep,
+						})
+						if trimErr == nil && trimResp != nil && trimResp.Session != nil {
+							sess = trimResp.Session
+							trimmed = true
+							ae.log.Info("token-aware session trim applied",
+								slog.String("session_id", sessionID),
+								slog.String("model", modelName),
+								slog.Int("context_window", contextWindow),
+								slog.Int("prompt_tokens_before", int(lastPromptTokens)),
+								slog.Int("events_kept", numKeep),
+								slog.Int("events_total", n),
+							)
+						} else {
+							ae.log.Warn("token-aware session re-fetch failed, using full history",
+								slog.String("session_id", sessionID),
+								logger.Error(trimErr),
+							)
+						}
+					}
+				}
+			}
+
+			if !trimmed {
+				ae.log.Info("resumed ADK session from database",
+					slog.String("session_id", sessionID),
+					slog.Int("history_events", sess.Events().Len()),
+				)
+			}
 		} else {
 			ae.log.Warn("failed to load existing ADK session, deleting stale session before creating fresh one",
 				slog.String("session_id", sessionID),
