@@ -7,8 +7,8 @@ import (
 func TestNewRegistry(t *testing.T) {
 	r := NewRegistry()
 
-	if len(r.providers) != 3 {
-		t.Fatalf("expected 3 providers, got %d", len(r.providers))
+	if len(r.providers) != 4 {
+		t.Fatalf("expected 4 providers, got %d", len(r.providers))
 	}
 
 	if !r.IsSupported(ProviderGoogleAI) {
@@ -19,6 +19,9 @@ func TestNewRegistry(t *testing.T) {
 	}
 	if !r.IsSupported(ProviderOpenAICompatible) {
 		t.Error("expected openai-compatible to be supported")
+	}
+	if !r.IsSupported(ProviderDeepSeek) {
+		t.Error("expected deepseek to be supported")
 	}
 	if r.IsSupported(ProviderType("openai")) {
 		t.Error("expected openai to NOT be supported")
@@ -80,16 +83,16 @@ func TestRegistryList(t *testing.T) {
 	r := NewRegistry()
 
 	defs := r.List()
-	if len(defs) != 3 {
-		t.Fatalf("expected 3 definitions, got %d", len(defs))
+	if len(defs) != 4 {
+		t.Fatalf("expected 4 definitions, got %d", len(defs))
 	}
 
 	types := make(map[ProviderType]bool)
 	for _, d := range defs {
 		types[d.Type] = true
 	}
-	if !types[ProviderGoogleAI] || !types[ProviderVertexAI] || !types[ProviderOpenAICompatible] {
-		t.Errorf("expected google, google-vertex, and openai-compatible in list, got %v", types)
+	if !types[ProviderGoogleAI] || !types[ProviderVertexAI] || !types[ProviderOpenAICompatible] || !types[ProviderDeepSeek] {
+		t.Errorf("expected google, google-vertex, openai-compatible, and deepseek in list, got %v", types)
 	}
 }
 
@@ -97,16 +100,16 @@ func TestRegistrySupportedTypes(t *testing.T) {
 	r := NewRegistry()
 
 	types := r.SupportedTypes()
-	if len(types) != 3 {
-		t.Fatalf("expected 3 types, got %d", len(types))
+	if len(types) != 4 {
+		t.Fatalf("expected 4 types, got %d", len(types))
 	}
 
 	typeSet := make(map[ProviderType]bool)
 	for _, pt := range types {
 		typeSet[pt] = true
 	}
-	if !typeSet[ProviderGoogleAI] || !typeSet[ProviderVertexAI] || !typeSet[ProviderOpenAICompatible] {
-		t.Errorf("expected google, google-vertex, and openai-compatible, got %v", typeSet)
+	if !typeSet[ProviderGoogleAI] || !typeSet[ProviderVertexAI] || !typeSet[ProviderOpenAICompatible] || !typeSet[ProviderDeepSeek] {
+		t.Errorf("expected google, google-vertex, openai-compatible, and deepseek, got %v", typeSet)
 	}
 }
 

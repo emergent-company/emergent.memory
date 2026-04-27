@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.25'
 
 jobs:
   lint:
@@ -40,6 +40,9 @@ jobs:
         with:
           version: latest
           working-directory: tools/cli
+          install-mode: goinstall
+        env:
+          GOWORK: off
 
   test:
     name: Test
