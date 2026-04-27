@@ -16,6 +16,7 @@ package mcprelay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -24,6 +25,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
+
+// ErrSessionNotFound is returned when a relay session is not in the active set.
+// The relay was connected at some point (so tools were registered) but is currently
+// disconnected (e.g. laptop went to sleep, network dropped). Callers handling this
+// error should return a user-friendly message suggesting retry later.
+var ErrSessionNotFound = errors.New("relay session not found or disconnected")
 
 // -----------------------------------------------------------------------------
 // Wire protocol frames
@@ -268,7 +275,7 @@ func (s *Service) ListByProject(projectID string) []*Session {
 func (s *Service) CallTool(ctx context.Context, projectID, instanceID, toolName string, args map[string]any) (map[string]any, error) {
 	sess, ok := s.Get(projectID, instanceID)
 	if !ok {
-		return nil, fmt.Errorf("relay instance %q not found or disconnected", instanceID)
+		return nil, fmt.Errorf("%w: instance %q", ErrSessionNotFound, instanceID)
 	}
 
 	reqID := uuid.New().String()
