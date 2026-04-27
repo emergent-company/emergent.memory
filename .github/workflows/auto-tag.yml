@@ -18,12 +18,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify GitHub CLI
+        run: |
+          if ! command -v gh &>/dev/null; then
+            echo "ERROR: gh CLI is not installed on the runner." >&2
+            exit 1
+          fi
+          echo "gh version: $(gh --version | head -1)"
+
       - name: Read VERSION
         id: version
         run: |
-          VERSION=$(cat VERSION | tr -d ' \n\r')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          VERSION=$(tr -d ' \n\r' < VERSION)
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: VERSION file is empty or contains only whitespace." >&2
+            exit 1
+          fi
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+){2}$'; then
+            echo "ERROR: VERSION '$VERSION' is not a valid semver (expected MAJOR.MINOR.PATCH, e.g. 1.2.3)." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "Read version: $VERSION"
 
       - name: Check if tag already exists
@@ -46,8 +63,8 @@ jobs:
       - name: Configure git
         if: steps.check.outputs.exists == 'false'
         run: |
-          git config user.name "emergent-bot"
-          git config user.email "bot@emergent-company.ai"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
 
       - name: Create and push tag
         if: steps.check.outputs.exists == 'false'
@@ -63,8 +80,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ steps.version.outputs.version }}"
-          echo "Triggering Memory CLI & Release on $TAG..."
+          echo "Triggering release workflows on $TAG..."
           gh workflow run "Memory CLI & Release" --ref "$TAG" --repo ${{ github.repository }}
-          echo "Triggering Publish Self-Hosted Images on $TAG..."
           gh workflow run "Publish Self-Hosted Images" --ref "$TAG" --repo ${{ github.repository }}
           echo "Workflows dispatched on tag: $TAG"

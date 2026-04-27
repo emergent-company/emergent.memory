@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"strings"
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 )
 
@@ -59,6 +61,7 @@ const DefaultMaxDepth = 6
 type ToolPoolConfig struct {
 	MCPService      *mcp.Service
 	RegistryService *mcpregistry.Service
+	RelayService    *mcprelay.Service
 	Logger          *slog.Logger
 }
 
@@ -68,6 +71,7 @@ type ToolPoolConfig struct {
 type ToolPool struct {
 	mcpService      *mcp.Service
 	registryService *mcpregistry.Service
+	relayService    *mcprelay.Service
 	log             *slog.Logger
 
 	// Per-project cache of tool definitions
@@ -83,6 +87,8 @@ type projectToolCache struct {
 	toolNames []string
 	// builtinTools tracks which tools came from builtin MCP service (not external servers)
 	builtinTools map[string]bool
+	// relayToolInstance maps prefixed tool name → instance ID for relay tool routing
+	relayToolInstance map[string]string
 }
 
 // NewToolPool creates a new ToolPool.
@@ -95,6 +101,7 @@ func NewToolPool(cfg ToolPoolConfig) *ToolPool {
 	return &ToolPool{
 		mcpService:      cfg.MCPService,
 		registryService: cfg.RegistryService,
+		relayService:    cfg.RelayService,
 		log:             log,
 		cache:           make(map[string]*projectToolCache),
 	}
@@ -128,8 +135,9 @@ func (tp *ToolPool) getOrBuildCache(projectID string) *projectToolCache {
 // buildCache creates the tool cache for a project by combining all tool sources.
 func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 	cache := &projectToolCache{
-		toolDefs:     make(map[string]mcp.ToolDefinition),
-		builtinTools: make(map[string]bool),
+		toolDefs:          make(map[string]mcp.ToolDefinition),
+		builtinTools:      make(map[string]bool),
+		relayToolInstance: make(map[string]string),
 	}
 
 	// 1. Built-in MCP tools — load from DB (respects per-project enabled flag).
@@ -213,6 +221,41 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 					slog.Int("count", len(extTools)),
 				)
 			}
+		}
+	}
+
+	// 3. MCP Relay tools from connected relay instances
+	if tp.relayService != nil {
+		sessions := tp.relayService.ListByProject(projectID)
+		relayToolCount := 0
+		for _, sess := range sessions {
+			relayToolDefs, err := extractRelayToolDefs(sess.Tools)
+			if err != nil {
+				tp.log.Warn("failed to extract relay tool definitions from session",
+					slog.String("instance_id", sess.InstanceID),
+					slog.String("error", err.Error()),
+				)
+				continue
+			}
+			relayToolCount += len(relayToolDefs)
+			for _, rt := range relayToolDefs {
+				// Prefix relay tool names: instanceID_toolname (same convention as external tools)
+				prefixedName := sess.InstanceID + "_" + rt.Name
+				cache.toolDefs[prefixedName] = mcp.ToolDefinition{
+					Name:        prefixedName,
+					Description: rt.Description,
+					InputSchema: rt.InputSchema,
+				}
+				cache.toolNames = append(cache.toolNames, prefixedName)
+				cache.relayToolInstance[prefixedName] = sess.InstanceID
+			}
+		}
+		if relayToolCount > 0 {
+			tp.log.Debug("loaded MCP relay tools into pool",
+				slog.String("project_id", projectID),
+				slog.Int("sessions", len(sessions)),
+				slog.Int("tools", relayToolCount),
+			)
 		}
 	}
 
@@ -588,6 +631,8 @@ func convertMCPSchemaToADK(input mcp.InputSchema) *jsonschema.Schema {
 // For external tools (prefixed with server name), it delegates to
 // mcpregistry.Service.CallExternalTool() which proxies through the
 // external MCP server connection.
+// For relay tools (prefixed with instance ID), it delegates to
+// mcprelay.Service.CallTool() which forwards through the WebSocket relay.
 func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (tool.Tool, error) {
 	// Capture for closure
 	toolName := td.Name
@@ -598,6 +643,34 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 	// Check if this is a builtin tool by looking at the project cache
 	cache := tp.getOrBuildCache(projectID)
 	isBuiltin := cache.builtinTools[toolName]
+
+	// Check if this is a relay tool
+	if instanceID, ok := cache.relayToolInstance[toolName]; ok && tp.relayService != nil {
+		// Relay tool: forward through mcprelay.Service
+		relaySvc := tp.relayService
+		pid := projectID
+		instID := instanceID
+		// Parse bare tool name by stripping the instanceID prefix and underscore
+		prefix := instID + "_"
+		if !strings.HasPrefix(toolName, prefix) {
+			return nil, fmt.Errorf("unexpected relay tool name %q for instance %q", toolName, instID)
+		}
+		bareToolName := strings.TrimPrefix(toolName, prefix)
+		return functiontool.New(
+			functiontool.Config{
+				Name:        toolName,
+				Description: td.Description,
+				InputSchema: inputSchema,
+			},
+			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+				result, err := relaySvc.CallTool(ctx, pid, instID, bareToolName, args)
+				if err != nil {
+					return map[string]any{"error": err.Error()}, nil
+				}
+				return convertRelayResponse(result)
+			},
+		)
+	}
 
 	if !isBuiltin && tp.registryService != nil {
 		// External tool: route through proxy
@@ -753,4 +826,90 @@ func (tp *ToolPool) wrapHiddenBuiltin(projectID, name, description string, schem
 		},
 	)
 	return t
+}
+
+// extractRelayToolDefs extracts MCP tool definitions from a relay session's tools/list
+// result map. The map is expected to have a "tools" key whose value is an array of
+// MCP tool objects, each with "name", "description", and "inputSchema" fields.
+func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error) {
+	toolsRaw, ok := toolsMap["tools"]
+	if !ok {
+		return nil, fmt.Errorf("tools/list result missing 'tools' key")
+	}
+	toolsArr, ok := toolsRaw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("tools value is not an array")
+	}
+
+	var defs []mcp.ToolDefinition
+	for _, tRaw := range toolsArr {
+		tMap, ok := tRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := tMap["name"].(string)
+		if name == "" {
+			continue
+		}
+		desc, _ := tMap["description"].(string)
+
+		var inputSchema mcp.InputSchema
+		if is, ok := tMap["inputSchema"]; ok {
+			data, err := json.Marshal(is)
+			if err == nil {
+				json.Unmarshal(data, &inputSchema)
+			}
+		}
+		if inputSchema.Type == "" {
+			inputSchema.Type = "object"
+		}
+
+		defs = append(defs, mcp.ToolDefinition{
+			Name:        name,
+			Description: desc,
+			InputSchema: inputSchema,
+		})
+	}
+
+	return defs, nil
+}
+
+// convertRelayResponse converts a raw MCP JSON-RPC response map from a relay tool
+// call into a format compatible with convertToolResult.
+// The response map is expected to have a "result" key (on success) or "error" key
+// (on failure), following the JSON-RPC 2.0 specification.
+func convertRelayResponse(response map[string]any) (map[string]any, error) {
+	// Check for JSON-RPC error
+	if errRaw, ok := response["error"]; ok {
+		errMap, ok := errRaw.(map[string]any)
+		if ok {
+			msg, _ := errMap["message"].(string)
+			if msg != "" {
+				return map[string]any{"error": msg}, nil
+			}
+		}
+		return map[string]any{"error": "relay tool returned an error"}, nil
+	}
+
+	// Extract result field from JSON-RPC response
+	resultRaw, ok := response["result"]
+	if !ok {
+		return map[string]any{"result": "ok"}, nil
+	}
+
+	// Marshal result into ToolResult for convertToolResult
+	result := &mcp.ToolResult{}
+	data, err := json.Marshal(resultRaw)
+	if err != nil {
+		return map[string]any{
+			"error": "invalid relay tool result: failed to marshal result",
+		}, nil
+	}
+	if err := json.Unmarshal(data, result); err != nil {
+		return map[string]any{
+			"error": "invalid relay tool result: failed to unmarshal into ToolResult",
+		}, nil
+	}
+
+	return convertToolResult(result)
 }
