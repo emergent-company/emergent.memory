@@ -149,6 +149,11 @@ func buildOpenAITools(tools []*genai.Tool) []openaiTool {
 
 // buildMessages converts ADK content history to OpenAI messages, including
 // tool call / tool response turns.
+//
+// After building the message list, it validates the conversation structure:
+// every tool_call_id in an assistant message's tool_calls must have a
+// matching tool response. Orphaned calls get synthetic responses patched
+// in to prevent DeepSeek's strict API from rejecting the request.
 func buildMessages(contents []*genai.Content) []openaiMessage {
 	var messages []openaiMessage
 	for _, content := range contents {
@@ -250,7 +255,46 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			messages = append(messages, msg)
 		}
 	}
-	return messages
+	return ensureToolCallIntegrity(messages)
+}
+
+// ensureToolCallIntegrity validates and repairs the conversation structure
+// so every tool_call_id has a matching tool response. This prevents DeepSeek's
+// strict API from rejecting requests with orphaned tool_calls — a condition
+// that can arise when the ADK's async function response rearranger drops
+// intermediate events (see contents_processor.go's
+// rearrangeEventsForLatestFunctionResponse).
+func ensureToolCallIntegrity(messages []openaiMessage) []openaiMessage {
+	// Build set of all tool_call_ids that have responses
+	respondedIDs := make(map[string]bool)
+	for _, msg := range messages {
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			respondedIDs[msg.ToolCallID] = true
+		}
+	}
+
+	// Scan assistant messages for orphaned tool_calls
+	var patched []openaiMessage
+	for _, msg := range messages {
+		patched = append(patched, msg)
+		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
+			continue
+		}
+		for _, tc := range msg.ToolCalls {
+			if !respondedIDs[tc.ID] {
+				// Orphaned tool call — inject a synthetic tool response
+				// so DeepSeek doesn't reject the conversation.
+				respondedIDs[tc.ID] = true
+				patched = append(patched, openaiMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Name:       tc.Function.Name,
+					Content:    `{"ok":true,"note":"completed"}`,
+				})
+			}
+		}
+	}
+	return patched
 }
 
 // GenerateContent implements model.LLM by calling the OpenAI Chat Completions API,
