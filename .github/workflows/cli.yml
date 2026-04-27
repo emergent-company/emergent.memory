@@ -44,10 +44,6 @@ jobs:
         env:
           GOWORK: off
 
-          install-mode: goinstall
-        env:
-          GOWORK: off
-
   test:
     name: Test
     runs-on: ubuntu-latest
