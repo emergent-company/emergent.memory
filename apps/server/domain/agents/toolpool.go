@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"strings"
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -226,6 +227,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 	// 3. MCP Relay tools from connected relay instances
 	if tp.relayService != nil {
 		sessions := tp.relayService.ListByProject(projectID)
+		relayToolCount := 0
 		for _, sess := range sessions {
 			relayToolDefs, err := extractRelayToolDefs(sess.Tools)
 			if err != nil {
@@ -235,6 +237,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 				)
 				continue
 			}
+			relayToolCount += len(relayToolDefs)
 			for _, rt := range relayToolDefs {
 				// Prefix relay tool names: instanceID_toolname (same convention as external tools)
 				prefixedName := sess.InstanceID + "_" + rt.Name
@@ -247,12 +250,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 				cache.relayToolInstance[prefixedName] = sess.InstanceID
 			}
 		}
-		if len(sessions) > 0 {
-			relayToolCount := 0
-			for _, s := range sessions {
-				defs, _ := extractRelayToolDefs(s.Tools)
-				relayToolCount += len(defs)
-			}
+		if relayToolCount > 0 {
 			tp.log.Debug("loaded MCP relay tools into pool",
 				slog.String("project_id", projectID),
 				slog.Int("sessions", len(sessions)),
@@ -653,7 +651,11 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 		pid := projectID
 		instID := instanceID
 		// Parse bare tool name by stripping the instanceID prefix and underscore
-		bareToolName := toolName[len(instID)+1:]
+		prefix := instID + "_"
+		if !strings.HasPrefix(toolName, prefix) {
+			return nil, fmt.Errorf("unexpected relay tool name %q for instance %q", toolName, instID)
+		}
+		bareToolName := strings.TrimPrefix(toolName, prefix)
 		return functiontool.New(
 			functiontool.Config{
 				Name:        toolName,
@@ -898,8 +900,15 @@ func convertRelayResponse(response map[string]any) (map[string]any, error) {
 	// Marshal result into ToolResult for convertToolResult
 	result := &mcp.ToolResult{}
 	data, err := json.Marshal(resultRaw)
-	if err == nil {
-		json.Unmarshal(data, result)
+	if err != nil {
+		return map[string]any{
+			"error": "invalid relay tool result: failed to marshal result",
+		}, nil
+	}
+	if err := json.Unmarshal(data, result); err != nil {
+		return map[string]any{
+			"error": "invalid relay tool result: failed to unmarshal into ToolResult",
+		}, nil
 	}
 
 	return convertToolResult(result)
