@@ -136,6 +136,16 @@ func (h *Handler) Connect(c echo.Context) error {
 			pong, _ := json.Marshal(PingFrame{Type: FramePong})
 			sess.writeMessage(websocket.TextMessage, pong)
 
+		case FrameRegister:
+			var reg RegisterFrame
+			if err := json.Unmarshal(data, &reg); err == nil && reg.Tools != nil {
+				sess.Tools = reg.Tools
+				h.log.Info("mcprelay: instance re-registered with updated tools",
+					slog.String("instance_id", reg.InstanceID),
+					slog.Int("tools", toolCount(reg.Tools)),
+				)
+			}
+
 		case FrameResponse:
 			var resp ResponseFrame
 			if err := json.Unmarshal(data, &resp); err == nil {
@@ -175,7 +185,7 @@ func (h *Handler) ListSessions(c echo.Context) error {
 		items = append(items, SessionInfo{
 			InstanceID:  s.InstanceID,
 			Version:     s.Version,
-			ToolCount:   len(s.Tools),
+			ToolCount:   toolCount(s.Tools),
 			ConnectedAt: s.ConnectedAt,
 		})
 	}
@@ -285,4 +295,20 @@ type ListSessionsResponse struct {
 type CallToolRequest struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`
+}
+
+// toolCount returns the actual number of tools in the tools map, handling
+// the nested {"tools": [...]} format from MCP tools/list results.
+func toolCount(tools map[string]any) int {
+	if tools == nil {
+		return 0
+	}
+	// Direct array: tools = [...] (legacy format)
+	for _, v := range tools {
+		if arr, ok := v.([]any); ok {
+			return len(arr)
+		}
+	}
+	// Fall back to map key count if no array found
+	return len(tools)
 }
