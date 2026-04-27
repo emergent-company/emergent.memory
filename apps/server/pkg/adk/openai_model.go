@@ -91,8 +91,9 @@ type responseFormat struct {
 type openaiResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string           `json:"content"`
-			ToolCalls []openaiToolCall `json:"tool_calls"`
+			Content          string           `json:"content"`
+			ReasoningContent string           `json:"reasoning_content,omitempty"`
+			ToolCalls        []openaiToolCall `json:"tool_calls"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
