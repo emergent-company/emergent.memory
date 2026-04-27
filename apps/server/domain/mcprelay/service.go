@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -259,4 +260,27 @@ func (s *Service) ListByProject(projectID string) []*Session {
 		}
 	}
 	return out
+}
+
+// CallTool forwards an MCP tool call to a connected relay instance.
+// The instanceID is the bare instance ID; the toolName is the bare MCP tool name
+// (without any prefix). Returns the raw MCP tool result as a map.
+func (s *Service) CallTool(ctx context.Context, projectID, instanceID, toolName string, args map[string]any) (map[string]any, error) {
+	sess, ok := s.Get(projectID, instanceID)
+	if !ok {
+		return nil, fmt.Errorf("relay instance %q not found or disconnected", instanceID)
+	}
+
+	reqID := uuid.New().String()
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqID,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      toolName,
+			"arguments": args,
+		},
+	}
+
+	return sess.SendRequest(ctx, reqID, payload)
 }
