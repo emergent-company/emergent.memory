@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path"
@@ -665,6 +666,16 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 				result, err := relaySvc.CallTool(ctx, pid, instID, bareToolName, args)
 				if err != nil {
+					if errors.Is(err, mcprelay.ErrSessionNotFound) {
+						return map[string]any{
+							"error": fmt.Sprintf(
+								"Tool %q is provided by a connected client (%s) that is currently offline. "+
+									"The client may have disconnected (e.g. laptop went to sleep, network dropped). "+
+									"Please try again later when the device reconnects.",
+								toolName, instID,
+							),
+						}, nil
+					}
 					return map[string]any{"error": err.Error()}, nil
 				}
 				return convertRelayResponse(result)

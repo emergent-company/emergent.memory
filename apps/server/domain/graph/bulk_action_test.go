@@ -339,7 +339,7 @@ func TestBulkActionIntegration_AuditLog(t *testing.T) {
 
 	// Build service with a real journal backed by the test DB
 	journalSvc := newTestJournalSvc(t, db)
-	svc := NewService(repo, log, nil, nil, nil, nil, nil, journalSvc, nil)
+	svc := NewService(repo, log, nil, nil, nil, nil, nil, journalSvc, nil, nil)
 
 	actorID := uuid.New()
 	resp, err := svc.BulkAction(context.Background(), projectID, &BulkActionRequest{

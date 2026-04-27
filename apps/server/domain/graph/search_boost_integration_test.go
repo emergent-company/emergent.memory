@@ -27,7 +27,7 @@ func TestRecencyBoostFavorsNewObjectsIntegration(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Graph.MaxListLimit = 100_000
 	repo := NewRepository(db, log, cfg)
-	svc := NewService(repo, log, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewService(repo, log, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	projectID := uuid.New()
 	t.Cleanup(func() {
@@ -108,7 +108,7 @@ func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Graph.MaxListLimit = 100_000
 	repo := NewRepository(db, log, cfg)
-	svc := NewService(repo, log, nil, nil, nil, nil, nil, nil, nil)
+	svc := NewService(repo, log, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	projectID := uuid.New()
 	t.Cleanup(func() {
