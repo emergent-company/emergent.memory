@@ -250,7 +250,104 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			messages = append(messages, msg)
 		}
 	}
+	// Validate conversation structure: every tool_call ID must have a matching
+	// tool response. Some providers (DeepSeek) enforce this strictly and reject
+	// conversations with orphaned tool_calls. Inject synthetic tool responses
+	// for any missing call IDs to keep the conversation valid.
+	messages = ensureToolCallResponsePairs(messages)
 	return messages
+}
+
+// ensureToolCallResponsePairs validates that every assistant tool_call has a
+// corresponding tool response. This is required by providers like DeepSeek that
+// enforce strict conversation ordering. Orphaned tool_calls can occur when ADK
+// session history is reconstructed from persisted events and a tool's response
+// was not properly serialized. For each orphaned tool_call ID, a synthetic tool
+// response is injected with a neutral "tool response not available" message.
+func ensureToolCallResponsePairs(messages []openaiMessage) []openaiMessage {
+	// Pass 1: collect all tool_call IDs and tool response IDs.
+	toolCallIDs := make(map[string]openaiToolCall) // id → call
+	toolResponseIDs := make(map[string]bool)
+
+	for _, msg := range messages {
+		if msg.Role == "assistant" {
+			for _, tc := range msg.ToolCalls {
+				toolCallIDs[tc.ID] = tc
+			}
+		}
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			toolResponseIDs[msg.ToolCallID] = true
+		}
+	}
+
+	if len(toolCallIDs) == 0 {
+		return messages
+	}
+
+	// Pass 2: identify orphaned tool_call IDs and inject synthetic responses.
+	// Work backwards through the message list so insertions don't shift indices.
+	var orphanedIDs []string
+	for id := range toolCallIDs {
+		if !toolResponseIDs[id] {
+			orphanedIDs = append(orphanedIDs, id)
+		}
+	}
+	if len(orphanedIDs) == 0 {
+		return messages
+	}
+
+	// Build synthetic responses for orphaned call IDs, grouped by the index of
+	// the assistant message that emitted them. We use the last assistant message
+	// that contains each orphaned call as the anchor point.
+	type orphanGroup struct {
+		assistantIdx int
+		responses    []openaiMessage
+	}
+	orphanGroups := make(map[int]*orphanGroup)
+	for _, id := range orphanedIDs {
+		tc := toolCallIDs[id]
+		// Find the assistant message index that contains this call ID.
+		idx := -1
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "assistant" {
+				for _, call := range messages[i].ToolCalls {
+					if call.ID == id {
+						idx = i
+						break
+					}
+				}
+				if idx >= 0 {
+					break
+				}
+			}
+		}
+		if idx < 0 {
+			idx = 0 // fallback: prepend at the very start
+		}
+		if orphanGroups[idx] == nil {
+			orphanGroups[idx] = &orphanGroup{assistantIdx: idx}
+		}
+		syntheticResponse := openaiMessage{
+			Role:       "tool",
+			ToolCallID: id,
+			Name:       tc.Function.Name,
+			Content:    `{"error":"tool response not available","note":"synthetic response inserted to maintain valid conversation structure"}`,
+		}
+		orphanGroups[idx].responses = append(orphanGroups[idx].responses, syntheticResponse)
+	}
+
+	// Inject synthetic responses after their respective assistant messages,
+	// processing from right to left to preserve indices.
+	var result []openaiMessage
+	inserted := make(map[int]bool)
+	for i := 0; i < len(messages); i++ {
+		result = append(result, messages[i])
+		if group, ok := orphanGroups[i]; ok && !inserted[i] {
+			inserted[i] = true
+			result = append(result, group.responses...)
+		}
+	}
+	return result
 }
 
 // GenerateContent implements model.LLM by calling the OpenAI Chat Completions API,
