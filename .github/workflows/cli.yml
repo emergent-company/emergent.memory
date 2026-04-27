@@ -41,6 +41,7 @@ jobs:
           version: latest
           working-directory: tools/cli
           skip-cache: true
+          install-mode: goinstall
 
   test:
     name: Test
