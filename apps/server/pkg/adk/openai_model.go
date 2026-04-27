@@ -47,11 +47,12 @@ func (m *openaiCompatibleModel) Name() string {
 // --- OpenAI wire types ---
 
 type openaiMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
-	Name       string           `json:"name,omitempty"`
+	Role             string           `json:"role"`
+	Content          string           `json:"content,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ToolCalls        []openaiToolCall `json:"tool_calls,omitempty"`
+	Name             string           `json:"name,omitempty"`
 }
 
 type openaiToolCall struct {
@@ -155,6 +156,7 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 
 		// Collect text parts and function calls/responses separately.
 		var textParts []string
+		var reasoningParts []string
 		var funcCalls []openaiToolCall
 		var funcResponses []struct {
 			id   string
@@ -166,7 +168,12 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			if part == nil {
 				continue
 			}
-			if part.Text != "" {
+			// Route thought/reasoning parts to reasoning_content for roundtrip.
+			// DeepSeek's API requires reasoning_content to be echoed back
+			// on subsequent turns when the model uses thinking mode.
+			if part.Thought && part.Text != "" {
+				reasoningParts = append(reasoningParts, part.Text)
+			} else if part.Text != "" {
 				textParts = append(textParts, part.Text)
 			}
 			if part.FunctionCall != nil {
@@ -208,6 +215,9 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			if len(textParts) > 0 {
 				msg.Content = strings.Join(textParts, "\n")
 			}
+			if len(reasoningParts) > 0 {
+				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
+			}
 			messages = append(messages, msg)
 			continue
 		}
@@ -227,11 +237,17 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 		}
 
 		// Plain text message.
-		if len(textParts) > 0 {
-			messages = append(messages, openaiMessage{
-				Role:    role,
-				Content: strings.Join(textParts, "\n"),
-			})
+		if len(textParts) > 0 || len(reasoningParts) > 0 {
+			msg := openaiMessage{
+				Role: role,
+			}
+			if len(textParts) > 0 {
+				msg.Content = strings.Join(textParts, "\n")
+			}
+			if role == "assistant" && len(reasoningParts) > 0 {
+				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
+			}
+			messages = append(messages, msg)
 		}
 	}
 	return messages
