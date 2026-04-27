@@ -215,7 +215,7 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			if len(textParts) > 0 {
 				msg.Content = strings.Join(textParts, "\n")
 			}
-			if len(reasoningParts) > 0 {
+			if len(reasoningParts) > 0 && msg.Role == "assistant" {
 				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
 			}
 			messages = append(messages, msg)
