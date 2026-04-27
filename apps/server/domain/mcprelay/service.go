@@ -92,7 +92,8 @@ type Session struct {
 	ConnectedAt time.Time
 
 	conn    *websocket.Conn
-	mu      sync.Mutex
+	mu      sync.Mutex // guards pending map
+	writeMu sync.Mutex // serializes all WebSocket writes (gorilla requires single writer)
 	pending map[string]*pendingCall
 	done    chan struct{}
 }
@@ -108,6 +109,16 @@ func newSession(projectID, instanceID, version string, tools map[string]any, con
 		pending:     make(map[string]*pendingCall),
 		done:        make(chan struct{}),
 	}
+}
+
+// writeMessage serializes all WebSocket writes so gorilla's single-writer
+// constraint is satisfied across the ping goroutine, SendRequest, and the
+// app-level pong handler.
+func (s *Session) writeMessage(msgType int, data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	return s.conn.WriteMessage(msgType, data)
 }
 
 // SendRequest sends a tool-call RequestFrame to the remote provider and waits for
@@ -132,8 +143,7 @@ func (s *Session) SendRequest(ctx context.Context, id string, payload map[string
 	frame := RequestFrame{Type: FrameRequest, ID: id, Payload: payload}
 	data, _ := json.Marshal(frame)
 
-	s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if err := s.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := s.writeMessage(websocket.TextMessage, data); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
 
