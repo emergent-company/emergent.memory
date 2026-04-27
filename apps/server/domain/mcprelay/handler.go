@@ -83,9 +83,41 @@ func (h *Handler) Connect(c echo.Context) error {
 	ack, _ := json.Marshal(map[string]string{"type": "registered", "instance_id": reg.InstanceID})
 	conn.WriteMessage(websocket.TextMessage, ack)
 
-	// Read loop — handle pings and response frames.
+	// ── WebSocket-level keepalive ──
+	// Use protocol-level ping/pong so that any intermediate proxy (Traefik, Cloudflare, etc.)
+	// won't drop the connection due to idle timeout. The gorilla/websocket client libraries
+	// (including Diane's) respond to WS pings automatically — no app-level changes needed.
+	const (
+		pongWait   = 60 * time.Second  // server waits this long for a pong before closing
+		pingPeriod = 45 * time.Second  // server sends pings at this interval
+	)
+
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	// Start a goroutine that sends WS protocol-level pings on a ticker.
+	// Stopped via sess.done when the connection drops or Unregister is called.
+	go func() {
+		ticker := time.NewTicker(pingPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					return
+				}
+			case <-sess.done:
+				return
+			}
+		}
+	}()
+
+	// Read loop — handle response frames and app-level pings.
 	for {
-		conn.SetReadDeadline(time.Now().Add(idleTimeout))
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			break
