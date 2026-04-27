@@ -733,8 +733,8 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 			if typeName != "" {
 				_, err := tx.NewRaw(`
 					INSERT INTO kb.project_object_schema_registry (project_id, schema_id, type_name, json_schema)
-					VALUES (?, ?, ?, ?)
-				`, projectUUID, schemaID, typeName, typeSchemaJSON).Exec(ctx)
+					VALUES (?, ?, ?, ?::jsonb)
+				`, projectUUID, schemaID, typeName, string(typeSchemaJSON)).Exec(ctx)
 				if err != nil {
 					return fmt.Errorf("insert object type %s: %w", typeName, err)
 				}
@@ -747,9 +747,9 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 			if typeName != "" {
 				relSchemaJSON, _ := json.Marshal(rt)
 				_, err := tx.NewRaw(`
-					INSERT INTO kb.project_edge_schema_registry (project_id, schema_id, type_name, type_schema)
-					VALUES (?, ?, ?, ?)
-				`, projectUUID, schemaID, typeName, relSchemaJSON).Exec(ctx)
+					INSERT INTO kb.project_edge_schema_registry (project_id, schema_id, type_name, json_schema)
+					VALUES (?, ?, ?, ?::jsonb)
+				`, projectUUID, schemaID, typeName, string(relSchemaJSON)).Exec(ctx)
 				if err != nil {
 					return fmt.Errorf("insert relationship type %s: %w", typeName, err)
 				}

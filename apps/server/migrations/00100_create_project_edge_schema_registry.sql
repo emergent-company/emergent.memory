@@ -6,9 +6,9 @@
 CREATE TABLE kb.project_edge_schema_registry (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     project_id uuid NOT NULL,
-    schema_id uuid,
+    schema_id uuid NOT NULL,
     type_name text NOT NULL,
-    type_schema jsonb,
+    json_schema jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -24,7 +24,7 @@ ALTER TABLE ONLY kb.project_edge_schema_registry
 -- Foreign key to graph_schemas
 ALTER TABLE ONLY kb.project_edge_schema_registry
     ADD CONSTRAINT project_edge_schema_registry_schema_id_fkey
-    FOREIGN KEY (schema_id) REFERENCES kb.graph_schemas(id) ON DELETE SET NULL;
+    FOREIGN KEY (schema_id) REFERENCES kb.graph_schemas(id) ON DELETE CASCADE;
 
 -- Index for project-scoped lookups
 CREATE INDEX idx_project_edge_schema_registry_project_id
@@ -34,7 +34,7 @@ CREATE INDEX idx_project_edge_schema_registry_project_id
 CREATE INDEX idx_project_edge_schema_registry_schema_id
     ON kb.project_edge_schema_registry(schema_id);
 
--- Unique constraint: one type_name per project per schema
+-- Unique constraint: one type_name per project per schema (schema_id is NOT NULL so NULLs are not an issue)
 CREATE UNIQUE INDEX idx_project_edge_schema_registry_unique
     ON kb.project_edge_schema_registry(project_id, schema_id, type_name);
 
