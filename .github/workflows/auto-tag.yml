@@ -73,3 +73,14 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
           echo "Created and pushed tag: $TAG"
+
+      - name: Trigger release workflows
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          echo "Triggering release workflows on $TAG..."
+          gh workflow run "Memory CLI & Release" --ref "$TAG" --repo ${{ github.repository }}
+          gh workflow run "Publish Self-Hosted Images" --ref "$TAG" --repo ${{ github.repository }}
+          echo "Workflows dispatched on tag: $TAG"
