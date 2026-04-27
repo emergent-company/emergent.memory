@@ -856,8 +856,11 @@ func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error)
 		var inputSchema mcp.InputSchema
 		if is, ok := tMap["inputSchema"]; ok {
 			data, err := json.Marshal(is)
-			if err == nil {
-				json.Unmarshal(data, &inputSchema)
+			if err != nil {
+				continue
+			}
+			if err := json.Unmarshal(data, &inputSchema); err != nil {
+				continue
 			}
 		}
 		if inputSchema.Type == "" {
