@@ -59,6 +59,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/standalone"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
@@ -145,6 +146,7 @@ func main() {
 		notifications.Module,
 		superadmin.Module,
 		tasks.Module,
+		sessiontodos.Module,
 		skills.Module,
 		schemas.Module,
 		schemaregistry.Module,

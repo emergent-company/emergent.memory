@@ -23,6 +23,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
@@ -78,6 +79,9 @@ type Service struct {
 	// Schemas service (for schema migration tools)
 	schemasSvc *schemas.Service
 
+	// Session todos service (for session-todo-list and session-todo-update tools)
+	sessionTodoSvc *sessiontodos.Service
+
 	// Embedding worker controller (for pause/resume/config tools)
 	// Typed as interface to avoid import cycle with extraction package.
 	embeddingCtl EmbeddingControlHandler
@@ -114,6 +118,7 @@ type ServiceParams struct {
 	EmailSvc           *email.JobsService
 	JournalSvc         *journal.Service
 	SchemasSvc         *schemas.Service
+	SessionTodoSvc     *sessiontodos.Service
 }
 
 // NewService creates a new MCP service
@@ -144,6 +149,7 @@ func NewService(p ServiceParams) *Service {
 		serverPort:         cfg.ServerPort,
 		journalSvc:         p.JournalSvc,
 		schemasSvc:         p.SchemasSvc,
+		sessionTodoSvc:     p.SessionTodoSvc,
 	}
 }
 

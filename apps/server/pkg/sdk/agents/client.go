@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -1580,4 +1581,140 @@ func (c *Client) GetProjectRunSessionStats(ctx context.Context, projectID string
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 	return &result, nil
+}
+
+// --- Session Todos ---
+
+// TodoStatus represents the lifecycle status of a session todo.
+type TodoStatus string
+
+const (
+	TodoStatusDraft      TodoStatus = "draft"
+	TodoStatusPending    TodoStatus = "pending"
+	TodoStatusInProgress TodoStatus = "in_progress"
+	TodoStatusCompleted  TodoStatus = "completed"
+	TodoStatusCancelled  TodoStatus = "cancelled"
+)
+
+// SessionTodo represents a persistent task item scoped to an agent session.
+type SessionTodo struct {
+	ID              string     `json:"id"`
+	SessionID       string     `json:"sessionId"`
+	Content         string     `json:"content"`
+	Status          TodoStatus `json:"status"`
+	Author          *string    `json:"author,omitempty"`
+	Order           int        `json:"order"`
+	ContextSnapshot *string    `json:"contextSnapshot,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+}
+
+// CreateTodoRequest is the request body for creating a session todo.
+type CreateTodoRequest struct {
+	Content         string  `json:"content"`
+	Author          *string `json:"author,omitempty"`
+	Order           *int    `json:"order,omitempty"`
+	ContextSnapshot *string `json:"contextSnapshot,omitempty"`
+}
+
+// UpdateTodoRequest is the request body for updating a session todo.
+type UpdateTodoRequest struct {
+	Status  *TodoStatus `json:"status,omitempty"`
+	Content *string     `json:"content,omitempty"`
+	Order   *int        `json:"order,omitempty"`
+}
+
+// ListSessionTodos returns all todos for a session, optionally filtered by one or more statuses.
+func (c *Client) ListSessionTodos(ctx context.Context, sessionID string, statuses []TodoStatus) ([]*SessionTodo, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("sessionID is required")
+	}
+	u := fmt.Sprintf("%s/api/v1/agent/sessions/%s/todos", c.base, sessionID)
+	if len(statuses) > 0 {
+		parts := make([]string, len(statuses))
+		for i, s := range statuses {
+			parts[i] = string(s)
+		}
+		u += "?status=" + strings.Join(parts, ",")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	var todos []*SessionTodo
+	if err := doRequest(c, req, &todos); err != nil {
+		return nil, err
+	}
+	return todos, nil
+}
+
+// CreateSessionTodo creates a new todo for a session.
+func (c *Client) CreateSessionTodo(ctx context.Context, sessionID string, r CreateTodoRequest) (*SessionTodo, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("sessionID is required")
+	}
+	body, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/api/v1/agent/sessions/%s/todos", c.base, sessionID),
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var todo SessionTodo
+	if err := doRequest(c, req, &todo); err != nil {
+		return nil, err
+	}
+	return &todo, nil
+}
+
+// UpdateSessionTodo applies a partial update (status, content, order) to a todo.
+func (c *Client) UpdateSessionTodo(ctx context.Context, sessionID, todoID string, r UpdateTodoRequest) (*SessionTodo, error) {
+	if sessionID == "" || todoID == "" {
+		return nil, fmt.Errorf("sessionID and todoID are required")
+	}
+	body, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		fmt.Sprintf("%s/api/v1/agent/sessions/%s/todos/%s", c.base, sessionID, todoID),
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var todo SessionTodo
+	if err := doRequest(c, req, &todo); err != nil {
+		return nil, err
+	}
+	return &todo, nil
+}
+
+// DeleteSessionTodo deletes a todo from a session.
+func (c *Client) DeleteSessionTodo(ctx context.Context, sessionID, todoID string) error {
+	if sessionID == "" || todoID == "" {
+		return fmt.Errorf("sessionID and todoID are required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		fmt.Sprintf("%s/api/v1/agent/sessions/%s/todos/%s", c.base, sessionID, todoID),
+		nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+	return nil
 }
