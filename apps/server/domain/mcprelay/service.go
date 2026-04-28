@@ -16,13 +16,21 @@ package mcprelay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
+
+// ErrSessionNotFound is returned when a relay session is not in the active set.
+// The relay was connected at some point (so tools were registered) but is currently
+// disconnected (e.g. laptop went to sleep, network dropped). Callers handling this
+// error should return a user-friendly message suggesting retry later.
+var ErrSessionNotFound = errors.New("relay session not found or disconnected")
 
 // -----------------------------------------------------------------------------
 // Wire protocol frames
@@ -92,7 +100,8 @@ type Session struct {
 	ConnectedAt time.Time
 
 	conn    *websocket.Conn
-	mu      sync.Mutex
+	mu      sync.Mutex // guards pending map
+	writeMu sync.Mutex // serializes all WebSocket writes (gorilla requires single writer)
 	pending map[string]*pendingCall
 	done    chan struct{}
 }
@@ -108,6 +117,16 @@ func newSession(projectID, instanceID, version string, tools map[string]any, con
 		pending:     make(map[string]*pendingCall),
 		done:        make(chan struct{}),
 	}
+}
+
+// writeMessage serializes all WebSocket writes so gorilla's single-writer
+// constraint is satisfied across the ping goroutine, SendRequest, and the
+// app-level pong handler.
+func (s *Session) writeMessage(msgType int, data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	return s.conn.WriteMessage(msgType, data)
 }
 
 // SendRequest sends a tool-call RequestFrame to the remote provider and waits for
@@ -132,8 +151,7 @@ func (s *Session) SendRequest(ctx context.Context, id string, payload map[string
 	frame := RequestFrame{Type: FrameRequest, ID: id, Payload: payload}
 	data, _ := json.Marshal(frame)
 
-	s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if err := s.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := s.writeMessage(websocket.TextMessage, data); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
 
@@ -249,4 +267,27 @@ func (s *Service) ListByProject(projectID string) []*Session {
 		}
 	}
 	return out
+}
+
+// CallTool forwards an MCP tool call to a connected relay instance.
+// The instanceID is the bare instance ID; the toolName is the bare MCP tool name
+// (without any prefix). Returns the raw MCP tool result as a map.
+func (s *Service) CallTool(ctx context.Context, projectID, instanceID, toolName string, args map[string]any) (map[string]any, error) {
+	sess, ok := s.Get(projectID, instanceID)
+	if !ok {
+		return nil, fmt.Errorf("%w: instance %q", ErrSessionNotFound, instanceID)
+	}
+
+	reqID := uuid.New().String()
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqID,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      toolName,
+			"arguments": args,
+		},
+	}
+
+	return sess.SendRequest(ctx, reqID, payload)
 }

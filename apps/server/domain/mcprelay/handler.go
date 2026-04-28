@@ -81,15 +81,17 @@ func (h *Handler) Connect(c echo.Context) error {
 
 	// Ack registration.
 	ack, _ := json.Marshal(map[string]string{"type": "registered", "instance_id": reg.InstanceID})
-	conn.WriteMessage(websocket.TextMessage, ack)
+	if err := sess.writeMessage(websocket.TextMessage, ack); err != nil {
+		return nil
+	}
 
 	// ── WebSocket-level keepalive ──
 	// Use protocol-level ping/pong so that any intermediate proxy (Traefik, Cloudflare, etc.)
 	// won't drop the connection due to idle timeout. The gorilla/websocket client libraries
 	// (including Diane's) respond to WS pings automatically — no app-level changes needed.
 	const (
-		pongWait   = 60 * time.Second  // server waits this long for a pong before closing
-		pingPeriod = 45 * time.Second  // server sends pings at this interval
+		pongWait   = 60 * time.Second // server waits this long for a pong before closing
+		pingPeriod = 45 * time.Second // server sends pings at this interval
 	)
 
 	conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -106,8 +108,7 @@ func (h *Handler) Connect(c echo.Context) error {
 		for {
 			select {
 			case <-ticker.C:
-				conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				if err := sess.writeMessage(websocket.PingMessage, nil); err != nil {
 					return
 				}
 			case <-sess.done:
@@ -133,8 +134,17 @@ func (h *Handler) Connect(c echo.Context) error {
 		switch base.Type {
 		case FramePing:
 			pong, _ := json.Marshal(PingFrame{Type: FramePong})
-			conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-			conn.WriteMessage(websocket.TextMessage, pong)
+			sess.writeMessage(websocket.TextMessage, pong)
+
+		case FrameRegister:
+			var reg RegisterFrame
+			if err := json.Unmarshal(data, &reg); err == nil && reg.Tools != nil {
+				sess.Tools = reg.Tools
+				h.log.Info("mcprelay: instance re-registered with updated tools",
+					slog.String("instance_id", reg.InstanceID),
+					slog.Int("tools", toolCount(reg.Tools)),
+				)
+			}
 
 		case FrameResponse:
 			var resp ResponseFrame
@@ -175,7 +185,7 @@ func (h *Handler) ListSessions(c echo.Context) error {
 		items = append(items, SessionInfo{
 			InstanceID:  s.InstanceID,
 			Version:     s.Version,
-			ToolCount:   len(s.Tools),
+			ToolCount:   toolCount(s.Tools),
 			ConnectedAt: s.ConnectedAt,
 		})
 	}
@@ -285,4 +295,20 @@ type ListSessionsResponse struct {
 type CallToolRequest struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`
+}
+
+// toolCount returns the actual number of tools in the tools map, handling
+// the nested {"tools": [...]} format from MCP tools/list results.
+func toolCount(tools map[string]any) int {
+	if tools == nil {
+		return 0
+	}
+	// Direct array: tools = [...] (legacy format)
+	for _, v := range tools {
+		if arr, ok := v.([]any); ok {
+			return len(arr)
+		}
+	}
+	// Fall back to map key count if no array found
+	return len(tools)
 }

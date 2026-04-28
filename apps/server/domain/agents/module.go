@@ -9,6 +9,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/provider"
@@ -62,10 +63,11 @@ func provideWebhookRateLimiter() *WebhookRateLimiter {
 }
 
 // provideToolPool creates a ToolPool from fx dependencies.
-func provideToolPool(mcpService *mcp.Service, registryService *mcpregistry.Service, log *slog.Logger) *ToolPool {
+func provideToolPool(mcpService *mcp.Service, registryService *mcpregistry.Service, relayService *mcprelay.Service, log *slog.Logger) *ToolPool {
 	return NewToolPool(ToolPoolConfig{
 		MCPService:      mcpService,
 		RegistryService: registryService,
+		RelayService:    relayService,
 		Logger:          log,
 	})
 }
