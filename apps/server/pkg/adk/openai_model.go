@@ -149,6 +149,11 @@ func buildOpenAITools(tools []*genai.Tool) []openaiTool {
 
 // buildMessages converts ADK content history to OpenAI messages, including
 // tool call / tool response turns.
+//
+// After building the message list, it validates the conversation structure:
+// every tool_call_id in an assistant message's tool_calls must have a
+// matching tool response. Orphaned calls get synthetic responses patched
+// in to prevent DeepSeek's strict API from rejecting the request.
 func buildMessages(contents []*genai.Content) []openaiMessage {
 	var messages []openaiMessage
 	for _, content := range contents {
