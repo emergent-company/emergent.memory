@@ -515,14 +515,14 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	testCtx, testCancel := context.WithTimeout(ctx, testTimeout2)
 	defer testCancel()
 	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
-		return nil, fmt.Errorf("generative model test failed: %w", err)
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("generative model test failed: %s", err))
 	}
 	// DeepSeek has no embedding API — skip the embed test and log a warning.
 	if provider == ProviderDeepSeek {
 		s.log.Warn("DeepSeek provider configured without embeddings — configure a separate embedding provider for document indexing")
 	} else {
 		if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
-			return nil, fmt.Errorf("embedding model test failed: %w", err)
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("embedding model test failed: %s", err))
 		}
 	}
 
