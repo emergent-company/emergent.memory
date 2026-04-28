@@ -366,6 +366,28 @@ Tracks extraction jobs specifically.
 - `Delete(ctx, id) error` — delete agent
 - `Run(ctx, id) (*AgentRun, error)` — trigger agent execution
 
+### Session Todos (`client.Agents` — same client)
+Persistent task lists scoped to an agent session. Todos survive across agent runs within the same session.
+
+- `ListSessionTodos(ctx, sessionID, statuses) ([]*SessionTodo, error)` — list todos, optionally filtered by one or more `TodoStatus` values
+- `CreateSessionTodo(ctx, sessionID, req) (*SessionTodo, error)` — create a new todo (`content` required)
+- `UpdateSessionTodo(ctx, sessionID, todoID, req) (*SessionTodo, error)` — update `status`, `content`, or `order`
+- `DeleteSessionTodo(ctx, sessionID, todoID) error` — delete a todo
+
+**Status values** (`TodoStatus`): `draft` → `pending` → `in_progress` → `completed` | `cancelled`
+
+```go
+// Mark a todo in-progress
+st := agents.TodoStatusInProgress
+updated, err := client.Agents.UpdateSessionTodo(ctx, sessionID, todoID, agents.UpdateTodoRequest{
+    Status: &st,
+})
+```
+
+**MCP built-in tools** (available to agents automatically):
+- `session-todo-list` — args: `session_id`, optional `statuses` (comma-separated)
+- `session-todo-update` — args: `session_id`, `todo_id`, optional `status` / `content` / `order`
+
 ### AgentDefinitions (`client.AgentDefinitions`)
 - `List(ctx) ([]AgentDefinition, error)` — list definitions
 - `Get(ctx, id) (*AgentDefinition, error)` — get by ID
