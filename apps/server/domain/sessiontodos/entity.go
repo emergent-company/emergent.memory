@@ -27,7 +27,7 @@ type SessionTodo struct {
 	Content         string     `bun:"content,notnull"                           json:"content"`
 	Status          TodoStatus `bun:"status,notnull,default:draft"              json:"status"`
 	Author          *string    `bun:"author"                                    json:"author,omitempty"`
-	Order           int        `bun:"order,notnull,default:0"                   json:"order"`
+	Order           int        `bun:"\"order\",notnull,default:0"               json:"order"`
 	ContextSnapshot *string    `bun:"context_snapshot"                          json:"contextSnapshot,omitempty"`
 	CreatedAt       time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt       time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`

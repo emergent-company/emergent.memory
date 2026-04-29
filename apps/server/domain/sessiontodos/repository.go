@@ -29,7 +29,7 @@ func (r *Repository) List(ctx context.Context, sessionID string, statuses []Todo
 	var todos []*SessionTodo
 	q := r.db.NewSelect().Model(&todos).
 		Where("st.session_id = ?", sessionID).
-		OrderExpr("st.order ASC, st.created_at ASC")
+		OrderExpr(`st."order" ASC, st.created_at ASC`)
 	if len(statuses) > 0 {
 		q = q.Where("st.status IN (?)", bun.In(statuses))
 	}

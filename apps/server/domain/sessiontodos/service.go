@@ -77,7 +77,7 @@ func (s *Service) Update(ctx context.Context, sessionID, todoID string, req Upda
 	}
 	if req.Order != nil {
 		todo.Order = *req.Order
-		cols = append(cols, "order")
+		cols = append(cols, `"order"`)
 	}
 	if len(cols) == 0 {
 		return todo, nil
