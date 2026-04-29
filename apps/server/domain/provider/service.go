@@ -317,13 +317,18 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 	}
 	testCtx, testCancel := context.WithTimeout(ctx, testTimeout)
 	defer testCancel()
-	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
-		return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
+	// Only test generative when a generative model is explicitly requested.
+	// Embedding-only configs (e.g. Google gemini-embedding-*) must not be forced
+	// through a generative test — the API key may have no generative scope.
+	if req.GenerativeModel != "" || req.EmbeddingModel == "" {
+		if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
+			return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
+		}
 	}
 	// DeepSeek has no embedding API — skip the embed test and log a warning.
 	if provider == ProviderDeepSeek {
 		s.log.Warn("DeepSeek provider configured without embeddings — configure a separate embedding provider for document indexing")
-	} else {
+	} else if req.EmbeddingModel != "" || req.GenerativeModel == "" {
 		if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
 			return nil, apperror.NewBadRequest(fmt.Sprintf("embedding model test failed: %s", err.Error()))
 		}
@@ -514,13 +519,18 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	}
 	testCtx, testCancel := context.WithTimeout(ctx, testTimeout2)
 	defer testCancel()
-	if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
-		return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
+	// Only test generative when a generative model is explicitly requested.
+	// Embedding-only configs (e.g. Google gemini-embedding-*) must not be forced
+	// through a generative test — the API key may have no generative scope.
+	if req.GenerativeModel != "" || req.EmbeddingModel == "" {
+		if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
+			return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
+		}
 	}
 	// DeepSeek has no embedding API — skip the embed test and log a warning.
 	if provider == ProviderDeepSeek {
 		s.log.Warn("DeepSeek provider configured without embeddings — configure a separate embedding provider for document indexing")
-	} else {
+	} else if req.EmbeddingModel != "" || req.GenerativeModel == "" {
 		if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
 			return nil, apperror.NewBadRequest(fmt.Sprintf("embedding model test failed: %s", err.Error()))
 		}
