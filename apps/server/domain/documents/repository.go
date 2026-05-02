@@ -1031,7 +1031,7 @@ func (r *Repository) GetExtractionSummary(ctx context.Context, projectID, docume
 	err = r.db.NewSelect().
 		TableExpr("kb.graph_objects").
 		ColumnExpr("type, COUNT(*)::int AS count").
-		Where("extraction_job_id = ?", job.ID).
+		Where("properties->>'_extraction_job_id' = ?", job.ID).
 		GroupExpr("type").
 		OrderExpr("count DESC").
 		Scan(ctx, &typeCounts)
