@@ -1,0 +1,3293 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Official documentation for the Memory Go SDK and Swift SDK">
+      
+      
+        <meta name="author" content="Emergent Company">
+      
+      
+        <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/v0.40.48/developer-guide/mcp-servers/">
+      
+      
+        <link rel="prev" href="../provider-setup/">
+      
+      
+        <link rel="next" href="../extraction/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.50">
+    
+    
+      
+        <title>MCP Servers - Memory SDK Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.a40c8224.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#mcp-servers" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Memory SDK Documentation" class="md-header__button md-logo" aria-label="Memory SDK Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Memory SDK Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MCP Servers
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/emergent-company/emergent.memory" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    emergent-company/emergent.memory
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+    
+  
+  Developer Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/" class="md-tabs__link">
+          
+  
+    
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../go-sdk/" class="md-tabs__link">
+          
+  
+    
+  
+  Go SDK
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../swift-sdk/" class="md-tabs__link">
+          
+  
+    
+  
+  Swift SDK
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../api-reference/" class="md-tabs__link">
+        
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Memory SDK Documentation" class="md-nav__button md-logo" aria-label="Memory SDK Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Memory SDK Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/emergent-company/emergent.memory" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    emergent-company/emergent.memory
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Developer Guide
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Developer Guide
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../provider-setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Provider Setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    MCP Servers
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    MCP Servers
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-memory-mcp-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in Memory MCP server
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in Memory MCP server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connecting-claude-desktop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connecting Claude Desktop
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connecting-opencode" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connecting OpenCode
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#available-mcp-tools-built-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available MCP tools (built-in)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#brave-search-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Brave Search integration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-tool-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in tool configuration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in tool configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-built-in-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available built-in tools
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#project-level-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project-level configuration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#org-level-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      Org-level defaults
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inheritance-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inheritance example
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      UI
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#external-mcp-server-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      External MCP server registry
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="External MCP server registry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#server-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Server types
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-external-servers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing external servers
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing external servers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#list-registered-servers" class="md-nav__link">
+    <span class="md-ellipsis">
+      List registered servers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#register-a-stdio-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Register a stdio server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#register-an-sse-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Register an SSE server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#register-an-http-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Register an HTTP server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspect-a-server-preview-tools-without-saving" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspect a server (preview tools without saving)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync-tool-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sync tool catalog
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list-synced-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      List synced tools
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enable-disable-a-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enable / disable a tool
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-a-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Update a server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-a-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Delete a server
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#official-mcp-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Official MCP registry
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Official MCP registry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#search-the-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Search the registry
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-details-for-a-registry-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Get details for a registry server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-from-the-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Install from the registry
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#server-entity-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Server entity reference
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hosted-mcp-servers-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hosted MCP servers (workspace)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../extraction/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extraction Pipeline
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../email-setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Email Setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../health-ops/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Health & Ops
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-scopes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Security Scopes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scheduler/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Background Scheduler
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../user-guide/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    User Guide
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            User Guide
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting Started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/knowledge-graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Knowledge Graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/documents/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Documents
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/chat/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Chat
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/agents/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Agents
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/branches/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Branches
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/datasources/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Data Sources
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/api-tokens/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API Tokens
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/backups/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Backups
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/notifications/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Notifications
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/tasks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Tasks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/integrations/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Integrations
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../go-sdk/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Go SDK
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Go SDK
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/authentication/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Authentication
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/multi-tenancy/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Multi-Tenancy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/error-handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error Handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/streaming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Streaming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/graph-id-model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph ID Model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/changelog/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Changelog
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/auth/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    auth
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    errors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/graphutil/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    graph/graphutil
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/testutil/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    testutil
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/documents/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    documents
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/search/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    search
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chat/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    chat
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chunks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    chunks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/chunking/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    chunking
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/agents/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    agents
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/agentdefinitions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    agentdefinitions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/branches/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    branches
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/projects/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    projects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/orgs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    orgs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/users/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    users
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/apitokens/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    apitokens
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/mcp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    mcp
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/mcpregistry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    mcpregistry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/datasources/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    datasources
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/discoveryjobs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    discoveryjobs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/embeddingpolicies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    embeddingpolicies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/integrations/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    integrations
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/notifications/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    notifications
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/tasks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    tasks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/monitoring/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    monitoring
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/useractivity/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    useractivity
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/health/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    health
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/superadmin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    superadmin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/apidocs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    apidocs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/provider/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    provider
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../swift-sdk/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Swift SDK
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Swift SDK
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../swift-sdk/api-client/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API Client
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../swift-sdk/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../swift-sdk/errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Errors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../swift-sdk/roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API Reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-memory-mcp-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in Memory MCP server
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in Memory MCP server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connecting-claude-desktop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connecting Claude Desktop
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connecting-opencode" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connecting OpenCode
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#available-mcp-tools-built-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available MCP tools (built-in)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#brave-search-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Brave Search integration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-tool-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in tool configuration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in tool configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-built-in-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available built-in tools
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#project-level-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project-level configuration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#org-level-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      Org-level defaults
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inheritance-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inheritance example
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      UI
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#external-mcp-server-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      External MCP server registry
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="External MCP server registry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#server-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Server types
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-external-servers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing external servers
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing external servers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#list-registered-servers" class="md-nav__link">
+    <span class="md-ellipsis">
+      List registered servers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#register-a-stdio-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Register a stdio server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#register-an-sse-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Register an SSE server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#register-an-http-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Register an HTTP server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspect-a-server-preview-tools-without-saving" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspect a server (preview tools without saving)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync-tool-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sync tool catalog
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list-synced-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      List synced tools
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enable-disable-a-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enable / disable a tool
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-a-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Update a server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-a-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Delete a server
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#official-mcp-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Official MCP registry
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Official MCP registry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#search-the-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Search the registry
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-details-for-a-registry-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Get details for a registry server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-from-the-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Install from the registry
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#server-entity-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Server entity reference
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hosted-mcp-servers-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hosted MCP servers (workspace)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="mcp-servers">MCP Servers<a class="headerlink" href="#mcp-servers" title="Permanent link">&para;</a></h1>
+<p>Memory integrates with the <a href="https://modelcontextprotocol.io">Model Context Protocol</a> in two ways:</p>
+<ol>
+<li><strong>Built-in MCP server</strong> — Memory itself is an MCP server. Clients like Claude Desktop or Cursor connect directly to Memory to read/write the knowledge graph.</li>
+<li><strong>MCP registry</strong> — Per-project registry of <em>external</em> MCP servers that agents can call as tools.</li>
+</ol>
+<hr />
+<h2 id="built-in-memory-mcp-server">Built-in Memory MCP server<a class="headerlink" href="#built-in-memory-mcp-server" title="Permanent link">&para;</a></h2>
+<p>Memory exposes its own MCP server at two endpoints:</p>
+<table>
+<thead>
+<tr>
+<th>Transport</th>
+<th>Endpoint</th>
+<th>Authentication</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SSE (project-scoped)</td>
+<td><code>GET /api/mcp/sse/:projectId</code></td>
+<td><code>Authorization: Bearer &lt;api_token&gt;</code></td>
+</tr>
+<tr>
+<td>Streamable HTTP (current spec)</td>
+<td><code>POST /api/mcp</code></td>
+<td><code>Authorization: Bearer &lt;api_token&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="connecting-claude-desktop">Connecting Claude Desktop<a class="headerlink" href="#connecting-claude-desktop" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p><strong>Tip:</strong> Run <code>memory mcp-guide</code> in any project directory to generate the correct config snippet automatically for Claude Desktop or Cursor.</p>
+</blockquote>
+<p>Add to <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">&quot;mcpServers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">&quot;memory&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;npx&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">&quot;args&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;-y&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;@modelcontextprotocol/client-sse&quot;</span><span class="p">],</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">&quot;env&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">&quot;MCP_SERVER_URL&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/mcp/sse&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">        </span><span class="nt">&quot;MCP_API_TOKEN&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;your-api-token&gt;&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">}</span>
+</code></pre></div>
+<p>Or using the streamable HTTP transport with a client that supports it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>https://api.dev.emergent-company.ai/mcp
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Authorization: Bearer &lt;api-token&gt;
+</code></pre></div>
+<h3 id="connecting-opencode">Connecting OpenCode<a class="headerlink" href="#connecting-opencode" title="Permanent link">&para;</a></h3>
+<p>Add to <code>opencode.json</code> in your project directory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">&quot;mcp&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">&quot;memory&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;remote&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">&quot;url&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/api/mcp/sse/&lt;project-id&gt;&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="nt">&quot;headers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;Authorization&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Bearer &lt;your-api-token&gt;&quot;</span><span class="p">},</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="nt">&quot;oauth&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">      </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">      </span><span class="nt">&quot;timeout&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">60000</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">}</span>
+</code></pre></div>
+<p>Replace <code>&lt;project-id&gt;</code> with your project UUID and <code>&lt;your-api-token&gt;</code> with a project-scoped API token. Run <code>opencode mcp list</code> to verify the connection.</p>
+<h3 id="available-mcp-tools-built-in">Available MCP tools (built-in)<a class="headerlink" href="#available-mcp-tools-built-in" title="Permanent link">&para;</a></h3>
+<p>The built-in server exposes tools including:</p>
+<ul>
+<li><strong>Knowledge graph</strong> — create, update, search objects and relationships</li>
+<li><strong>Documents</strong> — upload, list, retrieve documents</li>
+<li><strong>Search</strong> — unified vector + keyword search</li>
+<li><strong>Chat</strong> — create sessions, send messages</li>
+<li><strong>Agents</strong> — list agents, trigger runs</li>
+<li><strong>MCP registry</strong> — <code>mcp-servers/list</code>, <code>mcp-servers/call</code></li>
+</ul>
+<blockquote>
+<p>See <code>apps/server/domain/mcp/README.md</code> for the complete tools, resources, and prompts reference.</p>
+</blockquote>
+<h3 id="brave-search-integration">Brave Search integration<a class="headerlink" href="#brave-search-integration" title="Permanent link">&para;</a></h3>
+<p>The built-in server includes a <code>brave_web_search</code> tool backed by the Brave Search API. The API key can be set globally (via environment variable) or overridden per-org or per-project — see <a href="#built-in-tool-configuration">Built-in tool configuration</a> below.</p>
+<hr />
+<h2 id="built-in-tool-configuration">Built-in tool configuration<a class="headerlink" href="#built-in-tool-configuration" title="Permanent link">&para;</a></h2>
+<p>Built-in tools can be enabled/disabled and configured at three levels. The most specific level wins:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>project setting  →  org default  →  global env var
+</code></pre></div>
+<p>If a project has no explicit setting, it inherits from the org default. If neither is set, the global environment variable is used.</p>
+<h3 id="available-built-in-tools">Available built-in tools<a class="headerlink" href="#available-built-in-tools" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Env var (global fallback)</th>
+<th>Config field</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>brave_web_search</code></td>
+<td><code>BRAVE_SEARCH_API_KEY</code></td>
+<td><code>api_key</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="project-level-configuration">Project-level configuration<a class="headerlink" href="#project-level-configuration" title="Permanent link">&para;</a></h3>
+<p>List the builtin server and its tools for your project:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># 1. Find the builtin server ID (auto-created on first list)</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>curl<span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/api/admin/mcp-servers?projectId=&lt;projectId&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># → find the entry with &quot;type&quot;: &quot;builtin&quot;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># 2. List its tools (includes inheritedFrom field)</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;builtinServerId&gt;/tools<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<p>Each tool in the response includes an <code>inheritedFrom</code> field: <code>"project"</code>, <code>"org"</code>, or <code>"global"</code>, indicating where the current effective setting comes from.</p>
+<p><strong>Enable/disable a built-in tool at project level:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;builtinServerId&gt;/tools/&lt;toolId&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;enabled&quot;: false}&#39;</span>
+</code></pre></div>
+<p><strong>Set a per-project API key for <code>brave_web_search</code>:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;builtinServerId&gt;/tools/&lt;toolId&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="s1">    &quot;enabled&quot;: true,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="s1">    &quot;config&quot;: { &quot;api_key&quot;: &quot;BSA...&quot; }</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<p>Once set, this project's agent runs use this API key instead of the global <code>BRAVE_SEARCH_API_KEY</code>.</p>
+<h3 id="org-level-defaults">Org-level defaults<a class="headerlink" href="#org-level-defaults" title="Permanent link">&para;</a></h3>
+<p>Org defaults apply to all projects in the org that have no project-level override.</p>
+<p><strong>List current org defaults:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/orgs/&lt;orgId&gt;/tool-settings<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<p><strong>Set an org default (enable + API key):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/api/admin/orgs/&lt;orgId&gt;/tool-settings/brave_web_search&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="s1">    &quot;enabled&quot;: true,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="s1">    &quot;config&quot;: { &quot;api_key&quot;: &quot;BSA...&quot; }</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<p><strong>Disable <code>brave_web_search</code> for all projects in the org by default:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/api/admin/orgs/&lt;orgId&gt;/tool-settings/brave_web_search&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;enabled&quot;: false}&#39;</span>
+</code></pre></div>
+<p><strong>Remove an org default</strong> (projects fall back to the global env var):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/api/admin/orgs/&lt;orgId&gt;/tool-settings/brave_web_search&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<h3 id="inheritance-example">Inheritance example<a class="headerlink" href="#inheritance-example" title="Permanent link">&para;</a></h3>
+<p>Suppose you want <code>brave_web_search</code> enabled for most projects but one project should use a different API key:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Global env: BRAVE_SEARCH_API_KEY=BSA-global-key
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>Org default: enabled=true, api_key=BSA-org-key      ← applies to all projects by default
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>  Project A: (no override)                          → uses org key (inheritedFrom: &quot;org&quot;)
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>  Project B: api_key=BSA-project-b-key             → uses project B key (inheritedFrom: &quot;project&quot;)
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>  Project C: enabled=false                          → tool disabled for this project
+</code></pre></div>
+<h3 id="ui">UI<a class="headerlink" href="#ui" title="Permanent link">&para;</a></h3>
+<p>The <strong>MCP Integration</strong> settings page (Project Settings → Integrations → MCP Integration) has a Built-in Tools section where you can toggle tools and set config fields for the current project.</p>
+<p>The <strong>Tool Defaults</strong> page (Project Settings → Organization → Tool Defaults) lets org admins set org-wide defaults for all built-in tools.</p>
+<hr />
+<h2 id="external-mcp-server-registry">External MCP server registry<a class="headerlink" href="#external-mcp-server-registry" title="Permanent link">&para;</a></h2>
+<p>Each project can register external MCP servers. These servers are proxied on demand and their tool catalogs are mirrored locally so agents can discover tools without connecting to every server on each request.</p>
+<h3 id="server-types">Server types<a class="headerlink" href="#server-types" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th><code>type</code> value</th>
+<th>Connection</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Built-in (Memory)</td>
+<td><code>builtin</code></td>
+<td>Internal; not configurable</td>
+</tr>
+<tr>
+<td>Subprocess (local)</td>
+<td><code>stdio</code></td>
+<td>Launches a command with arguments</td>
+</tr>
+<tr>
+<td>Server-Sent Events</td>
+<td><code>sse</code></td>
+<td>Long-lived HTTP SSE connection</td>
+</tr>
+<tr>
+<td>Plain HTTP</td>
+<td><code>http</code></td>
+<td>Per-request HTTP</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="managing-external-servers">Managing external servers<a class="headerlink" href="#managing-external-servers" title="Permanent link">&para;</a></h2>
+<h3 id="list-registered-servers">List registered servers<a class="headerlink" href="#list-registered-servers" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<h3 id="register-a-stdio-server">Register a stdio server<a class="headerlink" href="#register-a-stdio-server" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="s1">    &quot;name&quot;: &quot;filesystem&quot;,</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="s1">    &quot;type&quot;: &quot;stdio&quot;,</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="s1">    &quot;command&quot;: &quot;npx&quot;,</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="s1">    &quot;args&quot;: [&quot;-y&quot;, &quot;@modelcontextprotocol/server-filesystem&quot;, &quot;/tmp/workspace&quot;],</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="s1">    &quot;env&quot;: {},</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="s1">    &quot;enabled&quot;: true</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<h3 id="register-an-sse-server">Register an SSE server<a class="headerlink" href="#register-an-sse-server" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="s1">    &quot;name&quot;: &quot;my-sse-server&quot;,</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="s1">    &quot;type&quot;: &quot;sse&quot;,</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="s1">    &quot;url&quot;: &quot;https://my-mcp-server.example.com/sse&quot;,</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="s1">    &quot;headers&quot;: { &quot;Authorization&quot;: &quot;Bearer &lt;server-token&gt;&quot; },</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="s1">    &quot;enabled&quot;: true</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<h3 id="register-an-http-server">Register an HTTP server<a class="headerlink" href="#register-an-http-server" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="s1">    &quot;name&quot;: &quot;my-http-server&quot;,</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="s1">    &quot;type&quot;: &quot;http&quot;,</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="s1">    &quot;url&quot;: &quot;https://my-mcp-server.example.com/mcp&quot;,</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="s1">    &quot;headers&quot;: {},</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="s1">    &quot;enabled&quot;: true</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<h3 id="inspect-a-server-preview-tools-without-saving">Inspect a server (preview tools without saving)<a class="headerlink" href="#inspect-a-server-preview-tools-without-saving" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;serverId&gt;/inspect<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<p>Returns the tool list from the live server without persisting anything.</p>
+<h3 id="sync-tool-catalog">Sync tool catalog<a class="headerlink" href="#sync-tool-catalog" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;serverId&gt;/sync<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<p>Connects to the server, calls <code>tools/list</code>, and upserts results into the local tool catalog. Safe to call repeatedly (idempotent).</p>
+<h3 id="list-synced-tools">List synced tools<a class="headerlink" href="#list-synced-tools" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;serverId&gt;/tools<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<h3 id="enable-disable-a-tool">Enable / disable a tool<a class="headerlink" href="#enable-disable-a-tool" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;serverId&gt;/tools/&lt;toolId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;enabled&quot;: false}&#39;</span>
+</code></pre></div>
+<p>Disabled tools are filtered from the agent context.</p>
+<h3 id="update-a-server">Update a server<a class="headerlink" href="#update-a-server" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;serverId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;enabled&quot;: false}&#39;</span>
+</code></pre></div>
+<h3 id="delete-a-server">Delete a server<a class="headerlink" href="#delete-a-server" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-servers/&lt;serverId&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="official-mcp-registry">Official MCP registry<a class="headerlink" href="#official-mcp-registry" title="Permanent link">&para;</a></h2>
+<p>Browse and install servers from the official MCP registry at <code>registry.modelcontextprotocol.io</code>.</p>
+<h3 id="search-the-registry">Search the registry<a class="headerlink" href="#search-the-registry" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>curl<span class="w"> </span><span class="s2">&quot;https://api.dev.emergent-company.ai/api/admin/mcp-registry/search?q=github&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<h3 id="get-details-for-a-registry-server">Get details for a registry server<a class="headerlink" href="#get-details-for-a-registry-server" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>curl<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-registry/servers/github<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+</code></pre></div>
+<h3 id="install-from-the-registry">Install from the registry<a class="headerlink" href="#install-from-the-registry" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/admin/mcp-registry/install<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="s1">    &quot;serverName&quot;: &quot;github&quot;,</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="s1">    &quot;config&quot;: {</span>
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="s1">      &quot;env&quot;: { &quot;GITHUB_PERSONAL_ACCESS_TOKEN&quot;: &quot;ghp_...&quot; }</span>
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="s1">    }</span>
+<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<p>This creates a new <code>MCPServer</code> record for your project and immediately runs a sync to populate the tool catalog.</p>
+<hr />
+<h2 id="server-entity-reference">Server entity reference<a class="headerlink" href="#server-entity-reference" title="Permanent link">&para;</a></h2>
+<p><strong><code>MCPServer</code></strong> — table <code>kb.mcp_servers</code></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>UUID</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>projectId</code></td>
+<td>UUID</td>
+<td>Owning project</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>Display name</td>
+</tr>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td>Disabled servers are not proxied</td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td>string</td>
+<td><code>stdio</code> | <code>sse</code> | <code>http</code> | <code>builtin</code></td>
+</tr>
+<tr>
+<td><code>command</code></td>
+<td>string</td>
+<td>Executable path (stdio only)</td>
+</tr>
+<tr>
+<td><code>args</code></td>
+<td>string[]</td>
+<td>Arguments (stdio only)</td>
+</tr>
+<tr>
+<td><code>env</code></td>
+<td>object</td>
+<td>Environment variables (stdio only)</td>
+</tr>
+<tr>
+<td><code>url</code></td>
+<td>string</td>
+<td>Server URL (sse/http only)</td>
+</tr>
+<tr>
+<td><code>headers</code></td>
+<td>object</td>
+<td>HTTP headers (sse/http only)</td>
+</tr>
+<tr>
+<td><code>createdAt</code></td>
+<td>timestamp</td>
+<td></td>
+</tr>
+<tr>
+<td><code>updatedAt</code></td>
+<td>timestamp</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>MCPServerTool</code></strong> — table <code>kb.mcp_server_tools</code></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>UUID</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>serverId</code></td>
+<td>UUID</td>
+<td>FK → <code>mcp_servers</code></td>
+</tr>
+<tr>
+<td><code>toolName</code></td>
+<td>string</td>
+<td>As reported by the server</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>string</td>
+<td>Tool description</td>
+</tr>
+<tr>
+<td><code>inputSchema</code></td>
+<td>object</td>
+<td>JSON Schema for tool inputs</td>
+</tr>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td>Disabled tools are hidden from agents</td>
+</tr>
+<tr>
+<td><code>createdAt</code></td>
+<td>timestamp</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="hosted-mcp-servers-workspace">Hosted MCP servers (workspace)<a class="headerlink" href="#hosted-mcp-servers-workspace" title="Permanent link">&para;</a></h2>
+<p>For persistent, containerized MCP servers managed by the workspace system, contact your platform administrator.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.top", "navigation.indexes", "content.tabs.link", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.f8cc74c7.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.60a45f97.min.js"></script>
+      
+    
+  </body>
+</html>
