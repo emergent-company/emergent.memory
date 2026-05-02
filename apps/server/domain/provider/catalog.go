@@ -38,15 +38,19 @@ func NewModelCatalogService(repo *Repository, log *slog.Logger) *ModelCatalogSer
 // static known-good model list.
 func (s *ModelCatalogService) SyncModels(ctx context.Context, provider ProviderType, cred *ResolvedCredential) error {
 	// OpenAI-compatible: no model catalog API — store the user-supplied model name directly.
+	// Attempt to query /v1/models for context_length; fall back to safe defaults on failure.
 	if provider == ProviderOpenAICompatible {
 		if cred.GenerativeModel == "" {
 			return fmt.Errorf("openai-compatible provider requires a model name")
 		}
+		inputLimit, outputLimit := s.queryOpenAICompatibleLimits(ctx, cred)
 		models := []ProviderSupportedModel{{
-			Provider:    provider,
-			ModelName:   cred.GenerativeModel,
-			ModelType:   ModelTypeGenerative,
-			DisplayName: cred.GenerativeModel,
+			Provider:        provider,
+			ModelName:       cred.GenerativeModel,
+			ModelType:       ModelTypeGenerative,
+			DisplayName:     cred.GenerativeModel,
+			MaxInputTokens:  &inputLimit,
+			MaxOutputTokens: &outputLimit,
 		}}
 		return s.repo.UpsertSupportedModels(ctx, models)
 	}
@@ -496,4 +500,101 @@ func buildClientConfig(provider ProviderType, cred *ResolvedCredential) (*genai.
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
+}
+
+const (
+	// openAICompatibleDefaultInputTokens is used when the server does not
+	// advertise a context_length via /v1/models (e.g. non-llama.cpp servers,
+	// unavailable server at config time). Conservative for large GGUF models.
+	openAICompatibleDefaultInputTokens = 32_768
+	// openAICompatibleDefaultOutputTokens is a safe default max-output budget.
+	openAICompatibleDefaultOutputTokens = 8_192
+)
+
+// queryOpenAICompatibleLimits tries to discover the context window of the
+// configured model by calling GET /v1/models on the base URL. llama.cpp and
+// many other OpenAI-compatible servers include a context_length field in the
+// model object. Returns (inputTokens, outputTokens); falls back to the safe
+// defaults if the call fails or the field is absent/zero.
+func (s *ModelCatalogService) queryOpenAICompatibleLimits(ctx context.Context, cred *ResolvedCredential) (inputTokens, outputTokens int) {
+	inputTokens = openAICompatibleDefaultInputTokens
+	outputTokens = openAICompatibleDefaultOutputTokens
+
+	if cred.BaseURL == "" {
+		return
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	url := strings.TrimSuffix(cred.BaseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, url, nil)
+	if err != nil {
+		s.log.Warn("openai-compatible: failed to build /v1/models request", logger.Error(err))
+		return
+	}
+	if cred.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cred.APIKey)
+	}
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		s.log.Warn("openai-compatible: /v1/models request failed, using default limits",
+			slog.Int("default_input", inputTokens),
+			slog.Int("default_output", outputTokens),
+			logger.Error(err),
+		)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		s.log.Warn("openai-compatible: /v1/models returned non-200, using default limits",
+			slog.Int("status", resp.StatusCode),
+			slog.Int("default_input", inputTokens),
+			slog.Int("default_output", outputTokens),
+		)
+		return
+	}
+
+	var body struct {
+		Data []struct {
+			ID            string `json:"id"`
+			ContextLength int    `json:"context_length"` // llama.cpp field
+			MaxModelLen   int    `json:"max_model_len"`  // vLLM field
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		s.log.Warn("openai-compatible: failed to decode /v1/models response, using default limits", logger.Error(err))
+		return
+	}
+
+	for _, m := range body.Data {
+		if m.ID != cred.GenerativeModel {
+			continue
+		}
+		ctxLen := m.ContextLength
+		if ctxLen == 0 {
+			ctxLen = m.MaxModelLen // vLLM fallback
+		}
+		if ctxLen > 0 {
+			inputTokens = ctxLen
+			// Cap output at half the context window or the default, whichever is larger.
+			outputTokens = max(openAICompatibleDefaultOutputTokens, ctxLen/2)
+			s.log.Info("openai-compatible: detected context window from /v1/models",
+				slog.String("model", cred.GenerativeModel),
+				slog.Int("input_tokens", inputTokens),
+				slog.Int("output_tokens", outputTokens),
+			)
+			return
+		}
+	}
+
+	s.log.Info("openai-compatible: model not found in /v1/models or context_length absent, using defaults",
+		slog.String("model", cred.GenerativeModel),
+		slog.Int("default_input", inputTokens),
+		slog.Int("default_output", outputTokens),
+	)
+	return
 }

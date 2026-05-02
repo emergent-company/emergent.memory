@@ -129,6 +129,7 @@ type ProviderSupportedModel struct {
 	ModelType       ModelType    `bun:"model_type,notnull" json:"modelType"`
 	DisplayName     string       `bun:"display_name" json:"displayName,omitempty"`
 	MaxOutputTokens *int         `bun:"max_output_tokens" json:"maxOutputTokens,omitempty"`
+	MaxInputTokens  *int         `bun:"max_input_tokens" json:"maxInputTokens,omitempty"`
 	LastSynced      time.Time    `bun:"last_synced,notnull,default:now()" json:"lastSynced"`
 }
 
