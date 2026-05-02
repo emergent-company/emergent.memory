@@ -17,6 +17,17 @@ func DefaultConfig() Config {
 	}
 }
 
+// ExtractionConfig returns a Config tuned for LLM entity/relationship extraction.
+// Chunks are ~16K chars (~4000 tokens) with 20% overlap so consecutive chunks
+// share ~3200 chars of context — enough to capture entities that span paragraph
+// boundaries without excessive duplication.
+func ExtractionConfig() Config {
+	return Config{
+		ChunkSize:    16000,
+		ChunkOverlap: 3200,
+	}
+}
+
 func Split(text string, cfg Config) []string {
 	if len(text) == 0 {
 		return nil

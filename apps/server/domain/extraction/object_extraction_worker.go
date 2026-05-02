@@ -20,6 +20,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/syshealth"
+	"github.com/emergent-company/emergent.memory/pkg/textsplitter"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
@@ -241,10 +242,11 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		return nil, fmt.Errorf("no document text to extract from")
 	}
 
-	// Truncate document text to the model's context window to avoid overflowing
-	// the LLM's input limit. We use a conservative character-to-token ratio of 4:1
-	// and reserve 20% of the budget for the system prompt + schema descriptions.
-	documentText = w.truncateToInputLimit(ctx, documentText)
+	// Split into extraction-sized batches that fit the model context window.
+	// Each batch is a semantically-split window (paragraph → sentence → word
+	// boundaries) large enough for good relationship detection (~4000 tokens)
+	// with 20% overlap to capture entities that span chunk boundaries.
+	batches := w.splitIntoExtractionBatches(ctx, documentText)
 
 	// Load schemas
 	schemas, err := w.loadSchemas(ctx, job)
@@ -271,7 +273,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		defer tl.Close()
 	}
 
-	// Create and run the extraction pipeline
+	// Create extraction pipeline (shared across all batches).
 	pipeline, err := agents.NewExtractionPipeline(agents.ExtractionPipelineConfig{
 		ModelFactory:        w.modelFactory,
 		ObjectSchemas:       schemas.ObjectSchemas,
@@ -285,63 +287,122 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		return nil, fmt.Errorf("create pipeline: %w", err)
 	}
 
-	// Run extraction
-	pipelineOutput, err := pipeline.Run(ctx, agents.ExtractionPipelineInput{
-		DocumentText:        documentText,
-		ObjectSchemas:       schemas.ObjectSchemas,
-		RelationshipSchemas: schemas.RelationshipSchemas,
-		AllowedTypes:        job.EnabledTypes,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("run pipeline: %w", err)
+	// Run extraction over each batch, accumulating results.
+	// persistResults upserts by (project_id, type, name) so duplicate entities
+	// across overlapping batches are merged naturally.
+	var totalResult *ObjectExtractionResults
+	for i, batch := range batches {
+		if len(batches) > 1 {
+			w.log.Info("processing extraction batch",
+				slog.Int("batch", i+1),
+				slog.Int("total_batches", len(batches)),
+				slog.Int("chars", len(batch)),
+			)
+		}
+
+		pipelineOutput, err := pipeline.Run(ctx, agents.ExtractionPipelineInput{
+			DocumentText:        batch,
+			ObjectSchemas:       schemas.ObjectSchemas,
+			RelationshipSchemas: schemas.RelationshipSchemas,
+			AllowedTypes:        job.EnabledTypes,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("run pipeline (batch %d/%d): %w", i+1, len(batches), err)
+		}
+
+		result, err := w.persistResults(ctx, job, pipelineOutput)
+		if err != nil {
+			return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
+		}
+
+		if totalResult == nil {
+			totalResult = result
+		} else {
+			totalResult.ObjectsCreated += result.ObjectsCreated
+			totalResult.RelationshipsCreated += result.RelationshipsCreated
+		}
 	}
 
-	// Create graph objects and relationships
-	result, err := w.persistResults(ctx, job, pipelineOutput)
-	if err != nil {
-		return nil, fmt.Errorf("persist results: %w", err)
+	if totalResult == nil {
+		totalResult = &ObjectExtractionResults{}
 	}
-
-	return result, nil
+	return totalResult, nil
 }
 
 // truncateToInputLimit caps documentText to the model's max_input_tokens.
 // Uses a 4 chars-per-token estimate and reserves 20% for system prompts and
 // schema descriptions. If the limit is unknown (0) or the resolver is nil,
 // the text is returned unchanged.
-func (w *ObjectExtractionWorker) truncateToInputLimit(ctx context.Context, text string) string {
-	if w.limitResolver == nil {
-		return text
-	}
-	inputLimit, err := w.limitResolver.GetInputLimit(ctx)
-	if err != nil {
-		w.log.Warn("could not resolve model input limit, skipping truncation", logger.Error(err))
-		return text
-	}
-	if inputLimit <= 0 {
-		return text
+// splitIntoExtractionBatches splits documentText into context-window-sized
+// batches ready to pass to the extraction pipeline.
+//
+// Algorithm:
+//  1. Split text using extraction-tuned config (16K chars / 3.2K overlap) —
+//     respects paragraph → sentence → word boundaries, never cuts mid-word.
+//  2. Compute maxBatchChars from the model's input limit (80% of token budget
+//     at 4 chars/token to leave headroom for system prompt + schemas).
+//  3. Greedily pack consecutive extraction chunks (joined with "\n\n") into
+//     batches until the next chunk would exceed maxBatchChars.
+//
+// If limitResolver is nil or returns 0, all chunks are packed into one batch
+// (equivalent to the previous single-shot behaviour).
+func (w *ObjectExtractionWorker) splitIntoExtractionBatches(ctx context.Context, text string) []string {
+	// Step 1: split into extraction-sized semantic chunks.
+	chunks := textsplitter.Split(text, textsplitter.ExtractionConfig())
+	if len(chunks) == 0 {
+		return []string{text}
 	}
 
+	// Step 2: determine per-batch character budget.
 	const (
 		charsPerToken  = 4
-		promptOverhead = 0.20 // reserve 20% for system prompt + schemas
+		promptOverhead = 0.20
 	)
-	maxChars := int(float64(inputLimit) * (1 - promptOverhead) * charsPerToken)
-	if len(text) <= maxChars {
-		return text
+	maxBatchChars := 0
+	if w.limitResolver != nil {
+		inputLimit, err := w.limitResolver.GetInputLimit(ctx)
+		if err != nil {
+			w.log.Warn("could not resolve model input limit, using single batch", logger.Error(err))
+		} else if inputLimit > 0 {
+			maxBatchChars = int(float64(inputLimit) * (1 - promptOverhead) * charsPerToken)
+		}
 	}
 
-	w.log.Warn("document text exceeds model context window, truncating",
-		slog.Int("original_chars", len(text)),
-		slog.Int("max_chars", maxChars),
-		slog.Int("input_limit_tokens", inputLimit),
-	)
-	// Truncate at a word boundary to avoid splitting mid-word.
-	truncated := text[:maxChars]
-	if idx := strings.LastIndexByte(truncated, ' '); idx > maxChars-200 {
-		truncated = truncated[:idx]
+	// Step 3: greedy packing.
+	// If no limit known, one batch = all chunks.
+	if maxBatchChars <= 0 {
+		return []string{strings.Join(chunks, "\n\n")}
 	}
-	return truncated
+
+	var batches []string
+	var current strings.Builder
+	for _, chunk := range chunks {
+		// +2 for the "\n\n" separator we'd prepend
+		needed := len(chunk)
+		if current.Len() > 0 {
+			needed += 2
+		}
+		if current.Len() > 0 && current.Len()+needed > maxBatchChars {
+			batches = append(batches, current.String())
+			current.Reset()
+		}
+		if current.Len() > 0 {
+			current.WriteString("\n\n")
+		}
+		current.WriteString(chunk)
+	}
+	if current.Len() > 0 {
+		batches = append(batches, current.String())
+	}
+
+	if len(batches) > 1 {
+		w.log.Info("document split into extraction batches",
+			slog.Int("batches", len(batches)),
+			slog.Int("total_chars", len(text)),
+			slog.Int("max_batch_chars", maxBatchChars),
+		)
+	}
+	return batches
 }
 
 // loadDocumentText loads the text content for extraction.
