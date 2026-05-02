@@ -64,11 +64,30 @@ type RequestFrame struct {
 }
 
 // ResponseFrame is sent by remote provider → relay (tool result).
+// ID is json.RawMessage because the MCP/JSON-RPC 2.0 spec allows the id field
+// to be a string, number, or null. Using json.RawMessage avoids an unmarshal
+// error when the remote provider sends a numeric id (e.g. {"id": 1, ...}).
 type ResponseFrame struct {
-	Type    FrameType      `json:"type"`
-	ID      string         `json:"id"`
-	Payload map[string]any `json:"payload"`
-	Error   string         `json:"error,omitempty"`
+	Type    FrameType       `json:"type"`
+	ID      json.RawMessage `json:"id"`
+	Payload map[string]any  `json:"payload"`
+	Error   string          `json:"error,omitempty"`
+}
+
+// pendingKey returns a normalised string suitable for use as a map key.
+// It strips surrounding quotes from JSON string values so that "1" and 1
+// both map to the same key "1".
+func (r ResponseFrame) pendingKey() string {
+	if len(r.ID) == 0 {
+		return ""
+	}
+	// JSON string — strip the enclosing quotes.
+	var s string
+	if json.Unmarshal(r.ID, &s) == nil {
+		return s
+	}
+	// JSON number, bool, or null — use the raw bytes as the key.
+	return string(r.ID)
 }
 
 // PingFrame / PongFrame for keepalive.
@@ -171,7 +190,7 @@ func (s *Session) SendRequest(ctx context.Context, id string, payload map[string
 // deliverResponse routes an incoming response frame to the waiting caller.
 func (s *Session) deliverResponse(resp ResponseFrame) {
 	s.mu.Lock()
-	pc, ok := s.pending[resp.ID]
+	pc, ok := s.pending[resp.pendingKey()]
 	s.mu.Unlock()
 	if ok {
 		select {

@@ -19,31 +19,31 @@ import (
 type GraphMemorySchema struct {
 	bun.BaseModel `bun:"kb.graph_schemas,alias:gtp"`
 
-	ID                      string     `bun:"id,pk,type:uuid"`
-	Name                    string     `bun:"name,notnull"`
-	Version                 string     `bun:"version,notnull"`
-	ParentVersionID         *string    `bun:"parent_version_id,type:uuid"`
-	Draft                   bool       `bun:"draft,default:false"`
-	Description             *string    `bun:"description"`
-	Author                  *string    `bun:"author"`
-	License                 *string    `bun:"license"`
-	RepositoryURL           *string    `bun:"repository_url"`
-	DocumentationURL        *string    `bun:"documentation_url"`
-	Source                  *string    `bun:"source"` // manual, discovered, imported, system
-	DiscoveryJobID          *string    `bun:"discovery_job_id,type:uuid"`
-	PendingReview           bool       `bun:"pending_review,default:false"`
-	ObjectTypeSchemas       JSON       `bun:"object_type_schemas,type:jsonb,notnull"`
-	RelationshipTypeSchemas JSON       `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
-	UIConfigs               JSON       `bun:"ui_configs,type:jsonb,default:'{}'"`
-	ExtractionPrompts       JSON       `bun:"extraction_prompts,type:jsonb,default:'{}'"`
-	SQLViews                JSONArray  `bun:"sql_views,type:jsonb,default:'[]'"`
-	Signature               *string    `bun:"signature"`
-	Checksum                *string    `bun:"checksum"`
-	PublishedAt             time.Time  `bun:"published_at,default:now()"`
-	DeprecatedAt            *time.Time `bun:"deprecated_at"`
-	SupersededBy            *string    `bun:"superseded_by"`
-	CreatedAt               time.Time  `bun:"created_at,default:now()"`
-	UpdatedAt               time.Time  `bun:"updated_at,default:now()"`
+	ID                      string          `bun:"id,pk,type:uuid"`
+	Name                    string          `bun:"name,notnull"`
+	Version                 string          `bun:"version,notnull"`
+	ParentVersionID         *string         `bun:"parent_version_id,type:uuid"`
+	Draft                   bool            `bun:"draft,default:false"`
+	Description             *string         `bun:"description"`
+	Author                  *string         `bun:"author"`
+	License                 *string         `bun:"license"`
+	RepositoryURL           *string         `bun:"repository_url"`
+	DocumentationURL        *string         `bun:"documentation_url"`
+	Source                  *string         `bun:"source"` // manual, discovered, imported, system
+	DiscoveryJobID          *string         `bun:"discovery_job_id,type:uuid"`
+	PendingReview           bool            `bun:"pending_review,default:false"`
+	ObjectTypeSchemas       json.RawMessage `bun:"object_type_schemas,type:jsonb,notnull"`
+	RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
+	UIConfigs               JSON            `bun:"ui_configs,type:jsonb,default:'{}'"`
+	ExtractionPrompts       JSON            `bun:"extraction_prompts,type:jsonb,default:'{}'"`
+	SQLViews                JSONArray       `bun:"sql_views,type:jsonb,default:'[]'"`
+	Signature               *string         `bun:"signature"`
+	Checksum                *string         `bun:"checksum"`
+	PublishedAt             time.Time       `bun:"published_at,default:now()"`
+	DeprecatedAt            *time.Time      `bun:"deprecated_at"`
+	SupersededBy            *string         `bun:"superseded_by"`
+	CreatedAt               time.Time       `bun:"created_at,default:now()"`
+	UpdatedAt               time.Time       `bun:"updated_at,default:now()"`
 }
 
 // ProjectMemorySchema represents a memory schema installation for a project.
@@ -219,19 +219,23 @@ func (p *MemorySchemaProvider) GetProjectSchemas(
 	}, nil
 }
 
-// parseObjectTypeSchemas converts JSON object_type_schemas to map of ObjectSchema.
-func parseObjectTypeSchemas(raw JSON) map[string]agents.ObjectSchema {
+// parseObjectTypeSchemas converts object_type_schemas JSONB to a map of ObjectSchema.
+// The column can be stored in two formats:
+//   - Map format (blueprint seeds / epf-engine v3): {"TypeName": {label, description, properties, ...}, ...}
+//   - Array format (user YAML / epf-cli generate): [{"name": "TypeName", ...}, ...]
+func parseObjectTypeSchemas(raw json.RawMessage) map[string]agents.ObjectSchema {
 	schemas := make(map[string]agents.ObjectSchema)
-	if raw == nil {
+	if len(raw) == 0 {
 		return schemas
 	}
 
-	for typeName, schemaRaw := range raw {
-		schemaMap, ok := schemaRaw.(map[string]any)
-		if !ok {
-			continue
-		}
+	// Normalise to map format regardless of which storage format the DB contains.
+	normalized := normalizeObjectTypeSchemasToMap(raw)
+	if normalized == nil {
+		return schemas
+	}
 
+	for typeName, schemaMap := range normalized {
 		schema := agents.ObjectSchema{
 			Name: typeName,
 		}
@@ -266,7 +270,6 @@ func parseObjectTypeSchemas(raw JSON) map[string]agents.ObjectSchema {
 			}
 		}
 
-		// Check for extraction_guidelines in extraction_prompts
 		if guidelines, ok := schemaMap["extraction_guidelines"].(string); ok {
 			schema.ExtractionGuidelines = guidelines
 		}
@@ -277,24 +280,58 @@ func parseObjectTypeSchemas(raw JSON) map[string]agents.ObjectSchema {
 	return schemas
 }
 
-// parseRelationshipTypeSchemas converts JSON relationship_type_schemas to map of RelationshipSchema.
+// normalizeObjectTypeSchemasToMap converts either storage format to map[typeName]map[string]any.
+// Array format: [{"name": "TypeName", ...}, ...] → {"TypeName": {...}, ...}
+// Map format:   {"TypeName": {...}, ...}          → unchanged
+func normalizeObjectTypeSchemasToMap(raw json.RawMessage) map[string]map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	// Try array format first.
+	var arr []map[string]any
+	if json.Unmarshal(raw, &arr) == nil && len(arr) > 0 {
+		result := make(map[string]map[string]any, len(arr))
+		for _, item := range arr {
+			name, _ := item["name"].(string)
+			if name == "" {
+				continue
+			}
+			result[name] = item
+		}
+		return result
+	}
+
+	// Try map format.
+	var m map[string]map[string]any
+	if json.Unmarshal(raw, &m) == nil {
+		return m
+	}
+
+	return nil
+}
+
+// parseRelationshipTypeSchemas converts relationship_type_schemas JSONB to a map of RelationshipSchema.
 // Handles multiple field naming conventions for source/target types:
 //   - source_types / target_types (snake_case)
 //   - sourceTypes / targetTypes (camelCase)
 //   - fromTypes / toTypes (alternative camelCase)
 //   - source / target (singular string)
-func parseRelationshipTypeSchemas(raw JSON) map[string]agents.RelationshipSchema {
+//
+// The column can be stored in map format ({"TypeName": {...}}) or array format
+// ([{"name": "TypeName", ...}]); both are handled.
+func parseRelationshipTypeSchemas(raw json.RawMessage) map[string]agents.RelationshipSchema {
 	schemas := make(map[string]agents.RelationshipSchema)
-	if raw == nil {
+	if len(raw) == 0 {
 		return schemas
 	}
 
-	for typeName, schemaRaw := range raw {
-		schemaMap, ok := schemaRaw.(map[string]any)
-		if !ok {
-			continue
-		}
+	normalized := normalizeRelTypeSchemasToMap(raw)
+	if normalized == nil {
+		return schemas
+	}
 
+	for typeName, schemaMap := range normalized {
 		schema := agents.RelationshipSchema{
 			Name: typeName,
 		}
@@ -303,10 +340,7 @@ func parseRelationshipTypeSchemas(raw JSON) map[string]agents.RelationshipSchema
 			schema.Description = desc
 		}
 
-		// Parse source types from any supported field name
 		schema.SourceTypes = parseTypesField(schemaMap, "source_types", "sourceTypes", "fromTypes", "source")
-
-		// Parse target types from any supported field name
 		schema.TargetTypes = parseTypesField(schemaMap, "target_types", "targetTypes", "toTypes", "target")
 
 		if guidelines, ok := schemaMap["extraction_guidelines"].(string); ok {
@@ -317,6 +351,35 @@ func parseRelationshipTypeSchemas(raw JSON) map[string]agents.RelationshipSchema
 	}
 
 	return schemas
+}
+
+// normalizeRelTypeSchemasToMap converts either storage format to map[typeName]map[string]any.
+func normalizeRelTypeSchemasToMap(raw json.RawMessage) map[string]map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	// Try array format.
+	var arr []map[string]any
+	if json.Unmarshal(raw, &arr) == nil && len(arr) > 0 {
+		result := make(map[string]map[string]any, len(arr))
+		for _, item := range arr {
+			name, _ := item["name"].(string)
+			if name == "" {
+				continue
+			}
+			result[name] = item
+		}
+		return result
+	}
+
+	// Try map format.
+	var m map[string]map[string]any
+	if json.Unmarshal(raw, &m) == nil {
+		return m
+	}
+
+	return nil
 }
 
 // parseTypesField extracts a []string from a schema map, trying multiple field names.
