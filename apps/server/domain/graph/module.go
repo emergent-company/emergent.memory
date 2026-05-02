@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -394,7 +395,8 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 		}
 
 		var schemas map[string]struct {
-			InverseType string `json:"inverseType"`
+			InverseType  string `json:"inverseType"`
+			InverseLabel string `json:"inverseLabel"`
 		}
 		if err := json.Unmarshal(row.RelationshipTypeSchemas, &schemas); err != nil {
 			p.log.Warn("failed to parse relationship type schemas",
@@ -406,6 +408,17 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 		for relType, schema := range schemas {
 			if schema.InverseType != "" {
 				inverseMap[relType] = schema.InverseType
+			} else if schema.InverseLabel != "" {
+				// Derive the inverse type key from the human-readable label when
+				// inverseType is not explicitly set. Converts "Has Employees" → "has_employees".
+				derived := labelToTypeKey(schema.InverseLabel)
+				if derived != "" {
+					inverseMap[relType] = derived
+					p.log.Debug("derived inverse type from inverseLabel",
+						slog.String("rel_type", relType),
+						slog.String("inverse_label", schema.InverseLabel),
+						slog.String("derived_type", derived))
+				}
 			}
 		}
 	}
@@ -420,6 +433,25 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 		slog.Int("mappings", len(inverseMap)))
 
 	return inverseMap
+}
+
+// labelToTypeKey converts a human-readable relationship label to a snake_case type key.
+// E.g. "Has Employees" → "has_employees", "CHILD_OF" → "child_of".
+// Returns empty string if the input is blank.
+func labelToTypeKey(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	// Lowercase and replace spaces/hyphens with underscores.
+	key := strings.ToLower(label)
+	key = strings.ReplaceAll(key, " ", "_")
+	key = strings.ReplaceAll(key, "-", "_")
+	// Collapse consecutive underscores.
+	for strings.Contains(key, "__") {
+		key = strings.ReplaceAll(key, "__", "_")
+	}
+	return key
 }
 
 // parseObjectTypeSchemasToMap normalises the two storage formats used for

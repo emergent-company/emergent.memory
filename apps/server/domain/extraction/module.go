@@ -65,6 +65,10 @@ func (a *embeddingEnqueuerAdapter) EnqueueEmbedding(ctx context.Context, objectI
 	return err
 }
 
+func (a *embeddingEnqueuerAdapter) EnqueueBatchEmbeddings(ctx context.Context, objectIDs []string) (int, error) {
+	return a.svc.EnqueueBatch(ctx, objectIDs, 0)
+}
+
 func provideEmbeddingEnqueuer(svc *GraphEmbeddingJobsService) graph.EmbeddingEnqueuer {
 	return &embeddingEnqueuerAdapter{svc: svc}
 }

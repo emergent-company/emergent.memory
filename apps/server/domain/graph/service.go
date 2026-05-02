@@ -55,6 +55,9 @@ type EmbeddingService interface {
 // to avoid a circular dependency (graph -> extraction -> graph).
 type EmbeddingEnqueuer interface {
 	EnqueueEmbedding(ctx context.Context, objectID string) error
+	// EnqueueBatchEmbeddings enqueues multiple objects for embedding. Returns the count of
+	// newly-inserted jobs and any error.
+	EnqueueBatchEmbeddings(ctx context.Context, objectIDs []string) (int, error)
 }
 
 // RelationshipEmbeddingEnqueuer enqueues graph relationships for asynchronous embedding generation.
@@ -177,6 +180,56 @@ func (s *Service) enqueueRelationshipEmbedding(ctx context.Context, relationship
 			slog.String("relationship_id", relationshipID),
 			slog.String("error", err.Error()))
 	}
+}
+
+// ReindexEmbeddingsResponse is the response for the ReindexEmbeddings operation.
+type ReindexEmbeddingsResponse struct {
+	// Enqueued is the number of object embedding jobs newly inserted.
+	Enqueued int `json:"enqueued"`
+}
+
+// ReindexEmbeddings finds all objects in the project with a missing embedding and
+// enqueues them for async processing. This is the recovery path for issue #254:
+// when schema reconciliation fails during ingest, objects are written but never
+// embedded. Calling this endpoint (or waiting for the sweep worker) fixes the gap.
+func (s *Service) ReindexEmbeddings(ctx context.Context, projectID uuid.UUID) (*ReindexEmbeddingsResponse, error) {
+	if s.embeddingEnqueuer == nil {
+		return &ReindexEmbeddingsResponse{}, nil
+	}
+
+	// Collect IDs of objects missing embedding_v2, skipping those that already
+	// have a pending or processing job (same filter as the sweep worker).
+	var objectIDs []string
+	err := s.repo.DB().NewRaw(`
+		SELECT o.id::text
+		FROM kb.graph_objects o
+		WHERE o.project_id = ?
+		  AND o.embedding_v2 IS NULL
+		  AND o.deleted_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM kb.graph_embedding_jobs j
+		    WHERE j.object_id = o.id
+		      AND j.status IN ('pending', 'processing')
+		  )
+		ORDER BY o.created_at ASC`, projectID).Scan(ctx, &objectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("reindex: query objects: %w", err)
+	}
+
+	if len(objectIDs) == 0 {
+		return &ReindexEmbeddingsResponse{Enqueued: 0}, nil
+	}
+
+	enqueued, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, objectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("reindex: enqueue batch: %w", err)
+	}
+
+	s.log.Info("reindex embeddings completed",
+		slog.String("project_id", projectID.String()),
+		slog.Int("enqueued", enqueued))
+
+	return &ReindexEmbeddingsResponse{Enqueued: enqueued}, nil
 }
 
 // UpdateAccessTimestamps updates last_accessed_at for the given object IDs.

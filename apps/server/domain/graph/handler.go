@@ -2235,3 +2235,32 @@ func (h *Handler) BulkAction(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, result)
 }
+
+// ReindexEmbeddings queues all graph objects that are missing an embedding for
+// async processing. Use this to recover from situations where objects were
+// ingested before schema registration completed (issue #254).
+//
+// @Summary      Reindex missing embeddings
+// @Tags         graph
+// @Produce      json
+// @Param        project_id query string true "Project ID"
+// @Success      200 {object} ReindexEmbeddingsResponse
+// @Router       /api/graph/reindex-embeddings [post]
+func (h *Handler) ReindexEmbeddings(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	result, err := h.svc.ReindexEmbeddings(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}

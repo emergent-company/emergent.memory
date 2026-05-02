@@ -48,6 +48,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sh *SessionHandler, authMiddleware
 	// Atomic subgraph creation
 	g.POST("/subgraph", h.CreateSubgraph)
 
+	// Reindex missing embeddings (recovery for ingest-without-schema scenarios)
+	g.POST("/reindex-embeddings", h.ReindexEmbeddings)
+
 	// Branch routes
 	branches := g.Group("/branches")
 	branches.POST("/:targetBranchId/merge", h.MergeBranch)
