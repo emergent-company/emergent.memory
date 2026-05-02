@@ -202,7 +202,7 @@ type LLMConfig struct {
 	VertexAILocation string `env:"VERTEX_AI_LOCATION" envDefault:"global"`
 
 	// Chat model name
-	Model string `env:"VERTEX_AI_MODEL" envDefault:"gemini-3-flash-preview"`
+	Model string `env:"VERTEX_AI_MODEL" envDefault:"gemini-3.1-flash-lite-preview"`
 
 	// Max output tokens for chat completions (65536 for Gemini 3 thinking models)
 	MaxOutputTokens int `env:"LLM_MAX_OUTPUT_TOKENS" envDefault:"65536"`
