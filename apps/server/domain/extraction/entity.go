@@ -143,8 +143,12 @@ type ObjectExtractionJob struct {
 	Logs                 JSONArray  `bun:"logs,type:jsonb,notnull,default:'[]'"`
 	DiscoveredTypes      JSONArray  `bun:"discovered_types,type:jsonb,default:'[]'"`
 	CreatedObjects       JSONArray  `bun:"created_objects,type:jsonb,default:'[]'"`
-	CreatedAt            time.Time  `bun:"created_at,notnull,default:now()"`
-	UpdatedAt            time.Time  `bun:"updated_at,notnull,default:now()"`
+	// StagingBranchID is set after extraction completes. Extracted objects land on
+	// this branch so they are invisible to main-graph searches until a reviewer
+	// merges the branch. NULL means legacy behaviour (objects written to main).
+	StagingBranchID *string   `bun:"staging_branch_id,type:uuid"`
+	CreatedAt       time.Time `bun:"created_at,notnull,default:now()"`
+	UpdatedAt       time.Time `bun:"updated_at,notnull,default:now()"`
 }
 
 // ------------------------------------------------------------------

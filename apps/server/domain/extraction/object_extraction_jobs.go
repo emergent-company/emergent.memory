@@ -890,3 +890,20 @@ func (s *ObjectExtractionJobsService) TriggerForDocument(ctx context.Context, pr
 	})
 	return err
 }
+
+// UpdateStagingBranchID records the staging branch that was created for this
+// extraction job. Called after the branch is successfully created so reviewers
+// can locate pending extractions via the branch.
+func (s *ObjectExtractionJobsService) UpdateStagingBranchID(ctx context.Context, jobID string, branchID string) error {
+	now := time.Now().UTC()
+	_, err := s.db.NewUpdate().
+		Model((*ObjectExtractionJob)(nil)).
+		Set("staging_branch_id = ?", branchID).
+		Set("updated_at = ?", now).
+		Where("id = ?", jobID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("update staging_branch_id: %w", err)
+	}
+	return nil
+}

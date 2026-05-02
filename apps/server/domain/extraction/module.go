@@ -8,6 +8,7 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chunking"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -276,6 +277,7 @@ func provideMemorySchemaProvider(db bun.IDB, log *slog.Logger) *MemorySchemaProv
 func provideObjectExtractionWorker(
 	jobs *ObjectExtractionJobsService,
 	graphService *graph.Service,
+	branchService *branches.Service,
 	docService *documents.Service,
 	schemaProvider *MemorySchemaProvider,
 	modelFactory *adk.ModelFactory,
@@ -297,7 +299,7 @@ func provideObjectExtractionWorker(
 		cfg.ObjectExtraction.MinConcurrency,
 		cfg.ObjectExtraction.MaxConcurrency,
 	)
-	return NewObjectExtractionWorker(jobs, graphService, docService, schemaProvider, modelFactory, workerConfig, log, scaler).
+	return NewObjectExtractionWorker(jobs, graphService, branchService, docService, schemaProvider, modelFactory, workerConfig, log, scaler).
 		WithLimitResolver(limitResolver)
 }
 

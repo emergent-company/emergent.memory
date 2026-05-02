@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -66,6 +67,7 @@ type ExtractionSchemas struct {
 type ObjectExtractionWorker struct {
 	jobsService    *ObjectExtractionJobsService
 	graphService   *graph.Service
+	branchService  *branches.Service
 	docService     *documents.Service
 	schemaProvider SchemaProvider
 	modelFactory   *adk.ModelFactory
@@ -82,6 +84,7 @@ type ObjectExtractionWorker struct {
 func NewObjectExtractionWorker(
 	jobsService *ObjectExtractionJobsService,
 	graphService *graph.Service,
+	branchService *branches.Service,
 	docService *documents.Service,
 	schemaProvider SchemaProvider,
 	modelFactory *adk.ModelFactory,
@@ -95,6 +98,7 @@ func NewObjectExtractionWorker(
 	return &ObjectExtractionWorker{
 		jobsService:    jobsService,
 		graphService:   graphService,
+		branchService:  branchService,
 		docService:     docService,
 		schemaProvider: schemaProvider,
 		modelFactory:   modelFactory,
@@ -254,6 +258,40 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		return nil, fmt.Errorf("load schemas: %w", err)
 	}
 
+	// Create a staging branch so extracted objects are isolated from the main
+	// graph until a reviewer explicitly merges them.
+	var stagingBranchID *uuid.UUID
+	if w.branchService != nil {
+		branchName := w.stagingBranchName(job)
+		desc := fmt.Sprintf("Extraction job %s", job.ID)
+		if job.DocumentID != nil {
+			desc = fmt.Sprintf("Extraction job %s (doc %s)", job.ID, *job.DocumentID)
+		}
+		branch, err := w.branchService.Create(ctx, &branches.CreateBranchRequest{
+			ProjectID:   &job.ProjectID,
+			Name:        branchName,
+			Description: &desc,
+		})
+		if err != nil {
+			// Non-fatal: fall back to writing on main graph rather than blocking extraction.
+			w.log.Warn("failed to create staging branch, writing to main graph",
+				slog.String("job_id", job.ID),
+				logger.Error(err))
+		} else {
+			id, parseErr := uuid.Parse(branch.ID)
+			if parseErr == nil {
+				stagingBranchID = &id
+				// Persist branch reference on the job immediately so it's visible
+				// even if a crash occurs mid-extraction.
+				if updateErr := w.jobsService.UpdateStagingBranchID(ctx, job.ID, branch.ID); updateErr != nil {
+					w.log.Warn("failed to record staging_branch_id on job",
+						slog.String("job_id", job.ID),
+						logger.Error(updateErr))
+				}
+			}
+		}
+	}
+
 	var traceLogger agents.TraceLogger
 	documentID := ""
 	if job.DocumentID != nil {
@@ -284,6 +322,8 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		TraceLogger:         traceLogger,
 	})
 	if err != nil {
+		// Pipeline creation failed — delete the (empty) staging branch to avoid clutter.
+		w.deleteStagingBranch(ctx, job, stagingBranchID)
 		return nil, fmt.Errorf("create pipeline: %w", err)
 	}
 
@@ -307,11 +347,13 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 			AllowedTypes:        job.EnabledTypes,
 		})
 		if err != nil {
+			w.deleteStagingBranch(ctx, job, stagingBranchID)
 			return nil, fmt.Errorf("run pipeline (batch %d/%d): %w", i+1, len(batches), err)
 		}
 
-		result, err := w.persistResults(ctx, job, pipelineOutput)
+		result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID)
 		if err != nil {
+			w.deleteStagingBranch(ctx, job, stagingBranchID)
 			return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
 		}
 
@@ -476,10 +518,13 @@ func (w *ObjectExtractionWorker) loadSchemas(ctx context.Context, job *ObjectExt
 }
 
 // persistResults creates graph objects and relationships from extraction results.
+// stagingBranchID, when non-nil, routes all created objects to the staging branch
+// so they are invisible to main-graph searches until merged by a reviewer.
 func (w *ObjectExtractionWorker) persistResults(
 	ctx context.Context,
 	job *ObjectExtractionJob,
 	output *agents.ExtractionPipelineOutput,
+	stagingBranchID *uuid.UUID,
 ) (*ObjectExtractionResults, error) {
 	projectID, err := uuid.Parse(job.ProjectID)
 	if err != nil {
@@ -510,6 +555,7 @@ func (w *ObjectExtractionWorker) persistResults(
 			Type:       entity.Type,
 			Properties: properties,
 			Status:     stringPtr("suggested"),
+			BranchID:   stagingBranchID,
 		}, nil)
 		if err != nil {
 			w.log.Warn("failed to create graph object",
@@ -548,6 +594,7 @@ func (w *ObjectExtractionWorker) persistResults(
 			SrcID:      srcID,
 			DstID:      dstID,
 			Properties: properties,
+			BranchID:   stagingBranchID,
 		})
 		if err != nil {
 			w.log.Warn("failed to create relationship",
@@ -582,6 +629,38 @@ func (w *ObjectExtractionWorker) persistResults(
 			"orphan_rate":        agents.CalculateOrphanRate(output.Entities, output.Relationships),
 		},
 	}, nil
+}
+
+// stagingBranchName builds a human-readable branch name for an extraction job.
+// Format: extraction/<doc-shortid>/<job-shortid>  (or extraction/<job-shortid> if no doc).
+func (w *ObjectExtractionWorker) stagingBranchName(job *ObjectExtractionJob) string {
+	jobShort := job.ID
+	if len(jobShort) > 8 {
+		jobShort = jobShort[:8]
+	}
+	if job.DocumentID != nil {
+		docShort := *job.DocumentID
+		if len(docShort) > 8 {
+			docShort = docShort[:8]
+		}
+		return fmt.Sprintf("extraction/%s/%s", docShort, jobShort)
+	}
+	return fmt.Sprintf("extraction/%s", jobShort)
+}
+
+// deleteStagingBranch removes a staging branch that was created for a job that
+// subsequently failed. This keeps the branch list clean — partial extractions
+// should not be left for reviewers to discover.
+func (w *ObjectExtractionWorker) deleteStagingBranch(ctx context.Context, job *ObjectExtractionJob, branchID *uuid.UUID) {
+	if w.branchService == nil || branchID == nil {
+		return
+	}
+	if err := w.branchService.Delete(ctx, branchID.String()); err != nil {
+		w.log.Warn("failed to delete staging branch after job failure",
+			slog.String("job_id", job.ID),
+			slog.String("branch_id", branchID.String()),
+			logger.Error(err))
+	}
 }
 
 // convertToObjectSchema converts a generic map to ObjectSchema.
