@@ -191,7 +191,10 @@ func ParseEntityExtractionOutput(output any) (*EntityExtractionOutput, error) {
 
 		var result EntityExtractionOutput
 		if err := json.Unmarshal([]byte(str), &result); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON: %w", err)
+			// Attempt to recover truncated JSON (e.g. LLM hit token limit mid-output).
+			if repairErr := repairTruncatedJSON(str, &result); repairErr != nil {
+				return nil, fmt.Errorf("failed to parse JSON: %w", err)
+			}
 		}
 		return &result, nil
 	}

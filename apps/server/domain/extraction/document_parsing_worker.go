@@ -38,6 +38,12 @@ type DocumentParsingWorker struct {
 	whisperClient   *whisper.Client
 	storageService  *storage.Service
 	scaler          *syshealth.ConcurrencyScaler
+	// extractionJobsSvc is optional; when set, triggers object extraction
+	// automatically after content is written (honoring the auto_extract flag
+	// stored in the parsing job's metadata). This avoids the race condition
+	// that occurs when the extraction job is enqueued at upload time, before
+	// the parsing worker has finished writing document content.
+	extractionJobsSvc *ObjectExtractionJobsService
 
 	// Polling configuration
 	interval    time.Duration
@@ -69,6 +75,7 @@ func NewDocumentParsingWorker(
 	cfg *DocumentParsingWorkerConfig,
 	log *slog.Logger,
 	scaler *syshealth.ConcurrencyScaler,
+	extractionJobsSvc *ObjectExtractionJobsService,
 ) *DocumentParsingWorker {
 	interval := 5 * time.Second
 	batchSize := 5
@@ -86,20 +93,21 @@ func NewDocumentParsingWorker(
 	}
 
 	return &DocumentParsingWorker{
-		log:             log.With(logger.Scope("document.parsing.worker")),
-		jobsService:     jobsService,
-		documentsRepo:   documentsRepo,
-		projectsRepo:    projectsRepo,
-		chunkingService: chunkingService,
-		kreuzbergClient: kreuzbergClient,
-		whisperClient:   whisperClient,
-		storageService:  storageService,
-		interval:        interval,
-		batchSize:       batchSize,
-		concurrency:     concurrency,
-		scaler:          scaler,
-		stopCh:          make(chan struct{}),
-		doneCh:          make(chan struct{}),
+		log:               log.With(logger.Scope("document.parsing.worker")),
+		jobsService:       jobsService,
+		documentsRepo:     documentsRepo,
+		projectsRepo:      projectsRepo,
+		chunkingService:   chunkingService,
+		kreuzbergClient:   kreuzbergClient,
+		whisperClient:     whisperClient,
+		storageService:    storageService,
+		interval:          interval,
+		batchSize:         batchSize,
+		concurrency:       concurrency,
+		scaler:            scaler,
+		extractionJobsSvc: extractionJobsSvc,
+		stopCh:            make(chan struct{}),
+		doneCh:            make(chan struct{}),
 	}
 }
 
@@ -331,6 +339,19 @@ func (w *DocumentParsingWorker) processJob(ctx context.Context, job *DocumentPar
 	if job.DocumentID != nil {
 		if err := w.documentsRepo.UpdateContentAndStatus(ctx, *job.DocumentID, parsedContent, "completed"); err != nil {
 			jobLog.Error("failed to update document content", logger.Error(err))
+		}
+
+		// If the parsing job was created with auto_extract=true in its metadata,
+		// trigger object extraction now that content is guaranteed to be stored.
+		// This avoids the race condition where extraction starts before content is written.
+		if w.extractionJobsSvc != nil {
+			if autoExtract, _ := job.Metadata["auto_extract"].(bool); autoExtract {
+				if err := w.extractionJobsSvc.TriggerForDocument(ctx, job.ProjectID, *job.DocumentID); err != nil {
+					jobLog.Error("failed to trigger extraction after parsing", logger.Error(err))
+				} else {
+					jobLog.Info("triggered object extraction after parsing")
+				}
+			}
 		}
 
 		chunkResult, err := w.chunkingService.RecreateChunks(ctx, job.ProjectID, *job.DocumentID)

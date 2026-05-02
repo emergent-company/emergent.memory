@@ -34,6 +34,10 @@ func (a *ParsingJobCreatorAdapter) CreateJob(ctx context.Context, opts documents
 	if opts.OrganizationID != "" {
 		orgID = &opts.OrganizationID
 	}
+	var metadata map[string]interface{}
+	if opts.AutoExtract {
+		metadata = map[string]interface{}{"auto_extract": true}
+	}
 	_, err := a.svc.CreateJob(ctx, CreateJobOptions{
 		OrganizationID: orgID,
 		ProjectID:      opts.ProjectID,
@@ -43,6 +47,7 @@ func (a *ParsingJobCreatorAdapter) CreateJob(ctx context.Context, opts documents
 		MimeType:       opts.MimeType,
 		FileSizeBytes:  opts.FileSizeBytes,
 		StorageKey:     opts.StorageKey,
+		Metadata:       metadata,
 	})
 	return err
 }
@@ -323,6 +328,7 @@ func provideDocumentParsingWorker(
 	cfg *ExtractionConfig,
 	log *slog.Logger,
 	monitor syshealth.Monitor,
+	extractionJobsSvc *ObjectExtractionJobsService,
 ) *DocumentParsingWorker {
 	workerConfig := &DocumentParsingWorkerConfig{
 		Interval:    time.Duration(cfg.DocumentParsing.WorkerIntervalMs) * time.Millisecond,
@@ -336,7 +342,7 @@ func provideDocumentParsingWorker(
 		cfg.DocumentParsing.MinConcurrency,
 		cfg.DocumentParsing.MaxConcurrency,
 	)
-	return NewDocumentParsingWorker(jobs, documentsRepo, projectsRepo, chunkingService, kreuzbergClient, whisperClient, storageService, workerConfig, log, scaler)
+	return NewDocumentParsingWorker(jobs, documentsRepo, projectsRepo, chunkingService, kreuzbergClient, whisperClient, storageService, workerConfig, log, scaler, extractionJobsSvc)
 }
 
 // RegisterDocumentParsingWorkerLifecycle registers the document parsing worker with fx lifecycle

@@ -62,6 +62,10 @@ type ParsingJobOptions struct {
 	MimeType       *string
 	FileSizeBytes  *int64
 	StorageKey     *string
+	// AutoExtract triggers object extraction after parsing completes successfully.
+	// The extraction job is created by the parsing worker (not the upload handler)
+	// to avoid a race condition where extraction starts before content is written.
+	AutoExtract bool
 }
 
 // NewUploadHandler creates a new upload handler
@@ -188,14 +192,9 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 			MimeType:       &mimeType,
 			FileSizeBytes:  &n,
 			StorageKey:     &uploadResult.Key,
+			AutoExtract:    autoExtract,
 		}); err != nil {
 			h.log.Error("failed to create parsing job", slog.String("document_id", response.Document.ID), logger.Error(err))
-		}
-
-		if autoExtract && h.extractionJobsService != nil {
-			if err := h.extractionJobsService.TriggerForDocument(c.Request().Context(), user.ProjectID, response.Document.ID); err != nil {
-				h.log.Error("failed to create extraction job", slog.String("document_id", response.Document.ID), logger.Error(err))
-			}
 		}
 	}
 
@@ -401,14 +400,9 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 			MimeType:       &mimeType,
 			FileSizeBytes:  &n,
 			StorageKey:     &uploadResult.Key,
+			AutoExtract:    autoExtract,
 		}); err != nil {
 			h.log.Error("failed to create parsing job", slog.String("document_id", response.Document.ID), logger.Error(err))
-		}
-
-		if autoExtract && h.extractionJobsService != nil {
-			if err := h.extractionJobsService.TriggerForDocument(ctx, user.ProjectID, response.Document.ID); err != nil {
-				h.log.Error("failed to create extraction job", slog.String("document_id", response.Document.ID), logger.Error(err))
-			}
 		}
 	}
 
