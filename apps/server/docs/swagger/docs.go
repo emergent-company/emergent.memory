@@ -5468,6 +5468,34 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/reindex-embeddings": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "graph"
+                ],
+                "summary": "Reindex missing embeddings",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ReindexEmbeddingsResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/relationships": {
             "post": {
                 "security": [
@@ -15057,6 +15085,182 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/agent/sessions/{sessionId}/todos": {
+            "get": {
+                "tags": [
+                    "session-todos"
+                ],
+                "summary": "List session todos",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated status filter",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sessiontodos.SessionTodo"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "session-todos"
+                ],
+                "summary": "Create a session todo",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Todo",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sessiontodos.CreateTodoRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sessiontodos.SessionTodo"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agent/sessions/{sessionId}/todos/{todoId}": {
+            "delete": {
+                "tags": [
+                    "session-todos"
+                ],
+                "summary": "Delete a session todo",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Todo ID",
+                        "name": "todoId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "tags": [
+                    "session-todos"
+                ],
+                "summary": "Update a session todo",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Todo ID",
+                        "name": "todoId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Updates",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sessiontodos.UpdateTodoRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sessiontodos.SessionTodo"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/mcp/hosted": {
             "get": {
                 "security": [
@@ -17855,6 +18059,12 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "interactionType": {
+                    "$ref": "#/definitions/domain_agents.AgentQuestionInteractionType"
+                },
+                "maxLength": {
+                    "type": "integer"
+                },
                 "notificationId": {
                     "type": "string"
                 },
@@ -17863,6 +18073,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/domain_agents.AgentQuestionOption"
                     }
+                },
+                "placeholder": {
+                    "type": "string"
                 },
                 "projectId": {
                     "type": "string"
@@ -17889,6 +18102,21 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "domain_agents.AgentQuestionInteractionType": {
+            "type": "string",
+            "enum": [
+                "buttons",
+                "select",
+                "multi_select",
+                "text"
+            ],
+            "x-enum-varnames": [
+                "QuestionInteractionButtons",
+                "QuestionInteractionSelect",
+                "QuestionInteractionMultiSelect",
+                "QuestionInteractionText"
+            ]
         },
         "domain_agents.AgentQuestionOption": {
             "type": "object",
@@ -21206,6 +21434,15 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_graph.ReindexEmbeddingsResponse": {
+            "type": "object",
+            "properties": {
+                "enqueued": {
+                    "description": "Enqueued is the number of object embedding jobs newly inserted.",
+                    "type": "integer"
+                }
+            }
+        },
         "domain_graph.SearchWithNeighborsRequest": {
             "type": "object",
             "required": [
@@ -23242,6 +23479,9 @@ const docTemplate = `{
                 },
                 "lastSynced": {
                     "type": "string"
+                },
+                "maxInputTokens": {
+                    "type": "integer"
                 },
                 "maxOutputTokens": {
                     "type": "integer"
@@ -25783,6 +26023,89 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_sessiontodos.CreateTodoRequest": {
+            "type": "object",
+            "required": [
+                "content"
+            ],
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "contextSnapshot": {
+                    "type": "string"
+                },
+                "order": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_sessiontodos.SessionTodo": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "contextSnapshot": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "order": {
+                    "type": "integer"
+                },
+                "sessionId": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/domain_sessiontodos.TodoStatus"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sessiontodos.TodoStatus": {
+            "type": "string",
+            "enum": [
+                "draft",
+                "pending",
+                "in_progress",
+                "completed",
+                "cancelled"
+            ],
+            "x-enum-varnames": [
+                "StatusDraft",
+                "StatusPending",
+                "StatusInProgress",
+                "StatusCompleted",
+                "StatusCancelled"
+            ]
+        },
+        "domain_sessiontodos.UpdateTodoRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "order": {
+                    "type": "integer"
+                },
+                "status": {
+                    "$ref": "#/definitions/domain_sessiontodos.TodoStatus"
+                }
+            }
+        },
         "domain_skills.CreateSkillDTO": {
             "type": "object",
             "required": [
@@ -27103,7 +27426,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.40.8",
+	Version:          "0.40.56",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

@@ -205,12 +205,18 @@ definitions:
         type: string
       id:
         type: string
+      interactionType:
+        $ref: '#/definitions/domain_agents.AgentQuestionInteractionType'
+      maxLength:
+        type: integer
       notificationId:
         type: string
       options:
         items:
           $ref: '#/definitions/domain_agents.AgentQuestionOption'
         type: array
+      placeholder:
+        type: string
       projectId:
         type: string
       question:
@@ -228,6 +234,18 @@ definitions:
       updatedAt:
         type: string
     type: object
+  domain_agents.AgentQuestionInteractionType:
+    enum:
+    - buttons
+    - select
+    - multi_select
+    - text
+    type: string
+    x-enum-varnames:
+    - QuestionInteractionButtons
+    - QuestionInteractionSelect
+    - QuestionInteractionMultiSelect
+    - QuestionInteractionText
   domain_agents.AgentQuestionOption:
     properties:
       description:
@@ -2490,6 +2508,12 @@ definitions:
       value:
         description: Filter value (omitted for "exists" operator)
     type: object
+  domain_graph.ReindexEmbeddingsResponse:
+    properties:
+      enqueued:
+        description: Enqueued is the number of object embedding jobs newly inserted.
+        type: integer
+    type: object
   domain_graph.SearchWithNeighborsRequest:
     properties:
       branchId:
@@ -3851,6 +3875,8 @@ definitions:
         type: string
       lastSynced:
         type: string
+      maxInputTokens:
+        type: integer
       maxOutputTokens:
         type: integer
       modelName:
@@ -5566,6 +5592,63 @@ definitions:
       textWeight:
         type: number
     type: object
+  domain_sessiontodos.CreateTodoRequest:
+    properties:
+      author:
+        type: string
+      content:
+        type: string
+      contextSnapshot:
+        type: string
+      order:
+        type: integer
+    required:
+    - content
+    type: object
+  domain_sessiontodos.SessionTodo:
+    properties:
+      author:
+        type: string
+      content:
+        type: string
+      contextSnapshot:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      order:
+        type: integer
+      sessionId:
+        type: string
+      status:
+        $ref: '#/definitions/domain_sessiontodos.TodoStatus'
+      updatedAt:
+        type: string
+    type: object
+  domain_sessiontodos.TodoStatus:
+    enum:
+    - draft
+    - pending
+    - in_progress
+    - completed
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - StatusDraft
+    - StatusPending
+    - StatusInProgress
+    - StatusCompleted
+    - StatusCancelled
+  domain_sessiontodos.UpdateTodoRequest:
+    properties:
+      content:
+        type: string
+      order:
+        type: integer
+      status:
+        $ref: '#/definitions/domain_sessiontodos.TodoStatus'
+    type: object
   domain_skills.CreateSkillDTO:
     properties:
       content:
@@ -6437,7 +6520,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.40.8
+  version: 0.40.56
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -10003,6 +10086,24 @@ paths:
       security:
       - bearerAuth: []
       summary: Vector similarity search
+      tags:
+      - graph
+  /api/graph/reindex-embeddings:
+    post:
+      parameters:
+      - description: Project ID
+        in: query
+        name: project_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_graph.ReindexEmbeddingsResponse'
+      summary: Reindex missing embeddings
       tags:
       - graph
   /api/graph/relationships:
@@ -16295,6 +16396,122 @@ paths:
       summary: Get agent session status
       tags:
       - agent-sessions
+  /api/v1/agent/sessions/{sessionId}/todos:
+    get:
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Comma-separated status filter
+        in: query
+        name: status
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_sessiontodos.SessionTodo'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: List session todos
+      tags:
+      - session-todos
+    post:
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Todo
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sessiontodos.CreateTodoRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_sessiontodos.SessionTodo'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Create a session todo
+      tags:
+      - session-todos
+  /api/v1/agent/sessions/{sessionId}/todos/{todoId}:
+    delete:
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Todo ID
+        in: path
+        name: todoId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Delete a session todo
+      tags:
+      - session-todos
+    patch:
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Todo ID
+        in: path
+        name: todoId
+        required: true
+        type: string
+      - description: Updates
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sessiontodos.UpdateTodoRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_sessiontodos.SessionTodo'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Update a session todo
+      tags:
+      - session-todos
   /api/v1/mcp/hosted:
     get:
       description: Returns all registered MCP servers with their current status
