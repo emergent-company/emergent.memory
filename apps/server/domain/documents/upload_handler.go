@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/labstack/echo/v4"
@@ -123,6 +125,12 @@ func (h *UploadHandler) Upload(c echo.Context) error {
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		// Try to detect from content
 		mimeType = http.DetectContentType(fileBytes)
+	}
+	// Office Open XML formats (.docx/.xlsx/.pptx) are ZIP archives internally;
+	// DetectContentType returns "application/zip" for them. Fall back to
+	// extension-based detection for known Office formats.
+	if mimeType == "application/zip" {
+		mimeType = refineMimeTypeByExtension(mimeType, file.Filename)
 	}
 
 	// Parse optional form fields
@@ -321,6 +329,10 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		mimeType = http.DetectContentType(fileBytes)
 	}
+	// Office Open XML formats are ZIP archives; refine by extension.
+	if mimeType == "application/zip" {
+		mimeType = refineMimeTypeByExtension(mimeType, fh.Filename)
+	}
 
 	// Upload to storage
 	uploadResult, err := h.storage.UploadDocument(
@@ -412,4 +424,20 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 func computeFileHash(data []byte) string {
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
+}
+
+// refineMimeTypeByExtension corrects MIME types that Go's http.DetectContentType
+// gets wrong because it only inspects magic bytes. Office Open XML formats
+// (.docx, .xlsx, .pptx) are ZIP archives internally and are detected as
+// "application/zip". Use the file extension as a tiebreaker.
+func refineMimeTypeByExtension(mimeType, filename string) string {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	}
+	return mimeType
 }
