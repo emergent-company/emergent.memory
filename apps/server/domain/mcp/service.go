@@ -16,6 +16,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/email"
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -38,6 +39,9 @@ type Service struct {
 	graphService *graph.Service
 	searchSvc    *search.Service
 	log          *slog.Logger
+
+	// Branch service (for graph-branch-* tools)
+	branchSvc *branches.Service
 
 	// Agent tool handler (injected to break import cycle)
 	agentToolHandler AgentToolHandler
@@ -112,6 +116,7 @@ type ServiceParams struct {
 
 	DocumentsSvc       *documents.Service
 	SkillsRepo         *skills.Repository
+	BranchSvc          *branches.Service
 	ProviderCredSvc    *provider.CredentialService
 	ProviderCatalogSvc *provider.ModelCatalogService
 	ApitokenSvc        *apitoken.Service
@@ -141,6 +146,7 @@ func NewService(p ServiceParams) *Service {
 		log:                p.Log.With(logger.Scope("mcp.svc")),
 		documentsSvc:       p.DocumentsSvc,
 		skillsRepo:         p.SkillsRepo,
+		branchSvc:          p.BranchSvc,
 		providerCredSvc:    p.ProviderCredSvc,
 		providerCatalogSvc: p.ProviderCatalogSvc,
 		apitokenSvc:        p.ApitokenSvc,
@@ -564,6 +570,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "array",
 						Description: "Array of entity specifications to create. Each item: {type (required), properties, key, status, labels, relationships?: [{type, source_id|target_id, properties}]}. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id).",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, entities are created in this branch instead of the main graph.",
+					},
 				},
 				Required: []string{"entities"},
 			},
@@ -608,6 +618,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "boolean",
 						Description: "If true, replace all labels instead of merging (default: false)",
 					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the update is applied in this branch.",
+					},
 				},
 				Required: []string{"entity_id"},
 			},
@@ -638,6 +652,72 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 				},
 				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:        "graph-branch-list",
+			Description: "List all branches in the project.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+			},
+		},
+		{
+			Name:        "graph-branch-create",
+			Description: "Create a new branch in the project.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Branch name (e.g. \"plan/my-feature\")",
+					},
+					"description": {
+						Type:        "string",
+						Description: "Optional human-readable description",
+					},
+					"parent_branch_id": {
+						Type:        "string",
+						Description: "Optional parent branch UUID. If omitted, branch has no parent.",
+					},
+				},
+				Required: []string{"name"},
+			},
+		},
+		{
+			Name:        "graph-branch-merge",
+			Description: "Merge a source branch into the main graph (or a target branch). By default performs a dry-run; set execute=true to apply.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"source_branch": {
+						Type:        "string",
+						Description: "Source branch name or UUID to merge from",
+					},
+					"target_branch": {
+						Type:        "string",
+						Description: "Optional target branch name or UUID. If omitted, merges into main graph.",
+					},
+					"execute": {
+						Type:        "boolean",
+						Description: "If true, apply the merge. Default false (dry-run).",
+					},
+				},
+				Required: []string{"source_branch"},
+			},
+		},
+		{
+			Name:        "graph-branch-delete",
+			Description: "Delete a branch by name or UUID.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to delete",
+					},
+				},
+				Required: []string{"branch"},
 			},
 		},
 		{
@@ -1273,6 +1353,14 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeDeleteEntity(ctx, projectID, args)
 	case "entity-restore":
 		return s.executeRestoreEntity(ctx, projectID, args)
+	case "graph-branch-list":
+		return s.executeGraphBranchList(ctx, projectID)
+	case "graph-branch-create":
+		return s.executeGraphBranchCreate(ctx, projectID, args)
+	case "graph-branch-merge":
+		return s.executeGraphBranchMerge(ctx, projectID, args)
+	case "graph-branch-delete":
+		return s.executeGraphBranchDelete(ctx, projectID, args)
 	case "search-hybrid":
 		return s.executeHybridSearch(ctx, projectID, args)
 	case "search-semantic":
@@ -2546,7 +2634,18 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 		entityID = resolved
 	}
 
-	req := &graph.PatchGraphObjectRequest{}
+	// Resolve optional branch param.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
+	req := &graph.PatchGraphObjectRequest{
+		BranchID: branchID,
+	}
 
 	if props, ok := args["properties"].(map[string]any); ok {
 		req.Properties = props
@@ -2646,6 +2745,109 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 	})
 }
 
+// executeGraphBranchList lists all branches in the project.
+func (s *Service) executeGraphBranchList(ctx context.Context, projectID string) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	list, err := s.branchSvc.List(ctx, &projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list branches: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"branches": list,
+	})
+}
+
+// executeGraphBranchCreate creates a new branch in the project.
+func (s *Service) executeGraphBranchCreate(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	name, _ := args["name"].(string)
+	if name == "" {
+		return nil, fmt.Errorf("missing required parameter: name")
+	}
+	req := &branches.CreateBranchRequest{
+		ProjectID: &projectID,
+		Name:      name,
+	}
+	if desc, ok := args["description"].(string); ok && desc != "" {
+		req.Description = &desc
+	}
+	if parentID, ok := args["parent_branch_id"].(string); ok && parentID != "" {
+		req.ParentBranchID = &parentID
+	}
+	created, err := s.branchSvc.Create(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("create branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"branch":  created,
+		"message": fmt.Sprintf("Branch %q created", name),
+	})
+}
+
+// executeGraphBranchMerge merges a source branch into main (or a target branch).
+func (s *Service) executeGraphBranchMerge(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+	srcRef, _ := args["source_branch"].(string)
+	if srcRef == "" {
+		return nil, fmt.Errorf("missing required parameter: source_branch")
+	}
+	srcID, err := s.resolveBranchID(ctx, projectID, srcRef)
+	if err != nil || srcID == nil {
+		return nil, fmt.Errorf("resolve source_branch: %w", err)
+	}
+	execute, _ := args["execute"].(bool)
+
+	var targetBranchID *uuid.UUID
+	if tgtRef, ok := args["target_branch"].(string); ok && tgtRef != "" {
+		targetBranchID, err = s.resolveBranchID(ctx, projectID, tgtRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve target_branch: %w", err)
+		}
+	}
+
+	req := &graph.BranchMergeRequest{
+		SourceBranchID: *srcID,
+		Execute:        execute,
+	}
+	result, err := s.graphService.MergeBranch(ctx, projectUUID, targetBranchID, req)
+	if err != nil {
+		return nil, fmt.Errorf("merge branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"result": result,
+	})
+}
+
+// executeGraphBranchDelete deletes a branch by name or UUID.
+func (s *Service) executeGraphBranchDelete(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	branchRef, _ := args["branch"].(string)
+	if branchRef == "" {
+		return nil, fmt.Errorf("missing required parameter: branch")
+	}
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || branchID == nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	if err := s.branchSvc.Delete(ctx, branchID.String()); err != nil {
+		return nil, fmt.Errorf("delete branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Branch %q deleted", branchRef),
+	})
+}
+
 // executeBatchCreateEntities creates one or more entities. Always expects an "entities" array.
 // Backward-compat: if flat fields (type, properties, etc.) are passed instead, wraps them as a single-element array.
 //
@@ -2663,6 +2865,15 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	// Resolve optional branch param.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
 	}
 
 	// Support flat single-entity form for backward compat
@@ -2764,6 +2975,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			Status:     status,
 			Properties: properties,
 			Labels:     labels,
+			BranchID:   branchID,
 		}
 
 		result, err := s.graphService.Create(ctx, projectUUID, req, nil)
@@ -2828,6 +3040,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 					SrcID:      relSrcID,
 					DstID:      relDstID,
 					Properties: relProps,
+					BranchID:   branchID,
 				}
 				relResult, err := s.graphService.CreateRelationship(ctx, projectUUID, relReq)
 				if err != nil {
