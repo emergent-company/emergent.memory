@@ -35,7 +35,15 @@ type CredentialResolver interface {
 	ResolveFor(ctx context.Context, provider string) (*ResolvedCredential, error)
 }
 
-// ModelWrapper wraps a raw LLM with usage tracking.
+// ModelLimitResolver looks up token limits for the active LLM model.
+// Implemented by domain/provider.ModelLimitAdapter to avoid an import cycle.
+type ModelLimitResolver interface {
+	// GetInputLimit returns the max_input_tokens for the active model in the
+	// current request context (project → org → env hierarchy). Returns 0 if
+	// unknown; callers should treat 0 as "no limit".
+	GetInputLimit(ctx context.Context) (int, error)
+}
+
 // Implemented by domain/provider.UsageTrackerAdapter to avoid an import cycle:
 // pkg/adk cannot import domain/provider, so the adapter satisfies this interface
 // and is injected optionally via fx.

@@ -57,3 +57,25 @@ func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 		OpenAIBaseURL:      c.BaseURL,
 	}
 }
+
+// ModelLimitAdapter wraps CredentialService + Repository to satisfy
+// adk.ModelLimitResolver. It resolves the active model for the request context
+// then looks up its max_input_tokens from provider_supported_models.
+type ModelLimitAdapter struct {
+	credSvc *CredentialService
+	repo    *Repository
+}
+
+// NewModelLimitAdapter creates a new ModelLimitAdapter.
+func NewModelLimitAdapter(credSvc *CredentialService, repo *Repository) *ModelLimitAdapter {
+	return &ModelLimitAdapter{credSvc: credSvc, repo: repo}
+}
+
+// GetInputLimit satisfies adk.ModelLimitResolver.
+func (a *ModelLimitAdapter) GetInputLimit(ctx context.Context) (int, error) {
+	cred, err := a.credSvc.ResolveAny(ctx)
+	if err != nil || cred == nil {
+		return 0, err
+	}
+	return a.repo.GetModelInputLimit(ctx, cred.GenerativeModel)
+}

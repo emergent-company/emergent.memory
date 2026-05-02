@@ -36,6 +36,7 @@ var Module = fx.Module("provider",
 		provideADKCredentialAdapter,
 		provideEmbeddingCredentialAdapter,
 		provideUsageTrackerAdapter,
+		provideModelLimitAdapter,
 		NewHandler,
 	),
 	fx.Invoke(
@@ -123,4 +124,11 @@ func provideEmbeddingCredentialAdapter(svc *CredentialService) embeddings.Embedd
 // into ModelFactory so every LLM created by the factory is automatically wrapped.
 func provideUsageTrackerAdapter(svc *UsageService, log *slog.Logger) adk.ModelWrapper {
 	return NewUsageTrackerAdapter(svc, log)
+}
+
+// provideModelLimitAdapter exposes CredentialService + Repository as
+// adk.ModelLimitResolver. Consumed by domain/extraction to cap document text
+// at the configured model's context window before sending to the LLM.
+func provideModelLimitAdapter(svc *CredentialService, repo *Repository) adk.ModelLimitResolver {
+	return NewModelLimitAdapter(svc, repo)
 }

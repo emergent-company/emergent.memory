@@ -282,6 +282,7 @@ func provideObjectExtractionWorker(
 	cfg *ExtractionConfig,
 	log *slog.Logger,
 	monitor syshealth.Monitor,
+	limitResolver adk.ModelLimitResolver,
 ) *ObjectExtractionWorker {
 	workerConfig := &ObjectExtractionWorkerConfig{
 		PollInterval:    time.Duration(cfg.ObjectExtraction.WorkerIntervalMs) * time.Millisecond,
@@ -296,7 +297,8 @@ func provideObjectExtractionWorker(
 		cfg.ObjectExtraction.MinConcurrency,
 		cfg.ObjectExtraction.MaxConcurrency,
 	)
-	return NewObjectExtractionWorker(jobs, graphService, docService, schemaProvider, modelFactory, workerConfig, log, scaler)
+	return NewObjectExtractionWorker(jobs, graphService, docService, schemaProvider, modelFactory, workerConfig, log, scaler).
+		WithLimitResolver(limitResolver)
 }
 
 // RegisterObjectExtractionWorkerLifecycle registers the object extraction worker with fx lifecycle

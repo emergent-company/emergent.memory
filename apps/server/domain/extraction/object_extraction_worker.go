@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,6 +68,7 @@ type ObjectExtractionWorker struct {
 	docService     *documents.Service
 	schemaProvider SchemaProvider
 	modelFactory   *adk.ModelFactory
+	limitResolver  adk.ModelLimitResolver // optional; nil → no truncation
 	config         *ObjectExtractionWorkerConfig
 	log            *slog.Logger
 	scaler         *syshealth.ConcurrencyScaler
@@ -100,6 +102,14 @@ func NewObjectExtractionWorker(
 		scaler:         scaler,
 		stopCh:         make(chan struct{}),
 	}
+}
+
+// WithLimitResolver sets an optional ModelLimitResolver on the worker.
+// When set, document text is truncated to the model's max_input_tokens before
+// being sent to the extraction pipeline.
+func (w *ObjectExtractionWorker) WithLimitResolver(r adk.ModelLimitResolver) *ObjectExtractionWorker {
+	w.limitResolver = r
+	return w
 }
 
 // Start begins processing jobs in the background.
@@ -231,6 +241,11 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		return nil, fmt.Errorf("no document text to extract from")
 	}
 
+	// Truncate document text to the model's context window to avoid overflowing
+	// the LLM's input limit. We use a conservative character-to-token ratio of 4:1
+	// and reserve 20% of the budget for the system prompt + schema descriptions.
+	documentText = w.truncateToInputLimit(ctx, documentText)
+
 	// Load schemas
 	schemas, err := w.loadSchemas(ctx, job)
 	if err != nil {
@@ -288,6 +303,45 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	}
 
 	return result, nil
+}
+
+// truncateToInputLimit caps documentText to the model's max_input_tokens.
+// Uses a 4 chars-per-token estimate and reserves 20% for system prompts and
+// schema descriptions. If the limit is unknown (0) or the resolver is nil,
+// the text is returned unchanged.
+func (w *ObjectExtractionWorker) truncateToInputLimit(ctx context.Context, text string) string {
+	if w.limitResolver == nil {
+		return text
+	}
+	inputLimit, err := w.limitResolver.GetInputLimit(ctx)
+	if err != nil {
+		w.log.Warn("could not resolve model input limit, skipping truncation", logger.Error(err))
+		return text
+	}
+	if inputLimit <= 0 {
+		return text
+	}
+
+	const (
+		charsPerToken  = 4
+		promptOverhead = 0.20 // reserve 20% for system prompt + schemas
+	)
+	maxChars := int(float64(inputLimit) * (1 - promptOverhead) * charsPerToken)
+	if len(text) <= maxChars {
+		return text
+	}
+
+	w.log.Warn("document text exceeds model context window, truncating",
+		slog.Int("original_chars", len(text)),
+		slog.Int("max_chars", maxChars),
+		slog.Int("input_limit_tokens", inputLimit),
+	)
+	// Truncate at a word boundary to avoid splitting mid-word.
+	truncated := text[:maxChars]
+	if idx := strings.LastIndexByte(truncated, ' '); idx > maxChars-200 {
+		truncated = truncated[:idx]
+	}
+	return truncated
 }
 
 // loadDocumentText loads the text content for extraction.
