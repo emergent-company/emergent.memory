@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -232,6 +233,7 @@ func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID s
 		Set("failed_items = ?", results.FailedItems).
 		Set("discovered_types = ?", results.DiscoveredTypes).
 		Set("created_objects = ?", results.CreatedObjects).
+		Set("created_object_ids = ?", pq.Array(results.CreatedObjectIDs)).
 		Set("debug_info = ?", results.DebugInfo).
 		Where("id = ?", jobID).
 		Exec(ctx)
@@ -261,6 +263,7 @@ type ObjectExtractionResults struct {
 	FailedItems          int
 	DiscoveredTypes      JSONArray
 	CreatedObjects       JSONArray
+	CreatedObjectIDs     []string
 	DebugInfo            JSON
 }
 

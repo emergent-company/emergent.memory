@@ -362,6 +362,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		} else {
 			totalResult.ObjectsCreated += result.ObjectsCreated
 			totalResult.RelationshipsCreated += result.RelationshipsCreated
+			totalResult.CreatedObjectIDs = append(totalResult.CreatedObjectIDs, result.CreatedObjectIDs...)
 		}
 	}
 
@@ -533,6 +534,7 @@ func (w *ObjectExtractionWorker) persistResults(
 
 	// Map temp_id -> created object ID
 	tempIDToObjectID := make(map[string]uuid.UUID)
+	createdObjectIDs := make([]string, 0)
 
 	// Create graph objects
 	objectsCreated := 0
@@ -547,6 +549,9 @@ func (w *ObjectExtractionWorker) persistResults(
 
 		// Add extraction metadata
 		properties["_extraction_job_id"] = job.ID
+		if job.DocumentID != nil {
+			properties["_document_id"] = *job.DocumentID
+		}
 		if job.SourceType != nil {
 			properties["_extraction_source"] = *job.SourceType
 		}
@@ -566,6 +571,7 @@ func (w *ObjectExtractionWorker) persistResults(
 		}
 
 		tempIDToObjectID[entity.TempID] = graphObj.ID
+		createdObjectIDs = append(createdObjectIDs, graphObj.ID.String())
 		objectsCreated++
 	}
 
@@ -623,6 +629,7 @@ func (w *ObjectExtractionWorker) persistResults(
 		SuccessfulItems:      objectsCreated,
 		FailedItems:          len(output.Entities) - objectsCreated,
 		DiscoveredTypes:      discoveredTypes,
+		CreatedObjectIDs:     createdObjectIDs,
 		DebugInfo: JSON{
 			"entity_count":       len(output.Entities),
 			"relationship_count": len(output.Relationships),

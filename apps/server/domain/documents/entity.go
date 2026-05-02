@@ -41,10 +41,10 @@ type Document struct {
 	StorageURL    *string `bun:"storage_url" json:"storageUrl,omitempty"`
 
 	// Data source
-	SourceType              *string `bun:"source_type" json:"sourceType,omitempty"`
+	SourceType *string `bun:"source_type" json:"sourceType,omitempty"`
 
 	// Metadata
-	Metadata            map[string]any `bun:"metadata,type:jsonb" json:"metadata,omitempty"`
+	Metadata map[string]any `bun:"metadata,type:jsonb" json:"metadata,omitempty"`
 
 	// Computed fields (populated via JOIN/subquery, not stored in documents table)
 	Chunks           int     `bun:"chunks,scanonly" json:"chunks"`
@@ -59,6 +59,9 @@ type Document struct {
 	LastExtractionAt    *time.Time `bun:"last_extraction_at,scanonly" json:"lastExtractionAt,omitempty"`
 	ExtractionObjects   *int       `bun:"extraction_objects_created,scanonly" json:"objectsCreated,omitempty"`
 	ExtractionRelations *int       `bun:"extraction_relationships_created,scanonly" json:"relationshipsCreated,omitempty"`
+
+	// Job IDs of all extraction jobs run on this document
+	JobIDs []string `bun:"-" json:"jobIds,omitempty"`
 }
 
 // ListParams contains parameters for listing documents
@@ -257,6 +260,7 @@ type ExtractionSummary struct {
 	ObjectsCreated       int            `json:"objectsCreated"`
 	RelationshipsCreated int            `json:"relationshipsCreated"`
 	ObjectsByType        map[string]int `json:"objectsByType"`
+	ObjectIDs            []string       `json:"objectIds,omitempty"`
 	ChunksProcessed      int            `json:"chunksProcessed"`
 	TotalChunks          int            `json:"totalChunks"`
 	HasErrors            bool           `json:"hasErrors"`

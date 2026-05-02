@@ -16,6 +16,7 @@ type ExtractionJobSummaryDTO struct {
 	ObjectsCreated       *int       `json:"objects_created,omitempty"`
 	RelationshipsCreated *int       `json:"relationships_created,omitempty"`
 	SuggestionsCreated   *int       `json:"suggestions_created,omitempty"`
+	CreatedObjectIDs     []string   `json:"created_object_ids,omitempty"`
 	TotalLLMCalls        *int       `json:"total_llm_calls,omitempty"`
 	TotalCostUSD         *float64   `json:"total_cost_usd,omitempty"`
 	ErrorMessage         *string    `json:"error_message,omitempty"`
@@ -69,6 +70,7 @@ type ExtractionJobDetailDTO struct {
 	ObjectsCreated       *int                     `json:"objects_created,omitempty"`
 	RelationshipsCreated *int                     `json:"relationships_created,omitempty"`
 	SuggestionsCreated   *int                     `json:"suggestions_created,omitempty"`
+	CreatedObjectIDs     []string                 `json:"created_object_ids,omitempty"`
 	ErrorMessage         *string                  `json:"error_message,omitempty"`
 	Logs                 []ProcessLogDTO          `json:"logs"`
 	LLMCalls             []LLMCallLogDTO          `json:"llm_calls"`

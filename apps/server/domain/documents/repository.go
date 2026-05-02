@@ -147,6 +147,21 @@ func (r *Repository) GetByID(ctx context.Context, projectID, documentID string) 
 		return nil, fmt.Errorf("get document: %w", err)
 	}
 
+	// Populate job_ids: all extraction job IDs for this document
+	var jobIDs []string
+	err = r.db.NewSelect().
+		TableExpr("kb.object_extraction_jobs").
+		ColumnExpr("id").
+		Where("document_id = ?", documentID).
+		Where("project_id = ?", projectID).
+		OrderExpr("created_at DESC").
+		Scan(ctx, &jobIDs)
+	if err != nil && err != sql.ErrNoRows {
+		// Non-fatal: log and continue without job_ids
+		jobIDs = nil
+	}
+	doc.JobIDs = jobIDs
+
 	return &doc, nil
 }
 
@@ -1003,11 +1018,12 @@ func (r *Repository) GetExtractionSummary(ctx context.Context, projectID, docume
 		RelationshipsCreated int       `bun:"relationships_created"`
 		ProcessedItems       int       `bun:"processed_items"`
 		TotalItems           int       `bun:"total_items"`
+		CreatedObjectIDs     []string  `bun:"created_object_ids,array"`
 	}
 
 	err := r.db.NewSelect().
 		TableExpr("kb.object_extraction_jobs").
-		Column("id", "completed_at", "objects_created", "relationships_created", "processed_items", "total_items").
+		Column("id", "completed_at", "objects_created", "relationships_created", "processed_items", "total_items", "created_object_ids").
 		Where("document_id = ?", documentID).
 		Where("project_id = ?", projectID).
 		Where("status = 'completed'").
@@ -1069,6 +1085,7 @@ func (r *Repository) GetExtractionSummary(ctx context.Context, projectID, docume
 		ObjectsCreated:       job.ObjectsCreated,
 		RelationshipsCreated: job.RelationshipsCreated,
 		ObjectsByType:        objectsByType,
+		ObjectIDs:            job.CreatedObjectIDs,
 		ChunksProcessed:      job.ProcessedItems,
 		TotalChunks:          job.TotalItems,
 		HasErrors:            hasErrors,

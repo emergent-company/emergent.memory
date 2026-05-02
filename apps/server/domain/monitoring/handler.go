@@ -375,6 +375,10 @@ func (h *Handler) jobToSummaryDTO(job *extraction.ObjectExtractionJob) Extractio
 		dto.ObjectsCreated = &job.SuccessfulItems
 	}
 
+	if len(job.CreatedObjectIDs) > 0 {
+		dto.CreatedObjectIDs = job.CreatedObjectIDs
+	}
+
 	if job.ErrorMessage != nil {
 		dto.ErrorMessage = job.ErrorMessage
 	}
@@ -421,6 +425,10 @@ func (h *Handler) jobToDetailDTO(job *extraction.ObjectExtractionJob, logs []Pro
 
 	if job.SuccessfulItems > 0 {
 		dto.ObjectsCreated = &job.SuccessfulItems
+	}
+
+	if len(job.CreatedObjectIDs) > 0 {
+		dto.CreatedObjectIDs = job.CreatedObjectIDs
 	}
 
 	if job.ErrorMessage != nil {
