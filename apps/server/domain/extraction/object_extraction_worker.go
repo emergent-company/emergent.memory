@@ -549,8 +549,8 @@ func (w *ObjectExtractionWorker) persistResults(
 
 		// Add extraction metadata
 		properties["_extraction_job_id"] = job.ID
-		if job.DocumentID != nil {
-			properties["_document_id"] = *job.DocumentID
+		if job.SourceID != nil {
+			properties["_source_id"] = *job.SourceID
 		}
 		if job.SourceType != nil {
 			properties["_extraction_source"] = *job.SourceType
