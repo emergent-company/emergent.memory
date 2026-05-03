@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -11,13 +12,20 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
+// ExtractionTrigger is a minimal interface for triggering extraction jobs from sessions.
+// Implemented by extraction.ObjectExtractionJobsService.
+type ExtractionTrigger interface {
+	TriggerForSession(ctx context.Context, projectID, sessionID string) (string, error)
+}
+
 // SessionService handles business logic for Session and Message graph objects.
 // Sessions and Messages are regular graph objects under the hood — this service
 // provides ergonomic wrappers with atomic semantics.
 type SessionService struct {
-	graphSvc *Service
-	repo     *Repository
-	log      *slog.Logger
+	graphSvc   *Service
+	repo       *Repository
+	log        *slog.Logger
+	extraction ExtractionTrigger // optional, nil if extraction domain not wired
 }
 
 // NewSessionService creates a new SessionService.
@@ -27,6 +35,12 @@ func NewSessionService(graphSvc *Service, repo *Repository, log *slog.Logger) *S
 		repo:     repo,
 		log:      log.With(logger.Scope("graph.session_svc")),
 	}
+}
+
+// SetExtractionTrigger wires an optional extraction trigger (called after fx construction
+// to avoid a circular dependency between graph and extraction modules).
+func (s *SessionService) SetExtractionTrigger(t ExtractionTrigger) {
+	s.extraction = t
 }
 
 // ---- Request/Response types ------------------------------------------------
@@ -115,6 +129,33 @@ func (s *SessionService) GetSession(ctx context.Context, projectID, sessionID uu
 	}
 
 	return &SessionResponse{GraphObjectResponse: obj}, nil
+}
+
+// ImportSessionMessageRequest represents a single message in an import payload.
+type ImportSessionMessageRequest struct {
+	Speaker   string  `json:"speaker,omitempty"` // participant name
+	Role      string  `json:"role,omitempty"`    // user, assistant, system (optional)
+	Content   string  `json:"content"`
+	Timestamp *string `json:"timestamp,omitempty"` // RFC3339
+}
+
+// ImportSessionRequest is the request body for bulk-importing a conversation session.
+type ImportSessionRequest struct {
+	SessionID         string                        `json:"session_id,omitempty"`   // used as object key for idempotency
+	Title             string                        `json:"title,omitempty"`        // defaults to session_id
+	Date              *string                       `json:"date,omitempty"`         // RFC3339 session date
+	Participants      []string                      `json:"participants,omitempty"` // participant names
+	Messages          []ImportSessionMessageRequest `json:"messages"`
+	Labels            []string                      `json:"labels,omitempty"`
+	TriggerExtraction bool                          `json:"trigger_extraction,omitempty"`
+	Metadata          map[string]any                `json:"metadata,omitempty"` // arbitrary extra properties on Session
+}
+
+// ImportSessionResponse is the response for the import endpoint.
+type ImportSessionResponse struct {
+	SessionID       string  `json:"session_id"` // object canonical_id
+	MessageCount    int     `json:"message_count"`
+	ExtractionJobID *string `json:"extraction_job_id,omitempty"`
 }
 
 // ListSessions returns sessions for a project, ordered by started_at descending.
@@ -433,4 +474,147 @@ func (s *SessionService) ListMessages(ctx context.Context, projectID, sessionID 
 		NextCursor: result.NextCursor,
 		Total:      result.Total,
 	}, nil
+}
+
+// ImportSession bulk-imports a conversation session atomically:
+// 1. Creates a Session graph object (idempotent via key = session_id)
+// 2. Creates all Message objects with sequence numbers
+// 3. Creates has_message relationships
+// 4. Optionally triggers an extraction job
+// Returns the session canonical_id, message count, and optional extraction job ID.
+func (s *SessionService) ImportSession(ctx context.Context, projectID uuid.UUID, req *ImportSessionRequest, actorID *uuid.UUID) (*ImportSessionResponse, error) {
+	if len(req.Messages) == 0 {
+		return nil, apperror.ErrBadRequest.WithMessage("messages is required and must not be empty")
+	}
+
+	// Determine title.
+	title := req.Title
+	if title == "" {
+		title = req.SessionID
+	}
+	if title == "" {
+		title = "Imported session"
+	}
+
+	// Build session properties.
+	sessionProps := map[string]any{
+		"title":         title,
+		"message_count": len(req.Messages),
+	}
+	if req.Date != nil {
+		sessionProps["started_at"] = *req.Date
+	} else {
+		sessionProps["started_at"] = time.Now().UTC().Format(time.RFC3339)
+	}
+	if len(req.Participants) > 0 {
+		sessionProps["participants"] = req.Participants
+	}
+	for k, v := range req.Metadata {
+		if _, exists := sessionProps[k]; !exists {
+			sessionProps[k] = v
+		}
+	}
+
+	// Determine object key for idempotency.
+	var sessionKey *string
+	if req.SessionID != "" {
+		sessionKey = &req.SessionID
+	}
+
+	labels := req.Labels
+	if labels == nil {
+		labels = []string{}
+	}
+
+	// Begin transaction.
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Create Session object.
+	sessionObj := &GraphObject{
+		ProjectID:  projectID,
+		Type:       "Session",
+		Key:        sessionKey,
+		Labels:     labels,
+		Properties: sessionProps,
+	}
+	if actorID != nil {
+		sessionObj.ActorType = func() *string { v := "user"; return &v }()
+		sessionObj.ActorID = actorID
+	}
+	if err := s.repo.CreateInTx(ctx, tx.Tx, sessionObj); err != nil {
+		return nil, fmt.Errorf("create session: %w", err)
+	}
+
+	// Create messages + relationships.
+	for i, msg := range req.Messages {
+		if msg.Content == "" {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("message[%d].content is required", i))
+		}
+
+		msgProps := map[string]any{
+			"content":         msg.Content,
+			"sequence_number": i + 1,
+		}
+		if msg.Role != "" {
+			msgProps["role"] = msg.Role
+		}
+		if msg.Speaker != "" {
+			msgProps["speaker"] = msg.Speaker
+			// If role not set, derive from speaker presence (treat as participant turn).
+			if msg.Role == "" {
+				msgProps["role"] = "user"
+			}
+		}
+		if msg.Timestamp != nil {
+			msgProps["timestamp"] = *msg.Timestamp
+		} else if req.Date != nil {
+			msgProps["timestamp"] = *req.Date
+		}
+
+		msgObj := &GraphObject{
+			ProjectID:  projectID,
+			Type:       "Message",
+			Properties: msgProps,
+		}
+		if err := s.repo.CreateInTx(ctx, tx.Tx, msgObj); err != nil {
+			return nil, fmt.Errorf("create message[%d]: %w", i, err)
+		}
+
+		rel := &GraphRelationship{
+			ProjectID: projectID,
+			Type:      "has_message",
+			SrcID:     sessionObj.CanonicalID,
+			DstID:     msgObj.CanonicalID,
+		}
+		if _, err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
+			return nil, fmt.Errorf("create has_message rel[%d]: %w", i, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit import: %w", err)
+	}
+
+	resp := &ImportSessionResponse{
+		SessionID:    sessionObj.CanonicalID.String(),
+		MessageCount: len(req.Messages),
+	}
+
+	// Optionally trigger extraction job (best-effort, non-fatal).
+	if req.TriggerExtraction && s.extraction != nil {
+		jobID, err := s.extraction.TriggerForSession(ctx, projectID.String(), sessionObj.CanonicalID.String())
+		if err != nil {
+			s.log.Warn("failed to trigger extraction after session import",
+				slog.String("session_id", sessionObj.CanonicalID.String()),
+				logger.Error(err))
+		} else {
+			resp.ExtractionJobID = &jobID
+		}
+	}
+
+	return resp, nil
 }

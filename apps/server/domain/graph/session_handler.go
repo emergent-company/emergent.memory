@@ -286,3 +286,41 @@ func (h *SessionHandler) ListMessages(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, result)
 }
+
+// ImportSession godoc
+// @Summary      Bulk import a conversation session
+// @Description  Atomically creates a Session object and all Message objects with has_message relationships in a single transaction. Pass session_id for idempotent re-imports.
+// @Tags         sessions
+// @Accept       json
+// @Produce      json
+// @Param        project_id  query    string                        true  "Project ID"
+// @Param        body        body     graph.ImportSessionRequest    true  "Import payload"
+// @Success      201         {object} graph.ImportSessionResponse
+// @Failure      400         {object} apperror.Error "Invalid parameters"
+// @Failure      401         {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/sessions/import [post]
+// @Security     bearerAuth
+func (h *SessionHandler) ImportSession(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req ImportSessionRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.ImportSession(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
