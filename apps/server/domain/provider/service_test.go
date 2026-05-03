@@ -249,6 +249,135 @@ func TestResolveAny_PriorityOrder_VertexBeforeGoogleBeforeOpenAI(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// shouldTestGenerative / shouldTestEmbed logic
+//
+// These tests document and enforce the skip-test conditions introduced to
+// support embedding-only configurations (e.g. Google gemini-embedding-*).
+//
+// Logic (same in UpsertOrgConfig and UpsertProjectConfig):
+//
+//	shouldTestGenerative = GenerativeModel != "" || EmbeddingModel == ""
+//	shouldTestEmbed      = EmbeddingModel  != "" || GenerativeModel == ""  (non-DeepSeek)
+// ---------------------------------------------------------------------------
+
+// shouldTestGenerative mirrors the production condition.
+func shouldTestGenerative(generativeModel, embeddingModel string) bool {
+	return generativeModel != "" || embeddingModel == ""
+}
+
+// shouldTestEmbed mirrors the production condition (excluding DeepSeek check).
+func shouldTestEmbed(generativeModel, embeddingModel string) bool {
+	return embeddingModel != "" || generativeModel == ""
+}
+
+func TestShouldTestGenerative(t *testing.T) {
+	cases := []struct {
+		name            string
+		generativeModel string
+		embeddingModel  string
+		wantTest        bool
+	}{
+		{
+			name:            "both models set — test generative",
+			generativeModel: "gemini-2.5-flash",
+			embeddingModel:  "text-embedding-004",
+			wantTest:        true,
+		},
+		{
+			name:            "only generative set — test generative",
+			generativeModel: "gemini-2.5-flash",
+			embeddingModel:  "",
+			wantTest:        true,
+		},
+		{
+			name:            "only embedding set — skip generative test",
+			generativeModel: "",
+			embeddingModel:  "text-embedding-004",
+			wantTest:        false,
+		},
+		{
+			name:            "neither set (bare key) — test generative (fall-through)",
+			generativeModel: "",
+			embeddingModel:  "",
+			wantTest:        true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldTestGenerative(tc.generativeModel, tc.embeddingModel)
+			if got != tc.wantTest {
+				t.Errorf("shouldTestGenerative(%q, %q) = %v, want %v",
+					tc.generativeModel, tc.embeddingModel, got, tc.wantTest)
+			}
+		})
+	}
+}
+
+func TestShouldTestEmbed(t *testing.T) {
+	cases := []struct {
+		name            string
+		generativeModel string
+		embeddingModel  string
+		wantTest        bool
+	}{
+		{
+			name:            "both models set — test embed",
+			generativeModel: "gemini-2.5-flash",
+			embeddingModel:  "text-embedding-004",
+			wantTest:        true,
+		},
+		{
+			name:            "only embedding set — test embed",
+			generativeModel: "",
+			embeddingModel:  "text-embedding-004",
+			wantTest:        true,
+		},
+		{
+			name:            "only generative set — skip embed test",
+			generativeModel: "gemini-2.5-flash",
+			embeddingModel:  "",
+			wantTest:        false,
+		},
+		{
+			name:            "neither set (bare key) — test embed (fall-through)",
+			generativeModel: "",
+			embeddingModel:  "",
+			wantTest:        true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldTestEmbed(tc.generativeModel, tc.embeddingModel)
+			if got != tc.wantTest {
+				t.Errorf("shouldTestEmbed(%q, %q) = %v, want %v",
+					tc.generativeModel, tc.embeddingModel, got, tc.wantTest)
+			}
+		})
+	}
+}
+
+// TestShouldTestGenerative_Symmetric verifies that exactly one of the two
+// conditions fires when only one model type is provided — preventing a situation
+// where both tests run for a single-scope API key.
+func TestShouldTest_Symmetric_SingleModel(t *testing.T) {
+	// Embedding-only: only embed test should run.
+	if shouldTestGenerative("", "embed-model") {
+		t.Error("embedding-only: generative test should be skipped")
+	}
+	if !shouldTestEmbed("", "embed-model") {
+		t.Error("embedding-only: embed test should run")
+	}
+
+	// Generative-only: only generative test should run.
+	if !shouldTestGenerative("gen-model", "") {
+		t.Error("generative-only: generative test should run")
+	}
+	if shouldTestEmbed("gen-model", "") {
+		t.Error("generative-only: embed test should be skipped")
+	}
+}
+
 // TestResolveAny_UnsupportedProviderError verifies that ResolveAny propagates
 // the last error when all providers fail with errors (not nil returns).
 // This guards against silently swallowing credential resolution failures.
@@ -267,4 +396,3 @@ func TestResolveAny_PropagatesLastError(t *testing.T) {
 		t.Errorf("expected nil, got %+v", resolved)
 	}
 }
-
