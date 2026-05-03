@@ -772,9 +772,10 @@ type TraverseEdge struct {
 
 // BranchMergeRequest is the request for branch merge endpoint.
 type BranchMergeRequest struct {
-	SourceBranchID uuid.UUID `json:"source_branch_id" validate:"required"`
-	Execute        bool      `json:"execute,omitempty"`
-	Limit          *int      `json:"limit,omitempty"` // Override enumeration limit (testing)
+	SourceBranchID   uuid.UUID `json:"source_branch_id" validate:"required"`
+	Execute          bool      `json:"execute,omitempty"`
+	Limit            *int      `json:"limit,omitempty"`             // Override enumeration limit (testing)
+	ConflictStrategy string    `json:"conflict_strategy,omitempty"` // "enrich" (default), "overwrite", "preserve_target", "block"
 }
 
 // BranchMergeResponse is the response for branch merge endpoint.
@@ -782,11 +783,14 @@ type BranchMergeResponse struct {
 	TargetBranchID   *uuid.UUID                  `json:"target_branch_id,omitempty"` // nil = main graph
 	SourceBranchID   uuid.UUID                   `json:"source_branch_id"`
 	DryRun           bool                        `json:"dryRun"`
+	ConflictStrategy string                      `json:"conflict_strategy,omitempty"`
 	TotalObjects     int                         `json:"total_objects"`
 	UnchangedCount   int                         `json:"unchanged_count"`
 	AddedCount       int                         `json:"added_count"`
 	FastForwardCount int                         `json:"fast_forward_count"`
 	ConflictCount    int                         `json:"conflict_count"`
+	ResolvedCount    int                         `json:"resolved_count,omitempty"`
+	SkippedCount     int                         `json:"skipped_count,omitempty"`
 	DeletedCount     *int                        `json:"deleted_count,omitempty"`
 	Objects          []*BranchMergeObjectSummary `json:"objects"`
 	Truncated        bool                        `json:"truncated,omitempty"`
@@ -805,12 +809,14 @@ type BranchMergeResponse struct {
 // BranchMergeObjectSummary represents merge status for a single object.
 type BranchMergeObjectSummary struct {
 	CanonicalID  uuid.UUID  `json:"canonical_id"`
-	Status       string     `json:"status"` // "unchanged", "added", "fast_forward", "conflict", "deleted"
+	Status       string     `json:"status"`               // "unchanged", "added", "fast_forward", "conflict", "deleted"
+	Resolution   string     `json:"resolution,omitempty"` // "enriched", "overwritten", "skipped" (set when conflict resolved)
 	SourceHeadID *uuid.UUID `json:"source_head_id,omitempty"`
 	TargetHeadID *uuid.UUID `json:"target_head_id,omitempty"`
 	SourcePaths  []string   `json:"source_paths,omitempty"`
 	TargetPaths  []string   `json:"target_paths,omitempty"`
 	Conflicts    []string   `json:"conflicts,omitempty"`
+	EnrichedKeys []string   `json:"enriched_keys,omitempty"` // keys added/updated from source (enrich strategy)
 }
 
 // BranchMergeRelationshipSummary represents merge status for a single relationship.

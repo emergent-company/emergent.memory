@@ -702,6 +702,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "boolean",
 						Description: "If true, apply the merge. Default false (dry-run).",
 					},
+					"conflict_strategy": {
+						Type:        "string",
+						Description: "How to handle conflicting objects (same key, different value). Options: \"enrich\" (default — target wins same keys, source adds new keys), \"overwrite\" (source wins all conflicting keys), \"preserve_target\" (skip conflict objects, keep target), \"block\" (abort if any conflicts exist, legacy behavior).",
+					},
 				},
 				Required: []string{"source_branch"},
 			},
@@ -2814,8 +2818,9 @@ func (s *Service) executeGraphBranchMerge(ctx context.Context, projectID string,
 	}
 
 	req := &graph.BranchMergeRequest{
-		SourceBranchID: *srcID,
-		Execute:        execute,
+		SourceBranchID:   *srcID,
+		Execute:          execute,
+		ConflictStrategy: func() string { s, _ := args["conflict_strategy"].(string); return s }(),
 	}
 	result, err := s.graphService.MergeBranch(ctx, projectUUID, targetBranchID, req)
 	if err != nil {

@@ -3382,16 +3382,44 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		truncated = true
 	}
 
+	// Normalize conflict strategy — default is "enrich".
+	strategy := req.ConflictStrategy
+	if strategy == "" {
+		strategy = "enrich"
+	}
+
+	// Pre-compute resolution for conflict summaries so dry-run shows intent.
+	resolvedCount := 0
+	skippedCount := 0
+	for _, s := range responseObjectSummaries {
+		if s.Status == "conflict" {
+			switch strategy {
+			case "enrich":
+				s.Resolution = "enriched"
+				resolvedCount++
+			case "overwrite":
+				s.Resolution = "overwritten"
+				resolvedCount++
+			case "preserve_target":
+				s.Resolution = "skipped"
+				skippedCount++
+			}
+		}
+	}
+
 	response := &BranchMergeResponse{
 		TargetBranchID:                targetBranchID, // nil = main graph
 		SourceBranchID:                req.SourceBranchID,
 		DryRun:                        !req.Execute,
+		ConflictStrategy:              strategy,
 		TotalObjects:                  len(allCanonicalIDs),
 		UnchangedCount:                unchangedCount,
 		AddedCount:                    addedCount,
 		FastForwardCount:              ffCount,
 		DeletedCount:                  &deletedCount,
 		ConflictCount:                 conflictCount,
+		ResolvedCount:                 resolvedCount,
+		SkippedCount:                  skippedCount,
 		Objects:                       responseObjectSummaries,
 		Truncated:                     truncated,
 		HardLimit:                     &hardLimit,
@@ -3403,9 +3431,10 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		Relationships:                 responseRelSummaries,
 	}
 
-	// If execute is requested and no conflicts, apply merge transactionally.
-	if req.Execute && conflictCount == 0 && relConflict == 0 {
-		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels) //nolint:staticcheck
+	// If execute is requested, apply merge transactionally.
+	// With strategy != "block", conflicts are handled by the strategy (enrich/overwrite/preserve_target).
+	if req.Execute && (conflictCount == 0 && relConflict == 0 || strategy != "block") {
+		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, strategy, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels) //nolint:staticcheck
 		if err != nil {
 			return nil, fmt.Errorf("apply merge: %w", err)
 		}
@@ -3450,6 +3479,7 @@ func (s *Service) applyMerge(
 	ctx context.Context,
 	projectID uuid.UUID,
 	targetBranchID *uuid.UUID,
+	strategy string,
 	objectSummaries []*BranchMergeObjectSummary,
 	relSummaries []*BranchMergeRelationshipSummary,
 	sourceObjects map[uuid.UUID]*BranchObjectHead,
@@ -3538,10 +3568,16 @@ func (s *Service) applyMerge(
 			if props == nil {
 				props = map[string]any{}
 			}
+			// Preserve target status unless overwrite strategy — fast_forward may
+			// differ only in status (target has a user-set status we must not stomp).
+			targetStatus := src.Status
+			if strategy != "overwrite" && prevHead.Status != nil {
+				targetStatus = prevHead.Status
+			}
 			newVersion := &GraphObject{
 				Type:       prevHead.Type,
 				Key:        src.Key,
-				Status:     src.Status,
+				Status:     targetStatus,
 				Labels:     labels,
 				Properties: props,
 				ProjectID:  projectID,
@@ -3549,6 +3585,76 @@ func (s *Service) applyMerge(
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
+			}
+			appliedCount++
+			defer s.enqueueEmbedding(ctx, cid.String())
+
+		case "conflict":
+			if strategy == "preserve_target" {
+				// Skip — target object is kept as-is, nothing to write.
+				continue
+			}
+			src := sourceObjects[cid]
+			tgt := targetObjects[cid]
+			if src == nil || tgt == nil {
+				continue
+			}
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, targetBranchID)
+			if err != nil {
+				return 0, fmt.Errorf("get target head for conflict %s: %w", cid, err)
+			}
+			var mergedProps map[string]any
+			var mergeResolution string
+			var enrichedKeys []string
+			switch strategy {
+			case "overwrite":
+				// Source wins all conflicting keys.
+				mergedProps = mergeProps(tgt.Properties, src.Properties)
+				mergeResolution = "overwritten"
+			default: // "enrich"
+				// Target wins same keys; source adds new keys only.
+				mergedProps = mergeProps(src.Properties, tgt.Properties)
+				mergeResolution = "enriched"
+				// Collect keys that came from source (keys in src not in tgt).
+				for k := range src.Properties {
+					if _, exists := tgt.Properties[k]; !exists {
+						enrichedKeys = append(enrichedKeys, k)
+					}
+				}
+			}
+			// Status: preserve target unless overwrite.
+			resolvedStatus := tgt.Status
+			if strategy == "overwrite" {
+				resolvedStatus = src.Status
+			}
+			labels := tgt.Labels
+			if strategy == "overwrite" {
+				labels = src.Labels
+			}
+			if labels == nil {
+				labels = []string{}
+			}
+			// Build change_summary provenance.
+			changeSummary := map[string]any{
+				"source":     "merge",
+				"strategy":   strategy,
+				"resolution": mergeResolution,
+			}
+			if len(enrichedKeys) > 0 {
+				changeSummary["enriched_keys"] = enrichedKeys
+			}
+			newVersion := &GraphObject{
+				Type:          prevHead.Type,
+				Key:           tgt.Key,
+				Status:        resolvedStatus,
+				Labels:        labels,
+				Properties:    mergedProps,
+				ProjectID:     projectID,
+				BranchID:      targetBranchID,
+				ChangeSummary: changeSummary,
+			}
+			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
+				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
 			}
 			appliedCount++
 			defer s.enqueueEmbedding(ctx, cid.String())
@@ -3642,6 +3748,21 @@ func (s *Service) applyMerge(
 }
 
 // Helper functions for branch merge
+
+// mergeProps merges two property maps: base is the starting set, overlay wins on
+// same keys. Returns a new map (does not mutate inputs).
+// Use mergeProps(source, target) for enrich (target wins same keys, source adds new).
+// Use mergeProps(target, source) for overwrite (source wins same keys).
+func mergeProps(base, overlay map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(overlay))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range overlay {
+		merged[k] = v
+	}
+	return merged
+}
 
 func bytesEqual(a, b []byte) bool {
 	if len(a) != len(b) {
