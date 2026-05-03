@@ -213,11 +213,15 @@ func (s *Session) close() {
 // Service — session registry
 // -----------------------------------------------------------------------------
 
+// RelayChangeCallback is notified when a relay session is registered or unregistered.
+type RelayChangeCallback func(projectID, instanceID string, isRegister bool)
+
 // Service manages all active relay sessions, keyed by (projectID, instanceID).
 type Service struct {
-	log      *slog.Logger
-	mu       sync.RWMutex
-	sessions map[string]*Session // key: projectID+"/"+instanceID
+	log              *slog.Logger
+	mu               sync.RWMutex
+	sessions         map[string]*Session // key: projectID+"/"+instanceID
+	onChangeCallbacks []RelayChangeCallback
 }
 
 // NewService creates a new relay service.
@@ -226,6 +230,15 @@ func NewService(log *slog.Logger) *Service {
 		log:      log,
 		sessions: make(map[string]*Session),
 	}
+}
+
+// OnChange registers a callback that is invoked whenever a relay session
+// is registered or unregistered.  Callbacks are called with the projectID,
+// instanceID, and a boolean (true = registered, false = unregistered).
+func (s *Service) OnChange(cb RelayChangeCallback) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onChangeCallbacks = append(s.onChangeCallbacks, cb)
 }
 
 func sessionKey(projectID, instanceID string) string {
@@ -240,12 +253,16 @@ func (s *Service) Register(sess *Session) {
 		old.close()
 	}
 	s.sessions[key] = sess
+	callbacks := append([]RelayChangeCallback(nil), s.onChangeCallbacks...)
 	s.mu.Unlock()
 	s.log.Info("mcprelay: instance registered",
 		slog.String("project_id", sess.ProjectID),
 		slog.String("instance_id", sess.InstanceID),
 		slog.Int("tools", len(sess.Tools)),
 	)
+	for _, cb := range callbacks {
+		cb(sess.ProjectID, sess.InstanceID, true)
+	}
 }
 
 // Unregister removes the session.
@@ -256,6 +273,7 @@ func (s *Service) Unregister(projectID, instanceID string) {
 	if ok {
 		delete(s.sessions, key)
 	}
+	callbacks := append([]RelayChangeCallback(nil), s.onChangeCallbacks...)
 	s.mu.Unlock()
 	if ok {
 		sess.close()
@@ -263,6 +281,9 @@ func (s *Service) Unregister(projectID, instanceID string) {
 			slog.String("project_id", projectID),
 			slog.String("instance_id", instanceID),
 		)
+	}
+	for _, cb := range callbacks {
+		cb(projectID, instanceID, false)
 	}
 }
 

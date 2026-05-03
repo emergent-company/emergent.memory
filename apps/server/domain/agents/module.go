@@ -49,6 +49,7 @@ var Module = fx.Module("agents",
 		registerSessionTitleHandler,
 		registerToolPoolInvalidator,
 		registerOrgToolPoolInvalidator,
+		registerRelayToolPoolInvalidator,
 		registerStaleRunReaper,
 	),
 )
@@ -210,6 +211,15 @@ func registerToolPoolInvalidator(registryService *mcpregistry.Service, toolPool 
 // so that org-level tool setting changes automatically invalidate the ToolPool cache.
 func registerOrgToolPoolInvalidator(orgService *orgs.Service, toolPool *ToolPool) {
 	orgService.SetToolPoolInvalidator(toolPool)
+}
+
+// registerRelayToolPoolInvalidator wires the ToolPool into the mcprelay service
+// so that relay session registrations/unregistrations automatically invalidate
+// the ToolPool cache for the affected project.
+func registerRelayToolPoolInvalidator(relayService *mcprelay.Service, toolPool *ToolPool) {
+	relayService.OnChange(func(projectID, instanceID string, isRegister bool) {
+		toolPool.InvalidateCache(projectID)
+	})
 }
 
 // provideWorkerPool creates a WorkerPool from fx dependencies.
