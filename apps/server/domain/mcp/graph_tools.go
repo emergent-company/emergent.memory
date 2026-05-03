@@ -45,6 +45,10 @@ func (s *Service) getTypesForNamespace(ctx context.Context, projectID string, na
 		return nil, fmt.Errorf("namespace type lookup: %w", err)
 	}
 
+	if len(rows) == 0 {
+		// No schema types registered for this namespace filter — treat as unfiltered.
+		return nil, nil
+	}
 	allowed := make(map[string]bool, len(rows))
 	for _, r := range rows {
 		allowed[r.TypeName] = true
