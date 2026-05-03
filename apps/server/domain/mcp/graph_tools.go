@@ -56,6 +56,43 @@ func (s *Service) getTypesForNamespace(ctx context.Context, projectID string, na
 	return allowed, nil
 }
 
+// getSystemNamespaceTypes returns the set of type names that have any non-null namespace
+// set in the schema registry. These types should be excluded from default (no-namespace)
+// searches regardless of whether any non-system types are registered.
+// Returns nil (no blocklist) when namespace filter is "all" or a specific namespace is requested.
+func (s *Service) getSystemNamespaceTypes(ctx context.Context, projectID string, namespaceFilter string) (map[string]bool, error) {
+	// Only apply blocklist for the default (no namespace) case.
+	if namespaceFilter != "" {
+		return nil, nil
+	}
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	type row struct {
+		TypeName string `bun:"type_name"`
+	}
+	var rows []row
+	_, err = s.db.NewRaw(`
+		SELECT type_name FROM kb.project_object_schema_registry
+		WHERE project_id = ? AND namespace IS NOT NULL AND enabled = true
+	`, projectUUID).Exec(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("system namespace type lookup: %w", err)
+	}
+
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	blocked := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		blocked[r.TypeName] = true
+	}
+	return blocked, nil
+}
+
 // executeHybridSearch performs hybrid search (FTS + vector + graph context + relationship embeddings)
 func (s *Service) executeHybridSearch(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -103,6 +140,13 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		return nil, err
 	}
 
+	// Always block system-namespaced types from default searches, even when no
+	// non-system types are registered (allowedTypes == nil).
+	blockedTypes, err := s.getSystemNamespaceTypes(ctx, projectID, namespaceFilter)
+	if err != nil {
+		return nil, err
+	}
+
 	if s.searchSvc != nil {
 		unifiedReq := &search.UnifiedSearchRequest{
 			Query: query,
@@ -129,7 +173,7 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 				"project_id", projectID,
 			)
 		} else {
-			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, labels, allowedTypes))
+			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, labels, allowedTypes, blockedTypes))
 		}
 	}
 
@@ -158,17 +202,22 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 		return nil, fmt.Errorf("hybrid search: %w", err)
 	}
 
-	// Post-hoc namespace filter for fallback path
-	if allowedTypes != nil {
-		filtered := results.Data[:0]
-		for _, item := range results.Data {
-			if item.Object != nil && allowedTypes[item.Object.Type] {
-				filtered = append(filtered, item)
-			}
+	// Post-hoc namespace filter for fallback path: apply both allowlist and blocklist.
+	filtered := results.Data[:0]
+	for _, item := range results.Data {
+		if item.Object == nil {
+			continue
 		}
-		results.Data = filtered
-		results.Total = len(filtered)
+		if allowedTypes != nil && !allowedTypes[item.Object.Type] {
+			continue
+		}
+		if blockedTypes != nil && blockedTypes[item.Object.Type] {
+			continue
+		}
+		filtered = append(filtered, item)
 	}
+	results.Data = filtered
+	results.Total = len(filtered)
 
 	return s.wrapResult(results)
 }
@@ -176,7 +225,7 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 // mapUnifiedToSearchResponse converts unified search results back to graph.SearchResponse
 // for backward compatibility with existing MCP consumers. Relationship results are included
 // as additional items with a synthetic object wrapper.
-func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, types, labels []string, allowedTypes map[string]bool) *graph.SearchResponse {
+func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, types, labels []string, allowedTypes map[string]bool, blockedTypes map[string]bool) *graph.SearchResponse {
 	var items []*graph.SearchResultItem
 
 	for _, r := range res.Results {
@@ -186,6 +235,9 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 				continue
 			}
 			if allowedTypes != nil && !allowedTypes[r.ObjectType] {
+				continue
+			}
+			if blockedTypes != nil && blockedTypes[r.ObjectType] {
 				continue
 			}
 
@@ -308,6 +360,11 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 		return nil, err
 	}
 
+	blockedTypes, err := s.getSystemNamespaceTypes(ctx, projectID, namespaceFilter)
+	if err != nil {
+		return nil, err
+	}
+
 	// Prefer search.Service which auto-embeds the query text, giving the vector
 	// leg full signal even for multi-word queries that FTS can't match well.
 	if s.searchSvc != nil {
@@ -320,7 +377,7 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 			s.log.WarnContext(ctx, "unified search failed in semantic_search, falling back",
 				"error", err, "project_id", projectID)
 		} else {
-			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, nil, allowedTypes))
+			return s.wrapResult(s.mapUnifiedToSearchResponse(res, types, nil, allowedTypes, blockedTypes))
 		}
 	}
 
@@ -337,17 +394,22 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 		return nil, fmt.Errorf("semantic search: %w", err)
 	}
 
-	// Post-hoc namespace filter for fallback path
-	if allowedTypes != nil {
-		filtered := results.Data[:0]
-		for _, item := range results.Data {
-			if item.Object != nil && allowedTypes[item.Object.Type] {
-				filtered = append(filtered, item)
-			}
+	// Post-hoc namespace filter for fallback path: apply both allowlist and blocklist.
+	filtered := results.Data[:0]
+	for _, item := range results.Data {
+		if item.Object == nil {
+			continue
 		}
-		results.Data = filtered
-		results.Total = len(filtered)
+		if allowedTypes != nil && !allowedTypes[item.Object.Type] {
+			continue
+		}
+		if blockedTypes != nil && blockedTypes[item.Object.Type] {
+			continue
+		}
+		filtered = append(filtered, item)
 	}
+	results.Data = filtered
+	results.Total = len(filtered)
 
 	return s.wrapResult(results)
 }

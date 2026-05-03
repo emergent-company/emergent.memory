@@ -2517,10 +2517,19 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		namespaceFilter, _ := args["namespace"].(string)
 		namespaceJoin := `LEFT JOIN kb.project_object_schema_registry tr ON tr.type_name = go.type AND tr.project_id = go.project_id`
 		namespaceClause := "AND (tr.namespace IS NULL OR tr.id IS NULL)"
+		// Also exclude types that are registered with ANY non-null namespace (defense-in-depth:
+		// catches objects whose type IS in the registry with namespace='system' but the LEFT JOIN
+		// matched a registry row from a different project, or any future namespace value).
+		systemExclusionClause := `AND go.type NOT IN (
+				SELECT type_name FROM kb.project_object_schema_registry
+				WHERE project_id = ? AND namespace IS NOT NULL AND enabled = true
+			)`
 		if namespaceFilter == "all" {
 			namespaceClause = ""
+			systemExclusionClause = ""
 		} else if namespaceFilter != "" {
 			namespaceClause = "AND tr.namespace = ?"
+			systemExclusionClause = ""
 		}
 
 		baseQuery := `
@@ -2545,10 +2554,14 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 				)
 				` + branchFilter + `
 				` + namespaceClause + `
+				` + systemExclusionClause + `
 		`
 		queryArgs := append([]any{projectUUID, searchPattern, searchPattern, searchPattern}, branchArgs...)
 		if namespaceFilter != "all" && namespaceFilter != "" {
 			queryArgs = append(queryArgs, namespaceFilter)
+		} else if namespaceFilter == "" {
+			// systemExclusionClause subquery needs project_id
+			queryArgs = append(queryArgs, projectUUID)
 		}
 
 		if typeName != "" {
