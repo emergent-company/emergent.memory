@@ -2888,7 +2888,11 @@ func (s *Service) executeGetSessionMessages(ctx context.Context, projectID strin
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
+	// Accept both snake_case and camelCase — LLMs sometimes send sessionId.
 	sessionIDStr, ok := args["session_id"].(string)
+	if !ok || sessionIDStr == "" {
+		sessionIDStr, ok = args["sessionId"].(string)
+	}
 	if !ok || sessionIDStr == "" {
 		return nil, fmt.Errorf("missing required parameter: session_id")
 	}
