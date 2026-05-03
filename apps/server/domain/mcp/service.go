@@ -86,6 +86,9 @@ type Service struct {
 	// Session todos service (for session-todo-list and session-todo-update tools)
 	sessionTodoSvc *sessiontodos.Service
 
+	// graphSessionSvc for session-get-messages tool
+	graphSessionSvc *graph.SessionService
+
 	// Embedding worker controller (for pause/resume/config tools)
 	// Typed as interface to avoid import cycle with extraction package.
 	embeddingCtl EmbeddingControlHandler
@@ -128,6 +131,7 @@ type ServiceParams struct {
 	JournalSvc         *journal.Service
 	SchemasSvc         *schemas.Service
 	SessionTodoSvc     *sessiontodos.Service
+	GraphSessionSvc    *graph.SessionService
 }
 
 // NewService creates a new MCP service
@@ -160,6 +164,7 @@ func NewService(p ServiceParams) *Service {
 		journalSvc:         p.JournalSvc,
 		schemasSvc:         p.SchemasSvc,
 		sessionTodoSvc:     p.SessionTodoSvc,
+		graphSessionSvc:    p.GraphSessionSvc,
 	}
 }
 
@@ -662,6 +667,28 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 				},
 				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:        "session-get-messages",
+			Description: "Get messages from a graph session. Returns paginated messages with role, content, speaker, and sequence_number. Use this to read conversation history stored as graph Session/Message objects.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"session_id": {
+						Type:        "string",
+						Description: "UUID of the graph session to fetch messages from",
+					},
+					"limit": {
+						Type:        "integer",
+						Description: "Maximum number of messages to return (default 50)",
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Pagination cursor from a previous response",
+					},
+				},
+				Required: []string{"session_id"},
 			},
 		},
 		{
@@ -1239,6 +1266,8 @@ var readOnlyToolNames = map[string]bool{
 	"search-knowledge": true,
 	// Journal (read)
 	"journal-list": true,
+	// Session messages (read)
+	"session-get-messages": true,
 }
 
 // isReadOnlyToken returns true when the token has only read scopes and no write scopes.
@@ -1374,6 +1403,8 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeDeleteEntity(ctx, projectID, args)
 	case "entity-restore":
 		return s.executeRestoreEntity(ctx, projectID, args)
+	case "session-get-messages":
+		return s.executeGetSessionMessages(ctx, projectID, args)
 	case "graph-branch-list":
 		return s.executeGraphBranchList(ctx, projectID)
 	case "graph-branch-create":
@@ -2830,6 +2861,53 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 		"success": true,
 		"entity":  result,
 		"message": "Entity restored successfully",
+	})
+}
+
+// executeGetSessionMessages fetches messages from a graph session.
+func (s *Service) executeGetSessionMessages(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.graphSessionSvc == nil {
+		return nil, fmt.Errorf("session service not available")
+	}
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	sessionIDStr, ok := args["session_id"].(string)
+	if !ok || sessionIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: session_id")
+	}
+	sessionUUID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session_id: %w", err)
+	}
+
+	limit := 50
+	if v, ok := args["limit"]; ok {
+		switch n := v.(type) {
+		case float64:
+			limit = int(n)
+		case int:
+			limit = n
+		}
+	}
+
+	var cursor *string
+	if c, ok := args["cursor"].(string); ok && c != "" {
+		cursor = &c
+	}
+
+	result, err := s.graphSessionSvc.ListMessages(ctx, projectUUID, sessionUUID, limit, cursor)
+	if err != nil {
+		return nil, fmt.Errorf("get session messages: %w", err)
+	}
+
+	return s.wrapResult(map[string]any{
+		"items":       result.Items,
+		"next_cursor": result.NextCursor,
+		"total":       result.Total,
 	})
 }
 
