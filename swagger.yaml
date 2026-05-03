@@ -1431,6 +1431,11 @@ definitions:
         type: string
       id:
         type: string
+      jobIds:
+        description: Job IDs of all extraction jobs run on this document
+        items:
+          type: string
+        type: array
       lastExtractionAt:
         description: Compact extraction summary (from most recent completed extraction
           job)
@@ -1490,6 +1495,10 @@ definitions:
         type: boolean
       jobId:
         type: string
+      objectIds:
+        items:
+          type: string
+        type: array
       objectsByType:
         additionalProperties:
           type: integer
@@ -1663,6 +1672,9 @@ definitions:
     type: object
   domain_graph.BranchMergeRequest:
     properties:
+      conflict_strategy:
+        description: '"enrich" (default), "overwrite", "preserve_target", "block"'
+        type: string
       execute:
         type: boolean
       limit:
@@ -2337,6 +2349,61 @@ definitions:
         type: number
     required:
     - query
+    type: object
+  domain_graph.ImportSessionMessageRequest:
+    properties:
+      content:
+        type: string
+      role:
+        description: user, assistant, system (optional)
+        type: string
+      speaker:
+        description: participant name
+        type: string
+      timestamp:
+        description: RFC3339
+        type: string
+    type: object
+  domain_graph.ImportSessionRequest:
+    properties:
+      date:
+        description: RFC3339 session date
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      messages:
+        items:
+          $ref: '#/definitions/domain_graph.ImportSessionMessageRequest'
+        type: array
+      metadata:
+        additionalProperties: {}
+        description: arbitrary extra properties on Session
+        type: object
+      participants:
+        description: participant names
+        items:
+          type: string
+        type: array
+      session_id:
+        description: used as object key for idempotency
+        type: string
+      title:
+        description: defaults to session_id
+        type: string
+      trigger_extraction:
+        type: boolean
+    type: object
+  domain_graph.ImportSessionResponse:
+    properties:
+      extraction_job_id:
+        type: string
+      message_count:
+        type: integer
+      session_id:
+        description: object canonical_id
+        type: string
     type: object
   domain_graph.ListMessagesResponse:
     properties:
@@ -3314,6 +3381,10 @@ definitions:
     properties:
       completed_at:
         type: string
+      created_object_ids:
+        items:
+          type: string
+        type: array
       duration_ms:
         type: integer
       error_message:
@@ -3375,6 +3446,10 @@ definitions:
     properties:
       completed_at:
         type: string
+      created_object_ids:
+        items:
+          type: string
+        type: array
       duration_ms:
         type: integer
       error_message:
@@ -6520,7 +6595,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.40.56
+  version: 0.40.64
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -10835,6 +10910,45 @@ paths:
       security:
       - bearerAuth: []
       summary: Spawn a child session
+      tags:
+      - sessions
+  /api/graph/sessions/import:
+    post:
+      consumes:
+      - application/json
+      description: Atomically creates a Session object and all Message objects with
+        has_message relationships in a single transaction. Pass session_id for idempotent
+        re-imports.
+      parameters:
+      - description: Project ID
+        in: query
+        name: project_id
+        required: true
+        type: string
+      - description: Import payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_graph.ImportSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_graph.ImportSessionResponse'
+        "400":
+          description: Invalid parameters
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Bulk import a conversation session
       tags:
       - sessions
   /api/graph/subgraph:
