@@ -6328,6 +6328,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/graph/sessions/import": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Atomically creates a Session object and all Message objects with has_message relationships in a single transaction. Pass session_id for idempotent re-imports.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Bulk import a conversation session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "description": "Import payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ImportSessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_graph.ImportSessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/graph/sessions/{id}": {
             "get": {
                 "security": [
@@ -19854,6 +19912,13 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "jobIds": {
+                    "description": "Job IDs of all extraction jobs run on this document",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "lastExtractionAt": {
                     "description": "Compact extraction summary (from most recent completed extraction job)",
                     "type": "string"
@@ -19936,6 +20001,12 @@ const docTemplate = `{
                 },
                 "jobId": {
                     "type": "string"
+                },
+                "objectIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "objectsByType": {
                     "type": "object",
@@ -20201,6 +20272,10 @@ const docTemplate = `{
                 "source_branch_id"
             ],
             "properties": {
+                "conflict_strategy": {
+                    "description": "\"enrich\" (default), \"overwrite\", \"preserve_target\", \"block\"",
+                    "type": "string"
+                },
                 "execute": {
                     "type": "boolean"
                 },
@@ -21182,6 +21257,85 @@ const docTemplate = `{
                 },
                 "vectorWeight": {
                     "type": "number"
+                }
+            }
+        },
+        "domain_graph.ImportSessionMessageRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "role": {
+                    "description": "user, assistant, system (optional)",
+                    "type": "string"
+                },
+                "speaker": {
+                    "description": "participant name",
+                    "type": "string"
+                },
+                "timestamp": {
+                    "description": "RFC3339",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_graph.ImportSessionRequest": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "description": "RFC3339 session date",
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_graph.ImportSessionMessageRequest"
+                    }
+                },
+                "metadata": {
+                    "description": "arbitrary extra properties on Session",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "participants": {
+                    "description": "participant names",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "session_id": {
+                    "description": "used as object key for idempotency",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "defaults to session_id",
+                    "type": "string"
+                },
+                "trigger_extraction": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_graph.ImportSessionResponse": {
+            "type": "object",
+            "properties": {
+                "extraction_job_id": {
+                    "type": "string"
+                },
+                "message_count": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "description": "object canonical_id",
+                    "type": "string"
                 }
             }
         },
@@ -22631,6 +22785,12 @@ const docTemplate = `{
                 "completed_at": {
                     "type": "string"
                 },
+                "created_object_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "duration_ms": {
                     "type": "integer"
                 },
@@ -22723,6 +22883,12 @@ const docTemplate = `{
             "properties": {
                 "completed_at": {
                     "type": "string"
+                },
+                "created_object_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "duration_ms": {
                     "type": "integer"
@@ -27426,7 +27592,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.40.56",
+	Version:          "0.40.64",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
