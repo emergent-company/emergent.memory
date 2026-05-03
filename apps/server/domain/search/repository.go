@@ -88,7 +88,7 @@ func (r *Repository) LexicalSearch(ctx context.Context, params TextSearchParams)
 
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
-			   ts_rank(c.tsv, websearch_to_tsquery('simple', ?)) AS score
+			   ts_rank_cd(c.tsv, websearch_to_tsquery('simple', ?), 32) AS score
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.tsv @@ websearch_to_tsquery('simple', ?)
@@ -233,7 +233,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	// Execute lexical search
 	lexicalQuery := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
-			   ts_rank(c.tsv, websearch_to_tsquery('simple', ?)) AS score
+			   ts_rank_cd(c.tsv, websearch_to_tsquery('simple', ?), 32) AS score
 		FROM kb.chunks c
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.tsv @@ websearch_to_tsquery('simple', ?)

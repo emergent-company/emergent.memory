@@ -1357,7 +1357,7 @@ type FTSSearchResult struct {
 }
 
 // FTSSearch performs full-text search using PostgreSQL's websearch_to_tsquery.
-// Returns objects sorted by relevance (ts_rank).
+// Returns objects sorted by relevance (ts_rank_cd with length normalization).
 func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
@@ -1388,10 +1388,12 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 
 	whereClause := buildWhereClause(conditions)
 
-	// Build the query with ts_rank
+	// Build the query with ts_rank_cd (cover density) + normalization flag 32 (divide by doc length).
+	// ts_rank_cd rewards documents where query terms appear close together and cover the query well.
+	// Flag 32 normalizes by document length, preventing short rare-term docs from dominating.
 	query := `
 		SELECT ` + graphObjectColumns + `,
-			ts_rank(fts, websearch_to_tsquery('simple', ?)) AS rank
+			ts_rank_cd(fts, websearch_to_tsquery('simple', ?), 32) AS rank
 		FROM kb.graph_objects
 		` + whereClause + `
 		ORDER BY rank DESC
