@@ -213,11 +213,16 @@ func (s *Session) close() {
 // Service — session registry
 // -----------------------------------------------------------------------------
 
+// RelayChangeCallback is called when a relay session registers or unregisters.
+// registered is true on Register, false on Unregister.
+type RelayChangeCallback func(projectID string, registered bool)
+
 // Service manages all active relay sessions, keyed by (projectID, instanceID).
 type Service struct {
-	log      *slog.Logger
-	mu       sync.RWMutex
-	sessions map[string]*Session // key: projectID+"/"+instanceID
+	log               *slog.Logger
+	mu                sync.RWMutex
+	sessions          map[string]*Session // key: projectID+"/"+instanceID
+	onChangeCallbacks []RelayChangeCallback
 }
 
 // NewService creates a new relay service.
@@ -225,6 +230,25 @@ func NewService(log *slog.Logger) *Service {
 	return &Service{
 		log:      log,
 		sessions: make(map[string]*Session),
+	}
+}
+
+// OnChange registers a callback that is called after every Register or Unregister.
+// Callbacks are invoked outside the service lock.
+func (s *Service) OnChange(cb RelayChangeCallback) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onChangeCallbacks = append(s.onChangeCallbacks, cb)
+}
+
+// fireChange calls all registered callbacks outside the lock.
+func (s *Service) fireChange(projectID string, registered bool) {
+	s.mu.RLock()
+	cbs := make([]RelayChangeCallback, len(s.onChangeCallbacks))
+	copy(cbs, s.onChangeCallbacks)
+	s.mu.RUnlock()
+	for _, cb := range cbs {
+		cb(projectID, registered)
 	}
 }
 
@@ -246,6 +270,7 @@ func (s *Service) Register(sess *Session) {
 		slog.String("instance_id", sess.InstanceID),
 		slog.Int("tools", len(sess.Tools)),
 	)
+	s.fireChange(sess.ProjectID, true)
 }
 
 // Unregister removes the session.
@@ -263,6 +288,7 @@ func (s *Service) Unregister(projectID, instanceID string) {
 			slog.String("project_id", projectID),
 			slog.String("instance_id", instanceID),
 		)
+		s.fireChange(projectID, false)
 	}
 }
 

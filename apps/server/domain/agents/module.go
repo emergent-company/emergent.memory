@@ -9,8 +9,8 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
-	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -49,6 +49,7 @@ var Module = fx.Module("agents",
 		registerSessionTitleHandler,
 		registerToolPoolInvalidator,
 		registerOrgToolPoolInvalidator,
+		registerRelayToolPoolInvalidator,
 		registerStaleRunReaper,
 	),
 )
@@ -210,6 +211,14 @@ func registerToolPoolInvalidator(registryService *mcpregistry.Service, toolPool 
 // so that org-level tool setting changes automatically invalidate the ToolPool cache.
 func registerOrgToolPoolInvalidator(orgService *orgs.Service, toolPool *ToolPool) {
 	orgService.SetToolPoolInvalidator(toolPool)
+}
+
+// registerRelayToolPoolInvalidator wires relay session connect/disconnect events
+// to ToolPool cache invalidation so the pool never serves stale relay tool lists.
+func registerRelayToolPoolInvalidator(relayService *mcprelay.Service, toolPool *ToolPool) {
+	relayService.OnChange(func(projectID string, _ bool) {
+		toolPool.InvalidateCache(projectID)
+	})
 }
 
 // provideWorkerPool creates a WorkerPool from fx dependencies.
