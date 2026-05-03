@@ -1456,8 +1456,16 @@ func (h *Handler) HybridSearch(c echo.Context) error {
 		}
 	}
 
+	// Enrich context with project/org IDs so downstream embedding resolver
+	// can look up per-project provider credentials (used by auto-embed).
+	ctx := c.Request().Context()
+	ctx = auth.ContextWithProjectID(ctx, projectID.String())
+	if user.OrgID != "" {
+		ctx = auth.ContextWithOrgID(ctx, user.OrgID)
+	}
+
 	opts := &HybridSearchOptions{Debug: wantsDebug}
-	result, err := h.svc.HybridSearch(c.Request().Context(), projectID, &req, opts)
+	result, err := h.svc.HybridSearch(ctx, projectID, &req, opts)
 	if err != nil {
 		return err
 	}
