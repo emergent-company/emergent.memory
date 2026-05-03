@@ -888,6 +888,7 @@ func (s *ObjectExtractionJobsService) TriggerForDocument(ctx context.Context, pr
 	_, err := s.CreateJob(ctx, CreateObjectExtractionJobOptions{
 		ProjectID:  projectID,
 		DocumentID: &documentID,
+		SourceID:   &documentID,
 		JobType:    JobTypeFullExtraction,
 		SourceType: func() *string { v := "document"; return &v }(),
 	})

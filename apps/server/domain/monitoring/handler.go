@@ -70,6 +70,10 @@ func (h *Handler) ListExtractionJobs(c echo.Context) error {
 		params.SourceType = &sourceType
 	}
 
+	if sourceID := c.QueryParam("source_id"); sourceID != "" {
+		params.SourceID = &sourceID
+	}
+
 	if dateFrom := c.QueryParam("date_from"); dateFrom != "" {
 		if t, err := time.Parse(time.RFC3339, dateFrom); err == nil {
 			params.DateFrom = &t

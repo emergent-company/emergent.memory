@@ -26,6 +26,7 @@ type ListExtractionJobsQueryParams struct {
 	ProjectID  string
 	Status     *string
 	SourceType *string
+	SourceID   *string
 	DateFrom   *time.Time
 	DateTo     *time.Time
 	Limit      int
@@ -51,6 +52,10 @@ func (r *Repository) ListExtractionJobs(ctx context.Context, params ListExtracti
 
 	if params.SourceType != nil && *params.SourceType != "" {
 		query = query.Where("source_type = ?", *params.SourceType)
+	}
+
+	if params.SourceID != nil && *params.SourceID != "" {
+		query = query.Where("source_id = ?", *params.SourceID)
 	}
 
 	if params.DateFrom != nil {
