@@ -8,6 +8,20 @@ import (
 // acpSessionIDKey is the context key for propagating ACP session ID into tool execution.
 type acpSessionIDKey struct{}
 
+// RelaySession is a minimal view of a connected MCP relay session.
+type RelaySession struct {
+	ProjectID  string
+	InstanceID string
+	Tools      map[string]any // raw tools/list result from the relay
+}
+
+// RelayToolProvider is the interface for querying connected MCP relay sessions.
+// Implemented by mcprelay.Service — defined here to avoid a circular import.
+type RelayToolProvider interface {
+	ListByProject(projectID string) []*RelaySession
+	CallTool(ctx context.Context, projectID, instanceID, toolName string, args map[string]any) (map[string]any, error)
+}
+
 // SessionTitleHandler is the interface for updating ACP session titles.
 // Implemented by the agents domain to avoid circular imports.
 type SessionTitleHandler interface {

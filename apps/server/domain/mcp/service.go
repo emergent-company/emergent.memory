@@ -93,6 +93,10 @@ type Service struct {
 	// Session title handler (injected to break import cycle with agents domain)
 	sessionTitleHandler SessionTitleHandler
 
+	// relaySvc provides tools from connected MCP relay sessions (e.g. Diane, AirMCP).
+	// Injected via SetRelayProvider after construction to avoid circular import.
+	relaySvc RelayToolProvider
+
 	// graphObjectTitlePatcher patches graph object Properties.title when set_session_title runs.
 	// Stored as a func to avoid a circular import (mcp already imports graph).
 	graphObjectTitlePatcher func(ctx context.Context, projectID, objectID, title string) error
@@ -183,6 +187,12 @@ func (s *Service) SetMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 // SetEmbeddingControlHandler sets the embedding worker controller (injected to break import cycle with extraction).
 func (s *Service) SetEmbeddingControlHandler(h EmbeddingControlHandler) {
 	s.embeddingCtl = h
+}
+
+// SetRelayProvider wires the MCP relay service so relay-registered tools appear
+// in tools/list and relay tool calls are forwarded correctly.
+func (s *Service) SetRelayProvider(p RelayToolProvider) {
+	s.relaySvc = p
 }
 
 // GetToolDefinitions returns all available MCP tools
@@ -1193,6 +1203,13 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 		}
 	}
 
+	// Append tools from connected relay sessions for this project.
+	if s.relaySvc != nil && projectID != "" {
+		for _, sess := range s.relaySvc.ListByProject(projectID) {
+			tools = append(tools, relaySessionTools(sess)...)
+		}
+	}
+
 	return tools
 }
 
@@ -1573,8 +1590,75 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeJournalAddNote(ctx, projectID, args)
 
 	default:
+		// Attempt to route to a connected relay. Relay tools are named
+		// "{instanceID}_{toolName}" where instanceID may itself contain underscores.
+		// We try each connected session to find one whose prefix matches.
+		if s.relaySvc != nil && projectID != "" {
+			for _, sess := range s.relaySvc.ListByProject(projectID) {
+				prefix := sess.InstanceID + "_"
+				if strings.HasPrefix(toolName, prefix) {
+					relayToolName := strings.TrimPrefix(toolName, prefix)
+					result, err := s.relaySvc.CallTool(ctx, projectID, sess.InstanceID, relayToolName, args)
+					if err != nil {
+						return nil, fmt.Errorf("relay tool %q: %w", toolName, err)
+					}
+					// Convert the relay result map to a ToolResult.
+					resultBytes, _ := json.Marshal(result)
+					return &ToolResult{
+						Content: []ContentBlock{{Type: "text", Text: string(resultBytes)}},
+					}, nil
+				}
+			}
+		}
 		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
+}
+
+// relaySessionTools converts a relay session's tools/list payload into MCP ToolDefinitions
+// with names prefixed by the instance ID (e.g. "mcj-mini_github_search_repositories").
+func relaySessionTools(sess *RelaySession) []ToolDefinition {
+	if sess == nil || sess.Tools == nil {
+		return nil
+	}
+	// MCP tools/list result is { "tools": [ { "name": "...", "description": "...", "inputSchema": {...} }, ... ] }
+	raw, ok := sess.Tools["tools"]
+	if !ok {
+		return nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	prefix := sess.InstanceID + "_"
+	out := make([]ToolDefinition, 0, len(arr))
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		desc, _ := m["description"].(string)
+		if name == "" {
+			continue
+		}
+		td := ToolDefinition{
+			Name:        prefix + name,
+			Description: desc,
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		}
+		// Carry through inputSchema if present.
+		if schemaRaw, ok := m["inputSchema"]; ok {
+			if schemaBytes, err := json.Marshal(schemaRaw); err == nil {
+				_ = json.Unmarshal(schemaBytes, &td.InputSchema)
+			}
+		}
+		out = append(out, td)
+	}
+	return out
 }
 
 // executeSchemaVersion returns schema version metadata
