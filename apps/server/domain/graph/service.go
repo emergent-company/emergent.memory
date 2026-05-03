@@ -2192,6 +2192,17 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 	hasQuery := req.Query != ""
 	hasVector := len(req.Vector) > 0
 
+	// Auto-embed query when no vector is provided — mirrors unified search behavior
+	if hasQuery && !hasVector && s.embeddings != nil {
+		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		if err != nil {
+			s.log.Warn("HybridSearch: failed to auto-embed query, continuing with lexical-only", logger.Error(err))
+		} else {
+			req.Vector = vec
+			hasVector = true
+		}
+	}
+
 	if !hasQuery && !hasVector {
 		return &SearchResponse{
 			Data:    []*SearchResultItem{},
