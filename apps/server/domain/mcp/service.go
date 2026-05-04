@@ -2455,6 +2455,51 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 	return &row.ID, nil
 }
 
+// resolveOrCreateBranchID resolves a branch name or UUID to a branch UUID.
+// If the branch does not exist and branchRef is a non-UUID name, it is auto-created.
+// Returns nil when branchRef is empty (meaning: use main branch).
+func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
+	if branchRef == "" {
+		return nil, nil
+	}
+	// Try parsing as UUID first — if it's a UUID and not found, don't auto-create.
+	if id, err := uuid.Parse(branchRef); err == nil {
+		return &id, nil
+	}
+	// Look up by name.
+	type branchRow struct {
+		ID uuid.UUID `bun:"id"`
+	}
+	var row branchRow
+	err := s.db.NewSelect().
+		TableExpr("kb.branches").
+		ColumnExpr("id").
+		Where("name = ?", branchRef).
+		Where("project_id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &row)
+	if err == nil {
+		return &row.ID, nil
+	}
+	// Branch not found — auto-create it.
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch %q not found and branch service not available to auto-create", branchRef)
+	}
+	req := &branches.CreateBranchRequest{
+		ProjectID: &projectID,
+		Name:      branchRef,
+	}
+	created, createErr := s.branchSvc.Create(ctx, req)
+	if createErr != nil {
+		return nil, fmt.Errorf("branch %q not found and auto-create failed: %w", branchRef, createErr)
+	}
+	createdID, parseErr := uuid.Parse(created.ID)
+	if parseErr != nil {
+		return nil, fmt.Errorf("auto-created branch has invalid UUID %q: %w", created.ID, parseErr)
+	}
+	return &createdID, nil
+}
+
 // executeSearchEntities searches entities by text
 func (s *Service) executeSearchEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	projectUUID, err := uuid.Parse(projectID)
@@ -2766,10 +2811,10 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 		entityID = resolved
 	}
 
-	// Resolve optional branch param.
+	// Resolve optional branch param — auto-creates the branch if it does not exist.
 	var branchID *uuid.UUID
 	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveBranchID(ctx, projectID, branchRef)
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
 		if err != nil {
 			return nil, fmt.Errorf("resolve branch: %w", err)
 		}
@@ -3051,10 +3096,10 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		return nil, fmt.Errorf("invalid project_id: %w", err)
 	}
 
-	// Resolve optional branch param.
+	// Resolve optional branch param — auto-creates the branch if it does not exist.
 	var branchID *uuid.UUID
 	if branchRef, _ := args["branch"].(string); branchRef != "" {
-		branchID, err = s.resolveBranchID(ctx, projectID, branchRef)
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
 		if err != nil {
 			return nil, fmt.Errorf("resolve branch: %w", err)
 		}
