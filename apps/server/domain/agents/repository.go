@@ -1326,6 +1326,19 @@ func (r *Repository) CancelRun(ctx context.Context, runID string) error {
 	return err
 }
 
+// MarkRunResumed transitions a paused run to running state when a new resume run has been created.
+// This prevents the old paused run from appearing stuck indefinitely.
+func (r *Repository) MarkRunResumed(ctx context.Context, runID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusRunning).
+		Set("completed_at = NULL").
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusPaused).
+		Exec(ctx)
+	return err
+}
+
 // UpdateStepCount updates the step count for a running agent.
 func (r *Repository) UpdateStepCount(ctx context.Context, runID string, stepCount int) error {
 	_, err := r.db.NewUpdate().

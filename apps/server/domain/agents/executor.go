@@ -685,6 +685,17 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		return nil, fmt.Errorf("failed to create resumed run: %w", err)
 	}
 
+	// Transition the prior paused run to running so it no longer appears stuck.
+	// The new run (newRun) carries the actual execution; the prior run's role is to
+	// serve as a checkpoint that has now been resumed.
+	if err := ae.repo.MarkRunResumed(dbCtx, priorRun.ID); err != nil {
+		ae.log.Warn("failed to mark prior run as resumed",
+			slog.String("prior_run_id", priorRun.ID),
+			slog.String("new_run_id", newRun.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
 	// Establish root_run_id for resumed runs: inherit from caller or default to own ID.
 	if req.RootRunID == nil {
 		req.RootRunID = &newRun.ID

@@ -1388,12 +1388,13 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 
 	whereClause := buildWhereClause(conditions)
 
-	// Build the query with ts_rank_cd (cover density) + normalization flag 32 (divide by doc length).
+	// Build the query with ts_rank_cd (cover density) + normalization flag 1 (divide by 1+log(ndoc)).
 	// ts_rank_cd rewards documents where query terms appear close together and cover the query well.
-	// Flag 32 normalizes by document length, preventing short rare-term docs from dominating.
+	// Flag 1 (log-length normalization) is gentler than flag 32 (raw length division), preventing
+	// short documents with rare n-grams from dominating over longer documents that match all query terms.
 	query := `
 		SELECT ` + graphObjectColumns + `,
-			ts_rank_cd(fts, websearch_to_tsquery('simple', ?), 32) AS rank
+			ts_rank_cd(fts, websearch_to_tsquery('simple', ?), 1) AS rank
 		FROM kb.graph_objects
 		` + whereClause + `
 		ORDER BY rank DESC

@@ -2594,6 +2594,13 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 					slog.String("question_id", questionID),
 					slog.String("error", err.Error()),
 				)
+				// Mark the run as failed so it does not remain stuck in paused state.
+				if repoErr := h.repo.FailRunWithSteps(ctx, run.ID, fmt.Sprintf("resume failed: %s", err.Error()), run.StepCount); repoErr != nil {
+					slog.Error("failed to mark run as error after resume failure",
+						slog.String("run_id", run.ID),
+						slog.String("error", repoErr.Error()),
+					)
+				}
 			}
 		}()
 	}
