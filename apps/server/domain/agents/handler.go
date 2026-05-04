@@ -2568,6 +2568,13 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 		// Look up the agent definition (optional, may be nil)
 		agentDef, _ := h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
 
+		// Resolve OrgID — required for LLM credential resolution and ephemeral token minting.
+		// Without it, CreateModel fails silently inside runPipeline.
+		orgID := user.OrgID
+		if orgID == "" {
+			orgID, _ = h.repo.GetOrgIDByProjectID(c.Request().Context(), agent.ProjectID)
+		}
+
 		// Build the resume user message with Q&A context (task 5.4)
 		userMessage := fmt.Sprintf(
 			"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
@@ -2581,6 +2588,7 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 				Agent:           agent,
 				AgentDefinition: agentDef,
 				ProjectID:       agent.ProjectID,
+				OrgID:           orgID,
 				UserMessage:     userMessage,
 				UserID:          user.ID, // propagate for ask_user notifications
 				AuthToken:       resumeAuthToken,
