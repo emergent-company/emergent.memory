@@ -156,8 +156,8 @@ func (s *BootstrapService) createProject(ctx context.Context, tx bun.Tx, orgID, 
 	var projectID string
 
 	projectQuery := `
-		INSERT INTO kb.projects (organization_id, name, created_at, updated_at)
-		VALUES (?, ?, NOW(), NOW())
+		INSERT INTO kb.projects (organization_id, name, budget_usd, created_at, updated_at)
+		VALUES (?, ?, 10.0, NOW(), NOW())
 		RETURNING id
 	`
 

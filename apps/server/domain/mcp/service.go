@@ -4154,7 +4154,7 @@ func (s *Service) executeCreateProject(ctx context.Context, args map[string]any)
 	}
 	var row projectRow
 	err := s.db.NewRaw(
-		"INSERT INTO kb.projects (name, organization_id) VALUES (?, ?) RETURNING id, name, organization_id",
+		"INSERT INTO kb.projects (name, organization_id, budget_usd) VALUES (?, ?, 10.0) RETURNING id, name, organization_id",
 		name, orgID,
 	).Scan(ctx, &row)
 	if err != nil {
