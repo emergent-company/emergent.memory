@@ -441,6 +441,10 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 	}
 	if dto.Enabled != nil {
 		agent.Enabled = *dto.Enabled
+		// Clearing disabled_reason when re-enabling so the agent can run again.
+		if *dto.Enabled {
+			agent.DisabledReason = nil
+		}
 	}
 	if dto.CronSchedule != nil {
 		agent.CronSchedule = *dto.CronSchedule
