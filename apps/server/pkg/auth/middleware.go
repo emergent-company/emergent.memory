@@ -56,6 +56,11 @@ const (
 	ProjectContextKey contextKey = "project_context"
 )
 
+// HasScope returns true if the user has the given scope (respecting scope expansion).
+func (u *AuthUser) HasScope(scope string) bool {
+	return expandScopes(u.Scopes)[scope]
+}
+
 // GetUser retrieves the authenticated user from the Echo context
 func GetUser(c echo.Context) *AuthUser {
 	if user, ok := c.Get(string(UserContextKey)).(*AuthUser); ok {

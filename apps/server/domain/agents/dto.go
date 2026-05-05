@@ -124,6 +124,9 @@ type UpdateAgentDTO struct {
 	Config            map[string]any      `json:"config"`
 	Description       *string             `json:"description"`
 	AgentDefinitionID *string             `json:"agentDefinitionId,omitempty"`
+	// DisabledReason is admin-only: sets the reason an agent is disabled.
+	// Requires admin:write scope. Ignored for non-admin callers.
+	DisabledReason *string `json:"disabledReason,omitempty"`
 }
 
 // BatchTriggerDTO is the request DTO for batch triggering an agent
