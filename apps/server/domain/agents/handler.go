@@ -497,7 +497,7 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 
 // EnableAgent handles POST /api/projects/:projectId/agents/:id/enable
 // @Summary      Enable an agent
-// @Description  Enables an agent and clears any disabled reason (e.g. spending cap exceeded)
+// @Description  Enables an agent and clears any disabled reason (e.g. AI provider quota exhausted or project budget exceeded)
 // @Tags         agents
 // @Accept       json
 // @Produce      json

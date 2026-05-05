@@ -1631,18 +1631,18 @@ func (ae *AgentExecutor) runPipeline(
 						slog.String("error", errStr),
 					)
 					if agentID != "" {
-						if disableErr := ae.repo.DisableAgent(ctx, agentID, "spending cap exceeded"); disableErr != nil {
+						if disableErr := ae.repo.DisableAgent(ctx, agentID, "AI provider quota exhausted (RESOURCE_EXHAUSTED)"); disableErr != nil {
 							ae.log.Error("failed to disable agent after RESOURCE_EXHAUSTED",
 								slog.String("agent_id", agentID),
 								slog.String("error", disableErr.Error()),
 							)
 						}
 					}
-					_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, "spending cap exceeded, agent disabled", steps)
+					_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, "AI provider quota exhausted — agent disabled. This is a provider-level limit (Google AI RESOURCE_EXHAUSTED), not your project budget.", steps)
 					return &ExecuteResult{
 						RunID:  run.ID,
 						Status: RunStatusError,
-					}, fmt.Errorf("spending cap exceeded, agent disabled")
+					}, fmt.Errorf("AI provider quota exhausted, agent disabled")
 				}
 
 				// Retry on transient Google AI API errors (503 UNAVAILABLE, 429 rate-limit)
