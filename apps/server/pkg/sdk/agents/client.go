@@ -14,7 +14,6 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
-	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
 // Client provides access to the Agents API.
@@ -196,12 +195,8 @@ type RespondToQuestionRequest struct {
 }
 
 // PaginatedResponse wraps paginated API responses.
-// Alias for httputil.PaginatedResponse — single source of truth in pkg/httputil.
-type PaginatedResponse[T any] = httputil.PaginatedResponse[T]
 
 // APIResponse wraps API responses with success flag.
-// Alias for httputil.APIResponse — single source of truth in pkg/httputil.
-type APIResponse[T any] = httputil.APIResponse[T]
 
 // ListRunsOptions contains options for listing project runs.
 type ListRunsOptions struct {

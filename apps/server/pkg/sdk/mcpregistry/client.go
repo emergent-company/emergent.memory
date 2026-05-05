@@ -16,7 +16,6 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
-	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
 // Client provides access to the MCP Server Registry API.
@@ -198,8 +197,6 @@ type InspectResourceTemplate struct {
 }
 
 // APIResponse wraps API responses with success flag.
-// Alias for httputil.APIResponse — single source of truth in pkg/httputil.
-type APIResponse[T any] = httputil.APIResponse[T]
 
 // --- Internal helpers ---
 
