@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Memory API server
 //
 // @title Memory API
-// @version 0.40.73
+// @version 0.40.74
 // @description Memory Knowledge Base API - AI-powered knowledge management system
 // @contact.name Memory Team
 // @contact.url https://emergent-company.ai
@@ -88,7 +88,22 @@ func main() {
 	_ = godotenv.Load("../../.env")
 	_ = godotenv.Overload("../../.env.local") // Overload ensures local values take precedence
 
-	fx.New(
+	// Load feature flags from env before building the fx app.
+	cfg, err := config.NewConfig(slog.Default())
+	if err != nil {
+		panic("config load failed: " + err.Error())
+	}
+	features := cfg.Features
+
+	opts := []fx.Option{coreFxOptions()}
+	opts = append(opts, featureFxOptions(features)...)
+
+	fx.New(opts...).Run()
+}
+
+// coreFxOptions returns the always-on fx options (infrastructure + core domains).
+func coreFxOptions() fx.Option {
+	return fx.Options(
 		// Logging
 		fx.WithLogger(func(log *slog.Logger) fxevent.Logger {
 			return &fxevent.SlogLogger{Logger: log}
@@ -100,7 +115,6 @@ func main() {
 		database.Module,
 		server.Module,
 		storage.Module,
-		tracing.Module,
 
 		// Auth module
 		auth.Module,
@@ -120,11 +134,9 @@ func main() {
 		// ADK module (Google Agent Development Kit for AI orchestration)
 		adk.Module,
 
-		// Domain modules
+		// Core domain modules (always on)
 		health.Module,
 		authinfo.Module,
-		agents.Module,
-		backups.Module,
 		documents.Module,
 		chunking.Module,
 		chunks.Module,
@@ -138,13 +150,8 @@ func main() {
 		branches.Module,
 		embeddingpolicies.Module,
 		search.Module,
-		chat.Module,
 		journal.Module,
-		mcp.Module,
-		mcpregistry.Module,
-		monitoring.Module,
 		notifications.Module,
-		superadmin.Module,
 		tasks.Module,
 		sessiontodos.Module,
 		skills.Module,
@@ -168,30 +175,62 @@ func main() {
 		// Scheduler module (cron-based scheduled tasks)
 		scheduler.Module,
 
-		// Developer tools (coverage, docs) - only enabled in debug mode
-		devtools.Module,
-
 		// Documentation API (serves markdown files from docs/public)
 		docs.Module,
-
-		// Agent workspace infrastructure (isolated execution environments)
-		sandbox.Module,
-
-		// Workspace image catalog (built-in rootfs + custom Docker images)
-		sandboximages.Module,
-
-		// MCP Relay — lets remote MCP providers register over WebSocket
-		mcprelay.Module,
 
 		// Cross-domain wiring: give projects.Service access to revoke tokens on member removal
 		fx.Invoke(func(svc *projects.Service, tokenRepo *apitoken.Repository) {
 			svc.SetTokenRevoker(tokenRepo)
 		}),
+	)
+}
 
+// featureFxOptions returns conditional fx options based on the FeatureSet.
+// Each block is only included when its feature flag is true.
+func featureFxOptions(f config.FeatureSet) []fx.Option {
+	var opts []fx.Option
+
+	if f.Agents {
+		opts = append(opts, agents.Module)
+	}
+	if f.MCP {
+		opts = append(opts, mcp.Module)
 		// Cross-domain wiring: set_session_title writes title to graph object Properties
 		// so clients using the graph API can read the updated title.
-		fx.Invoke(func(mcpSvc *mcp.Service, graphSvc *graph.Service) {
+		opts = append(opts, fx.Invoke(func(mcpSvc *mcp.Service, graphSvc *graph.Service) {
 			mcpSvc.SetGraphObjectPatcher(graphSvc.PatchGraphObjectTitle)
-		}),
-	).Run()
+		}))
+	}
+	if f.MCPRegistry {
+		opts = append(opts, mcpregistry.Module)
+	}
+	if f.MCPRelay {
+		opts = append(opts, mcprelay.Module)
+	}
+	if f.Sandbox {
+		opts = append(opts, sandbox.Module)
+	}
+	if f.SandboxImages {
+		opts = append(opts, sandboximages.Module)
+	}
+	if f.Backups {
+		opts = append(opts, backups.Module)
+	}
+	if f.Monitoring {
+		opts = append(opts, monitoring.Module)
+	}
+	if f.Tracing {
+		opts = append(opts, tracing.Module)
+	}
+	if f.Devtools {
+		opts = append(opts, devtools.Module)
+	}
+	if f.Chat {
+		opts = append(opts, chat.Module)
+	}
+	if f.SuperAdmin {
+		opts = append(opts, superadmin.Module)
+	}
+
+	return opts
 }
