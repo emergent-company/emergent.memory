@@ -751,16 +751,21 @@ project-level overrides across all projects in the organization.
 The output is a table with columns: SCOPE, PROVIDER, GENERATIVE MODEL,
 EMBEDDING MODEL, GCP PROJECT, LOCATION, and UPDATED.
 
+Use --project to filter results to a single project (name or ID).
+If multiple projects share the same name, an error is returned with all matching IDs.
+
 Examples:
   memory provider list
   memory provider list --org-id <id>
+  memory provider list --project my-project
   memory provider list --json`,
 	RunE: runProviderList,
 }
 
 var (
-	listOrgID    string
-	listJSONFlag bool
+	listOrgID     string
+	listJSONFlag  bool
+	listProjectID string
 )
 
 func runProviderList(cmd *cobra.Command, _ []string) error {
@@ -776,6 +781,15 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 
 	ctx := context.Background()
 
+	// Resolve --project flag to a project ID (supports name or ID).
+	var filterProjectID string
+	if listProjectID != "" {
+		filterProjectID, err = resolveProjectNameOrID(c, listProjectID)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Fetch org-level configs and project-level overrides in parallel.
 	orgConfigs, orgErr := c.SDK.Provider.ListOrgConfigs(ctx, orgID)
 	if orgErr != nil {
@@ -787,9 +801,25 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to list project provider configs: %w", projErr)
 	}
 
+	// Filter to a specific project if requested.
+	if filterProjectID != "" {
+		var filtered []provider.ProjectProviderConfig
+		for _, cfg := range projectConfigs {
+			if cfg.ProjectID == filterProjectID {
+				filtered = append(filtered, cfg)
+			}
+		}
+		projectConfigs = filtered
+		// Keep orgConfigs — they represent the inherited base for the project.
+	}
+
 	if len(orgConfigs) == 0 && len(projectConfigs) == 0 {
-		fmt.Println("No providers configured.")
-		fmt.Println("Run 'memory provider configure google --api-key <key>' to get started.")
+		if filterProjectID != "" {
+			fmt.Printf("No providers configured for project %q.\n", listProjectID)
+		} else {
+			fmt.Println("No providers configured.")
+			fmt.Println("Run 'memory provider configure google --api-key <key>' to get started.")
+		}
 		return nil
 	}
 
@@ -926,6 +956,7 @@ func init() {
 	// list flags
 	providerListCmd.Flags().StringVar(&listOrgID, "org-id", "", "Organization ID (auto-detected from config)")
 	providerListCmd.Flags().BoolVar(&listJSONFlag, "json", false, "Output raw JSON")
+	providerListCmd.Flags().StringVar(&listProjectID, "project", "", "Filter to a specific project (name or ID)")
 
 	// Wire sub-commands
 	providerCmd.AddCommand(configureCmd)
