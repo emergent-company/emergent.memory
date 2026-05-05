@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/term v0.2.2
-	github.com/emergent-company/emergent.memory/apps/server/pkg/sdk v0.40.75
+	github.com/emergent-company/emergent.memory/apps/server/pkg/sdk v0.40.77-0.20260505070516-8124c4060547
 	github.com/fatih/color v1.18.0
 	github.com/go-resty/resty/v2 v2.17.1
 	github.com/joho/godotenv v1.5.1
