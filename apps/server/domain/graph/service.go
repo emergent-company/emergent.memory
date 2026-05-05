@@ -17,7 +17,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
-	"github.com/emergent-company/emergent.memory/domain/journal"
+
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
@@ -80,7 +80,7 @@ type Service struct {
 	embeddings           EmbeddingService
 	embeddingEnqueuer    EmbeddingEnqueuer
 	relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer
-	journal              *journal.Service
+	eventSink            EventSink
 	branchStore          branchStoreIface
 	events               *events.Service
 
@@ -92,7 +92,10 @@ type Service struct {
 }
 
 // NewService creates a new graph service.
-func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, journalSvc *journal.Service, branchStore branchStoreIface, eventsSvc *events.Service) *Service {
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, sink EventSink, branchStore branchStoreIface, eventsSvc *events.Service) *Service {
+	if sink == nil {
+		sink = NoopEventSink{}
+	}
 	return &Service{
 		repo:                 repo,
 		log:                  log.With(logger.Scope("graph.svc")),
@@ -101,7 +104,7 @@ func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvide
 		embeddings:           embeddings,
 		embeddingEnqueuer:    embeddingEnqueuer,
 		relEmbeddingEnqueuer: relEmbeddingEnqueuer,
-		journal:              journalSvc,
+		eventSink:            sink,
 		branchStore:          branchStore,
 		events:               eventsSvc,
 	}
@@ -151,10 +154,10 @@ func nameFromProps(props map[string]any) string {
 }
 
 // entityTypeObject is the entity type constant for graph objects.
-const entityTypeObject = journal.EntityObject
+const entityTypeObject = EntityObject
 
 // entityTypeRelationship is the entity type constant for graph relationships.
-const entityTypeRelationship = journal.EntityRelationship
+const entityTypeRelationship = EntityRelationship
 
 // enqueueEmbedding enqueues a graph object for async embedding generation.
 // Logs and swallows errors — embedding is best-effort and must never block CRUD.
@@ -507,16 +510,16 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 
 	s.enqueueEmbedding(ctx, obj.ID.String())
 
-	if s.journal != nil && obj.Key != nil {
+	if obj.Key != nil {
 		objType := obj.Type
 		entityType := entityTypeObject
-		s.journal.Log(ctx, journal.LogParams{
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   obj.BranchID,
-			EventType:  journal.EventTypeCreated,
+			EventType:  EventTypeCreated,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  journal.ActorUser,
+			ActorType:  ActorUser,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *obj.Key,
@@ -932,7 +935,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 
 	s.enqueueEmbedding(ctx, newVersion.ID.String())
 
-	if s.journal != nil && newVersion.Key != nil {
+	if newVersion.Key != nil {
 		objType := newVersion.Type
 		entityType := entityTypeObject
 		var fieldsChanged []string
@@ -941,13 +944,13 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 				fieldsChanged = append(fieldsChanged, k)
 			}
 		}
-		s.journal.Log(ctx, journal.LogParams{
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   newVersion.BranchID,
-			EventType:  journal.EventTypeUpdated,
+			EventType:  EventTypeUpdated,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  journal.ActorUser,
+			ActorType:  ActorUser,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":            *newVersion.Key,
@@ -1023,16 +1026,16 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		return err
 	}
 
-	if s.journal != nil && current.Key != nil {
+	if current.Key != nil {
 		objType := current.Type
 		entityType := entityTypeObject
-		s.journal.Log(ctx, journal.LogParams{
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   current.BranchID,
-			EventType:  journal.EventTypeDeleted,
+			EventType:  EventTypeDeleted,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  journal.ActorUser,
+			ActorType:  ActorUser,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *current.Key,
@@ -1088,16 +1091,16 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 		return nil, err
 	}
 
-	if s.journal != nil && restored.Key != nil {
+	if restored.Key != nil {
 		objType := restored.Type
 		entityType := entityTypeObject
-		s.journal.Log(ctx, journal.LogParams{
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   restored.BranchID,
-			EventType:  journal.EventTypeRestored,
+			EventType:  EventTypeRestored,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  journal.ActorUser,
+			ActorType:  ActorUser,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":         *restored.Key,
@@ -1492,7 +1495,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 			s.enqueueRelationshipEmbedding(ctx, inverseRelID)
 		}
 
-		if s.journal != nil {
+		{
 			var srcKey, dstKey string
 			if srcObj.Key != nil {
 				srcKey = *srcObj.Key
@@ -1501,12 +1504,12 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 				dstKey = *dstObj.Key
 			}
 			entityType := entityTypeRelationship
-			s.journal.Log(ctx, journal.LogParams{
+			s.eventSink.Log(ctx, LogParams{
 				ProjectID:  projectID,
 				BranchID:   effectiveBranchID,
-				EventType:  journal.EventTypeRelated,
+				EventType:  EventTypeRelated,
 				EntityType: &entityType,
-				ActorType:  journal.ActorUser,
+				ActorType:  ActorUser,
 				Metadata: map[string]any{
 					"src_key":  srcKey,
 					"rel_type": req.Type,
@@ -2550,15 +2553,15 @@ func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, re
 		}
 	}
 
-	if s.journal != nil && successCount > 0 {
+	if successCount > 0 {
 		byTypeAny := make(map[string]any, len(byType))
 		for k, v := range byType {
 			byTypeAny[k] = v
 		}
-		s.journal.Log(ctx, journal.LogParams{
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID: projectID,
-			EventType: journal.EventTypeBatch,
-			ActorType: journal.ActorUser,
+			EventType: EventTypeBatch,
+			ActorType: ActorUser,
 			ActorID:   actorID,
 			Metadata: map[string]any{
 				"created": successCount,
@@ -2621,11 +2624,11 @@ func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, re
 		}
 	}
 
-	if s.journal != nil && successCount > 0 {
-		s.journal.Log(ctx, journal.LogParams{
+	if successCount > 0 {
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID: projectID,
-			EventType: journal.EventTypeBatch,
-			ActorType: journal.ActorUser,
+			EventType: EventTypeBatch,
+			ActorType: ActorUser,
 			ActorID:   actorID,
 			Metadata: map[string]any{
 				"updated": successCount,
@@ -2678,11 +2681,11 @@ func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UU
 		}
 	}
 
-	if s.journal != nil && successCount > 0 {
-		s.journal.Log(ctx, journal.LogParams{
+	if successCount > 0 {
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID: projectID,
-			EventType: journal.EventTypeBatch,
-			ActorType: journal.ActorUser,
+			EventType: EventTypeBatch,
+			ActorType: ActorUser,
 			Metadata: map[string]any{
 				"created": successCount,
 			},
@@ -3452,16 +3455,16 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		response.Applied = true
 		response.AppliedObjects = &appliedCount
 
-		if s.journal != nil {
+		{
 			relsMerged := 0
 			if response.RelationshipsTotal != nil {
 				relsMerged = *response.RelationshipsTotal - relUnchanged
 			}
-			s.journal.Log(ctx, journal.LogParams{
+			s.eventSink.Log(ctx, LogParams{
 				ProjectID: projectID,
 				BranchID:  targetBranchID,
-				EventType: journal.EventTypeMerge,
-				ActorType: journal.ActorUser,
+				EventType: EventTypeMerge,
+				ActorType: ActorUser,
 				Metadata: map[string]any{
 					"objects_merged":       appliedCount,
 					"relationships_merged": relsMerged,
@@ -4211,16 +4214,16 @@ func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID,
 	}
 
 	// Journal entry
-	if s.journal != nil && current.Key != nil {
+	if current.Key != nil {
 		objType := current.Type
 		entityType := entityTypeObject
-		s.journal.Log(ctx, journal.LogParams{
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID:  projectID,
 			BranchID:   targetBranchID,
-			EventType:  journal.EventTypeMoved,
+			EventType:  EventTypeMoved,
 			EntityType: &entityType,
 			ObjectType: &objType,
-			ActorType:  journal.ActorUser,
+			ActorType:  ActorUser,
 			ActorID:    actorID,
 			Metadata: map[string]any{
 				"key":                 *current.Key,
@@ -4294,12 +4297,12 @@ func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBra
 	}
 
 	// Journal log
-	if s.journal != nil {
-		s.journal.Log(ctx, journal.LogParams{
+	{
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID: projectID,
 			BranchID:  &targetBranchID,
-			EventType: journal.EventTypeBatch,
-			ActorType: journal.ActorUser,
+			EventType: EventTypeBatch,
+			ActorType: ActorUser,
 			Metadata: map[string]any{
 				"action":                "fork",
 				"source_branch_id":      sourceBranchID,
@@ -4382,15 +4385,15 @@ func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *Bulk
 	}
 
 	// Write journal entry for non-dry-run operations
-	if !req.DryRun && s.journal != nil {
-		actorType := journal.ActorSystem
+	if !req.DryRun {
+		actorType := ActorSystem
 		if actorID != nil {
-			actorType = journal.ActorUser
+			actorType = ActorUser
 		}
 		entityType := entityTypeObject
-		s.journal.Log(ctx, journal.LogParams{
+		s.eventSink.Log(ctx, LogParams{
 			ProjectID:  projectID,
-			EventType:  journal.EventTypeBatch,
+			EventType:  EventTypeBatch,
 			EntityType: &entityType,
 			ActorType:  actorType,
 			ActorID:    actorID,

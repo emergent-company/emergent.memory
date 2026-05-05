@@ -20,7 +20,12 @@ import (
 // Module provides graph domain dependencies.
 var Module = fx.Module("graph",
 	fx.Provide(NewRepository),
-	fx.Provide(NewService),
+	fx.Provide(
+		fx.Annotate(
+			NewService,
+			fx.ParamTags(``, ``, ``, ``, ``, ``, ``, `optional:"true"`),
+		),
+	),
 	fx.Provide(NewHandler),
 	fx.Provide(NewSessionService),
 	fx.Provide(NewSessionHandler),

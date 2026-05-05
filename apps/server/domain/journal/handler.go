@@ -165,21 +165,9 @@ func (h *Handler) resolveBranchID(c echo.Context, projectID string, branchStr st
 }
 
 // getProjectID extracts the project UUID from the auth context.
+// Deprecated: Use auth.GetProjectUUID(c) directly.
 func getProjectID(c echo.Context) (uuid.UUID, error) {
-	user := auth.GetUser(c)
-	if user == nil {
-		return uuid.Nil, apperror.ErrUnauthorized
-	}
-
-	if user.APITokenProjectID != "" {
-		return uuid.Parse(user.APITokenProjectID)
-	}
-
-	if user.ProjectID == "" {
-		return uuid.Nil, apperror.ErrBadRequest.WithMessage("project_id is required")
-	}
-
-	return uuid.Parse(user.ProjectID)
+	return auth.GetProjectUUID(c)
 }
 
 // parseSince parses a since string which may be an ISO-8601 timestamp or a

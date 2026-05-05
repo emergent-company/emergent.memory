@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
@@ -868,5 +869,47 @@ func GetAllScopes() []string {
 		"admin:write",
 		"agents:read",
 		"agents:write",
+	}
+}
+
+// MustGetUser retrieves the authenticated user from the Echo context.
+// It is safe to call without a nil-check on routes protected by RequireProject().
+// Panics if called on a route where RequireProject() was not applied and the user is nil.
+func MustGetUser(c echo.Context) *AuthUser {
+	user := GetUser(c)
+	if user == nil {
+		panic("auth: MustGetUser called on unauthenticated context — ensure RequireProject() middleware is applied")
+	}
+	return user
+}
+
+// GetProjectUUID extracts and UUID-parses the project ID from the authenticated user on the context.
+// Replaces local getProjectID() helpers in domain handlers.
+func GetProjectUUID(c echo.Context) (uuid.UUID, error) {
+	projectID, err := GetProjectID(c)
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	return uuid.Parse(projectID)
+}
+
+// RequireProject returns an Echo middleware that enforces:
+//  1. A non-nil authenticated user exists on the context.
+//  2. The user has a non-empty ProjectID.
+//
+// Handlers behind this middleware may safely call MustGetUser(c) and GetProjectUUID(c)
+// without additional nil checks.
+func RequireProject() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			user := GetUser(c)
+			if user == nil {
+				return apperror.ErrUnauthorized
+			}
+			if user.ProjectID == "" && user.APITokenProjectID == "" {
+				return apperror.ErrBadRequest.WithMessage("x-project-id header required")
+			}
+			return next(c)
+		}
 	}
 }

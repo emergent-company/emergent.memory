@@ -3,6 +3,7 @@ package sandboximages
 import (
 	"time"
 
+	"github.com/emergent-company/emergent.memory/pkg/httputil"
 	"github.com/uptrace/bun"
 )
 
@@ -99,9 +100,8 @@ func (r *CreateSandboxImageRequest) Validate() error {
 }
 
 // APIResponse wraps a response with a standard envelope.
-type APIResponse[T any] struct {
-	Data T `json:"data"`
-}
+// Alias for httputil.APIResponse — single source of truth in pkg/httputil.
+type APIResponse[T any] = httputil.APIResponse[T]
 
 // ListResponse wraps a list of items.
 type ListResponse[T any] struct {

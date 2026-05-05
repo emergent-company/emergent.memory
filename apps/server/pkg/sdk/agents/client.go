@@ -14,6 +14,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
+	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
 // Client provides access to the Agents API.
@@ -195,12 +196,12 @@ type RespondToQuestionRequest struct {
 }
 
 // PaginatedResponse wraps paginated API responses.
-type PaginatedResponse[T any] struct {
-	Items      []T `json:"items"`
-	TotalCount int `json:"totalCount"`
-	Limit      int `json:"limit"`
-	Offset     int `json:"offset"`
-}
+// Alias for httputil.PaginatedResponse — single source of truth in pkg/httputil.
+type PaginatedResponse[T any] = httputil.PaginatedResponse[T]
+
+// APIResponse wraps API responses with success flag.
+// Alias for httputil.APIResponse — single source of truth in pkg/httputil.
+type APIResponse[T any] = httputil.APIResponse[T]
 
 // ListRunsOptions contains options for listing project runs.
 type ListRunsOptions struct {
@@ -208,14 +209,6 @@ type ListRunsOptions struct {
 	Offset  int
 	AgentID string
 	Status  string
-}
-
-// APIResponse wraps API responses with success flag.
-type APIResponse[T any] struct {
-	Success bool    `json:"success"`
-	Data    T       `json:"data,omitempty"`
-	Error   *string `json:"error,omitempty"`
-	Message *string `json:"message,omitempty"`
 }
 
 // CreateAgentRequest is the request body for creating an agent.

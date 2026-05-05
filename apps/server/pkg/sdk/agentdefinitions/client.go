@@ -16,6 +16,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
+	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
 // Client provides access to the Agent Definitions API.
@@ -103,12 +104,8 @@ type ACPConfig struct {
 }
 
 // APIResponse wraps API responses with success flag.
-type APIResponse[T any] struct {
-	Success bool    `json:"success"`
-	Data    T       `json:"data,omitempty"`
-	Error   *string `json:"error,omitempty"`
-	Message *string `json:"message,omitempty"`
-}
+// Alias for httputil.APIResponse — single source of truth in pkg/httputil.
+type APIResponse[T any] = httputil.APIResponse[T]
 
 // CreateAgentDefinitionRequest is the request body for creating an agent definition.
 type CreateAgentDefinitionRequest struct {

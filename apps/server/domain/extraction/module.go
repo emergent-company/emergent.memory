@@ -206,17 +206,9 @@ func provideGraphEmbeddingWorker(
 	return NewGraphEmbeddingWorker(jobs, embeds, db, cfg.GraphEmbedding, log, scaler, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled)
 }
 
-// RegisterGraphEmbeddingWorkerLifecycle registers the worker with fx lifecycle
+// RegisterGraphEmbeddingWorkerLifecycle registers the worker with fx lifecycle.
 func RegisterGraphEmbeddingWorkerLifecycle(lc fx.Lifecycle, worker *GraphEmbeddingWorker) {
-	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			// Use context.Background() - fx lifecycle context has a 15s timeout
-			return worker.Start(context.Background())
-		},
-		OnStop: func(ctx context.Context) error {
-			return worker.Stop(ctx)
-		},
-	})
+	RegisterWorkerLifecycle(lc, worker)
 }
 
 // provideChunkEmbeddingJobsService creates chunk embedding jobs service with fx
@@ -245,17 +237,9 @@ func provideChunkEmbeddingWorker(
 	return NewChunkEmbeddingWorker(jobs, embeds, db, cfg.ChunkEmbedding, log, scaler, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled)
 }
 
-// RegisterChunkEmbeddingWorkerLifecycle registers the chunk embedding worker with fx lifecycle
+// RegisterChunkEmbeddingWorkerLifecycle registers the chunk embedding worker with fx lifecycle.
 func RegisterChunkEmbeddingWorkerLifecycle(lc fx.Lifecycle, worker *ChunkEmbeddingWorker) {
-	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			// Use context.Background() - fx lifecycle context has a 15s timeout
-			return worker.Start(context.Background())
-		},
-		OnStop: func(ctx context.Context) error {
-			return worker.Stop(ctx)
-		},
-	})
+	RegisterWorkerLifecycle(lc, worker)
 }
 
 // provideDocumentParsingJobsService creates document parsing jobs service with fx
@@ -376,16 +360,9 @@ func provideEmbeddingSweepWorker(
 	return NewEmbeddingSweepWorker(jobs, embeds, db, cfg.EmbeddingSweep, log, usageSvc, usageSvc, appCfg.AgentSafeguards.BudgetEnforcementEnabled)
 }
 
-// RegisterEmbeddingSweepWorkerLifecycle registers the sweep worker with fx lifecycle
+// RegisterEmbeddingSweepWorkerLifecycle registers the sweep worker with fx lifecycle.
 func RegisterEmbeddingSweepWorkerLifecycle(lc fx.Lifecycle, worker *EmbeddingSweepWorker) {
-	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			return worker.Start(context.Background())
-		},
-		OnStop: func(ctx context.Context) error {
-			return worker.Stop(ctx)
-		},
-	})
+	RegisterWorkerLifecycle(lc, worker)
 }
 
 // provideGraphRelationshipEmbeddingJobsService creates the relationship embedding jobs service.
@@ -409,14 +386,7 @@ func provideGraphRelationshipEmbeddingWorker(
 
 // RegisterGraphRelationshipEmbeddingWorkerLifecycle registers the relationship embedding worker with fx lifecycle.
 func RegisterGraphRelationshipEmbeddingWorkerLifecycle(lc fx.Lifecycle, worker *GraphRelationshipEmbeddingWorker) {
-	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			return worker.Start(context.Background())
-		},
-		OnStop: func(ctx context.Context) error {
-			return worker.Stop(ctx)
-		},
-	})
+	RegisterWorkerLifecycle(lc, worker)
 }
 
 // provideEmbeddingControlHandler creates the embedding control handler.

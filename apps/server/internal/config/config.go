@@ -80,6 +80,10 @@ type Config struct {
 	// which generates Python SDK scripts instead of calling 57 individual MCP tools.
 	AskV2 bool `env:"MEMORY_ASK_V2" envDefault:"false"`
 
+	// Features controls which optional domain modules are loaded at startup.
+	// See FeatureSet for per-flag documentation and defaults.
+	Features FeatureSet
+
 	// Server timeouts
 	ReadTimeout     time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"3600s"`   // 1 hour for large file uploads
 	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"28800s"` // 8 hours for SSE

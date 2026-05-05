@@ -56,23 +56,9 @@ func NewHandler(svc *Service, cfg *config.Config) *Handler {
 }
 
 // getProjectID extracts and parses the project ID from the auth user context.
+// Deprecated: Use auth.GetProjectUUID(c) directly.
 func getProjectID(c echo.Context) (uuid.UUID, error) {
-	user := auth.GetUser(c)
-	if user == nil {
-		return uuid.Nil, apperror.ErrUnauthorized
-	}
-
-	// First check API token project ID (automatically set for API token auth)
-	if user.APITokenProjectID != "" {
-		return uuid.Parse(user.APITokenProjectID)
-	}
-
-	// Then check X-Project-ID header
-	if user.ProjectID == "" {
-		return uuid.Nil, apperror.ErrBadRequest.WithMessage("project_id is required")
-	}
-
-	return uuid.Parse(user.ProjectID)
+	return auth.GetProjectUUID(c)
 }
 
 // getUserID extracts and parses the user ID from the auth user context.

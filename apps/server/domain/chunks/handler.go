@@ -21,18 +21,9 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // getProjectID extracts and parses the project ID from the request context.
+// Deprecated: Use auth.GetProjectUUID(c) directly.
 func getProjectID(c echo.Context) (uuid.UUID, error) {
-	projectIDStr, err := auth.GetProjectID(c)
-	if err != nil {
-		return uuid.Nil, err
-	}
-
-	projectID, err := uuid.Parse(projectIDStr)
-	if err != nil {
-		return uuid.Nil, apperror.ErrBadRequest.WithMessage("invalid project ID")
-	}
-
-	return projectID, nil
+	return auth.GetProjectUUID(c)
 }
 
 // List handles GET /chunks

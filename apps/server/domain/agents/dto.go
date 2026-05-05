@@ -1,6 +1,10 @@
 package agents
 
-import "time"
+import (
+	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/httputil"
+)
 
 // AgentDTO is the response DTO for an agent
 type AgentDTO struct {
@@ -179,12 +183,22 @@ type TriggerResponseDTO struct {
 	Error   *string `json:"error,omitempty"`
 }
 
-// APIResponse wraps API responses with success flag
-type APIResponse[T any] struct {
-	Success bool    `json:"success"`
-	Data    T       `json:"data,omitempty"`
-	Error   *string `json:"error,omitempty"`
-	Message *string `json:"message,omitempty"`
+// APIResponse wraps API responses with success flag.
+// Alias for httputil.APIResponse — single source of truth in pkg/httputil.
+type APIResponse[T any] = httputil.APIResponse[T]
+
+// PaginatedResponse wraps paginated API responses.
+// Alias for httputil.PaginatedResponse — single source of truth in pkg/httputil.
+type PaginatedResponse[T any] = httputil.PaginatedResponse[T]
+
+// SuccessResponse creates a successful API response wrapping data.
+func SuccessResponse[T any](data T) APIResponse[T] {
+	return httputil.NewSuccessResponse(data)
+}
+
+// ErrorResponse creates an error API response with the given error message.
+func ErrorResponse[T any](err string) APIResponse[T] {
+	return httputil.NewErrorResponse[T](err)
 }
 
 // ToDTO converts an Agent entity to AgentDTO
@@ -247,30 +261,6 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		dto.TriggerMetadata = r.TriggerMetadata
 	}
 	return dto
-}
-
-// SuccessResponse creates a successful API response
-func SuccessResponse[T any](data T) APIResponse[T] {
-	return APIResponse[T]{
-		Success: true,
-		Data:    data,
-	}
-}
-
-// ErrorResponse creates an error API response
-func ErrorResponse[T any](err string) APIResponse[T] {
-	return APIResponse[T]{
-		Success: false,
-		Error:   &err,
-	}
-}
-
-// PaginatedResponse wraps paginated API responses
-type PaginatedResponse[T any] struct {
-	Items      []T `json:"items"`
-	TotalCount int `json:"totalCount"`
-	Limit      int `json:"limit"`
-	Offset     int `json:"offset"`
 }
 
 // AgentWithDefinitionDTO enriches AgentDTO with fields from the agent's definition.
@@ -526,22 +516,22 @@ type WebhookTriggerPayloadDTO struct {
 
 // AgentQuestionDTO is the API response format for an agent question.
 type AgentQuestionDTO struct {
-	ID              string                         `json:"id"`
-	RunID           string                         `json:"runId"`
-	AgentID         string                         `json:"agentId"`
-	ProjectID       string                         `json:"projectId"`
-	Question        string                         `json:"question"`
-	Options         []AgentQuestionOption          `json:"options"`
-	InteractionType AgentQuestionInteractionType   `json:"interactionType"`
-	Placeholder     string                         `json:"placeholder,omitempty"`
-	MaxLength       int                            `json:"maxLength,omitempty"`
-	Response        *string                        `json:"response,omitempty"`
-	RespondedBy     *string                        `json:"respondedBy,omitempty"`
-	RespondedAt     *time.Time                     `json:"respondedAt,omitempty"`
-	Status          AgentQuestionStatus            `json:"status"`
-	NotificationID  *string                        `json:"notificationId,omitempty"`
-	CreatedAt       time.Time                      `json:"createdAt"`
-	UpdatedAt       time.Time                      `json:"updatedAt"`
+	ID              string                       `json:"id"`
+	RunID           string                       `json:"runId"`
+	AgentID         string                       `json:"agentId"`
+	ProjectID       string                       `json:"projectId"`
+	Question        string                       `json:"question"`
+	Options         []AgentQuestionOption        `json:"options"`
+	InteractionType AgentQuestionInteractionType `json:"interactionType"`
+	Placeholder     string                       `json:"placeholder,omitempty"`
+	MaxLength       int                          `json:"maxLength,omitempty"`
+	Response        *string                      `json:"response,omitempty"`
+	RespondedBy     *string                      `json:"respondedBy,omitempty"`
+	RespondedAt     *time.Time                   `json:"respondedAt,omitempty"`
+	Status          AgentQuestionStatus          `json:"status"`
+	NotificationID  *string                      `json:"notificationId,omitempty"`
+	CreatedAt       time.Time                    `json:"createdAt"`
+	UpdatedAt       time.Time                    `json:"updatedAt"`
 }
 
 // ToDTO converts an AgentQuestion entity to a DTO.

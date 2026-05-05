@@ -1,6 +1,10 @@
 package extraction
 
-import "time"
+import (
+	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/httputil"
+)
 
 // ExtractionJobStatus represents the status of an extraction job (used in DTOs)
 // Maps to internal JobStatus values
@@ -181,28 +185,18 @@ type ExtractionLogsResponseDTO struct {
 	Timeline []TimelineEventDTO      `json:"timeline,omitempty"`
 }
 
-// APIResponse wraps API responses with success flag
-type APIResponse[T any] struct {
-	Success bool    `json:"success"`
-	Data    T       `json:"data,omitempty"`
-	Error   *string `json:"error,omitempty"`
-	Message *string `json:"message,omitempty"`
-}
+// APIResponse wraps API responses with success flag.
+// Alias for httputil.APIResponse — single source of truth in pkg/httputil.
+type APIResponse[T any] = httputil.APIResponse[T]
 
-// SuccessResponse creates a successful API response
+// SuccessResponse creates a successful API response wrapping data.
 func SuccessResponse[T any](data T) APIResponse[T] {
-	return APIResponse[T]{
-		Success: true,
-		Data:    data,
-	}
+	return httputil.NewSuccessResponse(data)
 }
 
-// ErrorResponse creates an error API response
+// ErrorResponse creates an error API response with the given error message.
 func ErrorResponse[T any](err string) APIResponse[T] {
-	return APIResponse[T]{
-		Success: false,
-		Error:   &err,
-	}
+	return httputil.NewErrorResponse[T](err)
 }
 
 // mapJobStatusToDTO converts internal JobStatus to DTO status
