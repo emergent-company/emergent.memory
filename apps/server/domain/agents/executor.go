@@ -2417,7 +2417,7 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 	}
 
 	if len(textParts) > 0 {
-		contentMap["text"] = textParts
+		contentMap["text"] = strings.Join(textParts, "\n")
 	}
 	if len(functionCalls) > 0 {
 		contentMap["function_calls"] = functionCalls
