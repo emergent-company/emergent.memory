@@ -3959,9 +3959,13 @@ project-level overrides across all projects in the organization.
 The output is a table with columns: SCOPE, PROVIDER, GENERATIVE MODEL,
 EMBEDDING MODEL, GCP PROJECT, LOCATION, and UPDATED.
 
+Use --project to filter results to a single project (name or ID).
+If multiple projects share the same name, an error is returned with all matching IDs.
+
 Examples:
   memory provider list
   memory provider list --org-id <id>
+  memory provider list --project my-project
   memory provider list --json
 
 ```
@@ -3971,9 +3975,10 @@ memory provider list [flags]
 ### Options
 
 ```
-  -h, --help            help for list
-      --json            Output raw JSON
-      --org-id string   Organization ID (auto-detected from config)
+  -h, --help             help for list
+      --json             Output raw JSON
+      --org-id string    Organization ID (auto-detected from config)
+      --project string   Filter to a specific project (name or ID)
 ```
 
 ## memory provider models
