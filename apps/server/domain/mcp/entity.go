@@ -119,6 +119,7 @@ type AgentToolHandler interface {
 	ExecuteACPListAgents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteACPTriggerRun(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteACPGetRunStatus(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
+	ExecuteACPGetRunEvents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 
 	// GetAgentToolDefinitions returns tool definitions for all agent tools
 	GetAgentToolDefinitions() []ToolDefinition

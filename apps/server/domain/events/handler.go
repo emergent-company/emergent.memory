@@ -122,10 +122,11 @@ func (h *Handler) sendHeartbeats() {
 
 // HandleStream handles GET /api/events/stream - SSE connection endpoint
 // @Summary      Subscribe to real-time events
-// @Description  Establish Server-Sent Events (SSE) connection to receive real-time entity updates for a project (documents, chunks, extraction jobs, graph objects, notifications). Connection requires projectId query parameter and sends periodic heartbeats.
+// @Description  Establish Server-Sent Events (SSE) connection to receive real-time entity updates for a project (documents, chunks, extraction jobs, graph objects, notifications, agent runs). Connection requires projectId query parameter and sends periodic heartbeats. Pass runId to receive only events for a specific agent run.
 // @Tags         events
 // @Produce      text/event-stream
 // @Param        projectId query string true "Project ID to subscribe to"
+// @Param        runId     query string false "Optional agent run ID to filter events (agent_run entity only)"
 // @Success      200 {string} string "SSE stream (events: connected, entity.created, entity.updated, entity.deleted, entity.batch, heartbeat)"
 // @Failure      400 {object} apperror.Error "Missing projectId parameter"
 // @Failure      401 {object} apperror.Error "Unauthorized"
@@ -144,6 +145,9 @@ func (h *Handler) HandleStream(c echo.Context) error {
 			"error": "Missing projectId query parameter",
 		})
 	}
+
+	// Optional runId filter — when set only agent_run events for that run are delivered
+	runID := c.QueryParam("runId")
 
 	// Generate connection ID
 	connectionID := h.generateConnectionID()
@@ -165,6 +169,7 @@ func (h *Handler) HandleStream(c echo.Context) error {
 		ConnectionID:  connectionID,
 		UserID:        user.ID,
 		ProjectID:     projectID,
+		RunID:         runID,
 		Writer:        w,
 		Flusher:       flusher,
 		Done:          make(chan struct{}),
@@ -182,6 +187,7 @@ func (h *Handler) HandleStream(c echo.Context) error {
 		slog.String("connection_id", connectionID),
 		slog.String("project_id", projectID),
 		slog.String("user_id", user.ID),
+		slog.String("run_id", runID),
 	)
 
 	// Send connected event
@@ -200,6 +206,18 @@ func (h *Handler) HandleStream(c echo.Context) error {
 		case <-conn.Done:
 			return
 		default:
+			// Server-side runId filter: if the connection requested a specific run,
+			// drop all agent_run events that don't match and all non-agent_run events.
+			if conn.RunID != "" {
+				if event.Entity != EntityAgentRun {
+					return
+				}
+				// event.ID holds the run ID for agent_run events
+				if event.ID == nil || *event.ID != conn.RunID {
+					return
+				}
+			}
+
 			payload := SSEEventPayload{
 				Entity:    event.Entity,
 				ID:        event.ID,

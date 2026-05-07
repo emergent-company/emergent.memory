@@ -1299,6 +1299,24 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 				Required: []string{"agent_name", "run_id"},
 			},
 		},
+		{
+			Name:        "acp-get-run-events",
+			Description: "Fetch the full persisted event log for a completed or in-progress agent run. Returns all trajectory events (tool calls, thought chunks, message parts, run lifecycle) in ACP SSE format. Use this to reconstruct the run history or inspect what the agent did step-by-step.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.PropertySchema{
+					"agent_name": {
+						Type:        "string",
+						Description: "ACP slug name of the agent that owns the run",
+					},
+					"run_id": {
+						Type:        "string",
+						Description: "UUID of the agent run",
+					},
+				},
+				Required: []string{"agent_name", "run_id"},
+			},
+		},
 	}
 }
 
@@ -1854,4 +1872,42 @@ func (h *MCPToolHandler) ExecuteACPGetRunStatus(ctx context.Context, projectID s
 	}
 
 	return wrapResult(RunToACPObject(run, valMsgs, question))
+}
+
+// ExecuteACPGetRunEvents returns the full persisted event log for a run.
+func (h *MCPToolHandler) ExecuteACPGetRunEvents(ctx context.Context, projectID string, args map[string]any) (*mcp.ToolResult, error) {
+	agentName, _ := args["agent_name"].(string)
+	if agentName == "" {
+		return errResult("agent_name is required")
+	}
+	runID, _ := args["run_id"].(string)
+	if runID == "" {
+		return errResult("run_id is required")
+	}
+
+	run, err := h.repo.FindRunByID(ctx, runID)
+	if err != nil {
+		return errResult("failed to get run: " + err.Error())
+	}
+	if run == nil {
+		return errResult("Run not found")
+	}
+	if run.Agent == nil || ACPSlugFromName(run.Agent.Name) != agentName {
+		return errResult("Run not found")
+	}
+	if run.Agent.ProjectID != projectID {
+		return errResult("Run not found")
+	}
+
+	runEvents, err := h.repo.GetACPRunEvents(ctx, runID)
+	if err != nil {
+		return errResult("failed to get run events: " + err.Error())
+	}
+
+	acpEvents := make([]ACPSSEEvent, 0, len(runEvents))
+	for _, e := range runEvents {
+		acpEvents = append(acpEvents, RunEventToACPSSEEvent(e))
+	}
+
+	return wrapResult(acpEvents)
 }

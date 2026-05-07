@@ -246,6 +246,9 @@ func (s *stubAgentToolHandler) ExecuteACPTriggerRun(_ context.Context, _ string,
 func (s *stubAgentToolHandler) ExecuteACPGetRunStatus(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
 	return nil, nil
 }
+func (s *stubAgentToolHandler) ExecuteACPGetRunEvents(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
+	return nil, nil
+}
 func (s *stubAgentToolHandler) GetAgentToolDefinitions() []ToolDefinition { return nil }
 func (s *stubAgentToolHandler) GetAgentToolDefinitionsForProject(_ context.Context, _ string) []ToolDefinition {
 	return nil

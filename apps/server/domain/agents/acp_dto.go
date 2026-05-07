@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -85,16 +86,19 @@ type ACPMessage struct {
 // ACPMessagePart is a single part of an ACP message.
 type ACPMessagePart struct {
 	ContentType string              `json:"content_type"`
-	Content     string              `json:"content"`
+	Content     string              `json:"content,omitempty"`
 	Metadata    *TrajectoryMetadata `json:"metadata,omitempty"`
 }
 
 // TrajectoryMetadata describes a tool call trajectory attached to a message part.
+// Fields match the ACP spec TrajectoryMetadata schema exactly:
+// tool_input and tool_output are JSON objects (not strings).
 type TrajectoryMetadata struct {
-	Type       string `json:"type"` // always "trajectory"
-	ToolName   string `json:"tool_name"`
-	ToolInput  string `json:"tool_input"`  // JSON string
-	ToolOutput string `json:"tool_output"` // JSON string
+	Kind       string          `json:"kind"`                  // always "trajectory"
+	Message    *string         `json:"message,omitempty"`     // reasoning step text
+	ToolName   *string         `json:"tool_name,omitempty"`   // name of the tool
+	ToolInput  json.RawMessage `json:"tool_input,omitempty"`  // full input params object
+	ToolOutput json.RawMessage `json:"tool_output,omitempty"` // full output/result object
 }
 
 // ACPRunObject is the ACP run representation returned by run endpoints.
@@ -125,21 +129,17 @@ type ACPAwaitRequest struct {
 }
 
 // ACPSessionObject is the ACP session representation.
+// Per ACP spec, History is a list of URL references to run event streams —
+// clients fetch each URL to load the full message history for that run.
 type ACPSessionObject struct {
-	ID        string          `json:"id"`
-	AgentName *string         `json:"agent_name,omitempty"`
-	Title     *string         `json:"title,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
-	History   []ACPRunSummary `json:"history"`
-}
-
-// ACPRunSummary is a lightweight run reference inside a session.
-type ACPRunSummary struct {
 	ID        string    `json:"id"`
-	AgentName string    `json:"agent_name"`
-	Status    string    `json:"status"`
+	AgentName *string   `json:"agent_name,omitempty"`
+	Title     *string   `json:"title,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	// History contains ordered URL references to run event streams.
+	// Each URL points to GET /acp/v1/agents/:name/runs/:runId/events.
+	History []string `json:"history"`
 }
 
 // ACPSSEEvent represents a persisted or streamed SSE event.
@@ -147,6 +147,28 @@ type ACPSSEEvent struct {
 	Type      string         `json:"type"`
 	Data      map[string]any `json:"data"`
 	CreatedAt time.Time      `json:"created_at"`
+}
+
+// ACPSSEBusPayload is the envelope emitted on the events.Service SSE bus for
+// agent run events. The Type and payload key/value match the ACP spec Event
+// discriminated union exactly, so clients can deserialize using the ACP SDK.
+//
+// Wire shape on the SSE bus:
+//
+//	event: entity.created
+//	data: { "entity": "agent_run", "id": "<runID>", "data": { "type": "run.in-progress", "run": {...} }, ... }
+//
+// The "data" object inside EntityEvent.Data is an ACPSSEBusPayload.
+type ACPSSEBusPayload struct {
+	// Type is the ACP event type string, e.g. "run.in-progress", "message.part".
+	Type string `json:"type"`
+	// RunID is repeated at the top level for fast client-side filtering.
+	RunID string `json:"run_id"`
+	// The ACP payload key depends on Type:
+	//   run.*        → "run"  (ACPRunObject)
+	//   message.part → "part" (ACPMessagePart with TrajectoryMetadata or text/plain)
+	// Stored as map to avoid a union type in Go while staying JSON-compatible.
+	Payload map[string]any `json:"payload"`
 }
 
 // --- ACP Request Types ---
@@ -371,27 +393,32 @@ func memoryContentToACPParts(content map[string]any) []ACPMessagePart {
 }
 
 // ToolCallToTrajectoryMetadata converts a Memory AgentRunToolCall to ACP TrajectoryMetadata.
+// tool_input and tool_output are kept as raw JSON objects per the ACP spec.
 func ToolCallToTrajectoryMetadata(tc *AgentRunToolCall) TrajectoryMetadata {
+	name := tc.ToolName
 	inputJSON, _ := json.Marshal(tc.Input)
 	outputJSON, _ := json.Marshal(tc.Output)
 
 	return TrajectoryMetadata{
-		Type:       "trajectory",
-		ToolName:   tc.ToolName,
-		ToolInput:  string(inputJSON),
-		ToolOutput: string(outputJSON),
+		Kind:       "trajectory",
+		ToolName:   &name,
+		ToolInput:  json.RawMessage(inputJSON),
+		ToolOutput: json.RawMessage(outputJSON),
 	}
 }
 
 // SessionToACPObject converts an ACPSession entity with associated runs to the ACP wire format.
-func SessionToACPObject(session *ACPSession, runs []*AgentRun) ACPSessionObject {
+// baseURL should be the scheme+host (e.g. "https://api.example.com") used to build history URLs.
+// Per ACP spec, history entries are URL references to run event streams that clients fetch to
+// reconstruct full message history.
+func SessionToACPObject(session *ACPSession, runs []*AgentRun, baseURL string) ACPSessionObject {
 	obj := ACPSessionObject{
 		ID:        session.ID,
 		AgentName: session.AgentName,
 		Title:     session.Title,
 		CreatedAt: session.CreatedAt,
 		UpdatedAt: session.UpdatedAt,
-		History:   make([]ACPRunSummary, 0, len(runs)),
+		History:   make([]string, 0, len(runs)),
 	}
 
 	for _, run := range runs {
@@ -399,12 +426,9 @@ func SessionToACPObject(session *ACPSession, runs []*AgentRun) ACPSessionObject 
 		if run.Agent != nil {
 			agentName = ACPSlugFromName(run.Agent.Name)
 		}
-		obj.History = append(obj.History, ACPRunSummary{
-			ID:        run.ID,
-			AgentName: agentName,
-			Status:    MapMemoryStatusToACP(run.Status),
-			CreatedAt: run.CreatedAt,
-		})
+		// Build URL: GET /acp/v1/agents/:name/runs/:runId/events
+		url := fmt.Sprintf("%s/acp/v1/agents/%s/runs/%s/events", baseURL, agentName, run.ID)
+		obj.History = append(obj.History, url)
 	}
 
 	return obj

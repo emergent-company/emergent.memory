@@ -10,6 +10,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
@@ -17,14 +18,15 @@ import (
 
 // ACPHandler handles ACP v1 HTTP requests.
 type ACPHandler struct {
-	repo     *Repository
-	executor *AgentExecutor
-	log      *slog.Logger
+	repo      *Repository
+	executor  *AgentExecutor
+	eventsSvc *events.Service
+	log       *slog.Logger
 }
 
 // NewACPHandler creates a new ACP handler.
-func NewACPHandler(repo *Repository, executor *AgentExecutor, log *slog.Logger) *ACPHandler {
-	return &ACPHandler{repo: repo, executor: executor, log: log}
+func NewACPHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger) *ACPHandler {
+	return &ACPHandler{repo: repo, executor: executor, eventsSvc: eventsSvc, log: log}
 }
 
 // ---------------------------------------------------------------------------
@@ -41,6 +43,22 @@ func acpProjectID(c echo.Context) (string, error) {
 		return "", apperror.NewBadRequest("project context is required (set via API token)")
 	}
 	return user.ProjectID, nil
+}
+
+// acpBaseURL returns the scheme+host base URL for the current request,
+// used to build absolute history URLs in ACP session responses.
+func acpBaseURL(c echo.Context) string {
+	req := c.Request()
+	scheme := "https"
+	if req.TLS == nil {
+		// Check X-Forwarded-Proto (set by reverse proxy / Traefik)
+		if proto := req.Header.Get("X-Forwarded-Proto"); proto != "" {
+			scheme = proto
+		} else {
+			scheme = "http"
+		}
+	}
+	return scheme + "://" + req.Host
 }
 
 // acpOrgID resolves the org ID for the project, used for executor requests.
@@ -130,6 +148,28 @@ func (h *ACPHandler) persistACPEvent(ctx context.Context, runID, eventType strin
 			slog.String("error", err.Error()),
 		)
 	}
+}
+
+// emitToSSEBus publishes an ACP run event onto the main events.Service SSE bus so
+// that any client subscribed to /api/events/stream?projectId=X&runId=Y receives it
+// in real-time without polling. The payload key matches the ACP spec discriminated
+// union (e.g. "run" for run.* events, "part" for message.part).
+func (h *ACPHandler) emitToSSEBus(projectID, runID, eventType string, payload map[string]any) {
+	if h.eventsSvc == nil || projectID == "" {
+		return
+	}
+	busPayload := ACPSSEBusPayload{
+		Type:    eventType,
+		RunID:   runID,
+		Payload: payload,
+	}
+	// Encode the bus payload as map[string]any so it fits into EntityEvent.Data.
+	data := map[string]any{
+		"type":    busPayload.Type,
+		"run_id":  busPayload.RunID,
+		"payload": busPayload.Payload,
+	}
+	h.eventsSvc.EmitCreated(events.EntityAgentRun, runID, projectID, &events.EmitOptions{Data: data})
 }
 
 // ---------------------------------------------------------------------------
@@ -317,22 +357,26 @@ func (h *ACPHandler) CreateRun(c echo.Context) error {
 
 // createRunAsync enqueues the run and returns 202 immediately.
 func (h *ACPHandler) createRunAsync(c echo.Context, ctx context.Context, run *AgentRun, execReq ExecuteRequest, def *AgentDefinition) error {
+	projectID := execReq.ProjectID
+	agentSlug := ACPSlugFromName(def.Name)
+
 	// Persist creation event
-	h.persistACPEvent(ctx, run.ID, "run.created", map[string]any{
-		"run_id":     run.ID,
-		"agent_name": ACPSlugFromName(def.Name),
-		"status":     "submitted",
-	})
+	createdData := map[string]any{
+		"run": map[string]any{"run_id": run.ID, "agent_name": agentSlug, "status": ACPStatusSubmitted},
+	}
+	h.persistACPEvent(ctx, run.ID, ACPEventRunCreated, createdData)
+	h.emitToSSEBus(projectID, run.ID, ACPEventRunCreated, createdData)
 
 	// Execute in background
 	go func() {
 		bgCtx := context.Background()
-		h.persistACPEvent(bgCtx, run.ID, "run.in-progress", map[string]any{
-			"run_id": run.ID,
-			"status": "working",
-		})
+		inProgressData := map[string]any{
+			"run": map[string]any{"run_id": run.ID, "agent_name": agentSlug, "status": ACPStatusWorking},
+		}
+		h.persistACPEvent(bgCtx, run.ID, ACPEventRunInProgress, inProgressData)
+		h.emitToSSEBus(projectID, run.ID, ACPEventRunInProgress, inProgressData)
 
-		execReq.StreamCallback = h.makeEventPersistingCallback(bgCtx, run.ID)
+		execReq.StreamCallback = h.makeEventPersistingCallback(bgCtx, run.ID, projectID)
 		result, execErr := h.executor.ExecuteWithRun(bgCtx, run, execReq)
 		if result != nil && result.Cleanup != nil {
 			result.Cleanup()
@@ -343,21 +387,26 @@ func (h *ACPHandler) createRunAsync(c echo.Context, ctx context.Context, run *Ag
 				slog.String("run_id", run.ID),
 				slog.String("error", execErr.Error()),
 			)
-			h.persistACPEvent(bgCtx, run.ID, "run.failed", map[string]any{
-				"run_id": run.ID,
-				"error":  map[string]any{"message": execErr.Error()},
-			})
-		} else {
-			terminalEvent := "run.completed"
-			if result != nil && result.Status == RunStatusPaused {
-				terminalEvent = "run.awaiting"
-			} else if result != nil && result.Status == RunStatusError {
-				terminalEvent = "run.failed"
+			data := map[string]any{
+				"run": map[string]any{"run_id": run.ID, "error": map[string]any{"message": execErr.Error()}},
 			}
-			h.persistACPEvent(bgCtx, run.ID, terminalEvent, map[string]any{
-				"run_id": run.ID,
-				"status": MapMemoryStatusToACP(result.Status),
-			})
+			h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, data)
+		} else {
+			terminalEvent := ACPEventRunCompleted
+			acpStatus := ACPStatusCompleted
+			if result != nil && result.Status == RunStatusPaused {
+				terminalEvent = ACPEventRunAwaiting
+				acpStatus = ACPStatusInputRequired
+			} else if result != nil && result.Status == RunStatusError {
+				terminalEvent = ACPEventRunFailed
+				acpStatus = ACPStatusFailed
+			}
+			data := map[string]any{
+				"run": map[string]any{"run_id": run.ID, "status": acpStatus},
+			}
+			h.persistACPEvent(bgCtx, run.ID, terminalEvent, data)
+			h.emitToSSEBus(projectID, run.ID, terminalEvent, data)
 		}
 	}()
 
@@ -365,8 +414,8 @@ func (h *ACPHandler) createRunAsync(c echo.Context, ctx context.Context, run *Ag
 	now := run.CreatedAt
 	acpRun := ACPRunObject{
 		ID:        run.ID,
-		AgentName: ACPSlugFromName(def.Name),
-		Status:    "submitted",
+		AgentName: agentSlug,
+		Status:    ACPStatusSubmitted,
 		CreatedAt: run.CreatedAt,
 		UpdatedAt: &now,
 	}
@@ -375,19 +424,19 @@ func (h *ACPHandler) createRunAsync(c echo.Context, ctx context.Context, run *Ag
 
 // createRunSync blocks until the run completes and returns the final state.
 func (h *ACPHandler) createRunSync(c echo.Context, ctx context.Context, run *AgentRun, execReq ExecuteRequest, def *AgentDefinition) error {
-	// Persist creation event
+	projectID := execReq.ProjectID
+	agentSlug := ACPSlugFromName(def.Name)
 	bgCtx := context.Background()
-	h.persistACPEvent(bgCtx, run.ID, "run.created", map[string]any{
-		"run_id":     run.ID,
-		"agent_name": ACPSlugFromName(def.Name),
-		"status":     "submitted",
-	})
-	h.persistACPEvent(bgCtx, run.ID, "run.in-progress", map[string]any{
-		"run_id": run.ID,
-		"status": "working",
-	})
 
-	execReq.StreamCallback = h.makeEventPersistingCallback(bgCtx, run.ID)
+	createdData := map[string]any{"run": map[string]any{"run_id": run.ID, "agent_name": agentSlug, "status": ACPStatusSubmitted}}
+	h.persistACPEvent(bgCtx, run.ID, ACPEventRunCreated, createdData)
+	h.emitToSSEBus(projectID, run.ID, ACPEventRunCreated, createdData)
+
+	inProgressData := map[string]any{"run": map[string]any{"run_id": run.ID, "status": ACPStatusWorking}}
+	h.persistACPEvent(bgCtx, run.ID, ACPEventRunInProgress, inProgressData)
+	h.emitToSSEBus(projectID, run.ID, ACPEventRunInProgress, inProgressData)
+
+	execReq.StreamCallback = h.makeEventPersistingCallback(bgCtx, run.ID, projectID)
 
 	result, execErr := h.executor.ExecuteWithRun(ctx, run, execReq)
 	if result != nil && result.Cleanup != nil {
@@ -399,10 +448,20 @@ func (h *ACPHandler) createRunSync(c echo.Context, ctx context.Context, run *Age
 			slog.String("run_id", run.ID),
 			slog.String("error", execErr.Error()),
 		)
-		h.persistACPEvent(bgCtx, run.ID, "run.failed", map[string]any{
-			"run_id": run.ID,
-			"error":  map[string]any{"message": execErr.Error()},
-		})
+		data := map[string]any{"run": map[string]any{"run_id": run.ID, "error": map[string]any{"message": execErr.Error()}}}
+		h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, data)
+		h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, data)
+	} else if result != nil {
+		termEvent := ACPEventRunCompleted
+		acpStatus := MapMemoryStatusToACP(result.Status)
+		if result.Status == RunStatusPaused {
+			termEvent = ACPEventRunAwaiting
+		} else if result.Status == RunStatusError {
+			termEvent = ACPEventRunFailed
+		}
+		data := map[string]any{"run": map[string]any{"run_id": run.ID, "status": acpStatus}}
+		h.persistACPEvent(bgCtx, run.ID, termEvent, data)
+		h.emitToSSEBus(projectID, run.ID, termEvent, data)
 	}
 
 	// Re-fetch the run to get the final state
@@ -412,6 +471,7 @@ func (h *ACPHandler) createRunSync(c echo.Context, ctx context.Context, run *Age
 // createRunStream sets up SSE and streams events inline on the response.
 func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *AgentRun, execReq ExecuteRequest, def *AgentDefinition) error {
 	bgCtx := context.Background()
+	projectID := execReq.ProjectID
 	agentSlug := ACPSlugFromName(def.Name)
 
 	writer := sse.NewWriter(c.Response().Writer)
@@ -420,78 +480,65 @@ func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *A
 	}
 
 	// Send run.created
-	h.persistACPEvent(bgCtx, run.ID, "run.created", map[string]any{
-		"run_id":     run.ID,
-		"agent_name": agentSlug,
-		"status":     "submitted",
-	})
-	_ = writer.WriteEvent("run.created", map[string]any{
-		"run_id":     run.ID,
-		"agent_name": agentSlug,
-		"status":     "submitted",
-	})
+	createdData := map[string]any{"run": map[string]any{"run_id": run.ID, "agent_name": agentSlug, "status": ACPStatusSubmitted}}
+	h.persistACPEvent(bgCtx, run.ID, ACPEventRunCreated, createdData)
+	h.emitToSSEBus(projectID, run.ID, ACPEventRunCreated, createdData)
+	_ = writer.WriteEvent(ACPEventRunCreated, createdData)
 
 	// Send run.in-progress
-	h.persistACPEvent(bgCtx, run.ID, "run.in-progress", map[string]any{
-		"run_id": run.ID,
-		"status": "working",
-	})
-	_ = writer.WriteEvent("run.in-progress", map[string]any{
-		"run_id": run.ID,
-		"status": "working",
-	})
+	inProgressData := map[string]any{"run": map[string]any{"run_id": run.ID, "status": ACPStatusWorking}}
+	h.persistACPEvent(bgCtx, run.ID, ACPEventRunInProgress, inProgressData)
+	h.emitToSSEBus(projectID, run.ID, ACPEventRunInProgress, inProgressData)
+	_ = writer.WriteEvent(ACPEventRunInProgress, inProgressData)
 
-	// Set up streaming callback that writes to both SSE and persistence
+	// Set up streaming callback that writes to SSE wire, persistence, and SSE bus
 	execReq.StreamCallback = func(event StreamEvent) {
 		switch event.Type {
 		case StreamEventTextDelta:
 			data := map[string]any{
-				"part": map[string]any{
-					"content_type": "text/plain",
-					"content":      event.Text,
-				},
+				"part": map[string]any{"content_type": "text/plain", "content": event.Text},
 			}
-			_ = writer.WriteEvent("message.part", data)
-			h.persistACPEvent(bgCtx, run.ID, "message.part", data)
+			_ = writer.WriteEvent(ACPEventMessagePart, data)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
 
 		case StreamEventToolCallStart:
 			inputJSON, _ := json.Marshal(event.Input)
 			data := map[string]any{
 				"part": map[string]any{
-					"content_type": "text/plain",
-					"content":      "",
+					"content_type": "application/json",
 					"metadata": map[string]any{
-						"type":       "trajectory",
+						"kind":       "trajectory",
 						"tool_name":  event.Tool,
-						"tool_input": string(inputJSON),
+						"tool_input": json.RawMessage(inputJSON),
 					},
 				},
 			}
-			_ = writer.WriteEvent("message.part", data)
-			h.persistACPEvent(bgCtx, run.ID, "message.part", data)
+			_ = writer.WriteEvent(ACPEventMessagePart, data)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
 
 		case StreamEventToolCallEnd:
 			outputJSON, _ := json.Marshal(event.Output)
 			data := map[string]any{
 				"part": map[string]any{
-					"content_type": "text/plain",
-					"content":      "",
+					"content_type": "application/json",
 					"metadata": map[string]any{
-						"type":        "trajectory",
+						"kind":        "trajectory",
 						"tool_name":   event.Tool,
-						"tool_output": string(outputJSON),
+						"tool_output": json.RawMessage(outputJSON),
 					},
 				},
 			}
-			_ = writer.WriteEvent("message.part", data)
-			h.persistACPEvent(bgCtx, run.ID, "message.part", data)
+			_ = writer.WriteEvent(ACPEventMessagePart, data)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
 
 		case StreamEventError:
-			data := map[string]any{
-				"error": map[string]any{"message": event.Error},
-			}
-			_ = writer.WriteEvent("error", data)
-			h.persistACPEvent(bgCtx, run.ID, "error", data)
+			data := map[string]any{"error": map[string]any{"message": event.Error}}
+			_ = writer.WriteEvent(ACPEventError, data)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventError, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventError, data)
 		}
 	}
 
@@ -507,31 +554,26 @@ func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *A
 			slog.String("run_id", run.ID),
 			slog.String("error", execErr.Error()),
 		)
-		termData := map[string]any{
-			"run_id": run.ID,
-			"error":  map[string]any{"message": execErr.Error()},
-		}
-		_ = writer.WriteEvent("run.failed", termData)
-		h.persistACPEvent(bgCtx, run.ID, "run.failed", termData)
+		termData := map[string]any{"run": map[string]any{"run_id": run.ID, "error": map[string]any{"message": execErr.Error()}}}
+		_ = writer.WriteEvent(ACPEventRunFailed, termData)
+		h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, termData)
+		h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, termData)
 	} else if result != nil {
 		switch result.Status {
 		case RunStatusPaused:
-			// Fetch the pending question for await_request
 			questions, _ := h.repo.FindPendingQuestionsByRunID(bgCtx, run.ID)
-			termData := map[string]any{
-				"run_id": run.ID,
-				"status": "input-required",
-			}
+			termData := map[string]any{"run": map[string]any{"run_id": run.ID, "status": ACPStatusInputRequired}}
 			if len(questions) > 0 {
 				q := questions[0]
-				termData["await_request"] = map[string]any{
+				termData["run"].(map[string]any)["await_request"] = map[string]any{
 					"question_id": q.ID,
 					"question":    q.Question,
 					"options":     q.Options,
 				}
 			}
-			_ = writer.WriteEvent("run.awaiting", termData)
-			h.persistACPEvent(bgCtx, run.ID, "run.awaiting", termData)
+			_ = writer.WriteEvent(ACPEventRunAwaiting, termData)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventRunAwaiting, termData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventRunAwaiting, termData)
 
 		case RunStatusError:
 			errRun, _ := h.repo.FindRunByID(bgCtx, run.ID)
@@ -539,20 +581,16 @@ func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *A
 			if errRun != nil && errRun.ErrorMessage != nil {
 				errMsg = *errRun.ErrorMessage
 			}
-			termData := map[string]any{
-				"run_id": run.ID,
-				"error":  map[string]any{"message": errMsg},
-			}
-			_ = writer.WriteEvent("run.failed", termData)
-			h.persistACPEvent(bgCtx, run.ID, "run.failed", termData)
+			termData := map[string]any{"run": map[string]any{"run_id": run.ID, "error": map[string]any{"message": errMsg}}}
+			_ = writer.WriteEvent(ACPEventRunFailed, termData)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, termData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, termData)
 
 		default:
-			termData := map[string]any{
-				"run_id": run.ID,
-				"status": MapMemoryStatusToACP(result.Status),
-			}
-			_ = writer.WriteEvent("run.completed", termData)
-			h.persistACPEvent(bgCtx, run.ID, "run.completed", termData)
+			termData := map[string]any{"run": map[string]any{"run_id": run.ID, "status": MapMemoryStatusToACP(result.Status)}}
+			_ = writer.WriteEvent(ACPEventRunCompleted, termData)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventRunCompleted, termData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventRunCompleted, termData)
 		}
 	}
 
@@ -560,47 +598,54 @@ func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *A
 	return nil
 }
 
-// makeEventPersistingCallback returns a StreamCallback that persists events to the DB.
-func (h *ACPHandler) makeEventPersistingCallback(ctx context.Context, runID string) StreamCallback {
+// makeEventPersistingCallback returns a StreamCallback that persists events to the DB
+// and emits them on the SSE bus for real-time delivery to subscribers.
+func (h *ACPHandler) makeEventPersistingCallback(ctx context.Context, runID, projectID string) StreamCallback {
 	return func(event StreamEvent) {
 		switch event.Type {
 		case StreamEventTextDelta:
-			h.persistACPEvent(ctx, runID, "message.part", map[string]any{
+			data := map[string]any{
 				"part": map[string]any{
 					"content_type": "text/plain",
 					"content":      event.Text,
 				},
-			})
+			}
+			h.persistACPEvent(ctx, runID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, runID, ACPEventMessagePart, data)
 		case StreamEventToolCallStart:
 			inputJSON, _ := json.Marshal(event.Input)
-			h.persistACPEvent(ctx, runID, "message.part", map[string]any{
+			data := map[string]any{
 				"part": map[string]any{
-					"content_type": "text/plain",
-					"content":      "",
+					"content_type": "application/json",
 					"metadata": map[string]any{
-						"type":       "trajectory",
+						"kind":       "trajectory",
 						"tool_name":  event.Tool,
-						"tool_input": string(inputJSON),
+						"tool_input": json.RawMessage(inputJSON),
 					},
 				},
-			})
+			}
+			h.persistACPEvent(ctx, runID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, runID, ACPEventMessagePart, data)
 		case StreamEventToolCallEnd:
 			outputJSON, _ := json.Marshal(event.Output)
-			h.persistACPEvent(ctx, runID, "message.part", map[string]any{
+			data := map[string]any{
 				"part": map[string]any{
-					"content_type": "text/plain",
-					"content":      "",
+					"content_type": "application/json",
 					"metadata": map[string]any{
-						"type":        "trajectory",
+						"kind":        "trajectory",
 						"tool_name":   event.Tool,
-						"tool_output": string(outputJSON),
+						"tool_output": json.RawMessage(outputJSON),
 					},
 				},
-			})
+			}
+			h.persistACPEvent(ctx, runID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, runID, ACPEventMessagePart, data)
 		case StreamEventError:
-			h.persistACPEvent(ctx, runID, "error", map[string]any{
+			data := map[string]any{
 				"error": map[string]any{"message": event.Error},
-			})
+			}
+			h.persistACPEvent(ctx, runID, ACPEventError, data)
+			h.emitToSSEBus(projectID, runID, ACPEventError, data)
 		}
 	}
 }
@@ -862,7 +907,7 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 		// Resume asynchronously
 		go func() {
 			bgCtx := context.Background()
-			execReq.StreamCallback = h.makeEventPersistingCallback(bgCtx, run.ID)
+			execReq.StreamCallback = h.makeEventPersistingCallback(bgCtx, run.ID, projectID)
 			result, execErr := h.executor.Resume(bgCtx, run, execReq)
 			if result != nil && result.Cleanup != nil {
 				result.Cleanup()
@@ -879,7 +924,7 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 		acpRun := ACPRunObject{
 			ID:        run.ID,
 			AgentName: ACPSlugFromName(def.Name),
-			Status:    "working",
+			Status:    ACPStatusWorking,
 			CreatedAt: run.CreatedAt,
 			UpdatedAt: &nowResume,
 		}
@@ -889,7 +934,7 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 		return h.resumeRunStream(c, ctx, run, execReq, def)
 
 	default: // sync
-		execReq.StreamCallback = h.makeEventPersistingCallback(context.Background(), run.ID)
+		execReq.StreamCallback = h.makeEventPersistingCallback(context.Background(), run.ID, projectID)
 		result, execErr := h.executor.Resume(ctx, run, execReq)
 		if result != nil && result.Cleanup != nil {
 			defer result.Cleanup()
@@ -914,6 +959,7 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 // resumeRunStream handles the SSE streaming path for resume.
 func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *AgentRun, execReq ExecuteRequest, def *AgentDefinition) error {
 	bgCtx := context.Background()
+	projectID := execReq.ProjectID
 	agentSlug := ACPSlugFromName(def.Name)
 
 	writer := sse.NewWriter(c.Response().Writer)
@@ -921,63 +967,58 @@ func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *A
 		return apperror.NewInternal("SSE streaming not supported", err)
 	}
 
-	_ = writer.WriteEvent("run.in-progress", map[string]any{
-		"run_id":     run.ID,
-		"agent_name": agentSlug,
-		"status":     "working",
-	})
+	inProgressData := map[string]any{"run": map[string]any{"run_id": run.ID, "agent_name": agentSlug, "status": ACPStatusWorking}}
+	h.emitToSSEBus(projectID, run.ID, ACPEventRunInProgress, inProgressData)
+	_ = writer.WriteEvent(ACPEventRunInProgress, inProgressData)
 
 	// Set up streaming callback
 	execReq.StreamCallback = func(event StreamEvent) {
 		switch event.Type {
 		case StreamEventTextDelta:
 			data := map[string]any{
-				"part": map[string]any{
-					"content_type": "text/plain",
-					"content":      event.Text,
-				},
+				"part": map[string]any{"content_type": "text/plain", "content": event.Text},
 			}
-			_ = writer.WriteEvent("message.part", data)
-			h.persistACPEvent(bgCtx, run.ID, "message.part", data)
+			_ = writer.WriteEvent(ACPEventMessagePart, data)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
 
 		case StreamEventToolCallStart:
 			inputJSON, _ := json.Marshal(event.Input)
 			data := map[string]any{
 				"part": map[string]any{
-					"content_type": "text/plain",
-					"content":      "",
+					"content_type": "application/json",
 					"metadata": map[string]any{
-						"type":       "trajectory",
+						"kind":       "trajectory",
 						"tool_name":  event.Tool,
-						"tool_input": string(inputJSON),
+						"tool_input": json.RawMessage(inputJSON),
 					},
 				},
 			}
-			_ = writer.WriteEvent("message.part", data)
-			h.persistACPEvent(bgCtx, run.ID, "message.part", data)
+			_ = writer.WriteEvent(ACPEventMessagePart, data)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
 
 		case StreamEventToolCallEnd:
 			outputJSON, _ := json.Marshal(event.Output)
 			data := map[string]any{
 				"part": map[string]any{
-					"content_type": "text/plain",
-					"content":      "",
+					"content_type": "application/json",
 					"metadata": map[string]any{
-						"type":        "trajectory",
+						"kind":        "trajectory",
 						"tool_name":   event.Tool,
-						"tool_output": string(outputJSON),
+						"tool_output": json.RawMessage(outputJSON),
 					},
 				},
 			}
-			_ = writer.WriteEvent("message.part", data)
-			h.persistACPEvent(bgCtx, run.ID, "message.part", data)
+			_ = writer.WriteEvent(ACPEventMessagePart, data)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
 
 		case StreamEventError:
-			data := map[string]any{
-				"error": map[string]any{"message": event.Error},
-			}
-			_ = writer.WriteEvent("error", data)
-			h.persistACPEvent(bgCtx, run.ID, "error", data)
+			data := map[string]any{"error": map[string]any{"message": event.Error}}
+			_ = writer.WriteEvent(ACPEventError, data)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventError, data)
+			h.emitToSSEBus(projectID, run.ID, ACPEventError, data)
 		}
 	}
 
@@ -988,30 +1029,26 @@ func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *A
 
 	// Send terminal event
 	if execErr != nil {
-		termData := map[string]any{
-			"run_id": run.ID,
-			"error":  map[string]any{"message": execErr.Error()},
-		}
-		_ = writer.WriteEvent("run.failed", termData)
-		h.persistACPEvent(bgCtx, run.ID, "run.failed", termData)
+		termData := map[string]any{"run": map[string]any{"run_id": run.ID, "error": map[string]any{"message": execErr.Error()}}}
+		_ = writer.WriteEvent(ACPEventRunFailed, termData)
+		h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, termData)
+		h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, termData)
 	} else if result != nil {
 		switch result.Status {
 		case RunStatusPaused:
 			questions, _ := h.repo.FindPendingQuestionsByRunID(bgCtx, result.RunID)
-			termData := map[string]any{
-				"run_id": result.RunID,
-				"status": "input-required",
-			}
+			termData := map[string]any{"run": map[string]any{"run_id": result.RunID, "status": ACPStatusInputRequired}}
 			if len(questions) > 0 {
 				q := questions[0]
-				termData["await_request"] = map[string]any{
+				termData["run"].(map[string]any)["await_request"] = map[string]any{
 					"question_id": q.ID,
 					"question":    q.Question,
 					"options":     q.Options,
 				}
 			}
-			_ = writer.WriteEvent("run.awaiting", termData)
-			h.persistACPEvent(bgCtx, run.ID, "run.awaiting", termData)
+			_ = writer.WriteEvent(ACPEventRunAwaiting, termData)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventRunAwaiting, termData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventRunAwaiting, termData)
 
 		case RunStatusError:
 			errRun, _ := h.repo.FindRunByID(bgCtx, result.RunID)
@@ -1019,20 +1056,16 @@ func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *A
 			if errRun != nil && errRun.ErrorMessage != nil {
 				errMsg = *errRun.ErrorMessage
 			}
-			termData := map[string]any{
-				"run_id": result.RunID,
-				"error":  map[string]any{"message": errMsg},
-			}
-			_ = writer.WriteEvent("run.failed", termData)
-			h.persistACPEvent(bgCtx, run.ID, "run.failed", termData)
+			termData := map[string]any{"run": map[string]any{"run_id": result.RunID, "error": map[string]any{"message": errMsg}}}
+			_ = writer.WriteEvent(ACPEventRunFailed, termData)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, termData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, termData)
 
 		default:
-			termData := map[string]any{
-				"run_id": result.RunID,
-				"status": MapMemoryStatusToACP(result.Status),
-			}
-			_ = writer.WriteEvent("run.completed", termData)
-			h.persistACPEvent(bgCtx, run.ID, "run.completed", termData)
+			termData := map[string]any{"run": map[string]any{"run_id": result.RunID, "status": MapMemoryStatusToACP(result.Status)}}
+			_ = writer.WriteEvent(ACPEventRunCompleted, termData)
+			h.persistACPEvent(bgCtx, run.ID, ACPEventRunCompleted, termData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventRunCompleted, termData)
 		}
 	}
 
@@ -1045,6 +1078,18 @@ func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *A
 // ---------------------------------------------------------------------------
 
 // GetRunEvents returns the persisted event log for a run as a JSON array.
+// @Summary      Get run event log
+// @Description  Returns all persisted ACP SSE events for an agent run: run lifecycle events (run.created, run.in-progress, run.completed, run.failed), trajectory events (tool calls with full input/output, thought chunks), and message parts. Useful for reconstructing what the agent did step-by-step or replaying a run. This endpoint also serves as the resource-server URL referenced in session history.
+// @Tags         acp
+// @Produce      json
+// @Param        name   path string true "ACP slug name of the agent"
+// @Param        runId  path string true "UUID of the agent run"
+// @Success      200 {array}  ACPSSEEvent
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /acp/v1/agents/{name}/runs/{runId}/events [get]
+// @Security     bearerAuth
 func (h *ACPHandler) GetRunEvents(c echo.Context) error {
 	projectID, err := acpProjectID(c)
 	if err != nil {
@@ -1125,7 +1170,7 @@ func (h *ACPHandler) CreateSession(c echo.Context) error {
 		return apperror.NewInternal("failed to create session", err)
 	}
 
-	acpSession := SessionToACPObject(session, nil)
+	acpSession := SessionToACPObject(session, nil, acpBaseURL(c))
 	return c.JSON(http.StatusCreated, acpSession)
 }
 
@@ -1134,6 +1179,17 @@ func (h *ACPHandler) CreateSession(c echo.Context) error {
 // ---------------------------------------------------------------------------
 
 // GetSession returns an ACP session with its run history.
+// @Summary      Get ACP session
+// @Description  Returns an ACP session descriptor. The `history` field contains an ordered list of URL references (one per run) pointing to GET /acp/v1/agents/:name/runs/:runId/events. Clients fetch each URL to reconstruct full message history for that run. MP acts as both ACP server and resource server — history URLs resolve back to this server.
+// @Tags         acp
+// @Produce      json
+// @Param        sessionId path string true "ACP session ID"
+// @Success      200 {object} ACPSessionObject
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /acp/v1/sessions/{sessionId} [get]
+// @Security     bearerAuth
 func (h *ACPHandler) GetSession(c echo.Context) error {
 	projectID, err := acpProjectID(c)
 	if err != nil {
@@ -1160,6 +1216,6 @@ func (h *ACPHandler) GetSession(c echo.Context) error {
 		return apperror.NewInternal("failed to fetch session history", err)
 	}
 
-	acpSession := SessionToACPObject(session, runs)
+	acpSession := SessionToACPObject(session, runs, acpBaseURL(c))
 	return c.JSON(http.StatusOK, acpSession)
 }

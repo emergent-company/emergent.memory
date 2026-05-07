@@ -9,8 +9,8 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
-	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -116,8 +116,8 @@ func (a *providerPricingAdapter) lookupModelPricing(ctx context.Context, model s
 }
 
 // provideACPHandler creates an ACPHandler from fx dependencies.
-func provideACPHandler(repo *Repository, executor *AgentExecutor, log *slog.Logger) *ACPHandler {
-	return NewACPHandler(repo, executor, log)
+func provideACPHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger) *ACPHandler {
+	return NewACPHandler(repo, executor, eventsSvc, log)
 }
 
 // provideTriggerService creates a TriggerService from fx dependencies.

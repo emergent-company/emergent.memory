@@ -25,6 +25,7 @@ const (
 	EntityGraphObject   EntityType = "graph_object"
 	EntityNotification  EntityType = "notification"
 	EntitySyncJob       EntityType = "sync_job"
+	EntityAgentRun      EntityType = "agent_run"
 )
 
 // ActorType represents the type of actor making a change
@@ -61,6 +62,7 @@ type SSEConnection struct {
 	ConnectionID  string
 	UserID        string
 	ProjectID     string
+	RunID         string // optional: if set, only agent_run events for this run are delivered
 	Writer        http.ResponseWriter
 	Flusher       http.Flusher
 	Done          chan struct{}

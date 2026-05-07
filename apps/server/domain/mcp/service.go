@@ -4117,6 +4117,8 @@ func (s *Service) delegateAgentTool(ctx context.Context, projectID, toolName str
 		return s.agentToolHandler.ExecuteACPTriggerRun(ctx, projectID, args)
 	case "acp-get-run-status":
 		return s.agentToolHandler.ExecuteACPGetRunStatus(ctx, projectID, args)
+	case "acp-get-run-events":
+		return s.agentToolHandler.ExecuteACPGetRunEvents(ctx, projectID, args)
 
 	default:
 		return nil, fmt.Errorf("unknown agent tool: %s", toolName)
