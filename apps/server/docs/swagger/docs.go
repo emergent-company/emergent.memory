@@ -44,6 +44,120 @@ const docTemplate = `{
                 }
             }
         },
+        "/acp/v1/agents/{name}/runs/{runId}/events": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns all persisted ACP SSE events for an agent run: run lifecycle events (run.created, run.in-progress, run.completed, run.failed), trajectory events (tool calls with full input/output, thought chunks), and message parts. Useful for reconstructing what the agent did step-by-step or replaying a run. This endpoint also serves as the resource-server URL referenced in session history.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "acp"
+                ],
+                "summary": "Get run event log",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ACP slug name of the agent",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "UUID of the agent run",
+                        "name": "runId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_agents.ACPSSEEvent"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/acp/v1/sessions/{sessionId}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns an ACP session descriptor. The ` + "`" + `history` + "`" + ` field contains an ordered list of URL references (one per run) pointing to GET /acp/v1/agents/:name/runs/:runId/events. Clients fetch each URL to reconstruct full message history for that run. MP acts as both ACP server and resource server — history URLs resolve back to this server.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "acp"
+                ],
+                "summary": "Get ACP session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ACP session ID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.ACPSessionObject"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/agent-definitions/{id}/sandbox-config": {
             "get": {
                 "security": [
@@ -2895,7 +3009,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Establish Server-Sent Events (SSE) connection to receive real-time entity updates for a project (documents, chunks, extraction jobs, graph objects, notifications). Connection requires projectId query parameter and sends periodic heartbeats.",
+                "description": "Establish Server-Sent Events (SSE) connection to receive real-time entity updates for a project (documents, chunks, extraction jobs, graph objects, notifications, agent runs). Connection requires projectId query parameter and sends periodic heartbeats. Pass runId to receive only events for a specific agent run.",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -2910,6 +3024,12 @@ const docTemplate = `{
                         "name": "projectId",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Optional agent run ID to filter events (agent_run entity only)",
+                        "name": "runId",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -9072,7 +9192,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Enables an agent and clears any disabled reason (e.g. spending cap exceeded)",
+                "description": "Enables an agent and clears any disabled reason (e.g. AI provider quota exhausted or project budget exceeded)",
                 "consumes": [
                     "application/json"
                 ],
@@ -17806,6 +17926,48 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "domain_agents.ACPSSEEvent": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.ACPSessionObject": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "history": {
+                    "description": "History contains ordered URL references to run event streams.\nEach URL points to GET /acp/v1/agents/:name/runs/:runId/events.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_agents.APIResponse-any": {
             "type": "object",
             "properties": {
@@ -18644,6 +18806,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "description": {
+                    "type": "string"
+                },
+                "disabledReason": {
+                    "description": "DisabledReason is admin-only: sets the reason an agent is disabled.\nRequires admin:write scope. Ignored for non-admin callers.",
                     "type": "string"
                 },
                 "enabled": {
@@ -24479,6 +24645,15 @@ const docTemplate = `{
             "properties": {
                 "data": {
                     "$ref": "#/definitions/domain_sandboximages.SandboxImageDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
                 }
             }
         },
@@ -27592,7 +27767,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.40.69",
+	Version:          "0.40.80",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

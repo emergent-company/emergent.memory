@@ -1,5 +1,35 @@
 basePath: /
 definitions:
+  domain_agents.ACPSSEEvent:
+    properties:
+      created_at:
+        type: string
+      data:
+        additionalProperties: {}
+        type: object
+      type:
+        type: string
+    type: object
+  domain_agents.ACPSessionObject:
+    properties:
+      agent_name:
+        type: string
+      created_at:
+        type: string
+      history:
+        description: |-
+          History contains ordered URL references to run event streams.
+          Each URL points to GET /acp/v1/agents/:name/runs/:runId/events.
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
   domain_agents.APIResponse-any:
     properties:
       data: {}
@@ -575,6 +605,11 @@ definitions:
       cronSchedule:
         type: string
       description:
+        type: string
+      disabledReason:
+        description: |-
+          DisabledReason is admin-only: sets the reason an agent is disabled.
+          Requires admin:write scope. Ignored for non-admin callers.
         type: string
       enabled:
         type: boolean
@@ -4507,6 +4542,12 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/domain_sandboximages.SandboxImageDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
     type: object
   domain_sandboximages.CreateSandboxImageRequest:
     properties:
@@ -6595,7 +6636,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.40.69
+  version: 0.40.80
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -6613,6 +6654,88 @@ paths:
       summary: OAuth Protected Resource Metadata
       tags:
       - mcp
+  /acp/v1/agents/{name}/runs/{runId}/events:
+    get:
+      description: 'Returns all persisted ACP SSE events for an agent run: run lifecycle
+        events (run.created, run.in-progress, run.completed, run.failed), trajectory
+        events (tool calls with full input/output, thought chunks), and message parts.
+        Useful for reconstructing what the agent did step-by-step or replaying a run.
+        This endpoint also serves as the resource-server URL referenced in session
+        history.'
+      parameters:
+      - description: ACP slug name of the agent
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: UUID of the agent run
+        in: path
+        name: runId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_agents.ACPSSEEvent'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get run event log
+      tags:
+      - acp
+  /acp/v1/sessions/{sessionId}:
+    get:
+      description: Returns an ACP session descriptor. The `history` field contains
+        an ordered list of URL references (one per run) pointing to GET /acp/v1/agents/:name/runs/:runId/events.
+        Clients fetch each URL to reconstruct full message history for that run. MP
+        acts as both ACP server and resource server — history URLs resolve back to
+        this server.
+      parameters:
+      - description: ACP session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_agents.ACPSessionObject'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get ACP session
+      tags:
+      - acp
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:
       consumes:
@@ -8471,13 +8594,18 @@ paths:
     get:
       description: Establish Server-Sent Events (SSE) connection to receive real-time
         entity updates for a project (documents, chunks, extraction jobs, graph objects,
-        notifications). Connection requires projectId query parameter and sends periodic
-        heartbeats.
+        notifications, agent runs). Connection requires projectId query parameter
+        and sends periodic heartbeats. Pass runId to receive only events for a specific
+        agent run.
       parameters:
       - description: Project ID to subscribe to
         in: query
         name: projectId
         required: true
+        type: string
+      - description: Optional agent run ID to filter events (agent_run entity only)
+        in: query
+        name: runId
         type: string
       produces:
       - text/event-stream
@@ -12544,8 +12672,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Enables an agent and clears any disabled reason (e.g. spending
-        cap exceeded)
+      description: Enables an agent and clears any disabled reason (e.g. AI provider
+        quota exhausted or project budget exceeded)
       parameters:
       - description: Project ID
         in: path
