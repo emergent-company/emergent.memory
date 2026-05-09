@@ -690,6 +690,169 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 	return def, nil
 }
 
+// graphInsertAgentSystemPrompt is the default system prompt for the graph-insert-agent.
+const graphInsertAgentSystemPrompt = `You are a knowledge graph insertion agent. Your job is to understand natural language input and persist it as structured data in the knowledge graph.
+
+## Workflow — follow these steps in order
+
+### 1. PARSE
+Extract from the user's message:
+- Entities (people, places, things, tasks, events, concepts)
+- Properties of each entity (name, status, due date, priority, location, etc.)
+- Relationships between entities (located_in, assigned_to, belongs_to, attended, owns, etc.)
+
+### 2. CHECK SCHEMA
+Call schema-compiled-types to get all active object and relationship types.
+- Match each extracted entity to the best fitting existing type.
+- Match each relationship to the best fitting existing relationship type.
+- Only consider schema-create if NO existing type is a reasonable match AND schema_policy != "reuse_only".
+- If schema_policy = "ask": call ask_user before creating any new schema type. Ask: "No existing type matches '<entity>'. Create a new type '<proposed_type>'? (yes/no)"
+- If schema_policy = "auto": create new types autonomously if needed.
+- If schema_policy = "reuse_only": use the closest existing type even if imperfect. Never call schema-create.
+- Keep new types minimal: only define properties that are present in the input. Use snake_case for type and property names.
+
+### 3. DEDUP CHECK
+For each entity, call search-hybrid with a focused query (name + key identifying properties).
+- If a high-confidence match exists (same name, same type, clearly the same thing): plan to UPDATE that entity instead of creating a new one.
+- If uncertain: create a new entity. Do not merge speculatively.
+- Check relationships too: use entity-edges-get on matched entities to avoid duplicate edges.
+
+### 4. CREATE BRANCH
+Call graph-branch-create with name "remember/<short-kebab-slug>" (e.g. "remember/lidl-shopping-2026-05-09").
+Record the returned branch_id — use it for ALL subsequent write operations.
+
+### 5. WRITE DATA
+On the branch (always pass branch_id to every write call):
+- Use entity-create for new entities. Always set a meaningful key (kebab-case, unique within type, e.g. "task-buy-toilet-paper"). Set name. Set all extracted properties.
+- Use entity-update for entities identified as duplicates in step 3.
+- Use relationship-create to wire entities together.
+- Prefer a single entity-create call with inline relationships where possible (atomic subgraph).
+
+### 6. MERGE (skip if dry_run = true)
+Call graph-branch-merge with the branch_id and execute=true.
+- If merge reports conflicts: surface them to the user in your final response. Do not force-merge.
+
+### 7. CLEANUP
+If merge succeeded (or dry_run=true): call graph-branch-delete to remove the branch.
+If merge failed: leave the branch and report its name so the user can inspect it.
+
+### 8. REPORT
+Summarise in markdown:
+- What entities were created / updated (with their keys)
+- What relationships were created
+- Any new schema types created
+- Branch name and merge status (or "dry run — not merged" if dry_run=true)
+
+## Rules
+- ALWAYS set a key on every entity. Format: <type>-<identifying-slug>, e.g. "task-buy-toilet-paper".
+- NEVER write directly to main. Always use a branch.
+- NEVER skip the dedup check (step 3).
+- Keep tool calls minimal — do not re-read data you already have in context.
+- If the user's message is ambiguous, make a reasonable interpretation and state your assumption in the report.
+- Format all responses in markdown.`
+
+// EnsureGraphInsertAgent returns the graph-insert-agent for the project, creating it if it
+// does not exist yet. schemaPolicy controls whether the agent may create new schema types:
+//   - "auto"        (default) — create new types if no existing type is a good match
+//   - "reuse_only"  — never call schema-create; always reuse closest existing type
+//   - "ask"         — call ask_user before creating any new schema type
+//
+// Safe to call concurrently — a race between two callers results in one insert and one
+// subsequent read (FindDefinitionByName will find the winner's row).
+func (r *Repository) EnsureGraphInsertAgent(ctx context.Context, projectID string, schemaPolicy string) (*AgentDefinition, error) {
+	existing, err := r.FindDefinitionByName(ctx, projectID, "graph-insert-agent")
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up graph-insert-agent: %w", err)
+	}
+
+	temperature := float32(0.2)
+	maxSteps := 30
+	systemPrompt := graphInsertAgentSystemPrompt
+
+	// MCP tools for graph insertion — read (dedup/schema), write (branch + data).
+	canonicalTools := []string{
+		// Read / understand
+		"search-hybrid",
+		"entity-query",
+		"entity-type-list",
+		"entity-edges-get",
+		"schema-compiled-types",
+		"schema-list-installed",
+		// Schema write (conditionally used per schema_policy)
+		"schema-create",
+		// Branch lifecycle
+		"graph-branch-create",
+		"graph-branch-merge",
+		"graph-branch-delete",
+		// Data write
+		"entity-create",
+		"entity-update",
+		"relationship-create",
+	}
+
+	// For schema_policy="ask", include ask_user so the agent can prompt before schema creation.
+	if schemaPolicy == "ask" {
+		canonicalTools = append(canonicalTools, "ask_user")
+	}
+
+	if existing != nil {
+		existing.Tools = canonicalTools
+		existing.SystemPrompt = &systemPrompt
+		if existing.Model == nil {
+			existing.Model = &ModelConfig{}
+		}
+		existing.Model.Temperature = &temperature
+		existing.MaxSteps = &maxSteps
+		existing.SandboxConfig = nil
+
+		// Apply per-project overrides on top of canonical defaults.
+		if projectID != "" {
+			if override, oErr := r.GetAgentOverride(ctx, projectID, "graph-insert-agent"); oErr == nil && override != nil {
+				ApplyAgentOverride(existing, override)
+			}
+		}
+
+		if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+			return existing, nil
+		}
+		return existing, nil
+	}
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         "graph-insert-agent",
+		Description:  strPtr("Knowledge graph insertion agent — understands natural language and persists structured data via MCP tools"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Temperature: &temperature,
+		},
+		Tools:      canonicalTools,
+		Skills:     []string{},
+		FlowType:   FlowTypeSingle,
+		IsDefault:  false,
+		MaxSteps:   &maxSteps,
+		Visibility: VisibilityInternal,
+		Config:     map[string]any{},
+	}
+
+	// Apply per-project overrides on top of canonical defaults.
+	if projectID != "" {
+		if override, oErr := r.GetAgentOverride(ctx, projectID, "graph-insert-agent"); oErr == nil && override != nil {
+			ApplyAgentOverride(def, override)
+		}
+	}
+
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		// Race condition: another caller inserted first — retry the read.
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, "graph-insert-agent"); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create graph-insert-agent: %w", err)
+	}
+
+	return def, nil
+}
+
 // cliAssistantAgentSystemPrompt is the default system prompt for the cli-assistant-agent.
 const cliAssistantAgentSystemPrompt = `You are a CLI assistant for the Memory knowledge management platform.
 You answer questions and take direct action: create, update, delete entities, relationships, agents, schemas, MCP servers, and projects.

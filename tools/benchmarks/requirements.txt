@@ -1,0 +1,4 @@
+requests>=2.31
+tqdm>=4.66
+openai>=1.30        # for llm_judge (OpenAI-compatible)
+datasets>=2.19      # HuggingFace datasets (LongMemEval download)

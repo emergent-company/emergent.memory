@@ -1415,6 +1415,182 @@ func (h *Handler) AskStream(c echo.Context) error {
 }
 
 // buildAskContextPrefix constructs a short context block prepended to the user's
+// RememberStreamRequest is the request body for the stateless remember endpoint.
+type RememberStreamRequest struct {
+	Message        string `json:"message"`
+	ConversationID string `json:"conversation_id,omitempty"` // optional: continue a previous session
+	SchemaPolicy   string `json:"schema_policy,omitempty"`   // "auto" (default), "reuse_only", "ask"
+	DryRun         bool   `json:"dry_run,omitempty"`         // if true, branch is created+written but not merged
+	ParentRunID    string `json:"parent_run_id,omitempty"`
+	RootRunID      string `json:"root_run_id,omitempty"`
+}
+
+// RememberStream handles POST /api/projects/:projectId/remember.
+// It finds (or lazily creates) the project's graph-insert-agent and streams the response.
+// The agent understands natural language, checks for duplicate entities, creates a branch,
+// writes structured data, and merges back to main — unless dry_run=true.
+func (h *Handler) RememberStream(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req RememberStreamRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		return apperror.ErrBadRequest.WithMessage("message is required")
+	}
+
+	// Normalise schema_policy — default to "auto".
+	schemaPolicy := req.SchemaPolicy
+	if schemaPolicy == "" {
+		schemaPolicy = "auto"
+	}
+	if schemaPolicy != "auto" && schemaPolicy != "reuse_only" && schemaPolicy != "ask" {
+		return apperror.ErrBadRequest.WithMessage("schema_policy must be one of: auto, reuse_only, ask")
+	}
+
+	// Accept parent/root run IDs from headers as well.
+	parentRunID := req.ParentRunID
+	if parentRunID == "" {
+		parentRunID = c.Request().Header.Get("X-Parent-Run-Id")
+	}
+	rootRunID := req.RootRunID
+	if rootRunID == "" {
+		rootRunID = c.Request().Header.Get("X-Root-Run-Id")
+	}
+
+	ctx := c.Request().Context()
+
+	msgPreview := message
+	if len(msgPreview) > 200 {
+		msgPreview = msgPreview[:200] + "..."
+	}
+	ctx, span := tracing.Start(ctx, "remember.run",
+		attribute.String("memory.project.id", projectID),
+		attribute.String("memory.remember.user_id", user.ID),
+		attribute.String("memory.remember.schema_policy", schemaPolicy),
+		attribute.Bool("memory.remember.dry_run", req.DryRun),
+		attribute.String("memory.remember.message_preview", msgPreview),
+	)
+	defer span.End()
+
+	if auth.ProjectIDFromContext(ctx) == "" && projectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, projectID)
+	}
+
+	// Probe LLM provider before opening SSE stream.
+	if h.modelFactory == nil {
+		return apperror.New(http.StatusServiceUnavailable, "no_provider",
+			"No LLM provider configured for this project. "+
+				"Please configure a Google AI or Vertex AI credential in your project settings.")
+	}
+	if h.modelFactory != nil {
+		probeModelName := h.modelFactory.ModelName()
+		if probeModelName == "" {
+			probeModelName = "gemini-3.1-flash-lite-preview"
+		}
+		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+		if probeErr != nil {
+			errMsg := probeErr.Error()
+			if strings.Contains(errMsg, "no LLM credentials configured") ||
+				strings.Contains(errMsg, "no_provider") ||
+				strings.Contains(errMsg, "provider config found for organization") {
+				return apperror.New(http.StatusServiceUnavailable, "no_provider",
+					"No LLM provider configured for this project. "+
+						"Please configure a Google AI or Vertex AI credential in your project settings.")
+			}
+			return apperror.New(http.StatusServiceUnavailable, "provider_error",
+				friendlyProviderError(probeErr))
+		}
+		if closer, ok := probeModel.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}
+
+	// Ensure the graph-insert-agent exists (idempotent, internal visibility).
+	agentDef, err := h.agentRepo.EnsureGraphInsertAgent(ctx, projectID, schemaPolicy)
+	if err != nil {
+		return apperror.NewInternal("failed to ensure graph-insert-agent", err)
+	}
+
+	agentDefUUID, err := uuid.Parse(agentDef.ID)
+	if err != nil {
+		return apperror.NewInternal("invalid graph-insert-agent ID", err)
+	}
+
+	// Augment message with policy context so agent doesn't need to call a tool to find it.
+	augmentedMessage := fmt.Sprintf("<insert_context>\nschema_policy: %s\ndry_run: %v\n</insert_context>\n\n%s",
+		schemaPolicy, req.DryRun, message)
+
+	// Reuse an existing conversation if the caller provided one, otherwise create a new one.
+	var conv *Conversation
+	if req.ConversationID != "" {
+		convUUID, parseErr := uuid.Parse(req.ConversationID)
+		if parseErr == nil {
+			conv, _ = h.svc.GetConversation(ctx, projectID, convUUID)
+		}
+	}
+	if conv == nil {
+		title := message
+		if len(title) > 50 {
+			title = title[:50] + "..."
+		}
+		var createErr error
+		conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
+			Title:   title,
+			Message: augmentedMessage,
+		})
+		if createErr != nil {
+			span.RecordError(createErr)
+			span.SetStatus(codes.Error, createErr.Error())
+			return apperror.NewInternal("failed to create conversation", createErr)
+		}
+	}
+	conv.AgentDefinitionID = &agentDefUUID
+	span.SetAttributes(attribute.String("memory.remember.conversation_id", conv.ID.String()))
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+		h.log.Warn("failed to set agent_definition_id on remember conversation",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	// Start SSE stream.
+	sseWriter := sse.NewWriter(c.Response().Writer)
+	if err := sseWriter.Start(); err != nil {
+		return apperror.ErrInternal.WithMessage("failed to start SSE stream")
+	}
+
+	if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
+		return nil
+	}
+
+	rememberResult := h.streamAgentChat(ctx, conv, augmentedMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID)
+	span.SetStatus(codes.Ok, "")
+	var rememberRunID string
+	if rememberResult != nil {
+		rememberRunID = rememberResult.RunID
+	}
+	sseWriter.WriteData(sse.NewDoneEventWithRun(rememberRunID))
+	sseWriter.Close()
+	if rememberResult != nil && rememberResult.Cleanup != nil {
+		go rememberResult.Cleanup()
+	}
+	return nil
+}
+
 // message so the cli-assistant-agent is always aware of auth/project state.
 // The block is formatted as a system note rather than part of the question.
 func buildAskContextPrefix(user *auth.AuthUser, projectID string) string {

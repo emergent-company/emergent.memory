@@ -57,4 +57,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	askGroup.Use(authMiddleware.RequireAuth())
 	askGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	askGroup.POST("", h.AskStream)
+	// Project-scoped remember endpoint — stateless NL insertion into the knowledge graph.
+	// Uses the internal graph-insert-agent; understands NL, deduplicates, branches, and merges.
+	rememberGroup := e.Group("/api/projects/:projectId/remember")
+	rememberGroup.Use(authMiddleware.RequireAuth())
+	rememberGroup.Use(authMiddleware.RequireProjectScope())
+	rememberGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	rememberGroup.POST("", h.RememberStream)
 }

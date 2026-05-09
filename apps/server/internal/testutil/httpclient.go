@@ -143,6 +143,63 @@ func (c *HTTPClient) externalRequest(method, path string, opts ...RequestOption)
 	}
 }
 
+// PostSSE performs a POST request expecting an SSE response and parses the events.
+// Works against both in-process and external servers.
+func (c *HTTPClient) PostSSE(path string, opts ...RequestOption) *SSEResponse {
+	opts = append(opts, WithHeader("Accept", "text/event-stream"))
+
+	if c.IsExternal() {
+		// Real HTTP with streaming body read.
+		tempReq := httptest.NewRequest(http.MethodPost, path, nil)
+		for _, opt := range opts {
+			opt(tempReq)
+		}
+
+		var body io.Reader
+		if tempReq.Body != nil {
+			bodyBytes, _ := io.ReadAll(tempReq.Body)
+			body = bytes.NewReader(bodyBytes)
+		}
+
+		req, err := http.NewRequest(http.MethodPost, c.baseURL+path, body)
+		if err != nil {
+			return &SSEResponse{StatusCode: 0, RawBody: err.Error()}
+		}
+		for k, v := range tempReq.Header {
+			req.Header[k] = v
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return &SSEResponse{StatusCode: 0, RawBody: err.Error()}
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(resp.Body)
+		events, _ := ParseSSEResponseFromBytes(respBody)
+		return &SSEResponse{
+			StatusCode:  resp.StatusCode,
+			ContentType: resp.Header.Get("Content-Type"),
+			Events:      events,
+			RawBody:     string(respBody),
+		}
+	}
+
+	// In-process path (same as TestServer.PostSSE).
+	req := httptest.NewRequest(http.MethodPost, path, nil)
+	for _, opt := range opts {
+		opt(req)
+	}
+	rec := httptest.NewRecorder()
+	c.inProcessHandler.ServeHTTP(rec, req)
+	events, _ := ParseSSEResponseFromBytes(rec.Body.Bytes())
+	return &SSEResponse{
+		StatusCode:  rec.Code,
+		ContentType: rec.Header().Get("Content-Type"),
+		Events:      events,
+		RawBody:     rec.Body.String(),
+	}
+}
+
 // GET performs a GET request
 func (c *HTTPClient) GET(path string, opts ...RequestOption) *HTTPResponse {
 	return c.Request(http.MethodGet, path, opts...)
