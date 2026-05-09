@@ -2,11 +2,51 @@ package apperror
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 )
+
+// pgError extracts a *pgconn.PgError from anywhere in the error chain.
+// Returns nil if err is not (or does not wrap) a Postgres error.
+func pgError(err error) *pgconn.PgError {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr
+	}
+	return nil
+}
+
+// pgErrorMessage builds a human-readable message from a PgError using the
+// constraint name, table, and column when available.
+func pgErrorMessage(pgErr *pgconn.PgError) string {
+	switch pgErr.Code {
+	case "23505": // unique_violation
+		if pgErr.ConstraintName != "" {
+			return fmt.Sprintf("duplicate value violates unique constraint %q", pgErr.ConstraintName)
+		}
+		return "a record with that value already exists"
+	case "23503": // foreign_key_violation
+		if pgErr.ConstraintName != "" {
+			return fmt.Sprintf("foreign key constraint %q violated — referenced record does not exist", pgErr.ConstraintName)
+		}
+		return "referenced record does not exist"
+	case "23502": // not_null_violation
+		if pgErr.ColumnName != "" {
+			return fmt.Sprintf("column %q must not be null", pgErr.ColumnName)
+		}
+		return "a required field is missing"
+	case "23514": // check_violation
+		if pgErr.ConstraintName != "" {
+			return fmt.Sprintf("value violates check constraint %q", pgErr.ConstraintName)
+		}
+		return "a field value failed a database check constraint"
+	}
+	return pgErr.Message
+}
 
 // HTTPErrorHandler returns an Echo error handler that formats errors in a standard JSON format.
 // This is the canonical error handler used by both production and test servers.
@@ -29,6 +69,36 @@ func HTTPErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 			code = appErr.HTTPStatus
 			errorObj["code"] = appErr.Code
 			errorObj["message"] = appErr.Message
+		} else if pgErr := pgError(err); pgErr != nil {
+			// Map Postgres error codes to HTTP status codes so DB constraint
+			// violations never surface as opaque 500s.
+			msg := pgErrorMessage(pgErr)
+			switch pgErr.Code {
+			case "23505": // unique_violation
+				code = http.StatusConflict
+				errorObj["code"] = "conflict"
+				errorObj["message"] = msg
+			case "23503": // foreign_key_violation
+				code = http.StatusConflict
+				errorObj["code"] = "conflict"
+				errorObj["message"] = msg
+			case "23502": // not_null_violation
+				code = http.StatusBadRequest
+				errorObj["code"] = "bad_request"
+				errorObj["message"] = msg
+			case "23514": // check_violation
+				code = http.StatusBadRequest
+				errorObj["code"] = "bad_request"
+				errorObj["message"] = msg
+			default:
+				// Unknown Postgres error — stays 500, logged with pg code for diagnosis
+				log.Error("unhandled postgres error",
+					slog.String("pg_code", pgErr.Code),
+					slog.String("pg_message", pgErr.Message),
+					slog.String("constraint", pgErr.ConstraintName),
+					slog.String("table", pgErr.TableName),
+				)
+			}
 		} else if he, ok := err.(*echo.HTTPError); ok {
 			// Handle Echo HTTP errors
 			code = he.Code
