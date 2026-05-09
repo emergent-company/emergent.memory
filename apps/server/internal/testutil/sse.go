@@ -131,21 +131,41 @@ func (s *TestServer) PostSSE(path string, opts ...RequestOption) *SSEResponse {
 	}
 }
 
-// HasEvent checks if the SSE response contains an event with the given type
+// eventMatches returns true if the SSE event matches the given type.
+// It first checks the SSE "event:" field, then falls back to the JSON "type" field
+// in the data payload (for servers that emit data-only events with a type field).
+func eventMatches(e SSEEvent, eventType string) bool {
+	if e.Event == eventType {
+		return true
+	}
+	if e.Event == "" && e.Data != "" {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(e.Data), &payload); err == nil {
+			if t, ok := payload["type"].(string); ok && t == eventType {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HasEvent checks if the SSE response contains an event with the given type.
+// Matches against the SSE "event:" field or the JSON "type" field in data payloads.
 func (r *SSEResponse) HasEvent(eventType string) bool {
 	for _, e := range r.Events {
-		if e.Event == eventType {
+		if eventMatches(e, eventType) {
 			return true
 		}
 	}
 	return false
 }
 
-// GetEventsByType returns all events with the given type
+// GetEventsByType returns all events with the given type.
+// Matches against the SSE "event:" field or the JSON "type" field in data payloads.
 func (r *SSEResponse) GetEventsByType(eventType string) []SSEEvent {
 	var result []SSEEvent
 	for _, e := range r.Events {
-		if e.Event == eventType {
+		if eventMatches(e, eventType) {
 			result = append(result, e)
 		}
 	}

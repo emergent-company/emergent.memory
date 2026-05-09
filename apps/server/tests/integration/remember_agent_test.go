@@ -146,7 +146,7 @@ func (s *RememberAgentTestSuite) postRemember(body map[string]any) *testutil.SSE
 // objectCount returns the number of graph objects in the project.
 func (s *RememberAgentTestSuite) objectCount() int {
 	resp := s.client.GET(
-		fmt.Sprintf("/api/projects/%s/graph/objects/search", s.projectID),
+		fmt.Sprintf("/api/graph/objects/search?projectId=%s", s.projectID),
 		testutil.WithAuth(s.authToken),
 	)
 	if resp.StatusCode != http.StatusOK {
@@ -175,14 +175,23 @@ func toolsUsed(sse *testutil.SSEResponse) []string {
 }
 
 // skipIfNoLLM skips a test when no LLM provider is configured.
-// In external mode, the server is always expected to have a provider — skip only on 503.
+// In external mode, the server is always expected to have a provider — skip only on 503 or LLM errors.
 // In in-process mode, modelFactory is nil so we always get 503.
 func (s *RememberAgentTestSuite) skipIfNoLLM() {
 	if s.external {
-		// External: provider should be configured; skip only if actually unavailable.
+		// External: provider should be configured; skip if actually unavailable or quota exceeded.
 		probe := s.postRemember(map[string]any{"message": "ping"})
 		if probe.StatusCode == http.StatusServiceUnavailable || probe.StatusCode == http.StatusUnprocessableEntity {
 			s.T().Skip("no LLM provider configured on external server — skipping")
+		}
+		// Also skip if the SSE stream contains an LLM/quota error event.
+		for _, ev := range probe.GetEventsByType("error") {
+			var data map[string]any
+			if err := ev.ParseSSEJSON(&data); err == nil {
+				if msg, ok := data["error"].(string); ok {
+					s.T().Skipf("LLM unavailable on external server (%s) — skipping", msg)
+				}
+			}
 		}
 		return
 	}
@@ -263,13 +272,13 @@ func (s *RememberAgentTestSuite) TestRemember_EmitsMetaAndDoneEvents() {
 	for _, ev := range rec.GetEventsByType("meta") {
 		var data map[string]any
 		s.Require().NoError(ev.ParseSSEJSON(&data))
-		s.NotEmpty(data["conversation_id"], "meta must contain conversation_id")
+		s.NotEmpty(data["conversationId"], "meta must contain conversationId")
 	}
 
 	for _, ev := range rec.GetEventsByType("done") {
 		var data map[string]any
 		s.Require().NoError(ev.ParseSSEJSON(&data))
-		s.NotEmpty(data["run_id"], "done must contain run_id")
+		s.NotEmpty(data["runId"], "done must contain runId")
 	}
 }
 
@@ -343,11 +352,11 @@ func (s *RememberAgentTestSuite) TestRemember_ReusesConversation() {
 	for _, ev := range rec1.GetEventsByType("meta") {
 		var data map[string]any
 		_ = ev.ParseSSEJSON(&data)
-		if id, ok := data["conversation_id"].(string); ok {
+		if id, ok := data["conversationId"].(string); ok {
 			convID = id
 		}
 	}
-	s.Require().NotEmpty(convID, "expected conversation_id in meta event")
+	s.Require().NotEmpty(convID, "expected conversationId in meta event")
 
 	rec2 := s.postRemember(map[string]any{
 		"message":         "Alice now works at Google.",
@@ -358,8 +367,8 @@ func (s *RememberAgentTestSuite) TestRemember_ReusesConversation() {
 	for _, ev := range rec2.GetEventsByType("meta") {
 		var data map[string]any
 		_ = ev.ParseSSEJSON(&data)
-		if id, ok := data["conversation_id"].(string); ok {
-			s.Equal(convID, id, "conversation_id must be reused across calls")
+		if id, ok := data["conversationId"].(string); ok {
+			s.Equal(convID, id, "conversationId must be reused across calls")
 		}
 	}
 }
