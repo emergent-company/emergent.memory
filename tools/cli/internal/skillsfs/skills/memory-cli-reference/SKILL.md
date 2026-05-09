@@ -1841,6 +1841,29 @@ Examples:
       --server string        Memory server URL (overrides config)
 ```
 
+## memory embeddings clear
+
+Delete all pending and processing embedding jobs from both queues
+
+### Synopsis
+
+Delete all pending and processing jobs from the object and relationship
+embedding queues. Useful when the queue is stuck or polluted.
+
+Examples:
+  memory embeddings clear
+  memory embeddings clear --server http://your-server:3002
+
+```
+memory embeddings clear [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for clear
+```
+
 ## memory embeddings config
 
 Get or set embedding worker config (batch, concurrency, stale-minutes)
@@ -4166,6 +4189,48 @@ memory query <question> [flags]
       --show-scores                 Show relevance scores for each result (search mode only)
       --show-time                   Show elapsed query time
       --show-tools                  Show tool calls made by the agent (agent mode only)
+```
+
+## memory remember
+
+Store information in the knowledge graph using natural language
+
+### Synopsis
+
+Store information in the knowledge graph using natural language.
+
+The graph-insert-agent understands your input, checks for existing entities to avoid
+duplicates, creates a branch, writes structured data (entities + relationships), and
+merges back to the main graph — all automatically.
+
+Schema policy controls what happens when no matching entity type exists:
+  auto        Create new schema types as needed (default)
+  reuse_only  Never create new types; use the closest existing type
+  ask         Prompt before creating any new type (requires interactive terminal)
+
+Examples:
+  memory remember "I have to buy toilet paper at Lidl"
+  memory remember "Meeting with Sarah tomorrow at 3pm about the Q3 roadmap"
+  memory remember "The API server is deployed on aws-eu-west-1, running Go 1.22"
+  memory remember --schema-policy reuse_only "Task: fix login bug, priority high"
+  memory remember --dry-run "Note: team offsite on 15 June in Berlin"
+  memory remember --project abc123 "remember to call dentist next week"
+
+```
+memory remember <text> [flags]
+```
+
+### Options
+
+```
+      --dry-run                Create branch and write data but do not merge to main
+  -h, --help                   help for remember
+      --json                   Output results as JSON
+      --project string         Project ID (uses default project if not specified)
+      --schema-policy string   Schema creation policy: auto, reuse_only, ask (default "auto")
+      --session string         Continue a previous remember session (use session ID printed after a run)
+      --show-time              Show elapsed time
+      --show-tools             Show tool calls made by the agent
 ```
 
 ## memory schemas

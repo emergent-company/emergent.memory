@@ -462,6 +462,21 @@ func (s *GraphEmbeddingJobsService) ResetDeadLetterJobs(ctx context.Context) (in
 	return int(n), nil
 }
 
+// ClearPendingJobs deletes all pending and processing jobs from the queue.
+// Returns the number of rows deleted.
+func (s *GraphEmbeddingJobsService) ClearPendingJobs(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`DELETE FROM kb.graph_embedding_jobs
+		WHERE status IN ('pending', 'processing')`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("clear pending graph embedding jobs: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("cleared pending/processing graph embedding jobs", slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
 // truncateError truncates an error message to 1000 characters
 func truncateError(msg string) string {
 	if len(msg) > 1000 {

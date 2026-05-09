@@ -61,6 +61,7 @@ func init() {
 	embeddingsCmd.AddCommand(embeddingsResumeCmd)
 	embeddingsCmd.AddCommand(embeddingsConfigCmd)
 	embeddingsCmd.AddCommand(embeddingsProgressCmd)
+	embeddingsCmd.AddCommand(embeddingsClearCmd)
 
 	embeddingsConfigCmd.Flags().IntVar(&embeddingsConfigFlags.batchSize, "batch", 0, "Number of jobs to dequeue per poll (0 = no change)")
 	embeddingsConfigCmd.Flags().IntVar(&embeddingsConfigFlags.concurrency, "concurrency", 0, "Number of jobs processed concurrently per poll (0 = no change)")
@@ -331,6 +332,29 @@ func printEmbeddingProgress(result map[string]any) {
 		}
 	}
 	fmt.Println()
+}
+
+// ─── clear subcommand ─────────────────────────────────────────────────────────
+
+var embeddingsClearCmd = &cobra.Command{
+	Use:   "clear",
+	Short: "Delete all pending and processing embedding jobs from both queues",
+	Long: `Delete all pending and processing jobs from the object and relationship
+embedding queues. Useful when the queue is stuck or polluted.
+
+Examples:
+  memory embeddings clear
+  memory embeddings clear --server http://your-server:3002`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		result, err := embeddingsDoRequest(http.MethodDelete, "/api/embeddings/queue")
+		if err != nil {
+			return err
+		}
+		objN, _ := result["objects_cleared"].(float64)
+		relN, _ := result["relationships_cleared"].(float64)
+		fmt.Printf("Cleared %.0f object jobs and %.0f relationship jobs.\n", objN, relN)
+		return nil
+	},
 }
 
 var embeddingsConfigFlags struct {

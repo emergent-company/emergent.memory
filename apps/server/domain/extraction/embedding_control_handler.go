@@ -256,8 +256,33 @@ func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
 	})
 }
 
-// ============================================================================
-// mcp.EmbeddingControlHandler interface implementation
+// EmbeddingClearResponse is the response for DELETE /api/embeddings/queue.
+type EmbeddingClearResponse struct {
+	ObjectsCleared       int `json:"objects_cleared"`
+	RelationshipsCleared int `json:"relationships_cleared"`
+}
+
+// ClearQueue deletes all pending and processing jobs from both embedding queues.
+// @Router /api/embeddings/queue [delete]
+func (h *EmbeddingControlHandler) ClearQueue(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	objN, err := h.objectJobsSvc.ClearPendingJobs(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	relN, err := h.relJobsSvc.ClearPendingJobs(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, EmbeddingClearResponse{
+		ObjectsCleared:       objN,
+		RelationshipsCleared: relN,
+	})
+}
+
 // These exported methods are called by the MCP package via interface (no direct import).
 // ============================================================================
 
