@@ -160,14 +160,17 @@ func (s *RememberAgentTestSuite) objectCount() int {
 	return len(items)
 }
 
-// toolsUsed extracts tool names from tool_call SSE events.
+// toolsUsed extracts tool names from mcp_tool SSE events (status=started).
 func toolsUsed(sse *testutil.SSEResponse) []string {
 	names := make([]string, 0)
-	for _, ev := range sse.GetEventsByType("tool_call") {
+	for _, ev := range sse.GetEventsByType("mcp_tool") {
 		var data map[string]any
 		if err := ev.ParseSSEJSON(&data); err == nil {
-			if name, ok := data["name"].(string); ok {
-				names = append(names, name)
+			// Only count each tool once (started event), not completed
+			if status, _ := data["status"].(string); status == "started" {
+				if name, ok := data["tool"].(string); ok {
+					names = append(names, name)
+				}
 			}
 		}
 	}
