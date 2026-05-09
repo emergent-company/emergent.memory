@@ -11,10 +11,9 @@ package config
 // non-functional (they reference agent types at runtime). Always disable all
 // three together or leave all three enabled.
 type FeatureSet struct {
-	// Chat enables the /api/chat SSE conversation routes.
-	// The admin UI has been moved away from these routes; default is false.
-	// Enable with FEATURE_CHAT=true if a client still depends on them.
-	Chat bool `env:"FEATURE_CHAT" envDefault:"false"`
+	// Chat enables the chat domain routes: /api/chat/* (legacy conversation CRUD),
+	// /api/projects/:id/query, /api/projects/:id/ask, and /api/projects/:id/remember.
+	Chat bool `env:"FEATURE_CHAT" envDefault:"true"`
 	// Agents enables the agent runner, agent definitions, and related MCP tools.
 	// Disabling also makes FEATURE_MCP and FEATURE_MCPREGISTRY non-functional.
 	Agents bool `env:"FEATURE_AGENTS" envDefault:"true"`
