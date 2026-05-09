@@ -689,21 +689,58 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 
 	description, _ := args["description"].(string)
 
-	// Parse object types from JSON
+	// Parse object types — support both legacy string form and map form from LLM
 	var objectTypes []map[string]any
 	if objTypesJSON, ok := args["object_types"].(string); ok && objTypesJSON != "" {
 		if err := json.Unmarshal([]byte(objTypesJSON), &objectTypes); err != nil {
 			return nil, fmt.Errorf("invalid object_types JSON: %w", err)
 		}
+	} else if objTypesMap, ok := args["object_type_schemas"].(map[string]any); ok {
+		// LLM passes {"type_name": {schema...}, ...}
+		for typeName, schema := range objTypesMap {
+			entry, _ := schema.(map[string]any)
+			if entry == nil {
+				entry = map[string]any{}
+			}
+			entry["type_name"] = typeName
+			objectTypes = append(objectTypes, entry)
+		}
 	}
 
-	// Parse relationship types from JSON
+	// Parse relationship types — support both legacy string form and map form from LLM
 	var relTypes []map[string]any
 	if relTypesJSON, ok := args["relationship_types"].(string); ok && relTypesJSON != "" {
 		if err := json.Unmarshal([]byte(relTypesJSON), &relTypes); err != nil {
 			return nil, fmt.Errorf("invalid relationship_types JSON: %w", err)
 		}
+	} else if relTypesMap, ok := args["relationship_type_schemas"].(map[string]any); ok {
+		for typeName, schema := range relTypesMap {
+			entry, _ := schema.(map[string]any)
+			if entry == nil {
+				entry = map[string]any{}
+			}
+			entry["type_name"] = typeName
+			relTypes = append(relTypes, entry)
+		}
 	}
+
+	// Build jsonb representations for graph_schemas columns (required NOT NULL)
+	objTypeSchemasMap := map[string]any{}
+	for _, ot := range objectTypes {
+		typeName, _ := ot["type_name"].(string)
+		if typeName != "" {
+			objTypeSchemasMap[typeName] = ot
+		}
+	}
+	relTypeSchemasMap := map[string]any{}
+	for _, rt := range relTypes {
+		typeName, _ := rt["type_name"].(string)
+		if typeName != "" {
+			relTypeSchemasMap[typeName] = rt
+		}
+	}
+	objTypeSchemasJSON, _ := json.Marshal(objTypeSchemasMap)
+	relTypeSchemasJSON, _ := json.Marshal(relTypeSchemasMap)
 
 	// Create schema
 	var schemaID string
@@ -717,10 +754,10 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 			ID string `bun:"id"`
 		}
 		err := tx.NewRaw(`
-			INSERT INTO kb.graph_schemas (id, project_id, name, version, description, visibility, source)
-			VALUES (gen_random_uuid(), ?, ?, ?, ?, 'project', 'custom')
+			INSERT INTO kb.graph_schemas (id, project_id, name, version, description, visibility, source, object_type_schemas, relationship_type_schemas)
+			VALUES (gen_random_uuid(), ?, ?, ?, ?, 'project', 'custom', ?::jsonb, ?::jsonb)
 			RETURNING id
-		`, projectUUID, name, version, description).Scan(ctx, &createdSchema)
+		`, projectUUID, name, version, description, string(objTypeSchemasJSON), string(relTypeSchemasJSON)).Scan(ctx, &createdSchema)
 		if err != nil {
 			return fmt.Errorf("create schema: %w", err)
 		}
