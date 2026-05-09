@@ -13,4 +13,5 @@ func RegisterEmbeddingControlRoutes(e *echo.Echo, h *EmbeddingControlHandler) {
 	e.POST("/api/embeddings/resume", h.Resume)
 	e.PATCH("/api/embeddings/config", h.Config)
 	e.DELETE("/api/embeddings/queue", h.ClearQueue)
+	e.POST("/api/embeddings/reset-schedule", h.ResetSchedule)
 }

@@ -228,6 +228,23 @@ func (s *GraphRelationshipEmbeddingJobsService) Stats(ctx context.Context) (*Gra
 	return stats, err
 }
 
+// ResetSchedule sets scheduled_at = now() for all pending relationship embedding jobs
+// so they are immediately eligible for dequeue regardless of backoff delay.
+// Returns the number of rows updated.
+func (s *GraphRelationshipEmbeddingJobsService) ResetSchedule(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.graph_relationship_embedding_jobs
+		SET scheduled_at = now(), updated_at = now()
+		WHERE status = 'pending'`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reset schedule relationship embedding jobs: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("reset schedule for pending relationship embedding jobs", slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
 // ClearPendingJobs deletes all pending and processing relationship embedding jobs.
 // Returns the number of rows deleted.
 func (s *GraphRelationshipEmbeddingJobsService) ClearPendingJobs(ctx context.Context) (int, error) {

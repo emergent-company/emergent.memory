@@ -262,6 +262,33 @@ type EmbeddingClearResponse struct {
 	RelationshipsCleared int `json:"relationships_cleared"`
 }
 
+// EmbeddingResetScheduleResponse is the response for POST /api/embeddings/reset-schedule.
+type EmbeddingResetScheduleResponse struct {
+	ObjectsReset       int `json:"objects_reset"`
+	RelationshipsReset int `json:"relationships_reset"`
+}
+
+// ResetSchedule resets scheduled_at to now() for all pending jobs so they bypass backoff delays.
+// @Router /api/embeddings/reset-schedule [post]
+func (h *EmbeddingControlHandler) ResetSchedule(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	objN, err := h.objectJobsSvc.ResetSchedule(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	relN, err := h.relJobsSvc.ResetSchedule(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, EmbeddingResetScheduleResponse{
+		ObjectsReset:       objN,
+		RelationshipsReset: relN,
+	})
+}
+
 // ClearQueue deletes all pending and processing jobs from both embedding queues.
 // @Router /api/embeddings/queue [delete]
 func (h *EmbeddingControlHandler) ClearQueue(c echo.Context) error {

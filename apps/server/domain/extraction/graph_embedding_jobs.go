@@ -462,6 +462,23 @@ func (s *GraphEmbeddingJobsService) ResetDeadLetterJobs(ctx context.Context) (in
 	return int(n), nil
 }
 
+// ResetSchedule sets scheduled_at = now() for all pending jobs so they are
+// immediately eligible for dequeue regardless of their backoff delay.
+// Returns the number of rows updated.
+func (s *GraphEmbeddingJobsService) ResetSchedule(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET scheduled_at = now(), updated_at = now()
+		WHERE status = 'pending'`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reset schedule graph embedding jobs: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("reset schedule for pending graph embedding jobs", slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
 // ClearPendingJobs deletes all pending and processing jobs from the queue.
 // Returns the number of rows deleted.
 func (s *GraphEmbeddingJobsService) ClearPendingJobs(ctx context.Context) (int, error) {
