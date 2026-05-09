@@ -16,8 +16,8 @@ from pathlib import Path
 
 SPLIT_MAP = {
     "oracle": "longmemeval_oracle",
-    "s":      "longmemeval_s",
-    "m":      "longmemeval_m",
+    "s":      "longmemeval_s_cleaned",
+    "m":      "longmemeval_m_cleaned",
 }
 
 HF_REPO = "xiaowu0162/longmemeval-cleaned"
@@ -48,10 +48,12 @@ def main() -> None:
 
     print(f"Downloading {HF_REPO} split={split_name} ...")
     try:
-        ds = load_dataset(HF_REPO, split=split_name)
-    except Exception:
-        # Fallback: try the split directly as a config
-        ds = load_dataset(HF_REPO, split_name, split="test")
+        # Use streaming=True to avoid loading broken splits (m split pyarrow overflow)
+        ds = load_dataset(HF_REPO, split=split_name, streaming=True)
+        records = [dict(row) for row in ds]
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
 
     records = [dict(row) for row in ds]
     with open(out_path, "w") as f:

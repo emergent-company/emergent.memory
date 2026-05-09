@@ -115,9 +115,16 @@ def query(
     if not pid:
         raise ValueError("project_id required")
 
-    msg = question
+    # Benchmark mode: prepend concise-answer instruction so Token F1 / EM metrics
+    # are not destroyed by verbose prose responses.
+    concise_prefix = (
+        "[IMPORTANT: Answer with the shortest possible phrase or name — "
+        "no explanation, no markdown, no sentences. "
+        "If the answer is a single word or short phrase, output only that.]"
+    )
+    msg = f"{concise_prefix} {question}"
     if namespace:
-        msg = f"[namespace: {namespace}] {question}"
+        msg = f"[namespace: {namespace}] {msg}"
 
     body: dict = {"message": msg}
     if session_id:
