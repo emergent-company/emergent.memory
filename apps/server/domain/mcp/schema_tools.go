@@ -769,8 +769,8 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 			typeSchemaJSON, _ := json.Marshal(ot)
 			if typeName != "" {
 				_, err := tx.NewRaw(`
-					INSERT INTO kb.project_object_schema_registry (project_id, schema_id, type_name, json_schema)
-					VALUES (?, ?, ?, ?::jsonb)
+					INSERT INTO kb.project_object_schema_registry (project_id, schema_id, type_name, source, json_schema)
+					VALUES (?, ?, ?, 'custom', ?::jsonb)
 				`, projectUUID, schemaID, typeName, string(typeSchemaJSON)).Exec(ctx)
 				if err != nil {
 					return fmt.Errorf("insert object type %s: %w", typeName, err)
