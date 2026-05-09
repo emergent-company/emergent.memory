@@ -1400,6 +1400,16 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		SandboxConfig:  dto.SandboxConfig,
 	}
 
+	// Check for existing definition with same name to return a clear 409 instead of a 500
+	// from a unique constraint violation on (project_id, name).
+	existing, err := h.repo.FindDefinitionByName(c.Request().Context(), projectID, dto.Name)
+	if err != nil {
+		return apperror.NewInternal("failed to check for existing agent definition", err)
+	}
+	if existing != nil {
+		return apperror.ErrConflict.WithMessage(fmt.Sprintf("an agent definition named '%s' already exists in this project", dto.Name))
+	}
+
 	if err := h.repo.CreateDefinition(c.Request().Context(), def); err != nil {
 		return apperror.NewInternal("failed to create agent definition", err)
 	}
