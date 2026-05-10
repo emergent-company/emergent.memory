@@ -2205,9 +2205,11 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("HybridSearch: failed to auto-embed query, continuing with lexical-only", logger.Error(err))
-		} else {
+		} else if len(vec) > 0 {
 			req.Vector = vec
 			hasVector = true
+		} else {
+			s.log.Warn("HybridSearch: auto-embed returned empty vector, continuing with lexical-only")
 		}
 	}
 
