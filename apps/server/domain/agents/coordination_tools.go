@@ -345,15 +345,24 @@ func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req Spaw
 		}
 	}
 	if agent == nil {
-		// Create a transient Agent entity for execution if one doesn't exist
-		// This can happen when an agent definition exists but no runtime agent was created
+		// No runtime agent row exists — create one from the definition so that
+		// agent_runs.agent_id FK is satisfied.
 		agent = &Agent{
-			ProjectID: deps.ProjectID,
-			Name:      def.Name,
-			Prompt:    def.SystemPrompt,
+			ProjectID:         deps.ProjectID,
+			Name:              def.Name,
+			Prompt:            def.SystemPrompt,
+			Description:       def.Description,
+			StrategyType:      "definition",
+			TriggerType:       TriggerTypeManual,
+			ExecutionMode:     ExecutionModeExecute,
+			AgentDefinitionID: &def.ID,
 		}
-		if def.Description != nil {
-			agent.Description = def.Description
+		if createErr := deps.Repo.Create(ctx, agent); createErr != nil {
+			return SpawnResult{
+				AgentName: req.AgentName,
+				Status:    RunStatusError,
+				Error:     fmt.Sprintf("failed to create runtime agent for definition %q: %s", req.AgentName, createErr.Error()),
+			}
 		}
 	}
 
