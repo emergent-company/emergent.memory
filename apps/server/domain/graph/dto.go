@@ -15,6 +15,7 @@ type CreateGraphObjectRequest struct {
 	Properties map[string]any `json:"properties,omitempty"`
 	Labels     []string       `json:"labels,omitempty" validate:"omitempty,max=32,dive,max=64"`
 	BranchID   *uuid.UUID     `json:"branch_id,omitempty"`
+	Namespace  *string        `json:"namespace,omitempty" validate:"omitempty,max=128"`
 }
 
 // PatchGraphObjectRequest is the request body for patching a graph object.
@@ -43,6 +44,7 @@ type GraphObjectResponse struct {
 	Type          string         `json:"type"`
 	Key           *string        `json:"key,omitempty"`
 	Status        *string        `json:"status,omitempty"`
+	Namespace     *string        `json:"namespace,omitempty"`
 	Properties    map[string]any `json:"properties"`
 	Labels        []string       `json:"labels"`
 	SchemaVersion *string        `json:"schema_version,omitempty"`
@@ -96,6 +98,7 @@ func (o *GraphObject) ToResponse() *GraphObjectResponse {
 		Type:              o.Type,
 		Key:               o.Key,
 		Status:            o.Status,
+		Namespace:         o.Namespace,
 		Properties:        o.Properties,
 		Labels:            o.Labels,
 		SchemaVersion:     o.SchemaVersion,
@@ -427,6 +430,7 @@ type HybridSearchRequest struct {
 	Vector          []float32  `json:"vector,omitempty"`
 	Types           []string   `json:"types,omitempty"`
 	Labels          []string   `json:"labels,omitempty"`
+	Namespace       *string    `json:"namespace,omitempty"`
 	Status          *string    `json:"status,omitempty"`
 	BranchID        *uuid.UUID `json:"branchId,omitempty"`
 	IncludeDeleted  bool       `json:"includeDeleted,omitempty"`
@@ -940,6 +944,7 @@ type BulkActionFilter struct {
 	PropertyFilters []PropertyFilter `json:"property_filters,omitempty"`
 	Labels          []string         `json:"labels,omitempty"`
 	CreatedAfter    *time.Time       `json:"created_after,omitempty"`
+	Namespace       *string          `json:"namespace,omitempty"`
 }
 
 // BulkActionRequest is the request body for a filter-then-action bulk operation.

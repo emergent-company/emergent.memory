@@ -449,8 +449,9 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	if auth.ProjectIDFromContext(ctx) == "" && user.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, user.ProjectID)
 	}
-
-	// Fail fast if no LLM provider is configured. Probe the model factory before
+	if req.Namespace != "" {
+		ctx = auth.ContextWithNamespace(ctx, req.Namespace)
+	}
 	// opening the SSE stream so clients get a proper HTTP error code, not a
 	// success status with an error buried in the stream.
 	if h.modelFactory != nil {
@@ -1421,6 +1422,7 @@ type RememberStreamRequest struct {
 	ConversationID string `json:"conversation_id,omitempty"` // optional: continue a previous session
 	SchemaPolicy   string `json:"schema_policy,omitempty"`   // "auto" (default), "reuse_only", "ask"
 	DryRun         bool   `json:"dry_run,omitempty"`         // if true, branch is created+written but not merged
+	Namespace      string `json:"namespace,omitempty"`       // optional: scope graph objects to a namespace
 	ParentRunID    string `json:"parent_run_id,omitempty"`
 	RootRunID      string `json:"root_run_id,omitempty"`
 }
@@ -1488,6 +1490,9 @@ func (h *Handler) RememberStream(c echo.Context) error {
 
 	if auth.ProjectIDFromContext(ctx) == "" && projectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, projectID)
+	}
+	if req.Namespace != "" {
+		ctx = auth.ContextWithNamespace(ctx, req.Namespace)
 	}
 
 	// Probe LLM provider before opening SSE stream.

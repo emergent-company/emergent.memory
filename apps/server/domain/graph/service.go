@@ -492,6 +492,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 		Type:       req.Type,
 		Key:        req.Key,
 		Status:     req.Status,
+		Namespace:  req.Namespace,
 		Properties: validatedProps,
 		Labels:     req.Labels,
 		ActorType:  &actorType,
@@ -584,7 +585,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	// Check if object already exists
-	existing, err := s.repo.FindHeadByTypeAndKey(ctx, tx.Tx, projectID, req.BranchID, req.Type, *req.Key)
+	existing, err := s.repo.FindHeadByTypeAndKeyNS(ctx, tx.Tx, projectID, req.BranchID, req.Namespace, req.Type, *req.Key)
 	if err != nil {
 		return nil, false, err
 	}
@@ -599,6 +600,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			Type:       req.Type,
 			Key:        req.Key,
 			Status:     req.Status,
+			Namespace:  req.Namespace,
 			Properties: validatedProps,
 			Labels:     req.Labels,
 			ActorType:  &actorType,
@@ -627,6 +629,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			Type:       req.Type,
 			Key:        req.Key,
 			Status:     req.Status,
+			Namespace:  existing.Namespace,
 			Properties: validatedProps,
 			Labels:     req.Labels,
 			DeletedAt:  nil,
@@ -713,6 +716,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 		Type:       existing.Type,
 		Key:        existing.Key,
 		Status:     newStatus,
+		Namespace:  existing.Namespace,
 		Properties: newProps,
 		Labels:     newLabels,
 		ActorType:  &actorType,
@@ -2229,6 +2233,7 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 			BranchID:       req.BranchID,
 			Types:          req.Types,
 			Labels:         req.Labels,
+			Namespace:      req.Namespace,
 			Status:         req.Status,
 			IncludeDeleted: req.IncludeDeleted,
 			Limit:          fetchLimit,
@@ -2251,6 +2256,7 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 			BranchID:       req.BranchID,
 			Types:          req.Types,
 			Labels:         req.Labels,
+			Namespace:      req.Namespace,
 			Status:         req.Status,
 			IncludeDeleted: req.IncludeDeleted,
 			Limit:          fetchLimit,
@@ -3543,6 +3549,7 @@ func (s *Service) applyMerge(
 				Type:        src.Type,
 				Key:         src.Key,
 				Status:      src.Status,
+				Namespace:   src.Namespace,
 				Labels:      labels,
 				Properties:  props,
 			}
@@ -3592,6 +3599,7 @@ func (s *Service) applyMerge(
 				Type:       prevHead.Type,
 				Key:        src.Key,
 				Status:     targetStatus,
+				Namespace:  src.Namespace,
 				Labels:     labels,
 				Properties: props,
 				ProjectID:  projectID,
@@ -3661,6 +3669,7 @@ func (s *Service) applyMerge(
 				Type:          prevHead.Type,
 				Key:           tgt.Key,
 				Status:        resolvedStatus,
+				Namespace:     src.Namespace,
 				Labels:        labels,
 				Properties:    mergedProps,
 				ProjectID:     projectID,

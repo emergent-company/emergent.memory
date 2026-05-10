@@ -3207,6 +3207,11 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			BranchID:   branchID,
 		}
 
+		// Propagate namespace from context (set by RememberStream or API caller).
+		if ns := auth.NamespaceFromContext(ctx); ns != "" {
+			req.Namespace = &ns
+		}
+
 		result, err := s.graphService.Create(ctx, projectUUID, req, nil)
 		if err != nil {
 			results = append(results, batchResult{

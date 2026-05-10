@@ -20,9 +20,10 @@ type GraphObject struct {
 	SupersedesID *uuid.UUID `bun:"supersedes_id,type:uuid" json:"supersedes_id,omitempty"`
 	Version      int        `bun:"version,notnull,default:1" json:"version"`
 
-	Type   string  `bun:"type,notnull" json:"type"`
-	Key    *string `bun:"key" json:"key,omitempty"`
-	Status *string `bun:"status" json:"status,omitempty"`
+	Type      string  `bun:"type,notnull" json:"type"`
+	Key       *string `bun:"key" json:"key,omitempty"`
+	Status    *string `bun:"status" json:"status,omitempty"`
+	Namespace *string `bun:"namespace" json:"namespace,omitempty"`
 
 	Properties    map[string]any `bun:"properties,type:jsonb,notnull,default:'{}'" json:"properties"`
 	Labels        []string       `bun:"labels,array,notnull,default:'{}'" json:"labels"`

@@ -10,6 +10,7 @@ type (
 	projectIDCtxKey struct{}
 	orgIDCtxKey     struct{}
 	rawTokenCtxKey  struct{}
+	namespaceCtxKey struct{}
 )
 
 // ContextWithUser returns a new context with the AuthUser embedded.
@@ -50,6 +51,20 @@ func ContextWithOrgID(ctx context.Context, orgID string) context.Context {
 func OrgIDFromContext(ctx context.Context) string {
 	if id, ok := ctx.Value(orgIDCtxKey{}).(string); ok {
 		return id
+	}
+	return ""
+}
+
+// ContextWithNamespace returns a new context with the graph namespace embedded.
+func ContextWithNamespace(ctx context.Context, namespace string) context.Context {
+	return context.WithValue(ctx, namespaceCtxKey{}, namespace)
+}
+
+// NamespaceFromContext extracts the graph namespace from a standard context.Context.
+// Returns empty string if no namespace is present.
+func NamespaceFromContext(ctx context.Context) string {
+	if ns, ok := ctx.Value(namespaceCtxKey{}).(string); ok {
+		return ns
 	}
 	return ""
 }

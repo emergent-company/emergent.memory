@@ -706,6 +706,11 @@ func (r *Repository) AcquireObjectLock(ctx context.Context, tx bun.Tx, canonical
 // FindHeadByTypeAndKey returns the HEAD version of an object identified by (project_id, type, key).
 // Returns nil, nil if not found (not an error).
 func (r *Repository) FindHeadByTypeAndKey(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, objType string, key string) (*GraphObject, error) {
+	return r.FindHeadByTypeAndKeyNS(ctx, db, projectID, branchID, nil, objType, key)
+}
+
+// FindHeadByTypeAndKeyNS is like FindHeadByTypeAndKey but also filters by namespace.
+func (r *Repository) FindHeadByTypeAndKeyNS(ctx context.Context, db bun.IDB, projectID uuid.UUID, branchID *uuid.UUID, namespace *string, objType string, key string) (*GraphObject, error) {
 	var obj GraphObject
 	q := db.NewSelect().
 		Model(&obj).
@@ -718,6 +723,10 @@ func (r *Repository) FindHeadByTypeAndKey(ctx context.Context, db bun.IDB, proje
 		q = q.Where("branch_id = ?", *branchID)
 	} else {
 		q = q.Where("branch_id IS NULL")
+	}
+
+	if namespace != nil {
+		q = q.Where("namespace = ?", *namespace)
 	}
 
 	err := q.Scan(ctx)
@@ -1259,6 +1268,7 @@ type searchFilters struct {
 	BranchID       *uuid.UUID
 	Types          []string
 	Labels         []string
+	Namespace      *string
 	Status         *string
 	IncludeDeleted bool
 }
@@ -1283,6 +1293,11 @@ func buildSearchFilters(filters searchFilters) (conditions []string, args []any)
 		args = append(args, formatTextArray(filters.Labels))
 	}
 
+	if filters.Namespace != nil {
+		conditions = append(conditions, "namespace = ?")
+		args = append(args, *filters.Namespace)
+	}
+
 	if filters.Status != nil {
 		conditions = append(conditions, "status = ?")
 		args = append(args, *filters.Status)
@@ -1305,7 +1320,7 @@ func buildWhereClause(conditions []string) string {
 
 // graphObjectColumns is the list of columns to select for GraphObject.
 const graphObjectColumns = `id, project_id, branch_id, canonical_id, supersedes_id, version,
-	type, key, status, properties, labels, change_summary, content_hash,
+	type, key, status, namespace, properties, labels, change_summary, content_hash,
 	created_at, updated_at, deleted_at, fts, embedding_updated_at,
 	extraction_job_id, extraction_confidence, needs_review, reviewed_by, reviewed_at,
 	actor_type, actor_id, schema_version`
@@ -1320,7 +1335,7 @@ func scanGraphObject(rows *sql.Rows, obj *GraphObject, extraDest ...any) error {
 
 	dest := []any{
 		&obj.ID, &obj.ProjectID, &obj.BranchID, &obj.CanonicalID, &obj.SupersedesID, &obj.Version,
-		&obj.Type, &obj.Key, &obj.Status, &props, &labels, &changeSummary, &obj.ContentHash,
+		&obj.Type, &obj.Key, &obj.Status, &obj.Namespace, &props, &labels, &changeSummary, &obj.ContentHash,
 		&obj.CreatedAt, &obj.UpdatedAt, &obj.DeletedAt, &obj.FTS, &obj.EmbeddingUpdatedAt,
 		&obj.ExtractionJobID, &obj.ExtractionConfidence, &obj.NeedsReview, &obj.ReviewedBy, &obj.ReviewedAt,
 		&obj.ActorType, &obj.ActorID, &obj.SchemaVersion,
@@ -1344,6 +1359,7 @@ type FTSSearchParams struct {
 	BranchID       *uuid.UUID
 	Types          []string
 	Labels         []string
+	Namespace      *string
 	Status         *string
 	IncludeDeleted bool
 	Limit          int
@@ -1380,6 +1396,7 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 		BranchID:       params.BranchID,
 		Types:          params.Types,
 		Labels:         params.Labels,
+		Namespace:      params.Namespace,
 		Status:         params.Status,
 		IncludeDeleted: params.IncludeDeleted,
 	})
@@ -1439,6 +1456,7 @@ type VectorSearchParams struct {
 	BranchID       *uuid.UUID
 	Types          []string
 	Labels         []string
+	Namespace      *string
 	Status         *string
 	IncludeDeleted bool
 	MaxDistance    *float32
@@ -1493,6 +1511,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 		BranchID:       params.BranchID,
 		Types:          params.Types,
 		Labels:         params.Labels,
+		Namespace:      params.Namespace,
 		Status:         params.Status,
 		IncludeDeleted: params.IncludeDeleted,
 	})
@@ -2299,6 +2318,7 @@ type BranchObjectHead struct {
 	Type        string
 	Key         *string
 	Status      *string
+	Namespace   *string
 	Labels      []string
 	Properties  map[string]any
 	DeletedAt   *time.Time
@@ -2311,7 +2331,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 
 	q := r.db.NewSelect().
 		Model(&objects).
-		Column("id", "canonical_id", "content_hash", "type", "key", "status", "labels", "properties", "deleted_at").
+		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL")
 
@@ -2335,6 +2355,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 			Type:        obj.Type,
 			Key:         obj.Key,
 			Status:      obj.Status,
+			Namespace:   obj.Namespace,
 			Labels:      obj.Labels,
 			Properties:  obj.Properties,
 			DeletedAt:   obj.DeletedAt,
@@ -2716,6 +2737,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 	if params.Filter.CreatedAfter != nil {
 		countQ = countQ.Where("created_at >= ?", params.Filter.CreatedAfter.UTC())
 	}
+	if params.Filter.Namespace != nil {
+		countQ = countQ.Where("namespace = ?", *params.Filter.Namespace)
+	}
 	// Apply property filters to count query.
 	if len(resolvedFilters) > 0 {
 		countQ = applyBulkPropertyFilters(countQ, resolvedFilters)
@@ -2789,6 +2813,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		}
 		if params.Filter.CreatedAfter != nil {
 			subQ = subQ.Where("created_at >= ?", params.Filter.CreatedAfter.UTC())
+		}
+		if params.Filter.Namespace != nil {
+			subQ = subQ.Where("namespace = ?", *params.Filter.Namespace)
 		}
 		subQ = applyBulkPropertyFilters(subQ, resolvedFilters)
 		result, qErr := r.db.NewDelete().
@@ -3011,6 +3038,9 @@ func applyBulkFilterToUpdate(q *bun.UpdateQuery, filter BulkActionFilter, resolv
 	}
 	if filter.CreatedAfter != nil {
 		q = q.Where("created_at >= ?", filter.CreatedAfter.UTC())
+	}
+	if filter.Namespace != nil {
+		q = q.Where("namespace = ?", *filter.Namespace)
 	}
 	return q
 }

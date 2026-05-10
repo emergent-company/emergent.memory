@@ -116,4 +116,5 @@ type StreamRequest struct {
 	Message           string  `json:"message" validate:"required,max=100000"`
 	CanonicalID       *string `json:"canonicalId,omitempty" validate:"omitempty,uuid"`
 	AgentDefinitionID *string `json:"agentDefinitionId,omitempty" validate:"omitempty,uuid"`
+	Namespace         string  `json:"namespace,omitempty"`
 }
