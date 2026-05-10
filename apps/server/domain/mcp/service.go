@@ -3143,6 +3143,25 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 	results := make([]batchResult, 0, len(entitiesRaw))
 	successCount := 0
 	failedCount := 0
+	// keyToID maps entity key → canonical UUID for entities created in this batch.
+	// Used to resolve inline relationship source/target by key within the same call.
+	keyToID := make(map[string]uuid.UUID)
+
+	// resolveIDOrKey resolves a string that is either a UUID or an entity key.
+	// Checks the in-batch keyToID map first, then falls back to a DB lookup.
+	resolveIDOrKey := func(idOrKey string) (uuid.UUID, error) {
+		if id, err := uuid.Parse(idOrKey); err == nil {
+			return id, nil
+		}
+		if id, ok := keyToID[idOrKey]; ok {
+			return id, nil
+		}
+		id, err := s.resolveEntityIDByKey(ctx, projectUUID, idOrKey)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("key %q not found: %w", idOrKey, err)
+		}
+		return id, nil
+	}
 
 	for i, entityRaw := range entitiesRaw {
 		entityMap, ok := entityRaw.(map[string]any)
@@ -3229,6 +3248,8 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 		}
 		if result.Key != nil {
 			slim.Key = *result.Key
+			// Register in keyToID so later entities in this batch can reference by key.
+			keyToID[*result.Key] = result.CanonicalID
 		}
 
 		// Create any inline relationships declared on this entity spec.
@@ -3247,22 +3268,23 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 				// Support both source_id and target_id in inline relationship specs.
 				// source_id: the pre-existing entity is the src (source_id → new_entity as dst).
 				// target_id: the new entity is the src (new_entity → target_id as dst).
+				// Both accept a UUID string OR an entity key (resolved via keyToID or DB lookup).
 				var relSrcID, relDstID uuid.UUID
 				if sourceIDStr, ok := relMap["source_id"].(string); ok && sourceIDStr != "" {
-					sourceID, err := uuid.Parse(sourceIDStr)
+					sourceID, err := resolveIDOrKey(sourceIDStr)
 					if err != nil {
-						s.log.Warn("skipping inline relationship: invalid source_id",
-							"rel_type", relType, "source_id", sourceIDStr)
+						s.log.Warn("skipping inline relationship: cannot resolve source_id",
+							"rel_type", relType, "source_id", sourceIDStr, logger.Error(err))
 						continue
 					}
 					relSrcID = sourceID
 					relDstID = result.CanonicalID
 				} else {
 					targetIDStr, _ := relMap["target_id"].(string)
-					targetID, err := uuid.Parse(targetIDStr)
+					targetID, err := resolveIDOrKey(targetIDStr)
 					if err != nil {
-						s.log.Warn("skipping inline relationship: invalid target_id",
-							"rel_type", relType, "target_id", targetIDStr)
+						s.log.Warn("skipping inline relationship: cannot resolve target_id",
+							"rel_type", relType, "target_id", targetIDStr, logger.Error(err))
 						continue
 					}
 					relSrcID = result.CanonicalID
