@@ -860,13 +860,20 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		// Continue without history — agent will still work
 	}
 
-	// Build the user message with history prefix for multi-turn context
+	// Build the user message with history prefix for multi-turn context.
+	// Filter out the current user message from history — it is persisted before
+	// this point and would otherwise appear duplicated in both sections.
 	userMessage := message
-	if len(history) > 0 {
+	var priorHistory []Message
+	for _, msg := range history {
+		if !(msg.Role == RoleUser && msg.Content == message) {
+			priorHistory = append(priorHistory, msg)
+		}
+	}
+	if len(priorHistory) > 0 {
 		var historyBuf strings.Builder
 		historyBuf.WriteString("## Prior conversation context\n")
-		for _, msg := range history {
-			// Skip the current user message (already the last in history if persisted before)
+		for _, msg := range priorHistory {
 			historyBuf.WriteString(msg.Role)
 			historyBuf.WriteString(": ")
 			content := msg.Content
