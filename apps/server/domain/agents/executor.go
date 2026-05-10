@@ -2386,6 +2386,9 @@ func (ae *AgentExecutor) persistMessage(ctx context.Context, runID, role, text s
 }
 
 // persistEventContent persists assistant/tool response content from an ADK event.
+// It writes one message for the assistant turn (text + function_calls) and one
+// separate "tool" message per FunctionResponse so the UI can display both sides
+// of every tool interaction.
 func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, event *session.Event, stepNumber int) {
 	if event.Content == nil {
 		return
@@ -2396,10 +2399,12 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 		role = event.Author
 	}
 
-	// Extract text content from parts
+	// Separate parts into text/function-calls (assistant turn) and function
+	// responses (tool turn).
 	contentMap := make(map[string]any)
 	var textParts []string
 	var functionCalls []map[string]any
+	var functionResponses []map[string]any
 
 	for _, part := range event.Content.Parts {
 		if part == nil {
@@ -2410,8 +2415,16 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 		}
 		if part.FunctionCall != nil {
 			functionCalls = append(functionCalls, map[string]any{
+				"id":   part.FunctionCall.ID,
 				"name": part.FunctionCall.Name,
 				"args": part.FunctionCall.Args,
+			})
+		}
+		if part.FunctionResponse != nil {
+			functionResponses = append(functionResponses, map[string]any{
+				"id":       part.FunctionResponse.ID,
+				"name":     part.FunctionResponse.Name,
+				"response": part.FunctionResponse.Response,
 			})
 		}
 	}
@@ -2423,22 +2436,38 @@ func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, 
 		contentMap["function_calls"] = functionCalls
 	}
 
-	if len(contentMap) == 0 {
-		return
+	// Persist assistant message (text + function_calls).
+	if len(contentMap) > 0 {
+		msg := &AgentRunMessage{
+			RunID:      runID,
+			Role:       role,
+			Content:    contentMap,
+			StepNumber: stepNumber,
+		}
+		if err := ae.repo.CreateMessage(ctx, msg); err != nil {
+			ae.log.Warn("failed to persist event content",
+				slog.String("run_id", runID),
+				slog.String("role", role),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
-	msg := &AgentRunMessage{
-		RunID:      runID,
-		Role:       role,
-		Content:    contentMap,
-		StepNumber: stepNumber,
-	}
-	if err := ae.repo.CreateMessage(ctx, msg); err != nil {
-		ae.log.Warn("failed to persist event content",
-			slog.String("run_id", runID),
-			slog.String("role", role),
-			slog.String("error", err.Error()),
-		)
+	// Persist tool responses as a separate "tool" role message so callers can
+	// correlate call→response pairs in the UI.
+	if len(functionResponses) > 0 {
+		toolMsg := &AgentRunMessage{
+			RunID:      runID,
+			Role:       "tool",
+			Content:    map[string]any{"function_responses": functionResponses},
+			StepNumber: stepNumber,
+		}
+		if err := ae.repo.CreateMessage(ctx, toolMsg); err != nil {
+			ae.log.Warn("failed to persist tool response content",
+				slog.String("run_id", runID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 }
 
