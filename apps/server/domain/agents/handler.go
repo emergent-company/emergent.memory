@@ -1389,6 +1389,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		Tools:          tools,
 		BannedTools:    dto.BannedTools,
 		Skills:         skillNames,
+		AutoLoadSkills: dto.AutoLoadSkills != nil && *dto.AutoLoadSkills,
 		FlowType:       flowType,
 		IsDefault:      isDefault,
 		MaxSteps:       dto.MaxSteps,
@@ -1468,6 +1469,9 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.Skills != nil {
 		def.Skills = dto.Skills
+	}
+	if dto.AutoLoadSkills != nil {
+		def.AutoLoadSkills = *dto.AutoLoadSkills
 	}
 	if dto.FlowType != nil {
 		def.FlowType = *dto.FlowType

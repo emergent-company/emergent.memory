@@ -301,6 +301,8 @@ type AgentDefinitionDTO struct {
 	Model          *ModelConfig      `json:"model,omitempty"`
 	Tools          []string          `json:"tools"`
 	BannedTools    []string          `json:"bannedTools,omitempty"`
+	Skills         []string          `json:"skills"`
+	AutoLoadSkills bool              `json:"autoLoadSkills"`
 	FlowType       AgentFlowType     `json:"flowType"`
 	IsDefault      bool              `json:"isDefault"`
 	MaxSteps       *int              `json:"maxSteps,omitempty"`
@@ -338,6 +340,7 @@ type CreateAgentDefinitionDTO struct {
 	Tools          []string          `json:"tools"`
 	BannedTools    []string          `json:"bannedTools,omitempty"`
 	Skills         []string          `json:"skills"`
+	AutoLoadSkills *bool             `json:"autoLoadSkills"`
 	FlowType       AgentFlowType     `json:"flowType"`
 	IsDefault      *bool             `json:"isDefault"`
 	MaxSteps       *int              `json:"maxSteps"`
@@ -358,6 +361,7 @@ type UpdateAgentDefinitionDTO struct {
 	Tools          []string           `json:"tools"`
 	BannedTools    []string           `json:"bannedTools,omitempty"`
 	Skills         []string           `json:"skills"`
+	AutoLoadSkills *bool              `json:"autoLoadSkills"`
 	FlowType       *AgentFlowType     `json:"flowType"`
 	IsDefault      *bool              `json:"isDefault"`
 	MaxSteps       *int               `json:"maxSteps"`
@@ -417,6 +421,8 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		Model:          d.Model,
 		Tools:          d.Tools,
 		BannedTools:    d.BannedTools,
+		Skills:         d.Skills,
+		AutoLoadSkills: d.AutoLoadSkills,
 		FlowType:       d.FlowType,
 		IsDefault:      d.IsDefault,
 		MaxSteps:       d.MaxSteps,

@@ -60,6 +60,7 @@ type AgentDefinition struct {
 	Model          *ModelConfig   `json:"model,omitempty"`
 	Tools          []string       `json:"tools"`
 	Skills         []string       `json:"skills,omitempty"`
+	AutoLoadSkills bool           `json:"autoLoadSkills"`
 	FlowType       string         `json:"flowType"`
 	IsDefault      bool           `json:"isDefault"`
 	MaxSteps       *int           `json:"maxSteps,omitempty"`
@@ -112,6 +113,7 @@ type CreateAgentDefinitionRequest struct {
 	Model          *ModelConfig   `json:"model,omitempty"`
 	Tools          []string       `json:"tools,omitempty"`
 	Skills         []string       `json:"skills,omitempty"`
+	AutoLoadSkills *bool          `json:"autoLoadSkills,omitempty"`
 	FlowType       string         `json:"flowType,omitempty"`
 	IsDefault      *bool          `json:"isDefault,omitempty"`
 	MaxSteps       *int           `json:"maxSteps,omitempty"`
@@ -130,6 +132,7 @@ type UpdateAgentDefinitionRequest struct {
 	Model          *ModelConfig   `json:"model,omitempty"`
 	Tools          []string       `json:"tools,omitempty"`
 	Skills         []string       `json:"skills,omitempty"`
+	AutoLoadSkills *bool          `json:"autoLoadSkills,omitempty"`
 	FlowType       *string        `json:"flowType,omitempty"`
 	IsDefault      *bool          `json:"isDefault,omitempty"`
 	MaxSteps       *int           `json:"maxSteps,omitempty"`
