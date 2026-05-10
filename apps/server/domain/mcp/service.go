@@ -595,13 +595,13 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "relationship-create",
-			Description: "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed schema. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead.",
+			Description: "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed schema. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead. IMPORTANT: source_id and target_id must be different entities — self-referential relationships (same entity as source and target) are not allowed.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"relationships": {
 						Type:        "array",
-						Description: "Array of relationship specifications to create. Each item: {type (required), source_id (required), target_id (required), properties, weight}",
+						Description: "Array of relationship specifications to create. Each item: {type (required), source_id (required), target_id (required), properties, weight}. source_id and target_id accept an entity key string (e.g. 'caroline-person') or UUID — entity keys are preferred and more reliable. source_id and target_id must refer to different entities.",
 					},
 				},
 				Required: []string{"relationships"},
@@ -3442,6 +3442,17 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		properties, _ := relMap["properties"].(map[string]any)
 		if properties == nil {
 			properties = make(map[string]any)
+		}
+
+		// Guard: self-referential relationships are not meaningful.
+		if srcID == dstID {
+			results = append(results, batchResult{
+				Success: false,
+				Error:   fmt.Sprintf("source_id and target_id resolve to the same entity (%s) — a relationship must connect two different entities. Use entity key strings (e.g. 'caroline-person') in source_id/target_id, not raw UUIDs.", srcID),
+				Index:   i,
+			})
+			failedCount++
+			continue
 		}
 
 		var weight *float32
