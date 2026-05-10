@@ -83,6 +83,9 @@ func NewGraphEmbeddingJobsService(db bun.IDB, log *slog.Logger, cfg *GraphEmbedd
 	}
 }
 
+// DB returns the underlying database handle (used for diagnostics).
+func (s *GraphEmbeddingJobsService) DB() bun.IDB { return s.db }
+
 // EnqueueOptions contains options for enqueuing a graph embedding job
 type EnqueueOptions struct {
 	ObjectID   string     // Required: the graph object ID to generate embedding for

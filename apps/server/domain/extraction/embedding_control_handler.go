@@ -270,6 +270,49 @@ type EmbeddingResetScheduleResponse struct {
 
 // ResetSchedule resets scheduled_at to now() for all pending jobs so they bypass backoff delays.
 // @Router /api/embeddings/reset-schedule [post]
+// DiagnoseQueue runs a SELECT-only version of the Dequeue query and returns
+// the count of immediately eligible jobs, plus min/max scheduled_at.
+func (h *EmbeddingControlHandler) DiagnoseQueue(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	type row struct {
+		Count    int    `bun:"count"`
+		MinSched string `bun:"min_sched"`
+		MaxSched string `bun:"max_sched"`
+		NowDB    string `bun:"now_db"`
+	}
+	var result []row
+	err := h.objectJobsSvc.DB().NewRaw(`
+		SELECT
+			count(*) AS count,
+			coalesce(min(scheduled_at)::text, '') AS min_sched,
+			coalesce(max(scheduled_at)::text, '') AS max_sched,
+			now()::text AS now_db
+		FROM kb.graph_embedding_jobs
+		WHERE status = 'pending' AND scheduled_at <= now()
+	`).Scan(ctx, &result)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	var allPending []row
+	err = h.objectJobsSvc.DB().NewRaw(`
+		SELECT
+			count(*) AS count,
+			coalesce(min(scheduled_at)::text, '') AS min_sched,
+			coalesce(max(scheduled_at)::text, '') AS max_sched,
+			now()::text AS now_db
+		FROM kb.graph_embedding_jobs
+		WHERE status = 'pending'
+	`).Scan(ctx, &allPending)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]any{
+		"eligible_now": result,
+		"all_pending":  allPending,
+	})
+}
+
 func (h *EmbeddingControlHandler) ResetSchedule(c echo.Context) error {
 	ctx := c.Request().Context()
 
