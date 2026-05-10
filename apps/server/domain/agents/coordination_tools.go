@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 )
@@ -237,6 +238,25 @@ func BuildSpawnAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) {
 		functiontool.Config{
 			Name:        ToolNameSpawnAgents,
 			Description: "Spawn one or more sub-agents in parallel. Each spawn request specifies an agent_name (from the agent catalog) and a task description. Optionally include a timeout (in seconds) or resume_run_id to continue a paused agent. Returns results for each spawn including run_id, status, summary, and steps.",
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"agents": {
+						Type:        "array",
+						Description: "List of sub-agent spawn requests",
+						Items: &jsonschema.Schema{
+							Type: "object",
+							Properties: map[string]*jsonschema.Schema{
+								"agent_name": {Type: "string", Description: "Name of the agent to spawn (from list_available_agents)"},
+								"task":       {Type: "string", Description: "Task description to pass to the sub-agent"},
+								"timeout":    {Type: "integer", Description: "Optional timeout in seconds"},
+							},
+							Required: []string{"agent_name", "task"},
+						},
+					},
+				},
+				Required: []string{"agents"},
+			},
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
 			// Parse the spawn requests from args
