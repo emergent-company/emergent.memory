@@ -939,6 +939,7 @@ type BulkActionFilter struct {
 	Types           []string         `json:"types,omitempty"`
 	PropertyFilters []PropertyFilter `json:"property_filters,omitempty"`
 	Labels          []string         `json:"labels,omitempty"`
+	CreatedAfter    *time.Time       `json:"created_after,omitempty"`
 }
 
 // BulkActionRequest is the request body for a filter-then-action bulk operation.

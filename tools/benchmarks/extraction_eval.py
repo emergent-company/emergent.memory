@@ -50,10 +50,9 @@ def _sse_lines(resp):
 def remember_with_agent(text: str, agent_def_id: str, project_id: str, token: str,
                         server: str, timeout: int = 300) -> dict:
     """POST /api/chat/stream with agentDefinitionId — bypasses default graph-insert-agent."""
-    body = {
-        "message": text,
-        "agentDefinitionId": agent_def_id,
-    }
+    body = {"message": text}
+    if agent_def_id:
+        body["agentDefinitionId"] = agent_def_id
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -82,9 +81,129 @@ def remember_with_agent(text: str, agent_def_id: str, project_id: str, token: st
         "error": None,
     }
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
+def load_graph_context(project_id: str, token: str, server: str, timeout: int = 30) -> str:
+    """Fetch all objects + relationships; return flat text blob for keyword scoring."""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "x-project-id": project_id,
+    }
+
+    # --- objects ---
+    r = requests.get(f"{server}/api/graph/objects/search?limit=500", headers=headers, timeout=timeout)
+    r.raise_for_status()
+    objects = r.json().get("items", [])
+
+    # UUID → key map (for resolving relationship endpoints)
+    id_to_key: dict[str, str] = {}
+    # Dedup by key: keep object with most properties
+    key_to_best: dict[str, dict] = {}
+
+    for obj in objects:
+        oid = obj.get("id") or obj.get("canonical_id", "")
+        key = obj.get("key") or ""
+        if oid:
+            id_to_key[oid] = key or oid
+        cid = obj.get("canonical_id", "")
+        if cid and cid != oid:
+            id_to_key[cid] = key or oid
+        if not key:
+            continue  # skip keyless objects (raw session dumps)
+        props = obj.get("properties") or {}
+        prev = key_to_best.get(key)
+        if prev is None or len(props) > len(prev.get("properties") or {}):
+            key_to_best[key] = obj
+
+    lines: list[str] = []
+    for key, obj in key_to_best.items():
+        props = obj.get("properties") or {}
+        vals: list[str] = []
+        for pv in props.values():
+            if isinstance(pv, list):
+                vals.extend(str(x) for x in pv if x is not None)
+            elif isinstance(pv, dict):
+                vals.extend(str(x) for x in pv.values() if x is not None)
+            elif pv is not None:
+                s = str(pv)
+                # Skip raw message blobs stored by agent
+                if s.startswith("{'message'") or s.startswith('{"message"'):
+                    continue
+                vals.append(s)
+        prop_str = " | ".join(vals)
+        lines.append(f"{key}: {prop_str}" if prop_str else key)
+
+    # --- relationships ---
+    r2 = requests.get(f"{server}/api/graph/relationships/search?limit=500", headers=headers, timeout=timeout)
+    if r2.ok:
+        for rel in r2.json().get("items", []):
+            src = id_to_key.get(rel.get("src_id", ""), rel.get("src_id", ""))
+            dst = id_to_key.get(rel.get("dst_id", ""), rel.get("dst_id", ""))
+            rtype = rel.get("type", "")
+            props = rel.get("properties") or {}
+            vals = []
+            for v in props.values():
+                if isinstance(v, list):
+                    vals.extend(str(x) for x in v)
+                elif v is not None:
+                    vals.append(str(v))
+            line = f"{src} --{rtype}--> {dst}"
+            if vals:
+                line += f": {' | '.join(vals)}"
+            lines.append(line)
+
+    return "\n".join(lines)
+
+
+def search_query(question: str, project_id: str, token: str, server: str,
+                 graph_context: str = "", limit: int = 10, timeout: int = 15) -> str:
+    """Return graph context relevant to the question.
+
+    If graph_context is pre-loaded, use keyword matching against it.
+    Otherwise fall back to /api/search/unified.
+    """
+    if graph_context:
+        # Keyword match: find lines containing any question word
+        q_words = set(w.lower() for w in question.split() if len(w) > 3)
+        scored = []
+        for line in graph_context.splitlines():
+            ll = line.lower()
+            hits = sum(1 for w in q_words if w in ll)
+            if hits > 0:
+                scored.append((hits, line))
+        scored.sort(key=lambda x: -x[0])
+        top = [line for _, line in scored[:limit]]
+        return " | ".join(top) if top else graph_context[:500]
+
+    # Fallback: unified search
+    url = f"{server}/api/search/unified"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "x-project-id": project_id,
+    }
+    r = requests.post(url, json={"query": question, "limit": limit},
+                      headers=headers, timeout=timeout)
+    r.raise_for_status()
+    results = r.json().get("results", [])
+
+    obj_parts = []
+    rel_parts = []
+    for res in results:
+        if res.get("type") == "graph":
+            fields = res.get("fields") or {}
+            for v in fields.values():
+                if isinstance(v, list):
+                    obj_parts.extend(str(x) for x in v)
+                elif v:
+                    obj_parts.append(str(v))
+        elif res.get("triplet_text"):
+            rel_parts.append(res["triplet_text"])
+
+    combined = obj_parts + rel_parts
+    return " | ".join(combined) if combined else ""
+
+
+
 DATA_FILE = Path(__file__).parent / "locomo" / "data" / "locomo10.json"
 
 SERVER = os.environ.get("MEMORY_API_URL", "https://memory.emergent-company.ai")
@@ -149,8 +268,8 @@ def main():
     parser.add_argument("--agent-def-id", default=None,
                         help="Override agent definition ID for remember calls")
     parser.add_argument("--query-agent-def-id",
-                        default="78e6e510-48f7-4bb8-9181-65d992abc9c0",
-                        help="Agent def ID for query (default: eval-query-fast)")
+                        default="",
+                        help="Agent def ID for query (empty = default ask agent)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -164,12 +283,31 @@ def main():
     # Parse QA categories
     qa_cats = [int(x) for x in args.qa_categories.split(",")]
 
+    # Resolve agent model info for display
+    agent_label = "default (graph-insert-agent)"
+    if args.agent_def_id:
+        try:
+            cfg_pre = __import__("shared.config", fromlist=["get_config"]).get_config()
+            r = requests.get(
+                f"{SERVER}/api/projects/{PROJECT_ID}/agent-definitions/{args.agent_def_id}",
+                headers={"Authorization": f"Bearer {cfg_pre.api_key}"},
+                timeout=10,
+            )
+            if r.ok:
+                adef = r.json().get("data", {})
+                model_cfg = adef.get("model") or {}
+                model_name = model_cfg.get("name", "default") if isinstance(model_cfg, dict) else str(model_cfg)
+                agent_label = f"{adef.get('name', args.agent_def_id)} | model={model_name}"
+        except Exception:
+            agent_label = args.agent_def_id
+
     print(f"=== Extraction Eval ===")
     print(f"  Sample:   {args.sample_id}")
     print(f"  Sessions: {session_nums}")
     print(f"  QA cats:  {qa_cats}  limit={args.qa_limit}")
     print(f"  Server:   {SERVER}")
     print(f"  Project:  {PROJECT_ID}")
+    print(f"  Agent:    {agent_label}")
     print()
 
     sample = load_sample(args.sample_id)
@@ -177,30 +315,32 @@ def main():
     qa_pairs = get_qa(sample, categories=qa_cats, limit=args.qa_limit)
 
     # -----------------------------------------------------------------------
-    # Ingest
+    # Ingest — one call per session for better extraction coverage
     # -----------------------------------------------------------------------
     if not args.skip_ingest:
-        dialogue = "\n".join(utterances)
-        print(f"[ingest] {len(utterances)} lines → remember ...", flush=True)
-        t0 = time.time()
-        if args.agent_def_id:
-            cfg = __import__("shared.config", fromlist=["get_config"]).get_config()
-            resp = remember_with_agent(
-                text=dialogue,
-                agent_def_id=args.agent_def_id,
-                project_id=PROJECT_ID,
-                token=cfg.api_key,
-                server=SERVER,
-            )
-        else:
-            resp = remember(text=dialogue, project_id=PROJECT_ID)
-        elapsed = time.time() - t0
-        tools_used = resp.get("tools", [])
-        print(f"[ingest] done in {elapsed:.1f}s  tools={tools_used}", flush=True)
-        if args.verbose:
-            print(f"[ingest] response:\n{resp.get('response','')[:500]}")
-        if resp.get("error"):
-            print(f"[ingest] ERROR: {resp['error']}")
+        cfg = __import__("shared.config", fromlist=["get_config"]).get_config()
+        for sn in session_nums:
+            sess_lines = get_utterances(sample, [sn])
+            dialogue = "\n".join(sess_lines)
+            print(f"[ingest] session {sn}: {len(sess_lines)} lines → remember ...", flush=True)
+            t0 = time.time()
+            if args.agent_def_id:
+                resp = remember_with_agent(
+                    text=dialogue,
+                    agent_def_id=args.agent_def_id,
+                    project_id=PROJECT_ID,
+                    token=cfg.api_key,
+                    server=SERVER,
+                )
+            else:
+                resp = remember(text=dialogue, project_id=PROJECT_ID)
+            elapsed = time.time() - t0
+            tools_used = resp.get("tools", [])
+            print(f"[ingest] session {sn} done in {elapsed:.1f}s  tools={tools_used}", flush=True)
+            if args.verbose:
+                print(f"[ingest] response:\n{resp.get('response','')[:500]}")
+            if resp.get("error"):
+                print(f"[ingest] ERROR: {resp['error']}")
         print()
     else:
         print("[ingest] skipped\n")
@@ -211,25 +351,27 @@ def main():
     predictions = []
     references = []
 
-    print(f"[query] evaluating {len(qa_pairs)} QA pairs ...", flush=True)
+    print(f"[query] loading graph context ...", flush=True)
     cfg = __import__("shared.config", fromlist=["get_config"]).get_config()
-    concise = ("[IMPORTANT: Answer with the shortest possible phrase or name — "
-               "no explanation, no markdown, no sentences.] ")
+    graph_ctx = load_graph_context(project_id=PROJECT_ID, token=cfg.api_key, server=SERVER)
+    print(f"[query] context: {len(graph_ctx.splitlines())} lines, {len(graph_ctx)} chars")
+    if graph_ctx:
+        print(f"[query] sample:\n{graph_ctx[:400]}\n")
+
+    print(f"[query] evaluating {len(qa_pairs)} QA pairs ...", flush=True)
     for i, qa in enumerate(qa_pairs):
         q_text = qa["question"]
         ref_str = str(qa["answer"])
 
         t0 = time.time()
-        resp_q = remember_with_agent(
-            text=concise + q_text,
-            agent_def_id=args.query_agent_def_id,
+        pred = search_query(
+            question=q_text,
             project_id=PROJECT_ID,
             token=cfg.api_key,
             server=SERVER,
-            timeout=60,
+            graph_context=graph_ctx,
         )
         elapsed_q = time.time() - t0
-        pred = (resp_q.get("response") or "").strip()
         predictions.append(pred)
         references.append(ref_str)
 

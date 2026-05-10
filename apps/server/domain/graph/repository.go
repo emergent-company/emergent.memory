@@ -2713,6 +2713,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 	if len(params.Filter.Labels) > 0 {
 		countQ = countQ.Where("labels && ?::text[]", formatTextArray(params.Filter.Labels))
 	}
+	if params.Filter.CreatedAfter != nil {
+		countQ = countQ.Where("created_at >= ?", params.Filter.CreatedAfter.UTC())
+	}
 	// Apply property filters to count query.
 	if len(resolvedFilters) > 0 {
 		countQ = applyBulkPropertyFilters(countQ, resolvedFilters)
@@ -2783,6 +2786,9 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		}
 		if len(params.Filter.Labels) > 0 {
 			subQ = subQ.Where("labels && ?::text[]", formatTextArray(params.Filter.Labels))
+		}
+		if params.Filter.CreatedAfter != nil {
+			subQ = subQ.Where("created_at >= ?", params.Filter.CreatedAfter.UTC())
 		}
 		subQ = applyBulkPropertyFilters(subQ, resolvedFilters)
 		result, qErr := r.db.NewDelete().
@@ -3002,6 +3008,9 @@ func applyBulkFilterToUpdate(q *bun.UpdateQuery, filter BulkActionFilter, resolv
 	}
 	if len(filter.Labels) > 0 {
 		q = q.Where("labels && ?::text[]", formatTextArray(filter.Labels))
+	}
+	if filter.CreatedAfter != nil {
+		q = q.Where("created_at >= ?", filter.CreatedAfter.UTC())
 	}
 	return q
 }

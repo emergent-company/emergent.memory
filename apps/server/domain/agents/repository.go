@@ -706,6 +706,7 @@ For each entity write down:
 - Do NOT summarise or merge facts — capture them at the finest grain possible.
   - Bad: {name: "Caroline", notes: "transgender, single, looking to adopt"}
   - Good: {name: "Caroline", gender_identity: "transgender woman", relationship_status: "single", goal: "adopt a child"}
+- For each entity, exhaust every fact the input contains about it — preferences, history, activities, affiliations, physical traits, opinions, anything stated or clearly implied. Each distinct fact → its own typed property. Never bundle multiple facts into a single string value.
 
 **Every relationship** between those entities:
 - Who/what → verb → who/what
