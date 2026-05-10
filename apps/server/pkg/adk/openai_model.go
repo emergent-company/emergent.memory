@@ -125,6 +125,20 @@ var coordinationTools = map[string]bool{
 	"list_available_agents": true,
 }
 
+// isReasonerModel returns true for models that do not support the tool_choice
+// field — typically chain-of-thought / reasoning models. These models still
+// support function calling but reject an explicit tool_choice constraint.
+func isReasonerModel(name string) bool {
+	lower := strings.ToLower(name)
+	reasonerKeywords := []string{"reasoner", "deepseek-v4-flash", "deepseek-r1"}
+	for _, kw := range reasonerKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
 // hasSubstantiveToolCall returns true when the conversation history contains a
 // FunctionCall to a non-coordination tool (e.g. spawn_agents, entity-create).
 // Used to decide tool_choice: "required" until the model calls a real tool,
@@ -412,10 +426,14 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			// nothing has fired). Switch to "auto" once spawn_agents or any
 			// user-defined tool has been called, so the model can produce a final
 			// text response after completing its work.
-			if hasSubstantiveToolCall(req.Contents) {
-				body.ToolChoice = "auto"
-			} else {
-				body.ToolChoice = "required"
+			// Skip tool_choice entirely for reasoning models (e.g. deepseek-v4-flash,
+			// deepseek-reasoner) — they reject the field outright.
+			if !isReasonerModel(m.modelName) {
+				if hasSubstantiveToolCall(req.Contents) {
+					body.ToolChoice = "auto"
+				} else {
+					body.ToolChoice = "required"
+				}
 			}
 			// Disable Qwen3 thinking mode when tools are present — thinking mode
 			// causes the model to reason independently and ignore system prompt
