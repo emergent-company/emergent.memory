@@ -3367,6 +3367,18 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		Index        int               `json:"index"`
 	}
 
+	// resolveRelIDOrKey resolves a string that is either a UUID or an entity key (DB lookup).
+	resolveRelIDOrKey := func(idOrKey string) (uuid.UUID, error) {
+		if id, err := uuid.Parse(idOrKey); err == nil {
+			return id, nil
+		}
+		id, err := s.resolveEntityIDByKey(ctx, projectUUID, idOrKey)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("key %q not found: %w", idOrKey, err)
+		}
+		return id, nil
+	}
+
 	results := make([]batchResult, 0, len(relationshipsRaw))
 	successCount := 0
 	failedCount := 0
@@ -3401,11 +3413,11 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		if srcIDStr == "" {
 			srcIDStr, _ = relMap["from_id"].(string)
 		}
-		srcID, err := uuid.Parse(srcIDStr)
+		srcID, err := resolveRelIDOrKey(srcIDStr)
 		if err != nil {
 			results = append(results, batchResult{
 				Success: false,
-				Error:   "invalid source_id",
+				Error:   fmt.Sprintf("cannot resolve source_id %q: %v", srcIDStr, err),
 				Index:   i,
 			})
 			failedCount++
@@ -3416,11 +3428,11 @@ func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID
 		if dstIDStr == "" {
 			dstIDStr, _ = relMap["to_id"].(string)
 		}
-		dstID, err := uuid.Parse(dstIDStr)
+		dstID, err := resolveRelIDOrKey(dstIDStr)
 		if err != nil {
 			results = append(results, batchResult{
 				Success: false,
-				Error:   "invalid target_id",
+				Error:   fmt.Sprintf("cannot resolve target_id %q: %v", dstIDStr, err),
 				Index:   i,
 			})
 			failedCount++
