@@ -84,6 +84,9 @@ type openaiRequest struct {
 	ToolChoice     string          `json:"tool_choice,omitempty"`
 	MaxTokens      int32           `json:"max_tokens,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	// EnableThinking controls Qwen3 thinking mode. Set to false to suppress
+	// chain-of-thought reasoning and improve instruction-following for tool calls.
+	EnableThinking *bool `json:"enable_thinking,omitempty"`
 }
 
 type responseFormat struct {
@@ -415,6 +418,11 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			} else {
 				body.ToolChoice = "required"
 			}
+			// Disable Qwen3 thinking mode when tools are present — thinking mode
+			// causes the model to reason independently and ignore system prompt
+			// instructions about which tools/agents to use.
+			falseVal := false
+			body.EnableThinking = &falseVal
 		}
 
 		// Apply generation config.
