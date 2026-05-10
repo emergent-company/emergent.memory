@@ -60,6 +60,7 @@ func (r *Repository) UpsertOrgProviderConfig(ctx context.Context, cfg *OrgProvid
 		Set("encryption_nonce = EXCLUDED.encryption_nonce").
 		Set("gcp_project = EXCLUDED.gcp_project").
 		Set("location = EXCLUDED.location").
+		Set("base_url = EXCLUDED.base_url").
 		Set("generative_model = EXCLUDED.generative_model").
 		Set("embedding_model = EXCLUDED.embedding_model").
 		Set("updated_at = NOW()").
@@ -150,6 +151,7 @@ func (r *Repository) UpsertProjectProviderConfig(ctx context.Context, cfg *Proje
 		Set("encryption_nonce = EXCLUDED.encryption_nonce").
 		Set("gcp_project = EXCLUDED.gcp_project").
 		Set("location = EXCLUDED.location").
+		Set("base_url = EXCLUDED.base_url").
 		Set("generative_model = EXCLUDED.generative_model").
 		Set("embedding_model = EXCLUDED.embedding_model").
 		Set("updated_at = NOW()").

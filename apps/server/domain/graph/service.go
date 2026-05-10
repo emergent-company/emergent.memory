@@ -2200,7 +2200,8 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 	hasVector := len(req.Vector) > 0
 
 	// Auto-embed query when no vector is provided — mirrors unified search behavior
-	if hasQuery && !hasVector && s.embeddings != nil {
+	// Skip when vectorWeight is 0 (lexical-only mode) to avoid unnecessary embedding calls.
+	if hasQuery && !hasVector && vectorWeight > 0 && s.embeddings != nil {
 		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
 		if err != nil {
 			s.log.Warn("HybridSearch: failed to auto-embed query, continuing with lexical-only", logger.Error(err))
@@ -2248,7 +2249,7 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		}
 	}
 
-	if hasVector {
+	if hasVector && vectorWeight > 0 {
 		vectorStart := time.Now()
 		vecParams := VectorSearchParams{
 			ProjectID:      projectID,
