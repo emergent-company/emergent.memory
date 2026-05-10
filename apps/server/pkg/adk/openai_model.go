@@ -322,14 +322,24 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 // was not properly serialized. For each orphaned tool_call ID, a synthetic tool
 // response is injected with a neutral "tool response not available" message.
 func ensureToolCallResponsePairs(messages []openaiMessage) []openaiMessage {
-	// Pass 1: collect all tool_call IDs and tool response IDs.
-	toolCallIDs := make(map[string]openaiToolCall) // id → call
+	// Pass 1: collect tool_call IDs (with their call data and assistant message
+	// index) in encounter order, and collect all tool response IDs.
+	type toolCallEntry struct {
+		call         openaiToolCall
+		assistantIdx int
+	}
+	// Use a slice to preserve discovery order and a map for O(1) lookup.
+	var toolCallOrder []string // ordered IDs as discovered
+	toolCallIndex := make(map[string]toolCallEntry)
 	toolResponseIDs := make(map[string]bool)
 
-	for _, msg := range messages {
+	for i, msg := range messages {
 		if msg.Role == "assistant" {
 			for _, tc := range msg.ToolCalls {
-				toolCallIDs[tc.ID] = tc
+				if _, seen := toolCallIndex[tc.ID]; !seen {
+					toolCallOrder = append(toolCallOrder, tc.ID)
+				}
+				toolCallIndex[tc.ID] = toolCallEntry{call: tc, assistantIdx: i}
 			}
 		}
 		if msg.Role == "tool" && msg.ToolCallID != "" {
@@ -337,70 +347,46 @@ func ensureToolCallResponsePairs(messages []openaiMessage) []openaiMessage {
 		}
 	}
 
-	if len(toolCallIDs) == 0 {
+	if len(toolCallIndex) == 0 {
 		return messages
 	}
 
-	// Pass 2: identify orphaned tool_call IDs and inject synthetic responses.
-	// Work backwards through the message list so insertions don't shift indices.
-	var orphanedIDs []string
-	for id := range toolCallIDs {
-		if !toolResponseIDs[id] {
-			orphanedIDs = append(orphanedIDs, id)
-		}
-	}
-	if len(orphanedIDs) == 0 {
-		return messages
-	}
-
-	// Build synthetic responses for orphaned call IDs, grouped by the index of
-	// the assistant message that emitted them. We use the last assistant message
-	// that contains each orphaned call as the anchor point.
+	// Pass 2: identify orphaned IDs in discovery order (deterministic).
+	// Group synthetic responses by assistant message index.
 	type orphanGroup struct {
-		assistantIdx int
-		responses    []openaiMessage
+		responses []openaiMessage
 	}
 	orphanGroups := make(map[int]*orphanGroup)
-	for _, id := range orphanedIDs {
-		tc := toolCallIDs[id]
-		// Find the assistant message index that contains this call ID.
-		idx := -1
-		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role == "assistant" {
-				for _, call := range messages[i].ToolCalls {
-					if call.ID == id {
-						idx = i
-						break
-					}
-				}
-				if idx >= 0 {
-					break
-				}
-			}
+	hasOrphans := false
+	for _, id := range toolCallOrder {
+		if toolResponseIDs[id] {
+			continue
 		}
-		if idx < 0 {
-			idx = 0 // fallback: prepend at the very start
+		hasOrphans = true
+		entry := toolCallIndex[id]
+		if orphanGroups[entry.assistantIdx] == nil {
+			orphanGroups[entry.assistantIdx] = &orphanGroup{}
 		}
-		if orphanGroups[idx] == nil {
-			orphanGroups[idx] = &orphanGroup{assistantIdx: idx}
-		}
-		syntheticResponse := openaiMessage{
-			Role:       "tool",
-			ToolCallID: id,
-			Name:       tc.Function.Name,
-			Content:    `{"error":"tool response not available","note":"synthetic response inserted to maintain valid conversation structure"}`,
-		}
-		orphanGroups[idx].responses = append(orphanGroups[idx].responses, syntheticResponse)
+		orphanGroups[entry.assistantIdx].responses = append(
+			orphanGroups[entry.assistantIdx].responses,
+			openaiMessage{
+				Role:       "tool",
+				ToolCallID: id,
+				Name:       entry.call.Function.Name,
+				Content:    `{"error":"tool response not available","note":"synthetic response inserted to maintain valid conversation structure"}`,
+			},
+		)
+	}
+	if !hasOrphans {
+		return messages
 	}
 
-	// Inject synthetic responses after their respective assistant messages,
-	// processing from right to left to preserve indices.
-	var result []openaiMessage
-	inserted := make(map[int]bool)
-	for i := 0; i < len(messages); i++ {
-		result = append(result, messages[i])
-		if group, ok := orphanGroups[i]; ok && !inserted[i] {
-			inserted[i] = true
+	// Inject synthetic responses immediately after their assistant message,
+	// iterating left to right over a new result slice (no index shifting).
+	result := make([]openaiMessage, 0, len(messages))
+	for i, msg := range messages {
+		result = append(result, msg)
+		if group, ok := orphanGroups[i]; ok {
 			result = append(result, group.responses...)
 		}
 	}
