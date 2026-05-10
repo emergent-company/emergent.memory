@@ -81,6 +81,7 @@ type openaiRequest struct {
 	Model          string          `json:"model"`
 	Messages       []openaiMessage `json:"messages"`
 	Tools          []openaiTool    `json:"tools,omitempty"`
+	ToolChoice     string          `json:"tool_choice,omitempty"`
 	MaxTokens      int32           `json:"max_tokens,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
@@ -114,6 +115,20 @@ func mapRole(role string) string {
 }
 
 // --- Tool schema conversion ---
+
+// hasToolResults returns true when the conversation history contains at least
+// one FunctionResponse — meaning a tool has already been called and responded.
+// Used to decide tool_choice: first turn = "required", subsequent = "auto".
+func hasToolResults(contents []*genai.Content) bool {
+	for _, c := range contents {
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionResponse != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // buildOpenAITools converts genai.Tool declarations to OpenAI tool format.
 func buildOpenAITools(tools []*genai.Tool) []openaiTool {
@@ -369,6 +384,15 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 		// Attach tool declarations when present.
 		if req.Config != nil && len(req.Config.Tools) > 0 {
 			body.Tools = buildOpenAITools(req.Config.Tools)
+			// Use "required" on the first turn (no tool results yet) so the model
+			// is forced to call a tool rather than respond conversationally.
+			// Switch to "auto" once tool results exist so the model can produce
+			// a final text response after executing the requested tools.
+			if hasToolResults(req.Contents) {
+				body.ToolChoice = "auto"
+			} else {
+				body.ToolChoice = "required"
+			}
 		}
 
 		// Apply generation config.

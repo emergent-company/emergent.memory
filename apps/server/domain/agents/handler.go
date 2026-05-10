@@ -1344,6 +1344,10 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		return apperror.NewBadRequest("name is required")
 	}
 
+	if dto.Model != nil && dto.Model.Name != "" && !strings.Contains(dto.Model.Name, "/") {
+		return apperror.NewBadRequest(`model.name must include a provider prefix, e.g. "openai-compatible/model-name" or "google/gemini-2.5-flash"`)
+	}
+
 	// Set defaults
 	flowType := FlowTypeSingle
 	if dto.FlowType != "" {
@@ -1433,6 +1437,10 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	var dto UpdateAgentDefinitionDTO
 	if err := c.Bind(&dto); err != nil {
 		return apperror.NewBadRequest("invalid request body")
+	}
+
+	if dto.Model != nil && dto.Model.Name != "" && !strings.Contains(dto.Model.Name, "/") {
+		return apperror.NewBadRequest(`model.name must include a provider prefix, e.g. "openai-compatible/model-name" or "google/gemini-2.5-flash"`)
 	}
 
 	var projectID *string
