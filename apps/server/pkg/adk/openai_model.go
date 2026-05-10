@@ -122,7 +122,6 @@ func mapRole(role string) string {
 // coordinationTools are internal housekeeping tools that should not count as
 // "substantive" tool calls when deciding whether to force tool_choice=required.
 var coordinationTools = map[string]bool{
-	"set_session_title":     true,
 	"list_available_agents": true,
 }
 
