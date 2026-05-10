@@ -3,6 +3,7 @@ package embeddings
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"go.uber.org/fx"
@@ -212,10 +213,7 @@ func (s *Service) resolveClientWithMeta(ctx context.Context) (Client, string, st
 
 	cred, err := s.resolver.ResolveEmbedding(ctx)
 	if err != nil {
-		s.log.Warn("embedding resolver returned error, falling back to static client",
-			slog.String("error", err.Error()),
-		)
-		return s.client, staticModel, staticProvider, nil
+		return nil, "", "", fmt.Errorf("embedding credential resolver failed: %w", err)
 	}
 	if cred == nil {
 		// No DB credential — use static client
