@@ -15,8 +15,8 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
-	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 )
 
 // Coordination tool names that are restricted for sub-agents by default.
@@ -312,7 +312,15 @@ func (tp *ToolPool) ResolveTools(projectID string, agentDef *AgentDefinition, de
 
 	// Always inject hidden built-in tools — these bypass all whitelist/scope filters.
 	// set_session_title: lets agents update the ACP session display title.
-	if tp.mcpService != nil {
+	// Agents can opt out by adding "set_session_title" to their BannedTools list.
+	sessionTitleBanned := false
+	for _, b := range agentDef.BannedTools {
+		if b == "set_session_title" {
+			sessionTitleBanned = true
+			break
+		}
+	}
+	if tp.mcpService != nil && !sessionTitleBanned {
 		tools = append(tools, tp.wrapHiddenBuiltin(projectID, "set_session_title",
 			"Update the display title for the current session. Call this when you can infer a meaningful title from the conversation (e.g. '🐛 Login Timeout Bug' or '✨ Export to PDF Feature').",
 			map[string]any{
