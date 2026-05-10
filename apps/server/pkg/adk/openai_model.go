@@ -116,9 +116,30 @@ func mapRole(role string) string {
 
 // --- Tool schema conversion ---
 
+// coordinationTools are internal housekeeping tools that should not count as
+// "substantive" tool calls when deciding whether to force tool_choice=required.
+var coordinationTools = map[string]bool{
+	"set_session_title":     true,
+	"list_available_agents": true,
+}
+
+// hasSubstantiveToolCall returns true when the conversation history contains a
+// FunctionCall to a non-coordination tool (e.g. spawn_agents, entity-create).
+// Used to decide tool_choice: "required" until the model calls a real tool,
+// then "auto" so it can produce a final text response.
+func hasSubstantiveToolCall(contents []*genai.Content) bool {
+	for _, c := range contents {
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionCall != nil && !coordinationTools[p.FunctionCall.Name] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // hasToolResults returns true when the conversation history contains at least
 // one FunctionResponse — meaning a tool has already been called and responded.
-// Used to decide tool_choice: first turn = "required", subsequent = "auto".
 func hasToolResults(contents []*genai.Content) bool {
 	for _, c := range contents {
 		for _, p := range c.Parts {
@@ -384,11 +405,12 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 		// Attach tool declarations when present.
 		if req.Config != nil && len(req.Config.Tools) > 0 {
 			body.Tools = buildOpenAITools(req.Config.Tools)
-			// Use "required" on the first turn (no tool results yet) so the model
-			// is forced to call a tool rather than respond conversationally.
-			// Switch to "auto" once tool results exist so the model can produce
-			// a final text response after executing the requested tools.
-			if hasToolResults(req.Contents) {
+			// Use "required" when the model has never called a substantive tool yet
+			// (i.e. only coordination tools like set_session_title have fired, or
+			// nothing has fired). Switch to "auto" once spawn_agents or any
+			// user-defined tool has been called, so the model can produce a final
+			// text response after completing its work.
+			if hasSubstantiveToolCall(req.Contents) {
 				body.ToolChoice = "auto"
 			} else {
 				body.ToolChoice = "required"
