@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -234,10 +235,17 @@ type SpawnAgentsResult struct {
 
 // BuildSpawnAgentsTool creates the spawn_agents ADK tool.
 func BuildSpawnAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) {
+	desc := "Spawn one or more sub-agents in parallel. Each spawn request specifies an agent_name and a task description. Optionally include a timeout (in seconds) or resume_run_id to continue a paused agent. Returns results for each spawn including run_id, status, summary, and steps."
+	agentNameDesc := "Name of the agent to spawn (from list_available_agents)"
+	if len(deps.SpawnPolicy) > 0 {
+		allowed := strings.Join(deps.SpawnPolicy, ", ")
+		desc += " Allowed agent_name values: " + allowed + "."
+		agentNameDesc = "Name of the agent to spawn. Must be one of: " + allowed
+	}
 	return functiontool.New(
 		functiontool.Config{
 			Name:        ToolNameSpawnAgents,
-			Description: "Spawn one or more sub-agents in parallel. Each spawn request specifies an agent_name (from the agent catalog) and a task description. Optionally include a timeout (in seconds) or resume_run_id to continue a paused agent. Returns results for each spawn including run_id, status, summary, and steps.",
+			Description: desc,
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{
@@ -247,7 +255,7 @@ func BuildSpawnAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) {
 						Items: &jsonschema.Schema{
 							Type: "object",
 							Properties: map[string]*jsonschema.Schema{
-								"agent_name": {Type: "string", Description: "Name of the agent to spawn (from list_available_agents)"},
+								"agent_name": {Type: "string", Description: agentNameDesc},
 								"task":       {Type: "string", Description: "Task description to pass to the sub-agent"},
 								"timeout":    {Type: "integer", Description: "Optional timeout in seconds"},
 							},
