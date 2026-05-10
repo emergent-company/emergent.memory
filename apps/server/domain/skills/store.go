@@ -3,7 +3,6 @@ package skills
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -163,47 +162,27 @@ func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*Skill, error)
 	return skill, nil
 }
 
-// Create inserts a new skill. If embedding is provided, it is written via raw SQL to avoid
-// Bun trying to bind a []float32 to a vector column. Embedding may be nil (stored as NULL).
+// Create inserts a new skill. Always uses Bun ORM for the INSERT (excluding the vector
+// column to avoid pgx binding issues with vector(768)), then issues a separate raw UPDATE
+// to set description_embedding when an embedding is provided.
 func (r *Repository) Create(ctx context.Context, s *Skill, embedding []float32) error {
-	if embedding != nil {
-		vectorStr := pgutils.FormatVector(embedding)
-
-		// JSON-marshal metadata so pgx can bind it to the jsonb column.
-		var metadataJSON []byte
-		if s.Metadata != nil {
-			var err error
-			metadataJSON, err = json.Marshal(s.Metadata)
-			if err != nil {
-				return r.wrapDBError("failed to marshal skill metadata", err)
-			}
-		}
-
-		_, err := r.db.ExecContext(ctx,
-			`INSERT INTO kb.skills (id, name, description, content, metadata, description_embedding, project_id, org_id, created_at, updated_at)
-			 VALUES (gen_random_uuid(), ?, ?, ?, ?::jsonb, ?::vector, ?, ?, now(), now())`,
-			s.Name, s.Description, s.Content, metadataJSON, vectorStr, s.ProjectID, s.OrgID,
-		)
-		if err != nil {
-			return r.wrapDBError("failed to create skill", err)
-		}
-		// Fetch to populate id/timestamps
-		q := r.db.NewSelect().Model(s)
-		if s.ProjectID != nil {
-			q = q.Where("s.name = ? AND s.project_id = ?", s.Name, *s.ProjectID)
-		} else if s.OrgID != nil {
-			q = q.Where("s.name = ? AND s.org_id = ? AND s.project_id IS NULL", s.Name, *s.OrgID)
-		} else {
-			q = q.Where("s.name = ? AND s.project_id IS NULL AND s.org_id IS NULL", s.Name)
-		}
-		return q.OrderExpr("s.created_at DESC").Limit(1).Scan(ctx)
-	}
-
-	// No embedding: use Bun ORM insert, explicitly excluding the vector column
-	// to avoid Bun trying to bind a nil []byte to a vector(768) column (causes 500).
+	// Step 1: insert via Bun ORM, skipping the vector column entirely.
 	_, err := r.db.NewInsert().Model(s).ExcludeColumn("description_embedding").Exec(ctx)
 	if err != nil {
 		return r.wrapDBError("failed to create skill", err)
+	}
+
+	// Step 2: if an embedding was generated, update the vector column via raw SQL.
+	// The ?::vector cast works correctly in an UPDATE (single parameter binding).
+	if embedding != nil {
+		vectorStr := pgutils.FormatVector(embedding)
+		_, err = r.db.ExecContext(ctx,
+			`UPDATE kb.skills SET description_embedding = ?::vector WHERE id = ?`,
+			vectorStr, s.ID,
+		)
+		if err != nil {
+			return r.wrapDBError("failed to set skill embedding", err)
+		}
 	}
 	return nil
 }
