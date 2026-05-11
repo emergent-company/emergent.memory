@@ -24,6 +24,17 @@ type openaiCompatibleModel struct {
 	apiKey    string
 	modelName string
 	client    *http.Client
+	// enableThinking overrides the per-request thinking default when non-nil.
+	// nil  → keep existing per-request logic (disable when tools present)
+	// true → always request thinking tokens
+	// false → always suppress thinking tokens
+	enableThinking *bool
+}
+
+// ThinkingConfigurator is implemented by models that support an explicit
+// thinking/chain-of-thought toggle (e.g. Qwen3 via OpenAI-compatible endpoint).
+type ThinkingConfigurator interface {
+	SetEnableThinking(v *bool)
 }
 
 // NewOpenAICompatibleModel creates a new openaiCompatibleModel.
@@ -37,6 +48,12 @@ func NewOpenAICompatibleModel(baseURL, apiKey, modelName string) model.LLM {
 		modelName: modelName,
 		client:    &http.Client{Timeout: 900 * time.Second},
 	}
+}
+
+// SetEnableThinking implements ThinkingConfigurator. Pass nil to restore
+// the default per-request logic (disable thinking when tools are present).
+func (m *openaiCompatibleModel) SetEnableThinking(v *bool) {
+	m.enableThinking = v
 }
 
 // Name returns the model name.
@@ -264,16 +281,15 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 		}
 
 		// Emit assistant message with tool_calls when present.
+		// Note: we intentionally omit any pre-tool text (reasoning narrative)
+		// from the history message. Including it inflates context on every
+		// subsequent turn and can cause context-size errors on long sessions.
+		// The tool results themselves convey what was done; the narrative adds
+		// no value for continuation.
 		if role == "assistant" && len(funcCalls) > 0 {
 			msg := openaiMessage{
 				Role:      "assistant",
 				ToolCalls: funcCalls,
-			}
-			if len(textParts) > 0 {
-				msg.Content = strings.Join(textParts, "\n")
-			}
-			if len(reasoningParts) > 0 && msg.Role == "assistant" {
-				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
 			}
 			messages = append(messages, msg)
 			continue
@@ -294,6 +310,10 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 		}
 
 		// Plain text message.
+		// Per Qwen3 best practices, thinking/reasoning content must NOT be
+		// included in multi-turn history — only the final output text is sent
+		// back. This prevents reasoning blobs from ballooning context on every
+		// subsequent turn.
 		if len(textParts) > 0 || len(reasoningParts) > 0 {
 			msg := openaiMessage{
 				Role: role,
@@ -301,9 +321,7 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			if len(textParts) > 0 {
 				msg.Content = strings.Join(textParts, "\n")
 			}
-			if role == "assistant" && len(reasoningParts) > 0 {
-				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
-			}
+			// reasoning_content intentionally omitted from history
 			messages = append(messages, msg)
 		}
 	}
@@ -424,8 +442,14 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			// Disable Qwen3 thinking mode when tools are present — thinking mode
 			// causes the model to reason independently and ignore system prompt
 			// instructions about which tools/agents to use.
-			falseVal := false
-			body.EnableThinking = &falseVal
+			// If the agent definition explicitly sets EnableThinking, honour that
+			// instead of the default (disable) behaviour.
+			if m.enableThinking != nil {
+				body.EnableThinking = m.enableThinking
+			} else {
+				falseVal := false
+				body.EnableThinking = &falseVal
+			}
 		}
 
 		// Apply generation config.

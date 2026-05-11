@@ -58,6 +58,17 @@ func (m *TrackingModel) ProviderName() string {
 	return string(m.provider)
 }
 
+// SetEnableThinking delegates to the inner model if it supports the
+// ThinkingConfigurator interface (e.g. openaiCompatibleModel for Qwen3).
+func (m *TrackingModel) SetEnableThinking(v *bool) {
+	type thinkingConfigurator interface {
+		SetEnableThinking(v *bool)
+	}
+	if tc, ok := m.inner.(thinkingConfigurator); ok {
+		tc.SetEnableThinking(v)
+	}
+}
+
 // GenerateContent satisfies adkmodel.LLM. It proxies every response item
 // through the wrapped LLM and, on the last non-partial response that contains
 // UsageMetadata, asynchronously records an LLMUsageEvent.

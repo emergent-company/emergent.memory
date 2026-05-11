@@ -296,6 +296,11 @@ type ModelConfig struct {
 	// Tools are only activated if the selected model actually supports them —
 	// unsupported combinations are silently skipped.
 	NativeTools []string `json:"nativeTools,omitempty"`
+	// EnableThinking controls chain-of-thought reasoning for models that support
+	// it (e.g. Qwen3 via OpenAI-compatible endpoint). When nil the provider
+	// default applies. Set to false to suppress thinking tokens and improve
+	// instruction-following for tool-heavy agents.
+	EnableThinking *bool `json:"enableThinking,omitempty"`
 }
 
 // AgentDefinition stores agent configurations from product manifests.
@@ -382,13 +387,13 @@ type AgentQuestionInteractionType string
 
 const (
 	// QuestionInteractionButtons presents options as clickable buttons (default for 2-5 options).
-	QuestionInteractionButtons    AgentQuestionInteractionType = "buttons"
+	QuestionInteractionButtons AgentQuestionInteractionType = "buttons"
 	// QuestionInteractionSelect presents options as a dropdown menu (for 5+ options).
-	QuestionInteractionSelect     AgentQuestionInteractionType = "select"
+	QuestionInteractionSelect AgentQuestionInteractionType = "select"
 	// QuestionInteractionMultiSelect presents options as a multi-select dropdown.
 	QuestionInteractionMultiSelect AgentQuestionInteractionType = "multi_select"
 	// QuestionInteractionText opens a free-text input modal (no options needed).
-	QuestionInteractionText       AgentQuestionInteractionType = "text"
+	QuestionInteractionText AgentQuestionInteractionType = "text"
 )
 
 // AgentQuestionOption represents a single option in an ask_user question.
@@ -403,22 +408,22 @@ type AgentQuestionOption struct {
 type AgentQuestion struct {
 	bun.BaseModel `bun:"table:kb.agent_questions,alias:aq"`
 
-	ID             string                         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	RunID          string                         `bun:"run_id,type:uuid,notnull" json:"runId"`
-	AgentID        string                         `bun:"agent_id,type:uuid,notnull" json:"agentId"`
-	ProjectID      string                         `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Question       string                         `bun:"question,notnull" json:"question"`
-	Options        []AgentQuestionOption          `bun:"options,type:jsonb,notnull,default:'[]'" json:"options"`
-	InteractionType AgentQuestionInteractionType  `bun:"interaction_type,type:text,notnull,default:'buttons'" json:"interactionType"`
-	Placeholder    string                         `bun:"placeholder,type:text" json:"placeholder,omitempty"`
-	MaxLength      int                            `bun:"max_length" json:"maxLength,omitempty"`
-	Response       *string                        `bun:"response" json:"response,omitempty"`
-	RespondedBy    *string               `bun:"responded_by,type:uuid" json:"respondedBy,omitempty"`
-	RespondedAt    *time.Time            `bun:"responded_at" json:"respondedAt,omitempty"`
-	Status         AgentQuestionStatus   `bun:"status,notnull,default:'pending'" json:"status"`
-	NotificationID *string               `bun:"notification_id,type:uuid" json:"notificationId,omitempty"`
-	CreatedAt      time.Time             `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt      time.Time             `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	ID              string                       `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	RunID           string                       `bun:"run_id,type:uuid,notnull" json:"runId"`
+	AgentID         string                       `bun:"agent_id,type:uuid,notnull" json:"agentId"`
+	ProjectID       string                       `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Question        string                       `bun:"question,notnull" json:"question"`
+	Options         []AgentQuestionOption        `bun:"options,type:jsonb,notnull,default:'[]'" json:"options"`
+	InteractionType AgentQuestionInteractionType `bun:"interaction_type,type:text,notnull,default:'buttons'" json:"interactionType"`
+	Placeholder     string                       `bun:"placeholder,type:text" json:"placeholder,omitempty"`
+	MaxLength       int                          `bun:"max_length" json:"maxLength,omitempty"`
+	Response        *string                      `bun:"response" json:"response,omitempty"`
+	RespondedBy     *string                      `bun:"responded_by,type:uuid" json:"respondedBy,omitempty"`
+	RespondedAt     *time.Time                   `bun:"responded_at" json:"respondedAt,omitempty"`
+	Status          AgentQuestionStatus          `bun:"status,notnull,default:'pending'" json:"status"`
+	NotificationID  *string                      `bun:"notification_id,type:uuid" json:"notificationId,omitempty"`
+	CreatedAt       time.Time                    `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt       time.Time                    `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 
 	// Relations
 	Run   *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`

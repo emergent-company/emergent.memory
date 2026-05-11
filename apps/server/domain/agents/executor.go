@@ -1023,6 +1023,14 @@ func (ae *AgentExecutor) runPipeline(
 		return nil, fmt.Errorf("failed to create LLM model: %w", err)
 	}
 
+	// Apply thinking config from agent definition when the model supports it.
+	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil &&
+		req.AgentDefinition.Model.EnableThinking != nil {
+		if tc, ok := llm.(adk.ThinkingConfigurator); ok {
+			tc.SetEnableThinking(req.AgentDefinition.Model.EnableThinking)
+		}
+	}
+
 	// Persist the resolved model name (and provider when available) on the run record.
 	// llm.Name() reflects the actual model used (including factory/credential defaults),
 	// which may differ from the modelName variable when a credential-level default applies.
