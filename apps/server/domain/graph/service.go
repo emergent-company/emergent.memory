@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -1235,6 +1236,24 @@ func humanizeRelationType(relType string) string {
 	return strings.ToLower(strings.ReplaceAll(relType, "_", " "))
 }
 
+// normalizeRelationType converts any casing variant to lower_snake_case.
+// Handles: PascalCase, camelCase, UPPER_SNAKE, spaces, mixed.
+// Examples: "ParticipatedIn" -> "participated_in", "WORKS FOR" -> "works_for"
+func normalizeRelationType(relType string) string {
+	// First handle spaces -> underscore
+	s := strings.ReplaceAll(relType, " ", "_")
+	// Insert underscore before uppercase letters that follow lowercase (PascalCase/camelCase)
+	var b strings.Builder
+	runes := []rune(s)
+	for i, r := range runes {
+		if i > 0 && unicode.IsUpper(r) && unicode.IsLower(runes[i-1]) {
+			b.WriteRune('_')
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String())
+}
+
 // getDisplayName extracts a display name from a graph object.
 // Tries properties["name"] first, falls back to Key if name is missing or empty.
 func getDisplayName(obj *GraphObject) string {
@@ -1468,7 +1487,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	rel := &GraphRelationship{
 		ProjectID:  projectID,
 		BranchID:   effectiveBranchID,
-		Type:       req.Type,
+		Type:       normalizeRelationType(req.Type),
 		SrcID:      srcObj.CanonicalID,
 		DstID:      dstObj.CanonicalID,
 		Properties: req.Properties,
