@@ -30,6 +30,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, auth
 	writeGroup.POST("", h.Create)
 	writeGroup.POST("/upload", uploadHandler.Upload)
 	writeGroup.POST("/upload/batch", uploadHandler.UploadBatch)
+	writeGroup.POST("/:id/retry-extraction", h.RetryExtraction)
 
 	deleteGroup := g.Group("")
 	deleteGroup.Use(authMiddleware.RequireAPITokenScopes("documents:delete"))

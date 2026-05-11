@@ -169,6 +169,9 @@ func coreFxOptions() fx.Option {
 		// Extraction module (background workers for document parsing, embeddings, etc.)
 		extraction.Module,
 
+		// Adapter: wires extraction retry capability into documents handler (avoids import cycle)
+		fx.Provide(NewExtractionRetrierAdapter),
+
 		// Email module (email job queue and worker)
 		email.Module,
 

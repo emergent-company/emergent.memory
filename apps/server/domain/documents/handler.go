@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -13,23 +14,39 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
+// RetryableJob is a minimal extraction job view for retry purposes
+type RetryableJob struct {
+	ID        string
+	ProjectID string
+	Status    string
+}
+
+// ExtractionRetrier abstracts extraction job retry operations to avoid import cycles
+type ExtractionRetrier interface {
+	FindRetryableByDocument(ctx context.Context, documentID, projectID string) (*RetryableJob, error)
+	RetryByJobID(ctx context.Context, jobID, projectID string) (*RetryableJob, error)
+}
+
 // Handler handles document HTTP requests
 type Handler struct {
-	svc     *Service
-	storage *storage.Service
-	log     *slog.Logger
+	svc        *Service
+	storage    *storage.Service
+	extraction ExtractionRetrier
+	log        *slog.Logger
 }
 
 // NewHandler creates a new documents handler
 func NewHandler(
 	svc *Service,
 	storageSvc *storage.Service,
+	extraction ExtractionRetrier,
 	log *slog.Logger,
 ) *Handler {
 	return &Handler{
-		svc:     svc,
-		storage: storageSvc,
-		log:     log.With(logger.Scope("documents.handler")),
+		svc:        svc,
+		storage:    storageSvc,
+		extraction: extraction,
+		log:        log.With(logger.Scope("documents.handler")),
 	}
 }
 
@@ -653,4 +670,64 @@ func (h *Handler) Upload(c echo.Context) error {
 	}
 
 	return c.JSON(status, response)
+}
+
+// RetryExtraction handles POST /api/documents/:id/retry-extraction
+// @Summary      Retry document extraction
+// @Description  Re-queues the most recent failed or dead_letter extraction job for a document
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        id path string true "Document ID"
+// @Success      202 {object} map[string]any
+// @Failure      400 {object} apperror.Error
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/documents/{id}/retry-extraction [post]
+// @Security     bearerAuth
+func (h *Handler) RetryExtraction(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	if user.ProjectID == "" {
+		return apperror.ErrBadRequest.WithMessage("x-project-id header required")
+	}
+
+	documentID := c.Param("id")
+	if documentID == "" {
+		return apperror.ErrBadRequest.WithMessage("document id required")
+	}
+
+	// Verify document exists and belongs to project
+	doc, err := h.svc.GetByID(c.Request().Context(), user.ProjectID, documentID)
+	if err != nil {
+		return err
+	}
+	if doc == nil {
+		return apperror.ErrNotFound.WithMessage("Document not found")
+	}
+
+	// Find latest retryable job for this document
+	retryableJob, err := h.extraction.FindRetryableByDocument(c.Request().Context(), documentID, user.ProjectID)
+	if err != nil {
+		return apperror.ErrInternal.WithMessage("failed to find extraction jobs")
+	}
+
+	if retryableJob == nil {
+		return apperror.ErrBadRequest.WithMessage("no retryable extraction job found for this document (only failed/dead_letter/processing jobs can be retried)")
+	}
+
+	job, err := h.extraction.RetryByJobID(c.Request().Context(), retryableJob.ID, user.ProjectID)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage(err.Error())
+	}
+
+	return c.JSON(http.StatusAccepted, map[string]any{
+		"job_id":  job.ID,
+		"status":  job.Status,
+		"message": "Extraction job queued for retry",
+	})
 }
