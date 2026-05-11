@@ -85,9 +85,13 @@ type RunWorkspaceDTO struct {
 
 // RunTokenUsage holds aggregated LLM token counts and estimated cost for a run.
 type RunTokenUsage struct {
-	TotalInputTokens  int64   `json:"totalInputTokens"`
-	TotalOutputTokens int64   `json:"totalOutputTokens"`
-	EstimatedCostUSD  float64 `json:"estimatedCostUsd"`
+	TotalInputTokens  int64 `json:"totalInputTokens"`
+	TotalOutputTokens int64 `json:"totalOutputTokens"`
+	// CachedTokens is the number of input tokens served from the provider's
+	// prompt cache (e.g. Google context caching). These are already counted
+	// within TotalInputTokens but are broken out here for cost analysis.
+	CachedTokens     int64   `json:"cachedTokens"`
+	EstimatedCostUSD float64 `json:"estimatedCostUsd"`
 	// Provider and Model identify the LLM used. Format: "<provider>/<model>",
 	// e.g. "google/gemini-2.0-flash". Empty when unknown.
 	Provider string `json:"provider,omitempty"`

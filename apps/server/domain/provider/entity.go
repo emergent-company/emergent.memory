@@ -153,6 +153,7 @@ type LLMUsageEvent struct {
 	EstimatedCostUSD float64       `bun:"estimated_cost_usd,notnull,default:0" json:"estimatedCostUsd"`
 	RunID            *string       `bun:"run_id,type:uuid,nullzero" json:"runId,omitempty"`
 	RootRunID        *string       `bun:"root_run_id,type:uuid,nullzero" json:"rootRunId,omitempty"`
+	UserID           *string       `bun:"user_id,type:uuid,nullzero" json:"userId,omitempty"`
 	CreatedAt        time.Time     `bun:"created_at,notnull,default:now()" json:"createdAt"`
 }
 

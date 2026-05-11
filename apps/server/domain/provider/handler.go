@@ -559,3 +559,55 @@ func (h *Handler) TestProvider(c echo.Context) error {
 		LatencyMs: time.Since(start).Milliseconds(),
 	})
 }
+
+// GetCurrentUserUsageSummary returns aggregated LLM usage for the authenticated user.
+// @Summary Get current user LLM usage summary
+// @Param since query string false "Start time (RFC3339)"
+// @Param until query string false "End time (RFC3339)"
+// @Success 200 {object} UsageSummaryResponse
+// @Failure 401 {object} apperror.Error
+// @Router /users/me/usage [get]
+func (h *Handler) GetCurrentUserUsageSummary(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	since, until := parseTimeRange(c)
+	rows, err := h.repo.GetUserUsageSummary(c.Request().Context(), user.ID, since, until)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, UsageSummaryResponse{
+		Note: "Costs shown are estimates based on retail pricing and may not reflect your actual provider invoice.",
+		Data: rows,
+	})
+}
+
+// GetCurrentUserUsageTimeSeries returns time-bucketed LLM usage for the authenticated user.
+// @Summary Get current user LLM usage time series
+// @Param since query string false "Start time (RFC3339)"
+// @Param until query string false "End time (RFC3339)"
+// @Param granularity query string false "Bucket size: day (default), week, month"
+// @Success 200 {object} UsageTimeSeriesResponse
+// @Failure 401 {object} apperror.Error
+// @Router /users/me/usage/timeseries [get]
+func (h *Handler) GetCurrentUserUsageTimeSeries(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	granularity := c.QueryParam("granularity")
+	since, until := parseTimeRange(c)
+	rows, err := h.repo.GetUserUsageTimeSeries(c.Request().Context(), user.ID, granularity, since, until)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, UsageTimeSeriesResponse{
+		Note: "Costs shown are estimates based on retail pricing and may not reflect your actual provider invoice.",
+		Data: rows,
+	})
+}

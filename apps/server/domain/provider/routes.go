@@ -21,6 +21,8 @@ import (
 //	GET    /api/v1/providers/:provider/models                 — read-only model catalog (per provider)
 //	GET    /api/v1/models                                     — list all models across providers (agents:read)
 //	POST   /api/v1/providers/:provider/test                   — live credential test
+//	GET    /api/v1/users/me/usage                             — current user usage summary
+//	GET    /api/v1/users/me/usage/timeseries                  — current user usage time series
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	api := e.Group("/api/v1")
 	api.Use(authMiddleware.RequireAuth())
@@ -49,6 +51,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Project-level usage summary and timeseries
 	api.GET("/projects/:projectId/usage", h.GetProjectUsageSummary)
 	api.GET("/projects/:projectId/usage/timeseries", h.GetProjectUsageTimeSeries)
+
+	// Current-user usage summary and timeseries
+	api.GET("/users/me/usage", h.GetCurrentUserUsageSummary)
+	api.GET("/users/me/usage/timeseries", h.GetCurrentUserUsageTimeSeries)
 
 	// Read-only model catalog (per provider)
 	api.GET("/providers/:provider/models", h.ListModels)

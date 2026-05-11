@@ -2323,11 +2323,12 @@ func (r *Repository) RequeueOrphanedQueuedRuns(ctx context.Context) (int, error)
 
 // GetRunTokenUsage returns aggregated LLM token counts and estimated cost for a
 // single agent run, reading from kb.llm_usage_events. Returns nil when no usage
-// events exist for the run (e.g. the run has not yet executed any LLM calls).
+// events exist for the run.
 func (r *Repository) GetRunTokenUsage(ctx context.Context, runID string) (*RunTokenUsage, error) {
 	type row struct {
 		TotalInput  int64   `bun:"total_input"`
 		TotalOutput int64   `bun:"total_output"`
+		TotalCached int64   `bun:"total_cached"`
 		TotalCost   float64 `bun:"total_cost"`
 		Provider    string  `bun:"provider"`
 		Model       string  `bun:"model"`
@@ -2337,6 +2338,7 @@ func (r *Repository) GetRunTokenUsage(ctx context.Context, runID string) (*RunTo
 		SELECT
 			COALESCE(SUM(text_input_tokens + image_input_tokens + video_input_tokens + audio_input_tokens), 0) AS total_input,
 			COALESCE(SUM(output_tokens), 0)        AS total_output,
+			COALESCE(SUM(cached_tokens), 0)        AS total_cached,
 			COALESCE(SUM(estimated_cost_usd), 0.0) AS total_cost,
 			COALESCE(
 				(SELECT provider FROM kb.llm_usage_events
@@ -2362,11 +2364,70 @@ func (r *Repository) GetRunTokenUsage(ctx context.Context, runID string) (*RunTo
 	usage := &RunTokenUsage{
 		TotalInputTokens:  result.TotalInput,
 		TotalOutputTokens: result.TotalOutput,
+		CachedTokens:      result.TotalCached,
 		EstimatedCostUSD:  result.TotalCost,
 		Provider:          result.Provider,
 		Model:             result.Model,
 	}
 	return usage, nil
+}
+
+// GetRunsTokenUsage returns aggregated LLM token counts and estimated cost for
+// a batch of agent runs in a single query. The returned map is keyed by run ID.
+// Runs with no usage events are absent from the map.
+func (r *Repository) GetRunsTokenUsage(ctx context.Context, runIDs []string) (map[string]*RunTokenUsage, error) {
+	if len(runIDs) == 0 {
+		return map[string]*RunTokenUsage{}, nil
+	}
+
+	type row struct {
+		RunID       string  `bun:"run_id"`
+		TotalInput  int64   `bun:"total_input"`
+		TotalOutput int64   `bun:"total_output"`
+		TotalCached int64   `bun:"total_cached"`
+		TotalCost   float64 `bun:"total_cost"`
+		Provider    string  `bun:"provider"`
+		Model       string  `bun:"model"`
+	}
+
+	var rows []row
+	err := r.db.NewRaw(`
+		SELECT
+			run_id,
+			COALESCE(SUM(text_input_tokens + image_input_tokens + video_input_tokens + audio_input_tokens), 0) AS total_input,
+			COALESCE(SUM(output_tokens), 0)        AS total_output,
+			COALESCE(SUM(cached_tokens), 0)        AS total_cached,
+			COALESCE(SUM(estimated_cost_usd), 0.0) AS total_cost,
+			(SELECT provider FROM kb.llm_usage_events sub
+			 WHERE sub.run_id = main.run_id
+			 GROUP BY provider ORDER BY COUNT(*) DESC LIMIT 1) AS provider,
+			(SELECT model FROM kb.llm_usage_events sub
+			 WHERE sub.run_id = main.run_id
+			 GROUP BY model ORDER BY COUNT(*) DESC LIMIT 1) AS model
+		FROM kb.llm_usage_events AS main
+		WHERE run_id = ANY(?)
+		GROUP BY run_id`,
+		bun.In(runIDs),
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("get runs token usage: %w", err)
+	}
+
+	result := make(map[string]*RunTokenUsage, len(rows))
+	for _, r := range rows {
+		if r.RunID == "" {
+			continue
+		}
+		result[r.RunID] = &RunTokenUsage{
+			TotalInputTokens:  r.TotalInput,
+			TotalOutputTokens: r.TotalOutput,
+			CachedTokens:      r.TotalCached,
+			EstimatedCostUSD:  r.TotalCost,
+			Provider:          r.Provider,
+			Model:             r.Model,
+		}
+	}
+	return result, nil
 }
 
 // GetOrgIDByProjectID returns the organization ID for the given project ID.

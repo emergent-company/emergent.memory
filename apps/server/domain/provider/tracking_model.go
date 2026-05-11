@@ -126,6 +126,12 @@ func (m *TrackingModel) recordUsage(ctx context.Context, req *adkmodel.LLMReques
 		event.RootRunID = &rootRunID
 	}
 
+	// Attach the authenticated user ID when present in context.
+	if user := auth.UserFromContext(ctx); user != nil && user.ID != "" {
+		userID := user.ID
+		event.UserID = &userID
+	}
+
 	// Extract per-modality prompt tokens when the breakdown is available.
 	// This is present when the model response includes PromptTokensDetails.
 	if len(meta.PromptTokensDetails) > 0 {

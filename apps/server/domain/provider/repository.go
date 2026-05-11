@@ -500,6 +500,7 @@ type UsageSummaryRow struct {
 	TotalVideo       int64        `bun:"total_video"`
 	TotalAudio       int64        `bun:"total_audio"`
 	TotalOutput      int64        `bun:"total_output"`
+	TotalCached      int64        `bun:"total_cached"`
 	EstimatedCostUSD float64      `bun:"estimated_cost_usd"`
 }
 
@@ -514,6 +515,7 @@ func (r *Repository) GetProjectUsageSummary(ctx context.Context, projectID strin
 		ColumnExpr("SUM(video_input_tokens) AS total_video").
 		ColumnExpr("SUM(audio_input_tokens) AS total_audio").
 		ColumnExpr("SUM(output_tokens) AS total_output").
+		ColumnExpr("SUM(cached_tokens) AS total_cached").
 		ColumnExpr("SUM(estimated_cost_usd) AS estimated_cost_usd").
 		Where("project_id = ?", projectID).
 		GroupExpr("provider, model").
@@ -544,6 +546,7 @@ func (r *Repository) GetOrgUsageSummary(ctx context.Context, orgID string, since
 		ColumnExpr("SUM(video_input_tokens) AS total_video").
 		ColumnExpr("SUM(audio_input_tokens) AS total_audio").
 		ColumnExpr("SUM(output_tokens) AS total_output").
+		ColumnExpr("SUM(cached_tokens) AS total_cached").
 		ColumnExpr("SUM(estimated_cost_usd) AS estimated_cost_usd").
 		Where("org_id = ?", orgID).
 		GroupExpr("provider, model").
@@ -573,6 +576,7 @@ type UsageTimeSeriesRow struct {
 	TotalVideo       int64        `bun:"total_video"`
 	TotalAudio       int64        `bun:"total_audio"`
 	TotalOutput      int64        `bun:"total_output"`
+	TotalCached      int64        `bun:"total_cached"`
 	EstimatedCostUSD float64      `bun:"estimated_cost_usd"`
 }
 
@@ -585,6 +589,7 @@ type OrgUsageByProjectRow struct {
 	TotalVideo       int64   `bun:"total_video"`
 	TotalAudio       int64   `bun:"total_audio"`
 	TotalOutput      int64   `bun:"total_output"`
+	TotalCached      int64   `bun:"total_cached"`
 	EstimatedCostUSD float64 `bun:"estimated_cost_usd"`
 }
 
@@ -602,6 +607,7 @@ func (r *Repository) GetProjectUsageTimeSeries(ctx context.Context, projectID, g
 		ColumnExpr("SUM(video_input_tokens) AS total_video").
 		ColumnExpr("SUM(audio_input_tokens) AS total_audio").
 		ColumnExpr("SUM(output_tokens) AS total_output").
+		ColumnExpr("SUM(cached_tokens) AS total_cached").
 		ColumnExpr("SUM(estimated_cost_usd) AS estimated_cost_usd").
 		Where("project_id = ?", projectID).
 		GroupExpr("period, provider, model").
@@ -635,6 +641,7 @@ func (r *Repository) GetOrgUsageTimeSeries(ctx context.Context, orgID, granulari
 		ColumnExpr("SUM(video_input_tokens) AS total_video").
 		ColumnExpr("SUM(audio_input_tokens) AS total_audio").
 		ColumnExpr("SUM(output_tokens) AS total_output").
+		ColumnExpr("SUM(cached_tokens) AS total_cached").
 		ColumnExpr("SUM(estimated_cost_usd) AS estimated_cost_usd").
 		Where("org_id = ?", orgID).
 		GroupExpr("period, provider, model").
@@ -667,6 +674,7 @@ func (r *Repository) GetOrgUsageByProject(ctx context.Context, orgID string, sin
 		ColumnExpr("SUM(e.video_input_tokens) AS total_video").
 		ColumnExpr("SUM(e.audio_input_tokens) AS total_audio").
 		ColumnExpr("SUM(e.output_tokens) AS total_output").
+		ColumnExpr("SUM(e.cached_tokens) AS total_cached").
 		ColumnExpr("SUM(e.estimated_cost_usd) AS estimated_cost_usd").
 		Where("e.org_id = ?", orgID).
 		GroupExpr("e.project_id, p.name").
@@ -735,4 +743,69 @@ func (r *Repository) GetOrgIDForProject(ctx context.Context, projectID string) (
 		return "", apperror.ErrDatabase.WithInternal(err)
 	}
 	return orgID, nil
+}
+
+// GetUserUsageSummary returns aggregated usage for a specific user grouped by provider + model.
+func (r *Repository) GetUserUsageSummary(ctx context.Context, userID string, since, until *time.Time) ([]UsageSummaryRow, error) {
+	var rows []UsageSummaryRow
+	q := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events").
+		ColumnExpr("provider, model").
+		ColumnExpr("SUM(text_input_tokens) AS total_text").
+		ColumnExpr("SUM(image_input_tokens) AS total_image").
+		ColumnExpr("SUM(video_input_tokens) AS total_video").
+		ColumnExpr("SUM(audio_input_tokens) AS total_audio").
+		ColumnExpr("SUM(output_tokens) AS total_output").
+		ColumnExpr("SUM(cached_tokens) AS total_cached").
+		ColumnExpr("SUM(estimated_cost_usd) AS estimated_cost_usd").
+		Where("user_id = ?", userID).
+		GroupExpr("provider, model").
+		OrderExpr("provider, model")
+
+	if since != nil {
+		q = q.Where("created_at >= ?", *since)
+	}
+	if until != nil {
+		q = q.Where("created_at <= ?", *until)
+	}
+
+	if err := q.Scan(ctx, &rows); err != nil {
+		r.log.Error("failed to get user usage summary", logger.Error(err), slog.String("userID", userID))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rows, nil
+}
+
+// GetUserUsageTimeSeries returns time-bucketed usage for a specific user.
+// granularity must be "day", "week", or "month".
+func (r *Repository) GetUserUsageTimeSeries(ctx context.Context, userID, granularity string, since, until *time.Time) ([]UsageTimeSeriesRow, error) {
+	g := sanitizeGranularity(granularity)
+	var rows []UsageTimeSeriesRow
+	q := r.db.NewSelect().
+		TableExpr("kb.llm_usage_events").
+		ColumnExpr("DATE_TRUNC(?, created_at AT TIME ZONE 'UTC') AS period", g).
+		ColumnExpr("provider, model").
+		ColumnExpr("SUM(text_input_tokens) AS total_text").
+		ColumnExpr("SUM(image_input_tokens) AS total_image").
+		ColumnExpr("SUM(video_input_tokens) AS total_video").
+		ColumnExpr("SUM(audio_input_tokens) AS total_audio").
+		ColumnExpr("SUM(output_tokens) AS total_output").
+		ColumnExpr("SUM(cached_tokens) AS total_cached").
+		ColumnExpr("SUM(estimated_cost_usd) AS estimated_cost_usd").
+		Where("user_id = ?", userID).
+		GroupExpr("period, provider, model").
+		OrderExpr("period ASC, provider, model")
+
+	if since != nil {
+		q = q.Where("created_at >= ?", *since)
+	}
+	if until != nil {
+		q = q.Where("created_at <= ?", *until)
+	}
+
+	if err := q.Scan(ctx, &rows); err != nil {
+		r.log.Error("failed to get user usage timeseries", logger.Error(err), slog.String("userID", userID))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return rows, nil
 }

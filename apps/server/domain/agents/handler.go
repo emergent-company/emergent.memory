@@ -1596,6 +1596,22 @@ func (h *Handler) ListProjectRuns(c echo.Context) error {
 		dtos[i] = run.ToDTO()
 	}
 
+	// Attach per-run token usage in a single batch query.
+	if len(dtos) > 0 {
+		runIDs := make([]string, len(dtos))
+		for i, d := range dtos {
+			runIDs[i] = d.ID
+		}
+		tokenUsageMap, err := h.repo.GetRunsTokenUsage(c.Request().Context(), runIDs)
+		if err == nil {
+			for _, d := range dtos {
+				if usage, ok := tokenUsageMap[d.ID]; ok {
+					d.TokenUsage = usage
+				}
+			}
+		}
+	}
+
 	return c.JSON(http.StatusOK, SuccessResponse(PaginatedResponse[*AgentRunDTO]{
 		Items:      dtos,
 		TotalCount: totalCount,
