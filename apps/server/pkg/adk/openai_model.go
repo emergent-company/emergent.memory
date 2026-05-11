@@ -35,7 +35,7 @@ func NewOpenAICompatibleModel(baseURL, apiKey, modelName string) model.LLM {
 		baseURL:   strings.TrimSuffix(baseURL, "/"),
 		apiKey:    apiKey,
 		modelName: modelName,
-		client:    &http.Client{Timeout: 300 * time.Second},
+		client:    &http.Client{Timeout: 900 * time.Second},
 	}
 }
 
