@@ -101,9 +101,12 @@ type openaiRequest struct {
 	ToolChoice     string          `json:"tool_choice,omitempty"`
 	MaxTokens      int32           `json:"max_tokens,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
-	// EnableThinking controls Qwen3 thinking mode. Set to false to suppress
-	// chain-of-thought reasoning and improve instruction-following for tool calls.
-	EnableThinking *bool `json:"enable_thinking,omitempty"`
+	// ChatTemplateKwargs passes model-specific template arguments.
+	// For Qwen3/vLLM, {"enable_thinking": false} suppresses chain-of-thought
+	// reasoning tokens. This is the correct way to disable thinking on vLLM —
+	// the top-level enable_thinking field does not work correctly (it empties
+	// the response content field).
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
 type responseFormat struct {
@@ -444,11 +447,16 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			// instructions about which tools/agents to use.
 			// If the agent definition explicitly sets EnableThinking, honour that
 			// instead of the default (disable) behaviour.
+			// NOTE: must use chat_template_kwargs (vLLM-level) not top-level
+			// enable_thinking — the top-level field empties the content field.
+			wantThinking := true // default: allow thinking when no tools
 			if m.enableThinking != nil {
-				body.EnableThinking = m.enableThinking
+				wantThinking = *m.enableThinking
 			} else {
-				falseVal := false
-				body.EnableThinking = &falseVal
+				wantThinking = false // default: disable when tools present
+			}
+			if !wantThinking {
+				body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
 			}
 		}
 
