@@ -3231,7 +3231,7 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			req.Namespace = &ns
 		}
 
-		result, err := s.graphService.Create(ctx, projectUUID, req, nil)
+		result, _, err := s.graphService.CreateOrUpdate(ctx, projectUUID, req, nil)
 		if err != nil {
 			results = append(results, batchResult{
 				Success: false,
