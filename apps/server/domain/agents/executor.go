@@ -1169,6 +1169,13 @@ func (ae *AgentExecutor) runPipeline(
 		}
 	}
 
+	// Inject namespace from TriggerMetadata into the context so that MCP tools
+	// (entity-create, relationship-create) scope writes to the correct namespace
+	// without requiring the LLM to pass it explicitly in every tool call.
+	if ns, ok := run.TriggerMetadata["namespace"].(string); ok && ns != "" {
+		ctx = auth.ContextWithNamespace(ctx, ns)
+	}
+
 	genConfig := ae.modelFactory.DefaultGenerateConfig()
 	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
 		if req.AgentDefinition.Model.Temperature != nil {
