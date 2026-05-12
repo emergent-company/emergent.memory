@@ -42,10 +42,14 @@ class Config:
     eval_llm_api_key: str
     eval_llm_model: str
 
-    def auth_headers(self) -> dict[str, str]:
+    def auth_headers(self, project_id: str | None = None) -> dict[str, str]:
+        headers: dict[str, str] = {}
         if self.api_key:
-            return {"Authorization": f"Bearer {self.api_key}"}
-        return {}
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        pid = project_id or self.project_id
+        if pid:
+            headers["X-Project-ID"] = pid
+        return headers
 
 
 _cfg: Config | None = None

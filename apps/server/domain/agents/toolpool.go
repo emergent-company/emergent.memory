@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/mcprelay"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Coordination tool names that are restricted for sub-agents by default.
@@ -721,6 +722,14 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			InputSchema: inputSchema,
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			// Auto-inject namespace from context if the agent didn't supply one.
+			// This allows callers to set a namespace once (e.g. via /query?namespace=)
+			// and have it propagate to every MCP tool call transparently.
+			if ns := auth.NamespaceFromContext(ctx); ns != "" {
+				if _, ok := args["namespace"]; !ok {
+					args["namespace"] = ns
+				}
+			}
 			result, err := svc.ExecuteTool(ctx, pid, toolName, args)
 			if err != nil {
 				return map[string]any{"error": err.Error()}, nil

@@ -97,6 +97,43 @@ def remember(
     }
 
 
+def search(
+    query_text: str,
+    *,
+    project_id: str | None = None,
+    namespace: str | None = None,
+    limit: int = 10,
+    timeout: int = 30,
+) -> dict:
+    """
+    POST /api/search/unified
+    Returns dict with keys: results, elapsed_ms, error.
+    results is a list of {key, name, summary, score, type} dicts.
+    """
+    cfg = get_config()
+    pid = project_id or cfg.project_id
+    if not pid:
+        raise ValueError("project_id required")
+
+    body: dict = {"query": query_text, "limit": limit, "search_type": "hybrid"}
+    if namespace:
+        body["namespace"] = namespace
+
+    url = f"{cfg.api_url}/api/search/unified"
+    headers = {"Content-Type": "application/json", **cfg.auth_headers(pid)}
+
+    start = time.time()
+    resp = requests.post(url, json=body, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    return {
+        "results": data.get("results", []),
+        "elapsed_ms": int((time.time() - start) * 1000),
+        "error": None,
+    }
+
+
 def query(
     question: str,
     *,
@@ -115,18 +152,11 @@ def query(
     if not pid:
         raise ValueError("project_id required")
 
-    # Benchmark mode: prepend concise-answer instruction so Token F1 / EM metrics
-    # are not destroyed by verbose prose responses.
-    concise_prefix = (
-        "[IMPORTANT: Answer with the shortest possible phrase or name — "
-        "no explanation, no markdown, no sentences. "
-        "If the answer is a single word or short phrase, output only that.]"
-    )
-    msg = f"{concise_prefix} {question}"
-    if namespace:
-        msg = f"[namespace: {namespace}] {msg}"
+    msg = question
 
     body: dict = {"message": msg}
+    if namespace:
+        body["namespace"] = namespace
     if session_id:
         body["conversation_id"] = session_id
 
