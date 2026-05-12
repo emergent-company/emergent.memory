@@ -311,6 +311,7 @@ func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, r
 		Query:           req.Query,
 		Vector:          vector,
 		Limit:           req.Limit,
+		Namespace:       req.Namespace,
 		RecencyBoost:    req.RecencyBoost,
 		RecencyHalfLife: req.RecencyHalfLife,
 		AccessBoost:     req.AccessBoost,

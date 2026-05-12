@@ -153,6 +153,12 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 			Limit: limit,
 		}
 
+		// Pass namespace to unified search for DB-level filtering.
+		// "all" means no filter; specific value filters graph objects by namespace field.
+		if namespaceFilter != "" && namespaceFilter != "all" {
+			unifiedReq.Namespace = &namespaceFilter
+		}
+
 		if rb, ok := args["recency_boost"].(float64); ok && rb > 0 {
 			v := float32(rb)
 			unifiedReq.RecencyBoost = &v
@@ -371,6 +377,10 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 		unifiedReq := &search.UnifiedSearchRequest{
 			Query: query,
 			Limit: limit,
+		}
+		// Pass namespace for DB-level filtering.
+		if namespaceFilter != "" && namespaceFilter != "all" {
+			unifiedReq.Namespace = &namespaceFilter
 		}
 		res, err := s.searchSvc.Search(ctx, projectUUID, unifiedReq, nil)
 		if err != nil {
