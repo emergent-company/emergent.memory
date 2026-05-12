@@ -1078,7 +1078,7 @@ type QueryStreamRequest struct {
 	Message        string `json:"message"`
 	ConversationID string `json:"conversation_id,omitempty"` // optional: continue a previous session
 	Branch         string `json:"branch,omitempty"`
-	Namespace      string `json:"namespace,omitempty"`      // optional: scopes all MCP tool calls to this namespace
+	Namespace      string `json:"namespace,omitempty"`     // optional: scopes all MCP tool calls to this namespace
 	ParentRunID    string `json:"parent_run_id,omitempty"` // optional: calling agent's run ID for parent→child linkage
 	RootRunID      string `json:"root_run_id,omitempty"`   // optional: top-level orchestration run ID
 }

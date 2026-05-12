@@ -150,7 +150,7 @@ var coordinationTools = map[string]bool{
 // support function calling but reject an explicit tool_choice constraint.
 func isReasonerModel(name string) bool {
 	lower := strings.ToLower(name)
-	reasonerKeywords := []string{"reasoner", "deepseek-v4-flash", "deepseek-r1"}
+	reasonerKeywords := []string{"reasoner", "deepseek-v4-flash", "deepseek-r1", "kvasir"}
 	for _, kw := range reasonerKeywords {
 		if strings.Contains(lower, kw) {
 			return true
