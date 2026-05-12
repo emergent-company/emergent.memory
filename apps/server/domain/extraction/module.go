@@ -89,6 +89,10 @@ func (a *relEmbeddingEnqueuerAdapter) EnqueueRelationshipEmbedding(ctx context.C
 	return err
 }
 
+func (a *relEmbeddingEnqueuerAdapter) EnqueueBatchRelationshipEmbeddings(ctx context.Context, relationshipIDs []string) (int, error) {
+	return a.svc.EnqueueBatch(ctx, relationshipIDs)
+}
+
 func provideRelEmbeddingEnqueuer(svc *GraphRelationshipEmbeddingJobsService) graph.RelationshipEmbeddingEnqueuer {
 	return &relEmbeddingEnqueuerAdapter{svc: svc}
 }

@@ -20,13 +20,17 @@ import (
 
 // graphRelationshipRow holds the minimal fields needed to generate a relationship embedding.
 type graphRelationshipRow struct {
-	ID        string `bun:"id,type:uuid"`
-	Type      string `bun:"type"`
-	SrcName   string `bun:"src_name"`
-	DstName   string `bun:"dst_name"`
-	SrcType   string `bun:"src_type"`
-	DstType   string `bun:"dst_type"`
-	ProjectID string `bun:"project_id,type:uuid"`
+	ID        string  `bun:"id,type:uuid"`
+	Type      string  `bun:"type"`
+	SrcName   string  `bun:"src_name"`
+	SrcKey    *string `bun:"src_key"`
+	SrcProps  []byte  `bun:"src_props,type:jsonb"`
+	DstName   string  `bun:"dst_name"`
+	DstKey    *string `bun:"dst_key"`
+	DstProps  []byte  `bun:"dst_props,type:jsonb"`
+	SrcType   string  `bun:"src_type"`
+	DstType   string  `bun:"dst_type"`
+	ProjectID string  `bun:"project_id,type:uuid"`
 }
 
 // GraphRelationshipEmbeddingWorker processes relationship embedding jobs from the queue.
@@ -235,17 +239,19 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	startTime := time.Now()
 
 	// Fetch the relationship along with endpoint names for triplet text generation.
-	// We join graph_objects twice to get src/dst display names (key or type).
+	// We join graph_objects twice to get src/dst display names (properties.name > key > type).
 	rel := &graphRelationshipRow{}
 	err := w.db.NewRaw(`
 		SELECT
 			gr.id,
 			gr.type,
 			gr.project_id,
-			COALESCE(src.key, src.type) AS src_name,
-			src.type                    AS src_type,
-			COALESCE(dst.key, dst.type) AS dst_name,
-			dst.type                    AS dst_type
+			src.properties AS src_props,
+			src.key        AS src_key,
+			src.type       AS src_type,
+			dst.properties AS dst_props,
+			dst.key        AS dst_key,
+			dst.type       AS dst_type
 		FROM kb.graph_relationships gr
 		JOIN kb.graph_objects src ON src.canonical_id = gr.src_id AND src.supersedes_id IS NULL
 		JOIN kb.graph_objects dst ON dst.canonical_id = gr.dst_id AND dst.supersedes_id IS NULL
@@ -257,10 +263,9 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		relErr := fmt.Errorf("relationship not found: %s", job.RelationshipID)
 		span.RecordError(relErr)
 		span.SetStatus(codes.Error, relErr.Error())
-		// Terminal failure — the relationship is gone, don't retry
-		markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, fmt.Errorf("relationship_missing"))
-		if markErr != nil {
-			w.log.Error("failed to mark rel embedding job as permanently failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
+		// Relationship is gone — remove job from queue, no retry
+		if delErr := w.jobs.DeleteJob(ctx, job.ID); delErr != nil {
+			w.log.Error("failed to delete job for missing relationship", slog.String("job_id", job.ID), slog.String("error", delErr.Error()))
 		}
 		w.incrementFailure()
 		return relErr
@@ -276,8 +281,10 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		return fmt.Errorf("fetch relationship: %w", err)
 	}
 
-	// Build triplet text: "SrcName REL_TYPE DstName"
-	text := rel.SrcName + " " + rel.Type + " " + rel.DstName
+	// Build triplet text using best display names (properties.name > key > type) and humanized rel type.
+	srcName := displayNameFromRow(rel.SrcProps, rel.SrcKey, rel.SrcType)
+	dstName := displayNameFromRow(rel.DstProps, rel.DstKey, rel.DstType)
+	text := buildTripletText(srcName, dstName, rel.Type)
 
 	// Inject project ID into context so the credential resolver can look up
 	// per-project LLM provider configuration (e.g. Vertex AI credentials).
@@ -286,8 +293,8 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		span.SetAttributes(
 			attribute.String("memory.project.id", rel.ProjectID),
 			attribute.String("memory.relationship.type", rel.Type),
-			attribute.String("memory.relationship.src_name", rel.SrcName),
-			attribute.String("memory.relationship.dst_name", rel.DstName),
+			attribute.String("memory.relationship.src_name", srcName),
+			attribute.String("memory.relationship.dst_name", dstName),
 		)
 	}
 

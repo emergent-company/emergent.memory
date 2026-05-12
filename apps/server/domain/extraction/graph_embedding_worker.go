@@ -262,14 +262,14 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		Scan(ctx, obj)
 
 	if err == sql.ErrNoRows {
-		// Object doesn't exist — terminal failure, don't retry
+		// Object doesn't exist — remove job from queue, no retry
 		objErr := fmt.Errorf("object not found: %s", job.ObjectID)
 		span.RecordError(objErr)
 		span.SetStatus(codes.Error, objErr.Error())
-		if markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, fmt.Errorf("object_missing")); markErr != nil {
-			w.log.Error("failed to mark job as permanently failed",
+		if delErr := w.jobs.DeleteJob(ctx, job.ID); delErr != nil {
+			w.log.Error("failed to delete job for missing object",
 				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
+				slog.String("error", delErr.Error()))
 		}
 		w.incrementFailure()
 		return objErr
@@ -441,48 +441,101 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	return nil
 }
 
-// extractText extracts text from a graph object for embedding.
-// Heuristic: join type, key, and all primitive leaf values.
+// skipEmbeddingKey lists property keys that carry no semantic value for embedding.
+var skipEmbeddingKey = map[string]bool{
+	"id":         true,
+	"url":        true,
+	"uri":        true,
+	"href":       true,
+	"license":    true,
+	"version":    true,
+	"citations":  true,
+	"references": true,
+	"hash":       true,
+	"checksum":   true,
+	"created_at": true,
+	"updated_at": true,
+	"deleted_at": true,
+}
+
+// isUUID returns true if s looks like a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+		} else if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// extractText extracts semantic text from a graph object for embedding.
+// Includes: type, stripped key (after last ':'), and meaningful string property values.
+// Skips: IDs, UUIDs, URLs, internal metadata keys, and numeric-only values.
 func (w *GraphEmbeddingWorker) extractText(obj *graphObjectRow) string {
-	tokens := []string{obj.Type}
-	if obj.Key != nil {
-		tokens = append(tokens, *obj.Key)
+	var tokens []string
+
+	tokens = append(tokens, obj.Type)
+
+	// Strip namespace prefix from key (e.g. "ns:sarah" → "sarah")
+	if obj.Key != nil && *obj.Key != "" {
+		k := *obj.Key
+		if i := strings.LastIndex(k, ":"); i >= 0 {
+			k = k[i+1:]
+		}
+		if k != "" && !isUUID(k) {
+			tokens = append(tokens, k)
+		}
 	}
 
-	// Walk properties recursively
-	var walk func(v interface{})
-	walk = func(v interface{}) {
+	// Walk properties with key-aware filtering
+	var walk func(key string, v interface{})
+	walk = func(key string, v interface{}) {
 		if v == nil {
+			return
+		}
+		if skipEmbeddingKey[strings.ToLower(key)] {
 			return
 		}
 		switch val := v.(type) {
 		case string:
+			if val == "" || isUUID(val) {
+				return
+			}
+			// Skip bare URLs
+			if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") {
+				return
+			}
 			tokens = append(tokens, val)
 		case float64:
-			tokens = append(tokens, fmt.Sprintf("%v", val))
+			// Skip large numeric IDs (>= 1e9); include small counts/years
+			if val < 1e9 {
+				tokens = append(tokens, fmt.Sprintf("%v", val))
+			}
 		case bool:
 			tokens = append(tokens, fmt.Sprintf("%v", val))
 		case []interface{}:
 			for _, x := range val {
-				walk(x)
+				walk(key, x)
 			}
 		case map[string]interface{}:
-			for _, x := range val {
-				walk(x)
+			for k, x := range val {
+				walk(k, x)
 			}
 		}
 	}
-	walk(obj.Properties)
 
-	// Join with spaces
-	result := ""
-	for i, token := range tokens {
-		if i > 0 {
-			result += " "
-		}
-		result += token
+	for k, v := range obj.Properties {
+		walk(k, v)
 	}
-	return result
+
+	return strings.Join(tokens, " ")
 }
 
 // vectorToString converts a float32 slice to PostgreSQL vector string format

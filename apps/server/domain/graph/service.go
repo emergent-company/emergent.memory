@@ -65,6 +65,7 @@ type EmbeddingEnqueuer interface {
 // This is satisfied by extraction.GraphRelationshipEmbeddingJobsService via an adapter in module.go.
 type RelationshipEmbeddingEnqueuer interface {
 	EnqueueRelationshipEmbedding(ctx context.Context, relationshipID string) error
+	EnqueueBatchRelationshipEmbeddings(ctx context.Context, relationshipIDs []string) (int, error)
 }
 
 // branchStoreIface is a minimal interface for branch store operations needed by the graph service.
@@ -188,52 +189,148 @@ func (s *Service) enqueueRelationshipEmbedding(ctx context.Context, relationship
 
 // ReindexEmbeddingsResponse is the response for the ReindexEmbeddings operation.
 type ReindexEmbeddingsResponse struct {
-	// Enqueued is the number of object embedding jobs newly inserted.
-	Enqueued int `json:"enqueued"`
+	// ObjectsEnqueued is the number of object embedding jobs newly inserted.
+	ObjectsEnqueued int `json:"objects_enqueued"`
+	// RelationshipsEnqueued is the number of relationship embedding jobs newly inserted.
+	RelationshipsEnqueued int `json:"relationships_enqueued"`
 }
 
-// ReindexEmbeddings finds all objects in the project with a missing embedding and
-// enqueues them for async processing. This is the recovery path for issue #254:
-// when schema reconciliation fails during ingest, objects are written but never
-// embedded. Calling this endpoint (or waiting for the sweep worker) fixes the gap.
-func (s *Service) ReindexEmbeddings(ctx context.Context, projectID uuid.UUID) (*ReindexEmbeddingsResponse, error) {
-	if s.embeddingEnqueuer == nil {
-		return &ReindexEmbeddingsResponse{}, nil
+// ReindexEmbeddingsRequest holds options for the ReindexEmbeddings operation.
+type ReindexEmbeddingsRequest struct {
+	// Namespace filters to objects/relationships with keys prefixed by this namespace.
+	// If empty, all objects/relationships in the project are considered.
+	Namespace string
+	// Force re-enqueues even objects/relationships that already have an embedding.
+	// Default (false) only targets those with a NULL embedding.
+	Force bool
+}
+
+// ReindexEmbeddings enqueues objects and relationships in the project for embedding (re)generation.
+// Supports namespace filtering and force-regeneration of existing embeddings.
+func (s *Service) ReindexEmbeddings(ctx context.Context, projectID uuid.UUID, req ReindexEmbeddingsRequest) (*ReindexEmbeddingsResponse, error) {
+	resp := &ReindexEmbeddingsResponse{}
+
+	// --- Objects ---
+	if s.embeddingEnqueuer != nil {
+		var objectIDs []string
+		var objQuery string
+		if req.Force {
+			objQuery = `
+				SELECT o.id::text
+				FROM kb.graph_objects o
+				WHERE o.project_id = ?
+				  AND o.deleted_at IS NULL
+				  ##NS##
+				  AND NOT EXISTS (
+				    SELECT 1 FROM kb.graph_embedding_jobs j
+				    WHERE j.object_id = o.id
+				      AND j.status IN ('pending', 'processing')
+				  )
+				ORDER BY o.created_at ASC`
+		} else {
+			objQuery = `
+				SELECT o.id::text
+				FROM kb.graph_objects o
+				WHERE o.project_id = ?
+				  AND o.embedding_v2 IS NULL
+				  AND o.deleted_at IS NULL
+				  ##NS##
+				  AND NOT EXISTS (
+				    SELECT 1 FROM kb.graph_embedding_jobs j
+				    WHERE j.object_id = o.id
+				      AND j.status IN ('pending', 'processing')
+				  )
+				ORDER BY o.created_at ASC`
+		}
+		if req.Namespace != "" {
+			objQuery = strings.ReplaceAll(objQuery, "##NS##", "AND o.key LIKE ?")
+			err := s.repo.DB().NewRaw(objQuery, projectID, req.Namespace+"%").Scan(ctx, &objectIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: query objects: %w", err)
+			}
+		} else {
+			objQuery = strings.ReplaceAll(objQuery, "##NS##", "")
+			err := s.repo.DB().NewRaw(objQuery, projectID).Scan(ctx, &objectIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: query objects: %w", err)
+			}
+		}
+		if len(objectIDs) > 0 {
+			enqueued, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, objectIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: enqueue objects: %w", err)
+			}
+			resp.ObjectsEnqueued = enqueued
+		}
 	}
 
-	// Collect IDs of objects missing embedding_v2, skipping those that already
-	// have a pending or processing job (same filter as the sweep worker).
-	var objectIDs []string
-	err := s.repo.DB().NewRaw(`
-		SELECT o.id::text
-		FROM kb.graph_objects o
-		WHERE o.project_id = ?
-		  AND o.embedding_v2 IS NULL
-		  AND o.deleted_at IS NULL
-		  AND NOT EXISTS (
-		    SELECT 1 FROM kb.graph_embedding_jobs j
-		    WHERE j.object_id = o.id
-		      AND j.status IN ('pending', 'processing')
-		  )
-		ORDER BY o.created_at ASC`, projectID).Scan(ctx, &objectIDs)
-	if err != nil {
-		return nil, fmt.Errorf("reindex: query objects: %w", err)
-	}
-
-	if len(objectIDs) == 0 {
-		return &ReindexEmbeddingsResponse{Enqueued: 0}, nil
-	}
-
-	enqueued, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, objectIDs)
-	if err != nil {
-		return nil, fmt.Errorf("reindex: enqueue batch: %w", err)
+	// --- Relationships ---
+	if s.relEmbeddingEnqueuer != nil {
+		var relIDs []string
+		var relQuery string
+		if req.Force {
+			relQuery = `
+				SELECT r.id::text
+				FROM kb.graph_relationships r
+				WHERE r.project_id = ?
+				  AND r.deleted_at IS NULL
+				  ##NS##
+				  AND NOT EXISTS (
+				    SELECT 1 FROM kb.graph_relationship_embedding_jobs j
+				    WHERE j.relationship_id = r.id
+				      AND j.status IN ('pending', 'processing')
+				  )
+				ORDER BY r.created_at ASC`
+		} else {
+			relQuery = `
+				SELECT r.id::text
+				FROM kb.graph_relationships r
+				WHERE r.project_id = ?
+				  AND r.embedding IS NULL
+				  AND r.deleted_at IS NULL
+				  ##NS##
+				  AND NOT EXISTS (
+				    SELECT 1 FROM kb.graph_relationship_embedding_jobs j
+				    WHERE j.relationship_id = r.id
+				      AND j.status IN ('pending', 'processing')
+				  )
+				ORDER BY r.created_at ASC`
+		}
+		// Filter by namespace via src object key prefix
+		if req.Namespace != "" {
+			relQuery = strings.ReplaceAll(relQuery, "##NS##", `
+				AND EXISTS (
+				  SELECT 1 FROM kb.graph_objects o
+				  WHERE o.id = r.src_id AND o.key LIKE ?
+				)`)
+			err := s.repo.DB().NewRaw(relQuery, projectID, req.Namespace+"%").Scan(ctx, &relIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: query relationships: %w", err)
+			}
+		} else {
+			relQuery = strings.ReplaceAll(relQuery, "##NS##", "")
+			err := s.repo.DB().NewRaw(relQuery, projectID).Scan(ctx, &relIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: query relationships: %w", err)
+			}
+		}
+		if len(relIDs) > 0 {
+			enqueued, err := s.relEmbeddingEnqueuer.EnqueueBatchRelationshipEmbeddings(ctx, relIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: enqueue relationships: %w", err)
+			}
+			resp.RelationshipsEnqueued = enqueued
+		}
 	}
 
 	s.log.Info("reindex embeddings completed",
 		slog.String("project_id", projectID.String()),
-		slog.Int("enqueued", enqueued))
+		slog.String("namespace", req.Namespace),
+		slog.Bool("force", req.Force),
+		slog.Int("objects_enqueued", resp.ObjectsEnqueued),
+		slog.Int("relationships_enqueued", resp.RelationshipsEnqueued))
 
-	return &ReindexEmbeddingsResponse{Enqueued: enqueued}, nil
+	return resp, nil
 }
 
 // UpdateAccessTimestamps updates last_accessed_at for the given object IDs.

@@ -17,7 +17,7 @@ import (
 
 // EmbeddingSweepConfig contains configuration for the embedding sweep worker.
 type EmbeddingSweepConfig struct {
-	// SweepIntervalSec is the interval between sweeps in seconds (default: 60)
+	// SweepIntervalSec is the interval between sweeps in seconds (default: 30)
 	SweepIntervalSec int
 	// BatchSize is the number of items to process per sweep (default: 50)
 	BatchSize int
@@ -26,7 +26,7 @@ type EmbeddingSweepConfig struct {
 // DefaultEmbeddingSweepConfig returns the default sweep configuration.
 func DefaultEmbeddingSweepConfig() *EmbeddingSweepConfig {
 	return &EmbeddingSweepConfig{
-		SweepIntervalSec: 60,
+		SweepIntervalSec: 30,
 		BatchSize:        200,
 	}
 }
@@ -267,10 +267,10 @@ type relationshipSweepRow struct {
 	ProjectID     string  `bun:"project_id"`
 	SrcProperties []byte  `bun:"src_properties"`
 	SrcKey        *string `bun:"src_key"`
-	SrcID         string  `bun:"src_id"`
+	SrcType       string  `bun:"src_type"`
 	DstProperties []byte  `bun:"dst_properties"`
 	DstKey        *string `bun:"dst_key"`
-	DstID         string  `bun:"dst_id"`
+	DstType       string  `bun:"dst_type"`
 }
 
 // sweepRelationships finds relationships with NULL embedding and generates
@@ -279,8 +279,8 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 	var rows []relationshipSweepRow
 	err := w.db.NewRaw(`
 		SELECT r.id::text, r.type, r.project_id::text AS project_id,
-		       src.properties AS src_properties, src.key AS src_key, src.id::text AS src_id,
-		       dst.properties AS dst_properties, dst.key AS dst_key, dst.id::text AS dst_id
+		       src.properties AS src_properties, src.key AS src_key, src.type AS src_type,
+		       dst.properties AS dst_properties, dst.key AS dst_key, dst.type AS dst_type
 		FROM kb.graph_relationships r
 		JOIN kb.graph_objects src ON src.id = r.src_id
 		JOIN kb.graph_objects dst ON dst.id = r.dst_id
@@ -312,8 +312,8 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 		default:
 		}
 
-		srcName := displayNameFromRow(row.SrcProperties, row.SrcKey, row.SrcID)
-		dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstID)
+		srcName := displayNameFromRow(row.SrcProperties, row.SrcKey, row.SrcType)
+		dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstType)
 		tripletText := buildTripletText(srcName, dstName, row.Type)
 
 		// Budget pre-flight check (fail-open: if check fails, proceed)

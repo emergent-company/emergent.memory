@@ -497,6 +497,17 @@ func (s *GraphEmbeddingJobsService) ClearPendingJobs(ctx context.Context) (int, 
 	return int(n), nil
 }
 
+// DeleteJob removes a job from the queue entirely.
+// Use when the referenced object no longer exists and the job should not be retried.
+func (s *GraphEmbeddingJobsService) DeleteJob(ctx context.Context, id string) error {
+	_, err := s.db.NewRaw(`DELETE FROM kb.graph_embedding_jobs WHERE id = ?`, id).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("delete graph embedding job: %w", err)
+	}
+	s.log.Info("graph embedding job deleted (object missing)", slog.String("job_id", id))
+	return nil
+}
+
 // truncateError truncates an error message to 1000 characters
 func truncateError(msg string) string {
 	if len(msg) > 1000 {

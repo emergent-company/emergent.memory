@@ -2234,14 +2234,15 @@ func (h *Handler) BulkAction(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
-// ReindexEmbeddings queues all graph objects that are missing an embedding for
-// async processing. Use this to recover from situations where objects were
-// ingested before schema registration completed (issue #254).
+// ReindexEmbeddings queues graph objects and relationships for embedding (re)generation.
+// Supports namespace filtering and force-regeneration of existing embeddings.
 //
-// @Summary      Reindex missing embeddings
+// @Summary      Reindex embeddings
 // @Tags         graph
 // @Produce      json
-// @Param        project_id query string true "Project ID"
+// @Param        project_id query string true  "Project ID"
+// @Param        namespace  query string false "Limit to objects/relationships whose key starts with this namespace prefix"
+// @Param        force      query bool   false "Re-enqueue even if embedding already exists (default: false)"
 // @Success      200 {object} ReindexEmbeddingsResponse
 // @Router       /api/graph/reindex-embeddings [post]
 func (h *Handler) ReindexEmbeddings(c echo.Context) error {
@@ -2255,7 +2256,12 @@ func (h *Handler) ReindexEmbeddings(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
 
-	result, err := h.svc.ReindexEmbeddings(c.Request().Context(), projectID)
+	req := ReindexEmbeddingsRequest{
+		Namespace: c.QueryParam("namespace"),
+		Force:     c.QueryParam("force") == "true" || c.QueryParam("force") == "1",
+	}
+
+	result, err := h.svc.ReindexEmbeddings(c.Request().Context(), projectID, req)
 	if err != nil {
 		return err
 	}

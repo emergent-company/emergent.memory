@@ -259,3 +259,75 @@ func (s *GraphRelationshipEmbeddingJobsService) ClearPendingJobs(ctx context.Con
 	}
 	return int(n), nil
 }
+
+// EnqueueBatch enqueues multiple relationships for embedding. Skips those with active jobs.
+// Returns the count of newly created jobs.
+func (s *GraphRelationshipEmbeddingJobsService) EnqueueBatch(ctx context.Context, relationshipIDs []string) (int, error) {
+	if len(relationshipIDs) == 0 {
+		return 0, nil
+	}
+
+	// Find relationships that already have active jobs
+	var existingIDs []string
+	err := s.db.NewSelect().
+		Model((*GraphRelationshipEmbeddingJob)(nil)).
+		Column("relationship_id").
+		Where("relationship_id IN (?)", bun.In(relationshipIDs)).
+		Where("status IN ('pending', 'processing')").
+		Scan(ctx, &existingIDs)
+	if err != nil {
+		return 0, fmt.Errorf("check existing rel embedding jobs: %w", err)
+	}
+
+	existingSet := make(map[string]bool, len(existingIDs))
+	for _, id := range existingIDs {
+		existingSet[id] = true
+	}
+
+	var toEnqueue []string
+	for _, id := range relationshipIDs {
+		if !existingSet[id] {
+			toEnqueue = append(toEnqueue, id)
+		}
+	}
+	if len(toEnqueue) == 0 {
+		return 0, nil
+	}
+
+	now := time.Now()
+	jobs := make([]*GraphRelationshipEmbeddingJob, len(toEnqueue))
+	for i, relID := range toEnqueue {
+		jobs[i] = &GraphRelationshipEmbeddingJob{
+			RelationshipID: relID,
+			Status:         JobStatusPending,
+			AttemptCount:   0,
+			Priority:       0,
+			ScheduledAt:    now,
+		}
+	}
+
+	_, err = s.db.NewInsert().Model(&jobs).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue rel embedding batch: %w", err)
+	}
+
+	s.log.Debug("enqueued relationship embedding jobs batch",
+		slog.Int("count", len(jobs)),
+		slog.Int("skipped", len(existingIDs)))
+
+	return len(jobs), nil
+}
+
+// DeleteJob removes a job from the queue entirely.
+// Use when the referenced relationship no longer exists and the job should not be retried.
+func (s *GraphRelationshipEmbeddingJobsService) DeleteJob(ctx context.Context, jobID string) error {
+	_, err := s.db.NewDelete().
+		TableExpr("kb.graph_relationship_embedding_jobs").
+		Where("id = ?", jobID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("delete relationship embedding job: %w", err)
+	}
+	s.log.Info("relationship embedding job deleted (relationship missing)", slog.String("job_id", jobID))
+	return nil
+}
