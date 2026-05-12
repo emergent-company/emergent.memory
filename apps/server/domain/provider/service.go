@@ -48,13 +48,6 @@ const (
 	SourceEnvironment  CredentialSource = "environment"
 )
 
-// Static fallback model names used when SyncModels fails or when no model was
-// explicitly selected by the caller.
-const (
-	staticFallbackGenerativeModel = "gemini-3.1-flash-lite-preview"
-	staticFallbackEmbeddingModel  = "gemini-embedding-2-preview"
-)
-
 // CredentialService resolves LLM credentials following the hierarchy:
 // Project config → Organization config → hard error (no env-var fallback).
 type CredentialService struct {
@@ -325,9 +318,10 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 			return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
 		}
 	}
-	// DeepSeek has no embedding API — skip the embed test and log a warning.
-	if provider == ProviderDeepSeek {
-		s.log.Warn("DeepSeek provider configured without embeddings — configure a separate embedding provider for document indexing")
+	// DeepSeek and OpenAI-compatible providers have no embedding API — skip the embed test.
+	noEmbedProvider := provider == ProviderDeepSeek || provider == ProviderOpenAICompatible
+	if noEmbedProvider {
+		s.log.Warn(fmt.Sprintf("%s provider configured without embeddings — configure a separate embedding provider for document indexing", provider))
 	} else if req.EmbeddingModel != "" || req.GenerativeModel == "" {
 		if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
 			return nil, apperror.NewBadRequest(fmt.Sprintf("embedding model test failed: %s", err.Error()))
@@ -348,6 +342,14 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 		if embeddingModel == "" {
 			embeddingModel = s.pickBestEmbeddingModel(embModels)
 		}
+	}
+
+	// Require an explicit generative model when catalog auto-selection yields nothing.
+	// Providers like DeepSeek must have a model set explicitly — no silent Google fallback.
+	if generativeModel == "" {
+		return nil, apperror.NewBadRequest(fmt.Sprintf(
+			"generativeModel is required for provider %s — catalog is empty and no model was specified", provider,
+		))
 	}
 
 	// Validate explicitly-provided model names against the synced catalog
@@ -527,9 +529,10 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 			return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
 		}
 	}
-	// DeepSeek has no embedding API — skip the embed test and log a warning.
-	if provider == ProviderDeepSeek {
-		s.log.Warn("DeepSeek provider configured without embeddings — configure a separate embedding provider for document indexing")
+	// DeepSeek and OpenAI-compatible providers have no embedding API — skip the embed test.
+	noEmbedProvider2 := provider == ProviderDeepSeek || provider == ProviderOpenAICompatible
+	if noEmbedProvider2 {
+		s.log.Warn(fmt.Sprintf("%s provider configured without embeddings — configure a separate embedding provider for document indexing", provider))
 	} else if req.EmbeddingModel != "" || req.GenerativeModel == "" {
 		if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
 			return nil, apperror.NewBadRequest(fmt.Sprintf("embedding model test failed: %s", err.Error()))
@@ -546,9 +549,17 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		if generativeModel == "" {
 			generativeModel = s.pickBestGenerativeModel(genModels)
 		}
-		if embeddingModel == "" {
+		if embeddingModel == "" && !noEmbedProvider2 {
 			embeddingModel = s.pickBestEmbeddingModel(embModels)
 		}
+	}
+
+	// Require an explicit generative model when catalog auto-selection yields nothing.
+	// Providers like DeepSeek must have a model set explicitly — no silent Google fallback.
+	if generativeModel == "" {
+		return nil, apperror.NewBadRequest(fmt.Sprintf(
+			"generativeModel is required for provider %s — catalog is empty and no model was specified", provider,
+		))
 	}
 
 	// Validate explicitly-provided model names against the synced catalog
@@ -691,10 +702,8 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 	return cred
 }
 
-// pickBestGenerativeModel selects the preferred generative model from the
-// catalog, falling back to the static default if none is available.
-// gemini-3.1-flash-lite-preview is the preferred default; gemini-2.5-flash
-// is the secondary fallback for environments that haven't synced the new model yet.
+// pickBestGenerativeModel selects the preferred generative model from the catalog.
+// Returns an empty string if the catalog is empty — callers must error if a model is required.
 func (s *CredentialService) pickBestGenerativeModel(models []ProviderSupportedModel) string {
 	for _, m := range models {
 		if m.ModelName == "gemini-3.1-flash-lite-preview" {
@@ -711,11 +720,11 @@ func (s *CredentialService) pickBestGenerativeModel(models []ProviderSupportedMo
 			return m.ModelName
 		}
 	}
-	return staticFallbackGenerativeModel
+	return ""
 }
 
-// pickBestEmbeddingModel selects the preferred embedding model from the
-// catalog, falling back to the static default if none is available.
+// pickBestEmbeddingModel selects the preferred embedding model from the catalog.
+// Returns an empty string if the catalog is empty — callers must error if a model is required.
 func (s *CredentialService) pickBestEmbeddingModel(models []ProviderSupportedModel) string {
 	for _, m := range models {
 		if m.ModelName == "gemini-embedding-2-preview" {
@@ -732,7 +741,7 @@ func (s *CredentialService) pickBestEmbeddingModel(models []ProviderSupportedMod
 			return m.ModelName
 		}
 	}
-	return staticFallbackEmbeddingModel
+	return ""
 }
 
 // validateModelInCatalog checks that a model name exists in the synced catalog.

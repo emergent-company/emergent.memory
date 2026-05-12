@@ -3589,8 +3589,9 @@ func (s *Service) applyMerge(
 			if n, _ := res.RowsAffected(); n > 0 {
 				canonicalIDMap[cid] = newCanonicalID
 				appliedCount++
-				// Enqueue embedding best-effort after commit (use new canonical ID)
-				defer s.enqueueEmbedding(ctx, newCanonicalID.String())
+				// Enqueue embedding best-effort after commit (use physical version ID,
+				// not canonical ID — graph_embedding_jobs.object_id FK references graph_objects.id).
+				defer s.enqueueEmbedding(ctx, clone.ID.String())
 			}
 
 		case "fast_forward":
@@ -3631,7 +3632,8 @@ func (s *Service) applyMerge(
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
 			}
 			appliedCount++
-			defer s.enqueueEmbedding(ctx, cid.String())
+			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
+			defer s.enqueueEmbedding(ctx, newVersion.ID.String())
 
 		case "conflict":
 			if strategy == "preserve_target" {
@@ -3702,7 +3704,8 @@ func (s *Service) applyMerge(
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
 			}
 			appliedCount++
-			defer s.enqueueEmbedding(ctx, cid.String())
+			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
+			defer s.enqueueEmbedding(ctx, newVersion.ID.String())
 
 		case "deleted":
 			// Soft delete on target branch

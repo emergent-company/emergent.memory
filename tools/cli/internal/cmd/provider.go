@@ -35,14 +35,17 @@ Supported providers:
   google            — Google AI (Gemini API); requires --api-key
   google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
   openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
+  deepseek          — DeepSeek AI models; requires --api-key
 
 Examples:
   memory provider configure google --api-key AIzaSy...
   memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
   memory provider configure openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
-  memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004`,
+  memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
+  memory provider configure deepseek --api-key sk-...
+  memory provider configure deepseek --api-key sk-... --generative-model deepseek-v4-flash`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai-compatible"},
+	ValidArgs: []string{"google", "google-vertex", "openai-compatible", "deepseek"},
 	RunE:      runProviderConfigure,
 }
 
@@ -112,8 +115,14 @@ func runProviderConfigure(cmd *cobra.Command, args []string) error {
 		req.APIKey = configureAPIKey
 		req.BaseURL = configureBaseURL
 
+	case provider.ProviderDeepSeek:
+		if configureAPIKey == "" {
+			return fmt.Errorf("--api-key is required for deepseek")
+		}
+		req.APIKey = configureAPIKey
+
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, or openai-compatible", providerArg)
+		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai-compatible, or deepseek", providerArg)
 	}
 
 	fmt.Printf("Configuring %s for org %s...\n", providerArg, orgID)
@@ -147,6 +156,7 @@ Supported providers:
   google            — Google AI (Gemini API); requires --api-key
   google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
   openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
+  deepseek          — DeepSeek AI models; requires --api-key
 
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
 
@@ -154,9 +164,10 @@ Examples:
   memory provider configure-project google --api-key AIzaSy...
   memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
   memory provider configure-project openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
+  memory provider configure-project deepseek --api-key sk-... --generative-model deepseek-v4-flash
   memory provider configure-project google --remove`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai-compatible"},
+	ValidArgs: []string{"google", "google-vertex", "openai-compatible", "deepseek"},
 	RunE:      runProviderConfigureProject,
 }
 
@@ -239,8 +250,14 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 		req.APIKey = configureProjectAPIKey
 		req.BaseURL = configureProjectBaseURL
 
+	case provider.ProviderDeepSeek:
+		if configureProjectAPIKey == "" {
+			return fmt.Errorf("--api-key is required for deepseek")
+		}
+		req.APIKey = configureProjectAPIKey
+
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, or openai-compatible", providerArg)
+		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai-compatible, or deepseek", providerArg)
 	}
 
 	fmt.Printf("Configuring %s for project %s...\n", providerArg, projectID)
@@ -276,9 +293,10 @@ Examples:
   memory provider models
   memory provider models openai-compatible
   memory provider models google-vertex
-  memory provider models google --type generative`,
+  memory provider models google --type generative
+  memory provider models deepseek`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai-compatible"},
+	ValidArgs: []string{"google", "google-vertex", "openai-compatible", "deepseek"},
 	RunE:      runProviderModels,
 }
 
@@ -660,7 +678,7 @@ var providerTestCmd = &cobra.Command{
 work end-to-end.
 
 Without a provider argument, tests all configured providers.
-Pass a provider name (google, google-vertex, or openai-compatible) to test a specific one.
+Pass a provider name (google, google-vertex, openai-compatible, or deepseek) to test a specific one.
 
 Use --project to test using the project-level credential hierarchy
 (project override → org) instead of org credentials only.
@@ -668,10 +686,11 @@ Use --project to test using the project-level credential hierarchy
 Examples:
   memory provider test
   memory provider test openai-compatible
+  memory provider test deepseek
   memory provider test google-vertex
   memory provider test google --project <id>`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai-compatible"},
+	ValidArgs: []string{"google", "google-vertex", "openai-compatible", "deepseek"},
 	RunE:      runProviderTest,
 }
 

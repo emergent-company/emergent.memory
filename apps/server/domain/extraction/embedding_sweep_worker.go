@@ -11,6 +11,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -331,7 +332,7 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 			}
 		}
 
-		result, err := w.embeds.EmbedQueryWithUsage(ctx, tripletText)
+		result, err := w.embeds.EmbedQueryWithUsage(auth.ContextWithProjectID(ctx, row.ProjectID), tripletText)
 		if err != nil {
 			errors++
 			w.log.Warn("sweep: failed to embed relationship",

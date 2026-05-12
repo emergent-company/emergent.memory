@@ -115,13 +115,14 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 			}
 		} else if cred != nil {
 			// Prefer the caller's bareModel (from agent definition or per-run override),
-			// fall back to the DB-stored credential model, then to the static config model.
+			// then fall back to the DB-stored credential model.
+			// No further fallback — if neither is set, error so the misconfiguration is explicit.
 			resolvedModel := bareModel
 			if resolvedModel == "" {
 				resolvedModel = cred.GenerativeModel
 			}
 			if resolvedModel == "" {
-				resolvedModel = f.cfg.Model
+				return nil, fmt.Errorf("no model configured: agent definition has no model and provider credential has no generative model stored — configure a model explicitly")
 			}
 
 			if cred.IsOpenAICompatible {

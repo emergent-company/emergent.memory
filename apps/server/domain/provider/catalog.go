@@ -359,16 +359,15 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 // credential when available, otherwise falls back to a known default.
 // Returns the model name used.
 func (s *ModelCatalogService) TestEmbed(ctx context.Context, provider ProviderType, cred *ResolvedCredential) (model string, err error) {
-	// Use the configured embedding model or the default.
+	// Use the configured embedding model or pick from catalog. Error if none available.
 	model = cred.EmbeddingModel
 	if model == "" {
 		embType := ModelTypeEmbedding
 		models, listErr := s.repo.ListSupportedModels(ctx, provider, &embType)
 		if listErr != nil || len(models) == 0 {
-			model = staticFallbackEmbeddingModel
-		} else {
-			model = models[0].ModelName
+			return "", fmt.Errorf("no embedding model configured for provider %s — configure an embedding model explicitly", provider)
 		}
+		model = models[0].ModelName
 	}
 
 	switch provider {
