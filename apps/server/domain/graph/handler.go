@@ -151,6 +151,10 @@ func (h *Handler) ListObjects(c echo.Context) error {
 		params.Key = &key
 	}
 
+	if namespace := c.QueryParam("namespace"); namespace != "" {
+		params.Namespace = &namespace
+	}
+
 	// Parse order (asc/desc)
 	if order := c.QueryParam("order"); order == "asc" || order == "desc" {
 		params.Order = order

@@ -148,6 +148,7 @@ type ListParams struct {
 	ExtractionJobID *uuid.UUID       // Filter by extraction job
 	PropertyFilters []PropertyFilter // JSONB property filters
 	Fields          []string         // Property field projection (include only these property keys)
+	Namespace       *string          // Filter by namespace
 }
 
 // applyPropertyFilters applies JSONB property filters to a Bun select query.
@@ -272,6 +273,10 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 
 	if params.ExtractionJobID != nil {
 		subq = subq.Where("extraction_job_id = ?", *params.ExtractionJobID)
+	}
+
+	if params.Namespace != nil {
+		subq = subq.Where("namespace = ?", *params.Namespace)
 	}
 
 	if !params.IncludeDeleted {
