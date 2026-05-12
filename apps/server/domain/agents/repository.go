@@ -1575,12 +1575,18 @@ func (r *Repository) UpdateRunModel(ctx context.Context, runID string, model str
 }
 
 // UpdateRunTools sets the tool names on an agent run.
+// Uses a raw array literal to avoid Bun serialising []string as a JSON string
+// (which causes SQLSTATE 22P02 "malformed array literal" against a text[] column).
 func (r *Repository) UpdateRunTools(ctx context.Context, runID string, tools []string) error {
-	_, err := r.db.NewUpdate().
-		Model((*AgentRun)(nil)).
-		Set("tools = ?", tools).
-		Where("id = ?", runID).
-		Exec(ctx)
+	if len(tools) == 0 {
+		return nil
+	}
+	// Build a Postgres array literal: ARRAY['a','b','c']
+	// bun.In handles the comma-separated quoting; we wrap in ARRAY[].
+	_, err := r.db.NewRaw(
+		`UPDATE kb.agent_runs SET tools = ARRAY[?] WHERE id = ?`,
+		bun.In(tools), runID,
+	).Exec(ctx)
 	return err
 }
 

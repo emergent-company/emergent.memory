@@ -2776,6 +2776,8 @@ func (s *Service) resolveCanonicalID(ctx context.Context, projectID, entityID uu
 
 // resolveEntityIDByKey looks up the canonical_id of a graph object by its key field.
 // Returns an error if no object with that key exists in the project.
+// On failure, includes fuzzy suggestions (same type prefix or trigram similarity) to help
+// the caller self-correct — particularly useful for LLM agents that may hallucinate keys.
 func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID, key string) (uuid.UUID, error) {
 	var canonicalID uuid.UUID
 	err := s.db.NewRaw(`
@@ -2785,9 +2787,91 @@ func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID,
 		LIMIT 1
 	`, key, projectID).Scan(ctx, &canonicalID)
 	if err != nil {
+		// Fetch fuzzy suggestions to help agents self-correct.
+		suggestions := s.suggestEntityKeysByFuzzy(ctx, projectID, key, 3)
+		if len(suggestions) > 0 {
+			return uuid.Nil, fmt.Errorf(
+				"entity with key %q not found — did you mean one of these? %s. Use the exact key shown with entity-update or relationship-create.",
+				key, strings.Join(suggestions, ", "),
+			)
+		}
 		return uuid.Nil, fmt.Errorf("entity with key %q not found", key)
 	}
 	return canonicalID, nil
+}
+
+// keySuggestion is a candidate match returned by suggestEntityKeysByFuzzy.
+type keySuggestion struct {
+	Key  string
+	Type string
+}
+
+// suggestEntityKeysByFuzzy returns up to limit entity keys from the project that
+// are similar to the given key using simple heuristics:
+//  1. Keys sharing the same first token (split on "-") — catches minor slug drift.
+//  2. Keys where one is a substring of the other.
+//  3. Fallback: the most recently created keys of the same first-token type prefix.
+//
+// This is intentionally lightweight (no pg_trgm dependency required) and runs a
+// single query, so it is safe to call on every key-not-found path.
+func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.UUID, key string, limit int) []string {
+	type row struct {
+		Key  string `bun:"key"`
+		Type string `bun:"type"`
+	}
+	var rows []row
+
+	// Grab a sample of recent distinct keys for this project (capped at 200 for speed).
+	queryErr := s.db.NewRaw(`
+		SELECT DISTINCT ON (key) key, type
+		FROM kb.graph_objects
+		WHERE project_id = ? AND deleted_at IS NULL AND key IS NOT NULL
+		ORDER BY key, version DESC
+		LIMIT 200
+	`, projectID).Scan(ctx, &rows)
+	if queryErr != nil || len(rows) == 0 {
+		return nil
+	}
+
+	// First token of the searched key (e.g. "alice" from "alice-smith").
+	firstToken := key
+	if idx := strings.Index(key, "-"); idx > 0 {
+		firstToken = key[:idx]
+	}
+
+	var suggestions []string
+	seen := make(map[string]bool)
+	// Pass 1: prefix match on first token.
+	for _, r := range rows {
+		if seen[r.Key] || r.Key == key {
+			continue
+		}
+		candidateFirst := r.Key
+		if idx := strings.Index(r.Key, "-"); idx > 0 {
+			candidateFirst = r.Key[:idx]
+		}
+		if candidateFirst == firstToken {
+			suggestions = append(suggestions, fmt.Sprintf("%q (%s)", r.Key, r.Type))
+			seen[r.Key] = true
+			if len(suggestions) >= limit {
+				return suggestions
+			}
+		}
+	}
+	// Pass 2: substring containment.
+	for _, r := range rows {
+		if seen[r.Key] || r.Key == key {
+			continue
+		}
+		if strings.Contains(r.Key, key) || strings.Contains(key, r.Key) {
+			suggestions = append(suggestions, fmt.Sprintf("%q (%s)", r.Key, r.Type))
+			seen[r.Key] = true
+			if len(suggestions) >= limit {
+				return suggestions
+			}
+		}
+	}
+	return suggestions
 }
 
 // executeUpdateEntity updates an existing entity's properties, labels, or status.
