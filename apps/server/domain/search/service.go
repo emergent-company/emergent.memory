@@ -216,7 +216,7 @@ func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, 
 
 	// Relationship search
 	go func() {
-		if resultTypes == ResultTypeText {
+		if resultTypes == ResultTypeText || resultTypes == ResultTypeGraph {
 			relCh <- relationshipOutcome{results: nil, elapsed: 0}
 			return
 		}
@@ -442,6 +442,7 @@ func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.
 		ProjectID: projectID,
 		Vector:    vector,
 		Limit:     req.Limit,
+		Namespace: req.Namespace,
 	}
 
 	resp, err := s.repo.SearchRelationships(ctx, params)

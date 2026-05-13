@@ -389,6 +389,7 @@ type RelationshipSearchParams struct {
 	ProjectID uuid.UUID
 	Vector    []float32 // Query embedding for semantic search
 	Limit     int       // Result limit (default: 50, max: 100)
+	Namespace *string   // optional: filter by src object namespace
 }
 
 // RelationshipSearchResult represents a single relationship search result
@@ -430,7 +431,7 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	// Joins with graph_objects to construct triplet text: "{source.name} {type} {target.name}"
-	query := `
+	baseQuery := `
 		SELECT 
 			r.id,
 			r.src_id,
@@ -446,12 +447,23 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 		JOIN kb.graph_objects dst ON dst.id = r.dst_id
 		WHERE r.embedding IS NOT NULL
 		  AND r.deleted_at IS NULL
-		  AND src.project_id = ?
+		  AND src.project_id = ?`
+
+	var queryArgs []any
+	queryArgs = append(queryArgs, vectorStr, params.ProjectID)
+
+	if params.Namespace != nil {
+		baseQuery += "\n\t\t  AND src.namespace = ?"
+		queryArgs = append(queryArgs, *params.Namespace)
+	}
+
+	query := baseQuery + `
 		ORDER BY r.embedding <=> ?::vector
 		LIMIT ?
 	`
+	queryArgs = append(queryArgs, vectorStr, limit)
 
-	rows, err := tx.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
+	rows, err := tx.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		r.log.Error("relationship vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
