@@ -112,6 +112,13 @@ type UnifiedSearchTextResult struct {
 	DocumentID *string               `json:"document_id,omitempty"`
 }
 
+// RelationshipNodeInfo contains key/type/properties for a node attached to a relationship result
+type RelationshipNodeInfo struct {
+	Key        string         `json:"key"`
+	ObjectType string         `json:"object_type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
 // UnifiedSearchResultItem is the union type for all search results
 // We use a struct with all possible fields since Go doesn't have union types
 type UnifiedSearchResultItem struct {
@@ -138,11 +145,13 @@ type UnifiedSearchResultItem struct {
 	DocumentID *string `json:"document_id,omitempty"`
 
 	// Relationship-specific fields
-	RelationshipType string         `json:"relationship_type,omitempty"`
-	TripletText      string         `json:"triplet_text,omitempty"`
-	SourceID         string         `json:"source_id,omitempty"`
-	TargetID         string         `json:"target_id,omitempty"`
-	Properties       map[string]any `json:"properties,omitempty"`
+	RelationshipType string                `json:"relationship_type,omitempty"`
+	TripletText      string                `json:"triplet_text,omitempty"`
+	SourceID         string                `json:"source_id,omitempty"`
+	TargetID         string                `json:"target_id,omitempty"`
+	Properties       map[string]any        `json:"properties,omitempty"`
+	SourceObject     *RelationshipNodeInfo `json:"source_object,omitempty"`
+	TargetObject     *RelationshipNodeInfo `json:"target_object,omitempty"`
 }
 
 // UnifiedSearchExecutionTime contains timing breakdown for the search

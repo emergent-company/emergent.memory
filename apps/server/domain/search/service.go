@@ -86,6 +86,11 @@ func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedS
 		relationshipElapsed = time.Since(start)
 	}
 
+	// Option B: inject src/dst node stubs from relationship results into graph pool.
+	// This ensures relationship endpoints appear as graph objects in the fused output,
+	// giving the judge full node-level context even when graph object search returns nothing.
+	graphResults = s.injectRelationshipNodes(graphResults, relationshipRes.results)
+
 	span.SetAttributes(attribute.String("memory.search.strategy", string(fusionStrategy)))
 
 	// Fuse results
@@ -458,6 +463,57 @@ func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.
 	return resp.Results, rawDebug, nil
 }
 
+// injectRelationshipNodes synthesizes graph result stubs from the src/dst metadata
+// already attached to relationship search results (Option C data). This ensures that
+// the nodes referenced by top relationship hits appear in the fused result set, giving
+// the judge full node context without an extra DB round-trip.
+// Nodes already present in graphResults (by key) are skipped to avoid duplicates.
+func (s *Service) injectRelationshipNodes(graphResults []*UnifiedSearchGraphResult, relResults []*RelationshipSearchResult) []*UnifiedSearchGraphResult {
+	if len(relResults) == 0 {
+		return graphResults
+	}
+
+	// Build a set of already-known keys
+	seen := make(map[string]bool, len(graphResults))
+	for _, g := range graphResults {
+		if g.Key != "" {
+			seen[g.Key] = true
+		}
+	}
+
+	// Inject src and dst nodes from each relationship result
+	for _, r := range relResults {
+		if r.SrcKey != "" && !seen[r.SrcKey] {
+			seen[r.SrcKey] = true
+			graphResults = append(graphResults, &UnifiedSearchGraphResult{
+				ObjectID:      r.SrcID.String(),
+				CanonicalID:   r.SrcID.String(),
+				ObjectType:    r.SrcType,
+				Key:           r.SrcKey,
+				Fields:        r.SrcProperties,
+				Score:         r.Score, // inherit parent relationship score
+				Rank:          0,
+				Relationships: []UnifiedSearchRelationship{},
+			})
+		}
+		if r.DstKey != "" && !seen[r.DstKey] {
+			seen[r.DstKey] = true
+			graphResults = append(graphResults, &UnifiedSearchGraphResult{
+				ObjectID:      r.DstID.String(),
+				CanonicalID:   r.DstID.String(),
+				ObjectType:    r.DstType,
+				Key:           r.DstKey,
+				Fields:        r.DstProperties,
+				Score:         r.Score,
+				Rank:          0,
+				Relationships: []UnifiedSearchRelationship{},
+			})
+		}
+	}
+
+	return graphResults
+}
+
 // expandRelationships fetches relationships for graph results
 func (s *Service) expandRelationships(ctx context.Context, projectID uuid.UUID, results []*UnifiedSearchGraphResult, options *UnifiedSearchRelationshipOptions) []*UnifiedSearchGraphResult {
 	if options == nil || !options.Enabled || options.MaxDepth == 0 {
@@ -828,7 +884,7 @@ func (s *Service) textResultToItem(t *TextSearchResult) UnifiedSearchResultItem 
 
 // relationshipResultToItem converts a relationship result to a unified search result item
 func (s *Service) relationshipResultToItem(r *RelationshipSearchResult) UnifiedSearchResultItem {
-	return UnifiedSearchResultItem{
+	item := UnifiedSearchResultItem{
 		Type:             ItemTypeRelationship,
 		ID:               r.ID.String(),
 		Score:            r.Score,
@@ -838,6 +894,21 @@ func (s *Service) relationshipResultToItem(r *RelationshipSearchResult) UnifiedS
 		TargetID:         r.DstID.String(),
 		Properties:       r.Properties,
 	}
+	if r.SrcKey != "" {
+		item.SourceObject = &RelationshipNodeInfo{
+			Key:        r.SrcKey,
+			ObjectType: r.SrcType,
+			Properties: r.SrcProperties,
+		}
+	}
+	if r.DstKey != "" {
+		item.TargetObject = &RelationshipNodeInfo{
+			Key:        r.DstKey,
+			ObjectType: r.DstType,
+			Properties: r.DstProperties,
+		}
+	}
+	return item
 }
 
 // buildDebugInfo creates debug information for the search response

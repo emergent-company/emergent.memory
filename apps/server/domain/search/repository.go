@@ -401,6 +401,14 @@ type RelationshipSearchResult struct {
 	TripletText string
 	Score       float32
 	Properties  map[string]any
+	// Source node metadata
+	SrcKey        string
+	SrcType       string
+	SrcProperties map[string]any
+	// Target node metadata
+	DstKey        string
+	DstType       string
+	DstProperties map[string]any
 }
 
 // RelationshipSearchResponse contains relationship search results
@@ -441,7 +449,13 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 			COALESCE(src.key, src.id::text) || ' ' || 
 				LOWER(REPLACE(r.type, '_', ' ')) || ' ' || 
 				COALESCE(dst.key, dst.id::text) AS triplet_text,
-			(1 - (r.embedding <=> ?::vector)) AS score
+			(1 - (r.embedding <=> ?::vector)) AS score,
+			src.key AS src_key,
+			src.type AS src_type,
+			src.properties AS src_properties,
+			dst.key AS dst_key,
+			dst.type AS dst_type,
+			dst.properties AS dst_properties
 		FROM kb.graph_relationships r
 		JOIN kb.graph_objects src ON src.id = r.src_id
 		JOIN kb.graph_objects dst ON dst.id = r.dst_id
@@ -473,15 +487,25 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 	var results []*RelationshipSearchResult
 	for rows.Next() {
 		var row struct {
-			ID          uuid.UUID
-			SrcID       uuid.UUID
-			DstID       uuid.UUID
-			Type        string
-			Properties  []byte // JSONB
-			TripletText string
-			Score       float32
+			ID            uuid.UUID
+			SrcID         uuid.UUID
+			DstID         uuid.UUID
+			Type          string
+			Properties    []byte // JSONB
+			TripletText   string
+			Score         float32
+			SrcKey        string
+			SrcType       string
+			SrcProperties []byte // JSONB
+			DstKey        string
+			DstType       string
+			DstProperties []byte // JSONB
 		}
-		if err := rows.Scan(&row.ID, &row.SrcID, &row.DstID, &row.Type, &row.Properties, &row.TripletText, &row.Score); err != nil {
+		if err := rows.Scan(
+			&row.ID, &row.SrcID, &row.DstID, &row.Type, &row.Properties, &row.TripletText, &row.Score,
+			&row.SrcKey, &row.SrcType, &row.SrcProperties,
+			&row.DstKey, &row.DstType, &row.DstProperties,
+		); err != nil {
 			r.log.Error("relationship search row scan failed", logger.Error(err))
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
@@ -494,14 +518,34 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 			}
 		}
 
+		var srcProps map[string]any
+		if len(row.SrcProperties) > 0 {
+			if err := json.Unmarshal(row.SrcProperties, &srcProps); err != nil {
+				r.log.Warn("failed to parse src properties", logger.Error(err))
+			}
+		}
+
+		var dstProps map[string]any
+		if len(row.DstProperties) > 0 {
+			if err := json.Unmarshal(row.DstProperties, &dstProps); err != nil {
+				r.log.Warn("failed to parse dst properties", logger.Error(err))
+			}
+		}
+
 		results = append(results, &RelationshipSearchResult{
-			ID:          row.ID,
-			SrcID:       row.SrcID,
-			DstID:       row.DstID,
-			Type:        row.Type,
-			TripletText: row.TripletText,
-			Score:       row.Score,
-			Properties:  props,
+			ID:            row.ID,
+			SrcID:         row.SrcID,
+			DstID:         row.DstID,
+			Type:          row.Type,
+			TripletText:   row.TripletText,
+			Score:         row.Score,
+			Properties:    props,
+			SrcKey:        row.SrcKey,
+			SrcType:       row.SrcType,
+			SrcProperties: srcProps,
+			DstKey:        row.DstKey,
+			DstType:       row.DstType,
+			DstProperties: dstProps,
 		})
 	}
 
