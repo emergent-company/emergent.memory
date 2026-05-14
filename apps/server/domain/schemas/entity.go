@@ -235,14 +235,15 @@ type MemorySchemaListItem struct {
 
 // InstalledSchemaItem represents an installed schema for a project
 type InstalledSchemaItem struct {
-	ID             string                 `json:"id"` // assignment ID
-	SchemaID       string                 `json:"schemaId"`
-	Name           string                 `json:"name"`
-	Version        string                 `json:"version"`
-	Description    *string                `json:"description,omitempty"`
-	Active         bool                   `json:"active"`
-	InstalledAt    time.Time              `json:"installedAt"`
-	Customizations map[string]interface{} `json:"customizations,omitempty"`
+	ID                string                 `json:"id"` // assignment ID
+	SchemaID          string                 `json:"schemaId"`
+	Name              string                 `json:"name"`
+	Version           string                 `json:"version"`
+	Description       *string                `json:"description,omitempty"`
+	Active            bool                   `json:"active"`
+	InstalledAt       time.Time              `json:"installedAt"`
+	Customizations    map[string]interface{} `json:"customizations,omitempty"`
+	ExtractionPrompts json.RawMessage        `json:"extractionPrompts,omitempty"`
 }
 
 // AssignPackRequest is the request to assign a memory schema to a project

@@ -151,19 +151,20 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID, orgID str
 // GetInstalledPacks returns schemas installed for a project
 func (r *Repository) GetInstalledPacks(ctx context.Context, projectID string) ([]InstalledSchemaItem, error) {
 	var results []struct {
-		ID             string                 `bun:"id"`
-		SchemaID       string                 `bun:"schema_id"`
-		Name           string                 `bun:"name"`
-		Version        string                 `bun:"version"`
-		Description    *string                `bun:"description"`
-		Active         bool                   `bun:"active"`
-		InstalledAt    time.Time              `bun:"installed_at"`
-		Customizations map[string]interface{} `bun:"customizations,type:jsonb"`
+		ID                string                 `bun:"id"`
+		SchemaID          string                 `bun:"schema_id"`
+		Name              string                 `bun:"name"`
+		Version           string                 `bun:"version"`
+		Description       *string                `bun:"description"`
+		Active            bool                   `bun:"active"`
+		InstalledAt       time.Time              `bun:"installed_at"`
+		Customizations    map[string]interface{} `bun:"customizations,type:jsonb"`
+		ExtractionPrompts json.RawMessage        `bun:"extraction_prompts,type:jsonb"`
 	}
 
 	err := r.db.NewRaw(`
 		SELECT ptp.id, ptp.schema_id, gtp.name, gtp.version, gtp.description,
-			   ptp.active, ptp.installed_at, ptp.customizations
+			   ptp.active, ptp.installed_at, ptp.customizations, gtp.extraction_prompts
 		FROM kb.project_schemas ptp
 		JOIN kb.graph_schemas gtp ON gtp.id = ptp.schema_id
 		WHERE ptp.project_id = ?
@@ -178,14 +179,15 @@ func (r *Repository) GetInstalledPacks(ctx context.Context, projectID string) ([
 	packs := make([]InstalledSchemaItem, len(results))
 	for i, r := range results {
 		packs[i] = InstalledSchemaItem{
-			ID:             r.ID,
-			SchemaID:       r.SchemaID,
-			Name:           r.Name,
-			Version:        r.Version,
-			Description:    r.Description,
-			Active:         r.Active,
-			InstalledAt:    r.InstalledAt,
-			Customizations: r.Customizations,
+			ID:                r.ID,
+			SchemaID:          r.SchemaID,
+			Name:              r.Name,
+			Version:           r.Version,
+			Description:       r.Description,
+			Active:            r.Active,
+			InstalledAt:       r.InstalledAt,
+			Customizations:    r.Customizations,
+			ExtractionPrompts: r.ExtractionPrompts,
 		}
 	}
 	return packs, nil
