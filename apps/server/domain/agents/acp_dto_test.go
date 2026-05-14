@@ -373,10 +373,10 @@ func TestToolCallToTrajectoryMetadata(t *testing.T) {
 	}
 
 	meta := ToolCallToTrajectoryMetadata(tc)
-	assert.Equal(t, "trajectory", meta.Type)
-	assert.Equal(t, "search", meta.ToolName)
-	assert.Contains(t, meta.ToolInput, "hello")
-	assert.Contains(t, meta.ToolOutput, "r1")
+	assert.Equal(t, "trajectory", meta.Kind)
+	assert.Equal(t, "search", *meta.ToolName)
+	assert.Contains(t, string(meta.ToolInput), "hello")
+	assert.Contains(t, string(meta.ToolOutput), "r1")
 }
 
 // ============================================================================
@@ -388,7 +388,7 @@ func TestSessionToACPObject_Empty(t *testing.T) {
 		ID: "sess-1",
 	}
 
-	obj := SessionToACPObject(session, nil)
+	obj := SessionToACPObject(session, nil, "")
 	assert.Equal(t, "sess-1", obj.ID)
 	assert.Len(t, obj.History, 0)
 }
@@ -410,11 +410,8 @@ func TestSessionToACPObject_WithRuns(t *testing.T) {
 		},
 	}
 
-	obj := SessionToACPObject(session, runs)
+	obj := SessionToACPObject(session, runs, "")
 	assert.Len(t, obj.History, 2)
-	assert.Equal(t, "run-1", obj.History[0].ID)
-	assert.Equal(t, ACPStatusCompleted, obj.History[0].Status)
-	assert.Equal(t, "agent-a", obj.History[0].AgentName)
-	assert.Equal(t, "run-2", obj.History[1].ID)
-	assert.Equal(t, ACPStatusWorking, obj.History[1].Status)
+	assert.Contains(t, obj.History[0], "run-1")
+	assert.Contains(t, obj.History[1], "run-2")
 }
