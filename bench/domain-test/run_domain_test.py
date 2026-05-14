@@ -475,7 +475,8 @@ def assert_document_classified(project_id, doc_id, expected_stage, pre_agent_sna
             doc = get(f"/api/documents/{doc_id}")
             stage = doc.get("domainName") or doc.get("domain_label") or "unset"
             confidence = doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0
-            schema_id = doc.get("matched_schema_id")
+            signals = doc.get("classificationSignals") or {}
+            schema_id = doc.get("matched_schema_id") or signals.get("matchedSchemaId")
             results.append(check(f"domain_label set (not new_domain)", stage not in ("new_domain", "unset"), f"got={stage}"))
             results.append(check("domain_confidence >= 0.7", confidence >= 0.7, f"got={confidence:.2f}"))
             results.append(check("matched_schema_id set", schema_id is not None, f"got={schema_id}"))
