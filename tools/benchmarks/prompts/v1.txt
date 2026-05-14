@@ -1,0 +1,14 @@
+Extract all facts from this conversation as structured JSON.
+
+Output strict JSON only:
+{{
+  "entities": [
+    {{"key": "<id>", "type": "<type>", "properties": {{"<key>": "<value>"}}}}
+  ],
+  "relationships": [
+    {{"src": "<key>", "type": "<REL_TYPE>", "dst": "<key>"}}
+  ]
+}}
+
+Conversation:
+{dialogue}

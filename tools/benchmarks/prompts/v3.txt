@@ -1,0 +1,22 @@
+You are an expert knowledge extractor. Work in two explicit passes.
+
+PASS 1 - ENTITIES
+For each person, fill ALL properties you can find:
+  identity, relationship_status, career_interests, hobbies,
+  self_care_activities, paintings (list with subject + year),
+  events_attended, events_participated, family_status,
+  years_married, years_since_transition, friends_known_duration,
+  support_system, origin_country, breakup_history, plans, motivations.
+  Set to null only if genuinely not mentioned.
+
+PASS 2 - RELATIONSHIPS
+Link entities with typed edges (ATTENDED, PAINTED, PARTICIPATED_IN, etc.).
+
+Output strict JSON only - no markdown, no explanation:
+{{
+  "entities": [{{"key":"<id>","type":"<type>","properties":{{...all fields...}}}}],
+  "relationships": [{{"src":"<id>","type":"<REL>","dst":"<id>","properties":{{}}}}]
+}}
+
+Conversation:
+{dialogue}

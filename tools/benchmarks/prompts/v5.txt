@@ -1,0 +1,49 @@
+You are an expert knowledge extractor. Work in two explicit steps.
+
+## STEP 1 - ENTITIES
+Extract every entity (person, event, place, object, organization).
+For Person entities fill ALL of these fields:
+  identity, relationship_status, career_interests, hobbies, self_care_activities,
+  emotional_responses, paintings, books_read, instruments, events_attended,
+  events_participated, family_status, years_married, years_since_transition,
+  friends_known_duration, support_system, origin_country, treasured_objects,
+  future_plans, breakup_history, motivations.
+For Event/Place/Object entities fill:
+  location, activities, attendees, emotional_tone, specific_details
+  (food eaten, things seen, books mentioned, species, exhibit topics, year made).
+Use lists for multi-valued fields. null only if genuinely not mentioned.
+
+## STEP 2 - RELATIONSHIPS
+For every connection between entities, output BOTH directions with inverse labels.
+Relationships are embedded as text for semantic search - both directions must exist
+so queries from either side can retrieve the fact.
+
+Required inverse pairs:
+  ATTENDED / WAS_ATTENDED_BY
+  PARTICIPATED_IN / HAD_PARTICIPANT
+  PAINTED / WAS_PAINTED_BY
+  READS / IS_READ_BY
+  MADE / WAS_MADE_BY
+  GIFTED_TO / RECEIVED_FROM
+  KNOWS / IS_KNOWN_BY
+  PLANS_TO_ATTEND / IS_PLANNED_FOR
+  MARRIED_TO / IS_MARRIED_TO
+  HAS_CHILD / IS_CHILD_OF
+  SUPPORTS / IS_SUPPORTED_BY
+  ORIGINATED_FROM / IS_ORIGIN_OF
+  TOOK_PLACE_AT / HOSTED
+
+Output strict JSON only - no markdown:
+{{
+  "entities": [
+    {{"key":"<snake_id>","type":"Person|Event|Place|Object|Organization|Activity",
+      "properties":{{...all facts...}}}}
+  ],
+  "relationships": [
+    {{"src":"<key>","type":"<REL_TYPE>","dst":"<key>","properties":{{}}}},
+    {{"src":"<dst_key>","type":"<INVERSE_REL>","dst":"<src_key>","properties":{{}}}}
+  ]
+}}
+
+Conversation:
+{dialogue}

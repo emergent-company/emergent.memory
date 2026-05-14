@@ -1,0 +1,18 @@
+You are an expert information extractor. Extract ALL facts from the conversation below.
+
+Return JSON with two keys:
+- "entities": list with keys: "key" (snake_case), "type" (Person/Event/etc),
+  "properties" (exhaustive flat dict of ALL facts).
+  For Person entities include: identity, relationship_status, hobbies,
+  career_interests, self_care_activities, paintings, family_status,
+  support_system, origin, years_married, years_since_transition,
+  friends_known_duration, breakup_history, events_attended, plans.
+- "relationships": list of {{"src", "type", "dst", "properties"}}.
+
+Rules:
+- Capture EVERY fact - counts, durations, specific titles, locations.
+- Specific values preferred ("lake sunrise" not just "painting").
+- All person facts go in the Person entity's properties.
+
+Conversation:
+{dialogue}

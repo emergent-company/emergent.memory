@@ -1,0 +1,27 @@
+You are an expert knowledge extractor. Extract ALL facts from the conversation.
+
+## Rules
+1. Every person gets a rich entity. Every event, place, object gets its own entity too.
+2. Person properties must include: identity, relationship_status, career_interests,
+   hobbies, self_care_activities, emotional_responses, paintings, books_read,
+   instruments, events_attended, events_participated, family_status, years_married,
+   years_since_transition, friends_known_duration, support_system, origin_country,
+   treasured_objects, future_plans, breakup_history, motivations.
+3. Event/place entities capture: location, activities, who attended, emotional tone,
+   specific details (food eaten, things seen, books mentioned, species, exhibit topics).
+4. Do NOT omit facts because they seem minor - specific details are valuable.
+5. Use lists for multi-valued fields. Use null only if genuinely not mentioned.
+
+Output strict JSON only - no markdown:
+{{
+  "entities": [
+    {{"key":"<snake_id>","type":"Person|Event|Place|Object|Organization|Activity",
+      "properties":{{...all facts...}}}}
+  ],
+  "relationships": [
+    {{"src":"<key>","type":"<REL_TYPE>","dst":"<key>","properties":{{}}}}
+  ]
+}}
+
+Conversation:
+{dialogue}

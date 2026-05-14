@@ -23,9 +23,9 @@ _ARTICLES = {"a", "an", "the"}
 _PUNCT = set(string.punctuation)
 
 
-def _normalise(text: str) -> str:
+def _normalise(text) -> str:
     """Lowercase, strip punctuation, collapse whitespace, remove articles."""
-    text = text.lower()
+    text = str(text).lower()
     text = "".join(ch if ch not in _PUNCT else " " for ch in text)
     tokens = [t for t in text.split() if t not in _ARTICLES]
     return " ".join(tokens)

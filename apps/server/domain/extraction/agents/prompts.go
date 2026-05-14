@@ -31,7 +31,26 @@ RULES:
 - Use consistent naming
 - Keep descriptions concise but informative
 - Only include properties that are explicitly mentioned or clearly implied in the document
-- Do NOT guess or fabricate property values`
+- Do NOT guess or fabricate property values
+
+TEMPORAL RULES:
+- NEVER create a separate entity for a date, month, or time
+- Instead, attach temporal info as properties on the entity it describes:
+  - "date": ISO date string (e.g. "2026-06-01") when a specific date is known
+  - "date_raw": original text (e.g. "June", "last year", "a few months back") when date is relative
+  - Resolve relative dates using any SESSION_DATE context provided (e.g. "last year" → prior year, "a few months back" → 3-4 months before session date)
+- Example: "the wedding was in June" → wedding Event entity gets properties.date_raw = "June"
+- Example: "went to Kenya a few months back" → kenya-trip Event entity gets properties.date_raw = "a few months back"
+
+CONVERSATION / AGENT LOG HINTS:
+- If the document is a chat or AI agent log, also extract:
+  - Tasks requested by the user (as Event entities with type="task" or relevant type)
+  - Actions completed by the agent (bookings confirmed, emails sent, reminders set) — as Event or Object entities
+  - Confirmation numbers, reference codes, booking IDs — as properties on the relevant entity (NOT separate entities)
+  - File paths or document names referenced — as Object entities
+  - Stated preferences or interests of a person — as properties on that Person entity (e.g. properties.interests, properties.preferences)
+- Pets and animals: type=Object with properties.species
+- If a user asks an agent to contact someone (email, message), extract the communication as an Event entity and note the implied social relationship`
 
 // RelationshipBuilderSystemPrompt is the base system prompt for relationship extraction.
 const RelationshipBuilderSystemPrompt = `You are an expert at finding connections in knowledge graphs. Your job is to identify ALL meaningful relationships between entities.
@@ -64,7 +83,10 @@ For EACH relationship you find:
 3. **Travel**: "went to X" → journey/travel relationships
 4. **Residence**: "from Bethlehem", "lived there" → residence relationships
 5. **Membership**: "They were Ephrathites" → group membership for each person
-6. **Geography**: "Bethlehem in Judah" → geographic containment (Place in Place)`
+6. **Geography**: "Bethlehem in Judah" → geographic containment (Place in Place)
+7. **Events with location**: If an event (marathon, wedding, conference) is named after or held in a city, extract a "takes_place_in" (or equivalent) relationship from the Event to that Place
+8. **Spectators/supporters**: If someone watched, attended, cheered for, or supported an event, extract an "attended" or "watched" relationship from that Person to the Event
+9. **Implied social ties**: If someone sent an email/message to another person, extract a "communicated_with" relationship. If someone planned or booked something for a companion, extract a "traveled_with" or similar relationship.`
 
 // ObjectSchema represents a schema for an entity or relationship type.
 type ObjectSchema struct {

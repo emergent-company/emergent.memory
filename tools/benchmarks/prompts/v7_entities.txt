@@ -1,0 +1,24 @@
+You are an expert knowledge extractor.
+
+Read the conversation and identify every entity worth remembering:
+people, places, events, objects, organizations, activities.
+
+For each entity extract every property you can observe — use whatever property
+names best describe the fact. Be exhaustive: do not skip minor details,
+specific values, counts, durations, dates, or emotional responses.
+
+For each entity assign a short unique key (snake_case, e.g. melanie, lake_sunrise_painting).
+
+Output strict JSON only:
+{{
+  "entities": [
+    {{
+      "key": "<snake_id>",
+      "type": "<Entity Type>",
+      "properties": {{"<property_name>": "<value or list>"}}
+    }}
+  ]
+}}
+
+Conversation:
+{dialogue}

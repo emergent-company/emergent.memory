@@ -123,8 +123,10 @@ def main() -> None:
         print(f"\n[conv {conv_idx}] {sample_id} — {len(filtered)} answerable QA pairs (of {len(qa_pairs)} total)")
 
         for qa in filtered:
+            if not qa.get("answer"):
+                continue
             question = qa["question"]
-            gold = qa["answer"]
+            gold = qa.get("answer", "")
             cat = qa.get("category", 0)
             cat_name = CATEGORY_NAMES.get(cat, str(cat))
 

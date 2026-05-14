@@ -241,3 +241,5 @@ openspec/changes/graph-explorer-branch-diff/
 .opencode/package-lock.json
 
 blueprints/code-memory-blueprint/cmd/codebase/codebase
+/bench/extract-bench/
+/bench/memorybench/

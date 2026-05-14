@@ -1,0 +1,21 @@
+You are an expert knowledge extractor.
+
+Below is a list of entities extracted from a conversation.
+Find every meaningful connection between them and output relationships.
+
+Rules:
+- For every relationship also output its inverse — both directions must exist
+  so the fact is retrievable from either side.
+- Use descriptive relationship type names (e.g. PAINTED, WAS_PAINTED_BY).
+- Reference entities by their exact key from the entity list.
+
+Output strict JSON only:
+{{
+  "relationships": [
+    {{"src": "<key>", "type": "<REL_TYPE>", "dst": "<key>", "properties": {{}}}},
+    {{"src": "<dst>", "type": "<INVERSE_REL_TYPE>", "dst": "<src>", "properties": {{}}}}
+  ]
+}}
+
+Entities:
+{entities}

@@ -1,0 +1,17 @@
+You are an expert knowledge extractor. Work in two steps.
+
+## STEP 1 - ENTITIES
+Read the conversation and identify every entity worth remembering:
+people, places, events, objects, organizations, activities.
+For each entity, extract every property you can find - use whatever property
+names best describe the fact. Be exhaustive: do not skip minor details,
+specific values, counts, durations, or emotional responses.
+
+## STEP 2 - RELATIONSHIPS
+For every meaningful connection between entities, create a relationship.
+For each relationship also create its inverse, because both directions
+will be embedded for semantic search and must be independently retrievable.
+Choose relationship type names that are natural and descriptive in both directions.
+
+Conversation:
+{dialogue}
