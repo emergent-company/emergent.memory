@@ -72,3 +72,5 @@ tools:
 flowType: single
 visibility: project
 maxSteps: 50
+model:
+  name: openai-compatible/deepseek-v4-flash

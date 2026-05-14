@@ -30,8 +30,8 @@ from typing import Optional
 
 SERVER = os.environ.get("MEMORY_SERVER", "https://memory.emergent-company.ai")
 TOKEN = os.environ.get("EMERGENT_MEMORY_TOKEN", "")
-ORG_TOKEN = os.environ.get("MEMORY_ORG_TOKEN", "emt_bench_org_5d0eb088db215459907a711b50b96fb232a760df3c8995b9b26e716a6b833f84")
-ORG_ID = os.environ.get("MEMORY_ORG_ID", "256508f5-6cbf-46bb-8c29-d8f839dd4ba8")
+ORG_TOKEN = os.environ.get("MEMORY_ORG_TOKEN", "")
+ORG_ID = os.environ.get("MEMORY_ORG_ID", "")
 AGENT_NAME = "remember-test"
 BLUEPRINT_PATH = Path(__file__).parent.parent.parent / "blueprints" / "test-agents"
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -184,6 +184,19 @@ def create_project():
         headers={"Authorization": f"Bearer {project_token}", "Content-Type": "application/json", "x-project-id": project_id},
         json={"project_info": PROJECT_INFO, "auto_extract_objects": True},
     )
+    # Configure LiteLLM as project-level OpenAI-compatible provider pointing at deepseek-v4-flash
+    litellm_base = os.environ.get("LITELLM_BASE_URL", "http://litellm:4000/v1")
+    litellm_key = os.environ.get("LITELLM_KEY", "")
+    dr = requests.put(
+        f"{SERVER}/api/projects/{project_id}/providers/openai-compatible",
+        headers={"Authorization": f"Bearer {project_token}", "Content-Type": "application/json", "x-project-id": project_id},
+        json={"apiKey": litellm_key, "baseUrl": litellm_base, "generativeModel": "deepseek-v4-flash"},
+    )
+    if dr.status_code == 200:
+        print(f"  LiteLLM provider configured for project {project_id} (deepseek-v4-flash)")
+    else:
+        print(f"  WARNING: provider config failed: {dr.status_code} {dr.text}")
+
     print(f"  Project created: {project_id}")
     return project_id
 

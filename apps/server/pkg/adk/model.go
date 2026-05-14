@@ -114,12 +114,24 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				return nil, fmt.Errorf("LLM credential resolution failed: %w", err)
 			}
 		} else if cred != nil {
-			// Prefer the caller's bareModel (from agent definition or per-run override),
-			// then fall back to the DB-stored credential model.
+			// Prefer the DB-stored credential model, then fall back to the caller's
+			// bareModel (from agent definition or per-run override).
+			// When the caller supplies a provider-prefixed name (e.g. "deepseek/deepseek-chat"),
+			// hasPrefix is true and bareModel is the specific model — honour it.
+			// When the caller supplies a bare name without a provider prefix it is
+			// typically the env-var default (e.g. "gemini-3.1-flash-lite-preview") which
+			// should be overridden by the project/org credential's stored model.
 			// No further fallback — if neither is set, error so the misconfiguration is explicit.
-			resolvedModel := bareModel
-			if resolvedModel == "" {
+			resolvedModel := ""
+			if hasPrefix {
+				// Explicit provider+model from caller — always honour it.
+				resolvedModel = bareModel
+			} else if cred.GenerativeModel != "" {
+				// DB-stored model from project/org config takes precedence over env default.
 				resolvedModel = cred.GenerativeModel
+			} else {
+				// Fall back to env default bare model name.
+				resolvedModel = bareModel
 			}
 			if resolvedModel == "" {
 				return nil, fmt.Errorf("no model configured: agent definition has no model and provider credential has no generative model stored — configure a model explicitly")

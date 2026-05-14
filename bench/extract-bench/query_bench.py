@@ -10,7 +10,7 @@ Usage:
 import argparse, json, os, re, sys, time, requests
 from pathlib import Path
 
-TOKEN   = os.environ.get("EMERGENT_MEMORY_TOKEN", "emt_90e466b66031ef242148336a85152d30f78ba3e723fb81dc7ebed0fefc9156de")
+TOKEN   = os.environ.get("EMERGENT_MEMORY_TOKEN", "")
 PROJECT = os.environ.get("EMERGENT_MEMORY_PROJECT", "ea1fe3b1-6ec9-48a0-8469-46211895f3be")
 SERVER  = os.environ.get("EMERGENT_MEMORY_SERVER", "https://memory.emergent-company.ai")
 

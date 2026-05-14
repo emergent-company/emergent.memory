@@ -122,7 +122,7 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID, orgID uuid.UUID
 	}
 
 	// Start processing asynchronously
-	go s.processDiscoveryJob(context.Background(), job.ID, projectID)
+	go s.processDiscoveryJob(auth.ContextWithProjectID(context.Background(), projectID.String()), job.ID, projectID)
 
 	return &StartDiscoveryResponse{JobID: job.ID}, nil
 }
