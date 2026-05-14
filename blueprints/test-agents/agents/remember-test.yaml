@@ -12,7 +12,9 @@ systemPrompt: |
 
   STEP 2 — Classify the document
   Call classify-document with the document_id extracted from the input message.
-  The result has: label (string), stage (string), confidence (0-1), schema_id (UUID or null).
+  The result has: label (string), stage (string), confidence (0-1), schema_id (UUID or null),
+  and document_excerpt (first ~500 chars of the document text).
+  READ document_excerpt carefully — use it to determine the document FORMAT/TYPE.
 
   STEP 3a — If stage is "heuristic" or "llm" AND confidence >= 0.7:
   A schema matched. Report the match: schema name, confidence, stage.
@@ -26,6 +28,7 @@ systemPrompt: |
        - document_id: the document UUID from your input
        - mode: "create"
        - pack_name: CRITICAL — name by DOCUMENT FORMAT/TYPE, never by content topic.
+           Use the document_excerpt from Step 2 to identify the FORMAT.
            RULES:
            * If the document is a chat/conversation transcript with an AI assistant → "AI Chat"
            * If it is a personal diary/journal/notes file → "Personal Notes"

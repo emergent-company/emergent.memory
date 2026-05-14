@@ -20,11 +20,12 @@ type DomainClassifierHandler interface {
 
 // ClassificationSnapshot mirrors extraction.ClassificationResult for use in mcp.
 type ClassificationSnapshot struct {
-	SchemaID   *string `json:"schema_id"`
-	Label      string  `json:"label"`
-	Confidence float32 `json:"confidence"`
-	Stage      string  `json:"stage"`
-	LLMReason  string  `json:"llm_reason,omitempty"`
+	SchemaID        *string `json:"schema_id"`
+	Label           string  `json:"label"`
+	Confidence      float32 `json:"confidence"`
+	Stage           string  `json:"stage"`
+	LLMReason       string  `json:"llm_reason,omitempty"`
+	DocumentExcerpt string  `json:"document_excerpt,omitempty"`
 }
 
 // SchemaIndexHandler returns lightweight summaries of installed schema packs.

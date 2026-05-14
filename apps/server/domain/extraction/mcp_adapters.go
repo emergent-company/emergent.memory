@@ -77,6 +77,15 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 		Stage:      stage,
 		LLMReason:  result.Signals.LLMReason,
 	}
+	// Provide a short excerpt so the agent can determine document format/type
+	// when naming a new schema pack (without needing to fetch the document separately).
+	if content != "" {
+		excerpt := content
+		if len(excerpt) > 500 {
+			excerpt = excerpt[:500]
+		}
+		snap.DocumentExcerpt = excerpt
+	}
 	return snap, nil
 }
 
