@@ -109,38 +109,22 @@ This triggers CI which takes ~5-10 minutes to:
 
 > **NOTE:** `git tag` + `git push --tags` does NOT immediately create a GitHub Release. The Release is created by the `cli.yml` CI workflow. Monitor progress with: `gh run watch`
 
-### Step 5: Deploy to servers (optional)
+### Step 5: Ask user to trigger prod deployment
 
-If the user wants to deploy to a specific server:
+**NEVER deploy to prod manually (no binary copy, no SSH docker commands).**
 
-**Option A: SSH and run upgrade command** (if `memory` CLI is in PATH on the server):
+After pushing the tag, always stop and tell the user:
 
-```bash
-ssh root@<server> "memory upgrade"
-```
+> "Tag `v0.X.Y` pushed. CI is building the image. Please trigger the prod deployment via GitHub Actions when the image is ready."
 
-**Option B: SSH and pull directly** (if CLI is not installed on the host):
+Wait for the user to confirm deployment is done before verifying.
 
-```bash
-ssh root@<server> "cd ~/.memory/docker && docker compose pull && docker compose up -d"
-```
-
-**Option C: Wait for user to upgrade manually**
-
-> **NOTE:** The `memory upgrade` command checks for the `images-ready.txt` sentinel in the GitHub Release before proceeding. If CI hasn't finished yet, the upgrade will fail. Either wait or use `--force` flag.
-
-### Step 6: Verify deployment
+### Step 6: Verify deployment (after user confirms)
 
 ```bash
-ssh root@<server> "curl -s http://localhost:3002/health | jq '.version'"
+curl -s https://memory.emergent-company.ai/api/health | jq '.version'
 # Should return "v0.X.Y"
 ```
-
-## Known Servers
-
-| Server       | SSH                     | Notes                                                                   |
-| ------------ | ----------------------- | ----------------------------------------------------------------------- |
-| your-server  | `ssh root@your-server`  | Standalone deployment, DB container: `emergent-db`, DB user: `emergent` |
 
 ## Quick Reference
 
@@ -167,6 +151,6 @@ ssh root@<server> "curl -s http://localhost:3002/health | jq '.version'"
 - [ ] No untracked release-related files (`git status --short | grep "^?"`)
 - [ ] Tag created: `git tag v0.X.Y`
 - [ ] Pushed: `git push origin main --tags`
+- [ ] **User asked to trigger prod deployment via GitHub Actions** (never deploy manually)
 - [ ] CI completed — GitHub Release created by CI (`gh run watch`)
-- [ ] Server upgraded (if requested)
-- [ ] Health check verified on target server
+- [ ] Health check verified after user confirms deployment done

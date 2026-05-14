@@ -446,8 +446,8 @@ def assert_document_classified(project_id, doc_id, expected_stage):
     results = []
     try:
         doc = get(f"/api/documents/{doc_id}")
-        stage = doc.get("domain_label") or "unset"
-        confidence = doc.get("domain_confidence") or 0.0
+        stage = doc.get("domainName") or doc.get("domain_label") or "unset"
+        confidence = doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0
         schema_id = doc.get("matched_schema_id")
 
         if expected_stage == "new_domain":

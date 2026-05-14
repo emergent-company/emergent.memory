@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // ============================================================================
@@ -84,14 +86,14 @@ func domainToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"project_id": {
 						Type:        "string",
-						Description: "UUID of the project",
+						Description: "UUID of the project (optional — inferred from auth context if omitted)",
 					},
 					"document_id": {
 						Type:        "string",
 						Description: "UUID of the document to classify",
 					},
 				},
-				Required: []string{"project_id", "document_id"},
+				Required: []string{"document_id"},
 			},
 		},
 		{
@@ -102,10 +104,10 @@ func domainToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"project_id": {
 						Type:        "string",
-						Description: "UUID of the project",
+						Description: "UUID of the project (optional — inferred from auth context if omitted)",
 					},
 				},
-				Required: []string{"project_id"},
+				Required: []string{},
 			},
 		},
 		{
@@ -124,11 +126,11 @@ func domainToolDefinitions() []ToolDefinition {
 					},
 					"project_id": {
 						Type:        "string",
-						Description: "UUID of the project",
+						Description: "UUID of the project (optional — inferred from auth context if omitted)",
 					},
 					"org_id": {
 						Type:        "string",
-						Description: "UUID of the organization",
+						Description: "UUID of the organization (optional — inferred from auth context if omitted)",
 					},
 					"mode": {
 						Type:        "string",
@@ -151,7 +153,7 @@ func domainToolDefinitions() []ToolDefinition {
 						Description: "List of discovered relationships to include. Each item: {source_type, target_type, relation_type, description, cardinality}",
 					},
 				},
-				Required: []string{"project_id", "org_id", "mode", "included_types"},
+				Required: []string{"mode", "included_types"},
 			},
 		},
 		{
@@ -162,7 +164,7 @@ func domainToolDefinitions() []ToolDefinition {
 				Properties: map[string]PropertySchema{
 					"project_id": {
 						Type:        "string",
-						Description: "UUID of the project",
+						Description: "UUID of the project (optional — inferred from auth context if omitted)",
 					},
 					"document_id": {
 						Type:        "string",
@@ -173,7 +175,7 @@ func domainToolDefinitions() []ToolDefinition {
 						Description: "UUID of the schema pack to use for extraction",
 					},
 				},
-				Required: []string{"project_id", "document_id", "schema_id"},
+				Required: []string{"document_id", "schema_id"},
 			},
 		},
 	}
@@ -223,6 +225,10 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 	jobIDStr, _ := args["job_id"].(string)
 	documentIDStr, _ := args["document_id"].(string)
 	orgIDStr, _ := args["org_id"].(string)
+	// Fall back to auth context if arg is missing or not a valid UUID
+	if orgIDStr == "" {
+		orgIDStr = auth.OrgIDFromContext(ctx)
+	}
 	mode, _ := args["mode"].(string)
 	packName, _ := args["pack_name"].(string)
 	existingPackIDStr, _ := args["existing_pack_id"].(string)

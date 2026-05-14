@@ -277,15 +277,21 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 					logger.Error(classErr))
 			} else {
 				classificationResult = cr
-				if cr.DomainName != "" {
-					w.log.Info("document classified",
-						slog.String("domain", cr.DomainName),
-						slog.Float64("confidence", float64(cr.Confidence)),
-					)
-					// Write domain fields back to document asynchronously (best-effort).
-					if job.DocumentID != nil && w.docService != nil {
-						go w.writeDomainClassification(ctx, *job.DocumentID, cr)
+				// Write domain fields back to document asynchronously (best-effort).
+				// Even for new_domain (no match), write so the document reflects classification state.
+				if job.DocumentID != nil && w.docService != nil {
+					if cr.DomainName != "" {
+						w.log.Info("document classified",
+							slog.String("domain", cr.DomainName),
+							slog.Float64("confidence", float64(cr.Confidence)),
+						)
+					} else {
+						// Mark as new_domain so agents/bench can detect the state.
+						cr.DomainName = "new_domain"
+						classificationResult = cr
+						w.log.Info("document classified as new domain (no schema match)")
 					}
+					go w.writeDomainClassification(ctx, *job.DocumentID, cr)
 				}
 			}
 		}
