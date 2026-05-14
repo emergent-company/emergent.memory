@@ -199,6 +199,7 @@ type SearchGraphObjectsResponse struct {
 // CreateGraphRelationshipRequest is the request body for creating a relationship.
 type CreateGraphRelationshipRequest struct {
 	Type       string         `json:"type" validate:"required,max=64"`
+	Label      *string        `json:"label,omitempty" validate:"omitempty,max=256"`
 	SrcID      uuid.UUID      `json:"src_id" validate:"required"`
 	DstID      uuid.UUID      `json:"dst_id" validate:"required"`
 	Properties map[string]any `json:"properties,omitempty"`
@@ -214,6 +215,7 @@ type CreateGraphRelationshipRequest struct {
 
 // PatchGraphRelationshipRequest is the request body for patching a relationship.
 type PatchGraphRelationshipRequest struct {
+	Label      *string        `json:"label,omitempty" validate:"omitempty,max=256"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Weight     *float32       `json:"weight,omitempty"`
 }
@@ -230,6 +232,7 @@ type GraphRelationshipResponse struct {
 	SupersedesID  *uuid.UUID     `json:"supersedes_id,omitempty"`
 	Version       int            `json:"version"`
 	Type          string         `json:"type"`
+	Label         *string        `json:"label,omitempty"`
 	SrcID         uuid.UUID      `json:"src_id"`
 	DstID         uuid.UUID      `json:"dst_id"`
 	Properties    map[string]any `json:"properties"`
@@ -267,6 +270,7 @@ func (r *GraphRelationship) ToResponse() *GraphRelationshipResponse {
 		SupersedesID:  r.SupersedesID,
 		Version:       r.Version,
 		Type:          r.Type,
+		Label:         r.Label,
 		SrcID:         r.SrcID,
 		DstID:         r.DstID,
 		Properties:    r.Properties,

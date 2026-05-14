@@ -1366,13 +1366,20 @@ func getDisplayName(obj *GraphObject) string {
 }
 
 // generateTripletText creates natural language triplet from a relationship.
-// Format: "{source.name} {humanized_relation_type} {target.name}"
+// Format: "{source.name} {label_or_humanized_type} {target.name}"
 // Example: "Elon Musk founded Tesla"
-func generateTripletText(source, target *GraphObject, relType string) string {
+// If the relationship has an explicit label, it is used directly.
+// Otherwise the type is humanized (e.g. WORKS_FOR -> "works for").
+func generateTripletText(source, target *GraphObject, rel *GraphRelationship) string {
 	sourceName := getDisplayName(source)
 	targetName := getDisplayName(target)
-	humanizedType := humanizeRelationType(relType)
-	return fmt.Sprintf("%s %s %s", sourceName, humanizedType, targetName)
+	var predicate string
+	if rel.Label != nil && *rel.Label != "" {
+		predicate = *rel.Label
+	} else {
+		predicate = humanizeRelationType(rel.Type)
+	}
+	return fmt.Sprintf("%s %s %s", sourceName, predicate, targetName)
 }
 
 // embedTripletText generates an embedding vector for a relationship triplet.
@@ -1585,6 +1592,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		ProjectID:  projectID,
 		BranchID:   effectiveBranchID,
 		Type:       normalizeRelationType(req.Type),
+		Label:      req.Label,
 		SrcID:      srcObj.CanonicalID,
 		DstID:      dstObj.CanonicalID,
 		Properties: req.Properties,
@@ -1690,6 +1698,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	if existing.DeletedAt != nil {
 		// Was deleted, restore with new properties.
 		newVersion := &GraphRelationship{
+			Label:      req.Label,
 			Properties: req.Properties,
 			Weight:     req.Weight,
 			DeletedAt:  nil,
@@ -1719,6 +1728,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	// Properties differ - create new version.
 	newVersion := &GraphRelationship{
+		Label:         req.Label,
 		Properties:    req.Properties,
 		Weight:        req.Weight,
 		ChangeSummary: diff,
@@ -1975,6 +1985,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	}
 
 	newVersion := &GraphRelationship{
+		Label:         req.Label,
 		Properties:    newProps,
 		Weight:        req.Weight,
 		ChangeSummary: diff,

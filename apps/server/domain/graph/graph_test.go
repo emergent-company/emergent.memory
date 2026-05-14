@@ -1027,6 +1027,7 @@ func TestGenerateTripletText(t *testing.T) {
 		source   *GraphObject
 		target   *GraphObject
 		relType  string
+		label    *string
 		expected string
 	}{
 		{
@@ -1091,7 +1092,8 @@ func TestGenerateTripletText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generateTripletText(tt.source, tt.target, tt.relType)
+			rel := &GraphRelationship{Type: tt.relType, Label: tt.label}
+			result := generateTripletText(tt.source, tt.target, rel)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

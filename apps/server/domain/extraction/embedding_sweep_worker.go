@@ -264,6 +264,7 @@ func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
 type relationshipSweepRow struct {
 	ID            string  `bun:"id"`
 	Type          string  `bun:"type"`
+	Label         *string `bun:"label"`
 	ProjectID     string  `bun:"project_id"`
 	SrcProperties []byte  `bun:"src_properties"`
 	SrcKey        *string `bun:"src_key"`
@@ -278,7 +279,7 @@ type relationshipSweepRow struct {
 func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded int, errors int) {
 	var rows []relationshipSweepRow
 	err := w.db.NewRaw(`
-		SELECT r.id::text, r.type, r.project_id::text AS project_id,
+		SELECT r.id::text, r.type, r.label, r.project_id::text AS project_id,
 		       src.properties AS src_properties, src.key AS src_key, src.type AS src_type,
 		       dst.properties AS dst_properties, dst.key AS dst_key, dst.type AS dst_type
 		FROM kb.graph_relationships r
@@ -314,7 +315,7 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 
 		srcName := displayNameFromRow(row.SrcProperties, row.SrcKey, row.SrcType)
 		dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstType)
-		tripletText := buildTripletText(srcName, dstName, row.Type)
+		tripletText := buildTripletText(srcName, dstName, row.Type, row.Label)
 
 		// Budget pre-flight check (fail-open: if check fails, proceed)
 		if w.budget != nil && row.ProjectID != "" {
@@ -395,9 +396,15 @@ func displayNameFromRow(propsJSON []byte, key *string, id string) string {
 }
 
 // buildTripletText creates a natural language triplet for embedding.
-func buildTripletText(srcName, dstName, relType string) string {
-	humanized := strings.ToLower(strings.ReplaceAll(relType, "_", " "))
-	return fmt.Sprintf("%s %s %s", srcName, humanized, dstName)
+// Uses label if provided, otherwise humanizes the rel type.
+func buildTripletText(srcName, dstName, relType string, label *string) string {
+	var predicate string
+	if label != nil && *label != "" {
+		predicate = *label
+	} else {
+		predicate = strings.ToLower(strings.ReplaceAll(relType, "_", " "))
+	}
+	return fmt.Sprintf("%s %s %s", srcName, predicate, dstName)
 }
 
 // --- metrics ---

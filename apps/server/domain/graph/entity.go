@@ -85,6 +85,7 @@ type GraphRelationship struct {
 	Version      int        `bun:"version,notnull,default:1" json:"version"`
 
 	Type  string    `bun:"type,notnull" json:"type"`
+	Label *string   `bun:"label" json:"label,omitempty"`
 	SrcID uuid.UUID `bun:"src_id,type:uuid,notnull" json:"src_id"`
 	DstID uuid.UUID `bun:"dst_id,type:uuid,notnull" json:"dst_id"`
 

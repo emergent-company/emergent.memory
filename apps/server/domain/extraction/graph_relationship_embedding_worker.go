@@ -22,6 +22,7 @@ import (
 type graphRelationshipRow struct {
 	ID        string  `bun:"id,type:uuid"`
 	Type      string  `bun:"type"`
+	Label     *string `bun:"label"`
 	SrcName   string  `bun:"src_name"`
 	SrcKey    *string `bun:"src_key"`
 	SrcProps  []byte  `bun:"src_props,type:jsonb"`
@@ -245,6 +246,7 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 		SELECT
 			gr.id,
 			gr.type,
+			gr.label,
 			gr.project_id,
 			src.properties AS src_props,
 			src.key        AS src_key,
@@ -284,7 +286,7 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	// Build triplet text using best display names (properties.name > key > type) and humanized rel type.
 	srcName := displayNameFromRow(rel.SrcProps, rel.SrcKey, rel.SrcType)
 	dstName := displayNameFromRow(rel.DstProps, rel.DstKey, rel.DstType)
-	text := buildTripletText(srcName, dstName, rel.Type)
+	text := buildTripletText(srcName, dstName, rel.Type, rel.Label)
 
 	// Inject project ID into context so the credential resolver can look up
 	// per-project LLM provider configuration (e.g. Vertex AI credentials).
