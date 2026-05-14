@@ -227,6 +227,8 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 			Source:                  "discovered",
 			DiscoveryJobID:          &jobID,
 			PendingReview:           false,
+			ProjectID:               &projectID,
+			OrgID:                   &orgID,
 		})
 		if err != nil {
 			return nil, err
@@ -234,6 +236,11 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 		schemaID = packID
 		message = fmt.Sprintf("Created new memory schema \"%s\" with %d types", req.PackName, len(req.IncludedTypes))
 		s.log.Info("created new memory schema", slog.String("pack_id", packID.String()))
+
+		// Auto-install schema into project so it appears in installed list.
+		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
+			s.log.Warn("failed to install schema to project", slog.String("schema_id", packID.String()), slog.Any("err", installErr))
+		}
 	} else {
 		// Extend existing pack
 		if req.ExistingPackID == nil {

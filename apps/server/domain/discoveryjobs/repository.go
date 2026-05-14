@@ -283,19 +283,41 @@ type DocumentContent struct {
 
 // CreateMemorySchema creates a new memory schema from discovery results
 func (r *Repository) CreateMemorySchema(ctx context.Context, params CreateMemorySchemaParams) (uuid.UUID, error) {
+	type row struct {
+		bun.BaseModel `bun:"table:kb.graph_schemas"`
+
+		Name                    string     `bun:"name"`
+		Version                 string     `bun:"version"`
+		Description             string     `bun:"description"`
+		Author                  string     `bun:"author"`
+		ObjectTypeSchemas       JSONMap    `bun:"object_type_schemas,type:jsonb"`
+		RelationshipTypeSchemas JSONMap    `bun:"relationship_type_schemas,type:jsonb"`
+		UIConfigs               JSONMap    `bun:"ui_configs,type:jsonb"`
+		Source                  string     `bun:"source"`
+		DiscoveryJobID          *uuid.UUID `bun:"discovery_job_id,type:uuid"`
+		PendingReview           bool       `bun:"pending_review"`
+		ProjectID               *uuid.UUID `bun:"project_id,type:uuid"`
+		OrgID                   *uuid.UUID `bun:"org_id,type:uuid"`
+	}
+
+	r2 := &row{
+		Name:                    params.Name,
+		Version:                 params.Version,
+		Description:             params.Description,
+		Author:                  params.Author,
+		ObjectTypeSchemas:       params.ObjectTypeSchemas,
+		RelationshipTypeSchemas: params.RelationshipTypeSchemas,
+		UIConfigs:               params.UIConfigs,
+		Source:                  params.Source,
+		DiscoveryJobID:          params.DiscoveryJobID,
+		PendingReview:           params.PendingReview,
+		ProjectID:               params.ProjectID,
+		OrgID:                   params.OrgID,
+	}
+
 	var packID uuid.UUID
 	err := r.db.NewInsert().
-		Table("kb.graph_schemas").
-		Value("name", "?", params.Name).
-		Value("version", "?", params.Version).
-		Value("description", "?", params.Description).
-		Value("author", "?", params.Author).
-		Value("object_type_schemas", "?", params.ObjectTypeSchemas).
-		Value("relationship_type_schemas", "?", params.RelationshipTypeSchemas).
-		Value("ui_configs", "?", params.UIConfigs).
-		Value("source", "?", params.Source).
-		Value("discovery_job_id", "?", params.DiscoveryJobID).
-		Value("pending_review", "?", params.PendingReview).
+		Model(r2).
 		Returning("id").
 		Scan(ctx, &packID)
 	if err != nil {
@@ -317,6 +339,8 @@ type CreateMemorySchemaParams struct {
 	Source                  string
 	DiscoveryJobID          *uuid.UUID
 	PendingReview           bool
+	ProjectID               *uuid.UUID
+	OrgID                   *uuid.UUID
 }
 
 // GetMemorySchema retrieves a memory schema by ID
@@ -379,7 +403,29 @@ func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uui
 	return nil
 }
 
-// UpdateSchemaExtractionPrompts writes generated extraction prompts to kb.graph_schemas.
+// InstallSchemaToProject inserts a row into kb.project_schemas to make the schema active in the project.
+func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, schemaID uuid.UUID) error {
+	type row struct {
+		bun.BaseModel `bun:"table:kb.project_schemas"`
+		ProjectID     uuid.UUID `bun:"project_id,type:uuid"`
+		SchemaID      uuid.UUID `bun:"schema_id,type:uuid"`
+		Active        bool      `bun:"active"`
+	}
+	rec := &row{
+		ProjectID: projectID,
+		SchemaID:  schemaID,
+		Active:    true,
+	}
+	_, err := r.db.NewInsert().
+		Model(rec).
+		On("CONFLICT DO NOTHING").
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to install schema to project", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	return nil
+}
 func (r *Repository) UpdateSchemaExtractionPrompts(ctx context.Context, schemaID uuid.UUID, prompts json.RawMessage) error {
 	_, err := r.db.NewUpdate().
 		Table("kb.graph_schemas").
