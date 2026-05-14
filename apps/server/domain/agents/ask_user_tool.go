@@ -65,8 +65,11 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 			Description: "Ask the user a question and pause execution until they respond. Use this when you encounter ambiguity, need clarification, or require a decision from the user. You can provide structured options for the user to choose from, or leave options empty for a free-text response. Set interaction_type to 'buttons' (default, 2-5 options), 'select' (5+ options), 'multi_select' (multi-pick dropdown), or 'text' (free-text input with optional placeholder and max_length). After calling this tool, execution will pause and resume automatically when the user responds.",
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
-			// Parse question (required)
+			// Parse question (required); accept "message" as alias for "question"
 			question, _ := args["question"].(string)
+			if question == "" {
+				question, _ = args["message"].(string)
+			}
 			if question == "" {
 				return map[string]any{"error": "question is required"}, nil
 			}

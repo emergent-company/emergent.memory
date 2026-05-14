@@ -65,6 +65,10 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 	if len(result.Signals.HeuristicKeywords) == 0 {
 		stage = "llm"
 	}
+	// No domain matched — signal new_domain so the agent triggers discovery.
+	if result.DomainName == "" {
+		stage = "new_domain"
+	}
 
 	snap := mcp.ClassificationSnapshot{
 		SchemaID:   result.MatchedSchemaID,

@@ -54,6 +54,7 @@ type DiscoveryFinalizer interface {
 // DiscoveryFinalizeRequest mirrors discoveryjobs.FinalizeDiscoveryRequest for mcp use.
 type DiscoveryFinalizeRequest struct {
 	JobID          string
+	DocumentID     string
 	ProjectID      string
 	OrgID          string
 	Mode           string
@@ -109,13 +110,17 @@ func domainToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "finalize-discovery",
-			Description: "Finalize a discovery job by creating a new schema pack or extending an existing one with the discovered types.",
+			Description: "Finalize domain discovery by creating a new schema pack or extending an existing one. Provide document_id to create a new discovery job on the fly (no job_id needed). job_id is only needed when resuming an existing pending discovery job.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
+					"document_id": {
+						Type:        "string",
+						Description: "UUID of the document being processed (preferred — used to create discovery job automatically)",
+					},
 					"job_id": {
 						Type:        "string",
-						Description: "UUID of the discovery job to finalize",
+						Description: "UUID of an existing discovery job to finalize (optional — omit if providing document_id)",
 					},
 					"project_id": {
 						Type:        "string",
@@ -146,7 +151,7 @@ func domainToolDefinitions() []ToolDefinition {
 						Description: "List of discovered relationships to include. Each item: {source_type, target_type, relation_type, description, cardinality}",
 					},
 				},
-				Required: []string{"job_id", "project_id", "org_id", "mode", "included_types"},
+				Required: []string{"project_id", "org_id", "mode", "included_types"},
 			},
 		},
 		{
@@ -216,6 +221,7 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 	}
 
 	jobIDStr, _ := args["job_id"].(string)
+	documentIDStr, _ := args["document_id"].(string)
 	orgIDStr, _ := args["org_id"].(string)
 	mode, _ := args["mode"].(string)
 	packName, _ := args["pack_name"].(string)
@@ -237,6 +243,7 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 
 	resp, err := s.discoverySvc.FinalizeDiscoveryFromMCP(ctx, DiscoveryFinalizeRequest{
 		JobID:          jobIDStr,
+		DocumentID:     documentIDStr,
 		ProjectID:      projectID,
 		OrgID:          orgIDStr,
 		Mode:           mode,

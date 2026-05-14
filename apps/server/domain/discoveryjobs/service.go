@@ -1065,6 +1065,7 @@ func strPtr(s string) *string {
 // mcpDiscoveryFinalizeRequest mirrors mcp.DiscoveryFinalizeRequest without importing mcp.
 type mcpDiscoveryFinalizeRequest struct {
 	JobID          string
+	DocumentID     string
 	ProjectID      string
 	OrgID          string
 	Mode           string
@@ -1093,10 +1094,6 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 		return nil, fmt.Errorf("FinalizeDiscoveryFromMCP unmarshal: %w", err)
 	}
 
-	jobID, err := uuid.Parse(r.JobID)
-	if err != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("invalid job_id")
-	}
 	projectUUID, err := uuid.Parse(r.ProjectID)
 	if err != nil {
 		return nil, apperror.ErrBadRequest.WithMessage("invalid project_id")
@@ -1104,6 +1101,26 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 	orgID, err := uuid.Parse(r.OrgID)
 	if err != nil {
 		return nil, apperror.ErrBadRequest.WithMessage("invalid org_id")
+	}
+
+	// Resolve job ID: use explicit job_id, or create a discovery job from document_id.
+	jobID, err := uuid.Parse(r.JobID)
+	if err != nil {
+		// No valid job_id — create one from document_id if provided.
+		if r.DocumentID == "" {
+			return nil, apperror.ErrBadRequest.WithMessage("either job_id or document_id is required")
+		}
+		docUUID, parseErr := uuid.Parse(r.DocumentID)
+		if parseErr != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid document_id")
+		}
+		resp, createErr := s.StartDiscovery(ctx, projectUUID, orgID, &StartDiscoveryRequest{
+			DocumentIDs: []uuid.UUID{docUUID},
+		})
+		if createErr != nil {
+			return nil, fmt.Errorf("create discovery job: %w", createErr)
+		}
+		jobID = resp.JobID
 	}
 
 	inReq := &FinalizeDiscoveryRequest{
