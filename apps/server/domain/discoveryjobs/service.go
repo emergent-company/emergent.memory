@@ -15,6 +15,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -264,7 +265,8 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 				Cardinality:  r.Cardinality,
 			}
 		}
-		if prompts, promptErr := s.generateExtractionPrompts(ctx, discoveredTypes, discoveredRels, req.PackName); promptErr != nil {
+		promptCtx := auth.ContextWithProjectID(ctx, projectID.String())
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, discoveredRels, req.PackName); promptErr != nil {
 			s.log.Warn("failed to generate extraction prompts", slog.Any("err", promptErr))
 		} else if prompts != nil {
 			raw, _ := json.Marshal(prompts)
