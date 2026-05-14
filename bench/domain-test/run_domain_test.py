@@ -379,7 +379,8 @@ def find_pending_question(project_id, run_id):
 
 
 def respond_to_question(project_id, question, auto_respond_contains):
-    """Find the button matching auto_respond_contains and submit it."""
+    """Find the button matching auto_respond_contains and submit it.
+    Returns (chosen_label, resume_run_id) where resume_run_id is the new run to poll."""
     qid = question["id"]
     options = question.get("options", [])
     chosen = None
@@ -398,10 +399,14 @@ def respond_to_question(project_id, question, auto_respond_contains):
         chosen = options[0]["label"]
 
     print(f"  Auto-responding to question: '{chosen}'")
-    post(f"/api/projects/{project_id}/agent-questions/{qid}/respond", {
+    resp = post(f"/api/projects/{project_id}/agent-questions/{qid}/respond", {
         "response": chosen,
     })
-    return chosen
+    resume_run_id = None
+    if isinstance(resp, dict):
+        data = resp.get("data", resp)
+        resume_run_id = data.get("resumeRunId") or data.get("resume_run_id")
+    return chosen, resume_run_id
 
 
 def run_agent_with_responds(project_id, doc_id, auto_respond_contains):
@@ -414,17 +419,24 @@ def run_agent_with_responds(project_id, doc_id, auto_respond_contains):
         if status == "paused":
             question = find_pending_question(project_id, run_id)
             if question and auto_respond_contains:
-                chosen = respond_to_question(project_id, question, auto_respond_contains)
+                chosen, resume_run_id = respond_to_question(project_id, question, auto_respond_contains)
                 responses.append(chosen)
-                # Resume run
-                post(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}/resume")
+                # Switch polling to the new resume run if provided
+                if resume_run_id:
+                    print(f"  Switching poll target to resume run: {resume_run_id}")
+                    run_id = resume_run_id
                 continue
             elif question and not auto_respond_contains:
                 print(f"  UNEXPECTED ask_user pause (expected none for this doc)!")
                 responses.append("UNEXPECTED_PAUSE")
                 # Skip to avoid hanging test
-                post(f"/api/projects/{project_id}/agent-questions/{question['id']}/respond", {"response": "Skip"})
-                post(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}/resume")
+                resp2 = post(f"/api/projects/{project_id}/agent-questions/{question['id']}/respond", {"response": "Skip"})
+                if isinstance(resp2, dict):
+                    data = resp2.get("data", resp2)
+                    resume_run_id = data.get("resumeRunId") or data.get("resume_run_id")
+                    if resume_run_id:
+                        print(f"  Switching poll target to resume run: {resume_run_id}")
+                        run_id = resume_run_id
                 continue
         elif status == "completed":
             break

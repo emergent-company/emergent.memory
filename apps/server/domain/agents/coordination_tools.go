@@ -34,6 +34,10 @@ type CoordinationToolDeps struct {
 	// any per-spawn Context supplied by the LLM (per-spawn keys take precedence)
 	// to form the child run's TriggerMetadata.
 	ParentMetadata map[string]any
+
+	// SuspendSignal is set by executeSingleSpawn when a spawned child run suspends.
+	// The parent executor's afterToolCb reads this and propagates the suspend upward.
+	SuspendSignal *SuspendSignal
 }
 
 // extractSpawnPolicy reads the spawnPolicy.allow list from an AgentDefinition's Config.
@@ -234,7 +238,9 @@ type SpawnAgentsResult struct {
 }
 
 // BuildSpawnAgentsTool creates the spawn_agents ADK tool.
-func BuildSpawnAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) {
+// deps is passed by pointer so that executeSingleSpawn can propagate a
+// SuspendSignal back to the parent executor via deps.SuspendSignal.
+func BuildSpawnAgentsTool(deps *CoordinationToolDeps) (tool.Tool, error) {
 	desc := "Spawn one or more sub-agents in parallel. Each spawn request specifies an agent_name and a task description. Optionally include a timeout (in seconds) or resume_run_id to continue a paused agent. Returns results for each spawn including run_id, status, summary, and steps."
 	agentNameDesc := "Name of the agent to spawn (from list_available_agents)"
 	if len(deps.SpawnPolicy) > 0 {
@@ -298,7 +304,7 @@ func BuildSpawnAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) {
 // executeSpawns runs all spawn requests in parallel using a WaitGroup.
 // Parent context cancellation cascades to all sub-agents.
 // Individual sub-agent timeouts only stop that sub-agent.
-func executeSpawns(ctx context.Context, deps CoordinationToolDeps, requests []SpawnRequest) []SpawnResult {
+func executeSpawns(ctx context.Context, deps *CoordinationToolDeps, requests []SpawnRequest) []SpawnResult {
 	results := make([]SpawnResult, len(requests))
 	var wg sync.WaitGroup
 
@@ -315,7 +321,7 @@ func executeSpawns(ctx context.Context, deps CoordinationToolDeps, requests []Sp
 }
 
 // executeSingleSpawn handles a single sub-agent spawn request.
-func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req SpawnRequest) SpawnResult {
+func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req SpawnRequest) SpawnResult {
 	// Enforce spawn policy — reject if the target is not in the allowlist
 	if !spawnAllowed(deps.SpawnPolicy, req.AgentName) {
 		return SpawnResult{
@@ -437,6 +443,14 @@ func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req Spaw
 			}
 		}
 
+		// Propagate spawn cascade: if the child suspended, signal the parent to pause too.
+		if result.Status == RunStatusPaused && result.RunID != "" {
+			deps.SuspendSignal = &SuspendSignal{
+				Reason:          SuspendReasonAwaitingChild,
+				WaitingForRunID: result.RunID,
+			}
+		}
+
 		return SpawnResult{
 			AgentName: req.AgentName,
 			RunID:     result.RunID,
@@ -462,6 +476,14 @@ func executeSingleSpawn(ctx context.Context, deps CoordinationToolDeps, req Spaw
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
 			Error:     fmt.Sprintf("execution failed: %s", err.Error()),
+		}
+	}
+
+	// Propagate spawn cascade: if the child suspended, signal the parent to pause too.
+	if result.Status == RunStatusPaused && result.RunID != "" {
+		deps.SuspendSignal = &SuspendSignal{
+			Reason:          SuspendReasonAwaitingChild,
+			WaitingForRunID: result.RunID,
 		}
 	}
 

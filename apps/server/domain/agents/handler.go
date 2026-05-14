@@ -2604,6 +2604,7 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 	}
 
 	// Resume the agent in a background goroutine
+	var preCreatedRun *AgentRun
 	if h.executor != nil {
 		// Look up the agent to build the resume request
 		agent, err := h.repo.FindByID(c.Request().Context(), run.AgentID, nil)
@@ -2627,6 +2628,32 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 			question.Question, req.Response,
 		)
 
+		// Pre-create the resume run synchronously so we can return its ID in the response.
+		// The executor's Resume method will reuse this run via PreCreatedRun.
+		maxSteps := MaxTotalStepsPerRun
+		resumedFrom := run.ID
+		var createErr error
+		preCreatedRun, createErr = h.repo.CreateRunWithOptions(c.Request().Context(), CreateRunOptions{
+			AgentID:          run.AgentID,
+			MaxSteps:         &maxSteps,
+			ResumedFrom:      &resumedFrom,
+			InitialStepCount: run.StepCount,
+			TriggerMetadata:  run.TriggerMetadata,
+		})
+		if createErr != nil {
+			return apperror.NewInternal("failed to pre-create resume run", createErr)
+		}
+
+		// Persist resume_run_id in suspend_context so GET run can expose it.
+		if run.SuspendContext != nil {
+			sc := make(map[string]any, len(run.SuspendContext)+1)
+			for k, v := range run.SuspendContext {
+				sc[k] = v
+			}
+			sc["resume_run_id"] = preCreatedRun.ID
+			_ = h.repo.UpdateSuspendContext(c.Request().Context(), run.ID, sc)
+		}
+
 		resumeAuthToken := auth.RawTokenFromContext(c.Request().Context())
 		go func() {
 			ctx := context.Background()
@@ -2638,6 +2665,7 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 				UserMessage:     userMessage,
 				UserID:          user.ID, // propagate for ask_user notifications
 				AuthToken:       resumeAuthToken,
+				PreCreatedRun:   preCreatedRun,
 			})
 			if result != nil && result.Cleanup != nil {
 				result.Cleanup()
@@ -2661,12 +2689,19 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 
 	// Re-fetch the question to return the updated state
 	updatedQuestion, err := h.repo.FindQuestionByID(c.Request().Context(), questionID)
+	var dto *AgentQuestionDTO
 	if err != nil || updatedQuestion == nil {
-		// Fall back to returning what we know with the answer applied
-		return c.JSON(http.StatusAccepted, SuccessResponse(question.ToDTO()))
+		dto = question.ToDTO()
+	} else {
+		dto = updatedQuestion.ToDTO()
 	}
 
-	return c.JSON(http.StatusAccepted, SuccessResponse(updatedQuestion.ToDTO()))
+	// Attach resume_run_id so clients can poll the correct run ID.
+	if preCreatedRun != nil {
+		dto.ResumeRunID = &preCreatedRun.ID
+	}
+
+	return c.JSON(http.StatusAccepted, SuccessResponse(dto))
 }
 
 // HandleListQuestionsByRun handles GET /api/projects/:projectId/agent-runs/:runId/questions

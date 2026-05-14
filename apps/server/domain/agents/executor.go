@@ -164,6 +164,12 @@ type ExecuteRequest struct {
 	// session key is derived from this value instead of the run ID, so successive triggers
 	// with the same SessionID share the same session events. Empty = per-run session (default).
 	SessionID string
+
+	// PreCreatedRun is an already-created AgentRun to use for this Resume call.
+	// When set, Resume skips CreateRunWithOptions and uses this run directly.
+	// This allows callers to obtain the resume run ID synchronously before launching
+	// the background goroutine, so the ID can be returned in the HTTP response.
+	PreCreatedRun *AgentRun
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -671,18 +677,24 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		return nil, fmt.Errorf("run %s already at step limit (%d/%d)", priorRun.ID, priorRun.StepCount, maxSteps)
 	}
 
-	// Create a new run record that tracks the resume chain
+	// Create a new run record that tracks the resume chain (or reuse pre-created run).
+	var newRun *AgentRun
 	resumedFrom := priorRun.ID
-	newRun, err := ae.repo.CreateRunWithOptions(dbCtx, CreateRunOptions{
-		AgentID:          priorRun.AgentID,
-		ParentRunID:      req.ParentRunID,
-		MaxSteps:         &maxSteps,
-		ResumedFrom:      &resumedFrom,
-		InitialStepCount: priorRun.StepCount,
-		TriggerMetadata:  priorRun.TriggerMetadata,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create resumed run: %w", err)
+	if req.PreCreatedRun != nil {
+		newRun = req.PreCreatedRun
+	} else {
+		var err error
+		newRun, err = ae.repo.CreateRunWithOptions(dbCtx, CreateRunOptions{
+			AgentID:          priorRun.AgentID,
+			ParentRunID:      req.ParentRunID,
+			MaxSteps:         &maxSteps,
+			ResumedFrom:      &resumedFrom,
+			InitialStepCount: priorRun.StepCount,
+			TriggerMetadata:  priorRun.TriggerMetadata,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create resumed run: %w", err)
+		}
 	}
 
 	// Transition the prior paused run to running so it no longer appears stuck.
@@ -783,6 +795,24 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		}
 	}
 
+	// Inject the pending tool result into the ADK session as a proper FunctionResponse,
+	// replacing the legacy text-based prompt injection. This gives the LLM an accurate
+	// view of the tool call/response pair without any synthetic "here is what happened" text.
+	if sc := SuspendSignalFromMap(priorRun.SuspendContext); sc != nil && sc.PendingToolCallID != "" {
+		rootRunID := ae.getRootRunID(ctx, newRun)
+		if injErr := ae.injectToolResponse(ctx, rootRunID, req.ProjectID, sc, req); injErr != nil {
+			ae.log.Warn("failed to inject FunctionResponse into ADK session, falling back to text injection",
+				slog.String("run_id", newRun.ID),
+				slog.String("pending_tool_call_id", sc.PendingToolCallID),
+				slog.String("error", injErr.Error()),
+			)
+		} else {
+			// Successfully injected FunctionResponse — clear UserMessage so runPipeline
+			// does not also inject a synthetic text turn.
+			req.UserMessage = ""
+		}
+	}
+
 	// Build and run the pipeline with accumulated step count
 	result, err := ae.runPipeline(ctx, newRun, req, maxSteps, priorRun.StepCount, startTime, wsResult, nil)
 	if err != nil {
@@ -799,6 +829,142 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 
 	result.Cleanup = cleanup
 	return result, nil
+}
+
+// injectToolResponse appends a FunctionResponse event to the ADK session so that
+// on resume, the LLM sees a proper tool call/response pair instead of a synthetic
+// text message. The session is identified by rootRunID (the original non-resumed run ID).
+func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, projectID string, sc *SuspendSignal, req ExecuteRequest) error {
+	sessionID := rootRunID // matches getRootRunID result used in runPipeline
+
+	getResp, err := ae.sessionService.Get(ctx, &session.GetRequest{
+		AppName:   "agents",
+		UserID:    "system",
+		SessionID: sessionID,
+	})
+	if err != nil || getResp == nil || getResp.Session == nil {
+		return fmt.Errorf("failed to load ADK session %s: %w", sessionID, err)
+	}
+
+	// Build the FunctionResponse content — the human's answer (or child run output)
+	// is delivered as a tool response keyed to the original function call ID.
+	responseBody := map[string]any{}
+	switch sc.Reason {
+	case SuspendReasonAwaitingHuman:
+		responseBody["answer"] = req.UserMessage
+		if sc.QuestionID != "" {
+			responseBody["question_id"] = sc.QuestionID
+		}
+	case SuspendReasonAwaitingChild:
+		responseBody["child_run_id"] = sc.WaitingForRunID
+		responseBody["status"] = "completed"
+		if req.UserMessage != "" {
+			responseBody["output"] = req.UserMessage
+		}
+	default:
+		responseBody["answer"] = req.UserMessage
+	}
+
+	toolName := sc.PendingToolName
+	if toolName == "" {
+		toolName = "ask_user"
+	}
+
+	funcRespPart := &genai.Part{
+		FunctionResponse: &genai.FunctionResponse{
+			ID:       sc.PendingToolCallID,
+			Name:     toolName,
+			Response: responseBody,
+		},
+	}
+	content := &genai.Content{
+		Role:  "tool",
+		Parts: []*genai.Part{funcRespPart},
+	}
+
+	event := &session.Event{
+		Author: toolName,
+		LLMResponse: model.LLMResponse{
+			Content: content,
+		},
+	}
+
+	if appendErr := ae.sessionService.AppendEvent(ctx, getResp.Session, event); appendErr != nil {
+		return fmt.Errorf("failed to append FunctionResponse event: %w", appendErr)
+	}
+
+	ae.log.Info("injected FunctionResponse into ADK session",
+		slog.String("session_id", sessionID),
+		slog.String("tool_call_id", sc.PendingToolCallID),
+		slog.String("tool_name", toolName),
+	)
+	return nil
+}
+
+// maybeWakeParent checks whether a parent run is suspended waiting for childRunID.
+// If found, it enqueues a resume for the parent in a background goroutine.
+func (ae *AgentExecutor) maybeWakeParent(ctx context.Context, childRunID string, childReq ExecuteRequest, childSummary map[string]any) {
+	parent, err := ae.repo.FindParentAwaitingChild(ctx, childRunID)
+	if err != nil {
+		ae.log.Warn("maybeWakeParent: error looking up parent",
+			slog.String("child_run_id", childRunID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	if parent == nil {
+		return // no parent waiting
+	}
+
+	ae.log.Info("maybeWakeParent: waking parent run",
+		slog.String("child_run_id", childRunID),
+		slog.String("parent_run_id", parent.ID),
+	)
+
+	// Build output description for injection as tool response
+	outputMsg := ""
+	if v, ok := childSummary["output"].(string); ok {
+		outputMsg = v
+	} else if v, ok := childSummary["text"].(string); ok {
+		outputMsg = v
+	}
+
+	// Look up parent's agent and definition for the resume request
+	parentAgent, _ := ae.repo.FindByID(ctx, parent.AgentID, nil)
+	var parentDef *AgentDefinition
+	if parentAgent != nil {
+		parentDef, _ = ae.repo.ResolveDefinitionForAgent(ctx, parentAgent)
+	}
+
+	parentProjectID := ""
+	if parentAgent != nil {
+		parentProjectID = parentAgent.ProjectID
+	}
+	parentOrgID := ""
+	if parentProjectID != "" {
+		parentOrgID, _ = ae.repo.GetOrgIDByProjectID(ctx, parentProjectID)
+	}
+
+	go func() {
+		bgCtx := context.Background()
+		result, err := ae.Resume(bgCtx, parent, ExecuteRequest{
+			Agent:           parentAgent,
+			AgentDefinition: parentDef,
+			ProjectID:       parentProjectID,
+			OrgID:           parentOrgID,
+			UserMessage:     outputMsg,
+		})
+		if result != nil && result.Cleanup != nil {
+			result.Cleanup()
+		}
+		if err != nil {
+			ae.log.Error("maybeWakeParent: parent resume failed",
+				slog.String("parent_run_id", parent.ID),
+				slog.String("child_run_id", childRunID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}()
 }
 
 // provisionWorkspace provisions a workspace for the agent run if configured.
@@ -989,6 +1155,9 @@ func (ae *AgentExecutor) runPipeline(
 	if effectiveToken != "" {
 		ctx = auth.ContextWithRawToken(ctx, effectiveToken)
 	}
+	if req.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
+	}
 	if req.OrgID != "" {
 		ctx = auth.ContextWithOrgID(ctx, req.OrgID)
 	}
@@ -1075,7 +1244,7 @@ func (ae *AgentExecutor) runPipeline(
 	}
 
 	// Add coordination tools (spawn_agents, list_available_agents) for top-level or opted-in agents
-	coordTools, err := ae.buildCoordinationTools(req, run.ID)
+	coordTools, coordDeps, err := ae.buildCoordinationTools(req, run.ID)
 	if err != nil {
 		ae.log.Warn("failed to build coordination tools, continuing without them",
 			slog.String("error", err.Error()),
@@ -1327,10 +1496,43 @@ func (ae *AgentExecutor) runPipeline(
 		// cannot produce a final response that would mark the run as success
 		// before beforeModelCb fires (race condition fix).
 		if toolName == ToolNameAskUser && askPauseState != nil && askPauseState.ShouldPause() {
-			ae.log.Info("ask_user afterToolCb: pausing run immediately",
+			functionCallID := tCtx.FunctionCallID()
+			sig := SuspendSignal{
+				Reason:            SuspendReasonAwaitingHuman,
+				QuestionID:        askPauseState.QuestionID(),
+				PendingToolCallID: functionCallID,
+				PendingToolName:   ToolNameAskUser,
+			}
+			ae.log.Info("ask_user afterToolCb: pausing run with suspend_context",
 				slog.String("run_id", run.ID),
-				slog.String("question_id", askPauseState.QuestionID()),
+				slog.String("question_id", sig.QuestionID),
+				slog.String("pending_tool_call_id", functionCallID),
 			)
+			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
+				ae.log.Warn("failed to persist suspend_context",
+					slog.String("run_id", run.ID),
+					slog.String("error", scErr.Error()),
+				)
+			}
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+		}
+
+		// Check for spawn cascade: if a spawned child paused, propagate suspend upward.
+		if coordDeps != nil && coordDeps.SuspendSignal != nil {
+			sig := coordDeps.SuspendSignal
+			sig.PendingToolCallID = tCtx.FunctionCallID()
+			sig.PendingToolName = toolName
+			ae.log.Info("spawn cascade: child paused, propagating suspend to parent",
+				slog.String("run_id", run.ID),
+				slog.String("waiting_for_run_id", sig.WaitingForRunID),
+				slog.String("pending_tool_call_id", sig.PendingToolCallID),
+			)
+			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
+				ae.log.Warn("failed to persist suspend_context for spawn cascade",
+					slog.String("run_id", run.ID),
+					slog.String("error", scErr.Error()),
+				)
+			}
 			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
 		}
 
@@ -1967,6 +2169,10 @@ func (ae *AgentExecutor) runPipeline(
 		)
 	}
 
+	// Spawn cascade wakeup: if a parent run is suspended waiting for this run,
+	// enqueue a resume for it now that this child has completed.
+	ae.maybeWakeParent(dbCtx, run.ID, req, summary)
+
 	// Update the agent's last run status
 	if req.Agent != nil && req.Agent.ID != "" {
 		_ = ae.repo.UpdateLastRun(dbCtx, req.Agent.ID, string(RunStatusSuccess))
@@ -2104,7 +2310,7 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningRes
 
 // buildCoordinationTools creates spawn_agents and list_available_agents tools
 // if the agent is at a depth that allows coordination.
-func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string) ([]tool.Tool, error) {
+func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string) ([]tool.Tool, *CoordinationToolDeps, error) {
 	maxDepth := req.MaxDepth
 	if maxDepth <= 0 {
 		maxDepth = DefaultMaxDepth
@@ -2112,7 +2318,7 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 
 	// Sub-agents at max depth don't get coordination tools
 	if req.Depth >= maxDepth {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Agents with an explicit non-empty tools whitelist only get coordination tools
@@ -2131,7 +2337,7 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 			}
 		}
 		if !hasCoordTool {
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
 
@@ -2152,17 +2358,17 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 
 	listTool, err := BuildListAvailableAgentsTool(deps)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build list_available_agents: %w", err)
+		return nil, nil, fmt.Errorf("failed to build list_available_agents: %w", err)
 	}
 	tools = append(tools, listTool)
 
-	spawnTool, err := BuildSpawnAgentsTool(deps)
+	spawnTool, err := BuildSpawnAgentsTool(&deps)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build spawn_agents: %w", err)
+		return nil, nil, fmt.Errorf("failed to build spawn_agents: %w", err)
 	}
 	tools = append(tools, spawnTool)
 
-	return tools, nil
+	return tools, &deps, nil
 }
 
 // buildAskUserTool creates the ask_user tool if the agent definition opts in.

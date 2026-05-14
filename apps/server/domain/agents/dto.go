@@ -543,6 +543,7 @@ type AgentQuestionDTO struct {
 	RespondedAt     *time.Time                   `json:"respondedAt,omitempty"`
 	Status          AgentQuestionStatus          `json:"status"`
 	NotificationID  *string                      `json:"notificationId,omitempty"`
+	ResumeRunID     *string                      `json:"resumeRunId,omitempty"` // new run ID created on resume
 	CreatedAt       time.Time                    `json:"createdAt"`
 	UpdatedAt       time.Time                    `json:"updatedAt"`
 }

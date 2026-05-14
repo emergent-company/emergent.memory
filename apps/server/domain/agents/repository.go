@@ -1466,6 +1466,26 @@ func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOpt
 }
 
 // FindRunByID returns an agent run by ID.
+// FindParentAwaitingChild returns any agent run that is paused waiting for the given
+// child run ID to complete (suspend_context->>'waiting_for_run_id' = childRunID).
+// Returns nil (no error) if no such parent exists.
+func (r *Repository) FindParentAwaitingChild(ctx context.Context, childRunID string) (*AgentRun, error) {
+	var run AgentRun
+	err := r.db.NewSelect().
+		Model(&run).
+		Where("status = ?", RunStatusPaused).
+		Where("suspend_context->>'waiting_for_run_id' = ?", childRunID).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &run, nil
+}
+
 func (r *Repository) FindRunByID(ctx context.Context, runID string) (*AgentRun, error) {
 	run := new(AgentRun)
 	err := r.db.NewSelect().
@@ -1483,6 +1503,17 @@ func (r *Repository) FindRunByID(ctx context.Context, runID string) (*AgentRun, 
 }
 
 // PauseRun marks a run as paused, persisting the current step count.
+// UpdateSuspendContext persists the suspend_context JSONB on an agent run row.
+// Call this before PauseRun so the context is available when the run is later resumed.
+func (r *Repository) UpdateSuspendContext(ctx context.Context, runID string, sc map[string]any) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("suspend_context = ?", sc).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 func (r *Repository) PauseRun(ctx context.Context, runID string, stepCount int) error {
 	now := time.Now()
 	_, err := r.db.NewUpdate().

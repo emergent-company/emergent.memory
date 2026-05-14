@@ -113,6 +113,7 @@ type ACPRunObject struct {
 	Error        *ACPRunError     `json:"error,omitempty"`
 	SessionID    *string          `json:"session_id,omitempty"`
 	Metadata     map[string]any   `json:"metadata,omitempty"`
+	ResumeRunID  *string          `json:"resume_run_id,omitempty"` // ID of the new run created on resume
 }
 
 // ACPRunError describes an error that occurred during a run.
@@ -333,6 +334,15 @@ func RunToACPObject(run *AgentRun, messages []AgentRunMessage, question *AgentQu
 		obj.Metadata = map[string]any{
 			"skipped":     true,
 			"skip_reason": *run.SkipReason,
+		}
+	}
+
+	// Expose resume_run_id from suspend_context if present
+	if run.SuspendContext != nil {
+		if v, ok := run.SuspendContext["resume_run_id"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				obj.ResumeRunID = &s
+			}
 		}
 	}
 

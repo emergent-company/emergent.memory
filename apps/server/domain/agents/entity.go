@@ -211,6 +211,10 @@ type AgentRun struct {
 
 	Tools []string `bun:"tools,array" json:"tools,omitempty"`
 
+	// SuspendContext holds the serialized SuspendSignal when a run is paused via the
+	// suspend/resume primitive. Null for runs that were never suspended this way.
+	SuspendContext map[string]any `bun:"suspend_context,type:jsonb" json:"suspendContext,omitempty"`
+
 	// Relations
 	Agent     *Agent    `bun:"rel:belongs-to,join:agent_id=id" json:"-"`
 	ParentRun *AgentRun `bun:"rel:belongs-to,join:parent_run_id=id" json:"-"`

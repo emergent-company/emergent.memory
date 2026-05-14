@@ -893,6 +893,30 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 
 	orgID := h.acpOrgID(ctx, c, projectID)
 
+	// Pre-create the resume run synchronously so we can return its ID in async mode.
+	maxSteps := MaxTotalStepsPerRun
+	resumedFromID := run.ID
+	preCreatedRun, err := h.repo.CreateRunWithOptions(ctx, CreateRunOptions{
+		AgentID:          run.AgentID,
+		MaxSteps:         &maxSteps,
+		ResumedFrom:      &resumedFromID,
+		InitialStepCount: run.StepCount,
+		TriggerMetadata:  run.TriggerMetadata,
+	})
+	if err != nil {
+		return apperror.NewInternal("failed to pre-create resume run", err)
+	}
+
+	// Persist resume_run_id in suspend_context so GET run can expose it.
+	if run.SuspendContext != nil {
+		sc := make(map[string]any, len(run.SuspendContext)+1)
+		for k, v := range run.SuspendContext {
+			sc[k] = v
+		}
+		sc["resume_run_id"] = preCreatedRun.ID
+		_ = h.repo.UpdateSuspendContext(ctx, run.ID, sc)
+	}
+
 	execReq := ExecuteRequest{
 		Agent:           run.Agent, // Use the agent record from the run if it exists
 		AgentDefinition: def,
@@ -900,6 +924,7 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 		OrgID:           orgID,
 		UserID:          userID, // propagate for ask_user notifications on resumed run
 		UserMessage:     userMessage,
+		PreCreatedRun:   preCreatedRun,
 	}
 
 	switch mode {
@@ -922,10 +947,10 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 
 		nowResume := time.Now()
 		acpRun := ACPRunObject{
-			ID:        run.ID,
+			ID:        preCreatedRun.ID,
 			AgentName: ACPSlugFromName(def.Name),
 			Status:    ACPStatusWorking,
-			CreatedAt: run.CreatedAt,
+			CreatedAt: preCreatedRun.CreatedAt,
 			UpdatedAt: &nowResume,
 		}
 		return c.JSON(http.StatusAccepted, acpRun)
