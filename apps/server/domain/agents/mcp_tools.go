@@ -1150,7 +1150,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					"status": {
 						Type:        "string",
 						Description: "Filter by run status",
-						Enum:        []string{"queued", "running", "success", "skipped", "error", "paused", "cancelled"},
+						Enum:        []string{"submitted", "working", "completed", "skipped", "failed", "input-required", "cancelled"},
 					},
 					"limit": {
 						Type:        "integer",

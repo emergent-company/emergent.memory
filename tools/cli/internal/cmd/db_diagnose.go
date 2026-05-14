@@ -188,7 +188,7 @@ func runDbDiagnose(cmd *cobra.Command, _ []string) error {
 		`SELECT id, status, started_at
 		 FROM kb.agent_runs
 		 WHERE agent_id = '00000000-0000-0000-0000-000000000001'
-		   AND status = 'running'
+		   AND status = 'working'
 		 ORDER BY started_at DESC
 		 LIMIT 20`))
 

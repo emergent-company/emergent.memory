@@ -2670,11 +2670,11 @@ func (r *Repository) GetAgentStatusMetrics(ctx context.Context, agentDefID strin
 		TableExpr("kb.agent_runs AS ar").
 		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
 		ColumnExpr("COUNT(*) AS total_runs").
-		ColumnExpr("COUNT(*) FILTER (WHERE ar.status = 'success') AS success_runs").
+		ColumnExpr("COUNT(*) FILTER (WHERE ar.status = 'completed') AS success_runs").
 		ColumnExpr("AVG(ar.duration_ms) FILTER (WHERE ar.duration_ms IS NOT NULL) AS avg_duration").
 		Where("a.definition_id = ?", agentDefID).
 		Where("ar.created_at >= ?", since).
-		Where("ar.status IN (?)", bun.In([]string{"success", "error", "cancelled", "skipped"})).
+		Where("ar.status IN (?)", bun.In([]string{"completed", "failed", "cancelled", "skipped"})).
 		Scan(ctx, &rs)
 	if err != nil {
 		return nil, fmt.Errorf("GetAgentStatusMetrics runs: %w", err)
@@ -2865,9 +2865,9 @@ func (r *Repository) GetRunStatsOverview(ctx context.Context, projectID string, 
 		SELECT
 			a.name                                                   AS agent_name,
 			COUNT(*)                                                  AS total,
-			COUNT(*) FILTER (WHERE ar.status = 'success')            AS success,
+			COUNT(*) FILTER (WHERE ar.status = 'completed')          AS success,
 			COUNT(*) FILTER (WHERE ar.status = 'failed')             AS failed,
-			COUNT(*) FILTER (WHERE ar.status = 'error')              AS errored,
+			COUNT(*) FILTER (WHERE ar.status = 'cancelled')          AS errored,
 			COALESCE(AVG(ar.duration_ms), 0)                         AS avg_duration_ms,
 			COALESCE(MAX(ar.duration_ms), 0)                         AS max_duration_ms,
 			COALESCE(AVG(u.total_cost), 0)                           AS avg_cost_usd,
@@ -2933,7 +2933,7 @@ func (r *Repository) GetRunStatsTopErrors(ctx context.Context, projectID string,
 			WHERE a.project_id = ?
 			  AND ar.started_at >= ?
 			  AND ar.started_at <= ?
-			  AND tc.status = 'error'
+			  AND tc.status = 'failed'
 			  AND tc.output->>'error' IS NOT NULL`+agentFilter+`
 		) AS errs
 		WHERE message IS NOT NULL AND message <> ''
@@ -2972,7 +2972,7 @@ func (r *Repository) GetRunStatsTools(ctx context.Context, projectID string, age
 			tc.tool_name,
 			COUNT(*)                                              AS total,
 			COUNT(*) FILTER (WHERE tc.status = 'completed')      AS success,
-			COUNT(*) FILTER (WHERE tc.status = 'error')          AS failed,
+			COUNT(*) FILTER (WHERE tc.status = 'failed')         AS failed,
 			COALESCE(AVG(tc.duration_ms), 0)                     AS avg_duration_ms,
 			COALESCE(MAX(tc.duration_ms), 0)                     AS max_duration_ms
 		FROM kb.agent_run_tool_calls tc
@@ -3056,7 +3056,7 @@ func (r *Repository) GetRunSessionStats(ctx context.Context, projectID string, p
 			COALESCE(ar.trigger_metadata->>'channelId', '')        AS channel_id,
 			COALESCE(ar.trigger_metadata->>'threadId', '')         AS thread_id,
 			COUNT(*)                                               AS total_runs,
-			COUNT(*) FILTER (WHERE ar.status IN ('running','queued','paused')) AS active_runs,
+			COUNT(*) FILTER (WHERE ar.status IN ('working','submitted','input-required')) AS active_runs,
 			MAX(ar.started_at)                                     AS last_run_at,
 			COALESCE(AVG(ar.duration_ms), 0)                       AS avg_duration_ms,
 			COALESCE(SUM(u.total_cost), 0)                         AS total_cost_usd

@@ -172,7 +172,7 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		p.handleFailure(ctx, log, agent)
 
 		// Still wake parent on failure so it can handle the error
-		p.reenqueueParent(ctx, log, run, agent.Name, "", "error")
+		p.reenqueueParent(ctx, log, run, agent.Name, "", "failed")
 		return
 	}
 
@@ -199,7 +199,7 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		// Track consecutive failures and auto-disable the agent if threshold exceeded.
 		p.handleFailure(ctx, log, agent)
 
-		p.reenqueueParent(ctx, log, run, agent.Name, errMsg, "error")
+		p.reenqueueParent(ctx, log, run, agent.Name, errMsg, "failed")
 		return
 	}
 
@@ -247,7 +247,7 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		)
 		return
 	}
-	p.reenqueueParent(ctx, log, run, agent.Name, finalResponse, "success")
+	p.reenqueueParent(ctx, log, run, agent.Name, finalResponse, "completed")
 }
 
 // reenqueueParent re-enqueues the parent run of this run (if any) with a

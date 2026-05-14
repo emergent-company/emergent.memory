@@ -360,7 +360,7 @@ def poll_run_status(project_id, run_id, timeout=120):
         try:
             resp = get(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}")
             status = resp.get("status")
-            if status in ("completed", "failed", "paused"):
+            if status in ("completed", "failed", "input-required"):
                 return status, resp
         except Exception as e:
             print(f"  Poll error: {e}")
@@ -416,7 +416,7 @@ def run_agent_with_responds(project_id, doc_id, auto_respond_contains):
 
     while True:
         status, resp = poll_run_status(project_id, run_id)
-        if status == "paused":
+        if status == "input-required":
             question = find_pending_question(project_id, run_id)
             if question and auto_respond_contains:
                 chosen, resume_run_id = respond_to_question(project_id, question, auto_respond_contains)

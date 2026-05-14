@@ -58,12 +58,12 @@ const (
 type AgentRunStatus string
 
 const (
-	RunStatusQueued     AgentRunStatus = "queued" // enqueued, waiting for a worker
-	RunStatusRunning    AgentRunStatus = "running"
-	RunStatusSuccess    AgentRunStatus = "success"
+	RunStatusQueued     AgentRunStatus = "submitted" // enqueued, waiting for a worker
+	RunStatusRunning    AgentRunStatus = "working"
+	RunStatusSuccess    AgentRunStatus = "completed"
 	RunStatusSkipped    AgentRunStatus = "skipped"
-	RunStatusError      AgentRunStatus = "error"
-	RunStatusPaused     AgentRunStatus = "paused"
+	RunStatusError      AgentRunStatus = "failed"
+	RunStatusPaused     AgentRunStatus = "input-required"
 	RunStatusCancelled  AgentRunStatus = "cancelled"
 	RunStatusCancelling AgentRunStatus = "cancelling" // ACP two-step cancel: intent acknowledged, awaiting execution stop
 

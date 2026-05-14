@@ -324,7 +324,16 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 			if len(textParts) > 0 {
 				msg.Content = strings.Join(textParts, "\n")
 			}
-			// reasoning_content intentionally omitted from history
+			// Echo reasoning_content back in assistant history turns.
+			// DeepSeek requires the reasoning_content it produced to be
+			// passed back verbatim on subsequent turns; omitting it causes
+			// a 400 "reasoning_content must be passed back" error.
+			// Qwen3/vLLM does NOT want this — but since Qwen3 sets
+			// enableThinking=false via chat_template_kwargs it won't produce
+			// reasoning_content in the first place, so this path is safe for both.
+			if role == "assistant" && len(reasoningParts) > 0 {
+				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
+			}
 			messages = append(messages, msg)
 		}
 	}

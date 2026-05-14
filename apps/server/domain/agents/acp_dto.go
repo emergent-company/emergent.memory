@@ -217,27 +217,13 @@ func ACPSlugFromName(name string) string {
 }
 
 // MapMemoryStatusToACP maps a Memory AgentRunStatus to the ACP status string.
+// Now that internal statuses use ACP vocabulary, this is mostly a passthrough.
+// skipped maps to completed since ACP has no distinct skipped status.
 func MapMemoryStatusToACP(status AgentRunStatus) string {
-	switch status {
-	case RunStatusQueued:
-		return ACPStatusSubmitted
-	case RunStatusRunning:
-		return ACPStatusWorking
-	case RunStatusPaused:
-		return ACPStatusInputRequired
-	case RunStatusSuccess:
+	if status == RunStatusSkipped {
 		return ACPStatusCompleted
-	case RunStatusError:
-		return ACPStatusFailed
-	case RunStatusCancelling:
-		return ACPStatusCancelling
-	case RunStatusCancelled:
-		return ACPStatusCancelled
-	case RunStatusSkipped:
-		return ACPStatusCompleted
-	default:
-		return string(status)
 	}
+	return string(status)
 }
 
 // AgentDefinitionToManifest converts an AgentDefinition entity to an ACP agent manifest.

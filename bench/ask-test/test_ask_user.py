@@ -227,7 +227,7 @@ def poll_run(run_id: str, timeout=120) -> tuple[str, dict]:
         try:
             resp = get(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}")
             status = resp.get("status", "")
-            if status in ("completed", "failed", "paused", "error", "success"):
+            if status in ("completed", "failed", "input-required"):
                 return status, resp
         except Exception as e:
             print(f"  poll error: {e}")
@@ -276,8 +276,8 @@ def run_test(project_id: str, agent_id: str) -> bool:
     # 2. Wait for paused
     print("Waiting for run to pause on ask_user...")
     status, run = poll_run(run_id, timeout=90)
-    if status != "paused":
-        print(f"  FAIL: expected 'paused', got '{status}'")
+    if status != "input-required":
+        print(f"  FAIL: expected 'input-required', got '{status}'")
         if run:
             print(f"  Run data: {run}")
         return False

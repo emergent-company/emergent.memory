@@ -1467,7 +1467,7 @@ func (ae *AgentExecutor) runPipeline(
 		// Record the tool call
 		status := "completed"
 		if toolErr != nil {
-			status = "error"
+			status = "failed"
 		}
 		output := result
 		if output == nil {

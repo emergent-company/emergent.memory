@@ -44,7 +44,7 @@ func TestTriggerAgentDispatchModeDefault(t *testing.T) {
 
 // TestRunStatusQueued verifies the RunStatusQueued constant is correct.
 func TestRunStatusQueued(t *testing.T) {
-	assert.Equal(t, AgentRunStatus("queued"), RunStatusQueued)
+	assert.Equal(t, AgentRunStatus("submitted"), RunStatusQueued)
 }
 
 // TestDispatchModeTriggerAgent_NilDef verifies that a nil agentDef falls
