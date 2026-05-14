@@ -272,7 +272,7 @@ def configure_provider(project_id):
         [
             os.path.expanduser("~/.memory/bin/memory"),
             "provider", "configure", "google",
-            "--api-key", "AIzaSyAHd6p6gAnq3HwcvoH8qx1vV4MrRN1zhoA",
+            "--api-key", os.environ.get("GOOGLE_API_KEY", ""),
             "--generative-model", "gemini-2.5-flash",
             "--embedding-model", "gemini-embedding-2-preview",
             "--project", project_id,
