@@ -1,0 +1,25 @@
+PATIENT LAB RESULTS
+Patient: John Smith  DOB: 1985-03-14  MRN: KCH-89234
+Ordering Physician: Dr. Priya Patel, MBBS  Date: 2026-05-08
+
+COMPLETE BLOOD COUNT
+  WBC: 6.2 x10^9/L  (Ref: 4.0-11.0) NORMAL
+  RBC: 4.8 x10^12/L (Ref: 4.5-5.9)  NORMAL
+  Haemoglobin: 14.1 g/dL             NORMAL
+  Platelets: 218 x10^9/L             NORMAL
+
+LIPID PANEL
+  Total Cholesterol: 5.9 mmol/L      BORDERLINE HIGH (Ref: <5.2)
+  LDL: 3.8 mmol/L                    HIGH (Ref: <3.4)
+  HDL: 1.2 mmol/L                    NORMAL
+  Triglycerides: 1.9 mmol/L          NORMAL
+
+GLUCOSE
+  Fasting Glucose: 5.1 mmol/L        NORMAL
+
+PHYSICIAN NOTES
+LDL slightly elevated. Recommend dietary changes - reduce saturated fats.
+Recheck lipids in 3 months. No medication required at this stage.
+Prescribe: Omega-3 supplements 1000mg daily.
+
+FOLLOW-UP APPOINTMENT: 2026-07-10 10:30am, Dr. Patel, Kensington Health Centre

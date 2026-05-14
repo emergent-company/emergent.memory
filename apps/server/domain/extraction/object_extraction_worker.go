@@ -55,6 +55,9 @@ func DefaultObjectExtractionWorkerConfig() *ObjectExtractionWorkerConfig {
 type SchemaProvider interface {
 	// GetProjectSchemas returns object and relationship schemas for a project.
 	GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error)
+	// GetInstalledSchemaSummaries returns lightweight schema-pack summaries for domain classification.
+	// Implementations may return nil without error if classification is not supported.
+	GetInstalledSchemaSummaries(ctx context.Context, projectID string) ([]InstalledSchemaSummary, error)
 }
 
 // ExtractionSchemas holds the schemas needed for extraction.
@@ -71,6 +74,7 @@ type ObjectExtractionWorker struct {
 	docService     *documents.Service
 	schemaProvider SchemaProvider
 	modelFactory   *adk.ModelFactory
+	classifier     *DocumentClassifier
 	limitResolver  adk.ModelLimitResolver // optional; nil → no truncation
 	config         *ObjectExtractionWorkerConfig
 	log            *slog.Logger
@@ -102,6 +106,7 @@ func NewObjectExtractionWorker(
 		docService:     docService,
 		schemaProvider: schemaProvider,
 		modelFactory:   modelFactory,
+		classifier:     NewDocumentClassifier(modelFactory, log),
 		config:         config,
 		log:            log.With(logger.Scope("object-extraction-worker")),
 		scaler:         scaler,
@@ -258,6 +263,34 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		return nil, fmt.Errorf("load schemas: %w", err)
 	}
 
+	// Classify document domain for schema-guided extraction.
+	var classificationResult ClassificationResult
+	if w.classifier != nil && w.schemaProvider != nil {
+		summaries, sumErr := w.schemaProvider.GetInstalledSchemaSummaries(ctx, job.ProjectID)
+		if sumErr != nil {
+			w.log.Warn("failed to load schema summaries for classification, continuing without domain guidance",
+				logger.Error(sumErr))
+		} else if len(summaries) > 0 {
+			cr, classErr := w.classifier.Classify(ctx, batches[0], summaries)
+			if classErr != nil {
+				w.log.Warn("document classification failed, continuing without domain guidance",
+					logger.Error(classErr))
+			} else {
+				classificationResult = cr
+				if cr.DomainName != "" {
+					w.log.Info("document classified",
+						slog.String("domain", cr.DomainName),
+						slog.Float64("confidence", float64(cr.Confidence)),
+					)
+					// Write domain fields back to document asynchronously (best-effort).
+					if job.DocumentID != nil && w.docService != nil {
+						go w.writeDomainClassification(ctx, *job.DocumentID, cr)
+					}
+				}
+			}
+		}
+	}
+
 	// Create a staging branch so extracted objects are isolated from the main
 	// graph until a reviewer explicitly merges them.
 	var stagingBranchID *uuid.UUID
@@ -345,6 +378,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 			ObjectSchemas:       schemas.ObjectSchemas,
 			RelationshipSchemas: schemas.RelationshipSchemas,
 			AllowedTypes:        job.EnabledTypes,
+			DomainGuidance:      classificationResult.DomainGuidance,
 		})
 		if err != nil {
 			w.deleteStagingBranch(ctx, job, stagingBranchID)
@@ -740,4 +774,27 @@ func convertToRelationshipSchema(m map[string]any) agents.RelationshipSchema {
 // stringPtr returns a pointer to a string.
 func stringPtr(s string) *string {
 	return &s
+}
+
+// writeDomainClassification writes classification results to the document table (best-effort).
+func (w *ObjectExtractionWorker) writeDomainClassification(ctx context.Context, documentID string, cr ClassificationResult) {
+	var domainName *string
+	var confidence *float32
+	if cr.DomainName != "" {
+		domainName = &cr.DomainName
+		confidence = &cr.Confidence
+	}
+	signals := map[string]any{
+		"matchedSchemaId":   cr.Signals.MatchedSchemaID,
+		"matchedSchemaName": cr.Signals.MatchedSchemaName,
+		"heuristicKeywords": cr.Signals.HeuristicKeywords,
+		"llmReason":         cr.Signals.LLMReason,
+		"classifiedAt":      cr.Signals.ClassifiedAt,
+	}
+	if err := w.docService.UpdateDomainClassification(ctx, documentID, domainName, confidence, signals); err != nil {
+		w.log.Warn("failed to write domain classification to document",
+			slog.String("document_id", documentID),
+			logger.Error(err),
+		)
+	}
 }

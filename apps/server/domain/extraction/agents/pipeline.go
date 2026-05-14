@@ -69,6 +69,14 @@ type ExtractionPipelineInput struct {
 
 	// ExistingEntities provides context for identity resolution (optional).
 	ExistingEntities []ExistingEntityContext
+
+	// ProjectContext is a short description of what this project/KB is about.
+	// Injected into system prompts when a domain has been classified.
+	ProjectContext string
+
+	// DomainGuidance contains schema-pack-specific extraction hints.
+	// Sourced from SchemaExtractionPrompts.DomainContext if set.
+	DomainGuidance string
 }
 
 // ExtractionPipelineOutput is the result of running the extraction pipeline.
@@ -167,6 +175,12 @@ func (p *ExtractionPipeline) Run(ctx context.Context, input ExtractionPipelineIn
 	}
 	if len(input.ExistingEntities) > 0 {
 		initialState["existing_entities"] = input.ExistingEntities
+	}
+	if input.ProjectContext != "" {
+		initialState["project_context"] = input.ProjectContext
+	}
+	if input.DomainGuidance != "" {
+		initialState["domain_guidance"] = input.DomainGuidance
 	}
 
 	// Create a session with initial state

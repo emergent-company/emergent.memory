@@ -1092,3 +1092,26 @@ func (r *Repository) GetExtractionSummary(ctx context.Context, projectID, docume
 		ErrorSummary:         errorSummary,
 	}, nil
 }
+
+// UpdateDomainClassification writes domain classification results to a document.
+func (r *Repository) UpdateDomainClassification(
+	ctx context.Context,
+	documentID string,
+	domainName *string,
+	confidence *float32,
+	signals map[string]any,
+) error {
+	now := time.Now().UTC()
+	q := r.db.NewUpdate().
+		Model((*Document)(nil)).
+		Set("domain_name = ?", domainName).
+		Set("domain_confidence = ?", confidence).
+		Set("classification_signals = ?", signals).
+		Set("updated_at = ?", now).
+		Where("id = ?", documentID)
+	_, err := q.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("update domain classification: %w", err)
+	}
+	return nil
+}

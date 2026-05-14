@@ -110,6 +110,27 @@ func NewEntityExtractorAgent(cfg EntityExtractorConfig) (agent.Agent, error) {
 				existingEntities,
 			)
 
+			// Append domain guidance if available
+			projectContext, _ := func() (string, bool) {
+				if v, err := state.Get("project_context"); err == nil {
+					if s, ok := v.(string); ok {
+						return s, true
+					}
+				}
+				return "", false
+			}()
+			domainGuidance, _ := func() (string, bool) {
+				if v, err := state.Get("domain_guidance"); err == nil {
+					if s, ok := v.(string); ok {
+						return s, true
+					}
+				}
+				return "", false
+			}()
+			if section := BuildDomainSection(projectContext, domainGuidance); section != "" {
+				prompt = prompt + section
+			}
+
 			log.Debug("built entity extraction prompt",
 				slog.Int("prompt_length", len(prompt)),
 				slog.Int("document_length", len(documentText)),

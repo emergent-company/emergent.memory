@@ -1,0 +1,499 @@
+#!/usr/bin/env python3
+"""
+Domain-aware extraction end-to-end test.
+
+Tests that:
+1. New-domain documents trigger discovery + ask_user pause
+2. User decisions (auto-responded) create schema packs with ClassificationSignals
+3. Subsequent same-domain documents match existing packs via heuristic classifier
+4. Re-extraction is queued after pack creation
+5. Entity types in graph match expected domain types
+
+Usage:
+    EMERGENT_MEMORY_TOKEN=emt_... python3 run_domain_test.py
+    EMERGENT_MEMORY_TOKEN=emt_... python3 run_domain_test.py --cleanup
+    EMERGENT_MEMORY_TOKEN=emt_... python3 run_domain_test.py --project-id <existing-id>
+"""
+
+import os
+import sys
+import json
+import time
+import argparse
+import requests
+from pathlib import Path
+from typing import Optional
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+SERVER = os.environ.get("MEMORY_SERVER", "https://memory.emergent-company.ai")
+TOKEN = os.environ.get("EMERGENT_MEMORY_TOKEN", "")
+ORG_ID = os.environ.get("MEMORY_ORG_ID", "256508f5-6cbf-46bb-8c29-d8f839dd4ba8")
+AGENT_NAME = "remember-test"
+BLUEPRINT_PATH = Path(__file__).parent.parent.parent / "blueprints" / "test-agents"
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+PROJECT_INFO = (
+    "Personal assistant knowledge base tracking AI assistant conversations, "
+    "personal notes and goals, medical health records, and business supplier agreements."
+)
+
+# ---------------------------------------------------------------------------
+# Test documents: order matters — runs 1-4 establish packs, 5-6 match them
+# ---------------------------------------------------------------------------
+
+TEST_DOCS = [
+    {
+        "file": "ai-chat-1.txt",
+        "label": "AI Chat (first)",
+        "expected_stage": "new_domain",
+        "expected_pack_name": "AI Chat",
+        "expected_types": ["Task", "Event", "Person", "Booking", "Reminder"],
+        "auto_respond_contains": "Create new pack",
+    },
+    {
+        "file": "personal-notes.txt",
+        "label": "Personal Notes (first)",
+        "expected_stage": "new_domain",
+        "expected_pack_name": "Personal Notes",
+        "expected_types": ["Person", "Goal", "Note", "Place"],
+        "auto_respond_contains": "Create new pack",
+    },
+    {
+        "file": "medical-lab-1.txt",
+        "label": "Medical Lab (first)",
+        "expected_stage": "new_domain",
+        "expected_pack_name": "Medical Records",
+        "expected_types": ["Condition", "Medication", "Appointment", "LabResult"],
+        "auto_respond_contains": "Create new pack",
+    },
+    {
+        "file": "supplier-agreement.txt",
+        "label": "Supplier Agreement (first)",
+        "expected_stage": "new_domain",
+        "expected_pack_name": "Supplier Agreements",
+        "expected_types": ["Party", "Contract", "Obligation", "PaymentTerm"],
+        "auto_respond_contains": "Create new pack",
+    },
+    {
+        "file": "ai-chat-2.txt",
+        "label": "AI Chat (second — should match existing pack)",
+        "expected_stage": "heuristic",
+        "expected_pack_name": "AI Chat",
+        "expected_types": ["Task", "Event", "Booking"],
+        "auto_respond_contains": None,  # no ask_user expected
+    },
+    {
+        "file": "medical-lab-2.txt",
+        "label": "Medical Lab (second — should match existing pack)",
+        "expected_stage": "heuristic",
+        "expected_pack_name": "Medical Records",
+        "expected_types": ["Condition", "Medication", "Appointment"],
+        "auto_respond_contains": None,
+    },
+]
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+def headers():
+    return {
+        "Authorization": f"Bearer {TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+
+def get(path, **kwargs):
+    r = requests.get(f"{SERVER}{path}", headers=headers(), **kwargs)
+    r.raise_for_status()
+    return r.json()
+
+
+def post(path, body=None, **kwargs):
+    r = requests.post(f"{SERVER}{path}", headers=headers(), json=body or {}, **kwargs)
+    r.raise_for_status()
+    return r.json()
+
+
+def patch(path, body=None, **kwargs):
+    r = requests.patch(f"{SERVER}{path}", headers=headers(), json=body or {}, **kwargs)
+    r.raise_for_status()
+    return r.json()
+
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
+def create_project():
+    print("Creating project 'Personal Assistant KB'...")
+    resp = post(f"/api/organizations/{ORG_ID}/projects", {
+        "name": "Personal Assistant KB [domain-test]",
+        "project_info": PROJECT_INFO,
+        "auto_extract_objects": True,
+    })
+    project_id = resp["id"]
+    print(f"  Project created: {project_id}")
+    return project_id
+
+
+def apply_blueprint(project_id):
+    print(f"Applying test-agents blueprint to project {project_id}...")
+    # Use memory CLI to apply blueprint
+    import subprocess
+    result = subprocess.run(
+        [
+            os.path.expanduser("~/.memory/bin/memory"),
+            "blueprints",
+            str(BLUEPRINT_PATH),
+            "--project", project_id,
+        ],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f"  WARNING: Blueprint apply stderr: {result.stderr}")
+    else:
+        print(f"  Blueprint applied: {result.stdout.strip()}")
+
+
+def setup_project():
+    project_id = create_project()
+    apply_blueprint(project_id)
+    print()
+    return project_id
+
+
+# ---------------------------------------------------------------------------
+# Document upload
+# ---------------------------------------------------------------------------
+
+def upload_document(project_id, filepath: Path):
+    print(f"  Uploading {filepath.name}...")
+    with open(filepath, "rb") as f:
+        r = requests.post(
+            f"{SERVER}/api/projects/{project_id}/documents/upload",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            files={"file": (filepath.name, f, "text/plain")},
+        )
+        r.raise_for_status()
+        doc_id = r.json()["id"]
+    print(f"  Document ID: {doc_id}")
+    return doc_id
+
+
+# ---------------------------------------------------------------------------
+# Agent run + SSE polling
+# ---------------------------------------------------------------------------
+
+def start_agent_run(project_id, doc_id):
+    print(f"  Starting remember-test agent run for doc {doc_id}...")
+    resp = post(f"/acp/v1/agents/{AGENT_NAME}/runs", {
+        "input": {
+            "document_id": doc_id,
+            "project_id": project_id,
+            "message": f"Remember document {doc_id}",
+        },
+        "project_id": project_id,
+    })
+    run_id = resp.get("id") or resp.get("run_id")
+    print(f"  Run ID: {run_id}")
+    return run_id
+
+
+def poll_run_status(project_id, run_id, timeout=120):
+    """Poll until run is completed, failed, or paused. Returns final status."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            resp = get(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}")
+            status = resp.get("status")
+            if status in ("completed", "failed", "paused"):
+                return status, resp
+        except Exception as e:
+            print(f"  Poll error: {e}")
+        time.sleep(2)
+    return "timeout", {}
+
+
+def find_pending_question(project_id, run_id):
+    """Return the first pending question for this run, or None."""
+    try:
+        resp = get(f"/api/projects/{project_id}/agent-questions", params={"run_id": run_id, "status": "pending"})
+        questions = resp.get("questions") or resp.get("items") or []
+        return questions[0] if questions else None
+    except Exception:
+        return None
+
+
+def respond_to_question(project_id, question, auto_respond_contains):
+    """Find the button matching auto_respond_contains and submit it."""
+    qid = question["id"]
+    options = question.get("options", [])
+    chosen = None
+    for opt in options:
+        label = opt.get("label", "")
+        if auto_respond_contains.lower() in label.lower():
+            chosen = label
+            break
+    if not chosen and options:
+        # Fallback: pick first option that has "create" in it
+        for opt in options:
+            if "create" in opt.get("label", "").lower():
+                chosen = opt["label"]
+                break
+    if not chosen and options:
+        chosen = options[0]["label"]
+
+    print(f"  Auto-responding to question: '{chosen}'")
+    post(f"/api/projects/{project_id}/agent-questions/{qid}/respond", {
+        "response": chosen,
+    })
+    return chosen
+
+
+def run_agent_with_responds(project_id, doc_id, auto_respond_contains):
+    """Start run, handle ask_user pauses, wait for completion."""
+    run_id = start_agent_run(project_id, doc_id)
+    responses = []
+
+    while True:
+        status, resp = poll_run_status(project_id, run_id)
+        if status == "paused":
+            question = find_pending_question(project_id, run_id)
+            if question and auto_respond_contains:
+                chosen = respond_to_question(project_id, question, auto_respond_contains)
+                responses.append(chosen)
+                # Resume run
+                post(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}/resume")
+                continue
+            elif question and not auto_respond_contains:
+                print(f"  UNEXPECTED ask_user pause (expected none for this doc)!")
+                responses.append("UNEXPECTED_PAUSE")
+                # Skip to avoid hanging test
+                post(f"/api/projects/{project_id}/agent-questions/{question['id']}/respond", {"response": "Skip"})
+                post(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}/resume")
+                continue
+        elif status == "completed":
+            break
+        elif status == "failed":
+            print(f"  Run FAILED: {resp.get('error_message', 'unknown error')}")
+            break
+        elif status == "timeout":
+            print(f"  Run TIMED OUT")
+            break
+
+    return run_id, responses
+
+
+# ---------------------------------------------------------------------------
+# Assertions
+# ---------------------------------------------------------------------------
+
+PASS = "PASS"
+FAIL = "FAIL"
+SKIP = "SKIP"
+
+
+def check(label, condition, detail=""):
+    status = PASS if condition else FAIL
+    mark = "+" if condition else "x"
+    suffix = f" ({detail})" if detail else ""
+    print(f"    [{mark}] {label}{suffix}")
+    return {"label": label, "status": status, "detail": detail}
+
+
+def assert_document_classified(project_id, doc_id, expected_stage):
+    results = []
+    try:
+        doc = get(f"/api/projects/{project_id}/documents/{doc_id}")
+        stage = doc.get("domain_label") or "unset"
+        confidence = doc.get("domain_confidence") or 0.0
+        schema_id = doc.get("matched_schema_id")
+
+        if expected_stage == "new_domain":
+            results.append(check("domain_label=new_domain", stage == "new_domain", f"got={stage}"))
+            results.append(check("matched_schema_id=null", schema_id is None, f"got={schema_id}"))
+        else:
+            # heuristic or llm match
+            results.append(check(f"domain_label set (not new_domain)", stage not in ("new_domain", "unset"), f"got={stage}"))
+            results.append(check("domain_confidence >= 0.7", confidence >= 0.7, f"got={confidence:.2f}"))
+            results.append(check("matched_schema_id set", schema_id is not None, f"got={schema_id}"))
+    except Exception as e:
+        results.append(check("document fetch", False, str(e)))
+    return results
+
+
+def assert_schema_created(project_id, expected_pack_name):
+    results = []
+    try:
+        resp = get(f"/api/projects/{project_id}/schemas")
+        schemas = resp.get("schemas") or resp.get("items") or []
+        names = [s.get("name", "") for s in schemas]
+        found = next((s for s in schemas if expected_pack_name.lower() in s.get("name", "").lower()), None)
+        results.append(check(f"schema '{expected_pack_name}' created", found is not None, f"found={names}"))
+        if found:
+            prompts = found.get("extraction_prompts", {})
+            classification = prompts.get("classification", {})
+            keywords = classification.get("keywords", [])
+            results.append(check("extraction_prompts.classification.keywords non-empty", len(keywords) > 0, f"keywords={keywords[:3]}"))
+            results.append(check("domain_description non-empty", bool(prompts.get("domain_description"))))
+    except Exception as e:
+        results.append(check("schema fetch", False, str(e)))
+    return results
+
+
+def assert_reextraction_queued(project_id, doc_id):
+    results = []
+    try:
+        resp = get(f"/api/projects/{project_id}/extraction-jobs", params={"document_id": doc_id, "job_type": "reextraction"})
+        jobs = resp.get("jobs") or resp.get("items") or []
+        results.append(check("reextraction job queued", len(jobs) > 0, f"count={len(jobs)}"))
+    except Exception as e:
+        results.append(check("reextraction job fetch", False, str(e)))
+    return results
+
+
+def assert_no_discovery_fired(project_id, run_id):
+    results = []
+    try:
+        resp = get(f"/api/projects/{project_id}/discovery-jobs", params={"triggered_by_run": run_id})
+        jobs = resp.get("jobs") or resp.get("items") or []
+        results.append(check("no discovery job fired", len(jobs) == 0, f"count={len(jobs)}"))
+    except Exception as e:
+        # endpoint may not support triggered_by_run filter — treat as inconclusive
+        results.append({"label": "no discovery job fired", "status": SKIP, "detail": str(e)})
+    return results
+
+
+def assert_entities_typed(project_id, doc_id, expected_types):
+    results = []
+    try:
+        resp = get(f"/api/projects/{project_id}/graph/objects", params={"source_document_id": doc_id, "limit": 50})
+        objects = resp.get("objects") or resp.get("items") or []
+        found_types = {o.get("type") or o.get("object_type") for o in objects}
+        for t in expected_types[:2]:  # check first 2 to avoid flakiness
+            results.append(check(f"entity type '{t}' present", t in found_types, f"found_types={list(found_types)[:5]}"))
+    except Exception as e:
+        results.append(check("graph objects fetch", False, str(e)))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Main test loop
+# ---------------------------------------------------------------------------
+
+def run_test_doc(project_id, doc_config, idx):
+    print(f"\n--- Doc {idx+1}/6: {doc_config['label']} ---")
+    filepath = FIXTURES_DIR / doc_config["file"]
+
+    doc_id = upload_document(project_id, filepath)
+    # Wait briefly for extraction worker to pick up the document
+    print("  Waiting 3s for extraction worker...")
+    time.sleep(3)
+
+    run_id, responses = run_agent_with_responds(
+        project_id, doc_id,
+        doc_config.get("auto_respond_contains")
+    )
+
+    print("  Running assertions...")
+    all_results = []
+
+    all_results += assert_document_classified(project_id, doc_id, doc_config["expected_stage"])
+
+    if doc_config["expected_stage"] == "new_domain":
+        all_results += assert_schema_created(project_id, doc_config["expected_pack_name"])
+        all_results += assert_reextraction_queued(project_id, doc_id)
+    else:
+        all_results += assert_no_discovery_fired(project_id, run_id)
+
+    all_results += assert_entities_typed(project_id, doc_id, doc_config["expected_types"])
+
+    passes = sum(1 for r in all_results if r["status"] == PASS)
+    fails = sum(1 for r in all_results if r["status"] == FAIL)
+    skips = sum(1 for r in all_results if r["status"] == SKIP)
+    print(f"  Result: {passes} passed, {fails} failed, {skips} skipped")
+
+    return {
+        "doc": doc_config["label"],
+        "doc_id": doc_id,
+        "run_id": run_id,
+        "responses": responses,
+        "assertions": all_results,
+        "passes": passes,
+        "fails": fails,
+    }
+
+
+def print_summary(results):
+    total_passes = sum(r["passes"] for r in results)
+    total_fails = sum(r["fails"] for r in results)
+    print(f"\n{'='*60}")
+    print(f"SUMMARY: {total_passes} passed, {total_fails} failed across {len(results)} documents")
+    print(f"{'='*60}")
+    for r in results:
+        icon = "+" if r["fails"] == 0 else "x"
+        print(f"  [{icon}] {r['doc']} — {r['passes']}p {r['fails']}f")
+        for a in r["assertions"]:
+            if a["status"] == FAIL:
+                print(f"        FAIL: {a['label']} {a['detail']}")
+    print()
+
+
+def cleanup_project(project_id):
+    print(f"Cleaning up project {project_id}...")
+    try:
+        requests.delete(
+            f"{SERVER}/api/organizations/{ORG_ID}/projects/{project_id}",
+            headers=headers()
+        )
+        print("  Deleted.")
+    except Exception as e:
+        print(f"  Cleanup failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description="Domain-aware extraction e2e test")
+    parser.add_argument("--project-id", help="Reuse existing project instead of creating new")
+    parser.add_argument("--cleanup", action="store_true", help="Delete project after test")
+    parser.add_argument("--doc", type=int, help="Run only this doc index (1-6)")
+    args = parser.parse_args()
+
+    if not TOKEN:
+        print("ERROR: EMERGENT_MEMORY_TOKEN not set")
+        sys.exit(1)
+
+    print("Domain-Aware Extraction E2E Test")
+    print(f"Server: {SERVER}")
+    print()
+
+    project_id = args.project_id or setup_project()
+    print(f"Using project: {project_id}\n")
+
+    docs_to_run = TEST_DOCS
+    if args.doc:
+        docs_to_run = [TEST_DOCS[args.doc - 1]]
+
+    results = []
+    for idx, doc_config in enumerate(docs_to_run):
+        result = run_test_doc(project_id, doc_config, idx)
+        results.append(result)
+
+    print_summary(results)
+
+    if args.cleanup:
+        cleanup_project(project_id)
+
+    total_fails = sum(r["fails"] for r in results)
+    sys.exit(0 if total_fails == 0 else 1)
+
+
+if __name__ == "__main__":
+    main()

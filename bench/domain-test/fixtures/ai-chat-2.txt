@@ -1,0 +1,10 @@
+[AI Assistant Session - 2026-05-12 09:15 UTC]
+
+User: Can you reschedule my 2pm meeting with Sarah to Thursday at 3pm?
+Assistant: Done. Meeting with Sarah Chen moved from Tuesday 2pm to Thursday May 14th at 3pm. Calendar invite updated and Sarah notified.
+User: Also I need a hotel in Paris for June 20-23, budget 150 EUR/night, near the Marais district.
+Assistant: Found Hotel du Petit Moulin, 29 Rue de Poitou, 75003 Paris. 148 EUR/night, 4-star, 0.3km from Marais. Available June 20-23. Book it?
+User: Yes.
+Assistant: Booked. Confirmation ref HPM-2026-3821. Check-in June 20th from 3pm. Confirmation email sent to your registered address.
+User: Set a reminder to book Eurostar tickets.
+Assistant: Reminder set for May 15th 09:00 - Book Eurostar tickets for Paris trip June 20th.

@@ -9,29 +9,56 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/adk/model"
+	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
-	"github.com/emergent-company/emergent.memory/pkg/llm"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // Service handles business logic for discovery jobs
 type Service struct {
-	repo *Repository
-	cfg  *config.Config
-	llm  llm.Provider
-	log  *slog.Logger
+	repo         *Repository
+	cfg          *config.Config
+	modelFactory *adk.ModelFactory
+	log          *slog.Logger
 }
 
-// NewService creates a new discovery jobs service
-func NewService(repo *Repository, cfg *config.Config, llmProvider llm.Provider, log *slog.Logger) *Service {
-	return &Service{
-		repo: repo,
-		cfg:  cfg,
-		llm:  llmProvider,
-		log:  log.With(logger.Scope("discoveryjobs.svc")),
+// completeWithLLM sends a text prompt and returns the text response.
+// Uses the configured modelFactory to create a model per call.
+func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, error) {
+	if s.modelFactory == nil {
+		return "", fmt.Errorf("LLM provider not configured")
 	}
+	llmModel, err := s.modelFactory.CreateModel(ctx)
+	if err != nil {
+		return "", fmt.Errorf("create model: %w", err)
+	}
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{
+			genai.NewContentFromText(prompt, "user"),
+		},
+		Config: &genai.GenerateContentConfig{
+			Temperature:     genai.Ptr[float32](0.0),
+			MaxOutputTokens: 65535,
+		},
+	}
+	var sb strings.Builder
+	for resp, err := range llmModel.GenerateContent(ctx, req, false) {
+		if err != nil {
+			return "", fmt.Errorf("LLM call failed: %w", err)
+		}
+		if resp != nil && resp.Content != nil {
+			for _, part := range resp.Content.Parts {
+				if part.Text != "" {
+					sb.WriteString(part.Text)
+				}
+			}
+		}
+	}
+	return sb.String(), nil
 }
 
 // StartDiscovery starts a new discovery job
@@ -411,6 +438,17 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		return
 	}
 
+	// Phase 7: Generate SchemaExtractionPrompts and write back to the schema.
+	if prompts, promptErr := s.generateExtractionPrompts(ctx, refinedTypes, relationships, job.KBPurpose); promptErr != nil {
+		s.log.Warn("failed to generate extraction prompts, continuing", slog.String("error", promptErr.Error()))
+	} else if prompts != nil {
+		if raw, merr := json.Marshal(prompts); merr == nil {
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(ctx, schemaID, raw); updateErr != nil {
+				s.log.Warn("failed to save extraction prompts", slog.String("error", updateErr.Error()))
+			}
+		}
+	}
+
 	// Step 6: Complete
 	if err := s.repo.MarkCompleted(ctx, jobID, &schemaID, typesArray, relsArray); err != nil {
 		s.handleJobError(ctx, jobID, err)
@@ -458,11 +496,7 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose)
 
 	// Call LLM
-	if s.llm == nil {
-		return fmt.Errorf("LLM provider not configured")
-	}
-
-	response, err := s.llm.Complete(ctx, prompt)
+	response, err := s.completeWithLLM(ctx, prompt)
 	if err != nil {
 		return fmt.Errorf("LLM call failed: %w", err)
 	}
@@ -797,7 +831,7 @@ func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) Discove
 func (s *Service) discoverRelationships(ctx context.Context, jobID uuid.UUID, types []DiscoveredType, kbPurpose string) ([]DiscoveredRelationship, error) {
 	s.log.Info("discovering relationships", slog.Int("type_count", len(types)))
 
-	if s.llm == nil {
+	if s.modelFactory == nil {
 		return nil, fmt.Errorf("LLM provider not configured")
 	}
 
@@ -840,7 +874,7 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
 
 Focus on the most important relationships.`, kbPurpose, typesList.String())
 
-	response, err := s.llm.Complete(ctx, prompt)
+	response, err := s.completeWithLLM(ctx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("LLM call failed: %w", err)
 	}
@@ -1028,9 +1062,191 @@ func strPtr(s string) *string {
 	return &s
 }
 
+// mcpDiscoveryFinalizeRequest mirrors mcp.DiscoveryFinalizeRequest without importing mcp.
+type mcpDiscoveryFinalizeRequest struct {
+	JobID          string
+	ProjectID      string
+	OrgID          string
+	Mode           string
+	PackName       string
+	ExistingPackID string
+	IncludedTypes  []map[string]any
+	IncludedRels   []map[string]any
+}
+
+// mcpDiscoveryFinalizeResponse mirrors mcp.DiscoveryFinalizeResponse.
+type mcpDiscoveryFinalizeResponse struct {
+	SchemaID string `json:"schema_id"`
+	Message  string `json:"message"`
+}
+
+// FinalizeDiscoveryFromMCP is the mcp.DiscoveryFinalizer interface implementation.
+// It adapts the loosely-typed MCP request into the typed FinalizeDiscovery call.
+func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{}) (interface{}, error) {
+	// req is mcp.DiscoveryFinalizeRequest passed as interface{} — re-marshal to decode.
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("FinalizeDiscoveryFromMCP marshal: %w", err)
+	}
+	var r mcpDiscoveryFinalizeRequest
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, fmt.Errorf("FinalizeDiscoveryFromMCP unmarshal: %w", err)
+	}
+
+	jobID, err := uuid.Parse(r.JobID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid job_id")
+	}
+	projectUUID, err := uuid.Parse(r.ProjectID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+	orgID, err := uuid.Parse(r.OrgID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid org_id")
+	}
+
+	inReq := &FinalizeDiscoveryRequest{
+		Mode:     r.Mode,
+		PackName: r.PackName,
+	}
+	if r.ExistingPackID != "" {
+		ep, err := uuid.Parse(r.ExistingPackID)
+		if err != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid existing_pack_id")
+		}
+		inReq.ExistingPackID = &ep
+	}
+
+	// Convert included types
+	for _, t := range r.IncludedTypes {
+		it := IncludedType{}
+		if v, ok := t["type_name"].(string); ok {
+			it.TypeName = v
+		}
+		if v, ok := t["description"].(string); ok {
+			it.Description = v
+		}
+		if v, ok := t["properties"].(map[string]any); ok {
+			it.Properties = v
+		}
+		if v, ok := t["frequency"].(float64); ok {
+			it.Frequency = int(v)
+		}
+		inReq.IncludedTypes = append(inReq.IncludedTypes, it)
+	}
+
+	// Convert included relationships
+	for _, rel := range r.IncludedRels {
+		ir := IncludedRelationship{}
+		if v, ok := rel["source_type"].(string); ok {
+			ir.SourceType = v
+		}
+		if v, ok := rel["target_type"].(string); ok {
+			ir.TargetType = v
+		}
+		if v, ok := rel["relation_type"].(string); ok {
+			ir.RelationType = v
+		}
+		if v, ok := rel["description"].(string); ok {
+			ir.Description = v
+		}
+		if v, ok := rel["cardinality"].(string); ok {
+			ir.Cardinality = v
+		}
+		inReq.IncludedRelationships = append(inReq.IncludedRelationships, ir)
+	}
+
+	resp, err := s.FinalizeDiscovery(ctx, jobID, projectUUID, orgID, inReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return mcpDiscoveryFinalizeResponse{
+		SchemaID: resp.SchemaID.String(),
+		Message:  resp.Message,
+	}, nil
+}
+
 func toJSONArray(items []any) JSONArray {
 	if items == nil {
 		return JSONArray{}
 	}
 	return JSONArray(items)
+}
+
+// extractionPrompts is a local mirror of extraction.SchemaExtractionPrompts
+// used to avoid an import cycle between discoveryjobs and extraction packages.
+type extractionPrompts struct {
+	DomainContext     string            `json:"domainContext,omitempty"`
+	TypeHints         map[string]string `json:"typeHints,omitempty"`
+	RelationshipHints map[string]string `json:"relationshipHints,omitempty"`
+	NegativeExamples  []string          `json:"negativeExamples,omitempty"`
+}
+
+// generateExtractionPrompts calls the LLM to produce per-schema extraction hints
+// based on the discovered types and relationships from a discovery job.
+func (s *Service) generateExtractionPrompts(
+	ctx context.Context,
+	types []DiscoveredType,
+	relationships []DiscoveredRelationship,
+	kbPurpose string,
+) (*extractionPrompts, error) {
+	if s.modelFactory == nil {
+		return nil, nil
+	}
+
+	// Build a compact type summary for the prompt.
+	var sb strings.Builder
+	sb.WriteString("Knowledge base purpose: ")
+	sb.WriteString(kbPurpose)
+	sb.WriteString("\n\nDiscovered entity types:\n")
+	for _, t := range types {
+		sb.WriteString(fmt.Sprintf("- %s: %s\n", t.TypeName, t.Description))
+	}
+	if len(relationships) > 0 {
+		sb.WriteString("\nDiscovered relationships:\n")
+		for _, r := range relationships {
+			sb.WriteString(fmt.Sprintf("- %s -[%s]-> %s\n", r.SourceType, r.RelationType, r.TargetType))
+		}
+	}
+
+	prompt := fmt.Sprintf(`You are an expert knowledge extraction system. Given the schema below, generate concise extraction guidance.
+
+%s
+
+Return ONLY valid JSON with this exact structure:
+{
+  "domainContext": "<1-2 sentence domain description to guide entity extraction>",
+  "typeHints": {
+    "<TypeName>": "<short extraction hint for this type>"
+  },
+  "relationshipHints": {
+    "<RelationType>": "<short hint for extracting this relationship>"
+  },
+  "negativeExamples": [
+    "<example of what NOT to extract>"
+  ]
+}`, sb.String())
+
+	response, err := s.completeWithLLM(ctx, prompt)
+	if err != nil {
+		return nil, fmt.Errorf("generateExtractionPrompts LLM call: %w", err)
+	}
+
+	// Strip markdown fences if present.
+	response = strings.TrimSpace(response)
+	if strings.HasPrefix(response, "```") {
+		if idx := strings.Index(response, "\n"); idx != -1 {
+			response = response[idx+1:]
+		}
+		response = strings.TrimSuffix(response, "```")
+		response = strings.TrimSpace(response)
+	}
+
+	var prompts extractionPrompts
+	if err := json.Unmarshal([]byte(response), &prompts); err != nil {
+		return nil, fmt.Errorf("generateExtractionPrompts parse response: %w", err)
+	}
+	return &prompts, nil
 }

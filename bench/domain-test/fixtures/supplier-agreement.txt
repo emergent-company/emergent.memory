@@ -1,0 +1,27 @@
+SUPPLIER AGREEMENT
+
+This Supplier Agreement ("Agreement") is entered into as of June 1, 2026, by and between:
+
+Buyer:    Acme Corp, 12 Innovation Way, London EC2A 4NE ("Buyer")
+Supplier: TechSupply Ltd, 45 Commerce Street, Manchester M1 2HX ("Supplier")
+
+1. SERVICES
+Supplier agrees to provide software development services as specified in Schedule A.
+
+2. DELIVERABLES
+  D1: API integration module - due July 15, 2026
+  D2: Testing suite and documentation - due August 1, 2026
+  D3: Deployment and handover - due August 30, 2026
+
+3. PAYMENT TERMS
+Total contract value: GBP 48,000. Payment schedule: NET-30 upon acceptance of each deliverable.
+  D1 accepted: GBP 18,000
+  D2 accepted: GBP 16,000
+  D3 accepted: GBP 14,000
+
+4. TERM AND TERMINATION
+Agreement effective June 1, 2026. Either party may terminate with 30 days written notice.
+
+SIGNATURES
+Acme Corp: _________________ James Hartley, CEO, June 1, 2026
+TechSupply Ltd: _____________ Linda Okafor, Director, June 1, 2026

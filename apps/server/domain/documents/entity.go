@@ -43,6 +43,11 @@ type Document struct {
 	// Data source
 	SourceType *string `bun:"source_type" json:"sourceType,omitempty"`
 
+	// Domain classification (Phase 3)
+	DomainName            *string        `bun:"domain_name" json:"domainName,omitempty"`
+	DomainConfidence      *float32       `bun:"domain_confidence" json:"domainConfidence,omitempty"`
+	ClassificationSignals map[string]any `bun:"classification_signals,type:jsonb" json:"classificationSignals,omitempty"`
+
 	// Metadata
 	Metadata map[string]any `bun:"metadata,type:jsonb" json:"metadata,omitempty"`
 

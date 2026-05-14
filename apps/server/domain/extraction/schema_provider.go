@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
@@ -14,36 +15,83 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// SchemaExtractionPrompts holds domain-specific extraction guidance stored with a schema pack.
+// Written by the discovery agent after schema creation (Phase 7).
+type SchemaExtractionPrompts struct {
+	// DomainContext is injected into the entity extractor system prompt.
+	DomainContext string `json:"domainContext,omitempty"`
+	// TypeHints are per-type extraction hints keyed by type name.
+	TypeHints map[string]string `json:"typeHints,omitempty"`
+	// RelationshipHints are per-relationship-type extraction hints.
+	RelationshipHints map[string]string `json:"relationshipHints,omitempty"`
+	// NegativeExamples describes what NOT to extract (reduces false positives).
+	NegativeExamples []string `json:"negativeExamples,omitempty"`
+}
+
+// ClassificationSignals are written back to a document after domain classification.
+type ClassificationSignals struct {
+	// MatchedSchemaID is the schema pack that matched (if any).
+	MatchedSchemaID *string `json:"matchedSchemaId,omitempty"`
+	// MatchedSchemaName is the name of the matched schema pack.
+	MatchedSchemaName *string `json:"matchedSchemaName,omitempty"`
+	// HeuristicKeywords are keywords that contributed to classification.
+	HeuristicKeywords []string `json:"heuristicKeywords,omitempty"`
+	// LLMReason is a short explanation from the LLM classifier.
+	LLMReason string `json:"llmReason,omitempty"`
+	// ClassifiedAt is the time the classification was performed.
+	ClassifiedAt string `json:"classifiedAt,omitempty"`
+}
+
+// Scan implements sql.Scanner for SchemaExtractionPrompts.
+func (p *SchemaExtractionPrompts) Scan(value any) error {
+	if value == nil {
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		return json.Unmarshal(v, p)
+	case string:
+		return json.Unmarshal([]byte(v), p)
+	default:
+		return fmt.Errorf("unsupported type for SchemaExtractionPrompts: %T", value)
+	}
+}
+
+// Value implements driver.Valuer for SchemaExtractionPrompts.
+func (p SchemaExtractionPrompts) Value() (any, error) {
+	return json.Marshal(p)
+}
+
 // GraphMemorySchema represents a memory schema from kb.graph_schemas.
 // Memory schemas are GLOBAL resources shared across all organizations.
 type GraphMemorySchema struct {
 	bun.BaseModel `bun:"kb.graph_schemas,alias:gtp"`
 
-	ID                      string          `bun:"id,pk,type:uuid"`
-	Name                    string          `bun:"name,notnull"`
-	Version                 string          `bun:"version,notnull"`
-	ParentVersionID         *string         `bun:"parent_version_id,type:uuid"`
-	Draft                   bool            `bun:"draft,default:false"`
-	Description             *string         `bun:"description"`
-	Author                  *string         `bun:"author"`
-	License                 *string         `bun:"license"`
-	RepositoryURL           *string         `bun:"repository_url"`
-	DocumentationURL        *string         `bun:"documentation_url"`
-	Source                  *string         `bun:"source"` // manual, discovered, imported, system
-	DiscoveryJobID          *string         `bun:"discovery_job_id,type:uuid"`
-	PendingReview           bool            `bun:"pending_review,default:false"`
-	ObjectTypeSchemas       json.RawMessage `bun:"object_type_schemas,type:jsonb,notnull"`
-	RelationshipTypeSchemas json.RawMessage `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
-	UIConfigs               JSON            `bun:"ui_configs,type:jsonb,default:'{}'"`
-	ExtractionPrompts       JSON            `bun:"extraction_prompts,type:jsonb,default:'{}'"`
-	SQLViews                JSONArray       `bun:"sql_views,type:jsonb,default:'[]'"`
-	Signature               *string         `bun:"signature"`
-	Checksum                *string         `bun:"checksum"`
-	PublishedAt             time.Time       `bun:"published_at,default:now()"`
-	DeprecatedAt            *time.Time      `bun:"deprecated_at"`
-	SupersededBy            *string         `bun:"superseded_by"`
-	CreatedAt               time.Time       `bun:"created_at,default:now()"`
-	UpdatedAt               time.Time       `bun:"updated_at,default:now()"`
+	ID                      string                   `bun:"id,pk,type:uuid"`
+	Name                    string                   `bun:"name,notnull"`
+	Version                 string                   `bun:"version,notnull"`
+	ParentVersionID         *string                  `bun:"parent_version_id,type:uuid"`
+	Draft                   bool                     `bun:"draft,default:false"`
+	Description             *string                  `bun:"description"`
+	Author                  *string                  `bun:"author"`
+	License                 *string                  `bun:"license"`
+	RepositoryURL           *string                  `bun:"repository_url"`
+	DocumentationURL        *string                  `bun:"documentation_url"`
+	Source                  *string                  `bun:"source"` // manual, discovered, imported, system
+	DiscoveryJobID          *string                  `bun:"discovery_job_id,type:uuid"`
+	PendingReview           bool                     `bun:"pending_review,default:false"`
+	ObjectTypeSchemas       json.RawMessage          `bun:"object_type_schemas,type:jsonb,notnull"`
+	RelationshipTypeSchemas json.RawMessage          `bun:"relationship_type_schemas,type:jsonb,default:'{}'"`
+	UIConfigs               JSON                     `bun:"ui_configs,type:jsonb,default:'{}'"`
+	ExtractionPrompts       *SchemaExtractionPrompts `bun:"extraction_prompts,type:jsonb,default:'{}'"`
+	SQLViews                JSONArray                `bun:"sql_views,type:jsonb,default:'[]'"`
+	Signature               *string                  `bun:"signature"`
+	Checksum                *string                  `bun:"checksum"`
+	PublishedAt             time.Time                `bun:"published_at,default:now()"`
+	DeprecatedAt            *time.Time               `bun:"deprecated_at"`
+	SupersededBy            *string                  `bun:"superseded_by"`
+	CreatedAt               time.Time                `bun:"created_at,default:now()"`
+	UpdatedAt               time.Time                `bun:"updated_at,default:now()"`
 }
 
 // ProjectMemorySchema represents a memory schema installation for a project.
@@ -217,6 +265,101 @@ func (p *MemorySchemaProvider) GetProjectSchemas(
 		ObjectSchemas:       objectSchemas,
 		RelationshipSchemas: relationshipSchemas,
 	}, nil
+}
+
+// GetInstalledSchemaSummaries returns lightweight summaries of installed schema packs
+// for use by the DocumentClassifier.
+func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
+	ctx context.Context,
+	projectID string,
+) ([]InstalledSchemaSummary, error) {
+	var assignments []ProjectMemorySchema
+	err := p.db.NewSelect().
+		Model(&assignments).
+		Relation("MemorySchema").
+		Where("ptp.project_id = ?", projectID).
+		Where("ptp.active = true").
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query schema summaries: %w", err)
+	}
+
+	summaries := make([]InstalledSchemaSummary, 0, len(assignments))
+	for _, a := range assignments {
+		if a.MemorySchema == nil {
+			continue
+		}
+		ms := a.MemorySchema
+		desc := ""
+		if ms.Description != nil {
+			desc = *ms.Description
+		}
+		// Build keyword list from schema name and installed object type names.
+		keywords := buildKeywordsFromSchema(ms)
+		var ep *SchemaExtractionPrompts
+		if ms.ExtractionPrompts != nil {
+			ep = ms.ExtractionPrompts
+		}
+		summaries = append(summaries, InstalledSchemaSummary{
+			ID:                ms.ID,
+			Name:              ms.Name,
+			Description:       desc,
+			Keywords:          keywords,
+			ExtractionPrompts: ep,
+		})
+	}
+	return summaries, nil
+}
+
+// buildKeywordsFromSchema extracts keyword signals from a schema pack's name and type list.
+func buildKeywordsFromSchema(ms *GraphMemorySchema) []string {
+	seen := map[string]bool{}
+	var kws []string
+	add := func(s string) {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s != "" && !seen[s] {
+			seen[s] = true
+			kws = append(kws, s)
+		}
+	}
+	// Schema name words.
+	for _, word := range strings.Fields(ms.Name) {
+		add(word)
+	}
+	// Object type names.
+	for typeName := range parseObjectTypeSchemas(ms.ObjectTypeSchemas) {
+		add(typeName)
+		// Also add individual words for compound types like "MedicalRecord".
+		for _, w := range splitCamelCase(typeName) {
+			add(w)
+		}
+	}
+	return kws
+}
+
+// splitCamelCase splits a CamelCase or snake_case string into lowercase words.
+func splitCamelCase(s string) []string {
+	// Replace underscores/hyphens with space, then split on uppercase boundaries.
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	var result []string
+	var cur strings.Builder
+	for _, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			if cur.Len() > 0 {
+				result = append(result, strings.ToLower(cur.String()))
+				cur.Reset()
+			}
+		}
+		cur.WriteRune(r)
+	}
+	if cur.Len() > 0 {
+		result = append(result, strings.ToLower(cur.String()))
+	}
+	return result
 }
 
 // parseObjectTypeSchemas converts object_type_schemas JSONB to a map of ObjectSchema.

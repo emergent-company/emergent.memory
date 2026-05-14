@@ -450,3 +450,25 @@ Example:
 }
 
 Find ALL relationships between the entities now. Ensure no entity is left without at least one connection.`
+
+// BuildDomainSection builds an optional domain-guidance section for injection
+// into entity/relationship extractor system prompts.
+// Returns empty string when both args are empty (no-op for existing callers).
+func BuildDomainSection(projectContext, domainGuidance string) string {
+	if projectContext == "" && domainGuidance == "" {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n## Domain Context\n\n")
+	if projectContext != "" {
+		sb.WriteString("**Knowledge base purpose:** ")
+		sb.WriteString(projectContext)
+		sb.WriteString("\n")
+	}
+	if domainGuidance != "" {
+		sb.WriteString("\n**Schema-specific guidance:**\n")
+		sb.WriteString(domainGuidance)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}

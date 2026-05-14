@@ -150,6 +150,7 @@ var Module = fx.Module("extraction",
 		RegisterObjectExtractionWorkerLifecycle,
 		RegisterEmbeddingSweepWorkerLifecycle,
 		registerEmbeddingControlHandlerWithMCP,
+		registerDomainToolsWithMCP,
 	),
 )
 
@@ -157,6 +158,25 @@ var Module = fx.Module("extraction",
 // the MCP service so MCP tools can pause/resume/inspect embedding workers.
 func registerEmbeddingControlHandlerWithMCP(mcpService *mcp.Service, handler *EmbeddingControlHandler) {
 	mcpService.SetEmbeddingControlHandler(handler)
+}
+
+// registerDomainToolsWithMCP injects domain classification, schema index, and reextraction
+// adapters into the MCP service so the domain tools are available to agents.
+func registerDomainToolsWithMCP(
+	mcpService *mcp.Service,
+	schemaProvider *MemorySchemaProvider,
+	objJobsSvc *ObjectExtractionJobsService,
+	docService *documents.Service,
+	modelFactory *adk.ModelFactory,
+	log *slog.Logger,
+) {
+	classifier := NewDomainClassifierMCPAdapter(modelFactory, schemaProvider, docService, log)
+	schemaIndex := NewSchemaIndexMCPAdapter(schemaProvider)
+	reextraction := NewReextractionQueuerMCPAdapter(objJobsSvc)
+
+	mcpService.SetDomainClassifier(classifier)
+	mcpService.SetSchemaIndex(schemaIndex)
+	mcpService.SetReextractionQueuer(reextraction)
 }
 
 // provideAdminHandler creates the extraction jobs admin handler

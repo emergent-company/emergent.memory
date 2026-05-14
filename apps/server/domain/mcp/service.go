@@ -104,6 +104,12 @@ type Service struct {
 	// Stored as a func to avoid a circular import (mcp already imports graph).
 	graphObjectTitlePatcher func(ctx context.Context, projectID, objectID, title string) error
 
+	// Domain classification and schema tools (injected via setters to avoid import cycle)
+	domainClassifier   DomainClassifierHandler
+	schemaIndex        SchemaIndexHandler
+	reextractionQueuer ReextractionQueuer
+	discoverySvc       DiscoveryFinalizer
+
 	// Tempo base URL for trace proxy (empty when tracing disabled)
 	tempoBaseURL string
 
@@ -192,6 +198,26 @@ func (s *Service) SetMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 // SetEmbeddingControlHandler sets the embedding worker controller (injected to break import cycle with extraction).
 func (s *Service) SetEmbeddingControlHandler(h EmbeddingControlHandler) {
 	s.embeddingCtl = h
+}
+
+// SetDomainClassifier injects the document classifier (breaks import cycle with extraction).
+func (s *Service) SetDomainClassifier(h DomainClassifierHandler) {
+	s.domainClassifier = h
+}
+
+// SetSchemaIndex injects the schema index handler (breaks import cycle with extraction).
+func (s *Service) SetSchemaIndex(h SchemaIndexHandler) {
+	s.schemaIndex = h
+}
+
+// SetReextractionQueuer injects the reextraction queue (breaks import cycle with extraction).
+func (s *Service) SetReextractionQueuer(h ReextractionQueuer) {
+	s.reextractionQueuer = h
+}
+
+// SetDiscoveryService injects the discovery jobs service.
+func (s *Service) SetDiscoveryService(svc DiscoveryFinalizer) {
+	s.discoverySvc = svc
 }
 
 // SetRelayProvider wires the MCP relay service so relay-registered tools appear
@@ -1156,6 +1182,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 	tools = append(tools, tokenToolDefinitions()...)
 	tools = append(tools, traceToolDefinitions()...)
 	tools = append(tools, queryToolDefinitions()...)
+	tools = append(tools, domainToolDefinitions()...)
 
 	// Journal tools
 	tools = append(tools, ToolDefinition{
@@ -1603,6 +1630,16 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeGetProjectAPIToken(ctx, projectID, args)
 	case "token-revoke":
 		return s.executeRevokeProjectAPIToken(ctx, projectID, args)
+
+	// Domain classification tools
+	case "classify-document":
+		return s.executeClassifyDocument(ctx, projectID, args)
+	case "list-installed-schemas":
+		return s.executeListInstalledSchemas(ctx, projectID)
+	case "finalize-discovery":
+		return s.executeFinalizeDiscovery(ctx, projectID, args)
+	case "queue-reextraction":
+		return s.executeQueueReextraction(ctx, projectID, args)
 
 	// Trace tools
 	case "trace-list":

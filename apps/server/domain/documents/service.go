@@ -431,3 +431,14 @@ func (s *Service) GetExtractionSummary(ctx context.Context, projectID, documentI
 	}
 	return summary, nil
 }
+
+// UpdateDomainClassification persists domain classification results to a document.
+func (s *Service) UpdateDomainClassification(
+	ctx context.Context,
+	documentID string,
+	domainName *string,
+	confidence *float32,
+	signals map[string]any,
+) error {
+	return s.repo.UpdateDomainClassification(ctx, documentID, domainName, confidence, signals)
+}

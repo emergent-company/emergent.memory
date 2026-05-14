@@ -2,6 +2,7 @@ package discoveryjobs
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -373,6 +374,21 @@ func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uui
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to set job memory schema", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	return nil
+}
+
+// UpdateSchemaExtractionPrompts writes generated extraction prompts to kb.graph_schemas.
+func (r *Repository) UpdateSchemaExtractionPrompts(ctx context.Context, schemaID uuid.UUID, prompts json.RawMessage) error {
+	_, err := r.db.NewUpdate().
+		Table("kb.graph_schemas").
+		Set("extraction_prompts = ?", prompts).
+		Set("updated_at = now()").
+		Where("id = ?", schemaID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to update schema extraction prompts", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
 	return nil
