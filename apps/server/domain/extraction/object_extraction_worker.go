@@ -270,7 +270,14 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 		if sumErr != nil {
 			w.log.Warn("failed to load schema summaries for classification, continuing without domain guidance",
 				logger.Error(sumErr))
-		} else if len(summaries) > 0 {
+		} else if len(summaries) == 0 {
+			// No schemas installed — mark document as new_domain so agents/bench detect HITL needed.
+			if job.DocumentID != nil && w.docService != nil {
+				noMatchResult := ClassificationResult{DomainName: "new_domain"}
+				go w.writeDomainClassification(ctx, *job.DocumentID, noMatchResult)
+				w.log.Info("no schemas installed, marking document as new_domain")
+			}
+		} else {
 			cr, classErr := w.classifier.Classify(ctx, batches[0], summaries)
 			if classErr != nil {
 				w.log.Warn("document classification failed, continuing without domain guidance",
