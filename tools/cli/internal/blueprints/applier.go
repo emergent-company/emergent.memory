@@ -818,9 +818,10 @@ func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequ
 	}
 	if ag.Model != nil {
 		req.Model = &sdkagents.ModelConfig{
-			Name:        ag.Model.Name,
-			Temperature: ag.Model.Temperature,
-			MaxTokens:   ag.Model.MaxTokens,
+			Name:           ag.Model.Name,
+			Temperature:    ag.Model.Temperature,
+			MaxTokens:      ag.Model.MaxTokens,
+			EnableThinking: ag.Model.EnableThinking,
 		}
 	}
 	return req
@@ -853,9 +854,10 @@ func agentFileToUpdateRequest(ag AgentFile) *sdkagents.UpdateAgentDefinitionRequ
 	}
 	if ag.Model != nil {
 		req.Model = &sdkagents.ModelConfig{
-			Name:        ag.Model.Name,
-			Temperature: ag.Model.Temperature,
-			MaxTokens:   ag.Model.MaxTokens,
+			Name:           ag.Model.Name,
+			Temperature:    ag.Model.Temperature,
+			MaxTokens:      ag.Model.MaxTokens,
+			EnableThinking: ag.Model.EnableThinking,
 		}
 	}
 	return req

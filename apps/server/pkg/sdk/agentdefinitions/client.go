@@ -89,9 +89,10 @@ type AgentDefinitionSummary struct {
 
 // ModelConfig contains model configuration for an agent definition.
 type ModelConfig struct {
-	Name        string   `json:"name,omitempty"`
-	Temperature *float32 `json:"temperature,omitempty"`
-	MaxTokens   *int     `json:"maxTokens,omitempty"`
+	Name           string   `json:"name,omitempty"`
+	Temperature    *float32 `json:"temperature,omitempty"`
+	MaxTokens      *int     `json:"maxTokens,omitempty"`
+	EnableThinking *bool    `json:"enableThinking,omitempty"`
 }
 
 // ACPConfig contains Agent Card Protocol metadata.
