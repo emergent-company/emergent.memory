@@ -442,19 +442,35 @@ def check(label, condition, detail=""):
     return {"label": label, "status": status, "detail": detail}
 
 
-def assert_document_classified(project_id, doc_id, expected_stage):
-    results = []
+def snapshot_document_stage(doc_id):
+    """Fetch doc domain label/confidence right now — call before agent run."""
     try:
         doc = get(f"/api/documents/{doc_id}")
-        stage = doc.get("domainName") or doc.get("domain_label") or "unset"
-        confidence = doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0
-        schema_id = doc.get("matched_schema_id")
+        return {
+            "stage": doc.get("domainName") or doc.get("domain_label") or "unset",
+            "confidence": doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0,
+            "schema_id": doc.get("matched_schema_id"),
+        }
+    except Exception:
+        return {"stage": "unset", "confidence": 0.0, "schema_id": None}
 
+
+def assert_document_classified(project_id, doc_id, expected_stage, pre_agent_snapshot=None):
+    results = []
+    try:
         if expected_stage == "new_domain":
+            # Use pre-agent snapshot: at that point no schema exists yet so label = new_domain
+            snap = pre_agent_snapshot or snapshot_document_stage(doc_id)
+            stage = snap["stage"]
+            schema_id = snap["schema_id"]
             results.append(check("domain_label=new_domain", stage == "new_domain", f"got={stage}"))
             results.append(check("matched_schema_id=null", schema_id is None, f"got={schema_id}"))
         else:
-            # heuristic or llm match
+            # heuristic or llm match — check after agent run (reextraction has completed)
+            doc = get(f"/api/documents/{doc_id}")
+            stage = doc.get("domainName") or doc.get("domain_label") or "unset"
+            confidence = doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0
+            schema_id = doc.get("matched_schema_id")
             results.append(check(f"domain_label set (not new_domain)", stage not in ("new_domain", "unset"), f"got={stage}"))
             results.append(check("domain_confidence >= 0.7", confidence >= 0.7, f"got={confidence:.2f}"))
             results.append(check("matched_schema_id set", schema_id is not None, f"got={schema_id}"))
@@ -475,11 +491,11 @@ def assert_schema_created(project_id, expected_pack_name):
         found = next((s for s in schemas if expected_pack_name.lower() in s.get("name", "").lower()), None)
         results.append(check(f"schema '{expected_pack_name}' created", found is not None, f"found={names}"))
         if found:
-            prompts = found.get("extraction_prompts", {})
-            classification = prompts.get("classification", {})
-            keywords = classification.get("keywords", [])
-            results.append(check("extraction_prompts.classification.keywords non-empty", len(keywords) > 0, f"keywords={keywords[:3]}"))
-            results.append(check("domain_description non-empty", bool(prompts.get("domain_description"))))
+            prompts = found.get("extractionPrompts") or found.get("extraction_prompts") or {}
+            domain_context = prompts.get("domainContext") or prompts.get("domain_context") or ""
+            type_hints = prompts.get("typeHints") or prompts.get("type_hints") or {}
+            results.append(check("extraction_prompts.domainContext non-empty", bool(domain_context), f"domainContext={domain_context[:50] if domain_context else ''}"))
+            results.append(check("extraction_prompts.typeHints non-empty", len(type_hints) > 0, f"typeHints={list(type_hints.keys())[:3]}"))
     except Exception as e:
         results.append(check("schema fetch", False, str(e)))
     return results
@@ -525,9 +541,13 @@ def run_test_doc(project_id, doc_config, idx):
     filepath = FIXTURES_DIR / doc_config["file"]
 
     doc_id = upload_document(project_id, filepath)
-    # Wait briefly for extraction worker to pick up the document
-    print("  Waiting 3s for extraction worker...")
-    time.sleep(3)
+    # Wait for extraction worker to pick up and process the document (polls every 5s)
+    print("  Waiting 15s for extraction worker...")
+    time.sleep(15)
+
+    # Snapshot domain label BEFORE agent runs (agent may install schema + trigger reextraction)
+    pre_agent_snapshot = snapshot_document_stage(doc_id)
+    print(f"  Pre-agent domain snapshot: stage={pre_agent_snapshot['stage']}")
 
     run_id, responses = run_agent_with_responds(
         project_id, doc_id,
@@ -537,7 +557,7 @@ def run_test_doc(project_id, doc_config, idx):
     print("  Running assertions...")
     all_results = []
 
-    all_results += assert_document_classified(project_id, doc_id, doc_config["expected_stage"])
+    all_results += assert_document_classified(project_id, doc_id, doc_config["expected_stage"], pre_agent_snapshot)
 
     if doc_config["expected_stage"] == "new_domain":
         all_results += assert_schema_created(project_id, doc_config["expected_pack_name"])

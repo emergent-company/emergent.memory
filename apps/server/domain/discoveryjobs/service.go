@@ -241,6 +241,37 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
 			s.log.Warn("failed to install schema to project", slog.String("schema_id", packID.String()), slog.Any("err", installErr))
 		}
+
+		// Generate extraction prompts (keywords, domain description) and write back to schema.
+		discoveredTypes := make([]DiscoveredType, len(req.IncludedTypes))
+		for i, t := range req.IncludedTypes {
+			discoveredTypes[i] = DiscoveredType{
+				TypeName:           t.TypeName,
+				Description:        t.Description,
+				Properties:         t.Properties,
+				RequiredProperties: t.RequiredProperties,
+				ExampleInstances:   t.ExampleInstances,
+				Frequency:          t.Frequency,
+			}
+		}
+		discoveredRels := make([]DiscoveredRelationship, len(req.IncludedRelationships))
+		for i, r := range req.IncludedRelationships {
+			discoveredRels[i] = DiscoveredRelationship{
+				SourceType:   r.SourceType,
+				TargetType:   r.TargetType,
+				RelationType: r.RelationType,
+				Description:  r.Description,
+				Cardinality:  r.Cardinality,
+			}
+		}
+		if prompts, promptErr := s.generateExtractionPrompts(ctx, discoveredTypes, discoveredRels, req.PackName); promptErr != nil {
+			s.log.Warn("failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(ctx, packID, raw); updateErr != nil {
+				s.log.Warn("failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
 	} else {
 		// Extend existing pack
 		if req.ExistingPackID == nil {

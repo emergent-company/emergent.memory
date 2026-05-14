@@ -25,7 +25,11 @@ systemPrompt: |
      Call finalize-discovery with:
        - document_id: the document UUID from your input
        - mode: "create"
-       - pack_name: suggest a clear domain name (e.g. "Medical Records", "AI Chat")
+       - pack_name: a specific domain name based on the DOCUMENT TYPE/FORMAT, not its topic.
+           Examples: "AI Chat" for AI assistant sessions, "Medical Records" for health docs,
+           "Software Bug Reports" for bug trackers, "Legal Contracts" for contracts.
+           For a chat/conversation transcript with an AI assistant, use "AI Chat".
+           Look at the document structure and format, not just the content subject.
        - included_types: list of entity types you expect for this domain (based on document content)
          Each type: {"type_name": "...", "description": "...", "frequency": 1}
      Wait for it to complete. Note the schema_id returned.
