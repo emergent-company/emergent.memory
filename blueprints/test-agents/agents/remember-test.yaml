@@ -21,15 +21,19 @@ systemPrompt: |
   STEP 3b — If stage is "new_domain" (label is empty or confidence < 0.3):
   This is a new domain. Handle domain discovery:
 
-  a. Run discovery:
+   a. Run discovery:
      Call finalize-discovery with:
        - document_id: the document UUID from your input
        - mode: "create"
-       - pack_name: a specific domain name based on the DOCUMENT TYPE/FORMAT, not its topic.
-           Examples: "AI Chat" for AI assistant sessions, "Medical Records" for health docs,
-           "Software Bug Reports" for bug trackers, "Legal Contracts" for contracts.
-           For a chat/conversation transcript with an AI assistant, use "AI Chat".
-           Look at the document structure and format, not just the content subject.
+       - pack_name: CRITICAL — name by DOCUMENT FORMAT/TYPE, never by content topic.
+           RULES:
+           * If the document is a chat/conversation transcript with an AI assistant → "AI Chat"
+           * If it is a personal diary/journal/notes file → "Personal Notes"
+           * If it is a medical report, lab result, or clinical record → "Medical Records"
+           * If it is a legal contract, agreement, or terms document → "Supplier Agreements" (or appropriate contract type)
+           * If it is a bug report or issue tracker export → "Software Bug Reports"
+           * NEVER use topic-based names like "Task Requests", "Travel Planning", "Email Management"
+           * DO NOT let content subject override format. A chat about tasks is still "AI Chat".
        - included_types: list of entity types you expect for this domain (based on document content)
          Each type: {"type_name": "...", "description": "...", "frequency": 1}
      Wait for it to complete. Note the schema_id returned.

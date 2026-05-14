@@ -445,12 +445,17 @@ def check(label, condition, detail=""):
 def snapshot_document_stage(doc_id):
     """Fetch doc domain label/confidence right now — call before agent run."""
     try:
-        doc = get(f"/api/documents/{doc_id}")
-        return {
-            "stage": doc.get("domainName") or doc.get("domain_label") or "unset",
-            "confidence": doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0,
-            "schema_id": doc.get("matched_schema_id"),
-        }
+         doc = get(f"/api/documents/{doc_id}")
+         signals = doc.get("classificationSignals") or {}
+         schema_id = (
+             doc.get("matched_schema_id")
+             or signals.get("matchedSchemaId")
+         )
+         return {
+             "stage": doc.get("domainName") or doc.get("domain_label") or "unset",
+             "confidence": doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0,
+             "schema_id": schema_id,
+         }
     except Exception:
         return {"stage": "unset", "confidence": 0.0, "schema_id": None}
 
