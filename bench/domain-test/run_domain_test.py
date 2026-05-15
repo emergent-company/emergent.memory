@@ -717,11 +717,23 @@ def reset_project(project_id):
     print("  Reset complete.\n")
 
 
+TEST_PROJECT_NAME_PREFIX = "Personal Assistant KB [domain-test"
+
 def cleanup_project(project_id):
+    """Delete a test project — ONLY if its name matches the test prefix."""
     print(f"Cleaning up project {project_id}...")
     try:
+        proj = requests.get(
+            f"{SERVER}/api/projects/{project_id}",
+            headers=headers(),
+        )
+        proj.raise_for_status()
+        name = proj.json().get("name", "")
+        if TEST_PROJECT_NAME_PREFIX not in name:
+            print(f"  SKIPPED — project name {name!r} does not match test prefix. Not deleting.")
+            return
         requests.delete(f"{SERVER}/api/projects/{project_id}", headers=headers())
-        print("  Deleted.")
+        print(f"  Deleted project: {name!r}")
     except Exception as e:
         print(f"  Cleanup failed: {e}")
 
@@ -733,7 +745,8 @@ def cleanup_project(project_id):
 def main():
     parser = argparse.ArgumentParser(description="Domain-aware extraction e2e test")
     parser.add_argument("--project-id", help="Reuse existing project instead of creating new")
-    parser.add_argument("--cleanup", action="store_true", help="Delete project after test")
+    parser.add_argument("--keep-project", action="store_true", help="Do NOT delete project after test (default: always delete test projects)")
+    parser.add_argument("--cleanup", action="store_true", help=argparse.SUPPRESS)  # legacy alias
     parser.add_argument("--reset", action="store_true", help="Reset project state before running; requires --project-id")
     parser.add_argument("--doc", type=int, help="Run only this doc index (1-6)")
     parser.add_argument("--manual", action="store_true", help="Pause at questions for human response")
@@ -751,10 +764,15 @@ def main():
     print(f"Server: {SERVER}")
     print()
 
+    # --project-id implies --keep-project (don't delete a pre-existing project)
+    is_fresh_project = not args.project_id
+    should_cleanup = is_fresh_project and not args.keep_project and not args.cleanup is False
+
     project_id = args.project_id or setup_project()
     if args.project_id:
         set_project_id(project_id)
-    print(f"Using project: {project_id}\n")
+    print(f"Using project: {project_id}")
+    print(f"Auto-cleanup after test: {'yes' if should_cleanup else 'no (--keep-project or pre-existing)'}\n")
 
     if args.reset:
         if not args.project_id:
@@ -769,14 +787,14 @@ def main():
     schema_count = get_schema_count(project_id)
 
     results = []
-    for idx, doc_config in enumerate(docs_to_run):
-        result, schema_count = run_test_doc(project_id, doc_config, idx, schema_count)
-        results.append(result)
-
-    print_summary(results)
-
-    if args.cleanup:
-        cleanup_project(project_id)
+    try:
+        for idx, doc_config in enumerate(docs_to_run):
+            result, schema_count = run_test_doc(project_id, doc_config, idx, schema_count)
+            results.append(result)
+    finally:
+        print_summary(results)
+        if should_cleanup:
+            cleanup_project(project_id)
 
     total_fails = sum(r["fails"] for r in results)
     sys.exit(0 if total_fails == 0 else 1)
