@@ -239,7 +239,7 @@ def find_pending_question(project_id: str, run_id: str) -> Optional[dict]:
     for _ in range(15):
         try:
             resp = get(f"/api/projects/{project_id}/agent-questions", params={"run_id": run_id, "status": "pending"})
-            questions = resp.get("questions") or resp.get("items") or []
+            questions = resp.get("questions") or resp.get("items") or resp.get("data") or []
             if questions:
                 return questions[0]
         except Exception as e:

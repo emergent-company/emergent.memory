@@ -284,15 +284,20 @@ func buildMessages(contents []*genai.Content) []openaiMessage {
 		}
 
 		// Emit assistant message with tool_calls when present.
-		// Note: we intentionally omit any pre-tool text (reasoning narrative)
+		// Note: we intentionally omit any pre-tool text content (reasoning narrative)
 		// from the history message. Including it inflates context on every
 		// subsequent turn and can cause context-size errors on long sessions.
 		// The tool results themselves convey what was done; the narrative adds
 		// no value for continuation.
+		// However, reasoning_content MUST be echoed back for DeepSeek — omitting it
+		// causes a 400 "reasoning_content must be passed back" error on the next turn.
 		if role == "assistant" && len(funcCalls) > 0 {
 			msg := openaiMessage{
 				Role:      "assistant",
 				ToolCalls: funcCalls,
+			}
+			if len(reasoningParts) > 0 {
+				msg.ReasoningContent = strings.Join(reasoningParts, "\n")
 			}
 			messages = append(messages, msg)
 			continue

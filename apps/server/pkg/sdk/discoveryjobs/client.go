@@ -147,7 +147,7 @@ func (c *Client) StartDiscovery(ctx context.Context, req *StartDiscoveryRequest)
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/discovery-jobs", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/discovery-jobs/projects/"+url.PathEscape(projectID)+"/start", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -177,14 +177,14 @@ func (c *Client) StartDiscovery(ctx context.Context, req *StartDiscoveryRequest)
 }
 
 // ListJobs lists all discovery jobs for the current project.
-// GET /api/discovery-jobs
+// GET /api/discovery-jobs/projects/:projectId
 func (c *Client) ListJobs(ctx context.Context) ([]JobListItem, error) {
 	c.mu.RLock()
 	orgID := c.orgID
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/discovery-jobs", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/discovery-jobs/projects/"+url.PathEscape(projectID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -249,14 +249,14 @@ func (c *Client) GetJobStatus(ctx context.Context, jobID string) (*JobStatusResp
 }
 
 // CancelJob cancels a running discovery job.
-// POST /api/discovery-jobs/:id/cancel
+// DELETE /api/discovery-jobs/:id
 func (c *Client) CancelJob(ctx context.Context, jobID string) (*CancelJobResponse, error) {
 	c.mu.RLock()
 	orgID := c.orgID
 	projectID := c.projectID
 	c.mu.RUnlock()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/discovery-jobs/"+url.PathEscape(jobID)+"/cancel", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.base+"/api/discovery-jobs/"+url.PathEscape(jobID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

@@ -215,7 +215,7 @@ func (c *Client) Create(ctx context.Context, req *CreateEmbeddingPolicyRequest) 
 }
 
 // Update updates an existing embedding policy.
-// PUT /api/graph/embedding-policies/:id?project_id=...
+// PATCH /api/graph/embedding-policies/:id?project_id=...
 func (c *Client) Update(ctx context.Context, policyID string, req *UpdateEmbeddingPolicyRequest) (*EmbeddingPolicy, error) {
 	c.mu.RLock()
 	orgID := c.orgID
@@ -232,7 +232,7 @@ func (c *Client) Update(ctx context.Context, policyID string, req *UpdateEmbeddi
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

@@ -335,10 +335,10 @@ func (c *Client) Delete(ctx context.Context, definitionID string) error {
 
 // --- Workspace Config Methods ---
 
-// GetWorkspaceConfig returns the workspace configuration for an agent definition.
-// GET /api/projects/:projectId/agent-definitions/:id/workspace
+// GetWorkspaceConfig returns the sandbox configuration for an agent definition.
+// GET /api/projects/:projectId/agent-definitions/:id/sandbox-config
 func (c *Client) GetWorkspaceConfig(ctx context.Context, definitionID string) (*APIResponse[map[string]any], error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID)+"/workspace", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID)+"/sandbox-config", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -365,15 +365,15 @@ func (c *Client) GetWorkspaceConfig(ctx context.Context, definitionID string) (*
 	return &result, nil
 }
 
-// SetWorkspaceConfig updates the workspace configuration for an agent definition.
-// PUT /api/projects/:projectId/agent-definitions/:id/workspace
+// SetWorkspaceConfig updates the sandbox configuration for an agent definition.
+// PUT /api/projects/:projectId/agent-definitions/:id/sandbox-config
 func (c *Client) SetWorkspaceConfig(ctx context.Context, definitionID string, config map[string]any) (*APIResponse[map[string]any], error) {
 	body, err := json.Marshal(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PUT", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID)+"/workspace", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "PUT", c.projectPath()+"/agent-definitions/"+url.PathEscape(definitionID)+"/sandbox-config", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
