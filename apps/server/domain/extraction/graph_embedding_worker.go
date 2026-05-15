@@ -24,6 +24,7 @@ import (
 // This allows for dependency injection and testing.
 type EmbeddingService interface {
 	IsEnabled() bool
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
 	EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error)
 }
 

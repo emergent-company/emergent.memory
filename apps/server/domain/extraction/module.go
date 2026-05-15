@@ -289,6 +289,7 @@ func provideObjectExtractionWorker(
 	docService *documents.Service,
 	schemaProvider *MemorySchemaProvider,
 	modelFactory *adk.ModelFactory,
+	embeds *embeddings.Service,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
 	monitor syshealth.Monitor,
@@ -307,7 +308,9 @@ func provideObjectExtractionWorker(
 		cfg.ObjectExtraction.MinConcurrency,
 		cfg.ObjectExtraction.MaxConcurrency,
 	)
-	return NewObjectExtractionWorker(jobs, graphService, branchService, docService, schemaProvider, modelFactory, workerConfig, log, scaler).
+	// Wire embedding service into schema provider (for vector classification).
+	schemaProvider.WithEmbeddingService(embeds)
+	return NewObjectExtractionWorker(jobs, graphService, branchService, docService, schemaProvider, modelFactory, embeds, workerConfig, log, scaler).
 		WithLimitResolver(limitResolver)
 }
 

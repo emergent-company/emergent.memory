@@ -32,7 +32,7 @@ func NewDomainClassifierMCPAdapter(
 	log *slog.Logger,
 ) *DomainClassifierMCPAdapter {
 	return &DomainClassifierMCPAdapter{
-		classifier:     NewDocumentClassifier(modelFactory, log),
+		classifier:     NewDocumentClassifier(modelFactory, nil, log),
 		schemaProvider: schemaProvider,
 		docService:     docService,
 		log:            log,

@@ -143,8 +143,9 @@ func (c MemorySchemaCustomizations) Value() (any, error) {
 // MemorySchemaProvider implements SchemaProvider by loading schemas
 // from memory schemas assigned to a project.
 type MemorySchemaProvider struct {
-	db  bun.IDB
-	log *slog.Logger
+	db               bun.IDB
+	embeddingService EmbeddingService
+	log              *slog.Logger
 }
 
 // NewMemorySchemaProvider creates a new memory schema provider.
@@ -153,6 +154,13 @@ func NewMemorySchemaProvider(db bun.IDB, log *slog.Logger) *MemorySchemaProvider
 		db:  db,
 		log: log.With(logger.Scope("memory-schema-provider")),
 	}
+}
+
+// WithEmbeddingService sets the embedding service used to pre-compute schema
+// pack embeddings during GetInstalledSchemaSummaries.
+func (p *MemorySchemaProvider) WithEmbeddingService(svc EmbeddingService) *MemorySchemaProvider {
+	p.embeddingService = svc
+	return p
 }
 
 // GetProjectSchemas loads and merges schemas from all active memory schemas for a project.
@@ -303,13 +311,29 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 		if ms.ExtractionPrompts != nil {
 			ep = ms.ExtractionPrompts
 		}
-		summaries = append(summaries, InstalledSchemaSummary{
+		summary := InstalledSchemaSummary{
 			ID:                ms.ID,
 			Name:              ms.Name,
 			Description:       desc,
 			Keywords:          keywords,
 			ExtractionPrompts: ep,
-		})
+		}
+		// Compute embedding from domainContext + typeHint names when available.
+		if p.embeddingService != nil && p.embeddingService.IsEnabled() {
+			embText := buildSchemaEmbeddingText(ms)
+			if embText != "" {
+				emb, embErr := p.embeddingService.EmbedQuery(ctx, embText)
+				if embErr != nil {
+					p.log.Warn("schema embedding failed, skipping vector classification for pack",
+						slog.String("pack", ms.Name),
+						logger.Error(embErr),
+					)
+				} else {
+					summary.Embedding = emb
+				}
+			}
+		}
+		summaries = append(summaries, summary)
 	}
 	return summaries, nil
 }
@@ -338,6 +362,33 @@ func buildKeywordsFromSchema(ms *GraphMemorySchema) []string {
 		}
 	}
 	return kws
+}
+
+// buildSchemaEmbeddingText builds a text representation of a schema pack
+// suitable for embedding. Uses domainContext + type hint names for semantic richness.
+func buildSchemaEmbeddingText(ms *GraphMemorySchema) string {
+	var parts []string
+	parts = append(parts, ms.Name)
+	if ms.Description != nil && *ms.Description != "" {
+		parts = append(parts, *ms.Description)
+	}
+	if ms.ExtractionPrompts != nil {
+		if ms.ExtractionPrompts.DomainContext != "" {
+			parts = append(parts, ms.ExtractionPrompts.DomainContext)
+		}
+		typeNames := make([]string, 0, len(ms.ExtractionPrompts.TypeHints))
+		for k := range ms.ExtractionPrompts.TypeHints {
+			typeNames = append(typeNames, k)
+		}
+		if len(typeNames) > 0 {
+			parts = append(parts, "Types: "+strings.Join(typeNames, ", "))
+		}
+	}
+	// Also include object type names from the schema definition.
+	for typeName := range parseObjectTypeSchemas(ms.ObjectTypeSchemas) {
+		parts = append(parts, typeName)
+	}
+	return strings.Join(parts, ". ")
 }
 
 // splitCamelCase splits a CamelCase or snake_case string into lowercase words.

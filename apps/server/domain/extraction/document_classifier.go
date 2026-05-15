@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -37,28 +38,41 @@ type InstalledSchemaSummary struct {
 	Name        string
 	Description string
 	// Keywords are extracted from schema name + type names for heuristic matching.
+	// Retained for fallback logging; primary classification uses Embedding.
 	Keywords []string
+	// Embedding is a pre-computed vector of the schema's domain description +
+	// type hints. Used for vector-similarity classification (stage 1).
+	Embedding []float32
 	// ExtractionPrompts holds domain guidance written back by the discovery agent.
 	ExtractionPrompts *SchemaExtractionPrompts
 }
 
 // DocumentClassifier classifies a document into a domain using a two-stage
-// pipeline: fast keyword heuristic → LLM confirmation (only when needed).
+// pipeline: vector similarity → LLM confirmation (only when ambiguous).
 type DocumentClassifier struct {
-	modelFactory *adk.ModelFactory
-	log          *slog.Logger
+	modelFactory     *adk.ModelFactory
+	embeddingService EmbeddingService
+	log              *slog.Logger
 }
 
 // NewDocumentClassifier creates a new DocumentClassifier.
-func NewDocumentClassifier(modelFactory *adk.ModelFactory, log *slog.Logger) *DocumentClassifier {
+// embeddingService may be nil — when nil or disabled, falls through to LLM only.
+func NewDocumentClassifier(modelFactory *adk.ModelFactory, embeddingService EmbeddingService, log *slog.Logger) *DocumentClassifier {
 	return &DocumentClassifier{
-		modelFactory: modelFactory,
-		log:          log.With(logger.Scope("document-classifier")),
+		modelFactory:     modelFactory,
+		embeddingService: embeddingService,
+		log:              log.With(logger.Scope("document-classifier")),
 	}
 }
 
 // Classify attempts to match the document against the provided schema packs.
 // Returns a zero-value ClassificationResult when no schema packs are installed.
+//
+// Pipeline:
+//  1. Vector similarity  — cosine(doc_embedding, pack_embedding) ≥ 0.75 → match
+//     0.55–0.75 → ambiguous, fall through to LLM
+//     < 0.55    → no match (new domain)
+//  2. LLM classification — used when vector is ambiguous or embeddings unavailable
 func (c *DocumentClassifier) Classify(
 	ctx context.Context,
 	documentText string,
@@ -68,36 +82,144 @@ func (c *DocumentClassifier) Classify(
 		return ClassificationResult{}, nil
 	}
 
-	// Stage 1: heuristic keyword match.
-	heuristicResult, matchedKeywords := c.heuristicMatch(documentText, schemaPacks)
-	if heuristicResult != nil && heuristicResult.Confidence >= 0.7 {
-		c.log.Info("domain classified via heuristic",
-			slog.String("domain", heuristicResult.DomainName),
-			slog.Float64("confidence", float64(heuristicResult.Confidence)),
+	// Stage 1: vector similarity (only when embedding service is available and
+	// at least one pack has a pre-computed embedding).
+	vectorResult, vectorAvailable := c.vectorMatch(ctx, documentText, schemaPacks)
+	if vectorAvailable {
+		if vectorResult != nil && vectorResult.Confidence >= 0.75 {
+			vectorResult.Signals.ClassifiedAt = time.Now().UTC().Format(time.RFC3339)
+			c.log.Info("domain classified via vector similarity",
+				slog.String("domain", vectorResult.DomainName),
+				slog.Float64("confidence", float64(vectorResult.Confidence)),
+			)
+			return *vectorResult, nil
+		}
+		// If best vector score < 0.55, no schema is a good match — skip LLM.
+		if vectorResult == nil {
+			c.log.Info("vector similarity: no match above threshold, skipping LLM")
+			return ClassificationResult{}, nil
+		}
+		// 0.55 ≤ score < 0.75: ambiguous — fall through to LLM.
+		c.log.Info("vector similarity ambiguous, falling through to LLM",
+			slog.String("best_domain", vectorResult.DomainName),
+			slog.Float64("confidence", float64(vectorResult.Confidence)),
 		)
-		heuristicResult.Signals.HeuristicKeywords = matchedKeywords
-		heuristicResult.Signals.ClassifiedAt = time.Now().UTC().Format(time.RFC3339)
-		return *heuristicResult, nil
 	}
 
 	// Stage 2: LLM classification.
 	llmResult, err := c.llmClassify(ctx, documentText, schemaPacks)
 	if err != nil {
-		c.log.Warn("LLM classification failed, falling back to heuristic",
-			logger.Error(err),
-		)
-		// Fall back to heuristic result even if low confidence.
-		if heuristicResult != nil {
-			heuristicResult.Signals.HeuristicKeywords = matchedKeywords
-			heuristicResult.Signals.ClassifiedAt = time.Now().UTC().Format(time.RFC3339)
-			return *heuristicResult, nil
+		c.log.Warn("LLM classification failed", logger.Error(err))
+		// Fall back to vector result if available (even if ambiguous).
+		if vectorResult != nil {
+			vectorResult.Signals.ClassifiedAt = time.Now().UTC().Format(time.RFC3339)
+			return *vectorResult, nil
 		}
 		return ClassificationResult{}, nil
 	}
 
-	llmResult.Signals.HeuristicKeywords = matchedKeywords
 	llmResult.Signals.ClassifiedAt = time.Now().UTC().Format(time.RFC3339)
 	return llmResult, nil
+}
+
+// vectorMatch computes cosine similarity between the document and each schema
+// pack's pre-computed embedding. Returns:
+//   - (result, true)  when embedding service is available and packs have embeddings
+//   - (nil, false)    when embeddings are unavailable (fall through to LLM)
+//
+// result is nil when the best similarity is below the ambiguous threshold (0.55).
+// result has Confidence set to the cosine similarity score otherwise.
+func (c *DocumentClassifier) vectorMatch(
+	ctx context.Context,
+	documentText string,
+	packs []InstalledSchemaSummary,
+) (*ClassificationResult, bool) {
+	if c.embeddingService == nil || !c.embeddingService.IsEnabled() {
+		return nil, false
+	}
+
+	// Check that at least one pack has an embedding.
+	hasEmbeddings := false
+	for _, p := range packs {
+		if len(p.Embedding) > 0 {
+			hasEmbeddings = true
+			break
+		}
+	}
+	if !hasEmbeddings {
+		return nil, false
+	}
+
+	// Embed the document snippet (first 1500 chars — enough signal, cheap).
+	snippet := documentText
+	if len(snippet) > 1500 {
+		snippet = snippet[:1500]
+	}
+	docEmb, err := c.embeddingService.EmbedQuery(ctx, snippet)
+	if err != nil {
+		c.log.Warn("vector classify: embed document failed", logger.Error(err))
+		return nil, false
+	}
+
+	const ambiguousThreshold = 0.55
+
+	bestScore := float32(-1)
+	var bestPack *InstalledSchemaSummary
+	for i := range packs {
+		if len(packs[i].Embedding) == 0 {
+			continue
+		}
+		score := cosineSimilarity(docEmb, packs[i].Embedding)
+		if score > bestScore {
+			bestScore = score
+			bestPack = &packs[i]
+		}
+	}
+
+	if bestPack == nil || bestScore < ambiguousThreshold {
+		return nil, true // embeddings available but no match
+	}
+
+	result := &ClassificationResult{
+		DomainName:      bestPack.Name,
+		Confidence:      bestScore,
+		MatchedSchemaID: &bestPack.ID,
+		Signals: ClassificationSignals{
+			MatchedSchemaID:   &bestPack.ID,
+			MatchedSchemaName: &bestPack.Name,
+		},
+	}
+	if bestPack.ExtractionPrompts != nil {
+		result.DomainGuidance = bestPack.ExtractionPrompts.DomainContext
+	}
+	return result, true
+}
+
+// cosineSimilarity returns the cosine similarity between two vectors (0–1).
+// Returns 0 when either vector has zero magnitude.
+func cosineSimilarity(a, b []float32) float32 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, magA, magB float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		magA += float64(a[i]) * float64(a[i])
+		magB += float64(b[i]) * float64(b[i])
+	}
+	mag := math.Sqrt(magA) * math.Sqrt(magB)
+	if mag == 0 {
+		return 0
+	}
+	sim := dot / mag
+	// Clamp to [0, 1] — cosine can be slightly > 1 due to float precision.
+	if sim > 1.0 {
+		sim = 1.0
+	}
+	if sim < 0 {
+		sim = 0
+	}
+	return float32(sim)
 }
 
 // heuristicMatch scores each schema pack by keyword overlap with documentText.
