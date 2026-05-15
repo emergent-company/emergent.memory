@@ -2626,11 +2626,27 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 			orgID, _ = h.repo.GetOrgIDByProjectID(c.Request().Context(), agent.ProjectID)
 		}
 
-		// Build the resume user message with Q&A context (task 5.4)
-		userMessage := fmt.Sprintf(
-			"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
-			question.Question, req.Response,
-		)
+		// Build the resume user message.
+		// For tool-policy confirmation questions, pass just the button value (e.g. "approve"
+		// or "reject") so injectToolResponse can reliably match it. For all other question
+		// types, include Q&A context so the LLM has history.
+		var userMessage string
+		sc := SuspendSignalFromMap(run.SuspendContext)
+		if sc != nil && sc.Reason == SuspendReasonAwaitingToolConfirm {
+			// Resolve the option value from the submitted label (or use as-is if it's already a value).
+			userMessage = strings.ToLower(strings.TrimSpace(req.Response))
+			for _, opt := range question.Options {
+				if strings.EqualFold(opt.Label, req.Response) || strings.EqualFold(opt.Value, req.Response) {
+					userMessage = strings.ToLower(strings.TrimSpace(opt.Value))
+					break
+				}
+			}
+		} else {
+			userMessage = fmt.Sprintf(
+				"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
+				question.Question, req.Response,
+			)
+		}
 
 		// Pre-create the resume run synchronously so we can return its ID in the response.
 		// The executor's Resume method will reuse this run via PreCreatedRun.
