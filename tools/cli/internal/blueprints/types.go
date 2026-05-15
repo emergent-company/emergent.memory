@@ -93,23 +93,30 @@ func (r RelationshipTypeDef) GetTargetTypes() []string {
 
 // AgentFile is the top-level structure parsed from a file in the agents/ directory.
 type AgentFile struct {
-	Name            string         `json:"name"            yaml:"name"`
-	Description     string         `json:"description"     yaml:"description"`
-	SystemPrompt    string         `json:"systemPrompt"    yaml:"systemPrompt"`
-	Model           *AgentModel    `json:"model"           yaml:"model"`
-	Tools           []string       `json:"tools"           yaml:"tools"`
-	Skills          []string       `json:"skills"          yaml:"skills"`
-	FlowType        string         `json:"flowType"        yaml:"flowType"`
-	IsDefault       bool           `json:"isDefault"       yaml:"isDefault"`
-	MaxSteps        *int           `json:"maxSteps"        yaml:"maxSteps"`
-	DefaultTimeout  *int           `json:"defaultTimeout"  yaml:"defaultTimeout"`
-	Visibility      string         `json:"visibility"      yaml:"visibility"`
-	DispatchMode    string         `json:"dispatchMode"    yaml:"dispatchMode"`
-	Config          map[string]any `json:"config"          yaml:"config"`
-	WorkspaceConfig map[string]any `json:"workspaceConfig" yaml:"workspaceConfig"`
+	Name            string                     `json:"name"            yaml:"name"`
+	Description     string                     `json:"description"     yaml:"description"`
+	SystemPrompt    string                     `json:"systemPrompt"    yaml:"systemPrompt"`
+	Model           *AgentModel                `json:"model"           yaml:"model"`
+	Tools           []string                   `json:"tools"           yaml:"tools"`
+	Skills          []string                   `json:"skills"          yaml:"skills"`
+	FlowType        string                     `json:"flowType"        yaml:"flowType"`
+	IsDefault       bool                       `json:"isDefault"       yaml:"isDefault"`
+	MaxSteps        *int                       `json:"maxSteps"        yaml:"maxSteps"`
+	DefaultTimeout  *int                       `json:"defaultTimeout"  yaml:"defaultTimeout"`
+	Visibility      string                     `json:"visibility"      yaml:"visibility"`
+	DispatchMode    string                     `json:"dispatchMode"    yaml:"dispatchMode"`
+	Config          map[string]any             `json:"config"          yaml:"config"`
+	WorkspaceConfig map[string]any             `json:"workspaceConfig" yaml:"workspaceConfig"`
+	ToolPolicies    map[string]AgentToolPolicy `json:"toolPolicies"    yaml:"toolPolicies"`
 
 	// SourceFile is the path from which this agent was loaded (not serialised).
 	SourceFile string `json:"-" yaml:"-"`
+}
+
+// AgentToolPolicy controls how a specific tool is invoked by an agent.
+type AgentToolPolicy struct {
+	Confirm bool   `json:"confirm" yaml:"confirm"`
+	Message string `json:"message,omitempty" yaml:"message,omitempty"`
 }
 
 // AgentModel holds model configuration for an agent definition file.

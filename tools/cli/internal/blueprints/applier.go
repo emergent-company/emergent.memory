@@ -807,6 +807,12 @@ func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequ
 		DefaultTimeout: ag.DefaultTimeout,
 		Config:         ag.Config,
 	}
+	if len(ag.ToolPolicies) > 0 {
+		req.ToolPolicies = make(map[string]sdkagents.ToolPolicy, len(ag.ToolPolicies))
+		for k, v := range ag.ToolPolicies {
+			req.ToolPolicies[k] = sdkagents.ToolPolicy{Confirm: v.Confirm, Message: v.Message}
+		}
+	}
 	if ag.DispatchMode != "" {
 		req.DispatchMode = ag.DispatchMode
 	}
@@ -836,6 +842,12 @@ func agentFileToUpdateRequest(ag AgentFile) *sdkagents.UpdateAgentDefinitionRequ
 		MaxSteps:       ag.MaxSteps,
 		DefaultTimeout: ag.DefaultTimeout,
 		Config:         ag.Config,
+	}
+	if len(ag.ToolPolicies) > 0 {
+		req.ToolPolicies = make(map[string]sdkagents.ToolPolicy, len(ag.ToolPolicies))
+		for k, v := range ag.ToolPolicies {
+			req.ToolPolicies[k] = sdkagents.ToolPolicy{Confirm: v.Confirm, Message: v.Message}
+		}
 	}
 	if ag.DispatchMode != "" {
 		req.DispatchMode = &ag.DispatchMode

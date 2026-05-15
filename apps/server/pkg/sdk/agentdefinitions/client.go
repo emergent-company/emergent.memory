@@ -106,42 +106,52 @@ type ACPConfig struct {
 
 // APIResponse wraps API responses with success flag.
 
+// ToolPolicy controls how a specific tool is invoked.
+type ToolPolicy struct {
+	// Confirm requires human approval before the tool executes.
+	Confirm bool `json:"confirm"`
+	// Message is the confirmation prompt shown to the user.
+	Message string `json:"message,omitempty"`
+}
+
 // CreateAgentDefinitionRequest is the request body for creating an agent definition.
 type CreateAgentDefinitionRequest struct {
-	Name           string         `json:"name"`
-	Description    *string        `json:"description,omitempty"`
-	SystemPrompt   *string        `json:"systemPrompt,omitempty"`
-	Model          *ModelConfig   `json:"model,omitempty"`
-	Tools          []string       `json:"tools,omitempty"`
-	Skills         []string       `json:"skills,omitempty"`
-	AutoLoadSkills *bool          `json:"autoLoadSkills,omitempty"`
-	FlowType       string         `json:"flowType,omitempty"`
-	IsDefault      *bool          `json:"isDefault,omitempty"`
-	MaxSteps       *int           `json:"maxSteps,omitempty"`
-	DefaultTimeout *int           `json:"defaultTimeout,omitempty"`
-	Visibility     string         `json:"visibility,omitempty"`
-	DispatchMode   string         `json:"dispatchMode,omitempty"`
-	ACPConfig      *ACPConfig     `json:"acpConfig,omitempty"`
-	Config         map[string]any `json:"config,omitempty"`
+	Name           string                `json:"name"`
+	Description    *string               `json:"description,omitempty"`
+	SystemPrompt   *string               `json:"systemPrompt,omitempty"`
+	Model          *ModelConfig          `json:"model,omitempty"`
+	Tools          []string              `json:"tools,omitempty"`
+	Skills         []string              `json:"skills,omitempty"`
+	AutoLoadSkills *bool                 `json:"autoLoadSkills,omitempty"`
+	FlowType       string                `json:"flowType,omitempty"`
+	IsDefault      *bool                 `json:"isDefault,omitempty"`
+	MaxSteps       *int                  `json:"maxSteps,omitempty"`
+	DefaultTimeout *int                  `json:"defaultTimeout,omitempty"`
+	Visibility     string                `json:"visibility,omitempty"`
+	DispatchMode   string                `json:"dispatchMode,omitempty"`
+	ACPConfig      *ACPConfig            `json:"acpConfig,omitempty"`
+	Config         map[string]any        `json:"config,omitempty"`
+	ToolPolicies   map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 }
 
 // UpdateAgentDefinitionRequest is the request body for updating an agent definition.
 type UpdateAgentDefinitionRequest struct {
-	Name           *string        `json:"name,omitempty"`
-	Description    *string        `json:"description,omitempty"`
-	SystemPrompt   *string        `json:"systemPrompt,omitempty"`
-	Model          *ModelConfig   `json:"model,omitempty"`
-	Tools          []string       `json:"tools,omitempty"`
-	Skills         []string       `json:"skills,omitempty"`
-	AutoLoadSkills *bool          `json:"autoLoadSkills,omitempty"`
-	FlowType       *string        `json:"flowType,omitempty"`
-	IsDefault      *bool          `json:"isDefault,omitempty"`
-	MaxSteps       *int           `json:"maxSteps,omitempty"`
-	DefaultTimeout *int           `json:"defaultTimeout,omitempty"`
-	Visibility     *string        `json:"visibility,omitempty"`
-	DispatchMode   *string        `json:"dispatchMode,omitempty"`
-	ACPConfig      *ACPConfig     `json:"acpConfig,omitempty"`
-	Config         map[string]any `json:"config,omitempty"`
+	Name           *string               `json:"name,omitempty"`
+	Description    *string               `json:"description,omitempty"`
+	SystemPrompt   *string               `json:"systemPrompt,omitempty"`
+	Model          *ModelConfig          `json:"model,omitempty"`
+	Tools          []string              `json:"tools,omitempty"`
+	Skills         []string              `json:"skills,omitempty"`
+	AutoLoadSkills *bool                 `json:"autoLoadSkills,omitempty"`
+	FlowType       *string               `json:"flowType,omitempty"`
+	IsDefault      *bool                 `json:"isDefault,omitempty"`
+	MaxSteps       *int                  `json:"maxSteps,omitempty"`
+	DefaultTimeout *int                  `json:"defaultTimeout,omitempty"`
+	Visibility     *string               `json:"visibility,omitempty"`
+	DispatchMode   *string               `json:"dispatchMode,omitempty"`
+	ACPConfig      *ACPConfig            `json:"acpConfig,omitempty"`
+	Config         map[string]any        `json:"config,omitempty"`
+	ToolPolicies   map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 }
 
 // --- Internal helpers ---
