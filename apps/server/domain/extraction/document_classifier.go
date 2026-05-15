@@ -86,7 +86,7 @@ func (c *DocumentClassifier) Classify(
 	// at least one pack has a pre-computed embedding).
 	vectorResult, vectorAvailable := c.vectorMatch(ctx, documentText, schemaPacks)
 	if vectorAvailable {
-		if vectorResult != nil && vectorResult.Confidence >= 0.75 {
+		if vectorResult != nil && vectorResult.Confidence >= 0.85 {
 			vectorResult.Signals.ClassifiedAt = time.Now().UTC().Format(time.RFC3339)
 			c.log.Info("domain classified via vector similarity",
 				slog.String("domain", vectorResult.DomainName),
@@ -161,7 +161,7 @@ func (c *DocumentClassifier) vectorMatch(
 		return nil, false
 	}
 
-	const ambiguousThreshold = 0.55
+	const ambiguousThreshold = 0.65
 
 	bestScore := float32(-1)
 	var bestPack *InstalledSchemaSummary
