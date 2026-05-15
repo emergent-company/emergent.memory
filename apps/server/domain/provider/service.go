@@ -276,6 +276,21 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 		return nil, err
 	}
 
+	// If no new API key provided, check for an existing config to reuse its credential.
+	if req.APIKey == "" && (provider == ProviderGoogleAI || provider == ProviderDeepSeek) {
+		existing, err := s.repo.GetOrgProviderConfig(ctx, orgID, provider)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check existing config: %w", err)
+		}
+		if existing != nil && len(existing.EncryptedCredential) > 0 {
+			plaintext, err := s.encryptor.Decrypt(existing.EncryptedCredential, existing.EncryptionNonce)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt existing credential: %w", err)
+			}
+			req.APIKey = string(plaintext)
+		}
+	}
+
 	plaintext, err := s.extractPlaintext(provider, req)
 	if err != nil {
 		return nil, err
@@ -515,6 +530,23 @@ func (s *CredentialService) ListProjectConfigsByOrg(ctx context.Context, orgID s
 func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID string, provider ProviderType, req UpsertProviderConfigRequest) (*ProviderConfigResponse, error) {
 	if err := s.assertCallerOwnsProject(ctx, projectID); err != nil {
 		return nil, err
+	}
+
+	// If no new API key provided, check for an existing config to reuse its credential.
+	if req.APIKey == "" && (provider == ProviderGoogleAI || provider == ProviderDeepSeek) {
+		existing, err := s.repo.GetProjectProviderConfig(ctx, projectID, provider)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check existing config: %w", err)
+		}
+		if existing != nil && len(existing.EncryptedCredential) > 0 {
+			// Reuse the stored credential — decrypt and set on req so the rest
+			// of the flow (test, sync, upsert) works with the existing key.
+			plaintext, err := s.encryptor.Decrypt(existing.EncryptedCredential, existing.EncryptionNonce)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt existing credential: %w", err)
+			}
+			req.APIKey = string(plaintext)
+		}
 	}
 
 	plaintext, err := s.extractPlaintext(provider, req)
