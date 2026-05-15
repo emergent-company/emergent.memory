@@ -25,6 +25,18 @@ from pathlib import Path
 from typing import Optional
 
 # ---------------------------------------------------------------------------
+# Load .env from script directory (if present)
+# ---------------------------------------------------------------------------
+
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
+
+# ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
@@ -495,25 +507,33 @@ def snapshot_document_stage(doc_id):
              doc.get("matched_schema_id")
              or signals.get("matchedSchemaId")
          )
+         # domainName is set to the pack name after finalize-discovery runs.
+         # classificationSignals.stage holds "new_domain"/"existing_domain" if set.
+         stage = signals.get("stage") or doc.get("domain_label") or ("new_domain" if not doc.get("domainName") else "classified")
          return {
-             "stage": doc.get("domainName") or doc.get("domain_label") or "unset",
+             "stage": stage,
+             "domain_name": doc.get("domainName"),
              "confidence": doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0,
              "schema_id": schema_id,
          }
     except Exception:
-        return {"stage": "unset", "confidence": 0.0, "schema_id": None}
+        return {"stage": "unset", "domain_name": None, "confidence": 0.0, "schema_id": None}
 
 
 def assert_document_classified(project_id, doc_id, expected_stage, pre_agent_snapshot=None):
     results = []
     try:
         if expected_stage == "new_domain":
-            # Use pre-agent snapshot: at that point no schema exists yet so label = new_domain
-            snap = pre_agent_snapshot or snapshot_document_stage(doc_id)
-            stage = snap["stage"]
-            schema_id = snap["schema_id"]
-            results.append(check("domain_label=new_domain", stage == "new_domain", f"got={stage}"))
-            results.append(check("matched_schema_id=null", schema_id is None, f"got={schema_id}"))
+            # Pre-agent: doc should have no domain_name yet (unclassified)
+            pre = pre_agent_snapshot or snapshot_document_stage(doc_id)
+            results.append(check("domain_name unset before agent", pre["domain_name"] is None, f"got={pre['domain_name']}"))
+            results.append(check("matched_schema_id=null before agent", pre["schema_id"] is None, f"got={pre['schema_id']}"))
+            # Post-agent: finalize-discovery should have set domain_name on the doc
+            doc = get(f"/api/documents/{doc_id}")
+            signals = doc.get("classificationSignals") or {}
+            schema_id = doc.get("matched_schema_id") or signals.get("matchedSchemaId") or signals.get("schemaId")
+            domain_name = doc.get("domainName")
+            results.append(check("domain_name set after finalize-discovery", domain_name is not None, f"got={domain_name}"))
         else:
             # heuristic or llm match — check after agent run (reextraction has completed)
             doc = get(f"/api/documents/{doc_id}")
@@ -521,7 +541,7 @@ def assert_document_classified(project_id, doc_id, expected_stage, pre_agent_sna
             confidence = doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0
             signals = doc.get("classificationSignals") or {}
             schema_id = doc.get("matched_schema_id") or signals.get("matchedSchemaId")
-            results.append(check(f"domain_label set (not new_domain)", stage not in ("new_domain", "unset"), f"got={stage}"))
+            results.append(check(f"domain_name set (classified)", stage not in ("new_domain", "unset"), f"got={stage}"))
             results.append(check("domain_confidence >= 0.7", confidence >= 0.7, f"got={confidence:.2f}"))
             results.append(check("matched_schema_id set", schema_id is not None, f"got={schema_id}"))
     except Exception as e:

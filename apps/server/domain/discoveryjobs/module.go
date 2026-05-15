@@ -5,6 +5,7 @@ import (
 
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
@@ -24,9 +25,10 @@ var Module = fx.Module("discoveryjobs",
 
 // NewService creates a new discovery jobs service.
 // modelFactory is injected by the adk.Module registered in main.go.
-func NewService(repo *Repository, cfg *config.Config, modelFactory *adk.ModelFactory, log *slog.Logger) *Service {
+func NewService(repo *Repository, docSvc *documents.Service, cfg *config.Config, modelFactory *adk.ModelFactory, log *slog.Logger) *Service {
 	return &Service{
 		repo:         repo,
+		docSvc:       docSvc,
 		cfg:          cfg,
 		modelFactory: modelFactory,
 		log:          log.With(slog.String("scope", "discoveryjobs.svc")),

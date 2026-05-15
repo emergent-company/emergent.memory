@@ -243,3 +243,4 @@ openspec/changes/graph-explorer-branch-diff/
 blueprints/code-memory-blueprint/cmd/codebase/codebase
 /bench/extract-bench/
 /bench/memorybench/
+bench/domain-test/.env

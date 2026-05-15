@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -22,6 +23,7 @@ import (
 // Service handles business logic for discovery jobs
 type Service struct {
 	repo         *Repository
+	docSvc       *documents.Service
 	cfg          *config.Config
 	modelFactory *adk.ModelFactory
 	log          *slog.Logger
@@ -1217,6 +1219,20 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 	resp, err := s.FinalizeDiscovery(ctx, jobID, projectUUID, orgID, inReq)
 	if err != nil {
 		return nil, err
+	}
+
+	// Update domain_name on the source document so classifiers and tests can read it.
+	if r.DocumentID != "" && s.docSvc != nil {
+		domainLabel := "new_domain"
+		if r.Mode == "extend" {
+			domainLabel = "existing_domain"
+		}
+		if updateErr := s.docSvc.UpdateDomainClassification(ctx, r.DocumentID, &r.PackName, nil, map[string]any{
+			"stage":    domainLabel,
+			"schemaId": resp.SchemaID.String(),
+		}); updateErr != nil {
+			s.log.Warn("failed to update document domain classification", slog.String("doc_id", r.DocumentID), slog.Any("err", updateErr))
+		}
 	}
 
 	return mcpDiscoveryFinalizeResponse{
