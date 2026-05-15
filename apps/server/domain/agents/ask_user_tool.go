@@ -91,6 +91,20 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 				}
 			}
 
+			// Validate: options-based interaction types require at least one option
+			switch interactionType {
+			case QuestionInteractionButtons, QuestionInteractionSelect, QuestionInteractionMultiSelect:
+				if len(options) == 0 {
+					return map[string]any{
+						"error": fmt.Sprintf(
+							"interaction_type %q requires at least one option with label and value fields. "+
+								"Provide options or use interaction_type \"text\" for a free-text response.",
+							interactionType,
+						),
+					}, nil
+				}
+			}
+
 			// Parse placeholder and max_length (for text interaction type)
 			placeholder, _ := args["placeholder"].(string)
 			var maxLength int

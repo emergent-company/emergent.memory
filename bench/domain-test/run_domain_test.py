@@ -146,6 +146,12 @@ def patch(path, body=None, project_id: Optional[str] = None, **kwargs):
     return r.json()
 
 
+def delete(path, body=None, project_id: Optional[str] = None, **kwargs):
+    r = requests.delete(f"{SERVER}{path}", headers=headers(project_id), json=body or None, **kwargs)
+    r.raise_for_status()
+    return r.json() if r.content else {}
+
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -184,16 +190,18 @@ def create_project():
         headers={"Authorization": f"Bearer {project_token}", "Content-Type": "application/json", "x-project-id": project_id},
         json={"project_info": PROJECT_INFO, "auto_extract_objects": True},
     )
-    # Configure LiteLLM as project-level OpenAI-compatible provider pointing at deepseek-v4-flash
-    litellm_base = os.environ.get("LITELLM_BASE_URL", "http://litellm:4000/v1")
-    litellm_key = os.environ.get("LITELLM_KEY", "")
+    # Configure OpenAI-compatible provider (DeepSeek) for the project.
+    # Prefer explicit env vars; fall back to the DeepSeek direct API.
+    provider_base = os.environ.get("LITELLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    provider_key  = os.environ.get("LITELLM_KEY") or os.environ.get("DEEPSEEK_API_KEY", "")
+    provider_model = os.environ.get("PROVIDER_MODEL", "deepseek-chat")
     dr = requests.put(
-        f"{SERVER}/api/projects/{project_id}/providers/openai-compatible",
-        headers={"Authorization": f"Bearer {project_token}", "Content-Type": "application/json", "x-project-id": project_id},
-        json={"apiKey": litellm_key, "baseUrl": litellm_base, "generativeModel": "deepseek-v4-flash"},
+        f"{SERVER}/api/v1/projects/{project_id}/providers/openai-compatible",
+        headers={"Authorization": f"Bearer {project_token}", "Content-Type": "application/json"},
+        json={"apiKey": provider_key, "baseUrl": provider_base, "generativeModel": provider_model},
     )
-    if dr.status_code == 200:
-        print(f"  LiteLLM provider configured for project {project_id} (deepseek-v4-flash)")
+    if dr.status_code in (200, 201):
+        print(f"  Provider configured: {provider_base} / {provider_model}")
     else:
         print(f"  WARNING: provider config failed: {dr.status_code} {dr.text}")
 
@@ -372,7 +380,15 @@ def find_pending_question(project_id, run_id):
     """Return the first pending question for this run, or None."""
     try:
         resp = get(f"/api/projects/{project_id}/agent-questions", params={"run_id": run_id, "status": "pending"})
-        questions = resp.get("questions") or resp.get("items") or []
+        # API returns {"success":true,"data":[...]} or flat list/dict
+        if isinstance(resp, list):
+            questions = resp
+        elif isinstance(resp, dict):
+            questions = (resp.get("data") or resp.get("questions") or resp.get("items") or [])
+            if isinstance(questions, dict):
+                questions = [questions]
+        else:
+            questions = []
         return questions[0] if questions else None
     except Exception:
         return None
@@ -386,7 +402,7 @@ def respond_to_question(project_id, question, auto_respond_contains):
     chosen = None
     for opt in options:
         label = opt.get("label", "")
-        if auto_respond_contains.lower() in label.lower():
+        if auto_respond_contains and auto_respond_contains.lower() in label.lower():
             chosen = label
             break
     if not chosen and options:
@@ -397,6 +413,9 @@ def respond_to_question(project_id, question, auto_respond_contains):
                 break
     if not chosen and options:
         chosen = options[0]["label"]
+    if not chosen:
+        # No options (yes/no free-text question) — respond affirmatively
+        chosen = "yes"
 
     print(f"  Auto-responding to question: '{chosen}'")
     resp = post(f"/api/projects/{project_id}/agent-questions/{qid}/respond", {
@@ -629,6 +648,67 @@ def print_summary(results):
     print()
 
 
+def reset_project(project_id):
+    """Delete all documents and uninstall all schemas from an existing project so the
+    test can run against a clean slate without creating a new project each time."""
+    print(f"Resetting project {project_id}...")
+
+    # 1. Delete all documents (bulk delete)
+    try:
+        docs_resp = get(f"/api/documents", project_id=project_id, params={"limit": 500})
+        # API may return list or dict with items/documents key
+        docs_list = docs_resp if isinstance(docs_resp, list) else (docs_resp.get("items") or docs_resp.get("documents") or [])
+        doc_ids = [d["id"] for d in docs_list]
+        if doc_ids:
+            delete(f"/api/documents", body={"ids": doc_ids}, project_id=project_id)
+            print(f"  Deleted {len(doc_ids)} document(s).")
+        else:
+            print("  No documents to delete.")
+    except Exception as e:
+        print(f"  WARNING: document deletion failed: {e}")
+
+    # 2. Uninstall all schema assignments for this project
+    try:
+        installed = get(f"/api/schemas/projects/{project_id}/installed")
+        # API returns a list directly
+        assignments = installed if isinstance(installed, list) else (installed.get("assignments") or installed.get("items") or [])
+        for a in assignments:
+            aid = a.get("id") or a.get("assignmentId")
+            if aid:
+                try:
+                    delete(f"/api/schemas/projects/{project_id}/assignments/{aid}")
+                except Exception:
+                    pass
+        if assignments:
+            print(f"  Uninstalled {len(assignments)} schema assignment(s).")
+        else:
+            print("  No schema assignments to remove.")
+    except Exception as e:
+        print(f"  WARNING: schema uninstall failed: {e}")
+
+    # 3. Delete schema packs created in this project (owned packs whose name
+    #    matches known test names, to avoid deleting shared org-level packs).
+    test_pack_names = {"AI Chat", "Personal Notes", "Medical Records", "Supplier Agreements"}
+    try:
+        available = get(f"/api/schemas/projects/{project_id}/available")
+        # API returns a list directly
+        packs = available if isinstance(available, list) else (available.get("schemas") or available.get("items") or [])
+        deleted_packs = 0
+        for p in packs:
+            if p.get("name") in test_pack_names:
+                try:
+                    delete(f"/api/schemas/{p['id']}")
+                    deleted_packs += 1
+                except Exception:
+                    pass
+        if deleted_packs:
+            print(f"  Deleted {deleted_packs} test schema pack(s).")
+    except Exception as e:
+        print(f"  WARNING: schema pack deletion failed: {e}")
+
+    print("  Reset complete.\n")
+
+
 def cleanup_project(project_id):
     print(f"Cleaning up project {project_id}...")
     try:
@@ -649,6 +729,7 @@ def main():
     parser = argparse.ArgumentParser(description="Domain-aware extraction e2e test")
     parser.add_argument("--project-id", help="Reuse existing project instead of creating new")
     parser.add_argument("--cleanup", action="store_true", help="Delete project after test")
+    parser.add_argument("--reset", action="store_true", help="Reset project state (delete docs + schemas) before running; requires --project-id")
     parser.add_argument("--doc", type=int, help="Run only this doc index (1-6)")
     args = parser.parse_args()
 
@@ -661,7 +742,16 @@ def main():
     print()
 
     project_id = args.project_id or setup_project()
+    if args.project_id:
+        set_project_id(project_id)
     print(f"Using project: {project_id}\n")
+
+    if args.reset:
+        if not args.project_id:
+            print("WARNING: --reset has no effect without --project-id (fresh project is already clean)")
+        else:
+            set_project_id(project_id)
+            reset_project(project_id)
 
     docs_to_run = TEST_DOCS
     if args.doc:
