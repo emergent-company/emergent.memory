@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -233,6 +234,20 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 	mode, _ := args["mode"].(string)
 	packName, _ := args["pack_name"].(string)
 	existingPackIDStr, _ := args["existing_pack_id"].(string)
+
+	// Validate required args per mode
+	if mode == "" {
+		return errorResult("missing required argument: mode (must be 'create' or 'extend')"), nil
+	}
+	if mode == "create" && strings.TrimSpace(packName) == "" {
+		return errorResult("missing required argument: pack_name (required when mode='create')"), nil
+	}
+	if mode == "extend" && strings.TrimSpace(existingPackIDStr) == "" {
+		return errorResult("missing required argument: existing_pack_id (required when mode='extend')"), nil
+	}
+	if documentIDStr == "" && jobIDStr == "" {
+		return errorResult("missing required argument: document_id or job_id (at least one is required)"), nil
+	}
 
 	// Parse included_types
 	var includedTypes []map[string]any

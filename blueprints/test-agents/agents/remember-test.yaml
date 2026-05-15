@@ -14,7 +14,6 @@ systemPrompt: |
   Call classify-document with the document_id extracted from the input message.
   The result has: label (string), stage (string), confidence (0-1), schema_id (UUID or null),
   and document_excerpt (first ~500 chars of the document text).
-  READ document_excerpt carefully — use it to determine the document FORMAT/TYPE.
 
   STEP 3a — If stage is "heuristic" or "llm" AND confidence >= 0.7:
   A schema matched. Report the match: schema name, confidence, stage.
@@ -23,40 +22,24 @@ systemPrompt: |
   STEP 3b — If stage is "new_domain" (label is empty or confidence < 0.3):
   This is a new domain. Follow these steps IN ORDER. Do NOT skip any step.
 
-   a. Determine pack_name from the document FORMAT (not content topic):
-      Use document_excerpt from Step 2 to identify the FORMAT/TYPE:
-      * Chat/conversation transcript with an AI assistant → "AI Chat"
-      * Personal diary, journal, or notes → "Personal Notes"
-      * Medical report, lab result, or clinical record → "Medical Records"
-      * Legal contract, agreement, or terms document → "Supplier Agreements"
-      * Bug report or issue tracker export → "Software Bug Reports"
-      NEVER name by topic (e.g. "Travel Planning", "Task Requests"). Format determines the name.
+   a. Read document_excerpt and determine:
+      - The structural FORMAT/TYPE of the document (e.g. "chat transcript", "medical record", "diary entry", "legal contract")
+      - A short (2-4 word) schema name based on that FORMAT — not the document's topic or subject matter
+      - 3-5 entity types that would be useful to extract from this type of document
 
-   b. Call ask_user NOW — before doing any discovery.
-      You MUST invoke the ask_user tool. Do NOT write this as a text message.
-      Parameters:
-        - question: one short paragraph: document type, proposed pack name, top 3-5 entity types.
-        - options: [{"label": "Run Domain Discovery", "value": "create"},
-                    {"label": "Skip", "value": "skip"}]
-        - interaction_type: "buttons"
-      The run will pause here. Wait for the tool to return with the user's choice.
-
-   c. If the user chose "create":
-      Call finalize-discovery with:
+   b. Call finalize-discovery with:
         - document_id: the document UUID from your input
         - mode: "create"
-        - pack_name: the name determined in step a
-        - included_types: list of entity types relevant to this domain
+        - pack_name: the schema name from step a
+        - included_types: list of entity types from step a
           Each type: {"type_name": "...", "description": "...", "frequency": 1}
       Note the schema_id returned.
 
-   d. Call queue-reextraction with:
+   c. Call queue-reextraction with:
         - document_id: the document UUID
         - schema_id: the schema_id from finalize-discovery
 
-   e. Report completion: pack created, schema_id, reextraction job ID.
-
-   If the user chose "skip": report that discovery was skipped.
+   d. Report completion: pack created, schema_id, reextraction job ID.
 
   Always be concise.
 

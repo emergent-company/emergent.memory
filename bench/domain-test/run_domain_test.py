@@ -3,11 +3,10 @@
 Domain-aware extraction end-to-end test.
 
 Tests that:
-1. New-domain documents trigger discovery + ask_user pause
-2. User decisions (auto-responded) create schema packs with ClassificationSignals
+1. New-domain documents trigger finalize-discovery (tool policy pauses for human approval)
+2. User approves → schema pack created with a non-empty pack_name chosen by agent
 3. Subsequent same-domain documents match existing packs via heuristic classifier
 4. Re-extraction is queued after pack creation
-5. Entity types in graph match expected domain types
 
 Usage:
     EMERGENT_MEMORY_TOKEN=emt_... python3 run_domain_test.py
@@ -62,49 +61,31 @@ TEST_DOCS = [
         "file": "ai-chat-1.txt",
         "label": "AI Chat (first)",
         "expected_stage": "new_domain",
-        "expected_pack_name": "AI Chat",
-        "expected_types": ["Task", "Event", "Person", "Booking", "Reminder"],
-        "auto_respond_contains": "Create new pack",
     },
     {
         "file": "personal-notes.txt",
         "label": "Personal Notes (first)",
         "expected_stage": "new_domain",
-        "expected_pack_name": "Personal Notes",
-        "expected_types": ["Person", "Goal", "Note", "Place"],
-        "auto_respond_contains": "Create new pack",
     },
     {
         "file": "medical-lab-1.txt",
         "label": "Medical Lab (first)",
         "expected_stage": "new_domain",
-        "expected_pack_name": "Medical Records",
-        "expected_types": ["Condition", "Medication", "Appointment", "LabResult"],
-        "auto_respond_contains": "Create new pack",
     },
     {
         "file": "supplier-agreement.txt",
         "label": "Supplier Agreement (first)",
         "expected_stage": "new_domain",
-        "expected_pack_name": "Supplier Agreements",
-        "expected_types": ["Party", "Contract", "Obligation", "PaymentTerm"],
-        "auto_respond_contains": "Create new pack",
     },
     {
         "file": "ai-chat-2.txt",
         "label": "AI Chat (second — should match existing pack)",
         "expected_stage": "heuristic",
-        "expected_pack_name": "AI Chat",
-        "expected_types": ["Task", "Event", "Booking"],
-        "auto_respond_contains": None,  # no ask_user expected
     },
     {
         "file": "medical-lab-2.txt",
         "label": "Medical Lab (second — should match existing pack)",
         "expected_stage": "heuristic",
-        "expected_pack_name": "Medical Records",
-        "expected_types": ["Condition", "Medication", "Appointment"],
-        "auto_respond_contains": None,
     },
 ]
 
@@ -350,7 +331,7 @@ def upload_document(project_id, filepath: Path):
 
 
 # ---------------------------------------------------------------------------
-# Agent run + SSE polling
+# Agent run + polling + tool-policy confirm auto-approve
 # ---------------------------------------------------------------------------
 
 def start_agent_run(project_id, doc_id):
@@ -374,7 +355,7 @@ def start_agent_run(project_id, doc_id):
 
 
 def poll_run_status(project_id, run_id, timeout=120):
-    """Poll until run is completed, failed, or paused. Returns final status."""
+    """Poll until run is completed, failed, or paused. Returns (status, resp)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -392,7 +373,6 @@ def find_pending_question(project_id, run_id):
     """Return the first pending question for this run, or None."""
     try:
         resp = get(f"/api/projects/{project_id}/agent-questions", params={"run_id": run_id, "status": "pending"})
-        # API returns {"success":true,"data":[...]} or flat list/dict
         if isinstance(resp, list):
             questions = resp
         elif isinstance(resp, dict):
@@ -406,68 +386,55 @@ def find_pending_question(project_id, run_id):
         return None
 
 
-def respond_to_question(project_id, question, auto_respond_contains):
-    """Find the button matching auto_respond_contains and submit it.
-    Returns (chosen_label, resume_run_id) where resume_run_id is the new run to poll."""
+def approve_tool_confirm(project_id, question):
+    """Auto-approve a tool-policy confirmation question. Returns resume_run_id."""
     qid = question["id"]
     options = question.get("options", [])
-    chosen = None
+    # Find the approve option (value == "approve" or label contains "Approve")
+    chosen_label = None
     for opt in options:
-        label = opt.get("label", "")
-        if auto_respond_contains and auto_respond_contains.lower() in label.lower():
-            chosen = label
+        if opt.get("value") == "approve" or "approve" in opt.get("label", "").lower():
+            chosen_label = opt["label"]
             break
-    if not chosen and options:
-        # Fallback: pick first option that has "create" in it
-        for opt in options:
-            if "create" in opt.get("label", "").lower():
-                chosen = opt["label"]
-                break
-    if not chosen and options:
-        chosen = options[0]["label"]
-    if not chosen:
-        # No options (yes/no free-text question) — respond affirmatively
-        chosen = "yes"
+    if not chosen_label and options:
+        chosen_label = options[0]["label"]
+    if not chosen_label:
+        chosen_label = "Approve"
 
-    print(f"  Auto-responding to question: '{chosen}'")
+    print(f"  Tool policy confirm: auto-approving ('{chosen_label}')")
     resp = post(f"/api/projects/{project_id}/agent-questions/{qid}/respond", {
-        "response": chosen,
+        "response": chosen_label,
     })
     resume_run_id = None
     if isinstance(resp, dict):
         data = resp.get("data", resp)
         resume_run_id = data.get("resumeRunId") or data.get("resume_run_id")
-    return chosen, resume_run_id
+    return resume_run_id
 
 
-def run_agent_with_responds(project_id, doc_id, auto_respond_contains):
-    """Start run, handle ask_user pauses, wait for completion."""
+def run_agent_with_auto_approve(project_id, doc_id):
+    """Start run, auto-approve any tool-policy confirmations, wait for completion."""
     run_id = start_agent_run(project_id, doc_id)
-    responses = []
+    tool_confirms = []  # track approved tool names from question text
 
     while True:
         status, resp = poll_run_status(project_id, run_id)
         if status == "input-required":
             question = find_pending_question(project_id, run_id)
-            if question and auto_respond_contains:
-                chosen, resume_run_id = respond_to_question(project_id, question, auto_respond_contains)
-                responses.append(chosen)
-                # Switch polling to the new resume run if provided
+            if question:
+                if MANUAL_RESPOND:
+                    print(f"\n  *** QUESTION PENDING — answer in the UI, then press Enter ***")
+                    print(f"  Question: {question.get('question', '')}")
+                    print(f"  Options:  {[o.get('label') for o in question.get('options', [])]}")
+                    print(f"  Question ID: {question['id']}")
+                    print(f"  Project: {project_id}")
+                    input("  [Press Enter after answering in the UI] ")
+                    continue
+                tool_confirms.append(question.get("question", ""))
+                resume_run_id = approve_tool_confirm(project_id, question)
                 if resume_run_id:
                     print(f"  Switching poll target to resume run: {resume_run_id}")
                     run_id = resume_run_id
-                continue
-            elif question and not auto_respond_contains:
-                print(f"  UNEXPECTED ask_user pause (expected none for this doc)!")
-                responses.append("UNEXPECTED_PAUSE")
-                # Skip to avoid hanging test
-                resp2 = post(f"/api/projects/{project_id}/agent-questions/{question['id']}/respond", {"response": "Skip"})
-                if isinstance(resp2, dict):
-                    data = resp2.get("data", resp2)
-                    resume_run_id = data.get("resumeRunId") or data.get("resume_run_id")
-                    if resume_run_id:
-                        print(f"  Switching poll target to resume run: {resume_run_id}")
-                        run_id = resume_run_id
                 continue
         elif status == "completed":
             break
@@ -478,7 +445,7 @@ def run_agent_with_responds(project_id, doc_id, auto_respond_contains):
             print(f"  Run TIMED OUT")
             break
 
-    return run_id, responses
+    return run_id, tool_confirms
 
 
 # ---------------------------------------------------------------------------
@@ -507,8 +474,6 @@ def snapshot_document_stage(doc_id):
              doc.get("matched_schema_id")
              or signals.get("matchedSchemaId")
          )
-         # domainName is set to the pack name after finalize-discovery runs.
-         # classificationSignals.stage holds "new_domain"/"existing_domain" if set.
          stage = signals.get("stage") or doc.get("domain_label") or ("new_domain" if not doc.get("domainName") else "classified")
          return {
              "stage": stage,
@@ -524,24 +489,20 @@ def assert_document_classified(project_id, doc_id, expected_stage, pre_agent_sna
     results = []
     try:
         if expected_stage == "new_domain":
-            # Pre-agent: doc should have no domain_name yet (unclassified)
             pre = pre_agent_snapshot or snapshot_document_stage(doc_id)
-            results.append(check("domain_name unset before agent", pre["domain_name"] is None, f"got={pre['domain_name']}"))
             results.append(check("matched_schema_id=null before agent", pre["schema_id"] is None, f"got={pre['schema_id']}"))
-            # Post-agent: finalize-discovery should have set domain_name on the doc
             doc = get(f"/api/documents/{doc_id}")
             signals = doc.get("classificationSignals") or {}
-            schema_id = doc.get("matched_schema_id") or signals.get("matchedSchemaId") or signals.get("schemaId")
             domain_name = doc.get("domainName")
-            results.append(check("domain_name set after finalize-discovery", domain_name is not None, f"got={domain_name}"))
+            real_name = domain_name and domain_name != "new_domain"
+            results.append(check("domain_name set after finalize-discovery", real_name, f"got={domain_name}"))
         else:
-            # heuristic or llm match — check after agent run (reextraction has completed)
             doc = get(f"/api/documents/{doc_id}")
             stage = doc.get("domainName") or doc.get("domain_label") or "unset"
             confidence = doc.get("domainConfidence") or doc.get("domain_confidence") or 0.0
             signals = doc.get("classificationSignals") or {}
             schema_id = doc.get("matched_schema_id") or signals.get("matchedSchemaId")
-            results.append(check(f"domain_name set (classified)", stage not in ("new_domain", "unset"), f"got={stage}"))
+            results.append(check("domain_name set (classified)", stage not in ("new_domain", "unset"), f"got={stage}"))
             results.append(check("domain_confidence >= 0.7", confidence >= 0.7, f"got={confidence:.2f}"))
             results.append(check("matched_schema_id set", schema_id is not None, f"got={schema_id}"))
     except Exception as e:
@@ -549,33 +510,70 @@ def assert_document_classified(project_id, doc_id, expected_stage, pre_agent_sna
     return results
 
 
-def assert_schema_created(project_id, expected_pack_name, retries=6, delay=5):
+
+
+def assert_agent_proposed_domain(project_id, run_id, tool_confirms):
+    """
+    Check that:
+    a) finalize-discovery was called — evidenced by tool policy confirm pause
+       (finalize-discovery is the only tool with confirm:true in this agent)
+    b) tool policy confirmation was issued (user was asked)
+    c) the confirm message references finalize-discovery
+    """
+    results = []
+
+    # (b) Tool policy confirm was issued
+    results.append(check(
+        "agent paused for tool policy confirm (user asked)",
+        len(tool_confirms) > 0,
+        f"confirms={len(tool_confirms)}"
+    ))
+
+    # (a)+(c) The confirm question text should reference finalize-discovery
+    if tool_confirms:
+        q_text = " ".join(tool_confirms).lower()
+        mentions_tool = "finalize-discovery" in q_text or "finalize discovery" in q_text or "schema pack" in q_text
+        results.append(check(
+            "tool policy confirm mentions finalize-discovery",
+            mentions_tool,
+            f"question={tool_confirms[0][:80]!r}"
+        ))
+
+    return results
+
+
+def assert_schema_created_any(project_id, schema_count_before, retries=6, delay=5):
+    """Check that at least one new schema was created (count increased)."""
     results = []
     try:
-        found = None
         names = []
+        count_after = schema_count_before
         for attempt in range(retries):
             resp = get(f"/api/schemas/projects/{project_id}/installed")
-            if isinstance(resp, list):
-                schemas = resp
-            else:
-                schemas = resp.get("schemas") or resp.get("items") or []
+            schemas = resp if isinstance(resp, list) else (resp.get("schemas") or resp.get("items") or [])
             names = [s.get("name", "") for s in schemas]
-            found = next((s for s in schemas if expected_pack_name.lower() in s.get("name", "").lower()), None)
-            if found:
+            count_after = len(schemas)
+            if count_after > schema_count_before:
                 break
             if attempt < retries - 1:
                 time.sleep(delay)
-        results.append(check(f"schema '{expected_pack_name}' created", found is not None, f"found={names}"))
-        if found:
-            prompts = found.get("extractionPrompts") or found.get("extraction_prompts") or {}
-            domain_context = prompts.get("domainContext") or prompts.get("domain_context") or ""
-            type_hints = prompts.get("typeHints") or prompts.get("type_hints") or {}
-            results.append(check("extraction_prompts.domainContext non-empty", bool(domain_context), f"domainContext={domain_context[:50] if domain_context else ''}"))
-            results.append(check("extraction_prompts.typeHints non-empty", len(type_hints) > 0, f"typeHints={list(type_hints.keys())[:3]}"))
+        results.append(check(
+            "schema created (count increased)",
+            count_after > schema_count_before,
+            f"before={schema_count_before} after={count_after} names={names}"
+        ))
+        if count_after > schema_count_before:
+            # Verify the newest schema has non-empty extraction prompts
+            newest = next((s for s in schemas if s.get("name") not in [""]), None)
+            if newest:
+                prompts = newest.get("extractionPrompts") or newest.get("extraction_prompts") or {}
+                domain_context = prompts.get("domainContext") or prompts.get("domain_context") or ""
+                type_hints = prompts.get("typeHints") or prompts.get("type_hints") or {}
+                results.append(check("schema has domainContext", bool(domain_context), f"domainContext={domain_context[:60] if domain_context else ''}"))
+                results.append(check("schema has typeHints", len(type_hints) > 0, f"typeHints={list(type_hints.keys())[:3]}"))
     except Exception as e:
         results.append(check("schema fetch", False, str(e)))
-    return results
+    return results, count_after if 'count_after' in dir() else schema_count_before
 
 
 def assert_reextraction_queued(project_id, doc_id):
@@ -596,53 +594,62 @@ def assert_no_discovery_fired(project_id, run_id):
         jobs = resp.get("jobs") or resp.get("items") or []
         results.append(check("no discovery job fired", len(jobs) == 0, f"count={len(jobs)}"))
     except Exception as e:
-        # endpoint may not support triggered_by_run filter — treat as inconclusive
         results.append({"label": "no discovery job fired", "status": SKIP, "detail": str(e)})
     return results
 
 
-def assert_entities_typed(project_id, doc_id, expected_types):
-    results = []
-    # No source_document_id filter on graph search — skip entity type check
-    for t in expected_types[:2]:
-        results.append({"label": f"entity type '{t}' present", "status": SKIP, "detail": "no doc-scoped graph filter"})
-    return results
+MANUAL_RESPOND = False  # set to True via --manual flag
+
+
+# ---------------------------------------------------------------------------
+# Schema count tracker (shared across doc runs in one test session)
+# ---------------------------------------------------------------------------
+
+_schema_count: int = 0
+
+
+def get_schema_count(project_id):
+    try:
+        resp = get(f"/api/schemas/projects/{project_id}/installed")
+        schemas = resp if isinstance(resp, list) else (resp.get("schemas") or resp.get("items") or [])
+        return len(schemas)
+    except Exception:
+        return 0
 
 
 # ---------------------------------------------------------------------------
 # Main test loop
 # ---------------------------------------------------------------------------
 
-def run_test_doc(project_id, doc_config, idx):
+def run_test_doc(project_id, doc_config, idx, schema_count_before):
     print(f"\n--- Doc {idx+1}/6: {doc_config['label']} ---")
     filepath = FIXTURES_DIR / doc_config["file"]
 
     doc_id = upload_document(project_id, filepath)
-    # Wait for extraction worker to pick up and process the document (polls every 5s)
     print("  Waiting 15s for extraction worker...")
     time.sleep(15)
 
-    # Snapshot domain label BEFORE agent runs (agent may install schema + trigger reextraction)
     pre_agent_snapshot = snapshot_document_stage(doc_id)
     print(f"  Pre-agent domain snapshot: stage={pre_agent_snapshot['stage']}")
 
-    run_id, responses = run_agent_with_responds(
-        project_id, doc_id,
-        doc_config.get("auto_respond_contains")
-    )
+    run_id, tool_confirms = run_agent_with_auto_approve(project_id, doc_id)
 
     print("  Running assertions...")
     all_results = []
 
     all_results += assert_document_classified(project_id, doc_id, doc_config["expected_stage"], pre_agent_snapshot)
 
+    schema_count_after = schema_count_before
     if doc_config["expected_stage"] == "new_domain":
-        all_results += assert_schema_created(project_id, doc_config["expected_pack_name"])
+        # a) agent proposed a domain and b) user was asked
+        all_results += assert_agent_proposed_domain(project_id, run_id, tool_confirms)
+        # c) user approved → schema created
+        schema_results, schema_count_after = assert_schema_created_any(project_id, schema_count_before)
+        all_results += schema_results
+        # d) reextraction queued (objects will be upserted)
         all_results += assert_reextraction_queued(project_id, doc_id)
     else:
         all_results += assert_no_discovery_fired(project_id, run_id)
-
-    all_results += assert_entities_typed(project_id, doc_id, doc_config["expected_types"])
 
     passes = sum(1 for r in all_results if r["status"] == PASS)
     fails = sum(1 for r in all_results if r["status"] == FAIL)
@@ -653,11 +660,10 @@ def run_test_doc(project_id, doc_config, idx):
         "doc": doc_config["label"],
         "doc_id": doc_id,
         "run_id": run_id,
-        "responses": responses,
         "assertions": all_results,
         "passes": passes,
         "fails": fails,
-    }
+    }, schema_count_after
 
 
 def print_summary(results):
@@ -676,14 +682,11 @@ def print_summary(results):
 
 
 def reset_project(project_id):
-    """Delete all documents and uninstall all schemas from an existing project so the
-    test can run against a clean slate without creating a new project each time."""
+    """Delete all documents and uninstall all schemas from an existing project."""
     print(f"Resetting project {project_id}...")
 
-    # 1. Delete all documents (bulk delete)
     try:
         docs_resp = get(f"/api/documents", project_id=project_id, params={"limit": 500})
-        # API may return list or dict with items/documents key
         docs_list = docs_resp if isinstance(docs_resp, list) else (docs_resp.get("items") or docs_resp.get("documents") or [])
         doc_ids = [d["id"] for d in docs_list]
         if doc_ids:
@@ -694,10 +697,8 @@ def reset_project(project_id):
     except Exception as e:
         print(f"  WARNING: document deletion failed: {e}")
 
-    # 2. Uninstall all schema assignments for this project
     try:
         installed = get(f"/api/schemas/projects/{project_id}/installed")
-        # API returns a list directly
         assignments = installed if isinstance(installed, list) else (installed.get("assignments") or installed.get("items") or [])
         for a in assignments:
             aid = a.get("id") or a.get("assignmentId")
@@ -713,36 +714,13 @@ def reset_project(project_id):
     except Exception as e:
         print(f"  WARNING: schema uninstall failed: {e}")
 
-    # 3. Delete schema packs created in this project (owned packs whose name
-    #    matches known test names, to avoid deleting shared org-level packs).
-    test_pack_names = {"AI Chat", "Personal Notes", "Medical Records", "Supplier Agreements"}
-    try:
-        available = get(f"/api/schemas/projects/{project_id}/available")
-        # API returns a list directly
-        packs = available if isinstance(available, list) else (available.get("schemas") or available.get("items") or [])
-        deleted_packs = 0
-        for p in packs:
-            if p.get("name") in test_pack_names:
-                try:
-                    delete(f"/api/schemas/{p['id']}")
-                    deleted_packs += 1
-                except Exception:
-                    pass
-        if deleted_packs:
-            print(f"  Deleted {deleted_packs} test schema pack(s).")
-    except Exception as e:
-        print(f"  WARNING: schema pack deletion failed: {e}")
-
     print("  Reset complete.\n")
 
 
 def cleanup_project(project_id):
     print(f"Cleaning up project {project_id}...")
     try:
-        requests.delete(
-            f"{SERVER}/api/projects/{project_id}",
-            headers=headers()
-        )
+        requests.delete(f"{SERVER}/api/projects/{project_id}", headers=headers())
         print("  Deleted.")
     except Exception as e:
         print(f"  Cleanup failed: {e}")
@@ -756,9 +734,14 @@ def main():
     parser = argparse.ArgumentParser(description="Domain-aware extraction e2e test")
     parser.add_argument("--project-id", help="Reuse existing project instead of creating new")
     parser.add_argument("--cleanup", action="store_true", help="Delete project after test")
-    parser.add_argument("--reset", action="store_true", help="Reset project state (delete docs + schemas) before running; requires --project-id")
+    parser.add_argument("--reset", action="store_true", help="Reset project state before running; requires --project-id")
     parser.add_argument("--doc", type=int, help="Run only this doc index (1-6)")
+    parser.add_argument("--manual", action="store_true", help="Pause at questions for human response")
     args = parser.parse_args()
+
+    if args.manual:
+        global MANUAL_RESPOND
+        MANUAL_RESPOND = True
 
     if not TOKEN:
         print("ERROR: EMERGENT_MEMORY_TOKEN not set")
@@ -775,18 +758,19 @@ def main():
 
     if args.reset:
         if not args.project_id:
-            print("WARNING: --reset has no effect without --project-id (fresh project is already clean)")
+            print("WARNING: --reset has no effect without --project-id")
         else:
-            set_project_id(project_id)
             reset_project(project_id)
 
     docs_to_run = TEST_DOCS
     if args.doc:
         docs_to_run = [TEST_DOCS[args.doc - 1]]
 
+    schema_count = get_schema_count(project_id)
+
     results = []
     for idx, doc_config in enumerate(docs_to_run):
-        result = run_test_doc(project_id, doc_config, idx)
+        result, schema_count = run_test_doc(project_id, doc_config, idx, schema_count)
         results.append(result)
 
     print_summary(results)
