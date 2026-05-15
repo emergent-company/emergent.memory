@@ -230,6 +230,15 @@ func (c *Client) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]P
 
 // --- Project Provider Config Methods ---
 
+// ListProjectConfigs returns all provider config overrides for a specific project.
+func (c *Client) ListProjectConfigs(ctx context.Context, projectID string) ([]ProjectProviderConfig, error) {
+	var result []ProjectProviderConfig
+	err := c.doJSON(ctx, "GET",
+		fmt.Sprintf("/api/v1/projects/%s/providers", url.PathEscape(projectID)),
+		nil, &result)
+	return result, err
+}
+
 // UpsertProjectConfig stores credentials and model selections for a project's provider.
 func (c *Client) UpsertProjectConfig(ctx context.Context, projectID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error) {
 	var result ProviderConfig

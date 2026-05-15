@@ -134,6 +134,26 @@ func (h *Handler) ListOrgConfigs(c echo.Context) error {
 
 // --- Project Provider Config Endpoints ---
 
+// ListProjectProviders returns all provider configs for a specific project.
+// @Summary List project-level provider configs
+// @Param projectId path string true "Project ID"
+// @Success 200 {array} ProjectProviderConfigResponse
+// @Failure 401 {object} apperror.Error
+// @Failure 403 {object} apperror.Error
+// @Router /projects/{projectId}/providers [get]
+func (h *Handler) ListProjectProviders(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	resp, err := h.creds.ListProjectConfigs(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
 // ListProjectConfigs returns all project-level provider configs for projects in an org.
 // @Summary List project-level provider config overrides for an org
 // @Param orgId path string true "Organization ID"

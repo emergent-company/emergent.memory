@@ -455,6 +455,33 @@ func (s *CredentialService) ListOrgConfigs(ctx context.Context, orgID string) ([
 	return resp, nil
 }
 
+// ListProjectConfigs returns all provider configs for a specific project (metadata only).
+func (s *CredentialService) ListProjectConfigs(ctx context.Context, projectID string) ([]ProjectProviderConfigResponse, error) {
+	if err := s.assertCallerOwnsProject(ctx, projectID); err != nil {
+		return nil, err
+	}
+	cfgs, err := s.repo.ListProjectProviderConfigs(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	resp := make([]ProjectProviderConfigResponse, len(cfgs))
+	for i, cfg := range cfgs {
+		resp[i] = ProjectProviderConfigResponse{
+			ID:              cfg.ID,
+			ProjectID:       cfg.ProjectID,
+			Provider:        cfg.Provider,
+			GCPProject:      cfg.GCPProject,
+			Location:        cfg.Location,
+			BaseURL:         cfg.BaseURL,
+			GenerativeModel: cfg.GenerativeModel,
+			EmbeddingModel:  cfg.EmbeddingModel,
+			CreatedAt:       cfg.CreatedAt,
+			UpdatedAt:       cfg.UpdatedAt,
+		}
+	}
+	return resp, nil
+}
+
 // ListProjectConfigsByOrg returns all project-level provider configs for
 // projects belonging to the given organization (metadata only).
 func (s *CredentialService) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfigResponse, error) {

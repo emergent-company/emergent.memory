@@ -15,6 +15,7 @@ import (
 //	DELETE /api/v1/organizations/:orgId/providers/:provider   — delete org config
 //	GET    /api/v1/organizations/:orgId/providers             — list org configs
 //	GET    /api/v1/organizations/:orgId/project-providers    — list all project-level overrides for org
+//	GET    /api/v1/projects/:projectId/providers             — list project configs
 //	PUT    /api/v1/projects/:projectId/providers/:provider    — upsert project config
 //	GET    /api/v1/projects/:projectId/providers/:provider    — get project config metadata
 //	DELETE /api/v1/projects/:projectId/providers/:provider    — delete project config
@@ -47,6 +48,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	projects.PUT("/:provider", h.SaveProjectConfig)
 	projects.GET("/:provider", h.GetProjectConfig)
 	projects.DELETE("/:provider", h.DeleteProjectConfig)
+	projects.GET("", h.ListProjectProviders)
 
 	// Project-level usage summary and timeseries
 	api.GET("/projects/:projectId/usage", h.GetProjectUsageSummary)

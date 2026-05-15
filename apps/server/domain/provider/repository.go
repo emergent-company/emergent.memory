@@ -188,6 +188,25 @@ func (r *Repository) DeleteProjectProviderConfig(ctx context.Context, projectID 
 	return nil
 }
 
+// ListProjectProviderConfigs lists all provider configs for a specific project (metadata only, no secrets).
+func (r *Repository) ListProjectProviderConfigs(ctx context.Context, projectID string) ([]ProjectProviderConfig, error) {
+	var cfgs []ProjectProviderConfig
+	err := r.db.NewSelect().
+		Model(&cfgs).
+		Where("project_id = ?", projectID).
+		Order("provider ASC").
+		Scan(ctx)
+
+	if err != nil {
+		r.log.Error("failed to list project provider configs",
+			logger.Error(err),
+			slog.String("projectID", projectID),
+		)
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return cfgs, nil
+}
+
 // ListProjectProviderConfigsByOrg lists all project-level provider configs for
 // projects belonging to the given organization (metadata only, no secrets).
 func (r *Repository) ListProjectProviderConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfig, error) {
