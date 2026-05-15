@@ -21,42 +21,42 @@ systemPrompt: |
   Done — no discovery needed.
 
   STEP 3b — If stage is "new_domain" (label is empty or confidence < 0.3):
-  This is a new domain. Handle domain discovery:
+  This is a new domain. Follow these steps IN ORDER. Do NOT skip any step.
 
-   a. Run discovery:
-     Call finalize-discovery with:
-       - document_id: the document UUID from your input
-       - mode: "create"
-       - pack_name: CRITICAL — name by DOCUMENT FORMAT/TYPE, never by content topic.
-           Use the document_excerpt from Step 2 to identify the FORMAT.
-           RULES:
-           * If the document is a chat/conversation transcript with an AI assistant → "AI Chat"
-           * If it is a personal diary/journal/notes file → "Personal Notes"
-           * If it is a medical report, lab result, or clinical record → "Medical Records"
-           * If it is a legal contract, agreement, or terms document → "Supplier Agreements" (or appropriate contract type)
-           * If it is a bug report or issue tracker export → "Software Bug Reports"
-           * NEVER use topic-based names like "Task Requests", "Travel Planning", "Email Management"
-           * DO NOT let content subject override format. A chat about tasks is still "AI Chat".
-       - included_types: list of entity types you expect for this domain (based on document content)
-         Each type: {"type_name": "...", "description": "...", "frequency": 1}
-     Wait for it to complete. Note the schema_id returned.
+   a. Determine pack_name from the document FORMAT (not content topic):
+      Use document_excerpt from Step 2 to identify the FORMAT/TYPE:
+      * Chat/conversation transcript with an AI assistant → "AI Chat"
+      * Personal diary, journal, or notes → "Personal Notes"
+      * Medical report, lab result, or clinical record → "Medical Records"
+      * Legal contract, agreement, or terms document → "Supplier Agreements"
+      * Bug report or issue tracker export → "Software Bug Reports"
+      NEVER name by topic (e.g. "Travel Planning", "Task Requests"). Format determines the name.
 
-  b. Call list-installed-schemas again to get fresh schema list.
+   b. Call ask_user NOW — before doing any discovery.
+      You MUST invoke the ask_user tool. Do NOT write this as a text message.
+      Parameters:
+        - question: one short paragraph: document type, proposed pack name, top 3-5 entity types.
+        - options: [{"label": "Run Domain Discovery", "value": "create"},
+                    {"label": "Skip", "value": "skip"}]
+        - interaction_type: "buttons"
+      The run will pause here. Wait for the tool to return with the user's choice.
 
-  c. Call ask_user with:
-       - question: concise summary (under 200 words) describing:
-           * Document content and detected domain
-           * Proposed pack name and top 3-5 entity types
-           * Your recommendation (one sentence)
-       - options: [{"label": "Create new pack: <name>", "value": "create"},
-                   {"label": "Skip", "value": "skip"}]
-       - interaction_type: "buttons"
+   c. If the user chose "create":
+      Call finalize-discovery with:
+        - document_id: the document UUID from your input
+        - mode: "create"
+        - pack_name: the name determined in step a
+        - included_types: list of entity types relevant to this domain
+          Each type: {"type_name": "...", "description": "...", "frequency": 1}
+      Note the schema_id returned.
 
-  d. Once user responds with "create", call queue-reextraction with:
-       - document_id: the document UUID
-       - schema_id: the schema_id returned by finalize-discovery
+   d. Call queue-reextraction with:
+        - document_id: the document UUID
+        - schema_id: the schema_id from finalize-discovery
 
-  e. Report completion: pack created, schema_id, reextraction job ID.
+   e. Report completion: pack created, schema_id, reextraction job ID.
+
+   If the user chose "skip": report that discovery was skipped.
 
   Always be concise.
 
@@ -73,5 +73,9 @@ flowType: single
 visibility: project
 maxSteps: 50
 model:
-  name: openai-compatible/deepseek-v4-flash
+  name: openai-compatible/deepseek-chat
   enableThinking: false
+toolPolicies:
+  finalize-discovery:
+    confirm: true
+    message: "Agent wants to call **finalize-discovery** to create a new schema pack. Do you approve?"

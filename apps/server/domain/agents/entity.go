@@ -307,6 +307,17 @@ type ModelConfig struct {
 	EnableThinking *bool `json:"enableThinking,omitempty"`
 }
 
+// ToolPolicy defines a confirmation requirement for a specific tool.
+// When Confirm is true, the executor will pause the run before executing
+// the tool and ask the user to approve or reject the action.
+type ToolPolicy struct {
+	// Confirm requires human approval before the tool executes.
+	Confirm bool `json:"confirm"`
+	// Message is the confirmation prompt shown to the user.
+	// Supports template variables: {tool_name}, {args_json}.
+	Message string `json:"message,omitempty"`
+}
+
 // AgentDefinition stores agent configurations from product manifests.
 // This is separate from Agent (which tracks runtime state like last_run_at).
 // Table: kb.agent_definitions
@@ -334,8 +345,11 @@ type AgentDefinition struct {
 	Config           map[string]any    `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
 	SandboxConfig    map[string]any    `bun:"sandbox_config,type:jsonb" json:"sandboxConfig,omitempty"`
 	DispatchMode     AgentDispatchMode `bun:"dispatch_mode,notnull,default:'sync'" json:"dispatchMode"`
-	CreatedAt        time.Time         `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt        time.Time         `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	// ToolPolicies maps tool name → policy. When a tool has Confirm:true,
+	// the executor pauses the run and asks the user before executing the tool.
+	ToolPolicies map[string]ToolPolicy `bun:"tool_policies,type:jsonb,default:'{}'" json:"toolPolicies,omitempty"`
+	CreatedAt    time.Time             `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt    time.Time             `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
 // AgentRunMessage stores a single LLM message exchanged during an agent run.

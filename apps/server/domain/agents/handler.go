@@ -1403,6 +1403,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		ACPConfig:      dto.ACPConfig,
 		Config:         config,
 		SandboxConfig:  dto.SandboxConfig,
+		ToolPolicies:   dto.ToolPolicies,
 	}
 
 	// Check for existing definition with same name to return a clear 409 instead of a 500
@@ -1507,6 +1508,9 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.SandboxConfig != nil {
 		def.SandboxConfig = dto.SandboxConfig
+	}
+	if dto.ToolPolicies != nil {
+		def.ToolPolicies = dto.ToolPolicies
 	}
 
 	if err := h.repo.UpdateDefinition(c.Request().Context(), def); err != nil {

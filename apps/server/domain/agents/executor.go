@@ -170,6 +170,10 @@ type ExecuteRequest struct {
 	// This allows callers to obtain the resume run ID synchronously before launching
 	// the background goroutine, so the ID can be returned in the HTTP response.
 	PreCreatedRun *AgentRun
+
+	// PreApprovedToolName is set by Resume when the user approved a tool-policy confirmation.
+	// beforeToolCb will skip the policy gate for the first call to this tool name.
+	PreApprovedToolName string
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -800,7 +804,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// view of the tool call/response pair without any synthetic "here is what happened" text.
 	if sc := SuspendSignalFromMap(priorRun.SuspendContext); sc != nil && sc.PendingToolCallID != "" {
 		rootRunID := ae.getRootRunID(ctx, newRun)
-		if injErr := ae.injectToolResponse(ctx, rootRunID, req.ProjectID, sc, req); injErr != nil {
+		if injErr := ae.injectToolResponse(ctx, rootRunID, req.ProjectID, sc, &req); injErr != nil {
 			ae.log.Warn("failed to inject FunctionResponse into ADK session, falling back to text injection",
 				slog.String("run_id", newRun.ID),
 				slog.String("pending_tool_call_id", sc.PendingToolCallID),
@@ -834,7 +838,8 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 // injectToolResponse appends a FunctionResponse event to the ADK session so that
 // on resume, the LLM sees a proper tool call/response pair instead of a synthetic
 // text message. The session is identified by rootRunID (the original non-resumed run ID).
-func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, projectID string, sc *SuspendSignal, req ExecuteRequest) error {
+// req is a pointer so that injectToolResponse can set PreApprovedToolName on approve.
+func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, projectID string, sc *SuspendSignal, req *ExecuteRequest) error {
 	sessionID := rootRunID // matches getRootRunID result used in runPipeline
 
 	getResp, err := ae.sessionService.Get(ctx, &session.GetRequest{
@@ -860,6 +865,24 @@ func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, proj
 		responseBody["status"] = "completed"
 		if req.UserMessage != "" {
 			responseBody["output"] = req.UserMessage
+		}
+	case SuspendReasonAwaitingToolConfirm:
+		// User responded to a tool-policy confirmation question.
+		// "approve" (case-insensitive) → tell the LLM the tool is approved and will run.
+		// Anything else → tell the LLM the action was rejected with the user's message.
+		userResp := strings.TrimSpace(strings.ToLower(req.UserMessage))
+		if userResp == "approve" {
+			// Signal approved; beforeToolCb will allow one free pass via PreApprovedToolName.
+			req.PreApprovedToolName = sc.PendingToolName
+			responseBody["status"] = "approved"
+			responseBody["message"] = "User approved. The tool will now execute."
+		} else {
+			reason := req.UserMessage
+			if reason == "" {
+				reason = "no reason provided"
+			}
+			responseBody["status"] = "rejected"
+			responseBody["error"] = fmt.Sprintf("Action not taken. User rejected with message: %q", reason)
 		}
 	default:
 		responseBody["answer"] = req.UserMessage
@@ -1383,6 +1406,14 @@ func (ae *AgentExecutor) runPipeline(
 	// Create the doom loop detector
 	doomDetector := newDoomLoopDetector(ae.log)
 
+	// Create tool confirmation pause state
+	toolConfirmState := &ToolConfirmPauseState{}
+	// preApprovedUsed tracks whether the one-shot PreApprovedToolName bypass has fired.
+	var preApprovedUsed sync.Once
+
+	// Resolve agentID once for use in question creation
+	agentID := ae.resolveAgentID(req)
+
 	// Accumulate cached token counts across all LLM steps in this run.
 	// Used to surface cache hit visibility in the run summary.
 	var cachedTokensMu sync.Mutex
@@ -1436,6 +1467,20 @@ func (ae *AgentExecutor) runPipeline(
 			}, nil
 		}
 
+		// Check if a tool-policy confirmation is pending
+		if toolConfirmState.ShouldConfirm() {
+			ae.log.Info("tool_policy confirmation pending, pausing agent",
+				slog.String("run_id", run.ID),
+				slog.String("tool", toolConfirmState.ToolName()),
+				slog.String("question_id", toolConfirmState.QuestionID()),
+				slog.Int("step", currentStep),
+			)
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+			return &model.LLMResponse{
+				Content: genai.NewContentFromText("Execution paused. Waiting for user approval of tool call.", genai.RoleModel),
+			}, nil
+		}
+
 		// Periodically persist step count
 		if currentStep%5 == 0 {
 			_ = ae.repo.UpdateStepCount(dbCtx, run.ID, currentStep)
@@ -1444,7 +1489,7 @@ func (ae *AgentExecutor) runPipeline(
 		return nil, nil
 	}
 
-	// Set up before-tool callback for streaming ToolCallStart events
+	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
 	beforeToolCb := func(tCtx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
 		if req.StreamCallback != nil {
 			req.StreamCallback(StreamEvent{
@@ -1453,6 +1498,60 @@ func (ae *AgentExecutor) runPipeline(
 				Input: args,
 			})
 		}
+
+		// Check tool policy — if Confirm:true, pause the run and ask the user.
+		if req.AgentDefinition != nil {
+			if policy, ok := req.AgentDefinition.ToolPolicies[t.Name()]; ok && policy.Confirm {
+				// If this tool was pre-approved on resume, allow it through once.
+				bypassed := false
+				if req.PreApprovedToolName == t.Name() {
+					preApprovedUsed.Do(func() { bypassed = true })
+				}
+				if !bypassed {
+					msg := policy.Message
+					if msg == "" {
+						msg = fmt.Sprintf("Agent wants to call tool **%s**. Do you approve?", t.Name())
+					}
+					q, qErr := CreateAndEmitQuestion(tCtx, CreateQuestionParams{
+						Repo:      ae.repo,
+						Logger:    ae.log,
+						ProjectID: req.ProjectID,
+						AgentID:   agentID,
+						RunID:     run.ID,
+						UserID:    req.UserID,
+						EventsSvc: ae.eventsSvc,
+						Question:  msg,
+						Options: []AgentQuestionOption{
+							{Label: "Approve", Value: "approve"},
+							{Label: "Reject", Value: "reject"},
+						},
+						InteractionType: QuestionInteractionButtons,
+					})
+					if qErr != nil {
+						ae.log.Warn("tool_policy: failed to create confirmation question, proceeding without confirmation",
+							slog.String("run_id", run.ID),
+							slog.String("tool", t.Name()),
+							slog.String("error", qErr.Error()),
+						)
+						// Fall through and let the tool execute
+						return nil, nil
+					}
+					ae.log.Info("tool_policy: confirmation required, pausing run",
+						slog.String("run_id", run.ID),
+						slog.String("tool", t.Name()),
+						slog.String("question_id", q.ID),
+					)
+					toolConfirmState.RequestConfirm(q.ID, t.Name(), args)
+					// Return synthetic result — skips actual tool.Run(); afterToolCb will still fire.
+					return map[string]any{
+						"status":      "awaiting_confirmation",
+						"question_id": q.ID,
+						"message":     "Tool execution paused, awaiting user confirmation.",
+					}, nil
+				}
+			}
+		}
+
 		// Return nil to let the ADK framework proceed with actual tool execution.
 		// Returning a non-nil result tells the framework the callback already handled
 		// the tool call and skips tool.Run() entirely (Bug 6 fix).
@@ -1510,6 +1609,33 @@ func (ae *AgentExecutor) runPipeline(
 			)
 			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
 				ae.log.Warn("failed to persist suspend_context",
+					slog.String("run_id", run.ID),
+					slog.String("error", scErr.Error()),
+				)
+			}
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+		}
+
+		// Tool-policy confirmation: beforeToolCb skipped execution and created a question.
+		// Now pause the run, storing the original tool name+args so Resume can re-execute
+		// on approve or inject an error result on reject.
+		if toolConfirmState.ShouldConfirm() {
+			functionCallID := tCtx.FunctionCallID()
+			sig := SuspendSignal{
+				Reason:                 SuspendReasonAwaitingToolConfirm,
+				QuestionID:             toolConfirmState.QuestionID(),
+				PendingToolCallID:      functionCallID,
+				PendingToolName:        toolConfirmState.ToolName(),
+				PendingToolConfirmArgs: toolConfirmState.ToolArgs(),
+			}
+			ae.log.Info("tool_policy afterToolCb: pausing run awaiting confirmation",
+				slog.String("run_id", run.ID),
+				slog.String("tool", sig.PendingToolName),
+				slog.String("question_id", sig.QuestionID),
+				slog.String("pending_tool_call_id", functionCallID),
+			)
+			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
+				ae.log.Warn("failed to persist suspend_context for tool confirm",
 					slog.String("run_id", run.ID),
 					slog.String("error", scErr.Error()),
 				)

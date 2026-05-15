@@ -8,6 +8,9 @@ const (
 	SuspendReasonAwaitingHuman SuspendReason = "awaiting_human"
 	// SuspendReasonAwaitingChild means the run is waiting for a spawned child run to complete.
 	SuspendReasonAwaitingChild SuspendReason = "awaiting_child"
+	// SuspendReasonAwaitingToolConfirm means the run is paused waiting for the user to
+	// approve or reject a tool call governed by a tool policy.
+	SuspendReasonAwaitingToolConfirm SuspendReason = "awaiting_tool_confirm"
 )
 
 // SuspendSignal is set by a tool (or spawn handler) to indicate that the current
@@ -16,7 +19,7 @@ const (
 type SuspendSignal struct {
 	Reason SuspendReason
 
-	// QuestionID is set when Reason == SuspendReasonAwaitingHuman.
+	// QuestionID is set when Reason == SuspendReasonAwaitingHuman or SuspendReasonAwaitingToolConfirm.
 	QuestionID string
 
 	// WaitingForRunID is set when Reason == SuspendReasonAwaitingChild.
@@ -29,6 +32,11 @@ type SuspendSignal struct {
 
 	// PendingToolName is the tool name that triggered the suspend (e.g. "ask_user").
 	PendingToolName string
+
+	// PendingToolConfirmArgs holds the original tool args when Reason == SuspendReasonAwaitingToolConfirm.
+	// On confirm-resume, the executor injects a synthetic "approved" FunctionResponse.
+	// On reject-resume, the executor injects an error FunctionResponse.
+	PendingToolConfirmArgs map[string]any
 }
 
 // ToMap serialises the SuspendSignal for storage as JSONB suspend_context.
@@ -43,6 +51,9 @@ func (s SuspendSignal) ToMap() map[string]any {
 	}
 	if s.WaitingForRunID != "" {
 		m["waiting_for_run_id"] = s.WaitingForRunID
+	}
+	if s.PendingToolConfirmArgs != nil {
+		m["pending_tool_confirm_args"] = s.PendingToolConfirmArgs
 	}
 	return m
 }
@@ -64,5 +75,8 @@ func SuspendSignalFromMap(m map[string]any) *SuspendSignal {
 	s.WaitingForRunID, _ = m["waiting_for_run_id"].(string)
 	s.PendingToolCallID, _ = m["pending_tool_call_id"].(string)
 	s.PendingToolName, _ = m["pending_tool_name"].(string)
+	if args, ok := m["pending_tool_confirm_args"].(map[string]any); ok {
+		s.PendingToolConfirmArgs = args
+	}
 	return s
 }

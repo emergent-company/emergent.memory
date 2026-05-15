@@ -529,16 +529,23 @@ def assert_document_classified(project_id, doc_id, expected_stage, pre_agent_sna
     return results
 
 
-def assert_schema_created(project_id, expected_pack_name):
+def assert_schema_created(project_id, expected_pack_name, retries=6, delay=5):
     results = []
     try:
-        resp = get(f"/api/schemas/projects/{project_id}/installed")
-        if isinstance(resp, list):
-            schemas = resp
-        else:
-            schemas = resp.get("schemas") or resp.get("items") or []
-        names = [s.get("name", "") for s in schemas]
-        found = next((s for s in schemas if expected_pack_name.lower() in s.get("name", "").lower()), None)
+        found = None
+        names = []
+        for attempt in range(retries):
+            resp = get(f"/api/schemas/projects/{project_id}/installed")
+            if isinstance(resp, list):
+                schemas = resp
+            else:
+                schemas = resp.get("schemas") or resp.get("items") or []
+            names = [s.get("name", "") for s in schemas]
+            found = next((s for s in schemas if expected_pack_name.lower() in s.get("name", "").lower()), None)
+            if found:
+                break
+            if attempt < retries - 1:
+                time.sleep(delay)
         results.append(check(f"schema '{expected_pack_name}' created", found is not None, f"found={names}"))
         if found:
             prompts = found.get("extractionPrompts") or found.get("extraction_prompts") or {}
