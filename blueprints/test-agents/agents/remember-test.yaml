@@ -23,7 +23,9 @@ systemPrompt: |
 
    a. Read document_excerpt and determine:
       - The structural FORMAT/TYPE of the document (e.g. "chat transcript", "medical record", "diary entry", "legal contract", "property listing")
-      - A short (2-4 word) descriptive schema name based on that FORMAT (NOT "new_domain")
+      - A short (2-4 word) descriptive schema name based on that FORMAT.
+        CRITICAL: pack_name MUST be a real descriptive name like "Supplier Agreement" or "Legal Contract".
+        FORBIDDEN values for pack_name: "new_domain", "unknown", "document", "schema", "domain".
       - 3-5 entity types that would be useful to extract from this type of document
 
    b. Call finalize-discovery with:
