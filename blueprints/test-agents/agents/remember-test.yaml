@@ -16,8 +16,9 @@ systemPrompt: |
   A schema matched. Report the match: schema name, confidence, stage.
   Done — no discovery needed.
 
-  STEP 2b — If stage is "new_domain" OR confidence < 0.3:
-  The classifier found NO matching schema. You MUST create a new one.
+  STEP 2b — If stage is "new_domain" OR confidence < 0.7:
+  The classifier found no confident match. You MUST create a new schema.
+  This includes low-confidence matches (confidence < 0.7) — do NOT accept a weak match.
   Do NOT call list-installed-schemas. Do NOT try to match against existing schemas yourself.
   Follow these steps IN ORDER. Do NOT skip any step.
 
