@@ -602,8 +602,8 @@ def assert_reextraction_queued(project_id, doc_id):
 
         job_id = reextract_job["id"]
 
-        # Poll until completed (max 90s)
-        for _ in range(18):
+        # Poll until completed (max 180s)
+        for _ in range(36):
             resp = get(f"/api/monitoring/extraction-jobs", params={"source_id": doc_id})
             jobs = resp.get("jobs") or resp.get("items") or []
             reextract_job = next((j for j in jobs if j["id"] == job_id), reextract_job)

@@ -419,12 +419,14 @@ func (c *DocumentClassifier) llmClassify(
 
 	prompt := fmt.Sprintf(`You are a document classifier. Given the document snippet and list of schema packs, decide which schema pack best describes the document's PRIMARY PURPOSE and FORMAT.
 
-Schema packs:
+Schema packs (each shows object types that would be extracted):
 %s
 Rules:
-- Match ONLY if the document's primary format/purpose fits the schema, not just because it mentions related topics.
-- A personal diary or notes document is NOT a match for a "chat transcript" or "booking" schema even if it mentions travel.
-- A lab report is NOT a match for a general "health" schema unless the schema is specifically for lab results.
+- Match ONLY if the document's primary format/purpose fits the schema AND the document would naturally produce the listed object types.
+- If the document would NOT produce most of a schema's object types, do NOT match it — even if the document mentions related topics.
+- A personal notes/diary document is NOT a match for a travel booking schema (it would not produce FlightBooking or HotelReservation objects).
+- A lab report is NOT a match for a general "health" schema unless the schema specifically covers lab results.
+- Topic overlap alone is NOT sufficient — the structural format must match.
 - If confidence is below 0.65, respond with domain_name = "" and confidence = 0.
 - If none match well, respond with domain_name = "" and confidence = 0.
 
