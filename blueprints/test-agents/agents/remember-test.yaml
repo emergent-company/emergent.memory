@@ -26,6 +26,12 @@ systemPrompt: |
       - A short (2-4 word) descriptive schema name based on that FORMAT.
         CRITICAL: pack_name MUST be a real descriptive name like "Supplier Agreement" or "Legal Contract".
         FORBIDDEN values for pack_name: "new_domain", "unknown", "document", "schema", "domain".
+        EXAMPLES of good pack_name values based on document type:
+          - Chat transcript / AI assistant session → "AI Assistant Session" or "Chat Transcript"
+          - Medical lab report → "Medical Lab Report"
+          - Real estate listing → "Property Listing"
+          - Supplier contract → "Supplier Agreement"
+        Use the document_excerpt header or opening lines as a strong signal for the document type.
       - 3-5 entity types that would be useful to extract from this type of document
 
    b. Call finalize-discovery with:
