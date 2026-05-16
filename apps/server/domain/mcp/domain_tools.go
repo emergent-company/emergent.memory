@@ -242,6 +242,9 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 	if mode == "create" && strings.TrimSpace(packName) == "" {
 		return errorResult("missing required argument: pack_name (required when mode='create')"), nil
 	}
+	if mode == "create" && strings.EqualFold(strings.TrimSpace(packName), "new_domain") {
+		return errorResult("invalid pack_name: 'new_domain' is a placeholder — provide a descriptive domain name (e.g. 'Real Estate Listings', 'Medical Lab Results')"), nil
+	}
 	if mode == "extend" && strings.TrimSpace(existingPackIDStr) == "" {
 		return errorResult("missing required argument: existing_pack_id (required when mode='extend')"), nil
 	}

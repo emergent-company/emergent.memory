@@ -49,7 +49,8 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 PROJECT_INFO = (
     "Personal assistant knowledge base tracking AI assistant conversations, "
-    "personal notes and goals, medical health records, and business supplier agreements."
+    "personal notes and goals, medical health records, business supplier agreements, "
+    "and real estate property listings."
 )
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,11 @@ TEST_DOCS = [
     {
         "file": "supplier-agreement.txt",
         "label": "Supplier Agreement (first)",
+        "expected_stage": "new_domain",
+    },
+    {
+        "file": "real-estate-listing.txt",
+        "label": "Real Estate Listing (first)",
         "expected_stage": "new_domain",
     },
     {
@@ -766,7 +772,7 @@ def main():
 
     # --project-id implies --keep-project (don't delete a pre-existing project)
     is_fresh_project = not args.project_id
-    should_cleanup = is_fresh_project and not args.keep_project and not args.cleanup is False
+    should_cleanup = is_fresh_project and not args.keep_project
 
     project_id = args.project_id or setup_project()
     if args.project_id:
