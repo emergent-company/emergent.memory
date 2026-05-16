@@ -311,14 +311,17 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 		if ms.ExtractionPrompts != nil {
 			ep = ms.ExtractionPrompts
 		}
+		// Collect object type names for LLM prompt and per-type embeddings.
+		typeNames := buildTypeNamesFromSchema(ms)
 		summary := InstalledSchemaSummary{
 			ID:                ms.ID,
 			Name:              ms.Name,
 			Description:       desc,
 			Keywords:          keywords,
+			TypeNames:         typeNames,
 			ExtractionPrompts: ep,
 		}
-		// Compute embedding from domainContext + typeHint names when available.
+		// Compute pack-level embedding and per-type embeddings when available.
 		if p.embeddingService != nil && p.embeddingService.IsEnabled() {
 			embText := buildSchemaEmbeddingText(ms)
 			if embText != "" {
@@ -332,10 +335,52 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 					summary.Embedding = emb
 				}
 			}
+			// Embed each object type name individually for Fix 3 (type-similarity matching).
+			if len(typeNames) > 0 {
+				typeEmbs := make(map[string][]float32, len(typeNames))
+				for _, tn := range typeNames {
+					te, teErr := p.embeddingService.EmbedQuery(ctx, tn)
+					if teErr != nil {
+						p.log.Warn("type embedding failed",
+							slog.String("pack", ms.Name),
+							slog.String("type", tn),
+							logger.Error(teErr),
+						)
+						continue
+					}
+					typeEmbs[tn] = te
+				}
+				if len(typeEmbs) > 0 {
+					summary.TypeEmbeddings = typeEmbs
+				}
+			}
 		}
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
+}
+
+// buildTypeNamesFromSchema returns the object type names defined in a schema pack.
+// Used to populate InstalledSchemaSummary.TypeNames for the LLM classification prompt.
+func buildTypeNamesFromSchema(ms *GraphMemorySchema) []string {
+	seen := map[string]bool{}
+	var names []string
+	for typeName := range parseObjectTypeSchemas(ms.ObjectTypeSchemas) {
+		if !seen[typeName] {
+			seen[typeName] = true
+			names = append(names, typeName)
+		}
+	}
+	// Also include type hint keys from extraction prompts (may differ from schema types).
+	if ms.ExtractionPrompts != nil {
+		for k := range ms.ExtractionPrompts.TypeHints {
+			if !seen[k] {
+				seen[k] = true
+				names = append(names, k)
+			}
+		}
+	}
+	return names
 }
 
 // buildKeywordsFromSchema extracts keyword signals from a schema pack's name and type list.

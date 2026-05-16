@@ -43,6 +43,12 @@ type InstalledSchemaSummary struct {
 	// Embedding is a pre-computed vector of the schema's domain description +
 	// type hints. Used for vector-similarity classification (stage 1).
 	Embedding []float32
+	// TypeNames are the object type names defined in this schema pack.
+	// Used in the LLM classification prompt to avoid topic-overlap false matches.
+	TypeNames []string
+	// TypeEmbeddings maps each object type name to its embedding vector.
+	// Used for object-type similarity matching (stage 3).
+	TypeEmbeddings map[string][]float32
 	// ExtractionPrompts holds domain guidance written back by the discovery agent.
 	ExtractionPrompts *SchemaExtractionPrompts
 }
@@ -68,15 +74,22 @@ func NewDocumentClassifier(modelFactory *adk.ModelFactory, embeddingService Embe
 // Classify attempts to match the document against the provided schema packs.
 // Returns a zero-value ClassificationResult when no schema packs are installed.
 //
+// suggestedTypeNames (optional): object type names the agent suggested during
+// test extraction. When provided, an object-type similarity stage is run as a
+// confirming signal when vector/LLM results are ambiguous.
+//
 // Pipeline:
-//  1. Vector similarity  — cosine(doc_embedding, pack_embedding) ≥ 0.75 → match
-//     0.55–0.75 → ambiguous, fall through to LLM
-//     < 0.55    → no match (new domain)
+//  1. Vector similarity  — cosine(doc_embedding, pack_embedding) ≥ 0.85 → match
+//     0.55–0.85 → ambiguous, fall through to LLM
+//     < 0.55    → fall through to LLM (low cosine ≠ no match for short schema text)
 //  2. LLM classification — used when vector is ambiguous or embeddings unavailable
+//  3. Object-type similarity — when suggestedTypeNames provided, confirms or
+//     overrides ambiguous result by matching suggested types against installed types
 func (c *DocumentClassifier) Classify(
 	ctx context.Context,
 	documentText string,
 	schemaPacks []InstalledSchemaSummary,
+	suggestedTypeNames ...string,
 ) (ClassificationResult, error) {
 	if len(schemaPacks) == 0 {
 		return ClassificationResult{}, nil
@@ -118,6 +131,27 @@ func (c *DocumentClassifier) Classify(
 			return *vectorResult, nil
 		}
 		return ClassificationResult{}, nil
+	}
+
+	// Stage 3: object-type similarity (optional confirming signal).
+	// When the caller provides suggested type names from a test extraction run,
+	// compare them against installed schema types. If a schema's types strongly
+	// match the suggestions, use that as a confirming or overriding signal.
+	if len(suggestedTypeNames) > 0 && c.embeddingService != nil && c.embeddingService.IsEnabled() {
+		typeResult := c.objectTypeMatch(ctx, suggestedTypeNames, schemaPacks)
+		if typeResult != nil {
+			c.log.Info("object-type similarity match",
+				slog.String("domain", typeResult.DomainName),
+				slog.Float64("type_score", float64(typeResult.Confidence)),
+				slog.String("llm_domain", llmResult.DomainName),
+			)
+			// Override LLM when: LLM returned empty OR type match agrees with LLM
+			// OR type score is very high (≥0.75) indicating strong structural match.
+			if llmResult.DomainName == "" || typeResult.DomainName == llmResult.DomainName || typeResult.Confidence >= 0.75 {
+				typeResult.Signals.ClassifiedAt = time.Now().UTC().Format(time.RFC3339)
+				return *typeResult, nil
+			}
+		}
 	}
 
 	llmResult.Signals.ClassifiedAt = time.Now().UTC().Format(time.RFC3339)
@@ -278,6 +312,85 @@ func (c *DocumentClassifier) heuristicMatch(
 	return result, bestKeywords
 }
 
+// objectTypeMatch compares suggestedTypeNames (from agent test extraction) against
+// the per-type embeddings of each installed schema pack. Returns the best-matching
+// pack when at least 40% of suggested types find a close match (cosine ≥ 0.75)
+// within any single pack. Returns nil when no pack reaches the threshold or
+// when type embeddings are unavailable.
+func (c *DocumentClassifier) objectTypeMatch(
+	ctx context.Context,
+	suggestedTypeNames []string,
+	packs []InstalledSchemaSummary,
+) *ClassificationResult {
+	if c.embeddingService == nil || !c.embeddingService.IsEnabled() {
+		return nil
+	}
+
+	// Embed each suggested type name.
+	type suggestedEmb struct {
+		name string
+		emb  []float32
+	}
+	var suggested []suggestedEmb
+	for _, tn := range suggestedTypeNames {
+		emb, err := c.embeddingService.EmbedQuery(ctx, tn)
+		if err != nil {
+			c.log.Warn("objectTypeMatch: embed suggested type failed",
+				slog.String("type", tn), logger.Error(err))
+			continue
+		}
+		suggested = append(suggested, suggestedEmb{name: tn, emb: emb})
+	}
+	if len(suggested) == 0 {
+		return nil
+	}
+
+	const typeMatchThreshold = 0.75 // cosine needed to count a type as matched
+	const packScoreThreshold = 0.40 // fraction of suggested types that must match
+
+	bestScore := float32(0)
+	var bestPack *InstalledSchemaSummary
+
+	for i := range packs {
+		if len(packs[i].TypeEmbeddings) == 0 {
+			continue
+		}
+		matched := 0
+		for _, s := range suggested {
+			for _, te := range packs[i].TypeEmbeddings {
+				if cosineSimilarity(s.emb, te) >= typeMatchThreshold {
+					matched++
+					break // count each suggested type at most once per pack
+				}
+			}
+		}
+		score := float32(matched) / float32(len(suggested))
+		if score > bestScore {
+			bestScore = score
+			bestPack = &packs[i]
+		}
+	}
+
+	if bestPack == nil || bestScore < packScoreThreshold {
+		return nil
+	}
+
+	result := &ClassificationResult{
+		DomainName:      bestPack.Name,
+		Confidence:      bestScore,
+		MatchedSchemaID: &bestPack.ID,
+		Signals: ClassificationSignals{
+			MatchedSchemaID:   &bestPack.ID,
+			MatchedSchemaName: &bestPack.Name,
+			LLMReason:         fmt.Sprintf("object-type similarity score %.2f", bestScore),
+		},
+	}
+	if bestPack.ExtractionPrompts != nil {
+		result.DomainGuidance = bestPack.ExtractionPrompts.DomainContext
+	}
+	return result
+}
+
 // llmClassify asks the LLM to pick the best schema pack for the document.
 func (c *DocumentClassifier) llmClassify(
 	ctx context.Context,
@@ -288,10 +401,14 @@ func (c *DocumentClassifier) llmClassify(
 		return ClassificationResult{}, fmt.Errorf("no model factory configured")
 	}
 
-	// Build schema-pack list for prompt.
+	// Build schema-pack list for prompt, including object type names.
 	var packList strings.Builder
 	for i, p := range packs {
-		packList.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, p.Name, p.Description))
+		line := fmt.Sprintf("%d. %s — %s", i+1, p.Name, p.Description)
+		if len(p.TypeNames) > 0 {
+			line += "\n   Object types: " + strings.Join(p.TypeNames, ", ")
+		}
+		packList.WriteString(line + "\n")
 	}
 
 	// Truncate document to first 2000 chars for classification.
