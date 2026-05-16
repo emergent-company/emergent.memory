@@ -94,16 +94,18 @@ func (c *DocumentClassifier) Classify(
 			)
 			return *vectorResult, nil
 		}
-		// If best vector score < 0.55, no schema is a good match — skip LLM.
 		if vectorResult == nil {
-			c.log.Info("vector similarity: no match above threshold, skipping LLM")
-			return ClassificationResult{}, nil
+			// Best vector score < 0.55 — embeddings alone are inconclusive.
+			// Fall through to LLM; schema embeddings are sparse text so low
+			// cosine doesn't mean no match.
+			c.log.Info("vector similarity: no strong match, falling through to LLM")
+		} else {
+			// 0.55 ≤ score < 0.85: ambiguous — fall through to LLM.
+			c.log.Info("vector similarity ambiguous, falling through to LLM",
+				slog.String("best_domain", vectorResult.DomainName),
+				slog.Float64("confidence", float64(vectorResult.Confidence)),
+			)
 		}
-		// 0.55 ≤ score < 0.75: ambiguous — fall through to LLM.
-		c.log.Info("vector similarity ambiguous, falling through to LLM",
-			slog.String("best_domain", vectorResult.DomainName),
-			slog.Float64("confidence", float64(vectorResult.Confidence)),
-		)
 	}
 
 	// Stage 2: LLM classification.
