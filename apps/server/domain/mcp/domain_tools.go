@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
 // ============================================================================
@@ -282,6 +284,42 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 	}
 
 	out, _ := json.Marshal(resp)
+
+	// Auto-queue reextraction when a new schema was created for a specific document.
+	// This removes the requirement for the agent to call queue-reextraction separately —
+	// DeepSeek consistently skips that step after tool-policy confirm resume.
+	if mode == "create" && documentIDStr != "" && s.reextractionQueuer != nil {
+		// Extract schema_id from the JSON response (resp is interface{}).
+		var respMap map[string]any
+		schemaID := ""
+		if json.Unmarshal(out, &respMap) == nil {
+			if sid, ok := respMap["schema_id"].(string); ok {
+				schemaID = sid
+			}
+		}
+		if schemaID != "" {
+			jobID, qErr := s.reextractionQueuer.QueueReextraction(ctx, projectID, documentIDStr, schemaID)
+			if qErr != nil {
+				s.log.Warn("auto queue-reextraction failed after finalize-discovery",
+					slog.String("document_id", documentIDStr),
+					slog.String("schema_id", schemaID),
+					logger.Error(qErr),
+				)
+			} else {
+				s.log.Info("auto-queued reextraction after finalize-discovery",
+					slog.String("document_id", documentIDStr),
+					slog.String("schema_id", schemaID),
+					slog.String("job_id", jobID),
+				)
+				// Append reextraction job ID to the response so the agent can report it.
+				respMap["reextraction_job_id"] = jobID
+				if b, err := json.Marshal(respMap); err == nil {
+					out = b
+				}
+			}
+		}
+	}
+
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
 }
 
