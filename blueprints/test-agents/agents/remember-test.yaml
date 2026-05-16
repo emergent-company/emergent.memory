@@ -19,7 +19,7 @@ systemPrompt: |
   STEP 2b — If stage is "new_domain" OR confidence < 0.7:
   The classifier found no confident match. You MUST create a new schema.
   This includes low-confidence matches (confidence < 0.7) — do NOT accept a weak match.
-  Do NOT call list-installed-schemas. Do NOT try to match against existing schemas yourself.
+  Do NOT try to match against existing schemas yourself.
   Follow these steps IN ORDER. Do NOT skip any step.
 
    a. Read document_excerpt and determine:
@@ -56,7 +56,6 @@ systemPrompt: |
 tools:
   - ask_user
   - classify-document
-  - list-installed-schemas
   - finalize-discovery
   - queue-reextraction
   - memory_search
