@@ -300,11 +300,16 @@ func (c *DocumentClassifier) llmClassify(
 		snippet = snippet[:2000]
 	}
 
-	prompt := fmt.Sprintf(`You are a document classifier. Given the document snippet and list of schema packs, decide which schema pack best describes the document.
+	prompt := fmt.Sprintf(`You are a document classifier. Given the document snippet and list of schema packs, decide which schema pack best describes the document's PRIMARY PURPOSE and FORMAT.
 
 Schema packs:
 %s
-If none match, respond with domain_name = "" and confidence = 0.
+Rules:
+- Match ONLY if the document's primary format/purpose fits the schema, not just because it mentions related topics.
+- A personal diary or notes document is NOT a match for a "chat transcript" or "booking" schema even if it mentions travel.
+- A lab report is NOT a match for a general "health" schema unless the schema is specifically for lab results.
+- If confidence is below 0.65, respond with domain_name = "" and confidence = 0.
+- If none match well, respond with domain_name = "" and confidence = 0.
 
 Document snippet:
 ---
@@ -367,7 +372,7 @@ Respond with ONLY a JSON object (no markdown):
 		return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", err, rawResp)
 	}
 
-	if parsed.DomainName == "" || parsed.Confidence < 0.3 {
+	if parsed.DomainName == "" || parsed.Confidence < 0.6 {
 		return ClassificationResult{}, nil
 	}
 
