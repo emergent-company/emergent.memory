@@ -7,6 +7,7 @@ import (
 // ExtractionJobSummaryDTO represents a summary of an extraction job for list views
 type ExtractionJobSummaryDTO struct {
 	ID                   string     `json:"id"`
+	JobType              string     `json:"job_type,omitempty"`
 	SourceType           string     `json:"source_type"`
 	SourceID             string     `json:"source_id"`
 	Status               string     `json:"status"`
@@ -61,6 +62,7 @@ type ExtractionJobMetricsDTO struct {
 // ExtractionJobDetailDTO represents full details for an extraction job
 type ExtractionJobDetailDTO struct {
 	ID                   string                   `json:"id"`
+	JobType              string                   `json:"job_type,omitempty"`
 	SourceType           string                   `json:"source_type"`
 	SourceID             string                   `json:"source_id"`
 	Status               string                   `json:"status"`

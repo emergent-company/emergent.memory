@@ -344,8 +344,9 @@ func (h *Handler) GetExtractionJobLLMCalls(c echo.Context) error {
 // jobToSummaryDTO converts an extraction job to a summary DTO
 func (h *Handler) jobToSummaryDTO(job *extraction.ObjectExtractionJob) ExtractionJobSummaryDTO {
 	dto := ExtractionJobSummaryDTO{
-		ID:     job.ID,
-		Status: mapInternalStatusToFrontend(string(job.Status)),
+		ID:      job.ID,
+		JobType: string(job.JobType),
+		Status:  mapInternalStatusToFrontend(string(job.Status)),
 	}
 
 	// Handle pointer fields
@@ -375,8 +376,12 @@ func (h *Handler) jobToSummaryDTO(job *extraction.ObjectExtractionJob) Extractio
 		dto.DurationMs = &duration
 	}
 
-	if job.SuccessfulItems > 0 {
-		dto.ObjectsCreated = &job.SuccessfulItems
+	if job.ObjectsCreated > 0 {
+		dto.ObjectsCreated = &job.ObjectsCreated
+	}
+
+	if job.RelationshipsCreated > 0 {
+		dto.RelationshipsCreated = &job.RelationshipsCreated
 	}
 
 	if len(job.CreatedObjectIDs) > 0 {
@@ -394,6 +399,7 @@ func (h *Handler) jobToSummaryDTO(job *extraction.ObjectExtractionJob) Extractio
 func (h *Handler) jobToDetailDTO(job *extraction.ObjectExtractionJob, logs []ProcessLogDTO, llmCalls []LLMCallLogDTO, metrics *ExtractionJobMetricsDTO) ExtractionJobDetailDTO {
 	dto := ExtractionJobDetailDTO{
 		ID:       job.ID,
+		JobType:  string(job.JobType),
 		Status:   mapInternalStatusToFrontend(string(job.Status)),
 		Logs:     logs,
 		LLMCalls: llmCalls,
@@ -427,8 +433,12 @@ func (h *Handler) jobToDetailDTO(job *extraction.ObjectExtractionJob, logs []Pro
 		dto.DurationMs = &duration
 	}
 
-	if job.SuccessfulItems > 0 {
-		dto.ObjectsCreated = &job.SuccessfulItems
+	if job.ObjectsCreated > 0 {
+		dto.ObjectsCreated = &job.ObjectsCreated
+	}
+
+	if job.RelationshipsCreated > 0 {
+		dto.RelationshipsCreated = &job.RelationshipsCreated
 	}
 
 	if len(job.CreatedObjectIDs) > 0 {

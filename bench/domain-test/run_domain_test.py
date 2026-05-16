@@ -583,11 +583,40 @@ def assert_schema_created_any(project_id, schema_count_before, retries=6, delay=
 
 
 def assert_reextraction_queued(project_id, doc_id):
+    """Assert reextraction job was queued, poll until complete, report object/relation stats."""
     results = []
     try:
-        resp = get(f"/api/monitoring/extraction-jobs", params={"document_id": doc_id, "job_type": "reextraction"})
-        jobs = resp.get("jobs") or resp.get("items") or []
-        results.append(check("reextraction job queued", len(jobs) > 0, f"count={len(jobs)}"))
+        # Poll for reextraction job to appear (agent calls queue-reextraction after finalize-discovery)
+        reextract_job = None
+        for _ in range(12):
+            resp = get(f"/api/monitoring/extraction-jobs", params={"source_id": doc_id})
+            jobs = resp.get("jobs") or resp.get("items") or []
+            reextract_job = next((j for j in jobs if j.get("job_type") == "reextraction"), None)
+            if reextract_job:
+                break
+            time.sleep(5)
+
+        results.append(check("reextraction job queued", reextract_job is not None, f"count=0"))
+        if not reextract_job:
+            return results
+
+        job_id = reextract_job["id"]
+
+        # Poll until completed (max 90s)
+        for _ in range(18):
+            resp = get(f"/api/monitoring/extraction-jobs", params={"source_id": doc_id})
+            jobs = resp.get("jobs") or resp.get("items") or []
+            reextract_job = next((j for j in jobs if j["id"] == job_id), reextract_job)
+            if reextract_job.get("status") in ("completed", "failed", "error"):
+                break
+            time.sleep(5)
+
+        objects = reextract_job.get("objects_created") or 0
+        relations = reextract_job.get("relationships_created") or 0
+        status = reextract_job.get("status", "unknown")
+        print(f"    Reextraction job {job_id[:8]}: status={status} objects={objects} relations={relations}")
+        results.append(check("reextraction completed", status == "completed", f"status={status}"))
+        results.append(check("objects extracted > 0", objects > 0, f"objects={objects}"))
     except Exception as e:
         results.append(check("reextraction job fetch", False, str(e)))
     return results
