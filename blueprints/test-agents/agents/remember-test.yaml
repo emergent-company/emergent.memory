@@ -63,6 +63,4 @@ toolPolicies:
   finalize-discovery:
     confirm: true
     message: "Agent wants to call **finalize-discovery** to create a new schema pack. Do you approve?"
-  queue-reextraction:
-    confirm: true
-    message: "Approve"
+
