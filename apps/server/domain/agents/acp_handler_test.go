@@ -640,6 +640,8 @@ func TestRunEventToACPSSEEvent_AllEventTypes(t *testing.T) {
 		ACPEventMessageCompleted,
 		ACPEventGeneric,
 		ACPEventError,
+		ACPEventToolCall,
+		ACPEventToolResult,
 	}
 
 	for _, et := range eventTypes {
@@ -651,6 +653,33 @@ func TestRunEventToACPSSEEvent_AllEventTypes(t *testing.T) {
 			sse := RunEventToACPSSEEvent(event)
 			assert.Equal(t, et, sse.Type)
 			assert.Equal(t, true, sse.Data["test"])
+		})
+	}
+}
+
+func TestACPEventToolCallConstants(t *testing.T) {
+	assert.Equal(t, "tool_call", ACPEventToolCall)
+	assert.Equal(t, "tool_result", ACPEventToolResult)
+}
+
+func TestACPEventToolCall_RunEventToSSEEvent(t *testing.T) {
+	for _, tc := range []struct {
+		eventType string
+		dataKey   string
+	}{
+		{ACPEventToolCall, "tool_call"},
+		{ACPEventToolResult, "tool_result"},
+	} {
+		t.Run(tc.eventType, func(t *testing.T) {
+			event := &ACPRunEvent{
+				EventType: tc.eventType,
+				Data: map[string]any{
+					tc.dataKey: map[string]any{"name": "search", "arguments": `{}`},
+				},
+			}
+			sse := RunEventToACPSSEEvent(event)
+			require.Equal(t, tc.eventType, sse.Type)
+			require.Contains(t, sse.Data, tc.dataKey)
 		})
 	}
 }

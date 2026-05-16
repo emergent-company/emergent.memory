@@ -517,6 +517,14 @@ func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *A
 			_ = writer.WriteEvent(ACPEventMessagePart, data)
 			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
 			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
+			toolCallData := map[string]any{
+				"tool_call": map[string]any{
+					"name":      event.Tool,
+					"arguments": json.RawMessage(inputJSON),
+				},
+			}
+			h.persistACPEvent(bgCtx, run.ID, ACPEventToolCall, toolCallData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventToolCall, toolCallData)
 
 		case StreamEventToolCallEnd:
 			outputJSON, _ := json.Marshal(event.Output)
@@ -533,6 +541,14 @@ func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *A
 			_ = writer.WriteEvent(ACPEventMessagePart, data)
 			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
 			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
+			toolResultData := map[string]any{
+				"tool_result": map[string]any{
+					"name":   event.Tool,
+					"output": json.RawMessage(outputJSON),
+				},
+			}
+			h.persistACPEvent(bgCtx, run.ID, ACPEventToolResult, toolResultData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventToolResult, toolResultData)
 
 		case StreamEventError:
 			data := map[string]any{"error": map[string]any{"message": event.Error}}
@@ -626,6 +642,14 @@ func (h *ACPHandler) makeEventPersistingCallback(ctx context.Context, runID, pro
 			}
 			h.persistACPEvent(ctx, runID, ACPEventMessagePart, data)
 			h.emitToSSEBus(projectID, runID, ACPEventMessagePart, data)
+			toolCallData := map[string]any{
+				"tool_call": map[string]any{
+					"name":      event.Tool,
+					"arguments": json.RawMessage(inputJSON),
+				},
+			}
+			h.persistACPEvent(ctx, runID, ACPEventToolCall, toolCallData)
+			h.emitToSSEBus(projectID, runID, ACPEventToolCall, toolCallData)
 		case StreamEventToolCallEnd:
 			outputJSON, _ := json.Marshal(event.Output)
 			data := map[string]any{
@@ -640,6 +664,14 @@ func (h *ACPHandler) makeEventPersistingCallback(ctx context.Context, runID, pro
 			}
 			h.persistACPEvent(ctx, runID, ACPEventMessagePart, data)
 			h.emitToSSEBus(projectID, runID, ACPEventMessagePart, data)
+			toolResultData := map[string]any{
+				"tool_result": map[string]any{
+					"name":   event.Tool,
+					"output": json.RawMessage(outputJSON),
+				},
+			}
+			h.persistACPEvent(ctx, runID, ACPEventToolResult, toolResultData)
+			h.emitToSSEBus(projectID, runID, ACPEventToolResult, toolResultData)
 		case StreamEventError:
 			data := map[string]any{
 				"error": map[string]any{"message": event.Error},
@@ -1022,6 +1054,14 @@ func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *A
 			_ = writer.WriteEvent(ACPEventMessagePart, data)
 			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
 			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
+			toolCallData := map[string]any{
+				"tool_call": map[string]any{
+					"name":      event.Tool,
+					"arguments": json.RawMessage(inputJSON),
+				},
+			}
+			h.persistACPEvent(bgCtx, run.ID, ACPEventToolCall, toolCallData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventToolCall, toolCallData)
 
 		case StreamEventToolCallEnd:
 			outputJSON, _ := json.Marshal(event.Output)
@@ -1038,6 +1078,14 @@ func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *A
 			_ = writer.WriteEvent(ACPEventMessagePart, data)
 			h.persistACPEvent(bgCtx, run.ID, ACPEventMessagePart, data)
 			h.emitToSSEBus(projectID, run.ID, ACPEventMessagePart, data)
+			toolResultData := map[string]any{
+				"tool_result": map[string]any{
+					"name":   event.Tool,
+					"output": json.RawMessage(outputJSON),
+				},
+			}
+			h.persistACPEvent(bgCtx, run.ID, ACPEventToolResult, toolResultData)
+			h.emitToSSEBus(projectID, run.ID, ACPEventToolResult, toolResultData)
 
 		case StreamEventError:
 			data := map[string]any{"error": map[string]any{"message": event.Error}}

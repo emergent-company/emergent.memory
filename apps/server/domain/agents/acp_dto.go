@@ -34,6 +34,8 @@ const (
 	ACPEventMessageCompleted = "message.completed"
 	ACPEventGeneric          = "generic"
 	ACPEventError            = "error"
+	ACPEventToolCall         = "tool_call"
+	ACPEventToolResult       = "tool_result"
 )
 
 // --- ACP Wire Types ---
