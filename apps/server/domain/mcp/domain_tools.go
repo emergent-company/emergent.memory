@@ -244,8 +244,20 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 	if mode == "create" && strings.TrimSpace(packName) == "" {
 		return errorResult("missing required argument: pack_name (required when mode='create')"), nil
 	}
-	if mode == "create" && strings.EqualFold(strings.TrimSpace(packName), "new_domain") {
-		return errorResult("invalid pack_name: 'new_domain' is a placeholder — provide a descriptive domain name (e.g. 'Real Estate Listings', 'Medical Lab Results')"), nil
+	if mode == "create" {
+		forbidden := []string{"new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc", "miscellaneous"}
+		lowerName := strings.ToLower(strings.TrimSpace(packName))
+		for _, f := range forbidden {
+			if lowerName == f {
+				return errorResult(fmt.Sprintf(
+					"invalid pack_name: %q is a generic placeholder and is not allowed. "+
+						"You MUST retry finalize-discovery immediately with a descriptive name that reflects the document's structural format. "+
+						"Look at the document_excerpt you received from classify-document and name the schema after the document type. "+
+						"Examples: 'AI Assistant Session', 'Personal Notes', 'Medical Lab Report', 'Property Listing', 'Supplier Agreement'. "+
+						"Do NOT give up — retry now with a better pack_name.", packName,
+				)), nil
+			}
+		}
 	}
 	if mode == "extend" && strings.TrimSpace(existingPackIDStr) == "" {
 		return errorResult("missing required argument: existing_pack_id (required when mode='extend')"), nil
