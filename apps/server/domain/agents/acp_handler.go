@@ -1333,21 +1333,15 @@ func (h *ACPHandler) ListSessions(c echo.Context) error {
 		return apperror.NewInternal("failed to fetch session runs", err)
 	}
 
-	// Collect all run IDs for a single bulk events query
-	var allRunIDs []string
-	for _, runs := range runsBySession {
-		for _, r := range runs {
-			allRunIDs = append(allRunIDs, r.ID)
-		}
-	}
-	eventsByRun, err := h.repo.GetACPRunEventsByRunIDs(ctx, allRunIDs)
-	if err != nil {
-		return apperror.NewInternal("failed to fetch run events", err)
-	}
+	// For list view: do not fetch run events — that is expensive and unnecessary.
+	// Clients that need full event history should GET /acp/v1/sessions/:id.
+	emptyEvents := map[string][]*ACPRunEvent{}
 
 	result := make([]ACPSessionObject, len(sessions))
 	for i, s := range sessions {
-		result[i] = SessionToACPObject(s, runsBySession[s.ID], eventsByRun)
+		result[i] = SessionToACPObject(s, runsBySession[s.ID], emptyEvents)
+		// Clear history entries — list view only needs metadata (run_count, last_run_status).
+		result[i].History = nil
 	}
 	return c.JSON(http.StatusOK, result)
 }
