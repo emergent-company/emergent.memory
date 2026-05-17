@@ -444,6 +444,36 @@ func TestACPGetSession_EmptySessionID_Returns400(t *testing.T) {
 	assert.Contains(t, appErr.Message, "session ID")
 }
 
+func TestACPListSessions_NoAuth_Returns401(t *testing.T) {
+	h := newTestACPHandler()
+	c, _ := newACPEchoContextNoAuth(http.MethodGet, "/acp/v1/sessions", "")
+
+	err := h.ListSessions(c)
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, http.StatusUnauthorized, appErr.HTTPStatus)
+}
+
+func TestACPListSessions_NoProject_Returns400(t *testing.T) {
+	h := newTestACPHandler()
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/acp/v1/sessions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(string(auth.UserContextKey), &auth.AuthUser{
+		ID:        "user-test-id",
+		Email:     "test@example.com",
+		ProjectID: "",
+	})
+
+	err := h.ListSessions(c)
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, http.StatusBadRequest, appErr.HTTPStatus)
+}
+
 // ============================================================================
 // Task 9.7: ACP Event endpoint tests (GetRunEvents)
 // ============================================================================

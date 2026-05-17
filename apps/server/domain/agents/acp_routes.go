@@ -39,6 +39,7 @@ func RegisterACPRoutes(e *echo.Echo, h *ACPHandler, authMiddleware *auth.Middlew
 	sessionsRead := e.Group("/acp/v1/sessions")
 	sessionsRead.Use(authMiddleware.RequireAuth())
 	sessionsRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
+	sessionsRead.GET("", h.ListSessions)
 	sessionsRead.GET("/:sessionId", h.GetSession)
 
 	sessionsWrite := e.Group("/acp/v1/sessions")

@@ -2749,6 +2749,20 @@ func (r *Repository) GetACPSession(ctx context.Context, projectID, sessionID str
 	return session, nil
 }
 
+// ListACPSessions returns all ACP sessions for a project, ordered by created_at descending.
+func (r *Repository) ListACPSessions(ctx context.Context, projectID string) ([]*ACPSession, error) {
+	var sessions []*ACPSession
+	err := r.db.NewSelect().
+		Model(&sessions).
+		Where("project_id = ?", projectID).
+		Order("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ListACPSessions: %w", err)
+	}
+	return sessions, nil
+}
+
 // GetSessionRunHistory returns all agent runs linked to the given ACP session,
 // ordered by created_at ascending (oldest first).
 func (r *Repository) GetSessionRunHistory(ctx context.Context, sessionID string) ([]*AgentRun, error) {

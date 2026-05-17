@@ -1292,3 +1292,37 @@ func (h *ACPHandler) GetSession(c echo.Context) error {
 	acpSession := SessionToACPObject(session, runs, acpBaseURL(c))
 	return c.JSON(http.StatusOK, acpSession)
 }
+
+// ---------------------------------------------------------------------------
+// 4.16 ListSessions — GET /acp/v1/sessions
+// ---------------------------------------------------------------------------
+
+// ListSessions returns all ACP sessions for the authenticated project.
+// @Summary      List ACP sessions
+// @Description  Returns a list of all ACP sessions for the project, ordered by creation time descending.
+// @Tags         acp
+// @Produce      json
+// @Success      200 {array} ACPSessionObject
+// @Failure      401 {object} apperror.Error
+// @Router       /acp/v1/sessions [get]
+// @Security     bearerAuth
+func (h *ACPHandler) ListSessions(c echo.Context) error {
+	projectID, err := acpProjectID(c)
+	if err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+
+	sessions, err := h.repo.ListACPSessions(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to list sessions", err)
+	}
+
+	baseURL := acpBaseURL(c)
+	result := make([]ACPSessionObject, len(sessions))
+	for i, s := range sessions {
+		result[i] = SessionToACPObject(s, nil, baseURL)
+	}
+	return c.JSON(http.StatusOK, result)
+}
