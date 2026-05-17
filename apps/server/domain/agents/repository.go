@@ -2763,6 +2763,31 @@ func (r *Repository) ListACPSessions(ctx context.Context, projectID string) ([]*
 	return sessions, nil
 }
 
+// ListSessionRunsByProjectID returns all agent runs that belong to any ACP session
+// in the given project, with Agent relation loaded, ordered by created_at ASC.
+// Results are grouped by acp_session_id for building history URLs.
+func (r *Repository) ListSessionRunsByProjectID(ctx context.Context, projectID string) (map[string][]*AgentRun, error) {
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Relation("Agent").
+		Where("ar.project_id = ?", projectID).
+		Where("ar.acp_session_id IS NOT NULL").
+		Order("ar.created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ListSessionRunsByProjectID: %w", err)
+	}
+	grouped := make(map[string][]*AgentRun, len(runs))
+	for _, run := range runs {
+		if run.ACPSessionID != nil {
+			sid := *run.ACPSessionID
+			grouped[sid] = append(grouped[sid], run)
+		}
+	}
+	return grouped, nil
+}
+
 // GetSessionRunHistory returns all agent runs linked to the given ACP session,
 // ordered by created_at ascending (oldest first).
 func (r *Repository) GetSessionRunHistory(ctx context.Context, sessionID string) ([]*AgentRun, error) {

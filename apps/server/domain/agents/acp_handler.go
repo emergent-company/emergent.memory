@@ -1319,10 +1319,15 @@ func (h *ACPHandler) ListSessions(c echo.Context) error {
 		return apperror.NewInternal("failed to list sessions", err)
 	}
 
+	runsBySession, err := h.repo.ListSessionRunsByProjectID(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to fetch session runs", err)
+	}
+
 	baseURL := acpBaseURL(c)
 	result := make([]ACPSessionObject, len(sessions))
 	for i, s := range sessions {
-		result[i] = SessionToACPObject(s, nil, baseURL)
+		result[i] = SessionToACPObject(s, runsBySession[s.ID], baseURL)
 	}
 	return c.JSON(http.StatusOK, result)
 }
