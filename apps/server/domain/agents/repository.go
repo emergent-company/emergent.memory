@@ -2789,6 +2789,41 @@ func (r *Repository) ListSessionRunsByProjectID(ctx context.Context, projectID s
 	return grouped, nil
 }
 
+// ACPSessionStats holds aggregated stats for a single ACP session.
+type ACPSessionStats struct {
+	SessionID    string  `bun:"session_id"`
+	MessageCount int64   `bun:"message_count"`
+	TotalTokens  int64   `bun:"total_tokens"`
+	TotalCostUSD float64 `bun:"total_cost_usd"`
+}
+
+// GetSessionStatsByProjectID returns aggregated message count, token usage, and
+// estimated cost for every ACP session in the given project.
+func (r *Repository) GetSessionStatsByProjectID(ctx context.Context, projectID string) (map[string]*ACPSessionStats, error) {
+	var rows []ACPSessionStats
+	err := r.db.NewRaw(`
+		SELECT
+			s.id                                                            AS session_id,
+			COUNT(DISTINCT CASE WHEN m.role = 'user' THEN m.id END)        AS message_count,
+			COALESCE(SUM(u.text_input_tokens + u.output_tokens), 0)        AS total_tokens,
+			COALESCE(SUM(u.estimated_cost_usd), 0)                         AS total_cost_usd
+		FROM kb.acp_sessions s
+		LEFT JOIN kb.agent_runs     ar ON ar.acp_session_id = s.id
+		LEFT JOIN kb.agent_run_messages m ON m.run_id = ar.id
+		LEFT JOIN kb.llm_usage_events   u  ON u.run_id  = ar.id
+		WHERE s.project_id = ?
+		GROUP BY s.id
+	`, projectID).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("GetSessionStatsByProjectID: %w", err)
+	}
+	out := make(map[string]*ACPSessionStats, len(rows))
+	for i := range rows {
+		out[rows[i].SessionID] = &rows[i]
+	}
+	return out, nil
+}
+
 // GetSessionRunHistory returns all agent runs linked to the given ACP session,
 // ordered by created_at ascending (oldest first).
 func (r *Repository) GetSessionRunHistory(ctx context.Context, sessionID string) ([]*AgentRun, error) {

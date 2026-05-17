@@ -389,7 +389,7 @@ func TestSessionToACPObject_Empty(t *testing.T) {
 		ID: "sess-1",
 	}
 
-	obj := SessionToACPObject(session, nil, nil)
+	obj := SessionToACPObject(session, nil, nil, nil)
 	assert.Equal(t, "sess-1", obj.ID)
 	assert.Len(t, obj.History, 0)
 }
@@ -411,7 +411,7 @@ func TestSessionToACPObject_WithRuns(t *testing.T) {
 		},
 	}
 
-	obj := SessionToACPObject(session, runs, nil)
+	obj := SessionToACPObject(session, runs, nil, nil)
 	assert.Len(t, obj.History, 2)
 	assert.Equal(t, "run-1", obj.History[0].RunID)
 	assert.Equal(t, "run-2", obj.History[1].RunID)
@@ -422,7 +422,7 @@ func TestSessionToACPObject_WithRuns(t *testing.T) {
 
 func TestSessionToACPObject_Empty_NoStatus(t *testing.T) {
 	session := &ACPSession{ID: "sess-3"}
-	obj := SessionToACPObject(session, nil, nil)
+	obj := SessionToACPObject(session, nil, nil, nil)
 	assert.Equal(t, 0, obj.RunCount)
 	assert.Nil(t, obj.LastRunStatus)
 }

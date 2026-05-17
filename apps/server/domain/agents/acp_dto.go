@@ -155,6 +155,12 @@ type ACPSessionObject struct {
 	LastRunStatus *string `json:"last_run_status,omitempty"`
 	// RunCount is the number of runs (user turns) in this session.
 	RunCount int `json:"run_count"`
+	// MessageCount is the number of user messages in this session.
+	MessageCount int64 `json:"message_count"`
+	// TotalTokens is the total number of input+output tokens consumed across all runs.
+	TotalTokens int64 `json:"total_tokens"`
+	// TotalCostUSD is the estimated total cost in USD across all runs.
+	TotalCostUSD float64 `json:"total_cost_usd"`
 }
 
 // ACPSSEEvent represents a persisted or streamed SSE event.
@@ -423,7 +429,7 @@ func ToolCallToTrajectoryMetadata(tc *AgentRunToolCall) TrajectoryMetadata {
 // reconstruct full message history.
 // SessionToACPObject converts an ACPSession entity with associated runs to the ACP wire format.
 // eventsByRunID maps run ID → ordered list of persisted events for that run.
-func SessionToACPObject(session *ACPSession, runs []*AgentRun, eventsByRunID map[string][]*ACPRunEvent) ACPSessionObject {
+func SessionToACPObject(session *ACPSession, runs []*AgentRun, eventsByRunID map[string][]*ACPRunEvent, stats *ACPSessionStats) ACPSessionObject {
 	obj := ACPSessionObject{
 		ID:        session.ID,
 		AgentName: session.AgentName,
@@ -432,6 +438,11 @@ func SessionToACPObject(session *ACPSession, runs []*AgentRun, eventsByRunID map
 		UpdatedAt: session.UpdatedAt,
 		History:   make([]ACPSessionRun, 0, len(runs)),
 		RunCount:  len(runs),
+	}
+	if stats != nil {
+		obj.MessageCount = stats.MessageCount
+		obj.TotalTokens = stats.TotalTokens
+		obj.TotalCostUSD = stats.TotalCostUSD
 	}
 
 	for _, run := range runs {

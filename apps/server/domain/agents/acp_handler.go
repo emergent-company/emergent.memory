@@ -1243,7 +1243,7 @@ func (h *ACPHandler) CreateSession(c echo.Context) error {
 		return apperror.NewInternal("failed to create session", err)
 	}
 
-	acpSession := SessionToACPObject(session, nil, nil)
+	acpSession := SessionToACPObject(session, nil, nil, nil)
 	return c.JSON(http.StatusCreated, acpSession)
 }
 
@@ -1298,7 +1298,7 @@ func (h *ACPHandler) GetSession(c echo.Context) error {
 		return apperror.NewInternal("failed to fetch run events", err)
 	}
 
-	acpSession := SessionToACPObject(session, runs, eventsByRun)
+	acpSession := SessionToACPObject(session, runs, eventsByRun, nil)
 	return c.JSON(http.StatusOK, acpSession)
 }
 
@@ -1337,9 +1337,14 @@ func (h *ACPHandler) ListSessions(c echo.Context) error {
 	// Clients that need full event history should GET /acp/v1/sessions/:id.
 	emptyEvents := map[string][]*ACPRunEvent{}
 
+	statsBySession, err := h.repo.GetSessionStatsByProjectID(ctx, projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to fetch session stats", err)
+	}
+
 	result := make([]ACPSessionObject, len(sessions))
 	for i, s := range sessions {
-		result[i] = SessionToACPObject(s, runsBySession[s.ID], emptyEvents)
+		result[i] = SessionToACPObject(s, runsBySession[s.ID], emptyEvents, statsBySession[s.ID])
 		// Clear history entries — list view only needs metadata (run_count, last_run_status).
 		result[i].History = nil
 	}
