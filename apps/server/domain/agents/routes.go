@@ -106,6 +106,15 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	adkSessions.GET("", h.GetADKSessions)
 	adkSessions.GET("/:sessionId", h.GetADKSessionByID)
 
+	// --- Legacy flat agent-definitions alias (no projectId in path) ---
+	// iOS clients that pre-date the project-scoped path can use this endpoint.
+	// Project ID is resolved from the API token binding or X-Project-ID header.
+	legacyDefs := e.Group("/api/agent-definitions")
+	legacyDefs.Use(authMiddleware.RequireAuth())
+	legacyDefs.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
+	legacyDefs.GET("", h.ListDefinitions)
+	legacyDefs.GET("/:id", h.GetDefinition)
+
 	// --- Public Webhook Receiver routes ---
 	// NOTE: Does not use RequireAuth; authentication is handled internally via Bearer token
 	webhooks := e.Group("/api/webhooks/agents")
