@@ -2771,7 +2771,8 @@ func (r *Repository) ListSessionRunsByProjectID(ctx context.Context, projectID s
 	err := r.db.NewSelect().
 		Model(&runs).
 		Relation("Agent").
-		Where("ar.project_id = ?", projectID).
+		Join("JOIN kb.acp_sessions AS s ON s.id = ar.acp_session_id").
+		Where("s.project_id = ?", projectID).
 		Where("ar.acp_session_id IS NOT NULL").
 		Order("ar.created_at ASC").
 		Scan(ctx)
