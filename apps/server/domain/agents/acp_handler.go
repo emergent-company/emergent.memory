@@ -1362,8 +1362,8 @@ func (h *ACPHandler) ListSessions(c echo.Context) error {
 // @Produce      json
 // @Param        sessionId  path  string  true  "Session ID"
 // @Success      200  {object}  ACPSessionObject
-// @Failure      401  {object}  apperror.AppError
-// @Failure      404  {object}  apperror.AppError
+// @Failure      401  {object}  apperror.Error
+// @Failure      404  {object}  apperror.Error
 // @Router       /acp/v1/sessions/{sessionId}/archive [patch]
 func (h *ACPHandler) ArchiveSession(c echo.Context) error {
 	projectID, err := acpProjectID(c)
@@ -1392,8 +1392,8 @@ func (h *ACPHandler) ArchiveSession(c echo.Context) error {
 // @Produce      json
 // @Param        sessionId  path  string  true  "Session ID"
 // @Success      200  {object}  ACPSessionObject
-// @Failure      401  {object}  apperror.AppError
-// @Failure      404  {object}  apperror.AppError
+// @Failure      401  {object}  apperror.Error
+// @Failure      404  {object}  apperror.Error
 // @Router       /acp/v1/sessions/{sessionId}/unarchive [patch]
 func (h *ACPHandler) UnarchiveSession(c echo.Context) error {
 	projectID, err := acpProjectID(c)
