@@ -483,12 +483,13 @@ type AgentRunJob struct {
 type ACPSession struct {
 	bun.BaseModel `bun:"table:kb.acp_sessions,alias:acps"`
 
-	ID        string    `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ProjectID string    `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	AgentName *string   `bun:"agent_name" json:"agentName,omitempty"`
-	Title     *string   `bun:"title" json:"title,omitempty"`
-	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	ID         string    `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ProjectID  string    `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	AgentName  *string   `bun:"agent_name" json:"agentName,omitempty"`
+	Title      *string   `bun:"title" json:"title,omitempty"`
+	IsArchived bool      `bun:"is_archived,notnull,default:false" json:"is_archived"`
+	CreatedAt  time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt  time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
 // ACPRunEvent represents a persisted SSE event emitted during an ACP run.

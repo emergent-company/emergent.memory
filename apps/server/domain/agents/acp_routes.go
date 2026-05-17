@@ -46,4 +46,6 @@ func RegisterACPRoutes(e *echo.Echo, h *ACPHandler, authMiddleware *auth.Middlew
 	sessionsWrite.Use(authMiddleware.RequireAuth())
 	sessionsWrite.Use(authMiddleware.RequireAPITokenScopes("agents:write"))
 	sessionsWrite.POST("", h.CreateSession)
+	sessionsWrite.PATCH("/:sessionId/archive", h.ArchiveSession)
+	sessionsWrite.PATCH("/:sessionId/unarchive", h.UnarchiveSession)
 }

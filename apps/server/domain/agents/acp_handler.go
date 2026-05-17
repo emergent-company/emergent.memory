@@ -1323,7 +1323,9 @@ func (h *ACPHandler) ListSessions(c echo.Context) error {
 
 	ctx := c.Request().Context()
 
-	sessions, err := h.repo.ListACPSessions(ctx, projectID)
+	includeArchived := c.QueryParam("include_archived") == "true"
+
+	sessions, err := h.repo.ListACPSessions(ctx, projectID, includeArchived)
 	if err != nil {
 		return apperror.NewInternal("failed to list sessions", err)
 	}
@@ -1349,4 +1351,64 @@ func (h *ACPHandler) ListSessions(c echo.Context) error {
 		result[i].History = nil
 	}
 	return c.JSON(http.StatusOK, result)
+}
+
+// ---------------------------------------------------------------------------
+// 4.17 ArchiveSession — PATCH /acp/v1/sessions/:sessionId/archive
+// ---------------------------------------------------------------------------
+
+// @Summary      Archive a session
+// @Tags         ACP Sessions
+// @Produce      json
+// @Param        sessionId  path  string  true  "Session ID"
+// @Success      200  {object}  ACPSessionObject
+// @Failure      401  {object}  apperror.AppError
+// @Failure      404  {object}  apperror.AppError
+// @Router       /acp/v1/sessions/{sessionId}/archive [patch]
+func (h *ACPHandler) ArchiveSession(c echo.Context) error {
+	projectID, err := acpProjectID(c)
+	if err != nil {
+		return err
+	}
+	sessionID := c.Param("sessionId")
+	ctx := c.Request().Context()
+
+	if err := h.repo.ArchiveACPSession(ctx, projectID, sessionID); err != nil {
+		return apperror.NewInternal("failed to archive session", err)
+	}
+	session, err := h.repo.GetACPSession(ctx, projectID, sessionID)
+	if err != nil {
+		return apperror.NewInternal("failed to fetch session", err)
+	}
+	return c.JSON(http.StatusOK, SessionToACPObject(session, nil, nil, nil))
+}
+
+// ---------------------------------------------------------------------------
+// 4.18 UnarchiveSession — PATCH /acp/v1/sessions/:sessionId/unarchive
+// ---------------------------------------------------------------------------
+
+// @Summary      Unarchive a session
+// @Tags         ACP Sessions
+// @Produce      json
+// @Param        sessionId  path  string  true  "Session ID"
+// @Success      200  {object}  ACPSessionObject
+// @Failure      401  {object}  apperror.AppError
+// @Failure      404  {object}  apperror.AppError
+// @Router       /acp/v1/sessions/{sessionId}/unarchive [patch]
+func (h *ACPHandler) UnarchiveSession(c echo.Context) error {
+	projectID, err := acpProjectID(c)
+	if err != nil {
+		return err
+	}
+	sessionID := c.Param("sessionId")
+	ctx := c.Request().Context()
+
+	if err := h.repo.UnarchiveACPSession(ctx, projectID, sessionID); err != nil {
+		return apperror.NewInternal("failed to unarchive session", err)
+	}
+	session, err := h.repo.GetACPSession(ctx, projectID, sessionID)
+	if err != nil {
+		return apperror.NewInternal("failed to fetch session", err)
+	}
+	return c.JSON(http.StatusOK, SessionToACPObject(session, nil, nil, nil))
 }

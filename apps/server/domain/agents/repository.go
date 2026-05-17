@@ -2749,18 +2749,47 @@ func (r *Repository) GetACPSession(ctx context.Context, projectID, sessionID str
 	return session, nil
 }
 
-// ListACPSessions returns all ACP sessions for a project, ordered by created_at descending.
-func (r *Repository) ListACPSessions(ctx context.Context, projectID string) ([]*ACPSession, error) {
+// ListACPSessions returns ACP sessions for a project ordered by created_at descending.
+// By default only non-archived sessions are returned; pass includeArchived=true to include them.
+func (r *Repository) ListACPSessions(ctx context.Context, projectID string, includeArchived bool) ([]*ACPSession, error) {
 	var sessions []*ACPSession
-	err := r.db.NewSelect().
+	q := r.db.NewSelect().
 		Model(&sessions).
-		Where("project_id = ?", projectID).
-		Order("created_at DESC").
-		Scan(ctx)
+		Where("project_id = ?", projectID)
+	if !includeArchived {
+		q = q.Where("is_archived = FALSE")
+	}
+	err := q.Order("created_at DESC").Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("ListACPSessions: %w", err)
 	}
 	return sessions, nil
+}
+
+// ArchiveACPSession sets is_archived=true on the given session.
+func (r *Repository) ArchiveACPSession(ctx context.Context, projectID, sessionID string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.acp_sessions").
+		Set("is_archived = TRUE, updated_at = NOW()").
+		Where("id = ? AND project_id = ?", sessionID, projectID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("ArchiveACPSession: %w", err)
+	}
+	return nil
+}
+
+// UnarchiveACPSession sets is_archived=false on the given session.
+func (r *Repository) UnarchiveACPSession(ctx context.Context, projectID, sessionID string) error {
+	_, err := r.db.NewUpdate().
+		TableExpr("kb.acp_sessions").
+		Set("is_archived = FALSE, updated_at = NOW()").
+		Where("id = ? AND project_id = ?", sessionID, projectID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("UnarchiveACPSession: %w", err)
+	}
+	return nil
 }
 
 // ListSessionRunsByProjectID returns all agent runs that belong to any ACP session

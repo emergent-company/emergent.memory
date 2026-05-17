@@ -153,6 +153,8 @@ type ACPSessionObject struct {
 	History []ACPSessionRun `json:"history"`
 	// LastRunStatus is the ACP status of the most recent run in this session, if any.
 	LastRunStatus *string `json:"last_run_status,omitempty"`
+	// IsArchived indicates the session is archived and excluded from default list results.
+	IsArchived bool `json:"is_archived"`
 	// RunCount is the number of runs (user turns) in this session.
 	RunCount int `json:"run_count"`
 	// MessageCount is the number of user messages in this session.
@@ -431,13 +433,14 @@ func ToolCallToTrajectoryMetadata(tc *AgentRunToolCall) TrajectoryMetadata {
 // eventsByRunID maps run ID → ordered list of persisted events for that run.
 func SessionToACPObject(session *ACPSession, runs []*AgentRun, eventsByRunID map[string][]*ACPRunEvent, stats *ACPSessionStats) ACPSessionObject {
 	obj := ACPSessionObject{
-		ID:        session.ID,
-		AgentName: session.AgentName,
-		Title:     session.Title,
-		CreatedAt: session.CreatedAt,
-		UpdatedAt: session.UpdatedAt,
-		History:   make([]ACPSessionRun, 0, len(runs)),
-		RunCount:  len(runs),
+		ID:         session.ID,
+		AgentName:  session.AgentName,
+		Title:      session.Title,
+		IsArchived: session.IsArchived,
+		CreatedAt:  session.CreatedAt,
+		UpdatedAt:  session.UpdatedAt,
+		History:    make([]ACPSessionRun, 0, len(runs)),
+		RunCount:   len(runs),
 	}
 	if stats != nil {
 		obj.MessageCount = stats.MessageCount
