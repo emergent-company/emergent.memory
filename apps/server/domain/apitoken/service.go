@@ -425,6 +425,100 @@ func (s *Service) RevokeEphemeral(ctx context.Context, tokenID string) {
 	}
 }
 
+// UpdateScopes updates the scopes of a non-revoked project token.
+func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID string, scopes []string) (*ApiTokenDTO, error) {
+	// Validate scopes
+	for _, scope := range scopes {
+		valid := false
+		for _, validScope := range ValidApiTokenScopes {
+			if scope == validScope {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
+		}
+	}
+
+	// Viewers may only set read-only scopes
+	if userID != "" && projectID != "" {
+		role, err := s.repo.GetUserProjectRole(ctx, projectID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if role == "project_viewer" {
+			for _, scope := range scopes {
+				if !viewerReadOnlyScopes[scope] {
+					return nil, apperror.New(403, "viewer-write-scope-denied",
+						"project_viewer may only request read-only scopes (data:read, schema:read, agents:read, projects:read)")
+				}
+			}
+		}
+	}
+
+	updated, err := s.repo.UpdateScopes(ctx, tokenID, projectID, scopes)
+	if err != nil {
+		return nil, err
+	}
+	if !updated {
+		return nil, apperror.ErrNotFound.WithMessage("Token not found or already revoked")
+	}
+
+	token, err := s.repo.GetByID(ctx, tokenID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if token == nil {
+		return nil, apperror.ErrNotFound.WithMessage("Token not found")
+	}
+
+	dto := token.ToDTO()
+	s.log.Info("updated API token scopes",
+		slog.String("tokenID", tokenID),
+		slog.String("projectID", projectID))
+	return &dto, nil
+}
+
+// UpdateAccountTokenScopes updates the scopes of a non-revoked account-level token.
+func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID string, scopes []string) (*ApiTokenDTO, error) {
+	// Validate scopes
+	for _, scope := range scopes {
+		valid := false
+		for _, validScope := range ValidApiTokenScopes {
+			if scope == validScope {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
+		}
+	}
+
+	updated, err := s.repo.UpdateScopesByUser(ctx, tokenID, userID, scopes)
+	if err != nil {
+		return nil, err
+	}
+	if !updated {
+		return nil, apperror.ErrNotFound.WithMessage("Token not found or already revoked")
+	}
+
+	token, err := s.repo.GetByIDAndUser(ctx, tokenID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if token == nil {
+		return nil, apperror.ErrNotFound.WithMessage("Token not found")
+	}
+
+	dto := token.ToDTO()
+	s.log.Info("updated account token scopes",
+		slog.String("tokenID", tokenID),
+		slog.String("userID", userID))
+	return &dto, nil
+}
+
 // RevokeAccountToken revokes an account-level token owned by the user
 func (s *Service) RevokeAccountToken(ctx context.Context, tokenID, userID string) error {
 	// Check if token exists

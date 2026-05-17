@@ -325,10 +325,8 @@ func TestExecuteGetSessionMessages_InvalidProjectID(t *testing.T) {
 }
 
 func TestExecuteGetSessionMessages_MissingSessionID(t *testing.T) {
-	// We need a non-nil graphSessionSvc to get past the nil check.
-	// Use a minimal stub: graphSessionSvc field accepts *graph.SessionService.
-	// Since we can't construct one without a DB, test only the nil-service guard path.
-	svc := &Service{graphSessionSvc: nil}
+	// sessionHistoryProvider is nil → "session service not available" error.
+	svc := &Service{}
 	_, err := svc.executeGetSessionMessages(context.Background(), uuid.New().String(), map[string]any{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "session service not available")

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 
+	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -257,6 +258,51 @@ func (r *Repository) RevokeByProjectAndUser(ctx context.Context, projectID, user
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil
+}
+
+// UpdateScopes updates the scopes of a non-revoked project token.
+func (r *Repository) UpdateScopes(ctx context.Context, tokenID, projectID string, scopes []string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("scopes = ?", pq.StringArray(scopes)).
+		Where("id = ?", tokenID).
+		Where("project_id = ?", projectID).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rows > 0, nil
+}
+
+// UpdateScopesByUser updates the scopes of a non-revoked account-level token owned by the user.
+func (r *Repository) UpdateScopesByUser(ctx context.Context, tokenID, userID string, scopes []string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("scopes = ?", pq.StringArray(scopes)).
+		Where("id = ?", tokenID).
+		Where("user_id = ?", userID).
+		Where("project_id IS NULL").
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rows > 0, nil
 }
 
 // Revoke sets the revoked_at timestamp on a token

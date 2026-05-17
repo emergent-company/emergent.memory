@@ -2883,6 +2883,259 @@ func (r *Repository) UpdateACPSessionTitle(ctx context.Context, projectID, sessi
 	return nil
 }
 
+// ConversationHistoryItem represents one event in the unified session timeline.
+type ConversationHistoryItem struct {
+	// Kind is one of: "user_message", "assistant_message", "tool_call", "tool_result", "run_start", "run_end"
+	Kind string `json:"kind"`
+	// RunID is the agent run this item belongs to.
+	RunID string `json:"run_id"`
+	// StepNumber within the run (0 for run_start/run_end).
+	StepNumber int `json:"step_number"`
+	// CreatedAt is the wall-clock time of this item.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Fields populated for user_message / assistant_message
+	Role    string         `json:"role,omitempty"`
+	Content map[string]any `json:"content,omitempty"`
+
+	// Fields populated for tool_call / tool_result
+	ToolName   string         `json:"tool_name,omitempty"`
+	ToolInput  map[string]any `json:"tool_input,omitempty"`
+	ToolOutput map[string]any `json:"tool_output,omitempty"`
+	ToolStatus string         `json:"tool_status,omitempty"` // completed | error
+	DurationMs *int           `json:"duration_ms,omitempty"`
+
+	// Fields populated for run_start / run_end
+	RunStatus    string     `json:"run_status,omitempty"`
+	RunModel     *string    `json:"run_model,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ErrorMessage *string    `json:"error_message,omitempty"`
+}
+
+// GetConversationFullHistory returns the unified ordered timeline for an ACP session:
+// run lifecycle events, all LLM messages (user + assistant), and all tool invocations.
+// Items are ordered by (run.created_at asc, item.step_number asc, item.created_at asc).
+func (r *Repository) GetConversationFullHistory(ctx context.Context, acpSessionID string) ([]*ConversationHistoryItem, error) {
+	// Fetch runs ordered by start time
+	var runs []*AgentRun
+	if err := r.db.NewSelect().
+		Model(&runs).
+		Where("ar.acp_session_id = ?", acpSessionID).
+		OrderExpr("ar.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("GetConversationFullHistory runs: %w", err)
+	}
+	if len(runs) == 0 {
+		return []*ConversationHistoryItem{}, nil
+	}
+
+	runIDs := make([]string, len(runs))
+	for i, r := range runs {
+		runIDs[i] = r.ID
+	}
+
+	// Fetch all messages for these runs
+	var messages []*AgentRunMessage
+	if err := r.db.NewSelect().
+		Model(&messages).
+		Where("arm.run_id IN (?)", bun.In(runIDs)).
+		OrderExpr("arm.step_number ASC, arm.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("GetConversationFullHistory messages: %w", err)
+	}
+
+	// Fetch all tool calls for these runs
+	var toolCalls []*AgentRunToolCall
+	if err := r.db.NewSelect().
+		Model(&toolCalls).
+		Where("artc.run_id IN (?)", bun.In(runIDs)).
+		OrderExpr("artc.step_number ASC, artc.created_at ASC").
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("GetConversationFullHistory tool_calls: %w", err)
+	}
+
+	// Group messages and tool calls by run ID
+	msgsByRun := make(map[string][]*AgentRunMessage, len(runs))
+	for _, m := range messages {
+		msgsByRun[m.RunID] = append(msgsByRun[m.RunID], m)
+	}
+	tcByRun := make(map[string][]*AgentRunToolCall, len(runs))
+	for _, tc := range toolCalls {
+		tcByRun[tc.RunID] = append(tcByRun[tc.RunID], tc)
+	}
+
+	var items []*ConversationHistoryItem
+
+	for _, run := range runs {
+		// run_start
+		items = append(items, &ConversationHistoryItem{
+			Kind:      "run_start",
+			RunID:     run.ID,
+			CreatedAt: run.CreatedAt,
+			RunStatus: string(run.Status),
+			RunModel:  run.Model,
+		})
+
+		// Merge messages and tool calls into a single ordered slice by step_number + created_at
+		// We interleave them: for each step, tool calls come after messages in same step
+		type timelineEntry struct {
+			step      int
+			createdAt time.Time
+			item      *ConversationHistoryItem
+		}
+		var entries []timelineEntry
+
+		for _, m := range msgsByRun[run.ID] {
+			entries = append(entries, timelineEntry{
+				step:      m.StepNumber,
+				createdAt: m.CreatedAt,
+				item: &ConversationHistoryItem{
+					Kind:       "message",
+					RunID:      run.ID,
+					StepNumber: m.StepNumber,
+					CreatedAt:  m.CreatedAt,
+					Role:       m.Role,
+					Content:    m.Content,
+				},
+			})
+		}
+		for _, tc := range tcByRun[run.ID] {
+			kind := "tool_call"
+			entries = append(entries, timelineEntry{
+				step:      tc.StepNumber,
+				createdAt: tc.CreatedAt,
+				item: &ConversationHistoryItem{
+					Kind:       kind,
+					RunID:      run.ID,
+					StepNumber: tc.StepNumber,
+					CreatedAt:  tc.CreatedAt,
+					ToolName:   tc.ToolName,
+					ToolInput:  tc.Input,
+					ToolOutput: tc.Output,
+					ToolStatus: tc.Status,
+					DurationMs: tc.DurationMs,
+				},
+			})
+		}
+
+		// Sort by step then created_at
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].step != entries[j].step {
+				return entries[i].step < entries[j].step
+			}
+			return entries[i].createdAt.Before(entries[j].createdAt)
+		})
+
+		for _, e := range entries {
+			items = append(items, e.item)
+		}
+
+		// run_end
+		items = append(items, &ConversationHistoryItem{
+			Kind:         "run_end",
+			RunID:        run.ID,
+			CreatedAt:    run.CreatedAt,
+			RunStatus:    string(run.Status),
+			CompletedAt:  run.CompletedAt,
+			ErrorMessage: run.ErrorMessage,
+		})
+	}
+
+	return items, nil
+}
+
+// GetConversationFullHistoryRaw implements mcp.SessionHistoryProvider.
+// Returns the same unified timeline as GetConversationFullHistory but serialised
+// as []map[string]any so the mcp package can consume it without importing agents.
+func (r *Repository) GetConversationFullHistoryRaw(ctx context.Context, acpSessionID string) ([]map[string]any, error) {
+	items, err := r.GetConversationFullHistory(ctx, acpSessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		m := map[string]any{
+			"kind":        item.Kind,
+			"run_id":      item.RunID,
+			"step_number": item.StepNumber,
+			"created_at":  item.CreatedAt,
+		}
+		if item.Role != "" {
+			m["role"] = item.Role
+		}
+		if item.Content != nil {
+			m["content"] = item.Content
+		}
+		if item.ToolName != "" {
+			m["tool_name"] = item.ToolName
+			m["tool_input"] = item.ToolInput
+			m["tool_output"] = item.ToolOutput
+			m["tool_status"] = item.ToolStatus
+		}
+		if item.DurationMs != nil {
+			m["duration_ms"] = *item.DurationMs
+		}
+		if item.RunStatus != "" {
+			m["run_status"] = item.RunStatus
+		}
+		if item.CompletedAt != nil {
+			m["completed_at"] = item.CompletedAt
+		}
+		if item.ErrorMessage != nil {
+			m["error_message"] = *item.ErrorMessage
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// EnsureConversationACPSession returns the acp_session_id linked to the given
+// chat conversation, creating a new ACPSession (and persisting the FK back onto
+// the conversation row) if one does not yet exist.
+//
+// The chat_conversations table must have an acp_session_id uuid column (added by
+// migration 00115) and kb.acp_sessions must exist (added earlier).
+func (r *Repository) EnsureConversationACPSession(ctx context.Context, conversationID, projectID string, agentName *string) (string, error) {
+	// 1. Fast path: read existing session ID from the conversation row.
+	var existing struct {
+		ACPSessionID *string `bun:"acp_session_id"`
+	}
+	err := r.db.NewSelect().
+		TableExpr("kb.chat_conversations").
+		ColumnExpr("acp_session_id::text").
+		Where("id = ?", conversationID).
+		Scan(ctx, &existing)
+	if err != nil {
+		return "", fmt.Errorf("EnsureConversationACPSession read: %w", err)
+	}
+	if existing.ACPSessionID != nil && *existing.ACPSessionID != "" {
+		return *existing.ACPSessionID, nil
+	}
+
+	// 2. Create a new ACP session.
+	session := &ACPSession{
+		ProjectID: projectID,
+		AgentName: agentName,
+	}
+	if err := r.CreateACPSession(ctx, session); err != nil {
+		return "", fmt.Errorf("EnsureConversationACPSession create: %w", err)
+	}
+
+	// 3. Persist the FK back onto the conversation row.
+	_, err = r.db.NewUpdate().
+		TableExpr("kb.chat_conversations").
+		Set("acp_session_id = ?", session.ID).
+		Where("id = ?", conversationID).
+		Exec(ctx)
+	if err != nil {
+		// Non-fatal: session was created, just the backlink failed.
+		// Log and continue — the session ID is still usable.
+		return session.ID, nil
+	}
+
+	return session.ID, nil
+}
+
 // UpdateRunACPSessionID sets the acp_session_id column on an agent run.
 func (r *Repository) UpdateRunACPSessionID(ctx context.Context, runID, sessionID string) error {
 	_, err := r.db.NewUpdate().

@@ -1,7 +1,7 @@
 // Package main provides the entry point for the Memory API server
 //
 // @title Memory API
-// @version 0.41.69
+// @version 0.41.70
 // @description Memory Knowledge Base API - AI-powered knowledge management system
 // @contact.name Memory Team
 // @contact.url https://emergent-company.ai
@@ -202,6 +202,9 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 		// so clients using the graph API can read the updated title.
 		opts = append(opts, fx.Invoke(func(mcpSvc *mcp.Service, graphSvc *graph.Service) {
 			mcpSvc.SetGraphObjectPatcher(graphSvc.PatchGraphObjectTitle)
+		}))
+		opts = append(opts, fx.Invoke(func(mcpSvc *mcp.Service, agentsRepo *agents.Repository) {
+			mcpSvc.SetSessionHistoryProvider(agentsRepo)
 		}))
 	}
 	if f.MCPRegistry {

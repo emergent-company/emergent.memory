@@ -48,11 +48,8 @@ func (r *Repository) ListConversations(ctx context.Context, params ListConversat
 		query = query.Where("(owner_user_id = ? OR is_private = false)", *params.OwnerUserID)
 	}
 
-	// Get total count
-	total, err := r.db.NewSelect().
-		Model((*Conversation)(nil)).
-		Where("project_id = ?", params.ProjectID).
-		Count(ctx)
+	// Get total count using same filters
+	total, err := query.Count(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("count conversations: %w", err)
 	}

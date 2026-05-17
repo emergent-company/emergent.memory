@@ -200,9 +200,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
 	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, nil, nil, nil, nil, nil)
 	graphHandler := graph.NewHandler(graphSvc, testGraphCfg)
-	sessionSvc := graph.NewSessionService(graphSvc, graphRepo, log)
-	sessionHandler := graph.NewSessionHandler(sessionSvc, log)
-	graph.RegisterRoutes(e, graphHandler, sessionHandler, authMiddleware)
+	graph.RegisterRoutes(e, graphHandler, authMiddleware)
 
 	// Register embedding policies routes
 	embPolicyStore := embeddingpolicies.NewStore(db, log)

@@ -67,6 +67,11 @@ type CreateAccountTokenRequest struct {
 	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use"`
 }
 
+// UpdateApiTokenScopesRequest is the request body for updating token scopes
+type UpdateApiTokenScopesRequest struct {
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use"`
+}
+
 // Available scopes for API tokens
 var ValidApiTokenScopes = []string{
 	"schema:read",

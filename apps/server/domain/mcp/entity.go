@@ -28,6 +28,13 @@ type SessionTitleHandler interface {
 	UpdateACPSessionTitle(ctx context.Context, projectID, sessionID, title string) error
 }
 
+// SessionHistoryProvider retrieves the unified timeline for an ACP session.
+// Implemented by agents.Repository to avoid a circular import (mcp → agents).
+// Returns items as map[string]any so no shared types are needed across the boundary.
+type SessionHistoryProvider interface {
+	GetConversationFullHistoryRaw(ctx context.Context, acpSessionID string) ([]map[string]any, error)
+}
+
 // ContextWithACPSessionID stores the ACP session ID in context.
 // Called by the agent executor before running tools so that built-in tools
 // like set_session_title can update session metadata.

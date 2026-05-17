@@ -32,6 +32,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Message operations
 	g.POST("/:id/messages", h.AddMessage)
+	g.GET("/:id/history", h.GetConversationHistory)
 
 	// Project-scoped query endpoint — stateless NL query against the knowledge graph.
 	// Uses the internal graph-query-agent; no agent ID needed from the client.

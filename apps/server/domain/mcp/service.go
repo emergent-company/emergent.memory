@@ -83,11 +83,12 @@ type Service struct {
 	// Schemas service (for schema migration tools)
 	schemasSvc *schemas.Service
 
+	// sessionHistoryProvider retrieves unified session timelines for session-get-messages tool.
+	// Replaces graphSessionSvc — backed by kb.agent_run_messages, not graph objects.
+	sessionHistoryProvider SessionHistoryProvider
+
 	// Session todos service (for session-todo-list and session-todo-update tools)
 	sessionTodoSvc *sessiontodos.Service
-
-	// graphSessionSvc for session-get-messages tool
-	graphSessionSvc *graph.SessionService
 
 	// Embedding worker controller (for pause/resume/config tools)
 	// Typed as interface to avoid import cycle with extraction package.
@@ -137,7 +138,6 @@ type ServiceParams struct {
 	JournalSvc         *journal.Service
 	SchemasSvc         *schemas.Service
 	SessionTodoSvc     *sessiontodos.Service
-	GraphSessionSvc    *graph.SessionService
 }
 
 // NewService creates a new MCP service
@@ -170,7 +170,6 @@ func NewService(p ServiceParams) *Service {
 		journalSvc:         p.JournalSvc,
 		schemasSvc:         p.SchemasSvc,
 		sessionTodoSvc:     p.SessionTodoSvc,
-		graphSessionSvc:    p.GraphSessionSvc,
 	}
 }
 
@@ -182,6 +181,12 @@ func (s *Service) SetAgentToolHandler(h AgentToolHandler) {
 // SetSessionTitleHandler sets the session title handler (called after construction to break circular init)
 func (s *Service) SetSessionTitleHandler(h SessionTitleHandler) {
 	s.sessionTitleHandler = h
+}
+
+// SetSessionHistoryProvider injects the session history provider used by session-get-messages.
+// Called after construction (agents → mcp circular import avoided via interface).
+func (s *Service) SetSessionHistoryProvider(p SessionHistoryProvider) {
+	s.sessionHistoryProvider = p
 }
 
 // SetGraphObjectPatcher sets the func used to patch graph object Properties.title
@@ -3043,17 +3048,9 @@ func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, ar
 	})
 }
 
-// executeGetSessionMessages fetches messages from a graph session.
+// executeGetSessionMessages fetches messages from a session.
+// Uses sessionHistoryProvider (backed by kb.agent_run_messages).
 func (s *Service) executeGetSessionMessages(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	if s.graphSessionSvc == nil {
-		return nil, fmt.Errorf("session service not available")
-	}
-
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid project_id: %w", err)
-	}
-
 	// Accept both snake_case and camelCase — LLMs sometimes send sessionId.
 	sessionIDStr, ok := args["session_id"].(string)
 	if !ok || sessionIDStr == "" {
@@ -3062,35 +3059,21 @@ func (s *Service) executeGetSessionMessages(ctx context.Context, projectID strin
 	if !ok || sessionIDStr == "" {
 		return nil, fmt.Errorf("missing required parameter: session_id")
 	}
-	sessionUUID, err := uuid.Parse(sessionIDStr)
-	if err != nil {
+	if _, err := uuid.Parse(sessionIDStr); err != nil {
 		return nil, fmt.Errorf("invalid session_id: %w", err)
 	}
 
-	limit := 50
-	if v, ok := args["limit"]; ok {
-		switch n := v.(type) {
-		case float64:
-			limit = int(n)
-		case int:
-			limit = n
-		}
+	if s.sessionHistoryProvider == nil {
+		return nil, fmt.Errorf("session service not available")
 	}
-
-	var cursor *string
-	if c, ok := args["cursor"].(string); ok && c != "" {
-		cursor = &c
-	}
-
-	result, err := s.graphSessionSvc.ListMessages(ctx, projectUUID, sessionUUID, limit, cursor)
+	items, err := s.sessionHistoryProvider.GetConversationFullHistoryRaw(ctx, sessionIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("get session messages: %w", err)
 	}
-
 	return s.wrapResult(map[string]any{
-		"items":       result.Items,
-		"next_cursor": result.NextCursor,
-		"total":       result.Total,
+		"session_id": sessionIDStr,
+		"items":      items,
+		"total":      len(items),
 	})
 }
 

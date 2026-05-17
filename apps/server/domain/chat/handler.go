@@ -330,6 +330,56 @@ func (h *Handler) AddMessage(c echo.Context) error {
 	return c.JSON(http.StatusCreated, msg)
 }
 
+// GetConversationHistory returns the full unified session timeline for a conversation.
+// Each item in the response is a typed event: run lifecycle, user/assistant messages,
+// tool calls, and tool results — ordered chronologically across all agent runs.
+//
+// GET /api/chat/:id/history
+func (h *Handler) GetConversationHistory(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+	if user.ProjectID == "" {
+		return apperror.ErrBadRequest.WithMessage("x-project-id header required")
+	}
+
+	conversationID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid conversation id")
+	}
+
+	ctx := c.Request().Context()
+
+	// Load the conversation to verify ownership and get acp_session_id.
+	conv, err := h.svc.GetConversationWithMessages(ctx, user.ProjectID, conversationID)
+	if err != nil {
+		return err
+	}
+	if conv == nil {
+		return apperror.ErrNotFound.WithMessage("conversation not found")
+	}
+
+	if conv.ACPSessionID == nil {
+		// No agent runs yet — return empty history.
+		return c.JSON(http.StatusOK, map[string]any{
+			"conversation_id": conversationID,
+			"items":           []any{},
+		})
+	}
+
+	items, err := h.agentRepo.GetConversationFullHistory(ctx, conv.ACPSessionID.String())
+	if err != nil {
+		return apperror.ErrInternal.WithMessage("failed to load conversation history")
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"conversation_id": conversationID,
+		"acp_session_id":  conv.ACPSessionID,
+		"items":           items,
+	})
+}
+
 // Validation helpers
 
 func validateCreateConversationRequest(req *CreateConversationRequest) error {
@@ -1003,6 +1053,18 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			}
 		}
 
+		// Ensure this conversation has a backing ACP session (create once, reuse on all turns).
+		agentNameForSession := def.Name
+		acpSessionID, sessionErr := h.agentRepo.EnsureConversationACPSession(ctx, conv.ID.String(), projectID, &agentNameForSession)
+		if sessionErr != nil {
+			h.log.Warn("failed to ensure ACP session for conversation",
+				slog.String("conversation_id", conv.ID.String()),
+				slog.String("error", sessionErr.Error()),
+			)
+			// Non-fatal — run proceeds without session linkage.
+			acpSessionID = ""
+		}
+
 		// Execute the real agent
 		execReq := agents.ExecuteRequest{
 			Agent:            dummyAgent,
@@ -1014,6 +1076,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			StreamCallback:   streamCallback,
 			AuthToken:        authToken,
 			EphemeralTokenID: ephemeralTokenID,
+			ACPSessionID:     acpSessionID,
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID

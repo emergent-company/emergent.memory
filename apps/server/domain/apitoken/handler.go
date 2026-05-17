@@ -313,3 +313,91 @@ func (h *Handler) RevokeAccountToken(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "revoked"})
 }
+
+// UpdateScopes updates the scopes of an existing project API token
+// @Summary      Update API token scopes
+// @Description  Updates the scopes of a non-revoked project API token
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Param        request body UpdateApiTokenScopesRequest true "New scopes"
+// @Success      200 {object} ApiTokenDTO "Updated token"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/tokens/{tokenId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateScopes(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	tokenID := c.Param("tokenId")
+
+	if projectID == "" || tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId and tokenId are required")
+	}
+
+	var req UpdateApiTokenScopesRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if len(req.Scopes) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one scope is required")
+	}
+
+	result, err := h.svc.UpdateScopes(c.Request().Context(), tokenID, projectID, user.ID, req.Scopes)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// UpdateAccountTokenScopes updates the scopes of an existing account-level API token
+// @Summary      Update account API token scopes
+// @Description  Updates the scopes of a non-revoked account-level API token owned by the authenticated user
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Param        request body UpdateApiTokenScopesRequest true "New scopes"
+// @Success      200 {object} ApiTokenDTO "Updated token"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens/{tokenId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateAccountTokenScopes(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	tokenID := c.Param("tokenId")
+	if tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("tokenId is required")
+	}
+
+	var req UpdateApiTokenScopesRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if len(req.Scopes) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one scope is required")
+	}
+
+	result, err := h.svc.UpdateAccountTokenScopes(c.Request().Context(), tokenID, user.ID, req.Scopes)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
