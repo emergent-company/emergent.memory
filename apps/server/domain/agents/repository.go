@@ -2831,6 +2831,28 @@ func (r *Repository) GetACPRunEvents(ctx context.Context, runID string) ([]*ACPR
 	return events, nil
 }
 
+// GetACPRunEventsByRunIDs returns all persisted SSE events for the given run IDs
+// in a single query, grouped by run ID. Used to bulk-load events for session history.
+func (r *Repository) GetACPRunEventsByRunIDs(ctx context.Context, runIDs []string) (map[string][]*ACPRunEvent, error) {
+	if len(runIDs) == 0 {
+		return map[string][]*ACPRunEvent{}, nil
+	}
+	var events []*ACPRunEvent
+	err := r.db.NewSelect().
+		Model(&events).
+		Where("run_id IN (?)", bun.In(runIDs)).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetACPRunEventsByRunIDs: %w", err)
+	}
+	grouped := make(map[string][]*ACPRunEvent, len(runIDs))
+	for _, e := range events {
+		grouped[e.RunID] = append(grouped[e.RunID], e)
+	}
+	return grouped, nil
+}
+
 // SetRunCancelling transitions a run to the "cancelling" intermediate state.
 // This is the first step of the ACP two-step cancel protocol: the intent is
 // acknowledged but the executor hasn't stopped yet.

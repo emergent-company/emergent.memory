@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ============================================================================
@@ -388,7 +389,7 @@ func TestSessionToACPObject_Empty(t *testing.T) {
 		ID: "sess-1",
 	}
 
-	obj := SessionToACPObject(session, nil, "")
+	obj := SessionToACPObject(session, nil, nil)
 	assert.Equal(t, "sess-1", obj.ID)
 	assert.Len(t, obj.History, 0)
 }
@@ -410,8 +411,18 @@ func TestSessionToACPObject_WithRuns(t *testing.T) {
 		},
 	}
 
-	obj := SessionToACPObject(session, runs, "")
+	obj := SessionToACPObject(session, runs, nil)
 	assert.Len(t, obj.History, 2)
-	assert.Contains(t, obj.History[0], "run-1")
-	assert.Contains(t, obj.History[1], "run-2")
+	assert.Equal(t, "run-1", obj.History[0].RunID)
+	assert.Equal(t, "run-2", obj.History[1].RunID)
+	assert.Equal(t, 2, obj.RunCount)
+	require.NotNil(t, obj.LastRunStatus)
+	assert.Equal(t, string(RunStatusRunning), *obj.LastRunStatus)
+}
+
+func TestSessionToACPObject_Empty_NoStatus(t *testing.T) {
+	session := &ACPSession{ID: "sess-3"}
+	obj := SessionToACPObject(session, nil, nil)
+	assert.Equal(t, 0, obj.RunCount)
+	assert.Nil(t, obj.LastRunStatus)
 }

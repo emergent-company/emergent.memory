@@ -2,7 +2,6 @@ package agents
 
 import (
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -131,6 +130,16 @@ type ACPAwaitRequest struct {
 	Options    []AgentQuestionOption `json:"options,omitempty"`
 }
 
+// ACPSessionRun represents a single run within a session, with its full event history inlined.
+type ACPSessionRun struct {
+	RunID          string        `json:"run_id"`
+	Status         string        `json:"status"`
+	TriggerMessage *string       `json:"trigger_message,omitempty"`
+	CreatedAt      time.Time     `json:"created_at"`
+	CompletedAt    *time.Time    `json:"completed_at,omitempty"`
+	Events         []ACPSSEEvent `json:"events"`
+}
+
 // ACPSessionObject is the ACP session representation.
 // Per ACP spec, History is a list of URL references to run event streams —
 // clients fetch each URL to load the full message history for that run.
@@ -140,9 +149,12 @@ type ACPSessionObject struct {
 	Title     *string   `json:"title,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	// History contains ordered URL references to run event streams.
-	// Each URL points to GET /acp/v1/agents/:name/runs/:runId/events.
-	History []string `json:"history"`
+	// History contains runs with their full inlined event log.
+	History []ACPSessionRun `json:"history"`
+	// LastRunStatus is the ACP status of the most recent run in this session, if any.
+	LastRunStatus *string `json:"last_run_status,omitempty"`
+	// RunCount is the number of runs (user turns) in this session.
+	RunCount int `json:"run_count"`
 }
 
 // ACPSSEEvent represents a persisted or streamed SSE event.
@@ -409,24 +421,39 @@ func ToolCallToTrajectoryMetadata(tc *AgentRunToolCall) TrajectoryMetadata {
 // baseURL should be the scheme+host (e.g. "https://api.example.com") used to build history URLs.
 // Per ACP spec, history entries are URL references to run event streams that clients fetch to
 // reconstruct full message history.
-func SessionToACPObject(session *ACPSession, runs []*AgentRun, baseURL string) ACPSessionObject {
+// SessionToACPObject converts an ACPSession entity with associated runs to the ACP wire format.
+// eventsByRunID maps run ID → ordered list of persisted events for that run.
+func SessionToACPObject(session *ACPSession, runs []*AgentRun, eventsByRunID map[string][]*ACPRunEvent) ACPSessionObject {
 	obj := ACPSessionObject{
 		ID:        session.ID,
 		AgentName: session.AgentName,
 		Title:     session.Title,
 		CreatedAt: session.CreatedAt,
 		UpdatedAt: session.UpdatedAt,
-		History:   make([]string, 0, len(runs)),
+		History:   make([]ACPSessionRun, 0, len(runs)),
+		RunCount:  len(runs),
 	}
 
 	for _, run := range runs {
-		agentName := ""
-		if run.Agent != nil {
-			agentName = ACPSlugFromName(run.Agent.Name)
+		rawEvents := eventsByRunID[run.ID]
+		sseEvents := make([]ACPSSEEvent, len(rawEvents))
+		for i, e := range rawEvents {
+			sseEvents[i] = RunEventToACPSSEEvent(e)
 		}
-		// Build URL: GET /acp/v1/agents/:name/runs/:runId/events
-		url := fmt.Sprintf("%s/acp/v1/agents/%s/runs/%s/events", baseURL, agentName, run.ID)
-		obj.History = append(obj.History, url)
+		obj.History = append(obj.History, ACPSessionRun{
+			RunID:          run.ID,
+			Status:         string(run.Status),
+			TriggerMessage: run.TriggerMessage,
+			CreatedAt:      run.CreatedAt,
+			CompletedAt:    run.CompletedAt,
+			Events:         sseEvents,
+		})
+	}
+
+	// Derive session status from the last run (runs are ordered ASC by created_at)
+	if len(runs) > 0 {
+		lastStatus := string(runs[len(runs)-1].Status)
+		obj.LastRunStatus = &lastStatus
 	}
 
 	return obj

@@ -1243,7 +1243,7 @@ func (h *ACPHandler) CreateSession(c echo.Context) error {
 		return apperror.NewInternal("failed to create session", err)
 	}
 
-	acpSession := SessionToACPObject(session, nil, acpBaseURL(c))
+	acpSession := SessionToACPObject(session, nil, nil)
 	return c.JSON(http.StatusCreated, acpSession)
 }
 
@@ -1289,7 +1289,16 @@ func (h *ACPHandler) GetSession(c echo.Context) error {
 		return apperror.NewInternal("failed to fetch session history", err)
 	}
 
-	acpSession := SessionToACPObject(session, runs, acpBaseURL(c))
+	runIDs := make([]string, len(runs))
+	for i, r := range runs {
+		runIDs[i] = r.ID
+	}
+	eventsByRun, err := h.repo.GetACPRunEventsByRunIDs(ctx, runIDs)
+	if err != nil {
+		return apperror.NewInternal("failed to fetch run events", err)
+	}
+
+	acpSession := SessionToACPObject(session, runs, eventsByRun)
 	return c.JSON(http.StatusOK, acpSession)
 }
 
@@ -1324,10 +1333,21 @@ func (h *ACPHandler) ListSessions(c echo.Context) error {
 		return apperror.NewInternal("failed to fetch session runs", err)
 	}
 
-	baseURL := acpBaseURL(c)
+	// Collect all run IDs for a single bulk events query
+	var allRunIDs []string
+	for _, runs := range runsBySession {
+		for _, r := range runs {
+			allRunIDs = append(allRunIDs, r.ID)
+		}
+	}
+	eventsByRun, err := h.repo.GetACPRunEventsByRunIDs(ctx, allRunIDs)
+	if err != nil {
+		return apperror.NewInternal("failed to fetch run events", err)
+	}
+
 	result := make([]ACPSessionObject, len(sessions))
 	for i, s := range sessions {
-		result[i] = SessionToACPObject(s, runsBySession[s.ID], baseURL)
+		result[i] = SessionToACPObject(s, runsBySession[s.ID], eventsByRun)
 	}
 	return c.JSON(http.StatusOK, result)
 }
