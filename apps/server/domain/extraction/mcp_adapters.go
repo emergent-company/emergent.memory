@@ -92,6 +92,21 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 	if stage == "new_domain" && content != "" {
 		snap.SuggestedPackName = suggestPackName(content)
 	}
+	// Persist classification result back to the document so confidence + matched_schema_id
+	// are up-to-date for test assertions and UI display. This matters for second-pass docs
+	// that were uploaded before the schema existed (initial extraction stored confidence=0).
+	if result.DomainName != "" {
+		conf := result.Confidence
+		signals := map[string]any{
+			"stage": stage,
+		}
+		if result.MatchedSchemaID != nil {
+			signals["schemaId"] = *result.MatchedSchemaID
+		}
+		if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, &result.DomainName, &conf, signals); updateErr != nil {
+			a.log.Warn("classify-document: failed to persist classification", slog.String("doc_id", documentID), slog.Any("err", updateErr))
+		}
+	}
 	return snap, nil
 }
 
