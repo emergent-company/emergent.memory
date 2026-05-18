@@ -142,7 +142,7 @@ func domainToolDefinitions() []ToolDefinition {
 					},
 					"pack_name": {
 						Type:        "string",
-						Description: "Name for the new schema pack (required when mode='create')",
+						Description: "Descriptive name for the new schema pack (required when mode='create'). MUST reflect the document's structural format/type. Examples: 'Property Listing', 'AI Assistant Session', 'Medical Lab Report', 'Personal Notes', 'Supplier Agreement'. FORBIDDEN: 'new_domain', 'unknown', 'document', 'schema', 'domain', 'other', 'general'.",
 					},
 					"existing_pack_id": {
 						Type:        "string",
