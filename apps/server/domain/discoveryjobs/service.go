@@ -1254,7 +1254,7 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 		if updateErr := s.docSvc.UpdateDomainClassification(ctx, r.DocumentID, packNamePtr, &conf, map[string]any{
 			"stage":           domainLabel,
 			"matchedSchemaId": schemaIDStr,
-		}); updateErr != nil {
+		}, true); updateErr != nil {
 			s.log.Warn("failed to update document domain classification", slog.String("doc_id", r.DocumentID), slog.Any("err", updateErr))
 		}
 	}

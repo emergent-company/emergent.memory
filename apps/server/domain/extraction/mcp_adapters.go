@@ -112,7 +112,7 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 		// Pass nil for domainName so UpdateDomainClassification skips writing domain_name
 		// when the document already has a finalized value.
 		if snap.SuggestedPackName != "" || result.MatchedSchemaID != nil {
-			if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, nil, &conf, signals); updateErr != nil {
+			if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, nil, &conf, signals, false); updateErr != nil {
 				a.log.Warn("classify-document: failed to persist classification", slog.String("doc_id", documentID), slog.Any("err", updateErr))
 			}
 		}

@@ -802,7 +802,7 @@ func (w *ObjectExtractionWorker) writeDomainClassification(ctx context.Context, 
 		"llmReason":         cr.Signals.LLMReason,
 		"classifiedAt":      cr.Signals.ClassifiedAt,
 	}
-	if err := w.docService.UpdateDomainClassification(ctx, documentID, domainName, confidence, signals); err != nil {
+	if err := w.docService.UpdateDomainClassification(ctx, documentID, domainName, confidence, signals, false); err != nil {
 		w.log.Warn("failed to write domain classification to document",
 			slog.String("document_id", documentID),
 			logger.Error(err),

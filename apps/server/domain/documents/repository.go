@@ -1094,14 +1094,20 @@ func (r *Repository) GetExtractionSummary(ctx context.Context, projectID, docume
 }
 
 // UpdateDomainClassification writes domain classification results to a document.
-// domain_name is only updated when it is currently NULL or "new_domain" — this prevents
-// classify-document / worker goroutines from overwriting a value already set by finalize-discovery.
+//
+// When force=false (classify-document, worker): domain_name is only updated when the
+// current value is NULL or "new_domain", preventing background goroutines from
+// overwriting a value already set by finalize-discovery.
+//
+// When force=true (finalize-discovery): domain_name is always overwritten — finalize-discovery
+// is the authoritative writer and must be able to update on re-finalize or extend-mode calls.
 func (r *Repository) UpdateDomainClassification(
 	ctx context.Context,
 	documentID string,
 	domainName *string,
 	confidence *float32,
 	signals map[string]any,
+	force bool,
 ) error {
 	now := time.Now().UTC()
 	q := r.db.NewUpdate().
@@ -1111,12 +1117,13 @@ func (r *Repository) UpdateDomainClassification(
 		Set("updated_at = ?", now).
 		Where("id = ?", documentID)
 
-	// Only overwrite domain_name when caller explicitly provides one AND the current value
-	// is unset (NULL) or is the placeholder "new_domain". This guards against a race where
-	// classify-document fires after finalize-discovery has already written the real name.
 	if domainName != nil {
-		q = q.Set("domain_name = ?", domainName).
-			Where("(domain_name IS NULL OR domain_name = 'new_domain')")
+		q = q.Set("domain_name = ?", domainName)
+		// Non-authoritative callers (classify-document, worker) must not overwrite a
+		// finalized domain_name set by finalize-discovery.
+		if !force {
+			q = q.Where("(domain_name IS NULL OR domain_name = 'new_domain')")
+		}
 	}
 
 	_, err := q.Exec(ctx)

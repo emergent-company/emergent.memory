@@ -433,14 +433,18 @@ func (s *Service) GetExtractionSummary(ctx context.Context, projectID, documentI
 }
 
 // UpdateDomainClassification persists domain classification results to a document.
+// Set force=true when the caller is authoritative (finalize-discovery); false for
+// background writers (classify-document MCP, extraction worker) that must not
+// overwrite an already-finalized domain_name.
 func (s *Service) UpdateDomainClassification(
 	ctx context.Context,
 	documentID string,
 	domainName *string,
 	confidence *float32,
 	signals map[string]any,
+	force bool,
 ) error {
-	return s.repo.UpdateDomainClassification(ctx, documentID, domainName, confidence, signals)
+	return s.repo.UpdateDomainClassification(ctx, documentID, domainName, confidence, signals, force)
 }
 
 // GetDocumentClassificationSignals returns the stored classification signals map for a document.
