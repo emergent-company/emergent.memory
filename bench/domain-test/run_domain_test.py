@@ -771,9 +771,10 @@ def cleanup_project(project_id):
         if TEST_PROJECT_NAME_PREFIX not in name:
             print(f"  SKIPPED — project name {name!r} does not match test prefix. Not deleting.")
             return
+        delete_token = ORG_TOKEN or TOKEN  # ORG_TOKEN preferred; fall back to EMERGENT_MEMORY_TOKEN
         requests.delete(
             f"{SERVER}/api/projects/{project_id}",
-            headers={"Authorization": f"Bearer {ORG_TOKEN}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {delete_token}", "Content-Type": "application/json"},
             timeout=30,
         )
         print(f"  Deleted project: {name!r}")
