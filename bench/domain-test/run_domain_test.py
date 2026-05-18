@@ -771,7 +771,11 @@ def cleanup_project(project_id):
         if TEST_PROJECT_NAME_PREFIX not in name:
             print(f"  SKIPPED — project name {name!r} does not match test prefix. Not deleting.")
             return
-        requests.delete(f"{SERVER}/api/projects/{project_id}", headers=headers(), timeout=30)
+        requests.delete(
+            f"{SERVER}/api/projects/{project_id}",
+            headers={"Authorization": f"Bearer {ORG_TOKEN}", "Content-Type": "application/json"},
+            timeout=30,
+        )
         print(f"  Deleted project: {name!r}")
     except Exception as e:
         print(f"  Cleanup failed: {e}")

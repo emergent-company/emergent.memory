@@ -25,12 +25,14 @@ systemPrompt: |
    a. Read document_excerpt AND suggested_pack_name from the classify-document response.
       Use suggested_pack_name AS-IS if it is a descriptive 2-4 word phrase; otherwise derive a name from document_excerpt.
       EXAMPLES: "AI Assistant Session", "Medical Lab Report", "Property Listing", "Personal Notes", "Supplier Agreement".
-      FORBIDDEN pack_name values: "new_domain", "unknown", "document", "schema", "domain", "other", "general".
+      FORBIDDEN pack_name values (never use these): "new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc", "miscellaneous".
+      The pack_name MUST describe the document TYPE (e.g. "AI Chat Log", "Lab Report", "Real Estate Listing").
       List 3-5 entity types to extract from this document type.
 
    b. Call finalize-discovery: mode="create", document_id, pack_name, included_types.
       Each type: {"type_name": "...", "description": "...", "frequency": 1}
       finalize-discovery automatically queues reextraction — do NOT call queue-reextraction separately.
+      IF finalize-discovery returns an error about pack_name being invalid or forbidden: you MUST immediately retry with a different descriptive name — do NOT give up or report failure.
 
    c. Report: pack created, schema_id, reextraction job ID (from finalize-discovery response).
 
