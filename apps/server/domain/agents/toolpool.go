@@ -241,15 +241,15 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 			}
 			relayToolCount += len(relayToolDefs)
 			for _, rt := range relayToolDefs {
-				// Prefix relay tool names: instanceID_toolname (same convention as external tools)
-				prefixedName := sess.InstanceID + "_" + rt.Name
-				cache.toolDefs[prefixedName] = mcp.ToolDefinition{
-					Name:        prefixedName,
+				// rt.Name is already prefixed with instanceID_ by relaySessionTools() in
+				// domain/mcp/service.go — do not prefix again here.
+				cache.toolDefs[rt.Name] = mcp.ToolDefinition{
+					Name:        rt.Name,
 					Description: rt.Description,
 					InputSchema: rt.InputSchema,
 				}
-				cache.toolNames = append(cache.toolNames, prefixedName)
-				cache.relayToolInstance[prefixedName] = sess.InstanceID
+				cache.toolNames = append(cache.toolNames, rt.Name)
+				cache.relayToolInstance[rt.Name] = sess.InstanceID
 			}
 		}
 		if relayToolCount > 0 {
