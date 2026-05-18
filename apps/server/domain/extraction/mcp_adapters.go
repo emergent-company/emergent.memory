@@ -93,10 +93,14 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 		snap.SuggestedPackName = suggestPackName(content)
 	}
 	// Persist classification result back to the document so confidence + matched_schema_id
-	// are up-to-date for test assertions and UI display. This matters for second-pass docs
-	// that were uploaded before the schema existed (initial extraction stored confidence=0).
-	if result.DomainName != "" {
+	// are up-to-date for test assertions and UI display. Also persists suggestedPackName
+	// so the finalize-discovery handler can auto-recover if the agent sends a forbidden pack_name.
+	{
 		conf := result.Confidence
+		domainNamePtr := (*string)(nil)
+		if result.DomainName != "" {
+			domainNamePtr = &result.DomainName
+		}
 		signals := map[string]any{
 			"stage": stage,
 		}
@@ -106,8 +110,11 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 		if snap.SuggestedPackName != "" {
 			signals["suggestedPackName"] = snap.SuggestedPackName
 		}
-		if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, &result.DomainName, &conf, signals); updateErr != nil {
-			a.log.Warn("classify-document: failed to persist classification", slog.String("doc_id", documentID), slog.Any("err", updateErr))
+		// Only update when we have something meaningful to write (name or signals content).
+		if domainNamePtr != nil || snap.SuggestedPackName != "" {
+			if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, domainNamePtr, &conf, signals); updateErr != nil {
+				a.log.Warn("classify-document: failed to persist classification", slog.String("doc_id", documentID), slog.Any("err", updateErr))
+			}
 		}
 	}
 	return snap, nil
