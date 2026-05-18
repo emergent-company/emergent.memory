@@ -267,12 +267,20 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 				Cardinality:  r.Cardinality,
 			}
 		}
-		promptCtx := auth.ContextWithProjectID(ctx, projectID.String())
+		// Generate extraction prompts — use a detached context with a generous timeout
+		// so a slow LLM call does not cause the finalize-discovery request context to
+		// expire, making the tool call appear to fail (which causes the agent to retry
+		// and hit a unique-name constraint on the second attempt).
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.Background(), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
 		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, discoveredRels, req.PackName); promptErr != nil {
 			s.log.Warn("failed to generate extraction prompts", slog.Any("err", promptErr))
 		} else if prompts != nil {
 			raw, _ := json.Marshal(prompts)
-			if updateErr := s.repo.UpdateSchemaExtractionPrompts(ctx, packID, raw); updateErr != nil {
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, packID, raw); updateErr != nil {
 				s.log.Warn("failed to update extraction prompts", slog.Any("err", updateErr))
 			}
 		}
