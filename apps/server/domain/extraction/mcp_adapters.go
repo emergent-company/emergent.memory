@@ -92,15 +92,13 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 	if stage == "new_domain" && content != "" {
 		snap.SuggestedPackName = suggestPackName(content)
 	}
-	// Persist classification result back to the document so confidence + matched_schema_id
-	// are up-to-date for test assertions and UI display. Also persists suggestedPackName
-	// so the finalize-discovery handler can auto-recover if the agent sends a forbidden pack_name.
+	// Persist signals back to the document (suggestedPackName, matchedSchemaId, stage) so
+	// finalize-discovery can auto-recover when the agent sends a forbidden pack_name.
+	// IMPORTANT: do NOT write domain_name here — finalize-discovery owns that field.
+	// Writing domain_name=NULL from classify-document would race with and overwrite
+	// finalize-discovery's correct value.
 	{
 		conf := result.Confidence
-		domainNamePtr := (*string)(nil)
-		if result.DomainName != "" {
-			domainNamePtr = &result.DomainName
-		}
 		signals := map[string]any{
 			"stage": stage,
 		}
@@ -110,9 +108,11 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 		if snap.SuggestedPackName != "" {
 			signals["suggestedPackName"] = snap.SuggestedPackName
 		}
-		// Only update when we have something meaningful to write (name or signals content).
-		if domainNamePtr != nil || snap.SuggestedPackName != "" {
-			if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, domainNamePtr, &conf, signals); updateErr != nil {
+		// Only persist when there is something useful (matched schema or suggested pack name).
+		// Pass nil for domainName so UpdateDomainClassification skips writing domain_name
+		// when the document already has a finalized value.
+		if snap.SuggestedPackName != "" || result.MatchedSchemaID != nil {
+			if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, nil, &conf, signals); updateErr != nil {
 				a.log.Warn("classify-document: failed to persist classification", slog.String("doc_id", documentID), slog.Any("err", updateErr))
 			}
 		}

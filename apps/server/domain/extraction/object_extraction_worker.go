@@ -272,12 +272,10 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 			w.log.Warn("failed to load schema summaries for classification, continuing without domain guidance",
 				logger.Error(sumErr))
 		} else if len(summaries) == 0 {
-			// No schemas installed — mark document as new_domain so agents/bench detect HITL needed.
-			if job.DocumentID != nil && w.docService != nil {
-				noMatchResult := ClassificationResult{DomainName: "new_domain"}
-				go w.writeDomainClassification(ctx, *job.DocumentID, noMatchResult)
-				w.log.Info("no schemas installed, marking document as new_domain")
-			}
+			// No schemas installed — do NOT write domain_name here; leave it NULL so
+			// finalize-discovery (or a future classify-document call after schemas are installed)
+			// can set the correct value without racing.
+			w.log.Info("no schemas installed, skipping domain classification write")
 		} else {
 			cr, classErr := w.classifier.Classify(ctx, batches[0], summaries)
 			if classErr != nil {
@@ -286,20 +284,19 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 			} else {
 				classificationResult = cr
 				// Write domain fields back to document asynchronously (best-effort).
-				// Even for new_domain (no match), write so the document reflects classification state.
+				// Only write when we have a real schema match (DomainName != "").
+				// Do NOT write "new_domain" placeholder — leave domain_name NULL so
+				// finalize-discovery owns that transition and there is no race condition.
 				if job.DocumentID != nil && w.docService != nil {
 					if cr.DomainName != "" {
 						w.log.Info("document classified",
 							slog.String("domain", cr.DomainName),
 							slog.Float64("confidence", float64(cr.Confidence)),
 						)
+						go w.writeDomainClassification(ctx, *job.DocumentID, cr)
 					} else {
-						// Mark as new_domain so agents/bench can detect the state.
-						cr.DomainName = "new_domain"
-						classificationResult = cr
-						w.log.Info("document classified as new domain (no schema match)")
+						w.log.Info("document classified as new domain (no schema match), skipping domain_name write")
 					}
-					go w.writeDomainClassification(ctx, *job.DocumentID, cr)
 				}
 			}
 		}

@@ -1094,6 +1094,8 @@ func (r *Repository) GetExtractionSummary(ctx context.Context, projectID, docume
 }
 
 // UpdateDomainClassification writes domain classification results to a document.
+// domain_name is only updated when it is currently NULL or "new_domain" — this prevents
+// classify-document / worker goroutines from overwriting a value already set by finalize-discovery.
 func (r *Repository) UpdateDomainClassification(
 	ctx context.Context,
 	documentID string,
@@ -1104,11 +1106,19 @@ func (r *Repository) UpdateDomainClassification(
 	now := time.Now().UTC()
 	q := r.db.NewUpdate().
 		Model((*Document)(nil)).
-		Set("domain_name = ?", domainName).
 		Set("domain_confidence = ?", confidence).
 		Set("classification_signals = ?", signals).
 		Set("updated_at = ?", now).
 		Where("id = ?", documentID)
+
+	// Only overwrite domain_name when caller explicitly provides one AND the current value
+	// is unset (NULL) or is the placeholder "new_domain". This guards against a race where
+	// classify-document fires after finalize-discovery has already written the real name.
+	if domainName != nil {
+		q = q.Set("domain_name = ?", domainName).
+			Where("(domain_name IS NULL OR domain_name = 'new_domain')")
+	}
+
 	_, err := q.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("update domain classification: %w", err)
