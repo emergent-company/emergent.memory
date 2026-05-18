@@ -1298,7 +1298,12 @@ func (h *ACPHandler) GetSession(c echo.Context) error {
 		return apperror.NewInternal("failed to fetch run events", err)
 	}
 
-	acpSession := SessionToACPObject(session, runs, eventsByRun, nil)
+	stats, err := h.repo.GetSessionStatsBySessionID(ctx, sessionID)
+	if err != nil {
+		return apperror.NewInternal("failed to fetch session stats", err)
+	}
+
+	acpSession := SessionToACPObject(session, runs, eventsByRun, stats)
 	return c.JSON(http.StatusOK, acpSession)
 }
 

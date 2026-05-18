@@ -2853,6 +2853,29 @@ func (r *Repository) GetSessionStatsByProjectID(ctx context.Context, projectID s
 	return out, nil
 }
 
+// GetSessionStatsBySessionID returns aggregated message count, token usage, and
+// estimated cost for a single ACP session.
+func (r *Repository) GetSessionStatsBySessionID(ctx context.Context, sessionID string) (*ACPSessionStats, error) {
+	var stats ACPSessionStats
+	err := r.db.NewRaw(`
+		SELECT
+			s.id                                                            AS session_id,
+			COUNT(DISTINCT CASE WHEN m.role = 'user' THEN m.id END)        AS message_count,
+			COALESCE(SUM(u.text_input_tokens + u.output_tokens), 0)        AS total_tokens,
+			COALESCE(SUM(u.estimated_cost_usd), 0)                         AS total_cost_usd
+		FROM kb.acp_sessions s
+		LEFT JOIN kb.agent_runs         ar ON ar.acp_session_id = s.id
+		LEFT JOIN kb.agent_run_messages m  ON m.run_id = ar.id
+		LEFT JOIN kb.llm_usage_events   u  ON u.run_id = ar.id
+		WHERE s.id = ?
+		GROUP BY s.id
+	`, sessionID).Scan(ctx, &stats)
+	if err != nil {
+		return nil, fmt.Errorf("GetSessionStatsBySessionID: %w", err)
+	}
+	return &stats, nil
+}
+
 // GetSessionRunHistory returns all agent runs linked to the given ACP session,
 // ordered by created_at ascending (oldest first).
 func (r *Repository) GetSessionRunHistory(ctx context.Context, sessionID string) ([]*AgentRun, error) {
