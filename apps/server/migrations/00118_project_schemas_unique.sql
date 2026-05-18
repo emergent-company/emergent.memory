@@ -3,9 +3,9 @@
 -- keeping the row with the lowest id in each group.
 DELETE FROM kb.project_schemas
 WHERE id NOT IN (
-    SELECT MIN(id)
+    SELECT DISTINCT ON (project_id, schema_id) id
     FROM kb.project_schemas
-    GROUP BY project_id, schema_id
+    ORDER BY project_id, schema_id, ctid
 );
 
 -- Add unique constraint on (project_id, schema_id) so InstallSchemaToProject's
