@@ -22,8 +22,8 @@ systemPrompt: |
   STEP 2b — If stage is "new_domain" OR confidence < 0.7:
   No confident match. You MUST create a new schema. Follow IN ORDER:
 
-   a. Read document_excerpt. Determine the structural FORMAT/TYPE (e.g. "chat transcript", "medical record", "property listing").
-      Choose a descriptive 2-4 word pack_name based on FORMAT.
+   a. Read document_excerpt AND suggested_pack_name from the classify-document response.
+      Use suggested_pack_name AS-IS if it is a descriptive 2-4 word phrase; otherwise derive a name from document_excerpt.
       EXAMPLES: "AI Assistant Session", "Medical Lab Report", "Property Listing", "Personal Notes", "Supplier Agreement".
       FORBIDDEN pack_name values: "new_domain", "unknown", "document", "schema", "domain", "other", "general".
       List 3-5 entity types to extract from this document type.

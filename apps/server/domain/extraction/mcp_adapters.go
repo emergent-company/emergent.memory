@@ -3,6 +3,7 @@ package extraction
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
@@ -86,7 +87,50 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 		}
 		snap.DocumentExcerpt = excerpt
 	}
+	// When no schema matched, suggest a pack_name derived from the first line of content.
+	// This gives the agent a concrete starting point and reduces generic "new_domain" responses.
+	if stage == "new_domain" && content != "" {
+		snap.SuggestedPackName = suggestPackName(content)
+	}
 	return snap, nil
+}
+
+// suggestPackName derives a short descriptive name from the first meaningful line of content.
+func suggestPackName(content string) string {
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		// Strip bracketed title like "[AI Assistant Session - 2026-05-10 14:32 UTC]"
+		if strings.HasPrefix(line, "[") {
+			if end := strings.Index(line, "]"); end > 0 {
+				inner := strings.TrimSpace(line[1:end])
+				// Remove trailing date/time like " - 2026-05-10 14:32 UTC"
+				if idx := strings.Index(inner, " - 20"); idx > 0 {
+					inner = strings.TrimSpace(inner[:idx])
+				}
+				if len(inner) >= 3 {
+					return inner
+				}
+			}
+		}
+		// Strip markdown/list prefixes
+		line = strings.TrimLeft(line, "#-*")
+		line = strings.TrimSpace(line)
+		// Strip trailing date suffix like " - May 2026" or " - 2026-05-10"
+		for _, sep := range []string{" - 20", " – 20", " - May ", " - Jan ", " - Feb ", " - Mar ", " - Apr ", " - Jun ", " - Jul ", " - Aug ", " - Sep ", " - Oct ", " - Nov ", " - Dec "} {
+			if idx := strings.Index(line, sep); idx > 0 {
+				line = strings.TrimSpace(line[:idx])
+				break
+			}
+		}
+		if len(line) >= 3 && len(line) <= 60 {
+			return line
+		}
+	}
+	return ""
 }
 
 // ============================================================================
