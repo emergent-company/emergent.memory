@@ -62,13 +62,13 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 		return mcp.ClassificationSnapshot{}, fmt.Errorf("classify: %w", err)
 	}
 
-	stage := "heuristic"
-	if len(result.Signals.HeuristicKeywords) == 0 {
-		stage = "llm"
-	}
-	// No domain matched — signal new_domain so the agent triggers discovery.
+	// Derive classification stage from result signals.
+	// "new_domain" when no schema matched; "llm" when LLM was used; "vector" otherwise.
+	stage := "vector"
 	if result.DomainName == "" {
 		stage = "new_domain"
+	} else if result.Signals.LLMReason != "" {
+		stage = "llm"
 	}
 
 	snap := mcp.ClassificationSnapshot{
@@ -101,7 +101,6 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 			"stage": stage,
 		}
 		if result.MatchedSchemaID != nil {
-			signals["schemaId"] = *result.MatchedSchemaID
 			signals["matchedSchemaId"] = *result.MatchedSchemaID
 		}
 		if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, &result.DomainName, &conf, signals); updateErr != nil {

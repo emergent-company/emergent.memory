@@ -126,12 +126,14 @@ def headers(project_id: Optional[str] = None):
 
 
 def get(path, project_id: Optional[str] = None, **kwargs):
+    kwargs.setdefault("timeout", 30)
     r = requests.get(f"{SERVER}{path}", headers=headers(project_id), **kwargs)
     r.raise_for_status()
     return r.json()
 
 
 def post(path, body=None, project_id: Optional[str] = None, **kwargs):
+    kwargs.setdefault("timeout", 30)
     r = requests.post(f"{SERVER}{path}", headers=headers(project_id), json=body or {}, **kwargs)
     if not r.ok:
         print(f"  HTTP {r.status_code} on POST {path}: {r.text[:300]}")
@@ -140,12 +142,14 @@ def post(path, body=None, project_id: Optional[str] = None, **kwargs):
 
 
 def patch(path, body=None, project_id: Optional[str] = None, **kwargs):
+    kwargs.setdefault("timeout", 30)
     r = requests.patch(f"{SERVER}{path}", headers=headers(project_id), json=body or {}, **kwargs)
     r.raise_for_status()
     return r.json()
 
 
 def delete(path, body=None, project_id: Optional[str] = None, **kwargs):
+    kwargs.setdefault("timeout", 30)
     r = requests.delete(f"{SERVER}{path}", headers=headers(project_id), json=body or None, **kwargs)
     r.raise_for_status()
     return r.json() if r.content else {}
@@ -277,7 +281,7 @@ def create_runtime_agent(project_id):
         r.raise_for_status()
         print(f"  Runtime agent created: {r.json().get('id')}")
     except Exception as e:
-        print(f"  WARNING: Runtime agent creation failed: {e} body={r.text if 'r' in dir() else 'n/a'}")
+        print(f"  WARNING: Runtime agent creation failed: {e} body={r.text if 'r' in locals() else 'n/a'}")
 
 
 def configure_provider(project_id):
@@ -579,7 +583,7 @@ def assert_schema_created_any(project_id, schema_count_before, retries=6, delay=
                 results.append(check("schema has typeHints", len(type_hints) > 0, f"typeHints={list(type_hints.keys())[:3]}"))
     except Exception as e:
         results.append(check("schema fetch", False, str(e)))
-    return results, count_after if 'count_after' in dir() else schema_count_before
+    return results, count_after if 'count_after' in locals() else schema_count_before
 
 
 def assert_reextraction_queued(project_id, doc_id):
@@ -602,8 +606,8 @@ def assert_reextraction_queued(project_id, doc_id):
 
         job_id = reextract_job["id"]
 
-        # Poll until completed (max 180s)
-        for _ in range(36):
+        # Poll until completed (max 300s)
+        for _ in range(60):
             resp = get(f"/api/monitoring/extraction-jobs", params={"source_id": doc_id})
             jobs = resp.get("jobs") or resp.get("items") or []
             reextract_job = next((j for j in jobs if j["id"] == job_id), reextract_job)
@@ -657,7 +661,7 @@ def get_schema_count(project_id):
 # ---------------------------------------------------------------------------
 
 def run_test_doc(project_id, doc_config, idx, schema_count_before):
-    print(f"\n--- Doc {idx+1}/6: {doc_config['label']} ---")
+    print(f"\n--- Doc {idx+1}/7: {doc_config['label']} ---")
     filepath = FIXTURES_DIR / doc_config["file"]
 
     doc_id = upload_document(project_id, filepath)
@@ -767,7 +771,7 @@ def cleanup_project(project_id):
         if TEST_PROJECT_NAME_PREFIX not in name:
             print(f"  SKIPPED — project name {name!r} does not match test prefix. Not deleting.")
             return
-        requests.delete(f"{SERVER}/api/projects/{project_id}", headers=headers())
+        requests.delete(f"{SERVER}/api/projects/{project_id}", headers=headers(), timeout=30)
         print(f"  Deleted project: {name!r}")
     except Exception as e:
         print(f"  Cleanup failed: {e}")

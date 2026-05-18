@@ -290,10 +290,12 @@ func provideObjectExtractionWorker(
 	schemaProvider *MemorySchemaProvider,
 	modelFactory *adk.ModelFactory,
 	embeds *embeddings.Service,
+	db bun.IDB,
 	cfg *ExtractionConfig,
 	log *slog.Logger,
 	monitor syshealth.Monitor,
 	limitResolver adk.ModelLimitResolver,
+	appCfg *config.Config,
 ) *ObjectExtractionWorker {
 	workerConfig := &ObjectExtractionWorkerConfig{
 		PollInterval:    time.Duration(cfg.ObjectExtraction.WorkerIntervalMs) * time.Millisecond,
@@ -309,7 +311,9 @@ func provideObjectExtractionWorker(
 		cfg.ObjectExtraction.MaxConcurrency,
 	)
 	// Wire embedding service into schema provider (for vector classification).
-	schemaProvider.WithEmbeddingService(embeds)
+	// Wrap with CachedEmbeddingService to avoid redundant API calls per classification.
+	cachedEmbeds := NewCachedEmbeddingService(embeds, db, appCfg.Embeddings.Model, log)
+	schemaProvider.WithEmbeddingService(cachedEmbeds)
 	return NewObjectExtractionWorker(jobs, graphService, branchService, docService, schemaProvider, modelFactory, embeds, workerConfig, log, scaler).
 		WithLimitResolver(limitResolver)
 }

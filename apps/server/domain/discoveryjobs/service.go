@@ -1108,10 +1108,6 @@ func (s *Service) generateColorForType(typeName string) string {
 	return colors[hash%len(colors)]
 }
 
-func strPtr(s string) *string {
-	return &s
-}
-
 // mcpDiscoveryFinalizeRequest mirrors mcp.DiscoveryFinalizeRequest without importing mcp.
 type mcpDiscoveryFinalizeRequest struct {
 	JobID          string
@@ -1153,24 +1149,35 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 		return nil, apperror.ErrBadRequest.WithMessage("invalid org_id")
 	}
 
-	// Resolve job ID: use explicit job_id, or create a discovery job from document_id.
+	// Resolve job ID: use explicit job_id, or create a minimal stub job from document_id.
+	// We do NOT call StartDiscovery here because that launches a background goroutine
+	// that runs full LLM-based discovery — producing an orphaned schema whose result
+	// is immediately discarded. Instead, create a pre-completed stub job so
+	// FinalizeDiscovery can link the schema to a valid job row without side effects.
 	jobID, err := uuid.Parse(r.JobID)
 	if err != nil {
-		// No valid job_id — create one from document_id if provided.
+		// No valid job_id — create stub from document_id if provided.
 		if r.DocumentID == "" {
 			return nil, apperror.ErrBadRequest.WithMessage("either job_id or document_id is required")
 		}
-		docUUID, parseErr := uuid.Parse(r.DocumentID)
-		if parseErr != nil {
+		if _, parseErr := uuid.Parse(r.DocumentID); parseErr != nil {
 			return nil, apperror.ErrBadRequest.WithMessage("invalid document_id")
 		}
-		resp, createErr := s.StartDiscovery(ctx, projectUUID, orgID, &StartDiscoveryRequest{
-			DocumentIDs: []uuid.UUID{docUUID},
-		})
-		if createErr != nil {
-			return nil, fmt.Errorf("create discovery job: %w", createErr)
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectUUID)
+		stub := &DiscoveryJob{
+			ID:             uuid.New(),
+			TenantID:       orgID,
+			OrganizationID: orgID,
+			ProjectID:      projectUUID,
+			Status:         StatusCompleted,
+			KBPurpose:      kbPurpose,
+			Progress:       JSONMap{"message": "stub job created by MCP finalize"},
+			Config:         JSONMap{"document_ids": []string{r.DocumentID}},
 		}
-		jobID = resp.JobID
+		if createErr := s.repo.Create(ctx, stub); createErr != nil {
+			return nil, fmt.Errorf("create stub discovery job: %w", createErr)
+		}
+		jobID = stub.ID
 	}
 
 	inReq := &FinalizeDiscoveryRequest{
@@ -1238,9 +1245,14 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 		// Agent explicitly confirmed the schema — confidence is 1.0.
 		conf := float32(1.0)
 		schemaIDStr := resp.SchemaID.String()
-		if updateErr := s.docSvc.UpdateDomainClassification(ctx, r.DocumentID, &r.PackName, &conf, map[string]any{
+		// Only pass pack_name when it is non-empty (extend mode omits it).
+		// Passing an empty string would overwrite the document's existing domain name.
+		var packNamePtr *string
+		if r.PackName != "" {
+			packNamePtr = &r.PackName
+		}
+		if updateErr := s.docSvc.UpdateDomainClassification(ctx, r.DocumentID, packNamePtr, &conf, map[string]any{
 			"stage":           domainLabel,
-			"schemaId":        schemaIDStr,
 			"matchedSchemaId": schemaIDStr,
 		}); updateErr != nil {
 			s.log.Warn("failed to update document domain classification", slog.String("doc_id", r.DocumentID), slog.Any("err", updateErr))
@@ -1325,7 +1337,8 @@ Return ONLY valid JSON with this exact structure:
 		if idx := strings.Index(response, "\n"); idx != -1 {
 			response = response[idx+1:]
 		}
-		response = strings.TrimSuffix(response, "```")
+		// TrimRight handles trailing ``` with optional whitespace/newlines.
+		response = strings.TrimRight(response, " \t\n`")
 		response = strings.TrimSpace(response)
 	}
 
@@ -1335,3 +1348,6 @@ Return ONLY valid JSON with this exact structure:
 	}
 	return &prompts, nil
 }
+
+// strPtr returns a pointer to the given string value.
+func strPtr(s string) *string { return &s }

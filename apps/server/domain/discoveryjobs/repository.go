@@ -2,7 +2,9 @@ package discoveryjobs
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -44,7 +46,7 @@ func (r *Repository) GetByID(ctx context.Context, jobID uuid.UUID) (*DiscoveryJo
 		Where("id = ?", jobID).
 		Scan(ctx)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperror.ErrNotFound.WithMessage("discovery job not found")
 		}
 		r.log.Error("failed to get discovery job", logger.Error(err))
@@ -172,7 +174,7 @@ func (r *Repository) GetProjectInfo(ctx context.Context, projectID uuid.UUID) (s
 		Where("id = ?", projectID).
 		Scan(ctx, &projectInfo)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", apperror.ErrNotFound.WithMessage("project not found")
 		}
 		r.log.Error("failed to get project info", logger.Error(err))
@@ -352,7 +354,7 @@ func (r *Repository) GetMemorySchema(ctx context.Context, packID uuid.UUID) (*Me
 		Where("id = ?", packID).
 		Scan(ctx, pack)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperror.ErrNotFound.WithMessage("memory schema not found")
 		}
 		r.log.Error("failed to get memory schema", logger.Error(err))
@@ -418,7 +420,7 @@ func (r *Repository) InstallSchemaToProject(ctx context.Context, projectID, sche
 	}
 	_, err := r.db.NewInsert().
 		Model(rec).
-		On("CONFLICT DO NOTHING").
+		On("CONFLICT (project_id, schema_id) DO UPDATE SET active = EXCLUDED.active").
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to install schema to project", logger.Error(err))

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -179,7 +180,7 @@ func (p *MemorySchemaProvider) GetProjectSchemas(
 		Scan(ctx)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return &ExtractionSchemas{
 				ObjectSchemas:       make(map[string]agents.ObjectSchema),
 				RelationshipSchemas: make(map[string]agents.RelationshipSchema),
@@ -289,7 +290,7 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 		Where("ptp.active = true").
 		Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("query schema summaries: %w", err)
@@ -305,14 +306,16 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 		if ms.Description != nil {
 			desc = *ms.Description
 		}
+		// Parse object type schemas once; pass the result to all helpers to avoid triple-parse.
+		parsedObjTypes := parseObjectTypeSchemas(ms.ObjectTypeSchemas)
 		// Build keyword list from schema name and installed object type names.
-		keywords := buildKeywordsFromSchema(ms)
+		keywords := buildKeywordsFromParsed(ms, parsedObjTypes)
 		var ep *SchemaExtractionPrompts
 		if ms.ExtractionPrompts != nil {
 			ep = ms.ExtractionPrompts
 		}
 		// Collect object type names for LLM prompt and per-type embeddings.
-		typeNames := buildTypeNamesFromSchema(ms)
+		typeNames := buildTypeNamesFromParsed(ms, parsedObjTypes)
 		summary := InstalledSchemaSummary{
 			ID:                ms.ID,
 			Name:              ms.Name,
@@ -323,7 +326,7 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 		}
 		// Compute pack-level embedding and per-type embeddings when available.
 		if p.embeddingService != nil && p.embeddingService.IsEnabled() {
-			embText := buildSchemaEmbeddingText(ms)
+			embText := buildSchemaEmbeddingTextFromParsed(ms, parsedObjTypes)
 			if embText != "" {
 				emb, embErr := p.embeddingService.EmbedQuery(ctx, embText)
 				if embErr != nil {
@@ -363,9 +366,14 @@ func (p *MemorySchemaProvider) GetInstalledSchemaSummaries(
 // buildTypeNamesFromSchema returns the object type names defined in a schema pack.
 // Used to populate InstalledSchemaSummary.TypeNames for the LLM classification prompt.
 func buildTypeNamesFromSchema(ms *GraphMemorySchema) []string {
+	return buildTypeNamesFromParsed(ms, parseObjectTypeSchemas(ms.ObjectTypeSchemas))
+}
+
+// buildTypeNamesFromParsed is the pre-parsed variant of buildTypeNamesFromSchema.
+func buildTypeNamesFromParsed(ms *GraphMemorySchema, parsed map[string]agents.ObjectSchema) []string {
 	seen := map[string]bool{}
 	var names []string
-	for typeName := range parseObjectTypeSchemas(ms.ObjectTypeSchemas) {
+	for typeName := range parsed {
 		if !seen[typeName] {
 			seen[typeName] = true
 			names = append(names, typeName)
@@ -385,6 +393,11 @@ func buildTypeNamesFromSchema(ms *GraphMemorySchema) []string {
 
 // buildKeywordsFromSchema extracts keyword signals from a schema pack's name and type list.
 func buildKeywordsFromSchema(ms *GraphMemorySchema) []string {
+	return buildKeywordsFromParsed(ms, parseObjectTypeSchemas(ms.ObjectTypeSchemas))
+}
+
+// buildKeywordsFromParsed is the pre-parsed variant of buildKeywordsFromSchema.
+func buildKeywordsFromParsed(ms *GraphMemorySchema, parsed map[string]agents.ObjectSchema) []string {
 	seen := map[string]bool{}
 	var kws []string
 	add := func(s string) {
@@ -399,7 +412,7 @@ func buildKeywordsFromSchema(ms *GraphMemorySchema) []string {
 		add(word)
 	}
 	// Object type names.
-	for typeName := range parseObjectTypeSchemas(ms.ObjectTypeSchemas) {
+	for typeName := range parsed {
 		add(typeName)
 		// Also add individual words for compound types like "MedicalRecord".
 		for _, w := range splitCamelCase(typeName) {
@@ -409,9 +422,13 @@ func buildKeywordsFromSchema(ms *GraphMemorySchema) []string {
 	return kws
 }
 
-// buildSchemaEmbeddingText builds a text representation of a schema pack
-// suitable for embedding. Uses domainContext + type hint names for semantic richness.
+// buildSchemaEmbeddingText builds a text representation of a schema pack for embedding.
 func buildSchemaEmbeddingText(ms *GraphMemorySchema) string {
+	return buildSchemaEmbeddingTextFromParsed(ms, parseObjectTypeSchemas(ms.ObjectTypeSchemas))
+}
+
+// buildSchemaEmbeddingTextFromParsed is the pre-parsed variant of buildSchemaEmbeddingText.
+func buildSchemaEmbeddingTextFromParsed(ms *GraphMemorySchema, parsed map[string]agents.ObjectSchema) string {
 	var parts []string
 	parts = append(parts, ms.Name)
 	if ms.Description != nil && *ms.Description != "" {
@@ -430,7 +447,7 @@ func buildSchemaEmbeddingText(ms *GraphMemorySchema) string {
 		}
 	}
 	// Also include object type names from the schema definition.
-	for typeName := range parseObjectTypeSchemas(ms.ObjectTypeSchemas) {
+	for typeName := range parsed {
 		parts = append(parts, typeName)
 	}
 	return strings.Join(parts, ". ")
@@ -519,10 +536,11 @@ func parseObjectTypeSchemas(raw json.RawMessage) map[string]agents.ObjectSchema 
 	return schemas
 }
 
-// normalizeObjectTypeSchemasToMap converts either storage format to map[typeName]map[string]any.
+// normalizeSchemaToMap converts either storage format to map[typeName]map[string]any.
 // Array format: [{"name": "TypeName", ...}, ...] → {"TypeName": {...}, ...}
 // Map format:   {"TypeName": {...}, ...}          → unchanged
-func normalizeObjectTypeSchemasToMap(raw json.RawMessage) map[string]map[string]any {
+// Used for both object and relationship type schema columns.
+func normalizeSchemaToMap(raw json.RawMessage) map[string]map[string]any {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -548,6 +566,11 @@ func normalizeObjectTypeSchemasToMap(raw json.RawMessage) map[string]map[string]
 	}
 
 	return nil
+}
+
+// normalizeObjectTypeSchemasToMap is an alias for normalizeSchemaToMap for object type schemas.
+func normalizeObjectTypeSchemasToMap(raw json.RawMessage) map[string]map[string]any {
+	return normalizeSchemaToMap(raw)
 }
 
 // parseRelationshipTypeSchemas converts relationship_type_schemas JSONB to a map of RelationshipSchema.
@@ -594,31 +617,7 @@ func parseRelationshipTypeSchemas(raw json.RawMessage) map[string]agents.Relatio
 
 // normalizeRelTypeSchemasToMap converts either storage format to map[typeName]map[string]any.
 func normalizeRelTypeSchemasToMap(raw json.RawMessage) map[string]map[string]any {
-	if len(raw) == 0 {
-		return nil
-	}
-
-	// Try array format.
-	var arr []map[string]any
-	if json.Unmarshal(raw, &arr) == nil && len(arr) > 0 {
-		result := make(map[string]map[string]any, len(arr))
-		for _, item := range arr {
-			name, _ := item["name"].(string)
-			if name == "" {
-				continue
-			}
-			result[name] = item
-		}
-		return result
-	}
-
-	// Try map format.
-	var m map[string]map[string]any
-	if json.Unmarshal(raw, &m) == nil {
-		return m
-	}
-
-	return nil
+	return normalizeSchemaToMap(raw)
 }
 
 // parseTypesField extracts a []string from a schema map, trying multiple field names.

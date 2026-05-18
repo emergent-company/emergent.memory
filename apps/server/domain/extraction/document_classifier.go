@@ -243,7 +243,7 @@ func cosineSimilarity(a, b []float32) float32 {
 		magA += float64(a[i]) * float64(a[i])
 		magB += float64(b[i]) * float64(b[i])
 	}
-	mag := math.Sqrt(magA) * math.Sqrt(magB)
+	mag := math.Sqrt(magA * magB)
 	if mag == 0 {
 		return 0
 	}
@@ -474,12 +474,16 @@ Respond with ONLY a JSON object (no markdown):
 	rawResp := strings.TrimSpace(sb.String())
 	// Strip markdown fences if present.
 	if strings.HasPrefix(rawResp, "```") {
-		if idx := strings.Index(rawResp[3:], "```"); idx >= 0 {
-			rawResp = strings.TrimSpace(rawResp[3 : 3+idx])
-		}
+		// Strip opening fence line (e.g. "```json\n" or "```\n").
+		rawResp = rawResp[3:]
 		if strings.HasPrefix(rawResp, "json") {
-			rawResp = strings.TrimSpace(rawResp[4:])
+			rawResp = rawResp[4:]
 		}
+		// Strip closing fence and any trailing whitespace.
+		if idx := strings.LastIndex(rawResp, "```"); idx >= 0 {
+			rawResp = rawResp[:idx]
+		}
+		rawResp = strings.TrimSpace(rawResp)
 	}
 
 	var parsed struct {

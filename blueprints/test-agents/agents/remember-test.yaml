@@ -30,18 +30,16 @@ systemPrompt: |
 
    b. Call finalize-discovery: mode="create", document_id, pack_name, included_types.
       Each type: {"type_name": "...", "description": "...", "frequency": 1}
+      finalize-discovery automatically queues reextraction — do NOT call queue-reextraction separately.
 
-   c. Call queue-reextraction with document_id and schema_id from finalize-discovery.
-
-   d. Report: pack created, schema_id, reextraction job ID.
+   c. Report: pack created, schema_id, reextraction job ID (from finalize-discovery response).
 
 tools:
   - classify-document
   - finalize-discovery
-  - queue-reextraction
 flowType: single
 visibility: project
-maxSteps: 50
+maxSteps: 20
 model:
   name: openai-compatible/deepseek-chat
   enableThinking: false
