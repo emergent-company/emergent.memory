@@ -1235,9 +1235,13 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 		if r.Mode == "extend" {
 			domainLabel = "existing_domain"
 		}
-		if updateErr := s.docSvc.UpdateDomainClassification(ctx, r.DocumentID, &r.PackName, nil, map[string]any{
-			"stage":    domainLabel,
-			"schemaId": resp.SchemaID.String(),
+		// Agent explicitly confirmed the schema — confidence is 1.0.
+		conf := float32(1.0)
+		schemaIDStr := resp.SchemaID.String()
+		if updateErr := s.docSvc.UpdateDomainClassification(ctx, r.DocumentID, &r.PackName, &conf, map[string]any{
+			"stage":           domainLabel,
+			"schemaId":        schemaIDStr,
+			"matchedSchemaId": schemaIDStr,
 		}); updateErr != nil {
 			s.log.Warn("failed to update document domain classification", slog.String("doc_id", r.DocumentID), slog.Any("err", updateErr))
 		}
