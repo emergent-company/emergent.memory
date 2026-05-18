@@ -574,6 +574,7 @@ func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *A
 		_ = writer.WriteEvent(ACPEventRunFailed, termData)
 		h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, termData)
 		h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, termData)
+		h.emitSessionReady(writer, projectID, run.ID, run.ACPSessionID)
 	} else if result != nil {
 		switch result.Status {
 		case RunStatusPaused:
@@ -601,12 +602,14 @@ func (h *ACPHandler) createRunStream(c echo.Context, ctx context.Context, run *A
 			_ = writer.WriteEvent(ACPEventRunFailed, termData)
 			h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, termData)
 			h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, termData)
+			h.emitSessionReady(writer, projectID, run.ID, run.ACPSessionID)
 
 		default:
 			termData := map[string]any{"run": map[string]any{"run_id": run.ID, "status": MapMemoryStatusToACP(result.Status)}}
 			_ = writer.WriteEvent(ACPEventRunCompleted, termData)
 			h.persistACPEvent(bgCtx, run.ID, ACPEventRunCompleted, termData)
 			h.emitToSSEBus(projectID, run.ID, ACPEventRunCompleted, termData)
+			h.emitSessionReady(writer, projectID, run.ID, run.ACPSessionID)
 		}
 	}
 
@@ -939,6 +942,16 @@ func (h *ACPHandler) ResumeRun(c echo.Context) error {
 		return apperror.NewInternal("failed to pre-create resume run", err)
 	}
 
+	// Copy acp_session_id to pre-created resume run so it stays linked to the same session.
+	if run.ACPSessionID != nil {
+		if updateErr := h.repo.UpdateRunACPSessionID(ctx, preCreatedRun.ID, *run.ACPSessionID); updateErr != nil {
+			h.log.Warn("failed to persist acp_session_id on pre-created resume run",
+				slog.String("run_id", preCreatedRun.ID),
+				slog.String("error", updateErr.Error()),
+			)
+		}
+	}
+
 	// Persist resume_run_id in suspend_context so GET run can expose it.
 	if run.SuspendContext != nil {
 		sc := make(map[string]any, len(run.SuspendContext)+1)
@@ -1106,6 +1119,7 @@ func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *A
 		_ = writer.WriteEvent(ACPEventRunFailed, termData)
 		h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, termData)
 		h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, termData)
+		h.emitSessionReady(writer, projectID, run.ID, run.ACPSessionID)
 	} else if result != nil {
 		switch result.Status {
 		case RunStatusPaused:
@@ -1133,12 +1147,14 @@ func (h *ACPHandler) resumeRunStream(c echo.Context, ctx context.Context, run *A
 			_ = writer.WriteEvent(ACPEventRunFailed, termData)
 			h.persistACPEvent(bgCtx, run.ID, ACPEventRunFailed, termData)
 			h.emitToSSEBus(projectID, run.ID, ACPEventRunFailed, termData)
+			h.emitSessionReady(writer, projectID, run.ID, run.ACPSessionID)
 
 		default:
 			termData := map[string]any{"run": map[string]any{"run_id": result.RunID, "status": MapMemoryStatusToACP(result.Status)}}
 			_ = writer.WriteEvent(ACPEventRunCompleted, termData)
 			h.persistACPEvent(bgCtx, run.ID, ACPEventRunCompleted, termData)
 			h.emitToSSEBus(projectID, run.ID, ACPEventRunCompleted, termData)
+			h.emitSessionReady(writer, projectID, run.ID, run.ACPSessionID)
 		}
 	}
 
@@ -1416,4 +1432,15 @@ func (h *ACPHandler) UnarchiveSession(c echo.Context) error {
 		return apperror.NewInternal("failed to fetch session", err)
 	}
 	return c.JSON(http.StatusOK, SessionToACPObject(session, nil, nil, nil))
+}
+
+// emitSessionReady signals that an ACP session is ready to accept the next user message.
+// Must only be called after a terminal event (completed or failed) — never after paused.
+func (h *ACPHandler) emitSessionReady(writer *sse.Writer, projectID string, runID string, sessionID *string) {
+	if sessionID == nil || *sessionID == "" {
+		return
+	}
+	readyData := map[string]any{"session": map[string]any{"session_id": *sessionID}}
+	_ = writer.WriteEvent(ACPEventSessionReady, readyData)
+	h.emitToSSEBus(projectID, runID, ACPEventSessionReady, readyData)
 }

@@ -35,6 +35,7 @@ const (
 	ACPEventError            = "error"
 	ACPEventToolCall         = "tool_call"
 	ACPEventToolResult       = "tool_result"
+	ACPEventSessionReady     = "session.ready"
 )
 
 // --- ACP Wire Types ---

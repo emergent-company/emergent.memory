@@ -712,6 +712,17 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		)
 	}
 
+	// Copy acp_session_id from prior run so the resumed run stays linked to the same session.
+	if priorRun.ACPSessionID != nil {
+		newRun.ACPSessionID = priorRun.ACPSessionID
+		if updateErr := ae.repo.UpdateRunACPSessionID(dbCtx, newRun.ID, *priorRun.ACPSessionID); updateErr != nil {
+			ae.log.Warn("failed to persist acp_session_id on resumed run",
+				slog.String("run_id", newRun.ID),
+				slog.String("error", updateErr.Error()),
+			)
+		}
+	}
+
 	// Establish root_run_id for resumed runs: inherit from caller or default to own ID.
 	if req.RootRunID == nil {
 		req.RootRunID = &newRun.ID
@@ -829,6 +840,20 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			Duration: time.Since(startTime),
 			Cleanup:  cleanup,
 		}, nil
+	}
+
+	// Update prior run status to reflect resume outcome so it doesn't stay stuck on "working".
+	switch result.Status {
+	case RunStatusSuccess:
+		_ = ae.repo.CompleteRun(dbCtx, priorRun.ID, result.Summary)
+	case RunStatusError:
+		errMsg := ""
+		if result.Summary != nil {
+			if msg, ok := result.Summary["error"]; ok {
+				errMsg = fmt.Sprintf("%v", msg)
+			}
+		}
+		_ = ae.repo.FailRun(dbCtx, priorRun.ID, errMsg)
 	}
 
 	result.Cleanup = cleanup
