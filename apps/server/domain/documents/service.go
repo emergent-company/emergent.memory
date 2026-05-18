@@ -442,3 +442,13 @@ func (s *Service) UpdateDomainClassification(
 ) error {
 	return s.repo.UpdateDomainClassification(ctx, documentID, domainName, confidence, signals)
 }
+
+// GetDocumentClassificationSignals returns the stored classification signals map for a document.
+// Used by the MCP layer to recover suggestedPackName without a circular import.
+func (s *Service) GetDocumentClassificationSignals(ctx context.Context, projectID, documentID string) (map[string]any, error) {
+	doc, err := s.GetByID(ctx, projectID, documentID)
+	if err != nil {
+		return nil, err
+	}
+	return doc.ClassificationSignals, nil
+}

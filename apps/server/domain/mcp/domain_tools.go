@@ -77,6 +77,12 @@ type DiscoveryFinalizeResponse struct {
 	Message  string `json:"message"`
 }
 
+// DocumentSignalsReader fetches stored classification signals for a document.
+// Used to recover suggestedPackName when an agent passes a forbidden pack_name.
+type DocumentSignalsReader interface {
+	GetDocumentClassificationSignals(ctx context.Context, projectID, documentID string) (map[string]any, error)
+}
+
 // ============================================================================
 // Domain Tool Definitions
 // ============================================================================
@@ -248,8 +254,38 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 	if mode == "create" {
 		forbidden := []string{"new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc", "miscellaneous"}
 		lowerName := strings.ToLower(strings.TrimSpace(packName))
+		isForbidden := false
 		for _, f := range forbidden {
 			if lowerName == f {
+				isForbidden = true
+				break
+			}
+		}
+		if isForbidden {
+			// Attempt auto-recovery: if we have a document_id and a signals reader,
+			// look up the suggestedPackName that was stored when classify-document ran.
+			recovered := ""
+			if documentIDStr != "" && s.docSignalsReader != nil {
+				if signals, err := s.docSignalsReader.GetDocumentClassificationSignals(ctx, projectID, documentIDStr); err == nil {
+					if v, ok := signals["suggestedPackName"].(string); ok && v != "" {
+						// Verify the stored suggestion is also not forbidden
+						lowerSugg := strings.ToLower(strings.TrimSpace(v))
+						isAlsoForbidden := false
+						for _, f := range forbidden {
+							if lowerSugg == f {
+								isAlsoForbidden = true
+								break
+							}
+						}
+						if !isAlsoForbidden {
+							recovered = v
+						}
+					}
+				}
+			}
+			if recovered != "" {
+				packName = recovered
+			} else {
 				return errorResult(fmt.Sprintf(
 					"invalid pack_name: %q is a generic placeholder and is not allowed. "+
 						"You MUST retry finalize-discovery immediately with a descriptive name that reflects the document's structural format. "+

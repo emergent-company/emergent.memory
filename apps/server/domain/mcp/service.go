@@ -110,6 +110,7 @@ type Service struct {
 	schemaIndex        SchemaIndexHandler
 	reextractionQueuer ReextractionQueuer
 	discoverySvc       DiscoveryFinalizer
+	docSignalsReader   DocumentSignalsReader
 
 	// Tempo base URL for trace proxy (empty when tracing disabled)
 	tempoBaseURL string
@@ -223,6 +224,11 @@ func (s *Service) SetReextractionQueuer(h ReextractionQueuer) {
 // SetDiscoveryService injects the discovery jobs service.
 func (s *Service) SetDiscoveryService(svc DiscoveryFinalizer) {
 	s.discoverySvc = svc
+}
+
+// SetDocumentSignalsReader injects the document signals reader (breaks import cycle with documents).
+func (s *Service) SetDocumentSignalsReader(r DocumentSignalsReader) {
+	s.docSignalsReader = r
 }
 
 // SetRelayProvider wires the MCP relay service so relay-registered tools appear

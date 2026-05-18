@@ -177,6 +177,7 @@ func registerDomainToolsWithMCP(
 	mcpService.SetDomainClassifier(classifier)
 	mcpService.SetSchemaIndex(schemaIndex)
 	mcpService.SetReextractionQueuer(reextraction)
+	mcpService.SetDocumentSignalsReader(docService)
 }
 
 // provideAdminHandler creates the extraction jobs admin handler

@@ -103,6 +103,9 @@ func (a *DomainClassifierMCPAdapter) ClassifyDocument(ctx context.Context, proje
 		if result.MatchedSchemaID != nil {
 			signals["matchedSchemaId"] = *result.MatchedSchemaID
 		}
+		if snap.SuggestedPackName != "" {
+			signals["suggestedPackName"] = snap.SuggestedPackName
+		}
 		if updateErr := a.docService.UpdateDomainClassification(ctx, documentID, &result.DomainName, &conf, signals); updateErr != nil {
 			a.log.Warn("classify-document: failed to persist classification", slog.String("doc_id", documentID), slog.Any("err", updateErr))
 		}
