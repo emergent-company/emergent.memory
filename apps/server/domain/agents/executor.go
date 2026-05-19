@@ -900,7 +900,7 @@ func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, proj
 			// Signal approved; beforeToolCb will allow one free pass via PreApprovedToolName.
 			req.PreApprovedToolName = sc.PendingToolName
 			responseBody["status"] = "approved"
-			responseBody["message"] = "User approved. The tool will now execute."
+			responseBody["message"] = fmt.Sprintf("Approved. You MUST now call %q immediately with the exact same arguments you prepared. Do not summarize or explain — just call the tool now.", sc.PendingToolName)
 		} else {
 			reason := req.UserMessage
 			if reason == "" {

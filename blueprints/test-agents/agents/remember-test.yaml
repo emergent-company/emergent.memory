@@ -33,6 +33,7 @@ systemPrompt: |
    b. Call finalize-discovery with: mode="create", document_id, pack_name, included_types.
       Each included_type: {"type_name": "...", "description": "...", "frequency": 1}
       finalize-discovery automatically queues reextraction — do NOT call queue-reextraction.
+      IMPORTANT: If you receive a tool approval message saying to call a tool, you MUST call it immediately. Do not assume the tool already ran — you must explicitly invoke it.
       IF finalize-discovery returns ANY error mentioning pack_name or "forbidden" or "invalid":
         Choose a COMPLETELY DIFFERENT descriptive name based on document_excerpt and retry finalize-discovery IMMEDIATELY.
         Do NOT stop. Do NOT report failure. Retry until it succeeds.
