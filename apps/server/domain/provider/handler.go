@@ -524,6 +524,47 @@ func parseTimeRange(c echo.Context) (since, until *time.Time) {
 	return since, until
 }
 
+// TestProjectProviderResponse is the response body for the project provider test endpoint.
+// Identical shape to TestProviderResponse but scoped to a project's credential config.
+type TestProjectProviderResponse = TestProviderResponse
+
+// TestProjectProvider sends a live generate call using a project's configured provider credentials.
+// @Summary Test a project provider with a live generate call
+// @Param projectId path string true "Project ID"
+// @Param provider path string true "Provider name"
+// @Success 200 {object} TestProjectProviderResponse
+// @Failure 400 {object} apperror.Error
+// @Failure 401 {object} apperror.Error
+// @Router /projects/{projectId}/providers/{provider}/test [post]
+func (h *Handler) TestProjectProvider(c echo.Context) error {
+	projectID := c.Param("projectId")
+	providerParam := c.Param("provider")
+	p := ProviderType(providerParam)
+
+	ctx := auth.ContextWithProjectID(c.Request().Context(), projectID)
+
+	cred, err := h.creds.Resolve(ctx, p)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("failed to resolve credentials: " + err.Error())
+	}
+	if cred == nil {
+		return apperror.ErrBadRequest.WithMessage("no credentials configured for provider " + providerParam + " on project " + projectID)
+	}
+
+	start := time.Now()
+	model, reply, err := h.catalog.TestGenerate(ctx, p, cred)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("provider test failed: " + err.Error())
+	}
+
+	return c.JSON(http.StatusOK, TestProjectProviderResponse{
+		Provider:  providerParam,
+		Model:     model,
+		Reply:     reply,
+		LatencyMs: time.Since(start).Milliseconds(),
+	})
+}
+
 // TestProviderResponse is the response body for the provider test endpoint.
 type TestProviderResponse struct {
 	Provider  string `json:"provider"`

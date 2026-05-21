@@ -211,7 +211,9 @@ def create_project():
     if dr.status_code in (200, 201):
         print(f"  Provider configured: {provider_base} / {provider_model}")
     else:
-        print(f"  WARNING: provider config failed: {dr.status_code} {dr.text}")
+        print(f"  ERROR: provider config/model test failed: {dr.status_code} {dr.text}")
+        print("  Aborting — fix provider credentials or model name before running the test.")
+        sys.exit(1)
 
     print(f"  Project created: {project_id}")
     return project_id
@@ -244,12 +246,65 @@ def configure_provider(project_id):
         print(f"  Provider configured (google/gemini-2.5-flash)")
 
 
+def check_project_provider(project_id, project_token, provider="openai-compatible"):
+    """Call POST /api/v1/projects/:projectId/providers/:provider/test to verify
+    the project's LLM provider is reachable and the model works end-to-end."""
+    print(f"Testing project provider ({provider}) ...")
+    try:
+        r = requests.post(
+            f"{SERVER}/api/v1/projects/{project_id}/providers/{provider}/test",
+            headers={"Authorization": f"Bearer {project_token}", "Content-Type": "application/json"},
+            timeout=60,
+        )
+        if r.status_code == 200:
+            d = r.json()
+            print(f"  OK — model={d.get('model')} reply={d.get('reply')!r} latency={d.get('latencyMs')}ms")
+        else:
+            print(f"  FAIL: {r.status_code} {r.text[:300]}")
+            print("  Aborting — fix provider credentials or model name before running the test.")
+            sys.exit(1)
+    except Exception as e:
+        print(f"  FAIL: {e}")
+        sys.exit(1)
+    print()
+
+
+def check_model_availability():
+    """Smoke-test the LLM provider with a minimal chat completion before running the suite.
+    Exits with error if the model is unreachable or returns an error."""
+    provider_base = os.environ.get("LITELLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    provider_key  = os.environ.get("LITELLM_KEY") or os.environ.get("DEEPSEEK_API_KEY", "")
+    provider_model = os.environ.get("PROVIDER_MODEL", "deepseek-v4-flash")
+    url = provider_base.rstrip("/") + "/chat/completions"
+    print(f"Checking model availability: {provider_base} / {provider_model} ...")
+    try:
+        r = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {provider_key}", "Content-Type": "application/json"},
+            json={
+                "model": provider_model,
+                "messages": [{"role": "user", "content": "Reply with the single word: ready"}],
+                "max_tokens": 10,
+            },
+            timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"  FAIL: {r.status_code} {r.text[:200]}")
+            sys.exit(1)
+        reply = r.json()["choices"][0]["message"]["content"].strip()
+        print(f"  OK — model replied: {reply!r}")
+    except Exception as e:
+        print(f"  FAIL: {e}")
+        sys.exit(1)
+    print()
+
+
 def setup_project():
     """Create project and configure providers. No blueprint install needed —
     /remember creates domain-remember-agent automatically on first call."""
     project_id = create_project()
     configure_provider(project_id)
-    print()
+    check_project_provider(project_id, _project_token)
     return project_id
 
 
@@ -273,7 +328,7 @@ def start_remember_run(project_id, filepath: Path):
     return run_id, document_id, resp
 
 
-def poll_remember_run(run_id, timeout=300):
+def poll_remember_run(run_id, timeout=600):
     """Poll GET /api/v1/runs/:runId until terminal status. Returns (status, resp).
     Uses global run lookup — no agent name needed."""
     deadline = time.time() + timeout

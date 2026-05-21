@@ -49,6 +49,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	projects.GET("/:provider", h.GetProjectConfig)
 	projects.DELETE("/:provider", h.DeleteProjectConfig)
 	projects.GET("", h.ListProjectProviders)
+	projects.POST("/:provider/test", h.TestProjectProvider)
 
 	// Project-level usage summary and timeseries
 	api.GET("/projects/:projectId/usage", h.GetProjectUsageSummary)
