@@ -1230,10 +1230,16 @@ func (ae *AgentExecutor) runPipeline(
 		ctx = auth.ContextWithOrgID(ctx, req.OrgID)
 	}
 
-	// Apply timeout if specified
+	// Apply timeout if specified; fall back to a hard maximum to prevent runs
+	// from blocking forever on a hung LLM HTTP call.
+	const defaultRunTimeout = 10 * time.Minute
+	runTimeout := defaultRunTimeout
 	if req.Timeout != nil && *req.Timeout > 0 {
+		runTimeout = *req.Timeout
+	}
+	{
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *req.Timeout)
+		ctx, cancel = context.WithTimeout(ctx, runTimeout)
 		defer cancel()
 	}
 
