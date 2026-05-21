@@ -321,9 +321,15 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		createOpts.AgentDefinitionID = &req.AgentDefinition.ID
 	}
 
-	run, err := ae.repo.CreateRunWithOptions(dbCtx, createOpts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create agent run: %w", err)
+	var run *AgentRun
+	if req.PreCreatedRun != nil {
+		run = req.PreCreatedRun
+	} else {
+		var createErr error
+		run, createErr = ae.repo.CreateRunWithOptions(dbCtx, createOpts)
+		if createErr != nil {
+			return nil, fmt.Errorf("failed to create agent run: %w", createErr)
+		}
 	}
 
 	// Link to ACP session if provided via request (e.g. trigger_agent sync path).

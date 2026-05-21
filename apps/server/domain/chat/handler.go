@@ -1744,6 +1744,12 @@ func (h *Handler) RememberStream(c echo.Context) error {
 					slog.String("run_id", run.ID),
 					slog.String("error", execErr.Error()),
 				)
+				if updateErr := h.agentRepo.FailRun(bgCtx, run.ID, execErr.Error()); updateErr != nil {
+					h.log.Warn("async remember: failed to mark run as failed",
+						slog.String("run_id", run.ID),
+						slog.String("error", updateErr.Error()),
+					)
+				}
 			}
 			if result != nil && result.Cleanup != nil {
 				result.Cleanup()
