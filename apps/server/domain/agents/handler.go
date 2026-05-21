@@ -696,6 +696,14 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 	// from within the background goroutine.
 	triggerAuthToken := auth.RawTokenFromContext(c.Request().Context())
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				h.executor.log.Error("panic in trigger goroutine",
+					slog.String("run_id", run.ID),
+					slog.Any("panic", r),
+				)
+			}
+		}()
 		bgCtx := context.Background()
 		execResult, execErr := h.executor.ExecuteWithRun(bgCtx, run, ExecuteRequest{
 			Agent:           agent,
@@ -2676,6 +2684,21 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 
 		resumeAuthToken := auth.RawTokenFromContext(c.Request().Context())
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic in resume goroutine",
+						slog.String("run_id", run.ID),
+						slog.Any("panic", r),
+					)
+					ctx := context.Background()
+					if repoErr := h.repo.FailRunWithSteps(ctx, run.ID, fmt.Sprintf("panic: %v", r), run.StepCount); repoErr != nil {
+						slog.Error("failed to mark run as error after panic",
+							slog.String("run_id", run.ID),
+							slog.String("error", repoErr.Error()),
+						)
+					}
+				}
+			}()
 			ctx := context.Background()
 			result, err := h.executor.Resume(ctx, run, ExecuteRequest{
 				Agent:           agent,

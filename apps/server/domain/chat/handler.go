@@ -1733,6 +1733,21 @@ func (h *Handler) RememberStream(c echo.Context) error {
 			execReq.RootRunID = &rootRunID
 		}
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					h.log.Error("panic in async remember goroutine",
+						slog.String("run_id", run.ID),
+						slog.Any("panic", r),
+					)
+					bgCtx2 := context.Background()
+					if updateErr := h.agentRepo.FailRun(bgCtx2, run.ID, fmt.Sprintf("panic: %v", r)); updateErr != nil {
+						h.log.Warn("async remember: failed to mark run as failed after panic",
+							slog.String("run_id", run.ID),
+							slog.String("error", updateErr.Error()),
+						)
+					}
+				}
+			}()
 			bgCtx := context.Background()
 			if req.Namespace != "" {
 				bgCtx = auth.ContextWithNamespace(bgCtx, req.Namespace)

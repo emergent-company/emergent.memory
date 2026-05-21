@@ -238,8 +238,39 @@ func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*R
 //
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
+	// Resolution order: project-scoped credentials take full priority over
+	// org-scoped ones, regardless of provider type. Within each scope, prefer
+	// OpenAI-compatible/DeepSeek over Google so that projects with a custom
+	// endpoint always use it when configured — even if the org has Google AI.
+	providerOrder := []ProviderType{ProviderOpenAICompatible, ProviderDeepSeek, ProviderVertexAI, ProviderGoogleAI}
+
+	projectID := auth.ProjectIDFromContext(ctx)
+
+	// Pass 1: project-level only (strip org from context so Resolve stops at project).
+	if projectID != "" {
+		projectOnlyCtx := auth.ContextWithOrgID(ctx, "")
+		for _, provider := range providerOrder {
+			cfg, err := s.repo.GetProjectProviderConfig(projectOnlyCtx, projectID, provider)
+			if err != nil || cfg == nil {
+				continue
+			}
+			cred, err := s.decryptProjectConfig(cfg)
+			if err != nil {
+				s.log.Debug("project credential decryption failed, trying next",
+					slog.String("provider", string(provider)),
+					slog.String("error", err.Error()),
+				)
+				continue
+			}
+			if cred != nil {
+				return cred, nil
+			}
+		}
+	}
+
+	// Pass 2: org-level fallback — use original context so Resolve can find org.
 	var lastErr error
-	for _, provider := range []ProviderType{ProviderVertexAI, ProviderGoogleAI, ProviderOpenAICompatible, ProviderDeepSeek} {
+	for _, provider := range providerOrder {
 		cred, err := s.Resolve(ctx, provider)
 		if err != nil {
 			s.log.Debug("provider resolution failed, trying next",
@@ -253,9 +284,7 @@ func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential
 			return cred, nil
 		}
 	}
-	// If every provider returned an error (credential found but resolution
-	// failed — e.g. decryption error, DB error), propagate the last error
-	// so the caller can surface a meaningful message instead of "no provider".
+
 	if lastErr != nil {
 		return nil, lastErr
 	}
