@@ -678,6 +678,18 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		return nil, fmt.Errorf("cannot resume run %s: status is %s (expected paused)", priorRun.ID, priorRun.Status)
 	}
 
+	// Apply hard timeout so a hung LLM call cannot block the goroutine forever.
+	const defaultRunTimeout = 10 * time.Minute
+	runTimeout := defaultRunTimeout
+	if req.Timeout != nil && *req.Timeout > 0 {
+		runTimeout = *req.Timeout
+	}
+	{
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, runTimeout)
+		defer cancel()
+	}
+
 	// Determine max steps, considering cumulative step count
 	maxSteps := MaxTotalStepsPerRun
 	if req.MaxSteps != nil && *req.MaxSteps > 0 && *req.MaxSteps < maxSteps {
