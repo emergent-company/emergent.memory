@@ -863,7 +863,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 // injectToolResponse appends a FunctionResponse event to the ADK session so that
 // on resume, the LLM sees a proper tool call/response pair instead of a synthetic
 // text message. The session is identified by rootRunID (the original non-resumed run ID).
-// req is a pointer so that injectToolResponse can set PreApprovedToolName on approve.
+// req is a pointer so that callers can inspect any mutations made during injection.
 func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, projectID string, sc *SuspendSignal, req *ExecuteRequest) error {
 	sessionID := rootRunID // matches getRootRunID result used in runPipeline
 
@@ -893,14 +893,28 @@ func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, proj
 		}
 	case SuspendReasonAwaitingToolConfirm:
 		// User responded to a tool-policy confirmation question.
-		// "approve" (case-insensitive) → tell the LLM the tool is approved and will run.
-		// Anything else → tell the LLM the action was rejected with the user's message.
+		// "approve" (case-insensitive) → execute the tool directly using the saved args,
+		// inject the real tool result as a FunctionResponse (no LLM re-ask needed).
+		// Anything else → inject an error FunctionResponse so the LLM knows it was rejected.
 		userResp := strings.TrimSpace(strings.ToLower(req.UserMessage))
 		if userResp == "approve" {
-			// Signal approved; beforeToolCb will allow one free pass via PreApprovedToolName.
-			req.PreApprovedToolName = sc.PendingToolName
-			responseBody["status"] = "approved"
-			responseBody["message"] = fmt.Sprintf("Approved. You MUST now call %q immediately with the exact same arguments you prepared. Do not summarize or explain — just call the tool now.", sc.PendingToolName)
+			// Execute the tool directly using the saved args — bypass ADK runner loop entirely.
+			toolResult, callErr := ae.toolPool.CallTool(ctx, projectID, sc.PendingToolName, sc.PendingToolConfirmArgs)
+			if callErr != nil {
+				responseBody["error"] = fmt.Sprintf("tool execution failed: %v", callErr)
+			} else {
+				for k, v := range toolResult {
+					responseBody[k] = v
+				}
+				if len(responseBody) == 0 {
+					responseBody["status"] = "ok"
+				}
+			}
+			ae.log.Info("injectToolResponse: executed approved tool directly",
+				slog.String("tool_name", sc.PendingToolName),
+				slog.Any("args", sc.PendingToolConfirmArgs),
+				slog.Any("result", responseBody),
+			)
 		} else {
 			reason := req.UserMessage
 			if reason == "" {

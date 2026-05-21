@@ -777,6 +777,55 @@ func convertToolResult(result *mcp.ToolResult) (map[string]any, error) {
 	return map[string]any{"result": "ok"}, nil
 }
 
+// CallTool executes a tool by name directly, bypassing the ADK runner loop.
+// This is used when the executor needs to call a tool on behalf of the user
+// (e.g. after tool-policy approval) without going through an LLM re-invocation.
+// It routes to the same backends as wrapSingleTool: relay → mcprelay.Service,
+// external → mcpregistry.Service, builtin → mcp.Service.ExecuteTool.
+func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, args map[string]any) (map[string]any, error) {
+	cache := tp.getOrBuildCache(projectID)
+
+	// Relay tool?
+	if instanceID, ok := cache.relayToolInstance[toolName]; ok && tp.relayService != nil {
+		prefix := instanceID + "_"
+		bareToolName := strings.TrimPrefix(toolName, prefix)
+		result, err := tp.relayService.CallTool(ctx, projectID, instanceID, bareToolName, args)
+		if err != nil {
+			if errors.Is(err, mcprelay.ErrSessionNotFound) {
+				return map[string]any{
+					"error": fmt.Sprintf(
+						"Tool %q is provided by a connected client (%s) that is currently offline.",
+						toolName, instanceID,
+					),
+				}, nil
+			}
+			return map[string]any{"error": err.Error()}, nil
+		}
+		return convertRelayResponse(result)
+	}
+
+	isBuiltin := cache.builtinTools[toolName]
+
+	// External tool?
+	if !isBuiltin && tp.registryService != nil {
+		result, err := tp.registryService.CallExternalTool(ctx, projectID, toolName, args)
+		if err != nil {
+			return map[string]any{"error": err.Error()}, nil
+		}
+		return convertToolResult(result)
+	}
+
+	// Builtin tool
+	if tp.mcpService == nil {
+		return map[string]any{"error": "mcp service not available"}, nil
+	}
+	result, err := tp.mcpService.ExecuteTool(ctx, projectID, toolName, args)
+	if err != nil {
+		return map[string]any{"error": err.Error()}, nil
+	}
+	return convertToolResult(result)
+}
+
 // isGlobPattern returns true if the string contains glob metacharacters.
 func isGlobPattern(s string) bool {
 	for _, c := range s {

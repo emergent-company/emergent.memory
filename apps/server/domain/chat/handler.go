@@ -21,6 +21,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -43,12 +44,13 @@ type Handler struct {
 	credSvc       *provider.CredentialService
 	modelFactory  *adk.ModelFactory
 	apiTokenSvc   *apitoken.Service // optional: mints ephemeral tokens for sandbox agents
-	askV2Default  bool              // server-level default for v2 code-gen agent
+	docSvc        *documents.Service
+	askV2Default  bool // server-level default for v2 code-gen agent
 	log           *slog.Logger
 }
 
 // NewHandler creates a new chat handler
-func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, cfg *config.Config, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, docSvc *documents.Service, cfg *config.Config, log *slog.Logger) *Handler {
 	return &Handler{
 		svc:           svc,
 		llmClient:     llmClient,
@@ -58,6 +60,7 @@ func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Servic
 		credSvc:       credSvc,
 		modelFactory:  modelFactory,
 		apiTokenSvc:   apiTokenSvc,
+		docSvc:        docSvc,
 		askV2Default:  cfg.AskV2,
 		log:           log.With(logger.Scope("chat.handler")),
 	}
@@ -1490,21 +1493,28 @@ func (h *Handler) AskStream(c echo.Context) error {
 }
 
 // buildAskContextPrefix constructs a short context block prepended to the user's
-// RememberStreamRequest is the request body for the stateless remember endpoint.
+// RememberStreamRequest is the request body for the domain-aware remember endpoint.
 type RememberStreamRequest struct {
 	Message        string `json:"message"`
 	ConversationID string `json:"conversation_id,omitempty"` // optional: continue a previous session
 	SchemaPolicy   string `json:"schema_policy,omitempty"`   // "auto" (default), "reuse_only", "ask"
-	DryRun         bool   `json:"dry_run,omitempty"`         // if true, branch is created+written but not merged
+	DryRun         bool   `json:"dry_run,omitempty"`         // if true, extraction branch is not merged
 	Namespace      string `json:"namespace,omitempty"`       // optional: scope graph objects to a namespace
 	ParentRunID    string `json:"parent_run_id,omitempty"`
 	RootRunID      string `json:"root_run_id,omitempty"`
+	// Mode controls response style: "stream" (default SSE), "sync" (JSON, wait), "async" (JSON 202, fire-and-forget).
+	Mode string `json:"mode,omitempty"`
 }
 
 // RememberStream handles POST /api/projects/:projectId/remember.
-// It finds (or lazily creates) the project's graph-insert-agent and streams the response.
-// The agent understands natural language, checks for duplicate entities, creates a branch,
-// writes structured data, and merges back to main — unless dry_run=true.
+// It is the unified domain-aware memory endpoint: raw text is persisted as a document,
+// the domain-remember-agent classifies it, discovers or reuses a schema pack, and
+// extraction is auto-queued by finalize-discovery.
+//
+// Response mode is controlled by the "mode" field (or X-Remember-Mode header):
+//   - "stream" (default) — SSE stream of agent events
+//   - "sync"             — wait for completion, return JSON {run_id, status, summary}
+//   - "async"            — fire-and-forget, return 202 JSON {run_id}
 func (h *Handler) RememberStream(c echo.Context) error {
 	user := auth.GetUser(c)
 	if user == nil {
@@ -1537,6 +1547,18 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("schema_policy must be one of: auto, reuse_only, ask")
 	}
 
+	// Normalise mode — accept header fallback.
+	mode := req.Mode
+	if mode == "" {
+		mode = c.Request().Header.Get("X-Remember-Mode")
+	}
+	if mode == "" {
+		mode = "stream"
+	}
+	if mode != "stream" && mode != "sync" && mode != "async" {
+		return apperror.ErrBadRequest.WithMessage("mode must be one of: stream, sync, async")
+	}
+
 	// Accept parent/root run IDs from headers as well.
 	parentRunID := req.ParentRunID
 	if parentRunID == "" {
@@ -1557,6 +1579,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		attribute.String("memory.project.id", projectID),
 		attribute.String("memory.remember.user_id", user.ID),
 		attribute.String("memory.remember.schema_policy", schemaPolicy),
+		attribute.String("memory.remember.mode", mode),
 		attribute.Bool("memory.remember.dry_run", req.DryRun),
 		attribute.String("memory.remember.message_preview", msgPreview),
 	)
@@ -1598,20 +1621,46 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		}
 	}
 
-	// Ensure the graph-insert-agent exists (idempotent, internal visibility).
-	agentDef, err := h.agentRepo.EnsureGraphInsertAgent(ctx, projectID, schemaPolicy)
+	// Persist raw text as a document so the agent can call classify-document with its ID.
+	// documents.Service.Create deduplicates by content hash, so repeated identical calls are safe.
+	var documentID string
+	if h.docSvc != nil {
+		filename := "remember.txt"
+		sourceType := "manual"
+		doc, _, docErr := h.docSvc.Create(ctx, documents.CreateParams{
+			ProjectID:  projectID,
+			Filename:   &filename,
+			Content:    &message,
+			SourceType: &sourceType,
+		})
+		if docErr != nil {
+			return apperror.NewInternal("failed to create document for remember", docErr)
+		}
+		documentID = doc.ID
+		span.SetAttributes(attribute.String("memory.remember.document_id", documentID))
+	}
+
+	// Ensure the domain-remember-agent exists (idempotent, user-editable after first creation).
+	agentDef, err := h.agentRepo.EnsureDomainRememberAgent(ctx, projectID, schemaPolicy)
 	if err != nil {
-		return apperror.NewInternal("failed to ensure graph-insert-agent", err)
+		return apperror.NewInternal("failed to ensure domain-remember-agent", err)
 	}
 
 	agentDefUUID, err := uuid.Parse(agentDef.ID)
 	if err != nil {
-		return apperror.NewInternal("invalid graph-insert-agent ID", err)
+		return apperror.NewInternal("invalid domain-remember-agent ID", err)
 	}
 
-	// Augment message with policy context so agent doesn't need to call a tool to find it.
-	augmentedMessage := fmt.Sprintf("<insert_context>\nschema_policy: %s\ndry_run: %v\n</insert_context>\n\n%s",
-		schemaPolicy, req.DryRun, message)
+	// Build agent message: document_id + schema context + original user message.
+	var agentMessage string
+	if documentID != "" {
+		agentMessage = fmt.Sprintf("document_id: %s\nschema_policy: %s\ndry_run: %v\n\n%s",
+			documentID, schemaPolicy, req.DryRun, message)
+	} else {
+		// Fallback (no docSvc injected): pass message directly so agent still runs.
+		agentMessage = fmt.Sprintf("schema_policy: %s\ndry_run: %v\n\n%s",
+			schemaPolicy, req.DryRun, message)
+	}
 
 	// Reuse an existing conversation if the caller provided one, otherwise create a new one.
 	var conv *Conversation
@@ -1629,7 +1678,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		var createErr error
 		conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
 			Title:   title,
-			Message: augmentedMessage,
+			Message: agentMessage,
 		})
 		if createErr != nil {
 			span.RecordError(createErr)
@@ -1646,28 +1695,132 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		)
 	}
 
-	// Start SSE stream.
-	sseWriter := sse.NewWriter(c.Response().Writer)
-	if err := sseWriter.Start(); err != nil {
-		return apperror.ErrInternal.WithMessage("failed to start SSE stream")
-	}
+	switch mode {
+	case "async":
+		// Fire-and-forget: launch agent in background, return 202 with run_id immediately.
+		dummyName := "Remember session for " + agentDef.Name
+		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
+		if dummyAgent == nil {
+			dummyAgent = &agents.Agent{
+				ProjectID:    projectID,
+				Name:         dummyName,
+				StrategyType: "remember-session:" + agentDef.ID,
+				CronSchedule: "0 0 * * *",
+				TriggerType:  "manual",
+			}
+			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
+				return apperror.NewInternal("failed to create agent session for async remember", err)
+			}
+		}
+		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
+		if runErr != nil {
+			return apperror.NewInternal("failed to create async run record", runErr)
+		}
+		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID}
+		execReq := agents.ExecuteRequest{
+			Agent:           dummyAgent,
+			AgentDefinition: agentDef,
+			ProjectID:       projectID,
+			OrgID:           user.OrgID,
+			UserID:          user.ID,
+			UserMessage:     agentMessage,
+			PreCreatedRun:   preCreated,
+		}
+		if parentRunID != "" {
+			execReq.ParentRunID = &parentRunID
+		}
+		if rootRunID != "" {
+			execReq.RootRunID = &rootRunID
+		}
+		go func() {
+			bgCtx := context.Background()
+			if req.Namespace != "" {
+				bgCtx = auth.ContextWithNamespace(bgCtx, req.Namespace)
+			}
+			bgCtx = auth.ContextWithProjectID(bgCtx, projectID)
+			result, execErr := h.agentExecutor.Execute(bgCtx, execReq)
+			if execErr != nil {
+				h.log.Warn("async remember: agent execution failed",
+					slog.String("run_id", run.ID),
+					slog.String("error", execErr.Error()),
+				)
+			}
+			if result != nil && result.Cleanup != nil {
+				result.Cleanup()
+			}
+		}()
+		return c.JSON(http.StatusAccepted, map[string]any{
+			"run_id":      run.ID,
+			"status":      "running",
+			"document_id": documentID,
+		})
 
-	if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
+	case "sync":
+		// Synchronous: wait for the agent to finish, return JSON result.
+		dummyName := "Remember session for " + agentDef.Name
+		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
+		if dummyAgent == nil {
+			dummyAgent = &agents.Agent{
+				ProjectID:    projectID,
+				Name:         dummyName,
+				StrategyType: "remember-session:" + agentDef.ID,
+				CronSchedule: "0 0 * * *",
+				TriggerType:  "manual",
+			}
+			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
+				return apperror.NewInternal("failed to create agent session for sync remember", err)
+			}
+		}
+		execReq := agents.ExecuteRequest{
+			Agent:           dummyAgent,
+			AgentDefinition: agentDef,
+			ProjectID:       projectID,
+			OrgID:           user.OrgID,
+			UserID:          user.ID,
+			UserMessage:     agentMessage,
+		}
+		if parentRunID != "" {
+			execReq.ParentRunID = &parentRunID
+		}
+		if rootRunID != "" {
+			execReq.RootRunID = &rootRunID
+		}
+		result, execErr := h.agentExecutor.Execute(ctx, execReq)
+		if execErr != nil {
+			return apperror.NewInternal("agent execution failed", execErr)
+		}
+		if result != nil && result.Cleanup != nil {
+			defer result.Cleanup()
+		}
+		span.SetStatus(codes.Ok, "")
+		return c.JSON(http.StatusOK, map[string]any{
+			"run_id":      result.RunID,
+			"status":      string(result.Status),
+			"summary":     result.Summary,
+			"document_id": documentID,
+		})
+
+	default: // "stream"
+		sseWriter := sse.NewWriter(c.Response().Writer)
+		if err := sseWriter.Start(); err != nil {
+			return apperror.ErrInternal.WithMessage("failed to start SSE stream")
+		}
+		if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
+			return nil
+		}
+		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID)
+		span.SetStatus(codes.Ok, "")
+		var rememberRunID string
+		if rememberResult != nil {
+			rememberRunID = rememberResult.RunID
+		}
+		sseWriter.WriteData(sse.NewDoneEventWithRun(rememberRunID))
+		sseWriter.Close()
+		if rememberResult != nil && rememberResult.Cleanup != nil {
+			go rememberResult.Cleanup()
+		}
 		return nil
 	}
-
-	rememberResult := h.streamAgentChat(ctx, conv, augmentedMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID)
-	span.SetStatus(codes.Ok, "")
-	var rememberRunID string
-	if rememberResult != nil {
-		rememberRunID = rememberResult.RunID
-	}
-	sseWriter.WriteData(sse.NewDoneEventWithRun(rememberRunID))
-	sseWriter.Close()
-	if rememberResult != nil && rememberResult.Cleanup != nil {
-		go rememberResult.Cleanup()
-	}
-	return nil
 }
 
 // message so the cli-assistant-agent is always aware of auth/project state.
@@ -1699,4 +1852,12 @@ func buildAskContextPrefix(user *auth.AuthUser, projectID string) string {
 
 	sb.WriteString("</context>\n\n")
 	return sb.String()
+}
+
+// nilIfEmpty returns a pointer to s if s is non-empty, otherwise nil.
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
