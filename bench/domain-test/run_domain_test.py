@@ -197,7 +197,7 @@ def create_project():
     # Prefer explicit env vars; fall back to the DeepSeek direct API.
     provider_base = os.environ.get("LITELLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
     provider_key  = os.environ.get("LITELLM_KEY") or os.environ.get("DEEPSEEK_API_KEY", "")
-    provider_model = os.environ.get("PROVIDER_MODEL", "deepseek-chat")
+    provider_model = os.environ.get("PROVIDER_MODEL", "deepseek-v4-flash")
     dr = requests.put(
         f"{SERVER}/api/v1/projects/{project_id}/providers/openai-compatible",
         headers={"Authorization": f"Bearer {project_token}", "Content-Type": "application/json"},

@@ -202,7 +202,7 @@ def create_project():
     # Configure OpenAI-compatible provider (DeepSeek by default)
     provider_base = os.environ.get("LITELLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
     provider_key  = os.environ.get("LITELLM_KEY") or os.environ.get("DEEPSEEK_API_KEY", "")
-    provider_model = os.environ.get("PROVIDER_MODEL", "deepseek-chat")
+    provider_model = os.environ.get("PROVIDER_MODEL", "deepseek-v4-flash")
     dr = requests.put(
         f"{SERVER}/api/v1/projects/{project_id}/providers/openai-compatible",
         headers={"Authorization": f"Bearer {project_token}", "Content-Type": "application/json"},
@@ -273,7 +273,7 @@ def start_remember_run(project_id, filepath: Path):
     return run_id, document_id, resp
 
 
-def poll_remember_run(run_id, timeout=120):
+def poll_remember_run(run_id, timeout=300):
     """Poll GET /api/v1/runs/:runId until terminal status. Returns (status, resp).
     Uses global run lookup — no agent name needed."""
     deadline = time.time() + timeout

@@ -29,8 +29,8 @@ Schema matched. Report: schema name, confidence, stage. Done — do NOT call fin
 
 Check schema_policy:
 - "reuse_only": do NOT create a new schema. Report: no confident match, schema_policy prevents creation. Done.
-- "ask": call ask_user to ask the user whether to create a new schema pack before calling finalize-discovery.
-  If user declines, report and stop. If user approves, proceed as "auto" below.
+- "ask": call finalize-discovery directly. The system will automatically pause and ask the user for approval before executing it. Do NOT ask the user via text or via ask_user — just call finalize-discovery and the platform handles the confirmation.
+  If the user later declines, report and stop. If approved, finalize-discovery will run automatically.
 - "auto": create a new schema pack immediately (no confirmation needed).
 
 To create a new schema pack:
@@ -111,9 +111,8 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 		"classify-document",
 		"finalize-discovery",
 	}
-	if schemaPolicy == "ask" {
-		tools = append(tools, "ask_user")
-	}
+	// ask_user no longer needed for schema_policy="ask" — the tool policy confirm on
+	// finalize-discovery handles user confirmation automatically.
 
 	def := &AgentDefinition{
 		ProjectID:    projectID,
