@@ -44,8 +44,9 @@ func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, e
 			genai.NewContentFromText(prompt, "user"),
 		},
 		Config: &genai.GenerateContentConfig{
-			Temperature:     genai.Ptr[float32](0.0),
-			MaxOutputTokens: 65535,
+			Temperature:      genai.Ptr[float32](0.0),
+			MaxOutputTokens:  4096,
+			ResponseMIMEType: "application/json",
 		},
 	}
 	var sb strings.Builder
