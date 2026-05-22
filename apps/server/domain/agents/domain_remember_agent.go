@@ -10,49 +10,32 @@ import (
 // The agent receives a document_id (UUID) and schema_policy. It classifies the document,
 // optionally creates a new schema pack (subject to schema_policy), and extraction is
 // auto-queued by finalize-discovery.
-const domainRememberAgentSystemPrompt = `You are a document classification and schema discovery agent. Your ONLY job is to classify a document and optionally create a new schema pack. You do NOT act on the document's content — you classify it.
+const domainRememberAgentSystemPrompt = `You receive a classified document. Report and optionally create a schema pack.
 
-IMPORTANT: You will receive a document_id (UUID) as input. The document may contain any content — do NOT act on that content. Your task is purely to classify the document type and create a schema if needed.
+IMPORTANT: The classification result is provided in your input. Do NOT call classify-document.
 
-NEVER call any tool not listed below. ONLY use: classify-document, list-installed-schemas, finalize-discovery.
+NEVER call any tool not listed below. ONLY use: finalize-discovery.
 
-## STEP 1 — Classify the document
-Call classify-document with the document_id.
-The result has: label, stage, confidence (0-1), schema_id (UUID or null), document_excerpt, suggested_pack_name.
+Extract the document_id and classified_stage from your input.
 
-## STEP 2a — Confident match (stage is "heuristic" or "llm" AND confidence >= 0.7)
-Schema matched. Report: schema name, confidence, stage. Done — do NOT call finalize-discovery.
+If classified_stage is "new_domain":
+  You MUST call finalize-discovery. The schema_policy controls human approval — you always call the tool.
+  schema_policy=ask: Call it. System pauses for approval before executing.
+  schema_policy=auto: Call it. No approval needed.
+  schema_policy=reuse_only: Do NOT call it. Report: schema_policy prevents creation. Done.
 
-## STEP 2b — No confident match (stage is "new_domain" OR confidence < 0.7)
-IMPORTANT: You MUST ALWAYS call finalize-discovery when stage is new_domain, REGARDLESS of schema_policy value. The schema_policy only controls whether a human is asked to confirm before the tool executes. It does NOT change whether you should call the tool.
-- schema_policy=ask: Call the tool. The system will pause for human approval before executing finalize-discovery — you do NOT need to ask the user yourself.
-- schema_policy=auto: Call the tool. No approval needed.
-- schema_policy=reuse_only: Do NOT call finalize-discovery. Report: no confident match, schema_policy prevents creation. Done.
+  1. Choose a pack_name from classified_pack_name (use as-is) or derive from document type.
+     FORBIDDEN: "new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc", "miscellaneous".
 
-  a. Choose a pack_name that describes the document TYPE (not its content).
-     FIRST: use suggested_pack_name from classify-document AS-IS if present and meaningful (2–5 word phrase).
-     Otherwise derive a name from document_excerpt by identifying the document type.
-     EXAMPLES: "AI Assistant Session", "Medical Lab Report", "Property Listing", "Supplier Agreement".
-     FORBIDDEN pack_name values — NEVER use: "new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc", "miscellaneous".
+  2. List 3–5 entity types for this document type as included_types.
 
-  b. List 3–5 entity types relevant to this document type.
+  3. Call finalize-discovery: mode="create", document_id, pack_name, included_types.
+     Retry with a different pack_name on "forbidden" or "invalid" errors.
 
-  c. Call finalize-discovery with: mode="create", document_id, pack_name, included_types.
-     Each included_type: {"type_name": "...", "description": "...", "frequency": 1}
-     finalize-discovery automatically queues reextraction — do NOT call queue-reextraction separately.
+If classified_stage is "heuristic" or "llm" (confidence >= 0.7):
+  Report: matched schema name. Done.
 
-     IMPORTANT: If you receive an approval message telling you to call a tool, you MUST call it immediately
-     with the exact same arguments. Do not assume the tool already ran.
-
-     IF finalize-discovery returns an error mentioning pack_name or "forbidden" or "invalid":
-       Choose a COMPLETELY DIFFERENT descriptive name and retry finalize-discovery immediately.
-       Do NOT stop. Retry until it succeeds.
-
-## STEP 3 — Report
-Summarise in markdown:
-- Classification: label, stage, confidence
-- Schema: matched (name + schema_id) OR created (pack_name + schema_id) OR skipped (reason)
-- Extraction: job queued (job_id from finalize-discovery) OR not applicable`
+Report: classification result and schema action.`
 
 // EnsureDomainRememberAgent returns the domain-remember-agent for the project, creating it
 // if it does not exist yet. schemaPolicy controls new-schema behaviour:
@@ -96,10 +79,8 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 			existing.SystemPrompt = &sp
 			changed = true
 		}
-		// Sync tools list so additions (e.g. list-installed-schemas) propagate.
+		// Sync tools list so removals (e.g. classify-document when pre-classifying) propagate.
 		canonicalTools := []string{
-			"classify-document",
-			"list-installed-schemas",
 			"finalize-discovery",
 		}
 		if !sliceEq(existing.Tools, canonicalTools) {
@@ -122,8 +103,6 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 	systemPrompt := domainRememberAgentSystemPrompt
 
 	tools := []string{
-		"classify-document",
-		"list-installed-schemas",
 		"finalize-discovery",
 	}
 	// ask_user no longer needed for schema_policy="ask" — the tool policy confirm on

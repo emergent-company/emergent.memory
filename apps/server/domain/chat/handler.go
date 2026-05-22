@@ -22,6 +22,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/search"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -36,33 +37,35 @@ import (
 
 // Handler handles chat HTTP requests
 type Handler struct {
-	svc           *Service
-	llmClient     *vertex.Client
-	searchSvc     *search.Service
-	agentExecutor *agents.AgentExecutor
-	agentRepo     *agents.Repository
-	credSvc       *provider.CredentialService
-	modelFactory  *adk.ModelFactory
-	apiTokenSvc   *apitoken.Service // optional: mints ephemeral tokens for sandbox agents
-	docSvc        *documents.Service
-	askV2Default  bool // server-level default for v2 code-gen agent
-	log           *slog.Logger
+	svc              *Service
+	llmClient        *vertex.Client
+	searchSvc        *search.Service
+	agentExecutor    *agents.AgentExecutor
+	agentRepo        *agents.Repository
+	credSvc          *provider.CredentialService
+	modelFactory     *adk.ModelFactory
+	apiTokenSvc      *apitoken.Service // optional: mints ephemeral tokens for sandbox agents
+	docSvc           *documents.Service
+	domainClassifier mcp.DomainClassifierHandler
+	askV2Default     bool // server-level default for v2 code-gen agent
+	log              *slog.Logger
 }
 
 // NewHandler creates a new chat handler
-func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, docSvc *documents.Service, cfg *config.Config, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, docSvc *documents.Service, domainClassifier mcp.DomainClassifierHandler, cfg *config.Config, log *slog.Logger) *Handler {
 	return &Handler{
-		svc:           svc,
-		llmClient:     llmClient,
-		searchSvc:     searchSvc,
-		agentExecutor: agentExecutor,
-		agentRepo:     agentRepo,
-		credSvc:       credSvc,
-		modelFactory:  modelFactory,
-		apiTokenSvc:   apiTokenSvc,
-		docSvc:        docSvc,
-		askV2Default:  cfg.AskV2,
-		log:           log.With(logger.Scope("chat.handler")),
+		svc:              svc,
+		llmClient:        llmClient,
+		searchSvc:        searchSvc,
+		agentExecutor:    agentExecutor,
+		agentRepo:        agentRepo,
+		credSvc:          credSvc,
+		modelFactory:     modelFactory,
+		apiTokenSvc:      apiTokenSvc,
+		docSvc:           docSvc,
+		domainClassifier: domainClassifier,
+		askV2Default:     cfg.AskV2,
+		log:              log.With(logger.Scope("chat.handler")),
 	}
 }
 
@@ -1651,11 +1654,28 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		return apperror.NewInternal("invalid domain-remember-agent ID", err)
 	}
 
-	// Build agent message: document_id + schema context + original user message.
+	// Build agent message: pre-classify so the agent skips classify-document and
+	// goes directly to finalize-discovery (LLM can't skip the classification step).
 	var agentMessage string
 	if documentID != "" {
-		agentMessage = fmt.Sprintf("document_id: %s\nschema_policy: %s\ndry_run: %v\n\n%s",
-			documentID, schemaPolicy, req.DryRun, message)
+		var classifiedStage, classifiedPackName string
+		if h.domainClassifier != nil {
+			snap, classErr := h.domainClassifier.ClassifyDocument(ctx, projectID, documentID)
+			if classErr == nil {
+				classifiedStage = snap.Stage
+				classifiedPackName = snap.SuggestedPackName
+				if classifiedPackName == "" {
+					classifiedPackName = snap.Label
+				}
+			} else {
+				h.log.Warn("pre-classify failed, agent will classify",
+					slog.String("document_id", documentID),
+					slog.String("error", classErr.Error()),
+				)
+			}
+		}
+		agentMessage = fmt.Sprintf("document_id: %s\nschema_policy: %s\ndry_run: %v\nclassified_stage: %s\nclassified_pack_name: %s\n\n%s",
+			documentID, schemaPolicy, req.DryRun, classifiedStage, classifiedPackName, message)
 	} else {
 		// Fallback (no docSvc injected): pass message directly so agent still runs.
 		agentMessage = fmt.Sprintf("schema_policy: %s\ndry_run: %v\n\n%s",

@@ -138,6 +138,8 @@ var Module = fx.Module("extraction",
 		provideEmbeddingEnqueuer,
 		provideRelEmbeddingEnqueuer,
 		provideEmbeddingSweepWorker,
+		// Expose DomainClassifierHandler for chat handler to pre-classify documents.
+		NewMCPDomainClassifierHandler,
 	),
 	fx.Invoke(
 		RegisterSysHealthMonitorLifecycle,
@@ -178,6 +180,17 @@ func registerDomainToolsWithMCP(
 	mcpService.SetSchemaIndex(schemaIndex)
 	mcpService.SetReextractionQueuer(reextraction)
 	mcpService.SetDocumentSignalsReader(docService)
+}
+
+// NewMCPDomainClassifierHandler creates a DomainClassifierHandler for injection into
+// other handlers (e.g. chat handler) — same constructor used by registerDomainToolsWithMCP.
+func NewMCPDomainClassifierHandler(
+	modelFactory *adk.ModelFactory,
+	schemaProvider *MemorySchemaProvider,
+	docService *documents.Service,
+	log *slog.Logger,
+) mcp.DomainClassifierHandler {
+	return NewDomainClassifierMCPAdapter(modelFactory, schemaProvider, docService, log)
 }
 
 // provideAdminHandler creates the extraction jobs admin handler
