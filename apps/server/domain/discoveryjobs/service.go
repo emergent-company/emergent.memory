@@ -1290,6 +1290,7 @@ func (s *Service) generateExtractionPrompts(
 	kbPurpose string,
 ) (*extractionPrompts, error) {
 	if s.modelFactory == nil {
+		s.log.Warn("generateExtractionPrompts: modelFactory is nil, cannot generate extraction prompts")
 		return nil, nil
 	}
 

@@ -388,15 +388,12 @@ def approve_tool_confirm(project_id, question):
     return resume_run_id
 
 
-def run_remember_with_auto_approve(project_id, filepath: Path):
-    """Call /remember, auto-approve any tool-policy confirmations, wait for completion.
-    Returns (run_id, document_id, remember_resp, tool_confirms)."""
-    run_id, document_id, remember_resp = start_remember_run(project_id, filepath)
+def poll_tool_confirms(project_id, run_id):
+    """Poll agent run until completion, handling tool-confirm pauses.
+    Returns list of tool confirmation question texts."""
     tool_confirms = []
-
     if not run_id:
-        print("  ERROR: /remember did not return a run_id")
-        return run_id, document_id, remember_resp, tool_confirms
+        return tool_confirms
 
     while True:
         status, resp = poll_remember_run(run_id)
@@ -426,7 +423,7 @@ def run_remember_with_auto_approve(project_id, filepath: Path):
             print(f"  Run TIMED OUT")
             break
 
-    return run_id, document_id, remember_resp, tool_confirms
+    return tool_confirms
 
 
 # ---------------------------------------------------------------------------
@@ -627,13 +624,15 @@ def run_test_doc(project_id, doc_config, idx, schema_count_before):
     print(f"\n--- Doc {idx+1}/7: {doc_config['label']} ---")
     filepath = FIXTURES_DIR / doc_config["file"]
 
-    run_id, document_id, remember_resp, tool_confirms = run_remember_with_auto_approve(project_id, filepath)
-
-    # Snapshot pre-agent state using the document_id returned by /remember
+    # Snapshot state immediately after /remember call (before agent runs)
+    run_id, document_id, remember_resp = start_remember_run(project_id, filepath)
     pre_agent_snapshot = None
     if document_id:
         pre_agent_snapshot = snapshot_document_stage(document_id)
         print(f"  Pre-agent domain snapshot: stage={pre_agent_snapshot['stage']}")
+
+    # Now poll for agent completion / tool confirmations
+    tool_confirms = poll_tool_confirms(project_id, run_id)
 
     print("  Running assertions...")
     all_results = []
