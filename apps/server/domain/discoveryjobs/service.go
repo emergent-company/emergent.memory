@@ -1333,6 +1333,15 @@ Return ONLY valid JSON with this exact structure:
 		return nil, fmt.Errorf("generateExtractionPrompts LLM call: %w", err)
 	}
 
+	preview := response
+	if len(preview) > 500 {
+		preview = preview[:500]
+	}
+	s.log.Debug("generateExtractionPrompts raw LLM response",
+		slog.Int("response_length", len(response)),
+		slog.String("response_preview", preview),
+	)
+
 	// Strip markdown fences if present.
 	response = strings.TrimSpace(response)
 	if strings.HasPrefix(response, "```") {
@@ -1348,6 +1357,14 @@ Return ONLY valid JSON with this exact structure:
 	if err := json.Unmarshal([]byte(response), &prompts); err != nil {
 		return nil, fmt.Errorf("generateExtractionPrompts parse response: %w", err)
 	}
+
+	if prompts.DomainContext == "" && len(prompts.TypeHints) == 0 {
+		s.log.Warn("generateExtractionPrompts: LLM returned empty extraction hints",
+			slog.Int("response_length", len(response)),
+			slog.String("response_preview", preview),
+		)
+	}
+
 	return &prompts, nil
 }
 
