@@ -1702,15 +1702,20 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
 		if dummyAgent == nil {
 			dummyAgent = &agents.Agent{
-				ProjectID:    projectID,
-				Name:         dummyName,
-				StrategyType: "remember-session:" + agentDef.ID,
-				CronSchedule: "0 0 * * *",
-				TriggerType:  "manual",
+				ProjectID:         projectID,
+				Name:              dummyName,
+				StrategyType:      "remember-session:" + agentDef.ID,
+				AgentDefinitionID: &agentDef.ID,
+				CronSchedule:      "0 0 * * *",
+				TriggerType:       "manual",
 			}
 			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
 				return apperror.NewInternal("failed to create agent session for async remember", err)
 			}
+		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
+			// Backfill FK for agents created before this fix.
+			dummyAgent.AgentDefinitionID = &agentDef.ID
+			_ = h.agentRepo.Update(ctx, dummyAgent)
 		}
 		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
 		if runErr != nil {
@@ -1782,15 +1787,20 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
 		if dummyAgent == nil {
 			dummyAgent = &agents.Agent{
-				ProjectID:    projectID,
-				Name:         dummyName,
-				StrategyType: "remember-session:" + agentDef.ID,
-				CronSchedule: "0 0 * * *",
-				TriggerType:  "manual",
+				ProjectID:         projectID,
+				Name:              dummyName,
+				StrategyType:      "remember-session:" + agentDef.ID,
+				AgentDefinitionID: &agentDef.ID,
+				CronSchedule:      "0 0 * * *",
+				TriggerType:       "manual",
 			}
 			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
 				return apperror.NewInternal("failed to create agent session for sync remember", err)
 			}
+		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
+			// Backfill FK for agents created before this fix.
+			dummyAgent.AgentDefinitionID = &agentDef.ID
+			_ = h.agentRepo.Update(ctx, dummyAgent)
 		}
 		execReq := agents.ExecuteRequest{
 			Agent:           dummyAgent,
