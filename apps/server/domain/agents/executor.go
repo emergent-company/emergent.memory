@@ -832,6 +832,14 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	// replacing the legacy text-based prompt injection. This gives the LLM an accurate
 	// view of the tool call/response pair without any synthetic "here is what happened" text.
 	if sc := SuspendSignalFromMap(priorRun.SuspendContext); sc != nil && sc.PendingToolCallID != "" {
+		// Ensure auth context has OrgID/ProjectID before calling tools directly (e.g. finalize-discovery
+		// reads org_id from context — without this injection it gets empty string and fails uuid.Parse).
+		if req.OrgID != "" {
+			ctx = auth.ContextWithOrgID(ctx, req.OrgID)
+		}
+		if req.ProjectID != "" {
+			ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
+		}
 		rootRunID := ae.getRootRunID(ctx, newRun)
 		if injErr := ae.injectToolResponse(ctx, rootRunID, req.ProjectID, sc, &req); injErr != nil {
 			ae.log.Warn("failed to inject FunctionResponse into ADK session, falling back to text injection",
