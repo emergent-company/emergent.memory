@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
 // Service handles business logic for discovery jobs
@@ -32,11 +34,18 @@ type Service struct {
 // completeWithLLM sends a text prompt and returns the text response.
 // Uses the configured modelFactory to create a model per call.
 func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, error) {
+	_, span := tracing.Start(ctx, "discovery.llm_complete",
+		attribute.Int("prompt_length", len(prompt)),
+	)
+	defer span.End()
+
 	if s.modelFactory == nil {
+		span.SetAttributes(attribute.String("error", "modelFactory is nil"))
 		return "", fmt.Errorf("LLM provider not configured")
 	}
 	llmModel, err := s.modelFactory.CreateModel(ctx)
 	if err != nil {
+		span.SetAttributes(attribute.String("error", err.Error()))
 		return "", fmt.Errorf("create model: %w", err)
 	}
 	req := &model.LLMRequest{
@@ -52,6 +61,7 @@ func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, e
 	var sb strings.Builder
 	for resp, err := range llmModel.GenerateContent(ctx, req, false) {
 		if err != nil {
+			span.SetAttributes(attribute.String("error", err.Error()))
 			return "", fmt.Errorf("LLM call failed: %w", err)
 		}
 		if resp != nil && resp.Content != nil {
@@ -62,7 +72,14 @@ func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, e
 			}
 		}
 	}
-	return sb.String(), nil
+	result := sb.String()
+	span.SetAttributes(attribute.Int("response_length", len(result)))
+	preview := result
+	if len(preview) > 500 {
+		preview = preview[:500]
+	}
+	span.SetAttributes(attribute.String("response_preview", preview))
+	return result, nil
 }
 
 // StartDiscovery starts a new discovery job
@@ -1290,7 +1307,14 @@ func (s *Service) generateExtractionPrompts(
 	relationships []DiscoveredRelationship,
 	kbPurpose string,
 ) (*extractionPrompts, error) {
+	_, span := tracing.Start(ctx, "discovery.generate_prompts",
+		attribute.Int("type_count", len(types)),
+		attribute.Int("relationship_count", len(relationships)),
+	)
+	defer span.End()
+
 	if s.modelFactory == nil {
+		span.SetAttributes(attribute.String("error", "modelFactory is nil"))
 		s.log.Warn("generateExtractionPrompts: modelFactory is nil, cannot generate extraction prompts")
 		return nil, nil
 	}
@@ -1330,8 +1354,10 @@ Return ONLY valid JSON with this exact structure:
 
 	response, err := s.completeWithLLM(ctx, prompt)
 	if err != nil {
+		span.SetAttributes(attribute.String("error", err.Error()))
 		return nil, fmt.Errorf("generateExtractionPrompts LLM call: %w", err)
 	}
+	span.SetAttributes(attribute.Int("raw_response_length", len(response)))
 
 	// Strip markdown fences if present.
 	response = strings.TrimSpace(response)
@@ -1346,8 +1372,15 @@ Return ONLY valid JSON with this exact structure:
 
 	var prompts extractionPrompts
 	if err := json.Unmarshal([]byte(response), &prompts); err != nil {
+		span.SetAttributes(attribute.String("error", fmt.Sprintf("parse: %s", err.Error())))
 		return nil, fmt.Errorf("generateExtractionPrompts parse response: %w", err)
 	}
+	span.SetAttributes(
+		attribute.Int("domain_context_length", len(prompts.DomainContext)),
+		attribute.Int("type_hints_count", len(prompts.TypeHints)),
+		attribute.Int("relationship_hints_count", len(prompts.RelationshipHints)),
+		attribute.Int("negative_examples_count", len(prompts.NegativeExamples)),
+	)
 	return &prompts, nil
 }
 
