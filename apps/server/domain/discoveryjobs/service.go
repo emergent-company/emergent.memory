@@ -289,8 +289,10 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 		// so a slow LLM call does not cause the finalize-discovery request context to
 		// expire, making the tool call appear to fail (which causes the agent to retry
 		// and hit a unique-name constraint on the second attempt).
+		// context.WithoutCancel preserves the parent trace context so OTel spans
+		// from generateExtractionPrompts appear as children of the MCP tool span.
 		promptCtx, promptCancel := context.WithTimeout(
-			auth.ContextWithProjectID(context.Background(), projectID.String()),
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
 			3*time.Minute,
 		)
 		defer promptCancel()
