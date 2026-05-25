@@ -15,19 +15,24 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/internal/config"
-	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
+// modelFactory is the interface for creating LLM models.
+// Implemented by *adk.ModelFactory in production; mocked in tests.
+type modelFactory interface {
+	CreateModel(ctx context.Context) (model.LLM, error)
+}
+
 // Service handles business logic for discovery jobs
 type Service struct {
 	repo         *Repository
 	docSvc       *documents.Service
 	cfg          *config.Config
-	modelFactory *adk.ModelFactory
+	modelFactory modelFactory
 	log          *slog.Logger
 }
 
