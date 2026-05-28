@@ -66,6 +66,14 @@ func (s *Service) Create(ctx context.Context, req *CreateBranchRequest) (*Branch
 		if parent == nil {
 			return nil, apperror.ErrNotFound.WithMessage("parent branch not found")
 		}
+	} else if req.ProjectID != nil {
+		// Auto-assign the project's main branch as parent so callers can
+		// discover the main branch ID from the response. If no main branch
+		// exists yet this is the first branch in the project — it becomes
+		// the main branch and correctly has no parent.
+		if main, err := s.store.GetMainBranch(ctx, *req.ProjectID); err == nil && main != nil {
+			req.ParentBranchID = &main.ID
+		}
 	}
 
 	// Create the branch

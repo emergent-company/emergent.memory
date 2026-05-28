@@ -25,7 +25,9 @@ func (s *Store) List(ctx context.Context, projectID *string) ([]*Branch, error) 
 	q := s.db.NewSelect().Model(&branches).Order("created_at ASC")
 
 	if projectID != nil {
-		q = q.Where("project_id = ?", *projectID)
+		// Include branches owned by the project AND the root/main branch that
+		// may have project_id IS NULL in legacy rows (pre-backfill migration).
+		q = q.Where("project_id = ? OR (project_id IS NULL AND parent_branch_id IS NULL)", *projectID)
 	}
 
 	err := q.Scan(ctx)

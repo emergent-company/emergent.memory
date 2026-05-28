@@ -2506,7 +2506,7 @@ func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef stri
 		Limit(1).
 		Scan(ctx, &row)
 	if err != nil {
-		return nil, fmt.Errorf("branch %q not found: %w", branchRef, err)
+		return nil, fmt.Errorf("branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph): %w", branchRef, err)
 	}
 	return &row.ID, nil
 }
