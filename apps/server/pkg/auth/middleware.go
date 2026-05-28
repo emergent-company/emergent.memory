@@ -275,6 +275,9 @@ var scopeImplies = map[string][]string{
 		"tasks:read",
 		"user-activity:read",
 		"notifications:read",
+		// MCP fine-grained
+		"search",
+		"journal:read",
 	},
 	"data:write": {
 		"documents:write",
@@ -287,15 +290,43 @@ var scopeImplies = map[string][]string{
 		"user-activity:write",
 		"notifications:write",
 		"schema:write",
+		// MCP fine-grained
+		"journal:write",
+	},
+	"schema:write": {
+		// schema:write also grants migration access
+		"schema:migrate",
 	},
 	"agents:read": {
 		"chat:use",
+		// MCP fine-grained
+		"skills:read",
 	},
 	"agents:write": {
 		"chat:admin",
+		// MCP fine-grained
+		"skills:write",
 	},
 	"projects:write": {
 		"projects:read",
+		// MCP fine-grained
+		"admin",
+	},
+	// MCP fine-grained umbrella scopes
+	"graph:write": {
+		"graph:read",
+	},
+	"branches:write": {
+		"branches:read",
+	},
+	"journal:write": {
+		"journal:read",
+	},
+	"skills:write": {
+		"skills:read",
+	},
+	"documents:write": {
+		"documents:read",
 	},
 }
 

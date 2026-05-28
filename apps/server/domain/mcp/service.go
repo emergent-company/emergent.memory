@@ -1249,6 +1249,17 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 	})
 
+	// Apply RequiredScope from the central map to any tool that doesn't already have one set.
+	// Tools in dynamic *_tools.go files set RequiredScope directly; this covers static tools.
+	for i := range tools {
+		if tools[i].RequiredScope == "" {
+			if scope, ok := toolRequiredScope[tools[i].Name]; ok {
+				tools[i].RequiredScope = scope
+			}
+		}
+	}
+
+	buildToolIndex(tools)
 	return tools
 }
 
@@ -1283,63 +1294,144 @@ func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID st
 		}
 	}
 
+	buildToolIndex(tools)
 	return tools
 }
 
-// readOnlyToolNames is the allowlist of tools exposed to read-only share tokens
-// (scopes: data:read, schema:read, agents:read, projects:read — no write scopes).
-// Only graph-querying and knowledge-retrieval tools are included.
-var readOnlyToolNames = map[string]bool{
-	// Project context
-	"project-get": true,
-	// Schema / type inspection
-	"schema-version":   true,
-	"entity-type-list": true,
-	"schema-list":      true,
-	"schema-get":       true,
-	// Graph querying
-	"entity-query":      true,
-	"entity-history":    true,
-	"entity-search":     true,
-	"entity-edges-get":  true,
-	"relationship-list": true,
-	"graph-traverse":    true,
-	"tag-list":          true,
-	// Semantic / hybrid search
-	"search-hybrid":    true,
-	"search-semantic":  true,
-	"search-similar":   true,
-	"search-knowledge": true,
-	// Journal (read)
-	"journal-list": true,
-	// Session messages (read)
-	"session-get-messages": true,
+// toolRequiredScope maps each static tool name to the MCP scope required to list and call it.
+// Dynamic tools (skills CRUD, agents ext, documents, etc.) set RequiredScope at definition time
+// in their respective *_tools.go files. This map covers only the core static tools built inline
+// in GetToolDefinitions.
+var toolRequiredScope = map[string]string{
+	// Project
+	"project-get":    "graph:read",
+	"project-create": "admin",
+	// Schema read
+	"schema-version":        "graph:read",
+	"entity-type-list":      "graph:read",
+	"schema-list":           "schema:read",
+	"schema-get":            "schema:read",
+	"schema-list-available": "schema:read",
+	"schema-list-installed": "schema:read",
+	"schema-history":        "schema:read",
+	"schema-compiled-types": "graph:read",
+	// Schema write
+	"schema-assign":            "schema:write",
+	"schema-assignment-update": "schema:write",
+	"schema-uninstall":         "schema:write",
+	"schema-create":            "schema:write",
+	"schema-delete":            "schema:write",
+	// Schema migrate
+	"schema-migration-preview":    "schema:migrate",
+	"migration-archive-list":      "schema:migrate",
+	"migration-archive-get":       "schema:migrate",
+	"schema-migrate-preview":      "schema:migrate",
+	"schema-migrate-execute":      "schema:migrate",
+	"schema-migrate-rollback":     "schema:migrate",
+	"schema-migrate-commit":       "schema:migrate",
+	"schema-migration-job-status": "schema:migrate",
+	// Graph read
+	"entity-query":      "graph:read",
+	"entity-history":    "graph:read",
+	"entity-search":     "graph:read",
+	"entity-edges-get":  "graph:read",
+	"relationship-list": "graph:read",
+	"graph-traverse":    "graph:read",
+	"tag-list":          "graph:read",
+	// Graph write
+	"entity-create":       "graph:write",
+	"entity-update":       "graph:write",
+	"entity-delete":       "graph:write",
+	"entity-restore":      "graph:write",
+	"relationship-create": "graph:write",
+	"relationship-update": "graph:write",
+	"relationship-delete": "graph:write",
+	// Branches
+	"graph-branch-list":   "branches:read",
+	"graph-branch-create": "branches:write",
+	"graph-branch-merge":  "branches:write",
+	"graph-branch-delete": "branches:write",
+	// Search
+	"search-hybrid":   "search",
+	"search-semantic": "search",
+	"search-similar":  "search",
+	// Session
+	"session-get-messages": "graph:read",
+	// Journal (static tools; journal-list and journal-add-note are also appended below)
+	"journal-list":     "journal:read",
+	"journal-add-note": "journal:write",
 }
 
-// isReadOnlyToken returns true when the token has only read scopes and no write scopes.
-// A token is considered read-only when it lacks any "*:write" or "*:admin" scope.
-func isReadOnlyToken(scopes []string) bool {
-	for _, s := range scopes {
-		if len(s) > 6 && (s[len(s)-6:] == ":write" || s[len(s)-6:] == ":admin") {
-			return false
-		}
-	}
-	return true
-}
-
-// FilterToolsForScopes filters the tool list based on token scopes.
-// Read-only tokens (no write/admin scopes) receive only the graph-querying allowlist.
+// FilterToolsForScopes filters tools based on token scopes.
+// Tools tagged AgentOnly are hidden from all external MCP clients regardless of scopes.
+// Tools with a RequiredScope are only shown when the token's expanded scope set includes that scope.
+// Tools with no RequiredScope are always shown (provided they are not AgentOnly).
 func FilterToolsForScopes(tools []ToolDefinition, scopes []string) []ToolDefinition {
-	if !isReadOnlyToken(scopes) {
-		return tools
-	}
-	filtered := make([]ToolDefinition, 0, len(readOnlyToolNames))
+	expanded := expandScopesSet(scopes)
+	out := make([]ToolDefinition, 0, len(tools))
 	for _, t := range tools {
-		if readOnlyToolNames[t.Name] {
-			filtered = append(filtered, t)
+		if t.AgentOnly {
+			continue
+		}
+		if t.RequiredScope != "" && !expanded[t.RequiredScope] {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// expandScopesSet returns the full effective scope set for a token, expanding umbrella scopes.
+// Exported so it can be used by FilterToolsForScopes and handleToolsCall enforcement.
+func expandScopesSet(scopes []string) map[string]bool {
+	result := make(map[string]bool, len(scopes)*4)
+	for _, s := range scopes {
+		result[s] = true
+		for _, implied := range scopeImpliesMap[s] {
+			result[implied] = true
 		}
 	}
-	return filtered
+	return result
+}
+
+// scopeImpliesMap mirrors auth/middleware.go's scopeImplies but for MCP fine-grained scopes.
+// It must stay in sync with the auth package's expansion table.
+var scopeImpliesMap = map[string][]string{
+	"data:read":       {"graph:read", "search", "journal:read", "documents:read"},
+	"data:write":      {"graph:write", "journal:write", "documents:write"},
+	"schema:write":    {"schema:write", "schema:migrate"},
+	"agents:read":     {"agents:read", "skills:read"},
+	"agents:write":    {"agents:write", "skills:write"},
+	"projects:write":  {"admin"},
+	"graph:write":     {"graph:read"},
+	"branches:write":  {"branches:read"},
+	"journal:write":   {"journal:read"},
+	"skills:write":    {"skills:read"},
+	"documents:write": {"documents:read"},
+}
+
+// toolIndex is built once from the full tool list for O(1) lookups in handleToolsCall.
+// Populated by buildToolIndex called from GetToolDefinitions and GetToolDefinitionsForProject.
+var toolIndexMu sync.RWMutex
+var toolIndex = map[string]*ToolDefinition{}
+
+// buildToolIndex rebuilds the tool index from the provided tool list.
+func buildToolIndex(tools []ToolDefinition) {
+	idx := make(map[string]*ToolDefinition, len(tools))
+	for i := range tools {
+		t := tools[i]
+		idx[t.Name] = &t
+	}
+	toolIndexMu.Lock()
+	toolIndex = idx
+	toolIndexMu.Unlock()
+}
+
+// GetToolByName returns the ToolDefinition for a given tool name, or nil if not found.
+func (s *Service) GetToolByName(name string) *ToolDefinition {
+	toolIndexMu.RLock()
+	defer toolIndexMu.RUnlock()
+	return toolIndex[name]
 }
 
 func (s *Service) GetResourceDefinitions() []ResourceDefinition {
@@ -1730,6 +1822,7 @@ func relaySessionTools(sess *RelaySession) []ToolDefinition {
 		}
 		td := ToolDefinition{
 			Name:        prefix + name,
+			AgentOnly:   true,
 			Description: desc,
 			InputSchema: InputSchema{
 				Type:       "object",

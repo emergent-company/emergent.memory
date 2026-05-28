@@ -205,6 +205,7 @@ func extractTextFromHTML(src string) (string, error) {
 func getWebFetchToolDefinition() ToolDefinition {
 	return ToolDefinition{
 		Name:        "web-fetch",
+		AgentOnly:   true,
 		Description: "Fetch the content of a URL and return it as markdown, plain text, or raw HTML. Use this when you already know the URL you need to read (retrieval). For finding URLs, use brave_web_search instead.",
 		InputSchema: InputSchema{
 			Type: "object",

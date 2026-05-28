@@ -286,6 +286,23 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 		)
 	}
 
+	// Enforce per-tool scope: reject AgentOnly tools and tools requiring a scope the caller lacks.
+	if toolDef := h.svc.GetToolByName(params.Name); toolDef != nil {
+		if toolDef.AgentOnly {
+			return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
+				"Tool not found: "+params.Name, nil)
+		}
+		if toolDef.RequiredScope != "" {
+			expanded := expandScopesSet(user.Scopes)
+			if !expanded[toolDef.RequiredScope] {
+				return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+					"Insufficient scope to call tool: "+params.Name,
+					map[string]string{"required_scope": toolDef.RequiredScope},
+				)
+			}
+		}
+	}
+
 	// Get project ID: prefer the per-request header (auth-middleware-resolved) so that
 	// callers with org-level tokens can target different projects on the same session.
 	// Fall back to the session value set at initialize time only when the header is absent.

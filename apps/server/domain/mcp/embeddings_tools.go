@@ -58,8 +58,9 @@ type EmbeddingConfigUpdate struct {
 func embeddingsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "embedding-status",
-			Description: "Get the current status of all embedding workers (objects, relationships, sweep). Returns running/paused state and active configuration.",
+			Name:          "embedding-status",
+			RequiredScope: "admin",
+			Description:   "Get the current status of all embedding workers (objects, relationships, sweep). Returns running/paused state and active configuration.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -67,8 +68,9 @@ func embeddingsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "embedding-pause",
-			Description: "Pause all embedding workers. Embedding jobs will stop being processed until resumed.",
+			Name:          "embedding-pause",
+			RequiredScope: "admin",
+			Description:   "Pause all embedding workers. Embedding jobs will stop being processed until resumed.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -76,8 +78,9 @@ func embeddingsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "embedding-resume",
-			Description: "Resume all embedding workers after they have been paused.",
+			Name:          "embedding-resume",
+			RequiredScope: "admin",
+			Description:   "Resume all embedding workers after they have been paused.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -85,7 +88,8 @@ func embeddingsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name: "embedding-config-update",
+			Name:          "embedding-config-update",
+			RequiredScope: "admin",
 			Description: "Update embedding worker runtime configuration. All fields are optional — only provided fields are changed. " +
 				"Returns the updated status.",
 			InputSchema: InputSchema{

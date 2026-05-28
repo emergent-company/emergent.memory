@@ -21,7 +21,8 @@ import (
 func queryToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name: "search-knowledge",
+			Name:          "search-knowledge",
+			RequiredScope: "search",
 			Description: "Ask a natural language question against the project's knowledge graph. The system finds relevant entities and relationships, " +
 				"then generates a grounded answer using the connected LLM provider. " +
 				"Returns the assembled answer text, a truncated flag if the response was cut short, and a session_id to continue the conversation. " +

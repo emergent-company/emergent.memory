@@ -553,6 +553,23 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 		)
 	}
 
+	// Enforce per-tool scope.
+	if toolDef := h.svc.GetToolByName(params.Name); toolDef != nil {
+		if toolDef.AgentOnly {
+			return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
+				"Tool not found: "+params.Name, nil)
+		}
+		if toolDef.RequiredScope != "" {
+			expanded := expandScopesSet(user.Scopes)
+			if !expanded[toolDef.RequiredScope] {
+				return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
+					"Insufficient scope to call tool: "+params.Name,
+					map[string]string{"required_scope": toolDef.RequiredScope},
+				)
+			}
+		}
+	}
+
 	projectID := session.ProjectID
 	if projectID == "" {
 		projectID = user.ProjectID

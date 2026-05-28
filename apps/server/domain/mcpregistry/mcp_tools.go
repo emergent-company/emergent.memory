@@ -408,8 +408,10 @@ func (h *MCPRegistryToolHandler) ExecuteInspectMCPServer(ctx context.Context, pr
 func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefinition {
 	return []mcp.ToolDefinition{
 		{
-			Name:        "mcp-server-list",
-			Description: "List all registered MCP servers for the current project. Returns both builtin and external servers with their type, status, and tool count.",
+			Name:          "mcp-server-list",
+			RequiredScope: "admin",
+			AgentOnly:     true,
+			Description:   "List all registered MCP servers for the current project. Returns both builtin and external servers with their type, status, and tool count.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
 				Properties: map[string]mcp.PropertySchema{},
@@ -417,8 +419,10 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "mcp-server-get",
-			Description: "Get details of a specific MCP server by ID, including all its registered tools with their enabled/disabled status.",
+			Name:          "mcp-server-get",
+			RequiredScope: "admin",
+			AgentOnly:     true,
+			Description:   "Get details of a specific MCP server by ID, including all its registered tools with their enabled/disabled status.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -431,8 +435,10 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "mcp-server-create",
-			Description: "Register a new external MCP server. Supports stdio, sse, and http transport types. Builtin servers are managed automatically.",
+			Name:          "mcp-server-create",
+			RequiredScope: "admin",
+			AgentOnly:     true,
+			Description:   "Register a new external MCP server. Supports stdio, sse, and http transport types. Builtin servers are managed automatically.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -475,8 +481,10 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "update_mcp_server",
-			Description: "Update an existing MCP server configuration. Only provided fields are updated (partial update). Builtin servers can only be enabled/disabled.",
+			Name:          "update_mcp_server",
+			RequiredScope: "admin",
+			AgentOnly:     true,
+			Description:   "Update an existing MCP server configuration. Only provided fields are updated (partial update). Builtin servers can only be enabled/disabled.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -505,8 +513,10 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "mcp-server-delete",
-			Description: "Delete an external MCP server and all its cached tools. Builtin servers cannot be deleted.",
+			Name:          "mcp-server-delete",
+			RequiredScope: "admin",
+			AgentOnly:     true,
+			Description:   "Delete an external MCP server and all its cached tools. Builtin servers cannot be deleted.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -519,8 +529,10 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "toggle_mcp_server_tool",
-			Description: "Enable or disable a specific tool from an MCP server. Disabled tools are excluded from the agent tool pool.",
+			Name:          "toggle_mcp_server_tool",
+			RequiredScope: "admin",
+			AgentOnly:     true,
+			Description:   "Enable or disable a specific tool from an MCP server. Disabled tools are excluded from the agent tool pool.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -537,8 +549,10 @@ func (h *MCPRegistryToolHandler) GetMCPRegistryToolDefinitions() []mcp.ToolDefin
 			},
 		},
 		{
-			Name:        "sync_mcp_server_tools",
-			Description: "Sync tool definitions from an external MCP server. By default, connects to the server and calls tools/list to auto-discover available tools. Optionally, tools can be provided manually. New tools are enabled by default; removed tools are cleaned up.",
+			Name:          "sync_mcp_server_tools",
+			RequiredScope: "admin",
+			AgentOnly:     true,
+			Description:   "Sync tool definitions from an external MCP server. By default, connects to the server and calls tools/list to auto-discover available tools. Optionally, tools can be provided manually. New tools are enabled by default; removed tools are cleaned up.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{

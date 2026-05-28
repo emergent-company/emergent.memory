@@ -23,8 +23,9 @@ const maxUploadBytes = 10 * 1024 * 1024 // 10 MB
 func documentsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "document-list",
-			Description: "List documents in the current project. Returns an array of document objects with id, filename, mimeType, conversionStatus, fileSizeBytes, and timestamps. Supports optional pagination.",
+			Name:          "document-list",
+			RequiredScope: "documents:read",
+			Description:   "List documents in the current project. Returns an array of document objects with id, filename, mimeType, conversionStatus, fileSizeBytes, and timestamps. Supports optional pagination.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -41,8 +42,9 @@ func documentsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "document-get",
-			Description: "Get a single document by its ID. Returns full document metadata including conversion status, storage info, and chunk counts.",
+			Name:          "document-get",
+			RequiredScope: "documents:read",
+			Description:   "Get a single document by its ID. Returns full document metadata including conversion status, storage info, and chunk counts.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -55,7 +57,8 @@ func documentsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name: "document-upload",
+			Name:          "document-upload",
+			RequiredScope: "documents:write",
 			Description: "Upload a document to the current project by providing its content as a base64-encoded string. " +
 				"The decoded content must not exceed 10 MB. Returns the created document id, title, and conversion status.",
 			InputSchema: InputSchema{
@@ -78,8 +81,9 @@ func documentsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "document-delete",
-			Description: "Delete a document and all its associated chunks from the current project.",
+			Name:          "document-delete",
+			RequiredScope: "documents:write",
+			Description:   "Delete a document and all its associated chunks from the current project.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{

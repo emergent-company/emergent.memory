@@ -15,8 +15,9 @@ import (
 func providerToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "provider-list-org",
-			Description: "List all LLM provider configurations for an organization. Returns provider name, model selections, and credential source.",
+			Name:          "provider-list-org",
+			RequiredScope: "admin",
+			Description:   "List all LLM provider configurations for an organization. Returns provider name, model selections, and credential source.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -29,8 +30,9 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "provider-configure-org",
-			Description: "Configure or update an LLM provider at the organization level (e.g. set Google AI API key).",
+			Name:          "provider-configure-org",
+			RequiredScope: "admin",
+			Description:   "Configure or update an LLM provider at the organization level (e.g. set Google AI API key).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -63,8 +65,9 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "provider-configure-project",
-			Description: "Configure or update an LLM provider at the project level, overriding the org-level config.",
+			Name:          "provider-configure-project",
+			RequiredScope: "admin",
+			Description:   "Configure or update an LLM provider at the project level, overriding the org-level config.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -93,8 +96,9 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "provider-models-list",
-			Description: "List available models for a given LLM provider. Optionally filter by model type (generative or embedding).",
+			Name:          "provider-models-list",
+			RequiredScope: "admin",
+			Description:   "List available models for a given LLM provider. Optionally filter by model type (generative or embedding).",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -112,8 +116,9 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "provider-test",
-			Description: "Test an LLM provider configuration by sending a minimal generation request. Returns the model used and the response.",
+			Name:          "provider-test",
+			RequiredScope: "admin",
+			Description:   "Test an LLM provider configuration by sending a minimal generation request. Returns the model used and the response.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -126,8 +131,9 @@ func providerToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "provider-usage-get",
-			Description: "Get LLM usage statistics (token counts, costs) for the organization.",
+			Name:          "provider-usage-get",
+			RequiredScope: "admin",
+			Description:   "Get LLM usage statistics (token counts, costs) for the organization.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{

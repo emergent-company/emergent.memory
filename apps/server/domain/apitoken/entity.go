@@ -74,6 +74,7 @@ type UpdateApiTokenScopesRequest struct {
 
 // Available scopes for API tokens
 var ValidApiTokenScopes = []string{
+	// Coarse-grained (legacy, kept for backwards compatibility)
 	"schema:read",
 	"schema:write",
 	"data:read",
@@ -83,6 +84,20 @@ var ValidApiTokenScopes = []string{
 	"projects:read",
 	"projects:write",
 	"chat:use",
+	// Fine-grained MCP scopes
+	"graph:read",
+	"graph:write",
+	"schema:migrate",
+	"branches:read",
+	"branches:write",
+	"search",
+	"journal:read",
+	"journal:write",
+	"skills:read",
+	"skills:write",
+	"documents:read",
+	"documents:write",
+	"admin",
 }
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO

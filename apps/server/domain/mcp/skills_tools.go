@@ -16,8 +16,9 @@ import (
 func skillsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "skill-list",
-			Description: "List skills available to the current project. Returns id, name, description, and scope — use skill-get to retrieve full content for a specific skill.",
+			Name:          "skill-list",
+			RequiredScope: "skills:read",
+			Description:   "List skills available to the current project. Returns id, name, description, and scope — use skill-get to retrieve full content for a specific skill.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -25,8 +26,9 @@ func skillsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "skill-get",
-			Description: "Get a single skill by its UUID or name. Returns the full skill including content, description, scope, and metadata.",
+			Name:          "skill-get",
+			RequiredScope: "skills:read",
+			Description:   "Get a single skill by its UUID or name. Returns the full skill including content, description, scope, and metadata.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -39,8 +41,9 @@ func skillsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "skill-create",
-			Description: "Create a new project-scoped skill. Returns the created skill's id, name, description, and scope.",
+			Name:          "skill-create",
+			RequiredScope: "skills:write",
+			Description:   "Create a new project-scoped skill. Returns the created skill's id, name, description, and scope.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -61,8 +64,9 @@ func skillsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "skill-update",
-			Description: "Update an existing skill's description, content, or metadata.",
+			Name:          "skill-update",
+			RequiredScope: "skills:write",
+			Description:   "Update an existing skill's description, content, or metadata.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -83,8 +87,9 @@ func skillsToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "skill-delete",
-			Description: "Delete a skill by its UUID.",
+			Name:          "skill-delete",
+			RequiredScope: "skills:write",
+			Description:   "Delete a skill by its UUID.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{

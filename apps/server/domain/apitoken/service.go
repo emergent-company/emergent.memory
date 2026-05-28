@@ -391,8 +391,21 @@ func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID, userID 
 		Name:        fmt.Sprintf("ephemeral-sandbox-%d", time.Now().UnixMilli()),
 		TokenHash:   hashToken(raw),
 		TokenPrefix: getTokenPrefix(raw),
-		Scopes:      []string{"data:read", "data:write", "schema:read", "agents:read", "agents:write", "projects:read", "projects:write"},
-		ExpiresAt:   &expiresAt,
+		Scopes: []string{
+			// Coarse-grained (legacy) — kept for backwards compat with route middleware
+			"data:read", "data:write", "schema:read", "schema:write",
+			"agents:read", "agents:write", "projects:read", "projects:write",
+			// Fine-grained MCP scopes — agent runners need full graph + schema + branches
+			"graph:read", "graph:write",
+			"schema:migrate",
+			"branches:read", "branches:write",
+			"search",
+			"journal:read", "journal:write",
+			"skills:read", "skills:write",
+			"documents:read", "documents:write",
+			"admin",
+		},
+		ExpiresAt: &expiresAt,
 	}
 
 	if err := s.repo.Create(ctx, token); err != nil {

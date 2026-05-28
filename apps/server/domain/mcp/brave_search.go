@@ -220,6 +220,7 @@ func (s *Service) callBraveSearchAPI(ctx context.Context, req braveSearchRequest
 func getBraveSearchToolDefinition() ToolDefinition {
 	return ToolDefinition{
 		Name:        "web-search-brave",
+		AgentOnly:   true,
 		Description: "Search the web using the Brave Search API. Returns web search results with titles, URLs, descriptions, and snippets. Use this to find current information, research topics, or verify facts from the web.",
 		ConfigKeys:  []string{"api_key"},
 		InputSchema: InputSchema{

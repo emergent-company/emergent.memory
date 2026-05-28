@@ -269,6 +269,12 @@ type ToolDefinition struct {
 	// ConfigKeys lists setup-time configuration keys required by this tool
 	// (e.g. ["api_key"]). Empty for tools that need no configuration.
 	ConfigKeys []string `json:"configKeys,omitempty"`
+	// RequiredScope is the MCP token scope required to list and call this tool.
+	// Empty means the tool is accessible to any authenticated token.
+	RequiredScope string `json:"requiredScope,omitempty"`
+	// AgentOnly marks tools that are only available to internal memory agents,
+	// not to external MCP clients regardless of their scopes.
+	AgentOnly bool `json:"agentOnly,omitempty"`
 }
 
 // InputSchema is a JSON schema for tool parameters

@@ -234,6 +234,7 @@ func (s *Service) doRedditPublicRequest(ctx context.Context, endpoint string) ([
 func getRedditSearchToolDefinition() ToolDefinition {
 	return ToolDefinition{
 		Name:        "web-search-reddit",
+		AgentOnly:   true,
 		Description: "Search Reddit posts or browse subreddit listings. Returns post titles, URLs, scores, comment counts, and authors. Use 'query' to search all of Reddit, 'subreddit' to browse a specific community, or both to search within a subreddit. No API key required.",
 		InputSchema: InputSchema{
 			Type: "object",

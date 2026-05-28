@@ -88,8 +88,9 @@ type DocumentSignalsReader interface {
 func domainToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
-			Name:        "classify-document",
-			Description: "Classify a document against installed domain schema packs. Returns the matched schema, label, confidence, and classification stage. Read-only — does not write to the document.",
+			Name:          "classify-document",
+			RequiredScope: "schema:read",
+			Description:   "Classify a document against installed domain schema packs. Returns the matched schema, label, confidence, and classification stage. Read-only — does not write to the document.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -106,8 +107,9 @@ func domainToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "list-installed-schemas",
-			Description: "List all domain schema packs installed in a project, including their names, descriptions, and keywords used for classification.",
+			Name:          "list-installed-schemas",
+			RequiredScope: "schema:read",
+			Description:   "List all domain schema packs installed in a project, including their names, descriptions, and keywords used for classification.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -120,8 +122,9 @@ func domainToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "finalize-discovery",
-			Description: "Finalize domain discovery by creating a new schema pack or extending an existing one. Provide document_id to create a new discovery job on the fly (no job_id needed). job_id is only needed when resuming an existing pending discovery job.",
+			Name:          "finalize-discovery",
+			RequiredScope: "schema:write",
+			Description:   "Finalize domain discovery by creating a new schema pack or extending an existing one. Provide document_id to create a new discovery job on the fly (no job_id needed). job_id is only needed when resuming an existing pending discovery job.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -166,8 +169,9 @@ func domainToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "queue-reextraction",
-			Description: "Queue a document for re-extraction using a specific domain schema pack. Use after domain discovery to enrich an existing document with typed entities.",
+			Name:          "queue-reextraction",
+			RequiredScope: "schema:write",
+			Description:   "Queue a document for re-extraction using a specific domain schema pack. Use after domain discovery to enrich an existing document with typed entities.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
