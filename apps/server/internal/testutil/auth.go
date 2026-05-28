@@ -286,9 +286,10 @@ func AuthHeader(token string) string {
 
 // TestProject represents a test project fixture
 type TestProject struct {
-	ID    string
-	Name  string
-	OrgID string
+	ID          string
+	Name        string
+	OrgID       string
+	ProjectInfo string // optional kbPurpose / project description
 }
 
 // DefaultTestProject is a standard test project
@@ -312,12 +313,13 @@ func CreateTestProject(ctx context.Context, db bun.IDB, project TestProject, own
 
 	// Create the project
 	_, err = db.NewRaw(`
-		INSERT INTO kb.projects (id, name, organization_id, created_at, updated_at)
-		VALUES (?, ?, ?, NOW(), NOW())
+		INSERT INTO kb.projects (id, name, organization_id, project_info, created_at, updated_at)
+		VALUES (?, ?, ?, NULLIF(?, ''), NOW(), NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
+			project_info = EXCLUDED.project_info,
 			updated_at = NOW()
-	`, project.ID, project.Name, project.OrgID).Exec(ctx)
+	`, project.ID, project.Name, project.OrgID, project.ProjectInfo).Exec(ctx)
 	if err != nil {
 		return err
 	}
@@ -339,14 +341,14 @@ func CreateTestOrganization(ctx context.Context, db bun.IDB, id, name string) er
 
 // TestDocument represents a test document fixture
 type TestDocument struct {
-	ID                      string
-	ProjectID               string
-	Filename                *string
-	SourceURL               *string
-	MimeType                *string
-	Content                 *string
-	SourceType              *string
-	ParentDocumentID        *string
+	ID               string
+	ProjectID        string
+	Filename         *string
+	SourceURL        *string
+	MimeType         *string
+	Content          *string
+	SourceType       *string
+	ParentDocumentID *string
 }
 
 // CreateTestDocument creates a test document in the database

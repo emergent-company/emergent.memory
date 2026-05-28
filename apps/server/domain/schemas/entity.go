@@ -166,8 +166,6 @@ type GraphMemorySchema struct {
 	Migrations              *SchemaMigrationHints `bun:"migrations,type:jsonb" json:"migrations,omitempty"`
 	Checksum                *string               `bun:"checksum" json:"checksum,omitempty"`
 	ProjectID               *string               `bun:"project_id,type:uuid" json:"projectId,omitempty"`
-	OrgID                   *string               `bun:"org_id,type:uuid" json:"orgId,omitempty"`
-	Visibility              string                `bun:"visibility,notnull,default:'project'" json:"visibility"`
 	Draft                   bool                  `bun:"draft,notnull,default:false" json:"draft"`
 	PublishedAt             *time.Time            `bun:"published_at" json:"publishedAt,omitempty"`
 	DeprecatedAt            *time.Time            `bun:"deprecated_at" json:"deprecatedAt,omitempty"`
@@ -230,7 +228,6 @@ type MemorySchemaListItem struct {
 	Version     string  `json:"version"`
 	Description *string `json:"description,omitempty"`
 	Author      *string `json:"author,omitempty"`
-	Visibility  string  `json:"visibility,omitempty"`
 }
 
 // InstalledSchemaItem represents an installed schema for a project
@@ -331,8 +328,6 @@ type CreatePackRequest struct {
 	License          *string `json:"license,omitempty"`
 	RepositoryURL    *string `json:"repository_url,omitempty"`
 	DocumentationURL *string `json:"documentation_url,omitempty"`
-	// Visibility controls schema scope: "project" (default) or "organization".
-	Visibility string `json:"visibility,omitempty"`
 
 	// Migrations is the optional upgrade-path block for this schema version.
 	Migrations *SchemaMigrationHints `json:"migrations,omitempty" yaml:"migrations,omitempty"`

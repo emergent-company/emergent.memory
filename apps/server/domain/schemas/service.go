@@ -39,9 +39,9 @@ func (s *Service) GetCompiledTypes(ctx context.Context, projectID string) (*Comp
 }
 
 // GetAvailablePacks returns schemas available for a project to install.
-// Returns schemas owned by the project, plus org-visible schemas from the same org.
-func (s *Service) GetAvailablePacks(ctx context.Context, projectID, orgID string) ([]MemorySchemaListItem, error) {
-	return s.repo.GetAvailablePacks(ctx, projectID, orgID)
+// Returns schemas owned by the project that are not yet installed.
+func (s *Service) GetAvailablePacks(ctx context.Context, projectID string) ([]MemorySchemaListItem, error) {
+	return s.repo.GetAvailablePacks(ctx, projectID)
 }
 
 // GetInstalledPacks returns schemas installed for a project
@@ -149,9 +149,9 @@ func (s *Service) DeleteAssignment(ctx context.Context, projectID, assignmentID 
 	return nil
 }
 
-// CreatePack creates a new schema scoped to the given project and org.
+// CreatePack creates a new schema scoped to the given project.
 // If migration hints are present, they are validated before persisting.
-func (s *Service) CreatePack(ctx context.Context, projectID, orgID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
+func (s *Service) CreatePack(ctx context.Context, projectID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
 	// Validate objectTypeSchemas structure — each entry must have a non-empty "name" field.
 	// This catches the common mistake of using the wrong top-level key (e.g. "objectTypes"
 	// instead of "objectTypeSchemas"), which causes silent data loss during JSON binding.
@@ -166,7 +166,7 @@ func (s *Service) CreatePack(ctx context.Context, projectID, orgID string, req *
 			return nil, apperror.ErrBadRequest.WithMessage("invalid migrations block: " + strings.Join(errs, "; "))
 		}
 	}
-	return s.repo.CreatePack(ctx, projectID, orgID, req)
+	return s.repo.CreatePack(ctx, projectID, req)
 }
 
 // validateSchemaDefinitions checks that objectTypeSchemas and relationshipTypeSchemas
@@ -221,18 +221,18 @@ func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.R
 	return errs
 }
 
-// GetPack returns a schema by ID if the caller has access (same project or same org with org visibility)
-func (s *Service) GetPack(ctx context.Context, packID, projectID, orgID string) (*GraphMemorySchema, error) {
-	return s.repo.GetPack(ctx, packID, projectID, orgID)
+// GetPack returns a schema by ID if the caller owns it (same project)
+func (s *Service) GetPack(ctx context.Context, packID, projectID string) (*GraphMemorySchema, error) {
+	return s.repo.GetPack(ctx, packID, projectID)
 }
 
 // UpdatePack partially updates an existing schema the caller owns.
 // If migration hints are present in the update, they are validated before persisting.
-func (s *Service) UpdatePack(ctx context.Context, packID, projectID, orgID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
+func (s *Service) UpdatePack(ctx context.Context, packID, projectID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
 	// Task 3.5: Validate migration hints if present
 	if req.Migrations != nil {
 		// For update, we need to get the schema's current type schemas for validation
-		pack, err := s.repo.GetPack(ctx, packID, projectID, orgID)
+		pack, err := s.repo.GetPack(ctx, packID, projectID)
 		if err != nil {
 			return nil, err
 		}
@@ -250,12 +250,12 @@ func (s *Service) UpdatePack(ctx context.Context, packID, projectID, orgID strin
 			return nil, apperror.ErrBadRequest.WithMessage("invalid migrations block: " + strings.Join(errs, "; "))
 		}
 	}
-	return s.repo.UpdatePack(ctx, packID, projectID, orgID, req)
+	return s.repo.UpdatePack(ctx, packID, projectID, req)
 }
 
 // DeletePack deletes a schema the caller owns from the registry
-func (s *Service) DeletePack(ctx context.Context, packID, projectID, orgID string) error {
-	return s.repo.DeletePack(ctx, packID, projectID, orgID)
+func (s *Service) DeletePack(ctx context.Context, packID, projectID string) error {
+	return s.repo.DeletePack(ctx, packID, projectID)
 }
 
 // GetSchemaHistory returns all schema assignments for a project including removed ones.

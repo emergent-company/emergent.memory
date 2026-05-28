@@ -53,8 +53,8 @@ func toADKCredential(c *ResolvedCredential) *adk.ResolvedCredential {
 		ServiceAccountJSON: c.ServiceAccountJSON,
 		GenerativeModel:    c.GenerativeModel,
 		Source:             string(c.Source),
-		IsOpenAICompatible: c.IsOpenAICompatible,
-		OpenAIBaseURL:      c.BaseURL,
+		BaseURL:            c.BaseURL,
+		Provider:           string(c.Provider),
 	}
 }
 

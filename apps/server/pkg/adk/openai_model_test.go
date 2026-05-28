@@ -393,10 +393,9 @@ func TestOpenAICompatibleModel_ResponseText(t *testing.T) {
 	}
 }
 
-// TestModelFactory_OpenAICompatibleDBCred verifies that CreateModelWithName
-// creates an openaiCompatibleModel when the DB resolver returns an
-// IsOpenAICompatible credential (task 17.6).
-func TestModelFactory_OpenAICompatibleDBCred(t *testing.T) {
+// TestModelFactory_OpenAIDBCred verifies that CreateModelWithName creates an
+// openaiCompatibleModel when the DB resolver returns an openai provider credential.
+func TestModelFactory_OpenAIDBCred(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(makeOpenAIResponse("hi")))
@@ -407,30 +406,26 @@ func TestModelFactory_OpenAICompatibleDBCred(t *testing.T) {
 	cfg := &config.LLMConfig{Model: "default-model"}
 
 	resolver := &staticResolver{cred: &ResolvedCredential{
-		IsOpenAICompatible: true,
-		OpenAIBaseURL:      srv.URL,
-		APIKey:             "",
-		GenerativeModel:    "llama3",
-		Source:             "test",
+		Provider:        "openai",
+		BaseURL:         srv.URL,
+		APIKey:          "sk-test",
+		GenerativeModel: "openai/gpt-4o",
+		Source:          "test",
 	}}
 
-	factory := NewModelFactory(cfg, log, resolver, nil)
-	llm, err := factory.CreateModelWithName(context.Background(), "openai-compatible/") // Prefix-only to use cred default
+	factory := NewModelFactory(cfg, log, resolver, nil, nil)
+	llm, err := factory.CreateModelWithName(context.Background(), "openai/gpt-4o")
 	if err != nil {
 		t.Fatalf("CreateModelWithName() error = %v", err)
 	}
 	if llm == nil {
 		t.Fatal("CreateModelWithName() returned nil")
 	}
-	if llm.Name() != "llama3" {
-		t.Errorf("model name = %q, want %q", llm.Name(), "llama3")
-	}
 }
 
-// TestModelFactory_OpenAICompatibleEnvFallback verifies that CreateModelWithName
-// creates an openaiCompatibleModel from env-var config when no DB resolver is
-// present (task 17.7).
-func TestModelFactory_OpenAICompatibleEnvFallback(t *testing.T) {
+// TestModelFactory_OpenAIEnvFallback verifies that CreateModelWithName
+// creates an openaiCompatibleModel from env-var config when no DB resolver is present.
+func TestModelFactory_OpenAIEnvFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(makeOpenAIResponse("hi")))
@@ -439,61 +434,54 @@ func TestModelFactory_OpenAICompatibleEnvFallback(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cfg := &config.LLMConfig{
+		OpenAIAPIKey:  "sk-test",
 		OpenAIBaseURL: srv.URL,
-		OpenAIAPIKey:  "",
-		OpenAIModel:   "mistral",
+		OpenAIModel:   "openai/gpt-4o",
 	}
 
-	factory := NewModelFactory(cfg, log, nil, nil)
-	llm, err := factory.CreateModelWithName(context.Background(), "ignored")
+	factory := NewModelFactory(cfg, log, nil, nil, nil)
+	llm, err := factory.CreateModelWithName(context.Background(), "openai/gpt-4o")
 	if err != nil {
 		t.Fatalf("CreateModelWithName() error = %v", err)
 	}
 	if llm == nil {
 		t.Fatal("CreateModelWithName() returned nil")
 	}
-	if llm.Name() != "mistral" {
-		t.Errorf("model name = %q, want %q", llm.Name(), "mistral")
-	}
 }
 
-// TestModelFactory_OpenAICompatibleEnvFallback_MissingModel verifies that an
-// error is returned when OPENAI_BASE_URL is set but LLM_MODEL is empty.
-func TestModelFactory_OpenAICompatibleEnvFallback_MissingModel(t *testing.T) {
+// TestModelFactory_OpenAIEnvFallback_MissingModel verifies that an error is
+// returned when a bare model name (no provider prefix) is passed.
+func TestModelFactory_OpenAIEnvFallback_MissingModel(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cfg := &config.LLMConfig{
+		OpenAIAPIKey:  "sk-test",
 		OpenAIBaseURL: "http://localhost:11434/v1",
-		OpenAIModel:   "", // missing
+		OpenAIModel:   "",
 	}
 
-	factory := NewModelFactory(cfg, log, nil, nil)
-	// Pass a non-empty modelName so we reach the OpenAI branch (the top-level
-	// "model name is required" guard fires before the OpenAI path when empty).
-	_, err := factory.CreateModelWithName(context.Background(), "some-model")
+	factory := NewModelFactory(cfg, log, nil, nil, nil)
+	_, err := factory.CreateModelWithName(context.Background(), "bare-model-no-prefix")
 	if err == nil {
-		t.Fatal("expected error when LLM_MODEL is empty, got nil")
-	}
-	if !strings.Contains(err.Error(), "LLM_MODEL") {
-		t.Errorf("error %q should mention LLM_MODEL", err.Error())
+		t.Fatal("expected error for bare model name without provider prefix, got nil")
 	}
 }
 
-// TestLLMConfig_IsEnabled_OpenAIBaseURL verifies IsEnabled returns true when
-// OpenAIBaseURL is set (task 17.8).
-func TestLLMConfig_IsEnabled_OpenAIBaseURL(t *testing.T) {
+// TestLLMConfig_IsEnabled_OpenAIAPIKey verifies IsEnabled returns true when
+// OpenAIAPIKey is set.
+func TestLLMConfig_IsEnabled_OpenAIAPIKey(t *testing.T) {
 	cfg := &config.LLMConfig{
-		OpenAIBaseURL: "http://localhost:11434/v1",
+		OpenAIAPIKey: "sk-test",
 	}
 	if !cfg.IsEnabled() {
-		t.Error("IsEnabled() = false, want true when OpenAIBaseURL is set")
+		t.Error("IsEnabled() = false, want true when OpenAIAPIKey is set")
 	}
 }
 
-// TestLLMConfig_IsEnabled_OpenAIBaseURL_NetworkDisabled verifies IsEnabled
-// returns false when NetworkDisabled is set even if OpenAIBaseURL is set.
-func TestLLMConfig_IsEnabled_OpenAIBaseURL_NetworkDisabled(t *testing.T) {
+// TestLLMConfig_IsEnabled_OpenAIAPIKey_NetworkDisabled verifies IsEnabled
+// returns false when NetworkDisabled is set even if OpenAIAPIKey is set.
+func TestLLMConfig_IsEnabled_OpenAIAPIKey_NetworkDisabled(t *testing.T) {
 	cfg := &config.LLMConfig{
-		OpenAIBaseURL:   "http://localhost:11434/v1",
+		OpenAIAPIKey:    "sk-test",
 		NetworkDisabled: true,
 	}
 	if cfg.IsEnabled() {

@@ -93,11 +93,7 @@ tasks:
     desc: Build and start server in background (writes PID to pids/server.pid)
     cmds:
       - task: build
-      - mkdir -p ../../pids
-      - |
-        ./dist/server &
-        echo $! > ../../pids/server.pid
-        echo "Server started (PID $(cat ../../pids/server.pid))"
+      - sh scripts/start-server.sh
 
   stop:
     desc: Stop background server (reads PID from pids/server.pid)

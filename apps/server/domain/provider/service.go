@@ -16,13 +16,13 @@ import (
 // ResolvedCredential holds the decrypted credential material and metadata
 // needed to instantiate an LLM client for a specific request context.
 type ResolvedCredential struct {
-	// Provider type (google or google-vertex)
+	// Provider type
 	Provider ProviderType
 
 	// Source describes where the credential was resolved from
 	Source CredentialSource
 
-	// APIKey is set for google (decrypted)
+	// APIKey is set for google, openai, deepseek (decrypted)
 	APIKey string
 
 	// Vertex AI fields (set for google-vertex)
@@ -30,9 +30,8 @@ type ResolvedCredential struct {
 	GCPProject         string
 	Location           string
 
-	// OpenAI-compatible fields (set for openai-compatible)
-	IsOpenAICompatible bool
-	BaseURL            string
+	// BaseURL is the HTTP endpoint for OpenAI-protocol providers (openai, deepseek)
+	BaseURL string
 
 	// Selected models (may come from org selection, project override, or env config)
 	EmbeddingModel  string
@@ -166,12 +165,13 @@ func (s *CredentialService) decryptOrgConfig(cfg *OrgProviderConfig) (*ResolvedC
 		resolved.APIKey = string(plaintext)
 	case ProviderVertexAI:
 		resolved.ServiceAccountJSON = string(plaintext)
-	case ProviderOpenAICompatible:
-		resolved.IsOpenAICompatible = true
+	case ProviderOpenAI:
 		resolved.BaseURL = cfg.BaseURL
-		resolved.APIKey = string(plaintext) // plaintext is the api_key (may be empty)
+		if resolved.BaseURL == "" {
+			resolved.BaseURL = "https://api.openai.com/v1"
+		}
+		resolved.APIKey = string(plaintext)
 	case ProviderDeepSeek:
-		resolved.IsOpenAICompatible = true
 		resolved.BaseURL = "https://api.deepseek.com/v1"
 		resolved.APIKey = string(plaintext)
 	}
@@ -203,12 +203,13 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		resolved.APIKey = string(plaintext)
 	case ProviderVertexAI:
 		resolved.ServiceAccountJSON = string(plaintext)
-	case ProviderOpenAICompatible:
-		resolved.IsOpenAICompatible = true
+	case ProviderOpenAI:
 		resolved.BaseURL = cfg.BaseURL
+		if resolved.BaseURL == "" {
+			resolved.BaseURL = "https://api.openai.com/v1"
+		}
 		resolved.APIKey = string(plaintext)
 	case ProviderDeepSeek:
-		resolved.IsOpenAICompatible = true
 		resolved.BaseURL = "https://api.deepseek.com/v1"
 		resolved.APIKey = string(plaintext)
 	}
@@ -240,9 +241,9 @@ func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*R
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
 	// Resolution order: project-scoped credentials take full priority over
 	// org-scoped ones, regardless of provider type. Within each scope, prefer
-	// OpenAI-compatible/DeepSeek over Google so that projects with a custom
+	// DeepSeek/OpenAI over Google so that projects with a custom
 	// endpoint always use it when configured — even if the org has Google AI.
-	providerOrder := []ProviderType{ProviderOpenAICompatible, ProviderDeepSeek, ProviderVertexAI, ProviderGoogleAI}
+	providerOrder := []ProviderType{ProviderDeepSeek, ProviderOpenAI, ProviderVertexAI, ProviderGoogleAI}
 
 	projectID := auth.ProjectIDFromContext(ctx)
 
@@ -331,10 +332,9 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 	}
 
 	// Live test using a model from the freshly synced catalog.
-	// OpenAI-compatible endpoints (especially large local models) may be slow
-	// to produce a first token, so we allow a longer timeout for them.
+	// OpenAI and DeepSeek endpoints may be slow to produce a first token.
 	testTimeout := 15 * time.Second
-	if provider == ProviderOpenAICompatible || provider == ProviderDeepSeek {
+	if provider == ProviderOpenAI || provider == ProviderDeepSeek {
 		testTimeout = 60 * time.Second
 	}
 	testCtx, testCancel := context.WithTimeout(ctx, testTimeout)
@@ -347,8 +347,8 @@ func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, p
 			return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
 		}
 	}
-	// DeepSeek and OpenAI-compatible providers have no embedding API — skip the embed test.
-	noEmbedProvider := provider == ProviderDeepSeek || provider == ProviderOpenAICompatible
+	// DeepSeek and OpenAI providers have no embedding API — skip the embed test.
+	noEmbedProvider := provider == ProviderDeepSeek || provider == ProviderOpenAI
 	if noEmbedProvider {
 		s.log.Warn(fmt.Sprintf("%s provider configured without embeddings — configure a separate embedding provider for document indexing", provider))
 	} else if req.EmbeddingModel != "" || req.GenerativeModel == "" {
@@ -568,11 +568,9 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 		catalogSynced = false
 	}
 
-	// Live test using a model from the freshly synced catalog.
-	// OpenAI-compatible endpoints (especially large local models) may be slow
-	// to produce a first token, so we allow a longer timeout for them.
+	// OpenAI and DeepSeek endpoints may be slow to produce a first token.
 	testTimeout2 := 15 * time.Second
-	if provider == ProviderOpenAICompatible || provider == ProviderDeepSeek {
+	if provider == ProviderOpenAI || provider == ProviderDeepSeek {
 		testTimeout2 = 60 * time.Second
 	}
 	testCtx, testCancel := context.WithTimeout(ctx, testTimeout2)
@@ -585,8 +583,8 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 			return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
 		}
 	}
-	// DeepSeek and OpenAI-compatible providers have no embedding API — skip the embed test.
-	noEmbedProvider2 := provider == ProviderDeepSeek || provider == ProviderOpenAICompatible
+	// DeepSeek and OpenAI providers have no embedding API — skip the embed test.
+	noEmbedProvider2 := provider == ProviderDeepSeek || provider == ProviderOpenAI
 	if noEmbedProvider2 {
 		s.log.Warn(fmt.Sprintf("%s provider configured without embeddings — configure a separate embedding provider for document indexing", provider))
 	} else if req.EmbeddingModel != "" || req.GenerativeModel == "" {
@@ -716,11 +714,11 @@ func (s *CredentialService) extractPlaintext(provider ProviderType, req UpsertPr
 			return nil, apperror.NewBadRequest("location is required for google-vertex")
 		}
 		return []byte(req.ServiceAccountJSON), nil
-	case ProviderOpenAICompatible:
-		if req.BaseURL == "" {
-			return nil, apperror.NewBadRequest("baseUrl is required for openai-compatible")
+	case ProviderOpenAI:
+		if req.APIKey == "" {
+			return nil, apperror.NewBadRequest("apiKey is required for openai")
 		}
-		// APIKey is optional (keyless local servers); encrypt empty string if not provided
+		// BaseURL is optional; defaults to https://api.openai.com/v1
 		return []byte(req.APIKey), nil
 	case ProviderDeepSeek:
 		if req.APIKey == "" {
@@ -746,12 +744,13 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 		cred.APIKey = req.APIKey
 	case ProviderVertexAI:
 		cred.ServiceAccountJSON = req.ServiceAccountJSON
-	case ProviderOpenAICompatible:
-		cred.IsOpenAICompatible = true
+	case ProviderOpenAI:
 		cred.BaseURL = req.BaseURL
+		if cred.BaseURL == "" {
+			cred.BaseURL = "https://api.openai.com/v1"
+		}
 		cred.APIKey = req.APIKey
 	case ProviderDeepSeek:
-		cred.IsOpenAICompatible = true
 		cred.BaseURL = "https://api.deepseek.com/v1"
 		cred.APIKey = req.APIKey
 	}

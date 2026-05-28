@@ -48,6 +48,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/domain/mcprelay"
+	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
@@ -165,6 +166,7 @@ func coreFxOptions() fx.Option {
 
 		// Provider module (credential resolution, model catalog, LLM usage tracking)
 		provider.Module,
+		modelconfig.Module,
 
 		// Extraction module (background workers for document parsing, embeddings, etc.)
 		extraction.Module,

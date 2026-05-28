@@ -492,7 +492,20 @@ Respond with ONLY a JSON object (no markdown):
 		Reason     string  `json:"reason"`
 	}
 	if err := json.Unmarshal([]byte(rawResp), &parsed); err != nil {
-		return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", err, rawResp)
+		// Reasoning models (e.g. deepseek-v4-flash) may emit chain-of-thought prose
+		// before the JSON object. Try to extract the last {...} block.
+		if start := strings.LastIndex(rawResp, "{"); start >= 0 {
+			if end := strings.LastIndex(rawResp, "}"); end > start {
+				jsonCandidate := rawResp[start : end+1]
+				if jsonErr := json.Unmarshal([]byte(jsonCandidate), &parsed); jsonErr != nil {
+					return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", err, rawResp)
+				}
+			} else {
+				return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", err, rawResp)
+			}
+		} else {
+			return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", err, rawResp)
+		}
 	}
 
 	if parsed.DomainName == "" || parsed.Confidence < 0.6 {

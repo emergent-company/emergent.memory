@@ -138,7 +138,6 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 	source := "builtin"
 	version := "1.0.0"
 	description := "Built-in conversation primitives: Session and Message types for storing agent interactions"
-	visibility := "global"
 
 	// Check if the built-in schema already exists.
 	var existingID string
@@ -152,15 +151,15 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 		// Insert new built-in schema.
 		_, insertErr := s.repo.DB().NewRaw(`
 			INSERT INTO kb.graph_schemas (
-				name, version, description, source, visibility,
+				name, version, description, source,
 				object_type_schemas, relationship_type_schemas,
 				published_at, created_at, updated_at
 			) VALUES (
-				'session-message-types', ?, ?, ?, ?,
+				'session-message-types', ?, ?, ?,
 				?, ?,
 				?, ?, ?
 			)
-		`, version, description, source, visibility,
+		`, version, description, source,
 			string(objectSchemas), string(relSchemas),
 			now, now, now).Exec(ctx)
 		if insertErr != nil {

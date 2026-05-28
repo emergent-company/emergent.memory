@@ -7,7 +7,7 @@ import (
 )
 
 // EntityExtractorSystemPrompt is the base system prompt for entity extraction.
-const EntityExtractorSystemPrompt = `You are an expert knowledge graph builder. Extract entities from the document.
+const EntityExtractorSystemPrompt = `You are an expert knowledge graph builder. Extract entities from the document. Respond with valid JSON.
 
 For EACH entity, you MUST provide these four fields:
 1. name: Clear, descriptive name of the entity (REQUIRED, top-level field)
@@ -53,7 +53,7 @@ CONVERSATION / AGENT LOG HINTS:
 - If a user asks an agent to contact someone (email, message), extract the communication as an Event entity and note the implied social relationship`
 
 // RelationshipBuilderSystemPrompt is the base system prompt for relationship extraction.
-const RelationshipBuilderSystemPrompt = `You are an expert at finding connections in knowledge graphs. Your job is to identify ALL meaningful relationships between entities.
+const RelationshipBuilderSystemPrompt = `You are an expert at finding connections in knowledge graphs. Your job is to identify ALL meaningful relationships between entities. Respond with valid JSON.
 
 For EACH relationship you find:
 1. Identify the source entity (by temp_id)

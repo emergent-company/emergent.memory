@@ -75,7 +75,7 @@ func (h *Handler) GetAvailablePacks(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("projectId is required")
 	}
 
-	packs, err := h.svc.GetAvailablePacks(c.Request().Context(), projectID, user.OrgID)
+	packs, err := h.svc.GetAvailablePacks(c.Request().Context(), projectID)
 	if err != nil {
 		return err
 	}
@@ -265,11 +265,6 @@ func (h *Handler) CreatePack(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("project context required (X-Project-ID header or API token)")
 	}
 
-	orgID := user.OrgID
-	if orgID == "" {
-		return apperror.ErrBadRequest.WithMessage("organization context required (X-Org-ID header)")
-	}
-
 	var req CreatePackRequest
 	if err := c.Bind(&req); err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
@@ -285,7 +280,7 @@ func (h *Handler) CreatePack(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("object_type_schemas is required")
 	}
 
-	pack, err := h.svc.CreatePack(c.Request().Context(), projectID, orgID, &req)
+	pack, err := h.svc.CreatePack(c.Request().Context(), projectID, &req)
 	if err != nil {
 		return err
 	}
@@ -323,7 +318,7 @@ func (h *Handler) GetPack(c echo.Context) error {
 		projectID = user.ProjectID
 	}
 
-	pack, err := h.svc.GetPack(c.Request().Context(), packID, projectID, user.OrgID)
+	pack, err := h.svc.GetPack(c.Request().Context(), packID, projectID)
 	if err != nil {
 		return err
 	}
@@ -367,7 +362,7 @@ func (h *Handler) UpdatePack(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
-	pack, err := h.svc.UpdatePack(c.Request().Context(), packID, projectID, user.OrgID, &req)
+	pack, err := h.svc.UpdatePack(c.Request().Context(), packID, projectID, &req)
 	if err != nil {
 		return err
 	}
@@ -405,7 +400,7 @@ func (h *Handler) DeletePack(c echo.Context) error {
 		projectID = user.ProjectID
 	}
 
-	if err := h.svc.DeletePack(c.Request().Context(), packID, projectID, user.OrgID); err != nil {
+	if err := h.svc.DeletePack(c.Request().Context(), packID, projectID); err != nil {
 		return err
 	}
 

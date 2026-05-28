@@ -20,8 +20,8 @@ type Config struct {
 	ServerPort int
 	// LLM Provider configuration
 	GoogleAPIKey string
-	// OpenAI-compatible configuration
-	OpenAIBaseURL string
+	// OpenAI configuration
+	OpenAIBaseURL string // kept for backward compat; maps to OPENAI_API_KEY template
 	LLMModel      string
 	// SkipStart skips starting services after installation
 	SkipStart bool
@@ -184,8 +184,8 @@ KREUZBERG_PORT=18000
 SERVER_PORT=%d
 
 GOOGLE_API_KEY=%s
-OPENAI_BASE_URL=%s
-LLM_MODEL=%s
+OPENAI_API_KEY=%s
+OPENAI_MODEL=%s
 EMBEDDING_DIMENSION=768
 KREUZBERG_LOG_LEVEL=info
 
@@ -565,7 +565,7 @@ func (i *Installer) Uninstall(keepData bool) error {
 	return nil
 }
 
-// PromptLLMProvider interactively asks the user to configure an LLM provider (Google AI or OpenAI-compatible)
+// PromptLLMProvider interactively asks the user to configure an LLM provider (Google AI or OpenAI)
 func (i *Installer) PromptLLMProvider() {
 	fmt.Println()
 	fmt.Printf("%s%sLLM Provider Setup (optional)%s\n", colorCyan, colorBold, colorReset)
@@ -578,7 +578,7 @@ func (i *Installer) PromptLLMProvider() {
 	fmt.Println()
 	fmt.Println("Choose a provider to configure:")
 	fmt.Println("  1. Google AI (Gemini) — requires an API key")
-	fmt.Println("  2. OpenAI-compatible API — for local (Ollama, vLLM) or other providers")
+	fmt.Println("  2. OpenAI API — requires an API key")
 	fmt.Println("  3. Skip for now")
 	fmt.Println()
 	fmt.Print("Choice [1-3]: ")
@@ -628,51 +628,49 @@ func (i *Installer) PromptGoogleAI() {
 	i.output.Success("Google AI configured successfully")
 }
 
-// PromptOpenAICompatible interactively asks the user for OpenAI-compatible settings and saves them
+// PromptOpenAICompatible interactively asks the user for OpenAI settings and saves them
 func (i *Installer) PromptOpenAICompatible() {
 	fmt.Println()
-	fmt.Printf("%s%sOpenAI-compatible API Setup%s\n", colorCyan, colorBold, colorReset)
+	fmt.Printf("%s%sOpenAI API Setup%s\n", colorCyan, colorBold, colorReset)
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
-	fmt.Println("Configure settings for your local (e.g., Ollama) or custom API.")
+	fmt.Println("Configure settings for OpenAI or a compatible provider.")
 	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Print("Base URL (e.g., http://localhost:11434/v1): ")
-	baseURL, _ := reader.ReadString('\n')
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		i.output.Warn("Base URL is required. Skipping OpenAI-compatible setup.")
-		return
-	}
-
-	fmt.Print("API Key (leave blank for local servers): ")
+	fmt.Print("API Key: ")
 	apiKey, _ := reader.ReadString('\n')
 	apiKey = strings.TrimSpace(apiKey)
-
-	fmt.Print("Model Name (e.g., llama3): ")
-	model, _ := reader.ReadString('\n')
-	model = strings.TrimSpace(model)
-	if model == "" {
-		i.output.Warn("Model name is required. Skipping OpenAI-compatible setup.")
+	if apiKey == "" {
+		i.output.Warn("API key is required. Skipping OpenAI setup.")
 		return
 	}
 
+	fmt.Print("Base URL (leave blank for https://api.openai.com/v1): ")
+	baseURL, _ := reader.ReadString('\n')
+	baseURL = strings.TrimSpace(baseURL)
+
+	fmt.Print("Model Name (e.g., openai/gpt-4o): ")
+	model, _ := reader.ReadString('\n')
+	model = strings.TrimSpace(model)
+
 	updates := map[string]string{
-		"OPENAI_BASE_URL": baseURL,
-		"LLM_MODEL":       model,
+		"OPENAI_API_KEY": apiKey,
 	}
-	if apiKey != "" {
-		updates["GOOGLE_API_KEY"] = apiKey // Standalone uses GOOGLE_API_KEY as the fallback auth header
+	if baseURL != "" {
+		updates["OPENAI_BASE_URL"] = baseURL
+	}
+	if model != "" {
+		updates["OPENAI_MODEL"] = model
 	}
 
 	if err := i.updateEnv(updates); err != nil {
-		i.output.Error("Could not save OpenAI-compatible settings: %v", err)
+		i.output.Error("Could not save OpenAI settings: %v", err)
 		return
 	}
 
-	i.output.Success("OpenAI-compatible API configured successfully")
+	i.output.Success("OpenAI API configured successfully")
 }
 
 // updateEnv updates one or more variables in the .env.local file

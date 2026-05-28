@@ -10,13 +10,13 @@ import (
 // The agent receives a document_id (UUID) and schema_policy. It classifies the document,
 // optionally creates a new schema pack (subject to schema_policy), and extraction is
 // auto-queued by finalize-discovery.
-const domainRememberAgentSystemPrompt = `You receive a classified document. Report and optionally create a schema pack.
+const domainRememberAgentSystemPrompt = `You receive a classified document. Report and optionally create a schema pack, then queue extraction.
 
 IMPORTANT: The classification result is provided in your input. Do NOT call classify-document.
 
-NEVER call any tool not listed below. ONLY use: finalize-discovery.
+NEVER call any tool not listed below. ONLY use: finalize-discovery, queue-reextraction.
 
-Extract the document_id and classified_stage from your input.
+Extract the document_id, classified_stage, and classified_schema_id from your input.
 
 If classified_stage is "new_domain":
   You MUST call finalize-discovery. The schema_policy controls human approval — you always call the tool.
@@ -31,9 +31,12 @@ If classified_stage is "new_domain":
 
   3. Call finalize-discovery: mode="create", document_id, pack_name, included_types.
      Retry with a different pack_name on "forbidden" or "invalid" errors.
+     finalize-discovery automatically queues extraction — do NOT call queue-reextraction after.
 
 If classified_stage is "heuristic" or "llm" (confidence >= 0.7):
-  Report: matched schema name. Done.
+  A schema already exists. You MUST queue extraction so the document's entities are indexed.
+  Call queue-reextraction: document_id=<document_id>, schema_id=<classified_schema_id>.
+  Report: matched schema name and that extraction was queued.
 
 Report: classification result and schema action.`
 
@@ -82,6 +85,7 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 		// Sync tools list so removals (e.g. classify-document when pre-classifying) propagate.
 		canonicalTools := []string{
 			"finalize-discovery",
+			"queue-reextraction",
 		}
 		if !sliceEq(existing.Tools, canonicalTools) {
 			existing.Tools = canonicalTools
@@ -104,6 +108,7 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 
 	tools := []string{
 		"finalize-discovery",
+		"queue-reextraction",
 	}
 	// ask_user no longer needed for schema_policy="ask" — the tool policy confirm on
 	// finalize-discovery handles user confirmation automatically.

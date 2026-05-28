@@ -31,6 +31,9 @@ type ObjectExtractionConfig struct {
 	MinConcurrency int
 	// MaxConcurrency is the maximum concurrency when adaptive scaling is enabled (default: 5)
 	MaxConcurrency int
+	// SkipStagingBranch disables the staging branch for extraction jobs.
+	// When true, extracted objects are written directly to the main graph without review.
+	SkipStagingBranch bool
 }
 
 // DefaultObjectExtractionConfig returns default configuration
@@ -910,4 +913,19 @@ func (s *ObjectExtractionJobsService) UpdateStagingBranchID(ctx context.Context,
 		return fmt.Errorf("update staging_branch_id: %w", err)
 	}
 	return nil
+}
+
+// GetProjectOrgID returns the organization ID for the given project.
+// Used by background workers that need org context for usage tracking.
+func (s *ObjectExtractionJobsService) GetProjectOrgID(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Scan(ctx, &orgID)
+	if err != nil {
+		return "", fmt.Errorf("get org id for project %s: %w", projectID, err)
+	}
+	return orgID, nil
 }

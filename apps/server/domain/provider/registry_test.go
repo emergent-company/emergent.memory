@@ -17,14 +17,14 @@ func TestNewRegistry(t *testing.T) {
 	if !r.IsSupported(ProviderVertexAI) {
 		t.Error("expected google-vertex to be supported")
 	}
-	if !r.IsSupported(ProviderOpenAICompatible) {
-		t.Error("expected openai-compatible to be supported")
+	if !r.IsSupported(ProviderOpenAI) {
+		t.Error("expected openai to be supported")
 	}
 	if !r.IsSupported(ProviderDeepSeek) {
 		t.Error("expected deepseek to be supported")
 	}
-	if r.IsSupported(ProviderType("openai")) {
-		t.Error("expected openai to NOT be supported")
+	if !r.IsSupported(ProviderOpenAI) {
+		t.Error("expected openai to be supported (ProviderOpenAI)")
 	}
 }
 
@@ -73,9 +73,9 @@ func TestRegistryGet(t *testing.T) {
 	}
 
 	// Unsupported
-	_, err = r.Get(ProviderType("openai"))
+	_, err = r.Get(ProviderType("unknown-provider"))
 	if err == nil {
-		t.Error("expected error for unsupported provider")
+		t.Error("expected error for unknown provider")
 	}
 }
 
@@ -91,8 +91,8 @@ func TestRegistryList(t *testing.T) {
 	for _, d := range defs {
 		types[d.Type] = true
 	}
-	if !types[ProviderGoogleAI] || !types[ProviderVertexAI] || !types[ProviderOpenAICompatible] || !types[ProviderDeepSeek] {
-		t.Errorf("expected google, google-vertex, openai-compatible, and deepseek in list, got %v", types)
+	if !types[ProviderGoogleAI] || !types[ProviderVertexAI] || !types[ProviderOpenAI] || !types[ProviderDeepSeek] {
+		t.Errorf("expected google, google-vertex, openai, and deepseek in list, got %v", types)
 	}
 }
 
@@ -108,8 +108,8 @@ func TestRegistrySupportedTypes(t *testing.T) {
 	for _, pt := range types {
 		typeSet[pt] = true
 	}
-	if !typeSet[ProviderGoogleAI] || !typeSet[ProviderVertexAI] || !typeSet[ProviderOpenAICompatible] || !typeSet[ProviderDeepSeek] {
-		t.Errorf("expected google, google-vertex, openai-compatible, and deepseek, got %v", typeSet)
+	if !typeSet[ProviderGoogleAI] || !typeSet[ProviderVertexAI] || !typeSet[ProviderOpenAI] || !typeSet[ProviderDeepSeek] {
+		t.Errorf("expected google, google-vertex, openai, and deepseek, got %v", typeSet)
 	}
 }
 

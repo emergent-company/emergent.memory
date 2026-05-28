@@ -209,11 +209,13 @@ type ExtractionConfig struct {
 
 // NewExtractionConfig creates extraction configuration from app config
 func NewExtractionConfig(cfg *config.Config) *ExtractionConfig {
+	objCfg := DefaultObjectExtractionConfig()
+	objCfg.SkipStagingBranch = cfg.ExtractionSkipStagingBranch
 	return &ExtractionConfig{
 		GraphEmbedding:   DefaultGraphEmbeddingConfig(),
 		ChunkEmbedding:   DefaultChunkEmbeddingConfig(),
 		DocumentParsing:  DefaultDocumentParsingConfig(),
-		ObjectExtraction: DefaultObjectExtractionConfig(),
+		ObjectExtraction: objCfg,
 		EmbeddingSweep:   DefaultEmbeddingSweepConfig(),
 	}
 }
@@ -312,10 +314,11 @@ func provideObjectExtractionWorker(
 	appCfg *config.Config,
 ) *ObjectExtractionWorker {
 	workerConfig := &ObjectExtractionWorkerConfig{
-		PollInterval:    time.Duration(cfg.ObjectExtraction.WorkerIntervalMs) * time.Millisecond,
-		Concurrency:     cfg.ObjectExtraction.WorkerConcurrency,
-		OrphanThreshold: 0.3,
-		MaxRetries:      uint(cfg.ObjectExtraction.DefaultMaxRetries),
+		PollInterval:      time.Duration(cfg.ObjectExtraction.WorkerIntervalMs) * time.Millisecond,
+		Concurrency:       cfg.ObjectExtraction.WorkerConcurrency,
+		OrphanThreshold:   0.3,
+		MaxRetries:        uint(cfg.ObjectExtraction.DefaultMaxRetries),
+		SkipStagingBranch: cfg.ObjectExtraction.SkipStagingBranch,
 	}
 	scaler := syshealth.NewConcurrencyScaler(
 		monitor,

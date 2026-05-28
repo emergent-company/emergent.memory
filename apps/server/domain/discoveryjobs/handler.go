@@ -26,7 +26,6 @@ func NewHandler(svc *Service) *Handler {
 // @Tags         discovery-jobs
 // @Accept       json
 // @Produce      json
-// @Param        X-Org-ID header string true "Organization ID"
 // @Param        projectId path string true "Project ID (UUID)"
 // @Param        request body StartDiscoveryRequest true "Discovery configuration"
 // @Success      200 {object} StartDiscoveryResponse "Discovery job started"
@@ -47,16 +46,6 @@ func (h *Handler) StartDiscovery(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid project ID")
 	}
 
-	// Get org ID from header
-	orgIDStr := c.Request().Header.Get("X-Org-ID")
-	if orgIDStr == "" {
-		return apperror.ErrBadRequest.WithMessage("X-Org-ID header required")
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid org ID")
-	}
-
 	var req StartDiscoveryRequest
 	if err := c.Bind(&req); err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
@@ -66,7 +55,7 @@ func (h *Handler) StartDiscovery(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("document_ids array is required and cannot be empty")
 	}
 
-	result, err := h.svc.StartDiscovery(c.Request().Context(), projectID, orgID, &req)
+	result, err := h.svc.StartDiscovery(c.Request().Context(), projectID, &req)
 	if err != nil {
 		return err
 	}
@@ -183,7 +172,6 @@ func (h *Handler) CancelJob(c echo.Context) error {
 // @Accept       json
 // @Produce      json
 // @Param        X-Project-ID header string true "Project ID"
-// @Param        X-Org-ID header string true "Organization ID"
 // @Param        jobId path string true "Job ID (UUID)"
 // @Param        request body FinalizeDiscoveryRequest true "Finalization configuration"
 // @Success      200 {object} FinalizeDiscoveryResponse "Template pack created"
@@ -205,7 +193,7 @@ func (h *Handler) FinalizeDiscovery(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid job ID")
 	}
 
-	// Get project and org IDs from headers
+	// Get project ID from headers
 	projectIDStr := c.Request().Header.Get("X-Project-ID")
 	if projectIDStr == "" {
 		return apperror.ErrBadRequest.WithMessage("X-Project-ID header required")
@@ -213,15 +201,6 @@ func (h *Handler) FinalizeDiscovery(c echo.Context) error {
 	projectID, err := uuid.Parse(projectIDStr)
 	if err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid project ID")
-	}
-
-	orgIDStr := c.Request().Header.Get("X-Org-ID")
-	if orgIDStr == "" {
-		return apperror.ErrBadRequest.WithMessage("X-Org-ID header required")
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid org ID")
 	}
 
 	var req FinalizeDiscoveryRequest
@@ -239,7 +218,7 @@ func (h *Handler) FinalizeDiscovery(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("includedTypes is required and cannot be empty")
 	}
 
-	result, err := h.svc.FinalizeDiscovery(c.Request().Context(), jobID, projectID, orgID, &req)
+	result, err := h.svc.FinalizeDiscovery(c.Request().Context(), jobID, projectID, &req)
 	if err != nil {
 		return err
 	}

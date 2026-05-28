@@ -20,6 +20,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chat"
 	"github.com/emergent-company/emergent.memory/domain/chunks"
+	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/embeddingpolicies"
 	"github.com/emergent-company/emergent.memory/domain/events"
@@ -152,7 +153,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register documents routes
 	docsRepo := documents.NewRepository(db, log)
 	docsSvc := documents.NewService(docsRepo, log)
-	docsHandler := documents.NewHandler(docsSvc, storageSvc, log)
+	docsHandler := documents.NewHandler(docsSvc, storageSvc, nil, log)
 	uploadHandler := documents.NewUploadHandler(docsSvc, storageSvc, nil, nil, log)
 	documents.RegisterRoutes(e, docsHandler, uploadHandler, authMiddleware)
 
@@ -229,7 +230,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register chat routes
 	chatRepo := chat.NewRepository(db, log)
 	chatSvc := chat.NewService(chatRepo, log)
-	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, nil, agentRepo, nil, nil, nil, nil, testDB.Config, log) // nil LLM client, executor, credSvc, modelFactory, apiTokenSvc, docSvc for tests
+	chatHandler := chat.NewHandler(chatSvc, nil, searchSvc, nil, agentRepo, nil, nil, nil, nil, nil, testDB.Config, log) // nil LLM client, executor, credSvc, modelFactory, apiTokenSvc, docSvc, domainClassifier for tests
 	chat.RegisterRoutes(e, chatHandler, authMiddleware)
 
 	// Register MCP routes
@@ -333,6 +334,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	providerHandler := provider.NewHandler(providerCredSvc, providerCatalogSvc, providerRepo)
 	provider.RegisterRoutes(e, providerHandler, authMiddleware)
 
+	// Register discovery jobs routes (nil modelFactory — LLM-dependent tests skip in-process)
+	discoveryRepo := discoveryjobs.NewRepository(db, log)
+	discoverySvc := discoveryjobs.NewService(discoveryRepo, docsSvc, testDB.Config, nil, log)
+	discoveryHandler := discoveryjobs.NewHandler(discoverySvc)
+	discoveryjobs.RegisterRoutes(e, discoveryHandler, authMiddleware)
+
 	return &TestServer{
 		Echo:           e,
 		TestDB:         testDB,
@@ -395,6 +402,11 @@ func WithHeader(key, value string) RequestOption {
 // WithAuth adds an Authorization header
 func WithAuth(token string) RequestOption {
 	return WithHeader("Authorization", "Bearer "+token)
+}
+
+// WithAPIKey adds an X-API-Key header (used for standalone-mode tokens)
+func WithAPIKey(key string) RequestOption {
+	return WithHeader("X-API-Key", key)
 }
 
 // WithProjectID adds an X-Project-ID header

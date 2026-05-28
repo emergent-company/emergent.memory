@@ -39,7 +39,7 @@ func NewModelCatalogService(repo *Repository, log *slog.Logger) *ModelCatalogSer
 func (s *ModelCatalogService) SyncModels(ctx context.Context, provider ProviderType, cred *ResolvedCredential) error {
 	// OpenAI-compatible: no model catalog API — store the user-supplied model name directly.
 	// Attempt to query /v1/models for context_length; fall back to safe defaults on failure.
-	if provider == ProviderOpenAICompatible {
+	if provider == ProviderOpenAI {
 		if cred.GenerativeModel == "" {
 			return fmt.Errorf("openai-compatible provider requires a model name")
 		}
@@ -284,7 +284,7 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 	}
 
 	// OpenAI-compatible and DeepSeek: use direct HTTP call instead of genai client.
-	if provider == ProviderOpenAICompatible || provider == ProviderDeepSeek {
+	if provider == ProviderOpenAI || provider == ProviderDeepSeek {
 		if cred.BaseURL == "" {
 			return "", "", fmt.Errorf("openai-compatible provider requires base_url")
 		}
@@ -322,7 +322,8 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		var result struct {
 			Choices []struct {
 				Message struct {
-					Content string `json:"content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"message"`
 			} `json:"choices"`
 		}
@@ -332,7 +333,14 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		if len(result.Choices) == 0 {
 			return "", "", fmt.Errorf("openai-compatible response had no choices")
 		}
-		return model, result.Choices[0].Message.Content, nil
+		reply := result.Choices[0].Message.Content
+		if reply == "" {
+			reply = result.Choices[0].Message.ReasoningContent
+		}
+		if reply == "" {
+			reply = "(ok)" // model responded with no text content but no error
+		}
+		return model, reply, nil
 	}
 
 	clientCfg, err := buildClientConfig(provider, cred)
@@ -412,7 +420,7 @@ func (s *ModelCatalogService) TestEmbed(ctx context.Context, provider ProviderTy
 			return "", fmt.Errorf("embedding model test failed: empty vector returned")
 		}
 
-	case ProviderOpenAICompatible:
+	case ProviderOpenAI:
 		// Embedding is not supported for OpenAI-compatible providers.
 		// Return the model name as "not supported" — non-fatal.
 		return "not supported", nil
@@ -490,7 +498,7 @@ func buildClientConfig(provider ProviderType, cred *ResolvedCredential) (*genai.
 		}
 		return cfg, nil
 
-	case ProviderOpenAICompatible:
+	case ProviderOpenAI:
 		return nil, fmt.Errorf("openai-compatible provider does not use genai client — use the HTTP adapter directly")
 
 	case ProviderDeepSeek:

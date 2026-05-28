@@ -12,7 +12,6 @@ type DiscoveryJob struct {
 	bun.BaseModel `bun:"table:kb.discovery_jobs,alias:dj"`
 
 	ID                      uuid.UUID  `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	TenantID                uuid.UUID  `bun:"tenant_id,type:uuid,notnull" json:"tenantId"`
 	OrganizationID          uuid.UUID  `bun:"organization_id,type:uuid,notnull" json:"organizationId"`
 	ProjectID               uuid.UUID  `bun:"project_id,type:uuid,notnull" json:"projectId"`
 	Status                  string     `bun:"status,notnull" json:"status"`

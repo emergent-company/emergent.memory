@@ -113,6 +113,45 @@ type responseFormat struct {
 	Type string `json:"type"`
 }
 
+// genaiSchemaToMap converts a genai.Schema to a plain map suitable for use
+// as an OpenAI json_schema response format schema.
+func genaiSchemaToMap(s *genai.Schema) map[string]any {
+	if s == nil {
+		return nil
+	}
+	m := map[string]any{}
+	if s.Type != "" {
+		m["type"] = strings.ToLower(string(s.Type))
+	}
+	if s.Description != "" {
+		m["description"] = s.Description
+	}
+	if len(s.Enum) > 0 {
+		m["enum"] = s.Enum
+	}
+	if len(s.Required) > 0 {
+		m["required"] = s.Required
+	}
+	if len(s.Properties) > 0 {
+		props := map[string]any{}
+		for k, v := range s.Properties {
+			props[k] = genaiSchemaToMap(v)
+		}
+		m["properties"] = props
+		// OpenAI strict mode requires additionalProperties: false on objects
+		m["additionalProperties"] = false
+	}
+	if s.Items != nil {
+		m["items"] = genaiSchemaToMap(s.Items)
+	}
+	if s.Nullable != nil && *s.Nullable {
+		// represent nullable as anyOf with null
+		inner := m
+		return map[string]any{"anyOf": []any{inner, map[string]any{"type": "null"}}}
+	}
+	return m
+}
+
 type openaiResponse struct {
 	Choices []struct {
 		Message struct {
@@ -122,6 +161,11 @@ type openaiResponse struct {
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int32 `json:"prompt_tokens"`
+		CompletionTokens int32 `json:"completion_tokens"`
+		TotalTokens      int32 `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 }
 
 // --- Role mapping ---
@@ -434,6 +478,23 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 	return func(yield func(*model.LLMResponse, error) bool) {
 		messages := buildMessages(req.Contents)
 
+		// Prepend system instruction if provided (OpenAI uses a system-role message).
+		if req.Config != nil && req.Config.SystemInstruction != nil {
+			var siParts []string
+			for _, p := range req.Config.SystemInstruction.Parts {
+				if p != nil && p.Text != "" {
+					siParts = append(siParts, p.Text)
+				}
+			}
+			if len(siParts) > 0 {
+				sysMsg := openaiMessage{
+					Role:    "system",
+					Content: strings.Join(siParts, "\n"),
+				}
+				messages = append([]openaiMessage{sysMsg}, messages...)
+			}
+		}
+
 		body := openaiRequest{
 			Model:    m.modelName,
 			Messages: messages,
@@ -479,6 +540,28 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			body.MaxTokens = req.Config.MaxOutputTokens
 			if req.Config.ResponseMIMEType == "application/json" {
 				body.ResponseFormat = &responseFormat{Type: "json_object"}
+				// Some providers (e.g. DeepSeek) require the word "json" to appear
+				// in the LAST user message. Find the last user message and ensure
+				// it contains "json"; inject if not.
+				lastUserIdx := -1
+				for i := len(body.Messages) - 1; i >= 0; i-- {
+					if body.Messages[i].Role == "user" {
+						lastUserIdx = i
+						break
+					}
+				}
+				lastUserHasJSON := lastUserIdx >= 0 &&
+					strings.Contains(strings.ToLower(body.Messages[lastUserIdx].Content), "json")
+				if !lastUserHasJSON {
+					if lastUserIdx >= 0 {
+						body.Messages[lastUserIdx].Content += " Respond in JSON."
+					} else {
+						body.Messages = append(body.Messages, openaiMessage{
+							Role:    "user",
+							Content: "Respond in JSON.",
+						})
+					}
+				}
 			}
 		}
 
@@ -514,7 +597,7 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			yield(nil, fmt.Errorf("openai-compatible: endpoint returned %d: %s", resp.StatusCode, string(respBody)))
+			yield(nil, fmt.Errorf("openai-compatible: endpoint returned %d (url=%s model=%s req_bytes=%d): %s", resp.StatusCode, m.baseURL, m.modelName, len(bodyBytes), string(respBody)))
 			return
 		}
 
@@ -568,11 +651,20 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			return
 		}
 
-		yield(&model.LLMResponse{
+		llmResp := &model.LLMResponse{
 			Content: &genai.Content{
 				Role:  "model",
 				Parts: parts,
 			},
-		}, nil)
+			Partial: false,
+		}
+		if result.Usage != nil {
+			llmResp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
+				PromptTokenCount:     result.Usage.PromptTokens,
+				CandidatesTokenCount: result.Usage.CompletionTokens,
+				TotalTokenCount:      result.Usage.TotalTokens,
+			}
+		}
+		yield(llmResp, nil)
 	}
 }

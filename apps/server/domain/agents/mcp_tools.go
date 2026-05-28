@@ -903,7 +903,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					},
 					"model": {
 						Type:        "string",
-						Description: "Model name for this agent. Supports provider/model format to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'openai-compatible/my-model'). Bare model names (e.g. 'gemini-2.5-flash') use the project/org default provider.",
+						Description: "Model name for this agent. Supports provider/model format to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'deepseek/deepseek-v4-flash'). Bare model names (e.g. 'gemini-2.5-flash') use the project/org default provider.",
 					},
 					"config": {
 						Type:        "string",
@@ -959,7 +959,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 					},
 					"model": {
 						Type:        "string",
-						Description: "Model name for this agent. Supports provider/model format to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'openai-compatible/my-model'). Bare model names (e.g. 'gemini-2.5-flash') use the project/org default provider.",
+						Description: "Model name for this agent. Supports provider/model format to pin a specific provider (e.g. 'google-vertex/gemini-2.5-flash', 'google/gemini-2.5-flash', 'deepseek/deepseek-v4-flash'). Bare model names (e.g. 'gemini-2.5-flash') use the project/org default provider.",
 					},
 				},
 				Required: []string{"definition_id"},

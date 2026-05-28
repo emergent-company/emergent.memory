@@ -400,7 +400,7 @@ func TestProtocolExtractionE2E(t *testing.T) {
 
 	// Create model factory
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	modelFactory := adk.NewModelFactory(llmConfig, logger, nil, nil)
+	modelFactory := adk.NewModelFactory(llmConfig, logger, nil, nil, nil)
 
 	// Create trace logger
 	traceLogger, err := NewExtractionTraceLogger(TraceLoggerConfig{

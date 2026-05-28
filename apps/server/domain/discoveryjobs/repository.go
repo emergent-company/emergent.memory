@@ -165,6 +165,23 @@ func (r *Repository) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 	return nil
 }
 
+// GetProjectOrgID returns the organization_id for the given project.
+func (r *Repository) GetProjectOrgID(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	var orgID uuid.UUID
+	err := r.db.NewSelect().
+		Table("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Scan(ctx, &orgID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return uuid.Nil, apperror.ErrNotFound.WithMessage("project not found")
+		}
+		return uuid.Nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return orgID, nil
+}
+
 // GetProjectInfo retrieves the KB purpose for a project
 func (r *Repository) GetProjectInfo(ctx context.Context, projectID uuid.UUID) (string, error) {
 	var projectInfo string
@@ -299,7 +316,6 @@ func (r *Repository) CreateMemorySchema(ctx context.Context, params CreateMemory
 		DiscoveryJobID          *uuid.UUID `bun:"discovery_job_id,type:uuid"`
 		PendingReview           bool       `bun:"pending_review"`
 		ProjectID               *uuid.UUID `bun:"project_id,type:uuid"`
-		OrgID                   *uuid.UUID `bun:"org_id,type:uuid"`
 	}
 
 	r2 := &row{
@@ -314,7 +330,6 @@ func (r *Repository) CreateMemorySchema(ctx context.Context, params CreateMemory
 		DiscoveryJobID:          params.DiscoveryJobID,
 		PendingReview:           params.PendingReview,
 		ProjectID:               params.ProjectID,
-		OrgID:                   params.OrgID,
 	}
 
 	var packID uuid.UUID
@@ -342,7 +357,6 @@ type CreateMemorySchemaParams struct {
 	DiscoveryJobID          *uuid.UUID
 	PendingReview           bool
 	ProjectID               *uuid.UUID
-	OrgID                   *uuid.UUID
 }
 
 // GetMemorySchema retrieves a memory schema by ID

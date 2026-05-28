@@ -623,7 +623,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Branch: agent-backed vs direct-LLM flow
 	if conv.AgentDefinitionID != nil {
-		agentResult := h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "")
+		agentResult := h.streamAgentChat(ctx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
 		if agentResult != nil && agentResult.Cleanup != nil {
@@ -892,7 +892,7 @@ func friendlyProviderError(err error) string {
 // streamAgentChat handles the agent-backed chat flow. It loads the agent definition,
 // builds conversation history, calls the agent executor with a StreamCallback, and
 // maps streaming events to SSE events. Final assistant text is persisted to kb.chat_messages.
-func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer, parentRunID, rootRunID string) *agents.ExecuteResult {
+func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, message, projectID, orgID, userID string, sseWriter *sse.Writer, parentRunID, rootRunID, systemPromptAppendix string) *agents.ExecuteResult {
 	agentDefID := conv.AgentDefinitionID.String()
 
 	// Load the agent definition
@@ -1073,16 +1073,17 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 
 		// Execute the real agent
 		execReq := agents.ExecuteRequest{
-			Agent:            dummyAgent,
-			AgentDefinition:  def,
-			ProjectID:        projectID,
-			OrgID:            orgID,
-			UserID:           userID, // propagate for ask_user notifications
-			UserMessage:      userMessage,
-			StreamCallback:   streamCallback,
-			AuthToken:        authToken,
-			EphemeralTokenID: ephemeralTokenID,
-			ACPSessionID:     acpSessionID,
+			Agent:                dummyAgent,
+			AgentDefinition:      def,
+			ProjectID:            projectID,
+			OrgID:                orgID,
+			UserID:               userID, // propagate for ask_user notifications
+			UserMessage:          userMessage,
+			StreamCallback:       streamCallback,
+			AuthToken:            authToken,
+			EphemeralTokenID:     ephemeralTokenID,
+			ACPSessionID:         acpSessionID,
+			SystemPromptAppendix: systemPromptAppendix,
 		}
 		if parentRunID != "" {
 			execReq.ParentRunID = &parentRunID
@@ -1147,9 +1148,10 @@ type QueryStreamRequest struct {
 	Message        string `json:"message"`
 	ConversationID string `json:"conversation_id,omitempty"` // optional: continue a previous session
 	Branch         string `json:"branch,omitempty"`
-	Namespace      string `json:"namespace,omitempty"`     // optional: scopes all MCP tool calls to this namespace
-	ParentRunID    string `json:"parent_run_id,omitempty"` // optional: calling agent's run ID for parent→child linkage
-	RootRunID      string `json:"root_run_id,omitempty"`   // optional: top-level orchestration run ID
+	Namespace      string `json:"namespace,omitempty"`       // optional: scopes all MCP tool calls to this namespace
+	ParentRunID    string `json:"parent_run_id,omitempty"`   // optional: calling agent's run ID for parent→child linkage
+	RootRunID      string `json:"root_run_id,omitempty"`     // optional: top-level orchestration run ID
+	ResponseFormat string `json:"response_format,omitempty"` // optional: hint prepended to message to control answer shape/verbosity
 }
 
 // QueryStream handles POST /api/projects/:projectId/query.
@@ -1180,6 +1182,11 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	}
 	if req.Branch != "" {
 		message = fmt.Sprintf("[Branch: %s]\n\n%s", req.Branch, message)
+	}
+	if req.ResponseFormat != "" {
+		// Append to user message so the LLM sees it as an immediate instruction
+		// before generating the final answer (system-only injection is ignored by some models).
+		message = message + "\n\n[Response format: " + req.ResponseFormat + "]"
 	}
 
 	// Accept parent/root run IDs from headers as well (for MCP tool callers that can't modify the body).
@@ -1304,7 +1311,7 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		return nil
 	}
 
-	queryResult := h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID)
+	queryResult := h.streamAgentChat(ctx, conv, message, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, req.ResponseFormat)
 	span.SetStatus(codes.Ok, "")
 	// Emit done event with run_id so callers (e.g. search-knowledge MCP tool) can trace the internal run.
 	var queryRunID string
@@ -1485,7 +1492,7 @@ func (h *Handler) AskStream(c echo.Context) error {
 		return nil
 	}
 
-	askResult := h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter, "", "")
+	askResult := h.streamAgentChat(ctx, conv, augmentedMessage, agentProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
 	span.SetStatus(codes.Ok, "")
 	sseWriter.WriteData(sse.NewDoneEvent())
 	sseWriter.Close()
@@ -1658,7 +1665,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	// goes directly to finalize-discovery (LLM can't skip the classification step).
 	var agentMessage string
 	if documentID != "" {
-		var classifiedStage, classifiedPackName string
+		var classifiedStage, classifiedPackName, classifiedSchemaID string
 		if h.domainClassifier != nil {
 			snap, classErr := h.domainClassifier.ClassifyDocument(ctx, projectID, documentID)
 			if classErr == nil {
@@ -1667,6 +1674,9 @@ func (h *Handler) RememberStream(c echo.Context) error {
 				if classifiedPackName == "" {
 					classifiedPackName = snap.Label
 				}
+				if snap.SchemaID != nil {
+					classifiedSchemaID = *snap.SchemaID
+				}
 			} else {
 				h.log.Warn("pre-classify failed, agent will classify",
 					slog.String("document_id", documentID),
@@ -1674,8 +1684,8 @@ func (h *Handler) RememberStream(c echo.Context) error {
 				)
 			}
 		}
-		agentMessage = fmt.Sprintf("document_id: %s\nschema_policy: %s\ndry_run: %v\nclassified_stage: %s\nclassified_pack_name: %s\n\n%s",
-			documentID, schemaPolicy, req.DryRun, classifiedStage, classifiedPackName, message)
+		agentMessage = fmt.Sprintf("document_id: %s\nschema_policy: %s\ndry_run: %v\nclassified_stage: %s\nclassified_pack_name: %s\nclassified_schema_id: %s\n\n%s",
+			documentID, schemaPolicy, req.DryRun, classifiedStage, classifiedPackName, classifiedSchemaID, message)
 	} else {
 		// Fallback (no docSvc injected): pass message directly so agent still runs.
 		agentMessage = fmt.Sprintf("schema_policy: %s\ndry_run: %v\n\n%s",
@@ -1859,7 +1869,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
 			return nil
 		}
-		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID)
+		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, "")
 		span.SetStatus(codes.Ok, "")
 		var rememberRunID string
 		if rememberResult != nil {

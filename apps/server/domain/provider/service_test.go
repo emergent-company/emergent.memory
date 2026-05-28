@@ -219,9 +219,7 @@ func TestResolveAny_NoContext_ReturnsNil(t *testing.T) {
 // expected order and will catch any future reordering.
 func TestResolveAny_PriorityOrder_VertexBeforeGoogleBeforeOpenAI(t *testing.T) {
 	// The expected resolution order: cloud providers first, local/self-hosted last.
-	// This order ensures that a Gemini model name is never accidentally routed to
-	// an OpenAI-compatible endpoint when a Google provider is also configured.
-	expectedOrder := []ProviderType{ProviderVertexAI, ProviderGoogleAI, ProviderOpenAICompatible}
+	expectedOrder := []ProviderType{ProviderDeepSeek, ProviderOpenAI, ProviderVertexAI, ProviderGoogleAI}
 
 	// Verify the constants have the expected string values (guards against rename bugs).
 	if ProviderVertexAI != "google-vertex" {
@@ -230,21 +228,20 @@ func TestResolveAny_PriorityOrder_VertexBeforeGoogleBeforeOpenAI(t *testing.T) {
 	if ProviderGoogleAI != "google" {
 		t.Errorf("ProviderGoogleAI = %q, want %q", ProviderGoogleAI, "google")
 	}
-	if ProviderOpenAICompatible != "openai-compatible" {
-		t.Errorf("ProviderOpenAICompatible = %q, want %q", ProviderOpenAICompatible, "openai-compatible")
+	if ProviderOpenAI != "openai" {
+		t.Errorf("ProviderOpenAI = %q, want %q", ProviderOpenAI, "openai")
+	}
+	if ProviderDeepSeek != "deepseek" {
+		t.Errorf("ProviderDeepSeek = %q, want %q", ProviderDeepSeek, "deepseek")
 	}
 
 	// Verify the order slice itself matches expectations.
-	// This is a compile-time-safe way to document and enforce the priority.
 	for i, p := range expectedOrder {
-		if i == 0 && p != ProviderVertexAI {
-			t.Errorf("position 0 = %q, want ProviderVertexAI", p)
+		if i == 0 && p != ProviderDeepSeek {
+			t.Errorf("position 0 = %q, want ProviderDeepSeek", p)
 		}
-		if i == 1 && p != ProviderGoogleAI {
-			t.Errorf("position 1 = %q, want ProviderGoogleAI", p)
-		}
-		if i == 2 && p != ProviderOpenAICompatible {
-			t.Errorf("position 2 = %q, want ProviderOpenAICompatible", p)
+		if i == 1 && p != ProviderOpenAI {
+			t.Errorf("position 1 = %q, want ProviderOpenAI", p)
 		}
 	}
 }

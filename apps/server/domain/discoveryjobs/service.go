@@ -80,15 +80,21 @@ func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, e
 	result := sb.String()
 	span.SetAttributes(attribute.Int("response_length", len(result)))
 	preview := result
-	if len(preview) > 500 {
-		preview = preview[:500]
+	if len(preview) > 2000 {
+		preview = preview[:2000]
 	}
 	span.SetAttributes(attribute.String("response_preview", preview))
+	// Also store the tail for debugging truncated responses
+	if len(result) > 2000 {
+		tail := result[len(result)-500:]
+		span.SetAttributes(attribute.String("response_tail", tail))
+	}
+	s.log.Debug("LLM raw response", slog.String("preview", preview), slog.Int("length", len(result)))
 	return result, nil
 }
 
 // StartDiscovery starts a new discovery job
-func (s *Service) StartDiscovery(ctx context.Context, projectID, orgID uuid.UUID, req *StartDiscoveryRequest) (*StartDiscoveryResponse, error) {
+func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *StartDiscoveryRequest) (*StartDiscoveryResponse, error) {
 	// Set defaults
 	if req.BatchSize <= 0 {
 		req.BatchSize = 5
@@ -98,6 +104,12 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID, orgID uuid.UUID
 	}
 	if req.MaxIterations <= 0 {
 		req.MaxIterations = 3
+	}
+
+	// Resolve org from project.
+	orgID, err := s.repo.GetProjectOrgID(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("StartDiscovery: resolve org: %w", err)
 	}
 
 	// Get KB purpose from project
@@ -119,7 +131,6 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID, orgID uuid.UUID
 	// Create job
 	job := &DiscoveryJob{
 		ID:             uuid.New(),
-		TenantID:       orgID, // Using orgID as tenantID for now
 		OrganizationID: orgID,
 		ProjectID:      projectID,
 		Status:         StatusPending,
@@ -202,12 +213,39 @@ func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 }
 
 // FinalizeDiscovery finalizes discovery and creates/extends a memory schema
-func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID uuid.UUID, req *FinalizeDiscoveryRequest) (*FinalizeDiscoveryResponse, error) {
+func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.UUID, req *FinalizeDiscoveryRequest) (*FinalizeDiscoveryResponse, error) {
 	s.log.Info("finalizing discovery",
 		slog.String("job_id", jobID.String()),
 		slog.String("mode", req.Mode),
 		slog.Int("types_count", len(req.IncludedTypes)),
 		slog.Int("relationships_count", len(req.IncludedRelationships)))
+
+	// Validate includedTypes against discovered candidates
+	job, err := s.repo.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("finalize: fetch job: %w", err)
+	}
+	if len(job.DiscoveredTypes) > 0 {
+		candidateNames := make(map[string]bool)
+		for _, raw := range job.DiscoveredTypes {
+			if m, ok := raw.(map[string]any); ok {
+				if name, ok := m["type_name"].(string); ok {
+					candidateNames[name] = true
+				}
+			}
+		}
+		var unknown []string
+		for _, t := range req.IncludedTypes {
+			if !candidateNames[t.TypeName] {
+				unknown = append(unknown, t.TypeName)
+			}
+		}
+		if len(unknown) > 0 {
+			s.log.Warn("finalize: included types not in discovered candidates",
+				slog.Any("unknown_types", unknown),
+				slog.String("job_id", jobID.String()))
+		}
+	}
 
 	// Build memory schema schemas
 	objectTypeSchemas := make(JSONMap)
@@ -254,7 +292,6 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID, orgID
 			DiscoveryJobID:          &jobID,
 			PendingReview:           false,
 			ProjectID:               &projectID,
-			OrgID:                   &orgID,
 		})
 		if err != nil {
 			return nil, err
@@ -626,10 +663,15 @@ func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose str
 
 Based on the documents provided, discover up to 20 important entity types that should be tracked in this knowledge base.
 
+Rules for type discovery:
+- Only create entity types for THINGS (nouns that have identity), not for actions, events, or relationships between things. For example, "ReportingRelationship" or "FoundingEvent" are NOT entity types — they are relationships and should be captured in the relationship discovery phase instead.
+- If a value appears as a distinct classifiable concept with multiple instances (e.g., a category like "Electronics", "Accessories", "Hardware"), treat it as a separate entity type — do NOT flatten it into a string property of another type.
+- Prefer fewer, cleaner types over many overlapping types. Merge similar types (e.g., "Employee" and "Person" → just "Person").
+
 For each type, provide:
 - type_name: A clear, singular name (e.g., "Customer", "Product", "Issue")
 - description: What this type represents
-- inferred_schema: A JSON schema describing the properties of this type
+- inferred_schema: A JSON schema describing the properties of this type. Properties that reference another entity type should use {"type": "string", "description": "reference to <TypeName>"} — do NOT embed the full object inline.
 - example_instances: 2-3 example instances from the documents
 - confidence: How confident you are about this type (0-1)
 - occurrences: Estimate how many times this type appears
@@ -652,9 +694,10 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
 }`, kbPurpose, combinedContent.String())
 }
 
-// parseTypeDiscoveryResponse parses the LLM response for type discovery
-func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType, error) {
-	// Clean response (remove markdown code blocks if present)
+// extractJSON strips prose and markdown fences, returning the JSON object found.
+// It preferentially finds an object containing the given key (e.g. "discovered_types").
+// Falls back to finding the last top-level '{' if the key is not found.
+func extractJSON(response, preferKey string) string {
 	response = strings.TrimSpace(response)
 	if strings.HasPrefix(response, "```json") {
 		response = strings.TrimPrefix(response, "```json")
@@ -669,6 +712,40 @@ func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType,
 	}
 	response = strings.TrimSpace(response)
 
+	// Prefer the last occurrence of preferKey — reasoning models often emit
+	// JSON-like fragments in their CoT before the real answer at the end.
+	if preferKey != "" {
+		keyPattern := `"` + preferKey + `"`
+		if idx := strings.LastIndex(response, keyPattern); idx >= 0 {
+			// Walk back to find the enclosing '{'
+			for i := idx - 1; i >= 0; i-- {
+				if response[i] == '{' {
+					candidate := strings.TrimSpace(response[i:])
+					// Trim trailing prose after last '}'
+					if end := strings.LastIndex(candidate, "}"); end >= 0 {
+						candidate = candidate[:end+1]
+					}
+					return candidate
+				}
+			}
+		}
+	}
+
+	// Fallback: find last '{' in response
+	if idx := strings.LastIndex(response, "{"); idx >= 0 {
+		candidate := strings.TrimSpace(response[idx:])
+		if end := strings.LastIndex(candidate, "}"); end >= 0 {
+			candidate = candidate[:end+1]
+		}
+		return candidate
+	}
+	return response
+}
+
+// parseTypeDiscoveryResponse parses the LLM response for type discovery
+func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType, error) {
+	response = extractJSON(response, "discovered_types")
+
 	var result struct {
 		DiscoveredTypes []struct {
 			TypeName         string         `json:"type_name"`
@@ -680,24 +757,68 @@ func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType,
 		} `json:"discovered_types"`
 	}
 
-	if err := json.Unmarshal([]byte(response), &result); err != nil {
+	if err := json.NewDecoder(strings.NewReader(response)).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	types := make([]DiscoveredType, len(result.DiscoveredTypes))
-	for i, t := range result.DiscoveredTypes {
-		types[i] = DiscoveredType{
+	var types []DiscoveredType
+	for _, t := range result.DiscoveredTypes {
+		if isReifiedType(t.TypeName) {
+			s.log.Warn("filtered reified type from discovery response",
+				slog.String("type_name", t.TypeName),
+			)
+			continue
+		}
+		types = append(types, DiscoveredType{
 			TypeName:           t.TypeName,
 			Description:        t.Description,
 			Confidence:         t.Confidence,
-			Properties:         t.InferredSchema,
+			Properties:         normalizePropertyCrossRefs(t.InferredSchema),
 			RequiredProperties: []string{},
 			ExampleInstances:   t.ExampleInstances,
 			Frequency:          t.Occurrences,
-		}
+		})
 	}
 
 	return types, nil
+}
+
+// isReifiedType returns true for type names that are relational concepts
+// masquerading as entity types (e.g. "ReportingRelationship", "EmployeeAssociation").
+// Only suffix-matches on unambiguously relational nouns to avoid false positives.
+func isReifiedType(name string) bool {
+	return strings.HasSuffix(name, "Relationship") || strings.HasSuffix(name, "Association")
+}
+
+// normalizePropertyCrossRefs walks an inferred_schema properties map and flattens
+// any embedded-object property (a nested map lacking a scalar "type" field) into
+// a string reference descriptor. This prevents downstream extraction failures caused
+// by the LLM embedding sub-objects instead of using string ID references.
+func normalizePropertyCrossRefs(properties map[string]any) map[string]any {
+	if properties == nil {
+		return nil
+	}
+	out := make(map[string]any, len(properties))
+	for k, v := range properties {
+		obj, ok := v.(map[string]any)
+		if !ok {
+			out[k] = v
+			continue
+		}
+		// If the map has a scalar "type" string value it's a JSON Schema leaf — keep it.
+		if typeVal, hasType := obj["type"]; hasType {
+			if _, isString := typeVal.(string); isString {
+				out[k] = v
+				continue
+			}
+		}
+		// Otherwise it's an embedded object — flatten to a string cross-reference.
+		out[k] = map[string]any{
+			"type":        "string",
+			"description": fmt.Sprintf("reference to %s", k),
+		}
+	}
+	return out
 }
 
 // refineAndMergeTypes refines and merges type candidates
@@ -904,9 +1025,16 @@ func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) Discove
 
 // discoverRelationships discovers relationships between types using LLM
 func (s *Service) discoverRelationships(ctx context.Context, jobID uuid.UUID, types []DiscoveredType, kbPurpose string) ([]DiscoveredRelationship, error) {
+	ctx, span := tracing.Start(ctx, "discovery.discover_relationships",
+		attribute.Int("type_count", len(types)),
+		attribute.String("job_id", jobID.String()),
+	)
+	defer span.End()
+
 	s.log.Info("discovering relationships", slog.Int("type_count", len(types)))
 
 	if s.modelFactory == nil {
+		span.SetAttributes(attribute.String("error", "modelFactory is nil"))
 		return nil, fmt.Errorf("LLM provider not configured")
 	}
 
@@ -949,16 +1077,21 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
 
 Focus on the most important relationships.`, kbPurpose, typesList.String())
 
+	span.SetAttributes(attribute.Int("prompt_length", len(prompt)))
 	response, err := s.completeWithLLM(ctx, prompt)
 	if err != nil {
+		span.SetAttributes(attribute.String("error", err.Error()))
 		return nil, fmt.Errorf("LLM call failed: %w", err)
 	}
+	span.SetAttributes(attribute.Int("response_length", len(response)))
 
 	// Parse response
 	relationships, err := s.parseRelationshipDiscoveryResponse(response)
 	if err != nil {
+		span.SetAttributes(attribute.String("error", fmt.Sprintf("parse: %s", err.Error())))
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
+	span.SetAttributes(attribute.Int("relationship_count_discovered", len(relationships)))
 
 	// Save relationships
 	relsArray := make(JSONArray, len(relationships))
@@ -982,20 +1115,7 @@ Focus on the most important relationships.`, kbPurpose, typesList.String())
 
 // parseRelationshipDiscoveryResponse parses the LLM response for relationship discovery
 func (s *Service) parseRelationshipDiscoveryResponse(response string) ([]DiscoveredRelationship, error) {
-	// Clean response
-	response = strings.TrimSpace(response)
-	if strings.HasPrefix(response, "```json") {
-		response = strings.TrimPrefix(response, "```json")
-		if idx := strings.LastIndex(response, "```"); idx >= 0 {
-			response = response[:idx]
-		}
-	} else if strings.HasPrefix(response, "```") {
-		response = strings.TrimPrefix(response, "```")
-		if idx := strings.LastIndex(response, "```"); idx >= 0 {
-			response = response[:idx]
-		}
-	}
-	response = strings.TrimSpace(response)
+	response = extractJSON(response, "discovered_relationships")
 
 	var result struct {
 		DiscoveredRelationships []struct {
@@ -1008,7 +1128,7 @@ func (s *Service) parseRelationshipDiscoveryResponse(response string) ([]Discove
 		} `json:"discovered_relationships"`
 	}
 
-	if err := json.Unmarshal([]byte(response), &result); err != nil {
+	if err := json.NewDecoder(strings.NewReader(response)).Decode(&result); err != nil {
 		return nil, err
 	}
 
@@ -1138,7 +1258,6 @@ type mcpDiscoveryFinalizeRequest struct {
 	JobID          string
 	DocumentID     string
 	ProjectID      string
-	OrgID          string
 	Mode           string
 	PackName       string
 	ExistingPackID string
@@ -1169,9 +1288,11 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 	if err != nil {
 		return nil, apperror.ErrBadRequest.WithMessage("invalid project_id")
 	}
-	orgID, err := uuid.Parse(r.OrgID)
+
+	// Resolve org from project
+	orgID, err := s.repo.GetProjectOrgID(ctx, projectUUID)
 	if err != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("invalid org_id")
+		return nil, fmt.Errorf("resolve org from project: %w", err)
 	}
 
 	// Resolve job ID: use explicit job_id, or create a minimal stub job from document_id.
@@ -1191,7 +1312,6 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectUUID)
 		stub := &DiscoveryJob{
 			ID:             uuid.New(),
-			TenantID:       orgID,
 			OrganizationID: orgID,
 			ProjectID:      projectUUID,
 			Status:         StatusCompleted,
@@ -1256,7 +1376,7 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 		inReq.IncludedRelationships = append(inReq.IncludedRelationships, ir)
 	}
 
-	resp, err := s.FinalizeDiscovery(ctx, jobID, projectUUID, orgID, inReq)
+	resp, err := s.FinalizeDiscovery(ctx, jobID, projectUUID, inReq)
 	if err != nil {
 		return nil, err
 	}
@@ -1364,21 +1484,14 @@ Return ONLY valid JSON with this exact structure:
 		span.SetAttributes(attribute.String("error", err.Error()))
 		return nil, fmt.Errorf("generateExtractionPrompts LLM call: %w", err)
 	}
-	span.SetAttributes(attribute.Int("raw_response_length", len(response)))
+	span.SetAttributes(
+		attribute.Int("raw_response_length", len(response)),
+		attribute.Int("prompt_length", len(prompt)),
+	)
 
-	// Strip markdown fences if present.
-	response = strings.TrimSpace(response)
-	if strings.HasPrefix(response, "```") {
-		if idx := strings.Index(response, "\n"); idx != -1 {
-			response = response[idx+1:]
-		}
-		// TrimRight handles trailing ``` with optional whitespace/newlines.
-		response = strings.TrimRight(response, " \t\n`")
-		response = strings.TrimSpace(response)
-	}
-
+	clean := extractJSON(response, "domainContext")
 	var prompts extractionPrompts
-	if err := json.Unmarshal([]byte(response), &prompts); err != nil {
+	if err := json.NewDecoder(strings.NewReader(clean)).Decode(&prompts); err != nil {
 		span.SetAttributes(attribute.String("error", fmt.Sprintf("parse: %s", err.Error())))
 		return nil, fmt.Errorf("generateExtractionPrompts parse response: %w", err)
 	}

@@ -161,7 +161,7 @@ func TestVarR_ExtractBench(t *testing.T) {
 		Temperature:     0,
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	modelFactory := adk.NewModelFactory(llmConfig, logger, nil, nil)
+	modelFactory := adk.NewModelFactory(llmConfig, logger, nil, nil, nil)
 
 	pipeline, err := NewExtractionPipeline(ExtractionPipelineConfig{
 		ModelFactory:    modelFactory,

@@ -109,8 +109,8 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 }
 
 // GetAvailablePacks returns schemas available for a project to install.
-// Only returns schemas owned by this project, or org-visible schemas from the same org.
-func (r *Repository) GetAvailablePacks(ctx context.Context, projectID, orgID string) ([]MemorySchemaListItem, error) {
+// Only returns schemas owned by this project that are not yet installed.
+func (r *Repository) GetAvailablePacks(ctx context.Context, projectID string) ([]MemorySchemaListItem, error) {
 	// Get IDs of packs already installed for this project
 	var installedIDs []string
 	err := r.db.NewSelect().
@@ -123,18 +123,17 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID, orgID str
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	// Get packs not installed for this project, scoped to project or org
+	// Get packs not installed for this project, scoped to project
 	var packs []MemorySchemaListItem
 	q := r.db.NewSelect().
 		Model((*GraphMemorySchema)(nil)).
-		Column("id", "name", "version", "description", "author", "visibility")
+		Column("id", "name", "version", "description", "author")
 
 	if len(installedIDs) > 0 {
 		q = q.Where("id NOT IN (?)", bun.In(installedIDs))
 	}
 
-	// Ownership filter: project-owned OR (same org AND org-visible)
-	q = q.Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID)
+	q = q.Where("project_id = ?", projectID)
 
 	err = q.Order("name ASC").Scan(ctx, &packs)
 	if err != nil {
@@ -580,8 +579,8 @@ func (r *Repository) DeleteAssignment(ctx context.Context, projectID, assignment
 	return nil
 }
 
-// CreatePack creates a new schema scoped to the given project and org
-func (r *Repository) CreatePack(ctx context.Context, projectID, orgID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
+// CreatePack creates a new schema scoped to the given project
+func (r *Repository) CreatePack(ctx context.Context, projectID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
 	objectTypeSchemas := req.GetObjectTypeSchemas()
 	relationshipTypeSchemas := req.GetRelationshipTypeSchemas()
 	uiConfigs := req.GetUIConfigs()
@@ -617,16 +616,10 @@ func (r *Repository) CreatePack(ctx context.Context, projectID, orgID string, re
 		Migrations:              req.Migrations,
 		Checksum:                &checksum,
 		ProjectID:               &projectID,
-		OrgID:                   &orgID,
-		Visibility:              req.Visibility,
 		Draft:                   false,
 		PublishedAt:             &now,
 		CreatedAt:               now,
 		UpdatedAt:               now,
-	}
-
-	if pack.Visibility == "" {
-		pack.Visibility = "project"
 	}
 
 	_, err := r.db.NewInsert().Model(pack).Returning("id, created_at, updated_at, published_at").Exec(ctx)
@@ -638,13 +631,13 @@ func (r *Repository) CreatePack(ctx context.Context, projectID, orgID string, re
 	return pack, nil
 }
 
-// GetPack returns a schema by ID if the caller has access (same project, same org with org visibility, or legacy)
-func (r *Repository) GetPack(ctx context.Context, packID, projectID, orgID string) (*GraphMemorySchema, error) {
+// GetPack returns a schema by ID if the caller owns it (same project)
+func (r *Repository) GetPack(ctx context.Context, packID, projectID string) (*GraphMemorySchema, error) {
 	var pack GraphMemorySchema
 	err := r.db.NewSelect().
 		Model(&pack).
 		Where("id = ?", packID).
-		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID).
+		Where("project_id = ?", projectID).
 		Scan(ctx)
 	if err != nil {
 		r.log.Error("failed to get schema", logger.Error(err))
@@ -655,10 +648,10 @@ func (r *Repository) GetPack(ctx context.Context, packID, projectID, orgID strin
 
 // UpdatePack partially updates a schema the caller owns.
 // Only non-nil / non-empty fields in req are applied.
-func (r *Repository) UpdatePack(ctx context.Context, packID, projectID, orgID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
+func (r *Repository) UpdatePack(ctx context.Context, packID, projectID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
 	// Fetch current record with ownership check
 	var pack GraphMemorySchema
-	err := r.db.NewSelect().Model(&pack).Where("id = ?", packID).Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID).Scan(ctx)
+	err := r.db.NewSelect().Model(&pack).Where("id = ?", packID).Where("project_id = ?", projectID).Scan(ctx)
 	if err != nil {
 		return nil, apperror.ErrNotFound.WithMessage("schema not found")
 	}
@@ -724,7 +717,7 @@ func (r *Repository) UpdatePack(ctx context.Context, packID, projectID, orgID st
 
 // DeletePack deletes a schema the caller owns from the registry.
 // Returns an error if the pack is assigned to any projects.
-func (r *Repository) DeletePack(ctx context.Context, packID, projectID, orgID string) error {
+func (r *Repository) DeletePack(ctx context.Context, packID, projectID string) error {
 	// Check if assigned to any projects
 	assignedCount, err := r.db.NewSelect().
 		Model((*ProjectMemorySchema)(nil)).
@@ -741,7 +734,7 @@ func (r *Repository) DeletePack(ctx context.Context, packID, projectID, orgID st
 	result, err := r.db.NewDelete().
 		Model((*GraphMemorySchema)(nil)).
 		Where("id = ?", packID).
-		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID).
+		Where("project_id = ?", projectID).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to delete schema", logger.Error(err))

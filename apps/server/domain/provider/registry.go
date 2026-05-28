@@ -24,7 +24,7 @@ type Registry struct {
 }
 
 // NewRegistry creates and returns a Registry pre-populated with the
-// supported providers: Google AI, Vertex AI, OpenAI-compatible, and DeepSeek.
+// supported providers: Google AI, Vertex AI, OpenAI, and DeepSeek.
 func NewRegistry() *Registry {
 	r := &Registry{
 		providers: make(map[ProviderType]*ProviderDefinition, 4),
@@ -50,13 +50,13 @@ func NewRegistry() *Registry {
 		},
 	}
 
-	r.providers[ProviderOpenAICompatible] = &ProviderDefinition{
-		Type:        ProviderOpenAICompatible,
-		DisplayName: "OpenAI-Compatible",
-		Description: "Any OpenAI-compatible LLM endpoint (Ollama, llama.cpp, vLLM, etc.)",
+	r.providers[ProviderOpenAI] = &ProviderDefinition{
+		Type:        ProviderOpenAI,
+		DisplayName: "OpenAI",
+		Description: "OpenAI API (GPT-4o, o1, etc.) authenticated via API key",
 		CredentialFields: []CredentialField{
-			{Name: "base_url", Description: "Base URL of the OpenAI-compatible API (e.g. http://localhost:11434/v1)", Required: true, Secret: false},
-			{Name: "api_key", Description: "API key (use any value for keyless local servers)", Required: false, Secret: true},
+			{Name: "api_key", Description: "OpenAI API key", Required: true, Secret: true},
+			{Name: "base_url", Description: "Base URL override (optional, defaults to https://api.openai.com/v1)", Required: false, Secret: false},
 		},
 	}
 

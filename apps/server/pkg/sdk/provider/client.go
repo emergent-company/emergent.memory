@@ -38,10 +38,10 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 type ProviderType = string
 
 const (
-	ProviderGoogleAI         ProviderType = "google"
-	ProviderVertexAI         ProviderType = "google-vertex"
-	ProviderOpenAICompatible ProviderType = "openai-compatible"
-	ProviderDeepSeek         ProviderType = "deepseek"
+	ProviderGoogleAI ProviderType = "google"
+	ProviderVertexAI ProviderType = "google-vertex"
+	ProviderOpenAI   ProviderType = "openai"
+	ProviderDeepSeek ProviderType = "deepseek"
 )
 
 // ModelType classifies a model.

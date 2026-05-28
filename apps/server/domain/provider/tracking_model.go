@@ -86,8 +86,14 @@ func (m *TrackingModel) GenerateContent(
 				continue
 			}
 			// Only record usage on the final, complete response.
-			if resp != nil && !resp.Partial && resp.UsageMetadata != nil {
-				m.recordUsage(ctx, req, resp)
+			if resp != nil && !resp.Partial {
+				if resp.UsageMetadata == nil {
+					m.log.Debug("trackingModel: final response has nil UsageMetadata — skipping",
+						"model", m.inner.Name(),
+					)
+				} else {
+					m.recordUsage(ctx, req, resp)
+				}
 			}
 		}
 	}

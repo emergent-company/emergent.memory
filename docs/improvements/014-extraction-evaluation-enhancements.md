@@ -1,6 +1,10 @@
 # Improvement Suggestion: Extraction Evaluation Enhancements
 
-**Status:** Proposed  
+> **Deprecated.** Superseded by [`docs/evaluation/discovery-extraction-locomo.md`](../evaluation/discovery-extraction-locomo.md).
+> TypeScript references in this document are incorrect — extraction is Go-only.
+> Go extraction eval now lives in `tests/experiments/extraction_eval_test.go`.
+
+**Status:** Deprecated  
 **Priority:** Medium  
 **Category:** Testing / Developer Experience  
 **Proposed:** 2025-12-07  

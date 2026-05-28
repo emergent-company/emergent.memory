@@ -58,7 +58,7 @@ type AgentRunDTO struct {
 	// Model used for this run (resolved at execution time)
 	Model string `json:"model,omitempty"`
 
-	// Provider identifies the LLM provider used (e.g. "google", "google-vertex", "openai-compatible").
+	// Provider identifies the LLM provider used (e.g. "google", "google-vertex", "openai", "deepseek").
 	Provider string `json:"provider,omitempty"`
 
 	// Token usage aggregated from kb.llm_usage_events for this run.
@@ -319,6 +319,10 @@ type AgentDefinitionDTO struct {
 	ToolPolicies   map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	CreatedAt      time.Time             `json:"createdAt"`
 	UpdatedAt      time.Time             `json:"updatedAt"`
+	// EffectiveModel is the resolved generative model that will be used when
+	// this definition runs (project config → org config → env default).
+	// Only populated on GET /agent-definitions/:id, not on list endpoints.
+	EffectiveModel string `json:"effectiveModel,omitempty"`
 }
 
 // AgentDefinitionSummaryDTO is a lightweight DTO for listing agent definitions

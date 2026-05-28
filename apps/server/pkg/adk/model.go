@@ -21,62 +21,93 @@ var Module = fx.Module("adk",
 	fx.Provide(provideModelFactory),
 )
 
-// modelFactoryParams allows optional injection of a CredentialResolver and
-// ModelWrapper via fx.
+// modelFactoryParams allows optional injection of a CredentialResolver,
+// ModelWrapper, and ModelResolver via fx.
 type modelFactoryParams struct {
 	fx.In
 
-	Cfg      *config.Config
-	Log      *slog.Logger
-	Resolver CredentialResolver `optional:"true"`
-	Wrapper  ModelWrapper       `optional:"true"`
+	Cfg           *config.Config
+	Log           *slog.Logger
+	Resolver      CredentialResolver `optional:"true"`
+	Wrapper       ModelWrapper       `optional:"true"`
+	ModelResolver ModelResolver      `optional:"true"`
 }
 
 // provideModelFactory creates a ModelFactory from the main config, with an
-// optional CredentialResolver and ModelWrapper injected by domain/provider.Module.
+// optional CredentialResolver, ModelWrapper, and ModelResolver injected by
+// domain/provider.Module and domain/modelconfig.Module.
 func provideModelFactory(p modelFactoryParams) *ModelFactory {
-	return NewModelFactory(&p.Cfg.LLM, p.Log, p.Resolver, p.Wrapper)
+	return NewModelFactory(&p.Cfg.LLM, p.Log, p.Resolver, p.Wrapper, p.ModelResolver)
 }
 
 // ModelFactory creates ADK-compatible LLM models from configuration.
 type ModelFactory struct {
-	cfg      *config.LLMConfig
-	log      *slog.Logger
-	resolver CredentialResolver // optional; nil → env-var-only mode
-	wrapper  ModelWrapper       // optional; nil → no usage tracking
+	cfg           *config.LLMConfig
+	log           *slog.Logger
+	resolver      CredentialResolver // optional; nil → env-var-only mode
+	wrapper       ModelWrapper       // optional; nil → no usage tracking
+	modelResolver ModelResolver      // optional; nil → env default only
 }
 
 // NewModelFactory creates a new ModelFactory with the given configuration.
 // resolver may be nil for env-var-only setups (tests, local dev without DB creds).
 // wrapper may be nil; when provided it wraps every created model with usage tracking.
-func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger, resolver CredentialResolver, wrapper ModelWrapper) *ModelFactory {
+// modelResolver may be nil; when provided it resolves the effective model name per project.
+func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger, resolver CredentialResolver, wrapper ModelWrapper, modelResolver ModelResolver) *ModelFactory {
 	return &ModelFactory{
-		cfg:      cfg,
-		log:      log,
-		resolver: resolver,
-		wrapper:  wrapper,
+		cfg:           cfg,
+		log:           log,
+		resolver:      resolver,
+		wrapper:       wrapper,
+		modelResolver: modelResolver,
 	}
 }
 
-// CreateModel creates an ADK-compatible Gemini model for Vertex AI.
+// CreateModel creates an ADK-compatible LLM model.
 //
-// The model uses Vertex AI backend with the configured GCP project and location.
-// If the configuration is missing required fields, an error is returned.
+// Model resolution order for the default (no explicit model name):
+//  1. ModelResolver.ResolveGenerativeModelByID — project → org → env chain (DB-backed)
+//  2. env-var default (DEEPSEEK_MODEL / OPENAI_MODEL / VERTEX_AI_MODEL)
+//
+// The resolved model name must include a provider prefix (e.g. "deepseek/deepseek-v4-flash").
 func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
-	return f.CreateModelWithName(ctx, f.cfg.Model)
+	defaultModel := f.cfg.Model
+	if f.modelResolver != nil {
+		if projectID := ProjectIDFromContext(ctx); projectID != "" {
+			resolved, source, err := f.modelResolver.ResolveGenerativeModelByID(ctx, projectID)
+			if err != nil {
+				f.log.Warn("model resolver returned error, using env default",
+					slog.String("projectID", projectID),
+					slog.String("error", err.Error()),
+				)
+			} else if resolved != "" {
+				f.log.Debug("resolved generative model",
+					slog.String("model", resolved),
+					slog.String("source", source),
+					slog.String("projectID", projectID),
+				)
+				defaultModel = resolved
+			}
+		}
+	}
+	return f.CreateModelWithName(ctx, defaultModel)
 }
 
 // CreateModelWithName creates an ADK-compatible Gemini model with a specific model name.
 //
-// This allows overriding the default model for specific use cases (e.g., using
-// a different model for extraction vs verification).
+// modelName MUST include a provider prefix (e.g. "deepseek/deepseek-v4-flash",
+// "openai/gpt-4o", "google/gemini-2.5-flash", "google-vertex/gemini-2.5-flash").
+// Bare model names without a slash are rejected.
 //
 // Credential resolution order:
 //  1. If a CredentialResolver is configured, resolve per-request credentials from
 //     the DB hierarchy (project → org → env). This is the production path when
 //     domain/provider.Module is registered.
-//  2. Fall back to static env-var config (GCP_PROJECT_ID+VERTEX_AI_LOCATION or
-//     GOOGLE_API_KEY). Used in tests and env-var-only setups.
+//  2. Fall back to per-provider env vars:
+//     DeepSeek: DEEPSEEK_API_KEY
+//     OpenAI:   OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
+//     Google:   GOOGLE_API_KEY
+//     Vertex:   GCP_PROJECT_ID + VERTEX_AI_LOCATION
 //
 // If a ModelWrapper is configured the returned LLM is wrapped for usage tracking.
 func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string) (model.LLM, error) {
@@ -84,28 +115,22 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		return nil, fmt.Errorf("model name is required")
 	}
 
-	// Parse optional provider prefix: "google-vertex/gemini-2.5-flash" → provider="google-vertex", model="gemini-2.5-flash"
-	// Bare model names (no slash) use ResolveAny as before.
+	// Require provider prefix: "provider/model-name"
 	providerHint, bareModel, hasPrefix := strings.Cut(modelName, "/")
 	if !hasPrefix {
-		bareModel = modelName
-		providerHint = ""
+		return nil, fmt.Errorf("model name %q must include a provider prefix (e.g. deepseek/deepseek-v4-flash, openai/gpt-4o, google/gemini-2.5-flash)", modelName)
 	}
 
 	// --- 1. DB credential resolution (project/org hierarchy) ---
 	if f.resolver != nil {
 		var cred *ResolvedCredential
 		var err error
-		if providerHint != "" {
-			cred, err = f.resolver.ResolveFor(ctx, providerHint)
-		} else {
-			cred, err = f.resolver.ResolveAny(ctx)
-		}
+		cred, err = f.resolver.ResolveFor(ctx, providerHint)
 		if err != nil {
 			// Only fall through to env-var config when env vars are actually
-			// configured. Otherwise the credential error (decryption failure,
-			// DB error, etc.) would be masked as "no LLM credentials configured".
-			hasEnvFallback := f.cfg.UseVertexAI() || f.cfg.GoogleAPIKey != ""
+			// configured. Otherwise the credential error would be masked.
+			hasEnvFallback := f.cfg.UseVertexAI() || f.cfg.GoogleAPIKey != "" ||
+				f.cfg.DeepSeekAPIKey != "" || f.cfg.OpenAIAPIKey != ""
 			if hasEnvFallback {
 				f.log.Warn("credential resolver returned error, falling back to env config",
 					slog.String("error", err.Error()),
@@ -114,40 +139,27 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 				return nil, fmt.Errorf("LLM credential resolution failed: %w", err)
 			}
 		} else if cred != nil {
-			// Prefer the DB-stored credential model, then fall back to the caller's
-			// bareModel (from agent definition or per-run override).
-			// When the caller supplies a provider-prefixed name (e.g. "deepseek/deepseek-chat"),
-			// hasPrefix is true and bareModel is the specific model — honour it.
-			// When the caller supplies a bare name without a provider prefix it is
-			// typically the env-var default (e.g. "gemini-3.1-flash-lite-preview") which
-			// should be overridden by the project/org credential's stored model.
-			// No further fallback — if neither is set, error so the misconfiguration is explicit.
-			resolvedModel := ""
-			if hasPrefix {
-				// Explicit provider+model from caller — always honour it.
-				resolvedModel = bareModel
-			} else if cred.GenerativeModel != "" {
-				// DB-stored model from project/org config takes precedence over env default.
+			// Explicit provider+model from caller — always honour bareModel.
+			// Fall back to DB-stored model if caller somehow passed empty bare portion.
+			resolvedModel := bareModel
+			if resolvedModel == "" {
 				resolvedModel = cred.GenerativeModel
-			} else {
-				// Fall back to env default bare model name.
-				resolvedModel = bareModel
 			}
 			if resolvedModel == "" {
-				return nil, fmt.Errorf("no model configured: agent definition has no model and provider credential has no generative model stored — configure a model explicitly")
+				return nil, fmt.Errorf("no model configured: model name has no model portion and provider credential has no generative model stored")
 			}
 
-			if cred.IsOpenAICompatible {
-				f.log.Debug("creating ADK model via OpenAI-compatible endpoint (DB cred)",
+			switch cred.Provider {
+			case "openai", "deepseek":
+				f.log.Debug("creating ADK model via OpenAI-protocol endpoint (DB cred)",
 					slog.String("model", resolvedModel),
-					slog.String("baseURL", cred.OpenAIBaseURL),
+					slog.String("baseURL", cred.BaseURL),
+					slog.String("provider", cred.Provider),
 					slog.String("source", cred.Source),
 				)
-				llm := NewOpenAICompatibleModel(cred.OpenAIBaseURL, cred.APIKey, resolvedModel)
-				return f.wrapModel(llm, "openai-compatible"), nil
-			}
-
-			if cred.IsVertexAI {
+				llm := NewOpenAICompatibleModel(cred.BaseURL, cred.APIKey, resolvedModel)
+				return f.wrapModel(llm, cred.Provider), nil
+			case "google-vertex":
 				clientCfg := &genai.ClientConfig{
 					Backend:  genai.BackendVertexAI,
 					Project:  cred.GCPProject,
@@ -177,9 +189,7 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 					return nil, fmt.Errorf("failed to create Gemini model via Vertex AI (DB cred): %w", err)
 				}
 				return f.wrapModel(llm, "google-vertex"), nil
-			}
-
-			if cred.IsGoogleAI && cred.APIKey != "" {
+			case "google":
 				clientCfg := &genai.ClientConfig{
 					Backend: genai.BackendGeminiAPI,
 					APIKey:  cred.APIKey,
@@ -198,66 +208,102 @@ func (f *ModelFactory) CreateModelWithName(ctx context.Context, modelName string
 		// cred == nil means no DB credential found — fall through to env vars
 	}
 
-	// --- 2. Static env-var fallback ---
-	// Try OpenAI-compatible env-var config first (explicit config wins).
-	if f.cfg.OpenAIBaseURL != "" {
-		modelToUse := f.cfg.OpenAIModel
-		if modelToUse == "" {
-			return nil, fmt.Errorf("model name is required: set LLM_MODEL when using OPENAI_BASE_URL")
-		}
-		f.log.Debug("creating ADK model via OpenAI-compatible endpoint (env config)",
-			slog.String("model", modelToUse),
-			slog.String("baseURL", f.cfg.OpenAIBaseURL),
-		)
-		llm := NewOpenAICompatibleModel(f.cfg.OpenAIBaseURL, f.cfg.OpenAIAPIKey, modelToUse)
-		return f.wrapModel(llm, "openai-compatible"), nil
+	// --- 2. Per-provider env-var fallback ---
+	switch providerHint {
+	case "deepseek":
+		return f.createDeepSeekEnv(bareModel)
+	case "openai":
+		return f.createOpenAIEnv(bareModel)
+	case "google-vertex":
+		return f.createVertexAIEnv(ctx, bareModel)
+	case "google":
+		return f.createGoogleAIEnv(ctx, bareModel)
+	default:
+		return nil, fmt.Errorf("unsupported provider %q in model name %q — supported providers: deepseek, openai, google, google-vertex", providerHint, modelName)
 	}
+}
 
-	// Try Vertex AI first (production), then fall back to Google AI API key (standalone/dev)
-	if f.cfg.UseVertexAI() {
-		clientCfg := &genai.ClientConfig{
-			Backend:  genai.BackendVertexAI,
-			Project:  f.cfg.GCPProjectID,
-			Location: f.cfg.VertexAILocation,
-		}
-		f.log.Debug("creating ADK Gemini model via Vertex AI (env config)",
-			slog.String("model", bareModel),
-			slog.String("project", f.cfg.GCPProjectID),
-			slog.String("location", f.cfg.VertexAILocation),
-		)
-
-		llm, err := gemini.NewModel(ctx, bareModel, clientCfg)
-		if err == nil {
-			return f.wrapModel(llm, "google-vertex"), nil
-		}
-
-		// If Vertex AI fails and we have an API key, fall back
-		if f.cfg.GoogleAPIKey != "" {
-			f.log.Warn("Vertex AI model creation failed, falling back to Google AI API key",
-				slog.String("error", err.Error()),
-			)
-		} else {
-			return nil, fmt.Errorf("failed to create Gemini model: %w", err)
-		}
+// createDeepSeekEnv creates a model from DEEPSEEK_API_KEY env var.
+func (f *ModelFactory) createDeepSeekEnv(bareModel string) (model.LLM, error) {
+	if f.cfg.DeepSeekAPIKey == "" {
+		return nil, fmt.Errorf("DEEPSEEK_API_KEY is not set")
 	}
-
-	if f.cfg.GoogleAPIKey != "" {
-		clientCfg := &genai.ClientConfig{
-			Backend: genai.BackendGeminiAPI,
-			APIKey:  f.cfg.GoogleAPIKey,
+	if bareModel == "" {
+		// Strip prefix from DeepSeekModel env var if it was set with provider prefix
+		m := f.cfg.DeepSeekModel
+		if _, stripped, ok := strings.Cut(m, "/"); ok {
+			m = stripped
 		}
-		f.log.Debug("creating ADK Gemini model via Google AI (env config)",
-			slog.String("model", bareModel),
-		)
-
-		llm, err := gemini.NewModel(ctx, bareModel, clientCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Gemini model via Google AI: %w", err)
-		}
-		return f.wrapModel(llm, "google"), nil
+		bareModel = m
 	}
+	if bareModel == "" {
+		return nil, fmt.Errorf("model name is required: set DEEPSEEK_MODEL (e.g. deepseek/deepseek-v4-flash)")
+	}
+	f.log.Debug("creating ADK model via DeepSeek (env config)", slog.String("model", bareModel))
+	llm := NewOpenAICompatibleModel("https://api.deepseek.com/v1", f.cfg.DeepSeekAPIKey, bareModel)
+	return f.wrapModel(llm, "deepseek"), nil
+}
 
-	return nil, fmt.Errorf("no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints")
+// createOpenAIEnv creates a model from OPENAI_API_KEY env var.
+func (f *ModelFactory) createOpenAIEnv(bareModel string) (model.LLM, error) {
+	if f.cfg.OpenAIAPIKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
+	}
+	if bareModel == "" {
+		m := f.cfg.OpenAIModel
+		if _, stripped, ok := strings.Cut(m, "/"); ok {
+			m = stripped
+		}
+		bareModel = m
+	}
+	if bareModel == "" {
+		return nil, fmt.Errorf("model name is required: set OPENAI_MODEL (e.g. openai/gpt-4o)")
+	}
+	baseURL := f.cfg.OpenAIBaseURL
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	f.log.Debug("creating ADK model via OpenAI (env config)",
+		slog.String("model", bareModel),
+		slog.String("baseURL", baseURL),
+	)
+	llm := NewOpenAICompatibleModel(baseURL, f.cfg.OpenAIAPIKey, bareModel)
+	return f.wrapModel(llm, "openai"), nil
+}
+
+// createVertexAIEnv creates a model from env-var Vertex AI config.
+func (f *ModelFactory) createVertexAIEnv(ctx context.Context, bareModel string) (model.LLM, error) {
+	clientCfg := &genai.ClientConfig{
+		Backend:  genai.BackendVertexAI,
+		Project:  f.cfg.GCPProjectID,
+		Location: f.cfg.VertexAILocation,
+	}
+	f.log.Debug("creating ADK Gemini model via Vertex AI (env config)",
+		slog.String("model", bareModel),
+		slog.String("project", f.cfg.GCPProjectID),
+		slog.String("location", f.cfg.VertexAILocation),
+	)
+	llm, err := gemini.NewModel(ctx, bareModel, clientCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Gemini model: %w", err)
+	}
+	return f.wrapModel(llm, "google-vertex"), nil
+}
+
+// createGoogleAIEnv creates a model from env-var Google AI API key config.
+func (f *ModelFactory) createGoogleAIEnv(ctx context.Context, bareModel string) (model.LLM, error) {
+	clientCfg := &genai.ClientConfig{
+		Backend: genai.BackendGeminiAPI,
+		APIKey:  f.cfg.GoogleAPIKey,
+	}
+	f.log.Debug("creating ADK Gemini model via Google AI (env config)",
+		slog.String("model", bareModel),
+	)
+	llm, err := gemini.NewModel(ctx, bareModel, clientCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Gemini model via Google AI: %w", err)
+	}
+	return f.wrapModel(llm, "google"), nil
 }
 
 // wrapModel applies the optional ModelWrapper to the given LLM.

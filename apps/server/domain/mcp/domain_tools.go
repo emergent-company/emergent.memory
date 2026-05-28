@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -63,7 +62,6 @@ type DiscoveryFinalizeRequest struct {
 	JobID          string
 	DocumentID     string
 	ProjectID      string
-	OrgID          string
 	Mode           string
 	PackName       string
 	ExistingPackID string
@@ -235,11 +233,6 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 
 	jobIDStr, _ := args["job_id"].(string)
 	documentIDStr, _ := args["document_id"].(string)
-	orgIDStr, _ := args["org_id"].(string)
-	// Fall back to auth context if arg is missing or not a valid UUID
-	if orgIDStr == "" {
-		orgIDStr = auth.OrgIDFromContext(ctx)
-	}
 	mode, _ := args["mode"].(string)
 	packName, _ := args["pack_name"].(string)
 	existingPackIDStr, _ := args["existing_pack_id"].(string)
@@ -321,7 +314,6 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 		JobID:          jobIDStr,
 		DocumentID:     documentIDStr,
 		ProjectID:      projectID,
-		OrgID:          orgIDStr,
 		Mode:           mode,
 		PackName:       packName,
 		ExistingPackID: existingPackIDStr,

@@ -571,8 +571,8 @@ const graphQueryAgentSystemPrompt = `You are a knowledge graph query assistant. 
 1. ALWAYS use tools to look up data. Never answer from training data or fabricate entities, relationships, or facts.
 2. Cite specific entity names, types, and relationship types from tool results.
 3. If tools return no results, clearly state that no matching data was found.
-4. Format responses using markdown. Use tables for structured data.
-5. Keep responses concise and factual.
+4. Format responses as plain text. Do NOT use markdown, bold, bullet points, headers, or tables unless explicitly requested.
+5. Keep responses concise and factual. Answer the question directly in as few words as possible. Do not add context, explanation, or narrative unless asked.
 6. Start with search-hybrid for most queries. Use entity-query to list by type. Use entity-edges-get to explore relationships.
 
 ## Context budget and field selection
@@ -627,15 +627,11 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 	}
 
 	if existing != nil {
-		// Self-heal: update tools, system prompt, model, and sandbox config to pick up
-		// any changes deployed in code.
+		// Self-heal: update tools, system prompt, and max steps to pick up
+		// any changes deployed in code. Do NOT overwrite the model — let whatever
+		// is explicitly set persist, and fall back to the project default when empty.
 		existing.Tools = canonicalTools
 		existing.SystemPrompt = &systemPrompt
-		if existing.Model == nil {
-			existing.Model = &ModelConfig{}
-		}
-		existing.Model.Name = "gemini-3.1-flash-lite-preview"
-		existing.Model.Temperature = &temperature
 		existing.MaxSteps = &maxSteps
 		// Clear sandbox config — this agent uses MCP tools, not SDK/sandbox.
 		existing.SandboxConfig = nil
@@ -660,7 +656,7 @@ func (r *Repository) EnsureGraphQueryAgent(ctx context.Context, projectID string
 		Description:  strPtr("Knowledge graph query assistant — explores data via MCP tools"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
-			Name:        "gemini-3.1-flash-lite-preview",
+			Name:        "",
 			Temperature: &temperature,
 		},
 		Tools:      canonicalTools,
@@ -1099,7 +1095,7 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		if existing.Model == nil {
 			existing.Model = &ModelConfig{}
 		}
-		existing.Model.Name = "gemini-3.1-flash-lite-preview"
+		existing.Model.Name = ""
 		existing.Model.Temperature = &temperature
 		existing.MaxSteps = &maxSteps
 		// Clear sandbox config — this agent uses MCP tools, not SDK/sandbox.
@@ -1125,7 +1121,7 @@ func (r *Repository) EnsureCliAssistantAgent(ctx context.Context, projectID stri
 		Description:  strPtr("CLI and platform assistant — answers documentation questions and executes tasks using available tools"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
-			Name:        "gemini-3.1-flash-lite-preview",
+			Name:        "",
 			Temperature: &temperature,
 		},
 		Tools:      canonicalTools,
@@ -1344,7 +1340,7 @@ func (r *Repository) EnsureCliAssistantAgentV2(ctx context.Context, projectID st
 		if existing.Model == nil {
 			existing.Model = &ModelConfig{}
 		}
-		existing.Model.Name = "gemini-3.1-flash-lite-preview"
+		existing.Model.Name = ""
 		if sandboxMap != nil {
 			existing.SandboxConfig = sandboxMap
 		}
@@ -1360,7 +1356,7 @@ func (r *Repository) EnsureCliAssistantAgentV2(ctx context.Context, projectID st
 		Description:  strPtr("CLI assistant v2 — code-generation mode using Python SDK scripts"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
-			Name:        "gemini-3.1-flash-lite-preview",
+			Name:        "",
 			Temperature: &temperature,
 		},
 		Tools:         canonicalTools,

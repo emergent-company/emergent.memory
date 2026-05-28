@@ -150,14 +150,23 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 				user.ProjectID = user.APITokenProjectID
 			}
 
-			// If authenticated via API token and OrgID is not set via header,
-			// resolve it from the token's project to avoid empty org_id errors.
-			if user.OrgID == "" && user.APITokenProjectID != "" {
+			// If OrgID is not set via header, resolve it from the project ID.
+			// This handles standalone mode (no API token) and API token auth.
+			projectIDForOrg := user.ProjectID
+			if projectIDForOrg == "" {
+				projectIDForOrg = user.APITokenProjectID
+			}
+			// Last resort: use the :projectId URL path param (e.g. /api/projects/:projectId/remember).
+			// This covers standalone mode where neither header nor token carries a project ID.
+			if projectIDForOrg == "" {
+				projectIDForOrg = c.Param("projectId")
+			}
+			if user.OrgID == "" && projectIDForOrg != "" {
 				var orgID string
 				err := m.db.NewSelect().
 					TableExpr("kb.projects").
 					Column("organization_id").
-					Where("id = ?", user.APITokenProjectID).
+					Where("id = ?", projectIDForOrg).
 					Scan(c.Request().Context(), &orgID)
 				if err == nil && orgID != "" {
 					user.OrgID = orgID

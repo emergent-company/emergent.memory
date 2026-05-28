@@ -38,6 +38,10 @@ type ObjectExtractionWorkerConfig struct {
 
 	// MaxRetries is the max number of relationship extraction retries. Default: 3.
 	MaxRetries uint
+
+	// SkipStagingBranch disables per-job staging branches.
+	// When true, extracted objects are written directly to the main graph.
+	SkipStagingBranch bool
 }
 
 // DefaultObjectExtractionWorkerConfig returns default worker configuration.
@@ -209,6 +213,10 @@ func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *Obje
 	// per-project LLM provider configuration (e.g. Vertex AI credentials).
 	if job.ProjectID != "" {
 		ctx = auth.ContextWithProjectID(ctx, job.ProjectID)
+		// Also inject org ID so usage tracking can record cost against the correct org.
+		if orgID, err := w.jobsService.GetProjectOrgID(ctx, job.ProjectID); err == nil && orgID != "" {
+			ctx = auth.ContextWithOrgID(ctx, orgID)
+		}
 	}
 
 	w.log.Info("processing extraction job",
@@ -305,7 +313,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	// Create a staging branch so extracted objects are isolated from the main
 	// graph until a reviewer explicitly merges them.
 	var stagingBranchID *uuid.UUID
-	if w.branchService != nil {
+	if w.branchService != nil && !w.config.SkipStagingBranch {
 		branchName := w.stagingBranchName(job)
 		desc := fmt.Sprintf("Extraction job %s", job.ID)
 		if job.DocumentID != nil {

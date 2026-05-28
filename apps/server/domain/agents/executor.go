@@ -155,6 +155,11 @@ type ExecuteRequest struct {
 	// set_session_title can update session metadata during execution.
 	ACPSessionID string
 
+	// SystemPromptAppendix is appended to the resolved system instruction at execution time.
+	// Use this to inject per-call constraints (e.g. response format, verbosity) without
+	// modifying the persisted agent definition. It is never written to the DB.
+	SystemPromptAppendix string
+
 	// UserID is the authenticated user who initiated this run (empty for system/background runs).
 	// Passed to ask_user tool so notifications target the correct user.
 	UserID string
@@ -2220,6 +2225,19 @@ func (ae *AgentExecutor) runPipeline(
 
 			if event.IsFinalResponse() {
 				lastEvent = event
+				// Emit final text response to the stream callback so callers receive
+				// token events for the agent's answer. Thought/reasoning parts are
+				// skipped — only the actual response text is streamed.
+				if event.Content != nil && req.StreamCallback != nil {
+					for _, part := range event.Content.Parts {
+						if part != nil && part.Text != "" && !part.Thought {
+							req.StreamCallback(StreamEvent{
+								Type: StreamEventTextDelta,
+								Text: part.Text,
+							})
+						}
+					}
+				}
 			}
 
 			// Track the last non-partial event that carries text — used as fallback
@@ -2712,6 +2730,10 @@ func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
 
 	if appendix := ae.buildSkillsSystemPrompt(req); appendix != "" {
 		inst += "\n\n" + appendix
+	}
+
+	if req.SystemPromptAppendix != "" {
+		inst += "\n\n" + req.SystemPromptAppendix
 	}
 
 	return inst

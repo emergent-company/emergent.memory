@@ -17,10 +17,11 @@ type ResolvedCredential struct {
 	Location           string
 	ServiceAccountJSON string
 	GenerativeModel    string
-	// IsOpenAICompatible is true when the credential is for an OpenAI-compatible endpoint.
-	IsOpenAICompatible bool
-	// OpenAIBaseURL is the base URL for OpenAI-compatible endpoints (e.g. http://localhost:11434/v1).
-	OpenAIBaseURL string
+	// BaseURL is the HTTP endpoint for OpenAI-protocol providers (openai, deepseek).
+	BaseURL string
+	// Provider is the canonical provider name: "google", "google-vertex", "openai", "deepseek".
+	// Used for dispatching model creation and recording usage events.
+	Provider string
 	// Source describes where the credential was resolved from (project/organization/environment).
 	// Informational only; used for logging and tracing.
 	Source string
@@ -44,13 +45,23 @@ type ModelLimitResolver interface {
 	GetInputLimit(ctx context.Context) (int, error)
 }
 
+// ModelResolver resolves the effective generative model name for a project.
+// Implemented by domain/modelconfig.Service via an adapter to avoid import cycles.
+// When injected into ModelFactory it takes precedence over the env-var default.
+type ModelResolver interface {
+	// ResolveGenerativeModel returns the effective model name and source
+	// for the given project UUID string.
+	// projectID must be a valid UUID string; returns env default when not found.
+	ResolveGenerativeModelByID(ctx context.Context, projectID string) (model string, source string, err error)
+}
+
 // Implemented by domain/provider.UsageTrackerAdapter to avoid an import cycle:
 // pkg/adk cannot import domain/provider, so the adapter satisfies this interface
 // and is injected optionally via fx.
 //
-// The provider parameter is one of "google" or "google-vertex" (the string values
-// of domain/provider.ProviderType). It is passed as a plain string to avoid
-// exporting domain types through this package.
+// The provider parameter is one of "google", "google-vertex", "openai", "deepseek"
+// (the string values of domain/provider.ProviderType). It is passed as a plain
+// string to avoid exporting domain types through this package.
 type ModelWrapper interface {
 	WrapModel(inner adkmodel.LLM, provider string) adkmodel.LLM
 }

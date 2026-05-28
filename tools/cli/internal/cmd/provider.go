@@ -34,18 +34,18 @@ on success. Models are auto-selected from the catalog if not specified.
 Supported providers:
   google            — Google AI (Gemini API); requires --api-key
   google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
-  openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
+  openai             — OpenAI API; requires --api-key
   deepseek          — DeepSeek AI models; requires --api-key
 
 Examples:
   memory provider configure google --api-key AIzaSy...
   memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
-  memory provider configure openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
+  memory provider configure openai --api-key sk-...
   memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
   memory provider configure deepseek --api-key sk-...
   memory provider configure deepseek --api-key sk-... --generative-model deepseek-v4-flash`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai-compatible", "deepseek"},
+	ValidArgs: []string{"google", "google-vertex", "openai", "deepseek"},
 	RunE:      runProviderConfigure,
 }
 
@@ -102,18 +102,12 @@ func runProviderConfigure(cmd *cobra.Command, args []string) error {
 		req.GCPProject = configureGCPProject
 		req.Location = configureLocation
 
-	case provider.ProviderOpenAICompatible:
+	case provider.ProviderOpenAI:
 		if configureAPIKey == "" {
-			return fmt.Errorf("--api-key is required for openai-compatible")
-		}
-		if configureBaseURL == "" {
-			return fmt.Errorf("--base-url is required for openai-compatible")
-		}
-		if configureGenerativeModel == "" {
-			return fmt.Errorf("--generative-model is required for openai-compatible")
+			return fmt.Errorf("--api-key is required for openai")
 		}
 		req.APIKey = configureAPIKey
-		req.BaseURL = configureBaseURL
+		req.BaseURL = configureBaseURL // optional, overrides default https://api.openai.com/v1
 
 	case provider.ProviderDeepSeek:
 		if configureAPIKey == "" {
@@ -122,7 +116,7 @@ func runProviderConfigure(cmd *cobra.Command, args []string) error {
 		req.APIKey = configureAPIKey
 
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai-compatible, or deepseek", providerArg)
+		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai, or deepseek", providerArg)
 	}
 
 	fmt.Printf("Configuring %s for org %s...\n", providerArg, orgID)
@@ -155,7 +149,7 @@ Use --remove to remove the project-level override and fall back to the org confi
 Supported providers:
   google            — Google AI (Gemini API); requires --api-key
   google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
-  openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
+  openai             — OpenAI API; requires --api-key
   deepseek          — DeepSeek AI models; requires --api-key
 
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
@@ -163,11 +157,11 @@ The project is read from --project or the MEMORY_PROJECT_ID environment variable
 Examples:
   memory provider configure-project google --api-key AIzaSy...
   memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
-  memory provider configure-project openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
+  memory provider configure-project openai --api-key sk-...
   memory provider configure-project deepseek --api-key sk-... --generative-model deepseek-v4-flash
   memory provider configure-project google --remove`,
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai-compatible", "deepseek"},
+	ValidArgs: []string{"google", "google-vertex", "openai", "deepseek"},
 	RunE:      runProviderConfigureProject,
 }
 
@@ -237,18 +231,12 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 		req.GCPProject = configureProjectGCPProject
 		req.Location = configureProjectLocation
 
-	case provider.ProviderOpenAICompatible:
+	case provider.ProviderOpenAI:
 		if configureProjectAPIKey == "" {
-			return fmt.Errorf("--api-key is required for openai-compatible")
-		}
-		if configureProjectBaseURL == "" {
-			return fmt.Errorf("--base-url is required for openai-compatible")
-		}
-		if configureProjectGenerativeModel == "" {
-			return fmt.Errorf("--generative-model is required for openai-compatible")
+			return fmt.Errorf("--api-key is required for openai")
 		}
 		req.APIKey = configureProjectAPIKey
-		req.BaseURL = configureProjectBaseURL
+		req.BaseURL = configureProjectBaseURL // optional
 
 	case provider.ProviderDeepSeek:
 		if configureProjectAPIKey == "" {
@@ -257,7 +245,7 @@ func runProviderConfigureProject(cmd *cobra.Command, args []string) error {
 		req.APIKey = configureProjectAPIKey
 
 	default:
-		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai-compatible, or deepseek", providerArg)
+		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai, or deepseek", providerArg)
 	}
 
 	fmt.Printf("Configuring %s for project %s...\n", providerArg, projectID)
@@ -296,7 +284,7 @@ Examples:
   memory provider models google --type generative
   memory provider models deepseek`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai-compatible", "deepseek"},
+	ValidArgs: []string{"google", "google-vertex", "openai", "deepseek"},
 	RunE:      runProviderModels,
 }
 
@@ -690,7 +678,7 @@ Examples:
   memory provider test google-vertex
   memory provider test google --project <id>`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai-compatible", "deepseek"},
+	ValidArgs: []string{"google", "google-vertex", "openai", "deepseek"},
 	RunE:      runProviderTest,
 }
 

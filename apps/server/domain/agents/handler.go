@@ -22,20 +22,31 @@ import (
 
 // Handler handles HTTP requests for agents
 type Handler struct {
-	repo         *Repository
-	executor     *AgentExecutor // may be nil in tests
-	rateLimiter  *WebhookRateLimiter
-	tempoBaseURL string        // internal Tempo query URL; empty when tracing disabled
-	pricing      pricingLookup // optional; nil when provider repo not available
-	usage        usageLookup   // optional; nil when provider repo not available
-	providerRepo *provider.Repository
-	sandboxStore sandboxStoreLookup
+	repo          *Repository
+	executor      *AgentExecutor // may be nil in tests
+	rateLimiter   *WebhookRateLimiter
+	tempoBaseURL  string        // internal Tempo query URL; empty when tracing disabled
+	pricing       pricingLookup // optional; nil when provider repo not available
+	usage         usageLookup   // optional; nil when provider repo not available
+	providerRepo  *provider.Repository
+	sandboxStore  sandboxStoreLookup
+	modelResolver modelResolverLookup // optional; nil when modelconfig not available
 }
 
 // usageLookup is the internal interface for looking up project spend.
 type usageLookup interface {
 	CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error)
 }
+
+// ModelResolverLookup is the interface for resolving the effective generative
+// model for a project. Implemented by domain/modelconfig.Service via an adapter.
+// Exported so that domain/modelconfig can wire it in without an import cycle.
+type ModelResolverLookup interface {
+	ResolveGenerativeModelByID(ctx context.Context, projectID string) (model string, source string, err error)
+}
+
+// modelResolverLookup is kept as an internal alias for use within this package.
+type modelResolverLookup = ModelResolverLookup
 
 // sandboxStoreLookup is the internal interface for looking up sandbox records by session ID.
 type sandboxStoreLookup interface {
@@ -51,6 +62,11 @@ type pricingLookup interface {
 // NewHandler creates a new agents handler
 func NewHandler(repo *Repository, executor *AgentExecutor, rateLimiter *WebhookRateLimiter, tempoBaseURL string, pricing pricingLookup, usage usageLookup, providerRepo *provider.Repository, sandboxStore sandboxStoreLookup) *Handler {
 	return &Handler{repo: repo, executor: executor, rateLimiter: rateLimiter, tempoBaseURL: tempoBaseURL, pricing: pricing, usage: usage, providerRepo: providerRepo, sandboxStore: sandboxStore}
+}
+
+// WithModelResolver attaches a model resolver to the handler (called from fx Invoke).
+func (h *Handler) WithModelResolver(mr modelResolverLookup) {
+	h.modelResolver = mr
 }
 
 // getWorkspaceInfo loads sandbox details for a run, returning nil if unavailable.
@@ -1324,7 +1340,22 @@ func (h *Handler) GetDefinition(c echo.Context) error {
 		return apperror.NewNotFound("AgentDefinition", id)
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(def.ToDTO()))
+	dto := def.ToDTO()
+
+	// Enrich with effective model (project → org → env resolution).
+	if h.modelResolver != nil {
+		resolved, _, err := h.modelResolver.ResolveGenerativeModelByID(c.Request().Context(), def.ProjectID)
+		if err == nil && resolved != "" {
+			// Per-agent override takes precedence over resolved default.
+			if dto.Model == nil || dto.Model.Name == "" {
+				dto.EffectiveModel = resolved
+			} else {
+				dto.EffectiveModel = dto.Model.Name
+			}
+		}
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
 
 // CreateDefinition handles POST /api/projects/:projectId/agent-definitions
@@ -1353,7 +1384,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 	}
 
 	if dto.Model != nil && dto.Model.Name != "" && !strings.Contains(dto.Model.Name, "/") {
-		return apperror.NewBadRequest(`model.name must include a provider prefix, e.g. "openai-compatible/model-name" or "google/gemini-2.5-flash"`)
+		return apperror.NewBadRequest(`model.name must include a provider prefix, e.g. "deepseek/deepseek-v4-flash" or "google/gemini-2.5-flash"`)
 	}
 
 	// Set defaults
@@ -1449,7 +1480,7 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 
 	if dto.Model != nil && dto.Model.Name != "" && !strings.Contains(dto.Model.Name, "/") {
-		return apperror.NewBadRequest(`model.name must include a provider prefix, e.g. "openai-compatible/model-name" or "google/gemini-2.5-flash"`)
+		return apperror.NewBadRequest(`model.name must include a provider prefix, e.g. "deepseek/deepseek-v4-flash" or "google/gemini-2.5-flash"`)
 	}
 
 	var projectID *string
