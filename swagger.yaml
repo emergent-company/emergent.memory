@@ -17,17 +17,53 @@ definitions:
       created_at:
         type: string
       history:
-        description: |-
-          History contains ordered URL references to run event streams.
-          Each URL points to GET /acp/v1/agents/:name/runs/:runId/events.
+        description: History contains runs with their full inlined event log.
         items:
-          type: string
+          $ref: '#/definitions/domain_agents.ACPSessionRun'
         type: array
       id:
         type: string
+      is_archived:
+        description: IsArchived indicates the session is archived and excluded from
+          default list results.
+        type: boolean
+      last_run_status:
+        description: LastRunStatus is the ACP status of the most recent run in this
+          session, if any.
+        type: string
+      message_count:
+        description: MessageCount is the number of user messages in this session.
+        type: integer
+      run_count:
+        description: RunCount is the number of runs (user turns) in this session.
+        type: integer
       title:
         type: string
+      total_cost_usd:
+        description: TotalCostUSD is the estimated total cost in USD across all runs.
+        type: number
+      total_tokens:
+        description: TotalTokens is the total number of input+output tokens consumed
+          across all runs.
+        type: integer
       updated_at:
+        type: string
+    type: object
+  domain_agents.ACPSessionRun:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      events:
+        items:
+          $ref: '#/definitions/domain_agents.ACPSSEEvent'
+        type: array
+      run_id:
+        type: string
+      status:
+        type: string
+      trigger_message:
         type: string
     type: object
   domain_agents.APIResponse-any:
@@ -257,6 +293,9 @@ definitions:
         type: string
       response:
         type: string
+      resumeRunId:
+        description: new run ID created on resume
+        type: string
       runId:
         type: string
       status:
@@ -323,7 +362,7 @@ definitions:
         type: string
       provider:
         description: Provider identifies the LLM provider used (e.g. "google", "google-vertex",
-          "openai-compatible").
+          "openai", "deepseek").
         type: string
       resumedFrom:
         type: string
@@ -365,12 +404,12 @@ definitions:
     type: object
   domain_agents.AgentRunStatus:
     enum:
-    - queued
-    - running
-    - success
+    - submitted
+    - working
+    - completed
     - skipped
-    - error
-    - paused
+    - failed
+    - input-required
     - cancelled
     - cancelling
     type: string
@@ -540,6 +579,12 @@ definitions:
     type: object
   domain_agents.RunTokenUsage:
     properties:
+      cachedTokens:
+        description: |-
+          CachedTokens is the number of input tokens served from the provider's
+          prompt cache (e.g. Google context caching). These are already counted
+          within TotalInputTokens but are broken out here for cost analysis.
+        type: integer
       estimatedCostUsd:
         type: number
       model:
@@ -736,6 +781,16 @@ definitions:
       tokenPrefix:
         type: string
     type: object
+  domain_apitoken.UpdateApiTokenScopesRequest:
+    properties:
+      scopes:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - scopes
+    type: object
   domain_authinfo.IssuerResponse:
     properties:
       issuer:
@@ -923,6 +978,11 @@ definitions:
     type: object
   domain_chat.Conversation:
     properties:
+      acpSessionId:
+        description: |-
+          ACPSessionID links this conversation to its backing kb.acp_sessions row.
+          Created on first agent-backed stream; reused on subsequent turns.
+        type: string
       agentDefinitionId:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
@@ -962,6 +1022,11 @@ definitions:
     type: object
   domain_chat.ConversationWithMessages:
     properties:
+      acpSessionId:
+        description: |-
+          ACPSessionID links this conversation to its backing kb.acp_sessions row.
+          Created on first agent-backed stream; reused on subsequent turns.
+        type: string
       agentDefinitionId:
         description: 'Agent-backed chat: links conversation to an agent definition
           for tool-calling capabilities'
@@ -1055,6 +1120,8 @@ definitions:
         type: string
       message:
         maxLength: 100000
+        type: string
+      namespace:
         type: string
     required:
     - message
@@ -1438,6 +1505,9 @@ definitions:
         description: Computed fields (populated via JOIN/subquery, not stored in documents
           table)
         type: integer
+      classificationSignals:
+        additionalProperties: {}
+        type: object
       content:
         description: Content
         type: string
@@ -1452,6 +1522,11 @@ definitions:
         type: string
       createdAt:
         description: Timestamps
+        type: string
+      domainConfidence:
+        type: number
+      domainName:
+        description: Domain classification (Phase 3)
         type: string
       embeddedChunks:
         type: integer
@@ -1690,21 +1765,6 @@ definitions:
       type:
         type: string
     type: object
-  domain_graph.AppendMessageRequest:
-    properties:
-      content:
-        type: string
-      extraProps:
-        additionalProperties: {}
-        type: object
-      role:
-        type: string
-      tokenCount:
-        type: integer
-      toolCalls:
-        items: {}
-        type: array
-    type: object
   domain_graph.BranchMergeRequest:
     properties:
       conflict_strategy:
@@ -1722,10 +1782,14 @@ definitions:
     type: object
   domain_graph.BulkActionFilter:
     properties:
+      created_after:
+        type: string
       labels:
         items:
           type: string
         type: array
+      namespace:
+        type: string
       property_filters:
         items:
           $ref: '#/definitions/domain_graph.PropertyFilter'
@@ -1923,6 +1987,9 @@ definitions:
           type: string
         maxItems: 32
         type: array
+      namespace:
+        maxLength: 128
+        type: string
       properties:
         additionalProperties: {}
         type: object
@@ -1940,6 +2007,9 @@ definitions:
       branch_id:
         type: string
       dst_id:
+        type: string
+      label:
+        maxLength: 256
         type: string
       properties:
         additionalProperties: {}
@@ -1963,15 +2033,6 @@ definitions:
     - dst_id
     - src_id
     - type
-    type: object
-  domain_graph.CreateSessionRequest:
-    properties:
-      agentVersion:
-        type: string
-      summary:
-        type: string
-      title:
-        type: string
     type: object
   domain_graph.CreateSubgraphRequest:
     properties:
@@ -2131,6 +2192,8 @@ definitions:
       created_at:
         description: Timestamps
         type: string
+      delete_reason:
+        type: string
       deleted_at:
         type: string
       external_id:
@@ -2166,6 +2229,8 @@ definitions:
           additionalProperties: {}
           type: object
         type: array
+      namespace:
+        type: string
       needs_review:
         type: boolean
       org_id:
@@ -2235,6 +2300,8 @@ definitions:
         items:
           type: string
         type: array
+      namespace:
+        type: string
       org_id:
         type: string
       project_id:
@@ -2271,6 +2338,8 @@ definitions:
       created_at:
         description: Timestamps
         type: string
+      delete_reason:
+        type: string
       deleted_at:
         type: string
       dst:
@@ -2278,6 +2347,8 @@ definitions:
       dst_id:
         type: string
       id:
+        type: string
+      label:
         type: string
       project_id:
         type: string
@@ -2327,6 +2398,8 @@ definitions:
         description: |-
           InverseRelationship is populated when an inverse relationship was auto-created
           based on the template pack's inverseType declaration.
+      label:
+        type: string
       project_id:
         type: string
       properties:
@@ -2362,6 +2435,8 @@ definitions:
         type: number
       limit:
         type: integer
+      namespace:
+        type: string
       offset:
         type: integer
       query:
@@ -2384,141 +2459,6 @@ definitions:
         type: number
     required:
     - query
-    type: object
-  domain_graph.ImportSessionMessageRequest:
-    properties:
-      content:
-        type: string
-      role:
-        description: user, assistant, system (optional)
-        type: string
-      speaker:
-        description: participant name
-        type: string
-      timestamp:
-        description: RFC3339
-        type: string
-    type: object
-  domain_graph.ImportSessionRequest:
-    properties:
-      date:
-        description: RFC3339 session date
-        type: string
-      labels:
-        items:
-          type: string
-        type: array
-      messages:
-        items:
-          $ref: '#/definitions/domain_graph.ImportSessionMessageRequest'
-        type: array
-      metadata:
-        additionalProperties: {}
-        description: arbitrary extra properties on Session
-        type: object
-      participants:
-        description: participant names
-        items:
-          type: string
-        type: array
-      session_id:
-        description: used as object key for idempotency
-        type: string
-      title:
-        description: defaults to session_id
-        type: string
-      trigger_extraction:
-        type: boolean
-    type: object
-  domain_graph.ImportSessionResponse:
-    properties:
-      extraction_job_id:
-        type: string
-      message_count:
-        type: integer
-      session_id:
-        description: object canonical_id
-        type: string
-    type: object
-  domain_graph.ListMessagesResponse:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/domain_graph.GraphObjectResponse'
-        type: array
-      nextCursor:
-        type: string
-      total:
-        type: integer
-    type: object
-  domain_graph.ListSessionsResponse:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/domain_graph.GraphObjectResponse'
-        type: array
-      nextCursor:
-        type: string
-      total:
-        type: integer
-    type: object
-  domain_graph.MessageResponse:
-    properties:
-      branch_id:
-        type: string
-      canonical_id:
-        type: string
-      change_summary:
-        additionalProperties: {}
-        type: object
-      content_hash:
-        type: string
-      created_at:
-        type: string
-      deleted_at:
-        type: string
-      external_id:
-        type: string
-      external_parent_id:
-        type: string
-      external_source:
-        description: External source fields for data sync
-        type: string
-      external_updated_at:
-        type: string
-      external_url:
-        type: string
-      id:
-        type: string
-      key:
-        type: string
-      labels:
-        items:
-          type: string
-        type: array
-      org_id:
-        type: string
-      project_id:
-        type: string
-      properties:
-        additionalProperties: {}
-        type: object
-      relationship_count:
-        type: integer
-      revision_count:
-        type: integer
-      schema_version:
-        type: string
-      status:
-        type: string
-      supersedes_id:
-        type: string
-      synced_at:
-        type: string
-      type:
-        type: string
-      version:
-        type: integer
     type: object
   domain_graph.MostAccessedResponse:
     properties:
@@ -2568,6 +2508,9 @@ definitions:
     type: object
   domain_graph.PatchGraphRelationshipRequest:
     properties:
+      label:
+        maxLength: 256
+        type: string
       properties:
         additionalProperties: {}
         type: object
@@ -2612,8 +2555,13 @@ definitions:
     type: object
   domain_graph.ReindexEmbeddingsResponse:
     properties:
-      enqueued:
-        description: Enqueued is the number of object embedding jobs newly inserted.
+      objects_enqueued:
+        description: ObjectsEnqueued is the number of object embedding jobs newly
+          inserted.
+        type: integer
+      relationships_enqueued:
+        description: RelationshipsEnqueued is the number of relationship embedding
+          jobs newly inserted.
         type: integer
     type: object
   domain_graph.SearchWithNeighborsRequest:
@@ -2640,83 +2588,6 @@ definitions:
         type: array
     required:
     - query
-    type: object
-  domain_graph.SessionResponse:
-    properties:
-      branch_id:
-        type: string
-      canonical_id:
-        type: string
-      change_summary:
-        additionalProperties: {}
-        type: object
-      content_hash:
-        type: string
-      created_at:
-        type: string
-      deleted_at:
-        type: string
-      external_id:
-        type: string
-      external_parent_id:
-        type: string
-      external_source:
-        description: External source fields for data sync
-        type: string
-      external_updated_at:
-        type: string
-      external_url:
-        type: string
-      id:
-        type: string
-      key:
-        type: string
-      labels:
-        items:
-          type: string
-        type: array
-      org_id:
-        type: string
-      project_id:
-        type: string
-      properties:
-        additionalProperties: {}
-        type: object
-      relationship_count:
-        type: integer
-      revision_count:
-        type: integer
-      schema_version:
-        type: string
-      status:
-        type: string
-      supersedes_id:
-        type: string
-      synced_at:
-        type: string
-      type:
-        type: string
-      version:
-        type: integer
-    type: object
-  domain_graph.SpawnSessionRequest:
-    properties:
-      forkContext:
-        type: boolean
-      maxMessages:
-        description: 0 = use default (50)
-        type: integer
-      summary:
-        type: string
-      title:
-        type: string
-    type: object
-  domain_graph.SpawnSessionResponse:
-    properties:
-      forkedMessages:
-        type: integer
-      session:
-        $ref: '#/definitions/domain_graph.SessionResponse'
     type: object
   domain_graph.SubgraphObjectRequest:
     properties:
@@ -3412,6 +3283,45 @@ definitions:
       version:
         type: string
     type: object
+  domain_modelconfig.EffectiveModelConfig:
+    properties:
+      embeddingModel:
+        type: string
+      embeddingModelSource:
+        $ref: '#/definitions/domain_modelconfig.ModelSource'
+      generativeModel:
+        type: string
+      generativeModelSource:
+        $ref: '#/definitions/domain_modelconfig.ModelSource'
+    type: object
+  domain_modelconfig.ModelConfigResponse:
+    properties:
+      createdAt:
+        type: string
+      embeddingModel:
+        type: string
+      generativeModel:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  domain_modelconfig.ModelSource:
+    enum:
+    - project
+    - org
+    - env
+    type: string
+    x-enum-varnames:
+    - ModelSourceProject
+    - ModelSourceOrg
+    - ModelSourceEnv
+  domain_modelconfig.UpsertModelConfigRequest:
+    properties:
+      embeddingModel:
+        type: string
+      generativeModel:
+        type: string
+    type: object
   domain_monitoring.ExtractionJobDetailDTO:
     properties:
       completed_at:
@@ -3425,6 +3335,8 @@ definitions:
       error_message:
         type: string
       id:
+        type: string
+      job_type:
         type: string
       llm_calls:
         items:
@@ -3490,6 +3402,8 @@ definitions:
       error_message:
         type: string
       id:
+        type: string
+      job_type:
         type: string
       objects_created:
         type: integer
@@ -3829,6 +3743,12 @@ definitions:
         type: string
       id:
         type: string
+      main_branch_id:
+        description: |-
+          MainBranchID is the UUID of the project's root branch (parent_branch_id IS NULL).
+          Callers can use this as targetBranchID when merging without knowing the branch UUID,
+          or pass the magic string "main" to the merge endpoint directly.
+        type: string
       name:
         type: string
       orgId:
@@ -3924,6 +3844,8 @@ definitions:
         type: string
       totalAudio:
         type: integer
+      totalCached:
+        type: integer
       totalImage:
         type: integer
       totalOutput:
@@ -4000,14 +3922,25 @@ definitions:
     enum:
     - google
     - google-vertex
-    - openai-compatible
+    - openai
     - deepseek
     type: string
     x-enum-varnames:
     - ProviderGoogleAI
     - ProviderVertexAI
-    - ProviderOpenAICompatible
+    - ProviderOpenAI
     - ProviderDeepSeek
+  domain_provider.TestProjectProviderResponse:
+    properties:
+      latencyMs:
+        type: integer
+      model:
+        type: string
+      provider:
+        type: string
+      reply:
+        type: string
+    type: object
   domain_provider.TestProviderResponse:
     properties:
       latencyMs:
@@ -4055,6 +3988,8 @@ definitions:
         $ref: '#/definitions/domain_provider.ProviderType'
       totalAudio:
         type: integer
+      totalCached:
+        type: integer
       totalImage:
         type: integer
       totalOutput:
@@ -4084,6 +4019,8 @@ definitions:
       provider:
         $ref: '#/definitions/domain_provider.ProviderType'
       totalAudio:
+        type: integer
+      totalCached:
         type: integer
       totalImage:
         type: integer
@@ -4962,9 +4899,6 @@ definitions:
         type: array
       version:
         type: string
-      visibility:
-        description: 'Visibility controls schema scope: "project" (default) or "organization".'
-        type: string
     type: object
   domain_schemas.GraphMemorySchema:
     properties:
@@ -4998,8 +4932,6 @@ definitions:
         items:
           type: integer
         type: array
-      orgId:
-        type: string
       projectId:
         type: string
       publishedAt:
@@ -5020,8 +4952,6 @@ definitions:
         type: string
       version:
         type: string
-      visibility:
-        type: string
     type: object
   domain_schemas.InstalledSchemaItem:
     properties:
@@ -5032,6 +4962,10 @@ definitions:
         type: object
       description:
         type: string
+      extractionPrompts:
+        items:
+          type: integer
+        type: array
       id:
         description: assignment ID
         type: string
@@ -5055,8 +4989,6 @@ definitions:
       name:
         type: string
       version:
-        type: string
-      visibility:
         type: string
     type: object
   domain_schemas.MigrateRequest:
@@ -5470,6 +5402,16 @@ definitions:
       text:
         type: integer
     type: object
+  domain_search.RelationshipNodeInfo:
+    properties:
+      key:
+        type: string
+      object_type:
+        type: string
+      properties:
+        additionalProperties: {}
+        type: object
+    type: object
   domain_search.ScoreStats:
     properties:
       max:
@@ -5597,6 +5539,9 @@ definitions:
         type: integer
       maxTokenBudget:
         type: integer
+      namespace:
+        description: filter graph results by namespace
+        type: string
       query:
         maxLength: 800
         type: string
@@ -5667,8 +5612,12 @@ definitions:
         type: string
       source_id:
         type: string
+      source_object:
+        $ref: '#/definitions/domain_search.RelationshipNodeInfo'
       target_id:
         type: string
+      target_object:
+        $ref: '#/definitions/domain_search.RelationshipNodeInfo'
       triplet_text:
         type: string
       truncated_fields:
@@ -6636,7 +6585,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.40.80
+  version: 0.41.117
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -6699,6 +6648,28 @@ paths:
       summary: Get run event log
       tags:
       - acp
+  /acp/v1/sessions:
+    get:
+      description: Returns a list of all ACP sessions for the project, ordered by
+        creation time descending.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_agents.ACPSessionObject'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List ACP sessions
+      tags:
+      - acp
   /acp/v1/sessions/{sessionId}:
     get:
       description: Returns an ACP session descriptor. The `history` field contains
@@ -6736,6 +6707,58 @@ paths:
       summary: Get ACP session
       tags:
       - acp
+  /acp/v1/sessions/{sessionId}/archive:
+    patch:
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_agents.ACPSessionObject'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Archive a session
+      tags:
+      - ACP Sessions
+  /acp/v1/sessions/{sessionId}/unarchive:
+    patch:
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_agents.ACPSessionObject'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Unarchive a session
+      tags:
+      - ACP Sessions
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:
       consumes:
@@ -8437,6 +8460,48 @@ paths:
       summary: Recreate document chunks
       tags:
       - chunking
+  /api/documents/{id}/retry-extraction:
+    post:
+      consumes:
+      - application/json
+      description: Re-queues the most recent failed or dead_letter extraction job
+        for a document
+      parameters:
+      - description: Project ID
+        in: header
+        name: X-Project-ID
+        required: true
+        type: string
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Retry document extraction
+      tags:
+      - documents
   /api/documents/deletion-impact:
     post:
       consumes:
@@ -8561,6 +8626,12 @@ paths:
       responses: {}
   /api/embeddings/progress:
     get:
+      responses: {}
+  /api/embeddings/queue:
+    delete:
+      responses: {}
+  /api/embeddings/reset-schedule:
+    post:
       responses: {}
   /api/embeddings/resume:
     post:
@@ -8707,11 +8778,17 @@ paths:
     get:
       consumes:
       - application/json
-      description: Returns all branches, optionally filtered by project
+      description: 'Returns branches for the current project. Project is resolved
+        from (in priority order): ?project_id query param, X-Project-ID header, API
+        token project binding.'
       parameters:
-      - description: Filter by project ID (UUID)
+      - description: Filter by project ID (UUID); overrides X-Project-ID header
         in: query
         name: project_id
+        type: string
+      - description: Project ID (used when project_id query param is absent)
+        in: header
+        name: X-Project-ID
         type: string
       produces:
       - application/json
@@ -10299,6 +10376,15 @@ paths:
         name: project_id
         required: true
         type: string
+      - description: Limit to objects/relationships whose key starts with this namespace
+          prefix
+        in: query
+        name: namespace
+        type: string
+      - description: 'Re-enqueue even if embedding already exists (default: false)'
+        in: query
+        name: force
+        type: boolean
       produces:
       - application/json
       responses:
@@ -10306,7 +10392,7 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/domain_graph.ReindexEmbeddingsResponse'
-      summary: Reindex missing embeddings
+      summary: Reindex embeddings
       tags:
       - graph
   /api/graph/relationships:
@@ -10788,297 +10874,6 @@ paths:
       summary: Search with graph neighbors
       tags:
       - graph
-  /api/graph/sessions:
-    get:
-      description: Returns a paginated list of Session objects for the project.
-      parameters:
-      - description: 'Max results (default: 20)'
-        in: query
-        name: limit
-        type: integer
-      - description: Pagination cursor
-        in: query
-        name: cursor
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_graph.ListSessionsResponse'
-        "400":
-          description: Invalid parameters
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List sessions
-      tags:
-      - sessions
-    post:
-      consumes:
-      - application/json
-      description: Creates a new Session graph object to track an AI agent conversation.
-      parameters:
-      - description: Session creation parameters
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_graph.CreateSessionRequest'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/domain_graph.SessionResponse'
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Create a session
-      tags:
-      - sessions
-  /api/graph/sessions/{id}:
-    get:
-      description: Returns a Session graph object by its ID.
-      parameters:
-      - description: Session ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_graph.SessionResponse'
-        "400":
-          description: Invalid ID
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Session not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get a session
-      tags:
-      - sessions
-  /api/graph/sessions/{id}/messages:
-    get:
-      description: Returns a paginated list of Message objects belonging to a session,
-        ordered by sequence_number ascending.
-      parameters:
-      - description: Session ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: 'Max results (default: 50)'
-        in: query
-        name: limit
-        type: integer
-      - description: Pagination cursor
-        in: query
-        name: cursor
-        type: string
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_graph.ListMessagesResponse'
-        "400":
-          description: Invalid parameters
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Session not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List messages in a session
-      tags:
-      - sessions
-    post:
-      consumes:
-      - application/json
-      description: Atomically creates a Message object and links it to the session
-        via a has_message relationship. Assigns sequence_number automatically.
-      parameters:
-      - description: Session ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Message parameters
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_graph.AppendMessageRequest'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/domain_graph.MessageResponse'
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Session not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Append a message to a session
-      tags:
-      - sessions
-  /api/graph/sessions/{id}/spawn:
-    post:
-      consumes:
-      - application/json
-      description: Creates a child session linked to the parent via a spawned_from
-        relationship. When forkContext is true, the parent's message history is copied
-        into the child as a snapshot.
-      parameters:
-      - description: Parent Session ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Spawn parameters
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_graph.SpawnSessionRequest'
-      - description: Project ID
-        in: header
-        name: X-Project-ID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/domain_graph.SpawnSessionResponse'
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Parent session not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Spawn a child session
-      tags:
-      - sessions
-  /api/graph/sessions/import:
-    post:
-      consumes:
-      - application/json
-      description: Atomically creates a Session object and all Message objects with
-        has_message relationships in a single transaction. Pass session_id for idempotent
-        re-imports.
-      parameters:
-      - description: Project ID
-        in: query
-        name: project_id
-        required: true
-        type: string
-      - description: Import payload
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/domain_graph.ImportSessionRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/domain_graph.ImportSessionResponse'
-        "400":
-          description: Invalid parameters
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Bulk import a conversation session
-      tags:
-      - sessions
   /api/graph/subgraph:
     post:
       consumes:
@@ -13130,6 +12925,59 @@ paths:
       security:
       - bearerAuth: []
       summary: Get API token by ID
+      tags:
+      - api-tokens
+    patch:
+      consumes:
+      - application/json
+      description: Updates the scopes of a non-revoked project API token
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Token ID (UUID)
+        in: path
+        name: tokenId
+        required: true
+        type: string
+      - description: New scopes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_apitoken.UpdateApiTokenScopesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated token
+          schema:
+            $ref: '#/definitions/domain_apitoken.ApiTokenDTO'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Token not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update API token scopes
       tags:
       - api-tokens
   /api/schema-registry/projects/{projectId}:
@@ -15666,6 +15514,51 @@ paths:
       summary: Get account API token by ID
       tags:
       - api-tokens
+    patch:
+      consumes:
+      - application/json
+      description: Updates the scopes of a non-revoked account-level API token owned
+        by the authenticated user
+      parameters:
+      - description: Token ID (UUID)
+        in: path
+        name: tokenId
+        required: true
+        type: string
+      - description: New scopes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_apitoken.UpdateApiTokenScopesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated token
+          schema:
+            $ref: '#/definitions/domain_apitoken.ApiTokenDTO'
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Token not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update account API token scopes
+      tags:
+      - api-tokens
   /api/user-activity/recent:
     delete:
       consumes:
@@ -17591,11 +17484,6 @@ paths:
         name: X-Project-ID
         required: true
         type: string
-      - description: Organization ID
-        in: header
-        name: X-Org-ID
-        required: true
-        type: string
       - description: Job ID (UUID)
         in: path
         name: jobId
@@ -17679,11 +17567,6 @@ paths:
       description: Initiates a discovery job to analyze documents and extract graph
         object types and relationships
       parameters:
-      - description: Organization ID
-        in: header
-        name: X-Org-ID
-        required: true
-        type: string
       - description: Project ID (UUID)
         in: path
         name: projectId
@@ -18073,6 +17956,160 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       summary: Get org LLM usage time series
+  /orgs/{orgId}/model-config:
+    delete:
+      parameters:
+      - description: Org ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Clear org model config
+      tags:
+      - model-config
+    get:
+      parameters:
+      - description: Org ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_modelconfig.ModelConfigResponse'
+      summary: Get org model config
+      tags:
+      - model-config
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Org ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Model config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_modelconfig.UpsertModelConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_modelconfig.ModelConfigResponse'
+      summary: Set org model config
+      tags:
+      - model-config
+  /projects/{projectId}/model-config:
+    delete:
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Clear project model config
+      tags:
+      - model-config
+    get:
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_modelconfig.ModelConfigResponse'
+      summary: Get project model config
+      tags:
+      - model-config
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Model config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_modelconfig.UpsertModelConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_modelconfig.ModelConfigResponse'
+      summary: Set project model config
+      tags:
+      - model-config
+  /projects/{projectId}/model-config/effective:
+    get:
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_modelconfig.EffectiveModelConfig'
+      summary: Get effective model config for a project (resolved)
+      tags:
+      - model-config
+  /projects/{projectId}/providers:
+    get:
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain_provider.ProjectProviderConfigResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: List project-level provider configs
   /projects/{projectId}/providers/{provider}:
     delete:
       parameters:
@@ -18168,6 +18205,33 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
       summary: Configure project-level provider
+  /projects/{projectId}/providers/{provider}/test:
+    post:
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_provider.TestProjectProviderResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Test a project provider with a live generate call
   /projects/{projectId}/usage:
     get:
       parameters:
@@ -18378,6 +18442,52 @@ paths:
       summary: Get user access tree
       tags:
       - user-access
+  /users/me/usage:
+    get:
+      parameters:
+      - description: Start time (RFC3339)
+        in: query
+        name: since
+        type: string
+      - description: End time (RFC3339)
+        in: query
+        name: until
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_provider.UsageSummaryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Get current user LLM usage summary
+  /users/me/usage/timeseries:
+    get:
+      parameters:
+      - description: Start time (RFC3339)
+        in: query
+        name: since
+        type: string
+      - description: End time (RFC3339)
+        in: query
+        name: until
+        type: string
+      - description: 'Bucket size: day (default), week, month'
+        in: query
+        name: granularity
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_provider.UsageTimeSeriesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Get current user LLM usage time series
   /v1/models:
     get:
       parameters:

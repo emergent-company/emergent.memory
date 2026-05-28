@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.40.80"
+        "version": "0.41.117"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -103,6 +103,40 @@
                 }
             }
         },
+        "/acp/v1/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns a list of all ACP sessions for the project, ordered by creation time descending.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "acp"
+                ],
+                "summary": "List ACP sessions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_agents.ACPSessionObject"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/acp/v1/sessions/{sessionId}": {
             "get": {
                 "security": [
@@ -138,6 +172,86 @@
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/acp/v1/sessions/{sessionId}/archive": {
+            "patch": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ACP Sessions"
+                ],
+                "summary": "Archive a session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.ACPSessionObject"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/acp/v1/sessions/{sessionId}/unarchive": {
+            "patch": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ACP Sessions"
+                ],
+                "summary": "Unarchive a session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.ACPSessionObject"
                         }
                     },
                     "401": {
@@ -2940,6 +3054,69 @@
                 }
             }
         },
+        "/api/documents/{id}/retry-extraction": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Re-queues the most recent failed or dead_letter extraction job for a document",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Retry document extraction",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "X-Project-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/embeddings/config": {
             "patch": {
                 "responses": {}
@@ -2952,6 +3129,16 @@
         },
         "/api/embeddings/progress": {
             "get": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/queue": {
+            "delete": {
+                "responses": {}
+            }
+        },
+        "/api/embeddings/reset-schedule": {
+            "post": {
                 "responses": {}
             }
         },
@@ -3174,7 +3361,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns all branches, optionally filtered by project",
+                "description": "Returns branches for the current project. Project is resolved from (in priority order): ?project_id query param, X-Project-ID header, API token project binding.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3188,9 +3375,15 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by project ID (UUID)",
+                        "description": "Filter by project ID (UUID); overrides X-Project-ID header",
                         "name": "project_id",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Project ID (used when project_id query param is absent)",
+                        "name": "X-Project-ID",
+                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -5593,7 +5786,7 @@
                 "tags": [
                     "graph"
                 ],
-                "summary": "Reindex missing embeddings",
+                "summary": "Reindex embeddings",
                 "parameters": [
                     {
                         "type": "string",
@@ -5601,6 +5794,18 @@
                         "name": "project_id",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Limit to objects/relationships whose key starts with this namespace prefix",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Re-enqueue even if embedding already exists (default: false)",
+                        "name": "force",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -6324,448 +6529,6 @@
                     },
                     "401": {
                         "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/graph/sessions": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns a paginated list of Session objects for the project.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "List sessions",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Max results (default: 20)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Pagination cursor",
-                        "name": "cursor",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "X-Project-ID",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.ListSessionsResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid parameters",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Creates a new Session graph object to track an AI agent conversation.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Create a session",
-                "parameters": [
-                    {
-                        "description": "Session creation parameters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.CreateSessionRequest"
-                        }
-                    },
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "X-Project-ID",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.SessionResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/graph/sessions/import": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Atomically creates a Session object and all Message objects with has_message relationships in a single transaction. Pass session_id for idempotent re-imports.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Bulk import a conversation session",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "project_id",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "description": "Import payload",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.ImportSessionRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.ImportSessionResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid parameters",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/graph/sessions/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns a Session graph object by its ID.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Get a session",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Session ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "X-Project-ID",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.SessionResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid ID",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Session not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/graph/sessions/{id}/messages": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns a paginated list of Message objects belonging to a session, ordered by sequence_number ascending.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "List messages in a session",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Session ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Max results (default: 50)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Pagination cursor",
-                        "name": "cursor",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "X-Project-ID",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.ListMessagesResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid parameters",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Session not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Atomically creates a Message object and links it to the session via a has_message relationship. Assigns sequence_number automatically.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Append a message to a session",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Session ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Message parameters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.AppendMessageRequest"
-                        }
-                    },
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "X-Project-ID",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.MessageResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Session not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/graph/sessions/{id}/spawn": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Creates a child session linked to the parent via a spawned_from relationship. When forkContext is true, the parent's message history is copied into the child as a snapshot.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Spawn a child session",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Parent Session ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Spawn parameters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.SpawnSessionRequest"
-                        }
-                    },
-                    {
-                        "type": "string",
-                        "description": "Project ID",
-                        "name": "X-Project-ID",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/domain_graph.SpawnSessionResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Parent session not found",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -9870,6 +9633,87 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Token not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Updates the scopes of a non-revoked project API token",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "api-tokens"
+                ],
+                "summary": "Update API token scopes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Token ID (UUID)",
+                        "name": "tokenId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New scopes",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.UpdateApiTokenScopesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated token",
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.ApiTokenDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -13750,6 +13594,74 @@
                         }
                     }
                 }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Updates the scopes of a non-revoked account-level API token owned by the authenticated user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "api-tokens"
+                ],
+                "summary": "Update account API token scopes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Token ID (UUID)",
+                        "name": "tokenId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New scopes",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.UpdateApiTokenScopesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated token",
+                        "schema": {
+                            "$ref": "#/definitions/domain_apitoken.ApiTokenDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Token not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
             }
         },
         "/api/user-activity/recent": {
@@ -16642,13 +16554,6 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Org-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "description": "Project ID (UUID)",
                         "name": "projectId",
                         "in": "path",
@@ -16835,13 +16740,6 @@
                         "type": "string",
                         "description": "Project ID",
                         "name": "X-Project-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Organization ID",
-                        "name": "X-Org-ID",
                         "in": "header",
                         "required": true
                     },
@@ -17429,6 +17327,243 @@
                 }
             }
         },
+        "/orgs/{orgId}/model-config": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "model-config"
+                ],
+                "summary": "Get org model config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Org ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_modelconfig.ModelConfigResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "model-config"
+                ],
+                "summary": "Set org model config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Org ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Model config",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_modelconfig.UpsertModelConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_modelconfig.ModelConfigResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "model-config"
+                ],
+                "summary": "Clear org model config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Org ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/projects/{projectId}/model-config": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "model-config"
+                ],
+                "summary": "Get project model config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_modelconfig.ModelConfigResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "model-config"
+                ],
+                "summary": "Set project model config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Model config",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_modelconfig.UpsertModelConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_modelconfig.ModelConfigResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "model-config"
+                ],
+                "summary": "Clear project model config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/projects/{projectId}/model-config/effective": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "model-config"
+                ],
+                "summary": "Get effective model config for a project (resolved)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_modelconfig.EffectiveModelConfig"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/{projectId}/providers": {
+            "get": {
+                "summary": "List project-level provider configs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_provider.ProjectProviderConfigResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/projects/{projectId}/providers/{provider}": {
             "get": {
                 "summary": "Get project-level provider config",
@@ -17565,6 +17700,47 @@
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/{projectId}/providers/{provider}/test": {
+            "post": {
+                "summary": "Test a project provider with a live generate call",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.TestProjectProviderResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -17885,6 +18061,78 @@
                 }
             }
         },
+        "/users/me/usage": {
+            "get": {
+                "summary": "Get current user LLM usage summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339)",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.UsageSummaryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/usage/timeseries": {
+            "get": {
+                "summary": "Get current user LLM usage time series",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start time (RFC3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (RFC3339)",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bucket size: day (default), week, month",
+                        "name": "granularity",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.UsageTimeSeriesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/models": {
             "get": {
                 "produces": [
@@ -17948,19 +18196,69 @@
                     "type": "string"
                 },
                 "history": {
-                    "description": "History contains ordered URL references to run event streams.\nEach URL points to GET /acp/v1/agents/:name/runs/:runId/events.",
+                    "description": "History contains runs with their full inlined event log.",
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/domain_agents.ACPSessionRun"
                     }
                 },
                 "id": {
                     "type": "string"
                 },
+                "is_archived": {
+                    "description": "IsArchived indicates the session is archived and excluded from default list results.",
+                    "type": "boolean"
+                },
+                "last_run_status": {
+                    "description": "LastRunStatus is the ACP status of the most recent run in this session, if any.",
+                    "type": "string"
+                },
+                "message_count": {
+                    "description": "MessageCount is the number of user messages in this session.",
+                    "type": "integer"
+                },
+                "run_count": {
+                    "description": "RunCount is the number of runs (user turns) in this session.",
+                    "type": "integer"
+                },
                 "title": {
                     "type": "string"
                 },
+                "total_cost_usd": {
+                    "description": "TotalCostUSD is the estimated total cost in USD across all runs.",
+                    "type": "number"
+                },
+                "total_tokens": {
+                    "description": "TotalTokens is the total number of input+output tokens consumed across all runs.",
+                    "type": "integer"
+                },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.ACPSessionRun": {
+            "type": "object",
+            "properties": {
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.ACPSSEEvent"
+                    }
+                },
+                "run_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "trigger_message": {
                     "type": "string"
                 }
             }
@@ -18309,6 +18607,10 @@
                 "response": {
                     "type": "string"
                 },
+                "resumeRunId": {
+                    "description": "new run ID created on resume",
+                    "type": "string"
+                },
                 "runId": {
                     "type": "string"
                 },
@@ -18400,7 +18702,7 @@
                     "type": "string"
                 },
                 "provider": {
-                    "description": "Provider identifies the LLM provider used (e.g. \"google\", \"google-vertex\", \"openai-compatible\").",
+                    "description": "Provider identifies the LLM provider used (e.g. \"google\", \"google-vertex\", \"openai\", \"deepseek\").",
                     "type": "string"
                 },
                 "resumedFrom": {
@@ -18464,12 +18766,12 @@
         "domain_agents.AgentRunStatus": {
             "type": "string",
             "enum": [
-                "queued",
-                "running",
-                "success",
+                "submitted",
+                "working",
+                "completed",
                 "skipped",
-                "error",
-                "paused",
+                "failed",
+                "input-required",
                 "cancelled",
                 "cancelling"
             ],
@@ -18713,6 +19015,10 @@
         "domain_agents.RunTokenUsage": {
             "type": "object",
             "properties": {
+                "cachedTokens": {
+                    "description": "CachedTokens is the number of input tokens served from the provider's\nprompt cache (e.g. Google context caching). These are already counted\nwithin TotalInputTokens but are broken out here for cost analysis.",
+                    "type": "integer"
+                },
                 "estimatedCostUsd": {
                     "type": "number"
                 },
@@ -18996,6 +19302,21 @@
                 }
             }
         },
+        "domain_apitoken.UpdateApiTokenScopesRequest": {
+            "type": "object",
+            "required": [
+                "scopes"
+            ],
+            "properties": {
+                "scopes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "domain_authinfo.IssuerResponse": {
             "type": "object",
             "properties": {
@@ -19275,6 +19596,10 @@
         "domain_chat.Conversation": {
             "type": "object",
             "properties": {
+                "acpSessionId": {
+                    "description": "ACPSessionID links this conversation to its backing kb.acp_sessions row.\nCreated on first agent-backed stream; reused on subsequent turns.",
+                    "type": "string"
+                },
                 "agentDefinitionId": {
                     "description": "Agent-backed chat: links conversation to an agent definition for tool-calling capabilities",
                     "type": "string"
@@ -19330,6 +19655,10 @@
         "domain_chat.ConversationWithMessages": {
             "type": "object",
             "properties": {
+                "acpSessionId": {
+                    "description": "ACPSessionID links this conversation to its backing kb.acp_sessions row.\nCreated on first agent-backed stream; reused on subsequent turns.",
+                    "type": "string"
+                },
                 "agentDefinitionId": {
                     "description": "Agent-backed chat: links conversation to an agent definition for tool-calling capabilities",
                     "type": "string"
@@ -19469,6 +19798,9 @@
                 "message": {
                     "type": "string",
                     "maxLength": 100000
+                },
+                "namespace": {
+                    "type": "string"
                 }
             }
         },
@@ -20035,6 +20367,10 @@
                     "description": "Computed fields (populated via JOIN/subquery, not stored in documents table)",
                     "type": "integer"
                 },
+                "classificationSignals": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "content": {
                     "description": "Content",
                     "type": "string"
@@ -20054,6 +20390,13 @@
                 },
                 "createdAt": {
                     "description": "Timestamps",
+                    "type": "string"
+                },
+                "domainConfidence": {
+                    "type": "number"
+                },
+                "domainName": {
+                    "description": "Domain classification (Phase 3)",
                     "type": "string"
                 },
                 "embeddedChunks": {
@@ -20407,28 +20750,6 @@
                 }
             }
         },
-        "domain_graph.AppendMessageRequest": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "extraProps": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "role": {
-                    "type": "string"
-                },
-                "tokenCount": {
-                    "type": "integer"
-                },
-                "toolCalls": {
-                    "type": "array",
-                    "items": {}
-                }
-            }
-        },
         "domain_graph.BranchMergeRequest": {
             "type": "object",
             "required": [
@@ -20454,11 +20775,17 @@
         "domain_graph.BulkActionFilter": {
             "type": "object",
             "properties": {
+                "created_after": {
+                    "type": "string"
+                },
                 "labels": {
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
+                },
+                "namespace": {
+                    "type": "string"
                 },
                 "property_filters": {
                     "type": "array",
@@ -20756,6 +21083,10 @@
                         "type": "string"
                     }
                 },
+                "namespace": {
+                    "type": "string",
+                    "maxLength": 128
+                },
                 "properties": {
                     "type": "object",
                     "additionalProperties": {}
@@ -20784,6 +21115,10 @@
                 "dst_id": {
                     "type": "string"
                 },
+                "label": {
+                    "type": "string",
+                    "maxLength": 256
+                },
                 "properties": {
                     "type": "object",
                     "additionalProperties": {}
@@ -20801,20 +21136,6 @@
                 },
                 "weight": {
                     "type": "number"
-                }
-            }
-        },
-        "domain_graph.CreateSessionRequest": {
-            "type": "object",
-            "properties": {
-                "agentVersion": {
-                    "type": "string"
-                },
-                "summary": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
                 }
             }
         },
@@ -21049,6 +21370,9 @@
                     "description": "Timestamps",
                     "type": "string"
                 },
+                "delete_reason": {
+                    "type": "string"
+                },
                 "deleted_at": {
                     "type": "string"
                 },
@@ -21097,6 +21421,9 @@
                         "type": "object",
                         "additionalProperties": {}
                     }
+                },
+                "namespace": {
+                    "type": "string"
                 },
                 "needs_review": {
                     "type": "boolean"
@@ -21199,6 +21526,9 @@
                         "type": "string"
                     }
                 },
+                "namespace": {
+                    "type": "string"
+                },
                 "org_id": {
                     "type": "string"
                 },
@@ -21252,6 +21582,9 @@
                     "description": "Timestamps",
                     "type": "string"
                 },
+                "delete_reason": {
+                    "type": "string"
+                },
                 "deleted_at": {
                     "type": "string"
                 },
@@ -21262,6 +21595,9 @@
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "label": {
                     "type": "string"
                 },
                 "project_id": {
@@ -21336,6 +21672,9 @@
                         }
                     ]
                 },
+                "label": {
+                    "type": "string"
+                },
                 "project_id": {
                     "type": "string"
                 },
@@ -21391,6 +21730,9 @@
                 "limit": {
                     "type": "integer"
                 },
+                "namespace": {
+                    "type": "string"
+                },
                 "offset": {
                     "type": "integer"
                 },
@@ -21420,205 +21762,6 @@
                 },
                 "vectorWeight": {
                     "type": "number"
-                }
-            }
-        },
-        "domain_graph.ImportSessionMessageRequest": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "role": {
-                    "description": "user, assistant, system (optional)",
-                    "type": "string"
-                },
-                "speaker": {
-                    "description": "participant name",
-                    "type": "string"
-                },
-                "timestamp": {
-                    "description": "RFC3339",
-                    "type": "string"
-                }
-            }
-        },
-        "domain_graph.ImportSessionRequest": {
-            "type": "object",
-            "properties": {
-                "date": {
-                    "description": "RFC3339 session date",
-                    "type": "string"
-                },
-                "labels": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "messages": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_graph.ImportSessionMessageRequest"
-                    }
-                },
-                "metadata": {
-                    "description": "arbitrary extra properties on Session",
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "participants": {
-                    "description": "participant names",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "session_id": {
-                    "description": "used as object key for idempotency",
-                    "type": "string"
-                },
-                "title": {
-                    "description": "defaults to session_id",
-                    "type": "string"
-                },
-                "trigger_extraction": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "domain_graph.ImportSessionResponse": {
-            "type": "object",
-            "properties": {
-                "extraction_job_id": {
-                    "type": "string"
-                },
-                "message_count": {
-                    "type": "integer"
-                },
-                "session_id": {
-                    "description": "object canonical_id",
-                    "type": "string"
-                }
-            }
-        },
-        "domain_graph.ListMessagesResponse": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_graph.GraphObjectResponse"
-                    }
-                },
-                "nextCursor": {
-                    "type": "string"
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
-        "domain_graph.ListSessionsResponse": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_graph.GraphObjectResponse"
-                    }
-                },
-                "nextCursor": {
-                    "type": "string"
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
-        "domain_graph.MessageResponse": {
-            "type": "object",
-            "properties": {
-                "branch_id": {
-                    "type": "string"
-                },
-                "canonical_id": {
-                    "type": "string"
-                },
-                "change_summary": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "content_hash": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "deleted_at": {
-                    "type": "string"
-                },
-                "external_id": {
-                    "type": "string"
-                },
-                "external_parent_id": {
-                    "type": "string"
-                },
-                "external_source": {
-                    "description": "External source fields for data sync",
-                    "type": "string"
-                },
-                "external_updated_at": {
-                    "type": "string"
-                },
-                "external_url": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "key": {
-                    "type": "string"
-                },
-                "labels": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "org_id": {
-                    "type": "string"
-                },
-                "project_id": {
-                    "type": "string"
-                },
-                "properties": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "relationship_count": {
-                    "type": "integer"
-                },
-                "revision_count": {
-                    "type": "integer"
-                },
-                "schema_version": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "supersedes_id": {
-                    "type": "string"
-                },
-                "synced_at": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "integer"
                 }
             }
         },
@@ -21695,6 +21838,10 @@
         "domain_graph.PatchGraphRelationshipRequest": {
             "type": "object",
             "properties": {
+                "label": {
+                    "type": "string",
+                    "maxLength": 256
+                },
                 "properties": {
                     "type": "object",
                     "additionalProperties": {}
@@ -21754,8 +21901,12 @@
         "domain_graph.ReindexEmbeddingsResponse": {
             "type": "object",
             "properties": {
-                "enqueued": {
-                    "description": "Enqueued is the number of object embedding jobs newly inserted.",
+                "objects_enqueued": {
+                    "description": "ObjectsEnqueued is the number of object embedding jobs newly inserted.",
+                    "type": "integer"
+                },
+                "relationships_enqueued": {
+                    "description": "RelationshipsEnqueued is the number of relationship embedding jobs newly inserted.",
                     "type": "integer"
                 }
             }
@@ -21795,121 +21946,6 @@
                     "items": {
                         "type": "string"
                     }
-                }
-            }
-        },
-        "domain_graph.SessionResponse": {
-            "type": "object",
-            "properties": {
-                "branch_id": {
-                    "type": "string"
-                },
-                "canonical_id": {
-                    "type": "string"
-                },
-                "change_summary": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "content_hash": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "deleted_at": {
-                    "type": "string"
-                },
-                "external_id": {
-                    "type": "string"
-                },
-                "external_parent_id": {
-                    "type": "string"
-                },
-                "external_source": {
-                    "description": "External source fields for data sync",
-                    "type": "string"
-                },
-                "external_updated_at": {
-                    "type": "string"
-                },
-                "external_url": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "key": {
-                    "type": "string"
-                },
-                "labels": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "org_id": {
-                    "type": "string"
-                },
-                "project_id": {
-                    "type": "string"
-                },
-                "properties": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "relationship_count": {
-                    "type": "integer"
-                },
-                "revision_count": {
-                    "type": "integer"
-                },
-                "schema_version": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "supersedes_id": {
-                    "type": "string"
-                },
-                "synced_at": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "integer"
-                }
-            }
-        },
-        "domain_graph.SpawnSessionRequest": {
-            "type": "object",
-            "properties": {
-                "forkContext": {
-                    "type": "boolean"
-                },
-                "maxMessages": {
-                    "description": "0 = use default (50)",
-                    "type": "integer"
-                },
-                "summary": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_graph.SpawnSessionResponse": {
-            "type": "object",
-            "properties": {
-                "forkedMessages": {
-                    "type": "integer"
-                },
-                "session": {
-                    "$ref": "#/definitions/domain_graph.SessionResponse"
                 }
             }
         },
@@ -22942,6 +22978,64 @@
                 }
             }
         },
+        "domain_modelconfig.EffectiveModelConfig": {
+            "type": "object",
+            "properties": {
+                "embeddingModel": {
+                    "type": "string"
+                },
+                "embeddingModelSource": {
+                    "$ref": "#/definitions/domain_modelconfig.ModelSource"
+                },
+                "generativeModel": {
+                    "type": "string"
+                },
+                "generativeModelSource": {
+                    "$ref": "#/definitions/domain_modelconfig.ModelSource"
+                }
+            }
+        },
+        "domain_modelconfig.ModelConfigResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "embeddingModel": {
+                    "type": "string"
+                },
+                "generativeModel": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_modelconfig.ModelSource": {
+            "type": "string",
+            "enum": [
+                "project",
+                "org",
+                "env"
+            ],
+            "x-enum-varnames": [
+                "ModelSourceProject",
+                "ModelSourceOrg",
+                "ModelSourceEnv"
+            ]
+        },
+        "domain_modelconfig.UpsertModelConfigRequest": {
+            "type": "object",
+            "properties": {
+                "embeddingModel": {
+                    "type": "string"
+                },
+                "generativeModel": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_monitoring.ExtractionJobDetailDTO": {
             "type": "object",
             "properties": {
@@ -22961,6 +23055,9 @@
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "job_type": {
                     "type": "string"
                 },
                 "llm_calls": {
@@ -23060,6 +23157,9 @@
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "job_type": {
                     "type": "string"
                 },
                 "objects_created": {
@@ -23573,6 +23673,10 @@
                 "id": {
                     "type": "string"
                 },
+                "main_branch_id": {
+                    "description": "MainBranchID is the UUID of the project's root branch (parent_branch_id IS NULL).\nCallers can use this as targetBranchID when merging without knowing the branch UUID,\nor pass the magic string \"main\" to the merge endpoint directly.",
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -23716,6 +23820,9 @@
                 "totalAudio": {
                     "type": "integer"
                 },
+                "totalCached": {
+                    "type": "integer"
+                },
                 "totalImage": {
                     "type": "integer"
                 },
@@ -23831,15 +23938,32 @@
             "enum": [
                 "google",
                 "google-vertex",
-                "openai-compatible",
+                "openai",
                 "deepseek"
             ],
             "x-enum-varnames": [
                 "ProviderGoogleAI",
                 "ProviderVertexAI",
-                "ProviderOpenAICompatible",
+                "ProviderOpenAI",
                 "ProviderDeepSeek"
             ]
+        },
+        "domain_provider.TestProjectProviderResponse": {
+            "type": "object",
+            "properties": {
+                "latencyMs": {
+                    "type": "integer"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "reply": {
+                    "type": "string"
+                }
+            }
         },
         "domain_provider.TestProviderResponse": {
             "type": "object",
@@ -23913,6 +24037,9 @@
                 "totalAudio": {
                     "type": "integer"
                 },
+                "totalCached": {
+                    "type": "integer"
+                },
                 "totalImage": {
                     "type": "integer"
                 },
@@ -23957,6 +24084,9 @@
                     "$ref": "#/definitions/domain_provider.ProviderType"
                 },
                 "totalAudio": {
+                    "type": "integer"
+                },
+                "totalCached": {
                     "type": "integer"
                 },
                 "totalImage": {
@@ -25242,10 +25372,6 @@
                 },
                 "version": {
                     "type": "string"
-                },
-                "visibility": {
-                    "description": "Visibility controls schema scope: \"project\" (default) or \"organization\".",
-                    "type": "string"
                 }
             }
         },
@@ -25297,9 +25423,6 @@
                         "type": "integer"
                     }
                 },
-                "orgId": {
-                    "type": "string"
-                },
                 "projectId": {
                     "type": "string"
                 },
@@ -25329,9 +25452,6 @@
                 },
                 "version": {
                     "type": "string"
-                },
-                "visibility": {
-                    "type": "string"
                 }
             }
         },
@@ -25347,6 +25467,12 @@
                 },
                 "description": {
                     "type": "string"
+                },
+                "extractionPrompts": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "id": {
                     "description": "assignment ID",
@@ -25382,9 +25508,6 @@
                     "type": "string"
                 },
                 "version": {
-                    "type": "string"
-                },
-                "visibility": {
                     "type": "string"
                 }
             }
@@ -26010,6 +26133,21 @@
                 }
             }
         },
+        "domain_search.RelationshipNodeInfo": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "object_type": {
+                    "type": "string"
+                },
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
         "domain_search.ScoreStats": {
             "type": "object",
             "properties": {
@@ -26198,6 +26336,10 @@
                 "maxTokenBudget": {
                     "type": "integer"
                 },
+                "namespace": {
+                    "description": "filter graph results by namespace",
+                    "type": "string"
+                },
                 "query": {
                     "type": "string",
                     "maxLength": 800
@@ -26298,8 +26440,14 @@
                 "source_id": {
                     "type": "string"
                 },
+                "source_object": {
+                    "$ref": "#/definitions/domain_search.RelationshipNodeInfo"
+                },
                 "target_id": {
                     "type": "string"
+                },
+                "target_object": {
+                    "$ref": "#/definitions/domain_search.RelationshipNodeInfo"
                 },
                 "triplet_text": {
                     "type": "string"
