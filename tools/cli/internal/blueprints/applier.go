@@ -751,14 +751,13 @@ func (b *Blueprinter) fetchExistingSkills(ctx context.Context) (map[string]*sdks
 // ──────────────────────────────────────────────
 
 // relTypeAPI is the JSON shape sent to the server for relationship type schemas.
-// It always uses the plural sourceTypes/targetTypes arrays so the server-side
-// parser (which supports both conventions) receives the richest data.
+// The server requires singular sourceType/targetType string fields.
 type relTypeAPI struct {
-	Name        string   `json:"name"`
-	Label       string   `json:"label,omitempty"`
-	Description string   `json:"description,omitempty"`
-	SourceTypes []string `json:"sourceTypes,omitempty"`
-	TargetTypes []string `json:"targetTypes,omitempty"`
+	Name        string `json:"name"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	SourceType  string `json:"sourceType"`
+	TargetType  string `json:"targetType"`
 }
 
 // marshalPackSchemas converts the typed ObjectTypes / RelationshipTypes slices
@@ -773,12 +772,21 @@ func marshalPackSchemas(p PackFile) (objSchemas, relSchemas, uiCfgs, exPrompts j
 	if len(p.RelationshipTypes) > 0 {
 		apiRels := make([]relTypeAPI, len(p.RelationshipTypes))
 		for i, r := range p.RelationshipTypes {
+			src := r.SourceType
+			tgt := r.TargetType
+			// Fall back to plural arrays for backward compat with old YAML format.
+			if src == "" && len(r.SourceTypes) > 0 {
+				src = r.SourceTypes[0]
+			}
+			if tgt == "" && len(r.TargetTypes) > 0 {
+				tgt = r.TargetTypes[0]
+			}
 			apiRels[i] = relTypeAPI{
 				Name:        r.Name,
 				Label:       r.Label,
 				Description: r.Description,
-				SourceTypes: r.GetSourceTypes(),
-				TargetTypes: r.GetTargetTypes(),
+				SourceType:  src,
+				TargetType:  tgt,
 			}
 		}
 		relSchemas, err = json.Marshal(apiRels)
