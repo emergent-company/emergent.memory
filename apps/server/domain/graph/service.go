@@ -1069,7 +1069,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 }
 
 // Delete soft-deletes a graph object by creating a tombstone version.
-func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID, branchID *uuid.UUID) error {
+func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID, branchID *uuid.UUID, reason *string) error {
 	current, err := s.repo.GetByID(ctx, projectID, id)
 	if err != nil {
 		return err
@@ -1103,12 +1103,12 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 			if merr != nil {
 				return merr
 			}
-			if err := s.repo.SoftDeleteOnBranch(ctx, tx.Tx, mainHead, branchID, actorID); err != nil {
+			if err := s.repo.SoftDeleteOnBranch(ctx, tx.Tx, mainHead, branchID, actorID, reason); err != nil {
 				return err
 			}
 			current = mainHead
 		} else {
-			if err := s.repo.SoftDelete(ctx, tx.Tx, branchHead, actorID); err != nil {
+			if err := s.repo.SoftDelete(ctx, tx.Tx, branchHead, actorID, reason); err != nil {
 				return err
 			}
 			current = branchHead
@@ -1119,7 +1119,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		if err != nil {
 			return err
 		}
-		if err := s.repo.SoftDelete(ctx, tx.Tx, current, actorID); err != nil {
+		if err := s.repo.SoftDelete(ctx, tx.Tx, current, actorID, reason); err != nil {
 			return err
 		}
 	}
@@ -2019,7 +2019,7 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 }
 
 // DeleteRelationship soft-deletes a relationship.
-func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUID, branchID *uuid.UUID) (*GraphRelationshipResponse, error) {
+func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUID, branchID *uuid.UUID, reason *string) (*GraphRelationshipResponse, error) {
 	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
@@ -2049,7 +2049,7 @@ func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUI
 		return nil, apperror.ErrBadRequest.WithMessage("already_deleted")
 	}
 
-	if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, head); err != nil {
+	if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, head, reason); err != nil {
 		return nil, err
 	}
 
@@ -3821,7 +3821,7 @@ func (s *Service) applyMerge(
 			if err != nil {
 				return 0, fmt.Errorf("get target head for delete %s: %w", summary.CanonicalID, err)
 			}
-			if err := s.repo.SoftDelete(ctx, tx.Tx, targetHead, nil); err != nil {
+			if err := s.repo.SoftDelete(ctx, tx.Tx, targetHead, nil, nil); err != nil {
 				return 0, fmt.Errorf("delete object %s: %w", summary.CanonicalID, err)
 			}
 			appliedCount++

@@ -794,6 +794,7 @@ CREATE TABLE kb.graph_objects (
     actor_id uuid,
     migration_archive jsonb DEFAULT '[]'::jsonb,
     last_accessed_at timestamp with time zone,
+    delete_reason text,
     CONSTRAINT chk_graph_objects_actor_type CHECK ((actor_type = ANY (ARRAY['user'::text, 'agent'::text, 'system'::text])))
 );
 
@@ -845,7 +846,8 @@ CREATE TABLE kb.graph_relationships (
     version integer DEFAULT 1 NOT NULL,
     branch_id uuid,
     embedding public.vector(768),
-    embedding_updated_at timestamp with time zone
+    embedding_updated_at timestamp with time zone,
+    delete_reason text
 );
 
 ALTER TABLE ONLY kb.graph_relationships FORCE ROW LEVEL SECURITY;

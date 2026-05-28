@@ -560,16 +560,17 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 }
 
 // SoftDelete marks a graph object as deleted by creating a tombstone version.
-func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject, actorID *uuid.UUID) error {
+func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject, actorID *uuid.UUID, reason *string) error {
 	now := time.Now()
 	tombstone := &GraphObject{
-		Type:       obj.Type,
-		Key:        obj.Key,
-		Status:     obj.Status,
-		Properties: obj.Properties,
-		Labels:     obj.Labels,
-		DeletedAt:  &now,
-		ActorID:    actorID,
+		Type:         obj.Type,
+		Key:          obj.Key,
+		Status:       obj.Status,
+		Properties:   obj.Properties,
+		Labels:       obj.Labels,
+		DeletedAt:    &now,
+		DeleteReason: reason,
+		ActorID:      actorID,
 	}
 	actorType := "user"
 	tombstone.ActorType = &actorType
@@ -580,25 +581,26 @@ func (r *Repository) SoftDelete(ctx context.Context, tx bun.Tx, obj *GraphObject
 // SoftDeleteOnBranch creates a branch-local tombstone for an object that only exists on main.
 // Unlike SoftDelete (which inherits branch from prevHead), this inserts a new HEAD directly
 // on the target branch with deleted_at set, without modifying the main-branch HEAD.
-func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead *GraphObject, branchID *uuid.UUID, actorID *uuid.UUID) error {
+func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead *GraphObject, branchID *uuid.UUID, actorID *uuid.UUID, reason *string) error {
 	now := time.Now()
 	actorType := "user"
 	tombstone := &GraphObject{
-		ID:          uuid.New(),
-		CanonicalID: mainHead.CanonicalID,
-		ProjectID:   mainHead.ProjectID,
-		BranchID:    branchID,
-		Type:        mainHead.Type,
-		Key:         mainHead.Key,
-		Status:      mainHead.Status,
-		Properties:  mainHead.Properties,
-		Labels:      mainHead.Labels,
-		DeletedAt:   &now,
-		ActorID:     actorID,
-		ActorType:   &actorType,
-		Version:     mainHead.Version + 1,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           uuid.New(),
+		CanonicalID:  mainHead.CanonicalID,
+		ProjectID:    mainHead.ProjectID,
+		BranchID:     branchID,
+		Type:         mainHead.Type,
+		Key:          mainHead.Key,
+		Status:       mainHead.Status,
+		Properties:   mainHead.Properties,
+		Labels:       mainHead.Labels,
+		DeletedAt:    &now,
+		DeleteReason: reason,
+		ActorID:      actorID,
+		ActorType:    &actorType,
+		Version:      mainHead.Version + 1,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	tombstone.ContentHash = computeContentHash(tombstone.Properties, tombstone.Status, tombstone.Key, tombstone.Labels)
 
@@ -1136,12 +1138,13 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 }
 
 // SoftDeleteRelationship marks a relationship as deleted by creating a tombstone version.
-func (r *Repository) SoftDeleteRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship) error {
+func (r *Repository) SoftDeleteRelationship(ctx context.Context, tx bun.Tx, rel *GraphRelationship, reason *string) error {
 	now := time.Now()
 	tombstone := &GraphRelationship{
-		Properties: rel.Properties,
-		Weight:     rel.Weight,
-		DeletedAt:  &now,
+		Properties:   rel.Properties,
+		Weight:       rel.Weight,
+		DeletedAt:    &now,
+		DeleteReason: reason,
 	}
 
 	return r.CreateRelationshipVersion(ctx, tx, rel, tombstone)

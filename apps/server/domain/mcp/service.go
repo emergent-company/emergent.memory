@@ -688,6 +688,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "string",
 						Description: "UUID or key of the entity to delete",
 					},
+					"reason": {
+						Type:        "string",
+						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+					},
 				},
 				Required: []string{"entity_id"},
 			},
@@ -992,6 +996,10 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					"relationship_id": {
 						Type:        "string",
 						Description: "UUID of the relationship to delete",
+					},
+					"reason": {
+						Type:        "string",
+						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
 					},
 				},
 				Required: []string{"relationship_id"},
@@ -3011,7 +3019,13 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 		entityID = resolved
 	}
 
-	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, nil); err != nil {
+	// Optional reason
+	var reason *string
+	if r, ok := args["reason"].(string); ok && r != "" {
+		reason = &r
+	}
+
+	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, nil, reason); err != nil {
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}
 

@@ -34,6 +34,7 @@ type GraphObject struct {
 	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()" json:"created_at"`
 	UpdatedAt      time.Time  `bun:"updated_at,notnull,default:now()" json:"updated_at"`
 	DeletedAt      *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
+	DeleteReason   *string    `bun:"delete_reason" json:"delete_reason,omitempty"`
 	LastAccessedAt *time.Time `bun:"last_accessed_at,type:timestamptz" json:"last_accessed_at,omitempty"`
 
 	// Full-text search vector (generated)
@@ -101,8 +102,9 @@ type GraphRelationship struct {
 	ValidTo   *time.Time `bun:"valid_to" json:"valid_to,omitempty"`
 
 	// Timestamps
-	CreatedAt time.Time  `bun:"created_at,notnull,default:now()" json:"created_at"`
-	DeletedAt *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
+	CreatedAt    time.Time  `bun:"created_at,notnull,default:now()" json:"created_at"`
+	DeletedAt    *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
+	DeleteReason *string    `bun:"delete_reason" json:"delete_reason,omitempty"`
 
 	// Populated by joins — src_id/dst_id store canonical_id values
 	SrcObject *GraphObject `bun:"rel:belongs-to,join:src_id=canonical_id" json:"src,omitempty"`

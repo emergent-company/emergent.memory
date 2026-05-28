@@ -674,8 +674,15 @@ func (h *Handler) DeleteObject(c echo.Context) error {
 		branchID = &parsed
 	}
 
+	// Parse optional reason from JSON body
+	var body struct {
+		Reason *string `json:"reason"`
+	}
+	// Ignore bind errors — body is optional for DELETE
+	_ = c.Bind(&body)
+
 	actorID, _ := getUserID(c)
-	if err := h.svc.Delete(c.Request().Context(), projectID, id, actorID, branchID); err != nil {
+	if err := h.svc.Delete(c.Request().Context(), projectID, id, actorID, branchID, body.Reason); err != nil {
 		return err
 	}
 
@@ -1184,7 +1191,13 @@ func (h *Handler) DeleteRelationship(c echo.Context) error {
 		branchID = &parsed
 	}
 
-	result, err := h.svc.DeleteRelationship(c.Request().Context(), projectID, id, branchID)
+	// Parse optional reason from JSON body
+	var body struct {
+		Reason *string `json:"reason"`
+	}
+	_ = c.Bind(&body)
+
+	result, err := h.svc.DeleteRelationship(c.Request().Context(), projectID, id, branchID, body.Reason)
 	if err != nil {
 		return err
 	}

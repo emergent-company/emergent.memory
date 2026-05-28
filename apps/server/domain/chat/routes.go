@@ -65,4 +65,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	rememberGroup.Use(authMiddleware.RequireProjectScope())
 	rememberGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	rememberGroup.POST("", h.RememberStream)
+	rememberGroup.POST("/file", h.RememberFile)
+
+	// Project-scoped forget endpoint — NL soft-delete from the knowledge graph.
+	forgetGroup := e.Group("/api/projects/:projectId/forget")
+	forgetGroup.Use(authMiddleware.RequireAuth())
+	forgetGroup.Use(authMiddleware.RequireProjectScope())
+	forgetGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
+	forgetGroup.POST("", h.ForgetStream)
 }

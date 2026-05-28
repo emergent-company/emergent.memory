@@ -46,13 +46,14 @@ type Handler struct {
 	modelFactory     *adk.ModelFactory
 	apiTokenSvc      *apitoken.Service // optional: mints ephemeral tokens for sandbox agents
 	docSvc           *documents.Service
+	uploadHandler    *documents.UploadHandler
 	domainClassifier mcp.DomainClassifierHandler
 	askV2Default     bool // server-level default for v2 code-gen agent
 	log              *slog.Logger
 }
 
 // NewHandler creates a new chat handler
-func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, docSvc *documents.Service, domainClassifier mcp.DomainClassifierHandler, cfg *config.Config, log *slog.Logger) *Handler {
+func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Service, agentExecutor *agents.AgentExecutor, agentRepo *agents.Repository, credSvc *provider.CredentialService, modelFactory *adk.ModelFactory, apiTokenSvc *apitoken.Service, docSvc *documents.Service, uploadHandler *documents.UploadHandler, domainClassifier mcp.DomainClassifierHandler, cfg *config.Config, log *slog.Logger) *Handler {
 	return &Handler{
 		svc:              svc,
 		llmClient:        llmClient,
@@ -63,6 +64,7 @@ func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Servic
 		modelFactory:     modelFactory,
 		apiTokenSvc:      apiTokenSvc,
 		docSvc:           docSvc,
+		uploadHandler:    uploadHandler,
 		domainClassifier: domainClassifier,
 		askV2Default:     cfg.AskV2,
 		log:              log.With(logger.Scope("chat.handler")),
@@ -1514,6 +1516,10 @@ type RememberStreamRequest struct {
 	RootRunID      string `json:"root_run_id,omitempty"`
 	// Mode controls response style: "stream" (default SSE), "sync" (JSON, wait), "async" (JSON 202, fire-and-forget).
 	Mode string `json:"mode,omitempty"`
+	// Guide is an optional natural-language hint that tells the agent how to interpret
+	// the content (e.g. "this is my shopping list for my birthday party").
+	// It is injected as a prefix in the agent message for both text and file paths.
+	Guide string `json:"guide,omitempty"`
 }
 
 // RememberStream handles POST /api/projects/:projectId/remember.
@@ -1548,10 +1554,10 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("message is required")
 	}
 
-	// Normalise schema_policy — default to "auto".
+	// Normalise schema_policy — default to "reuse_only".
 	schemaPolicy := req.SchemaPolicy
 	if schemaPolicy == "" {
-		schemaPolicy = "auto"
+		schemaPolicy = "reuse_only"
 	}
 	if schemaPolicy != "auto" && schemaPolicy != "reuse_only" && schemaPolicy != "ask" {
 		return apperror.ErrBadRequest.WithMessage("schema_policy must be one of: auto, reuse_only, ask")
@@ -1669,7 +1675,7 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		if h.domainClassifier != nil {
 			snap, classErr := h.domainClassifier.ClassifyDocument(ctx, projectID, documentID)
 			if classErr == nil {
-				classifiedStage = snap.Stage
+				classifiedStage = demoteStageForPolicy(snap.Stage, schemaPolicy)
 				classifiedPackName = snap.SuggestedPackName
 				if classifiedPackName == "" {
 					classifiedPackName = snap.Label
@@ -1690,6 +1696,11 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		// Fallback (no docSvc injected): pass message directly so agent still runs.
 		agentMessage = fmt.Sprintf("schema_policy: %s\ndry_run: %v\n\n%s",
 			schemaPolicy, req.DryRun, message)
+	}
+
+	// Prepend guide hint when provided so the agent knows how to interpret the content.
+	if req.Guide != "" {
+		agentMessage = "guide: " + req.Guide + "\n" + agentMessage
 	}
 
 	// Reuse an existing conversation if the caller provided one, otherwise create a new one.
@@ -1884,6 +1895,426 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	}
 }
 
+// RememberFileRequest holds parameters parsed from the multipart /remember/file form.
+type RememberFileRequest struct {
+	SchemaPolicy   string
+	DryRun         bool
+	Guide          string
+	Namespace      string
+	ConversationID string
+	ParentRunID    string
+	RootRunID      string
+	Mode           string
+}
+
+// RememberFile handles POST /api/projects/:projectId/remember/file.
+// It accepts a multipart form with a "file" field plus optional parameters,
+// uploads the file, waits for the parsing pipeline to produce plaintext content,
+// and then runs the domain-remember-agent on that content — identical to RememberStream
+// but driven from a file rather than raw text.
+//
+// Multipart form fields:
+//
+//	file            — required: the file to upload and remember
+//	schema_policy   — optional: "auto" | "reuse_only" (default) | "ask"
+//	dry_run         — optional: "true" to skip merging the extraction branch
+//	guide           — optional: natural-language hint for the agent (stored in doc metadata)
+//	namespace       — optional: scope graph objects to a namespace
+//	conversation_id — optional: reuse an existing conversation
+//	mode            — optional: "stream" (default) | "sync" | "async"
+func (h *Handler) RememberFile(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	if h.uploadHandler == nil {
+		return apperror.New(http.StatusServiceUnavailable, "storage_unavailable",
+			"File upload is not available — storage service is not configured")
+	}
+
+	fh, err := c.FormFile("file")
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("file is required")
+	}
+
+	req := RememberFileRequest{
+		SchemaPolicy:   strings.TrimSpace(c.FormValue("schema_policy")),
+		Guide:          strings.TrimSpace(c.FormValue("guide")),
+		Namespace:      strings.TrimSpace(c.FormValue("namespace")),
+		ConversationID: strings.TrimSpace(c.FormValue("conversation_id")),
+		ParentRunID:    strings.TrimSpace(c.FormValue("parent_run_id")),
+		RootRunID:      strings.TrimSpace(c.FormValue("root_run_id")),
+		Mode:           strings.TrimSpace(c.FormValue("mode")),
+		DryRun:         c.FormValue("dry_run") == "true",
+	}
+
+	// Normalise schema_policy.
+	if req.SchemaPolicy == "" {
+		req.SchemaPolicy = "reuse_only"
+	}
+	if req.SchemaPolicy != "auto" && req.SchemaPolicy != "reuse_only" && req.SchemaPolicy != "ask" {
+		return apperror.ErrBadRequest.WithMessage("schema_policy must be one of: auto, reuse_only, ask")
+	}
+
+	// Normalise mode.
+	if req.Mode == "" {
+		req.Mode = c.Request().Header.Get("X-Remember-Mode")
+	}
+	if req.Mode == "" {
+		req.Mode = "stream"
+	}
+	if req.Mode != "stream" && req.Mode != "sync" && req.Mode != "async" {
+		return apperror.ErrBadRequest.WithMessage("mode must be one of: stream, sync, async")
+	}
+
+	if req.ParentRunID == "" {
+		req.ParentRunID = c.Request().Header.Get("X-Parent-Run-Id")
+	}
+	if req.RootRunID == "" {
+		req.RootRunID = c.Request().Header.Get("X-Root-Run-Id")
+	}
+
+	ctx := c.Request().Context()
+	if auth.ProjectIDFromContext(ctx) == "" && projectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, projectID)
+	}
+	if req.Namespace != "" {
+		ctx = auth.ContextWithNamespace(ctx, req.Namespace)
+	}
+
+	// Probe LLM provider before doing expensive upload work.
+	if h.modelFactory == nil {
+		return apperror.New(http.StatusServiceUnavailable, "no_provider",
+			"No LLM provider configured for this project. "+
+				"Please configure a Google AI or Vertex AI credential in your project settings.")
+	}
+	probeModelName := h.modelFactory.ModelName()
+	if probeModelName == "" {
+		probeModelName = "gemini-3.1-flash-lite-preview"
+	}
+	probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+	if probeErr != nil {
+		errMsg := probeErr.Error()
+		if strings.Contains(errMsg, "no LLM credentials configured") ||
+			strings.Contains(errMsg, "no_provider") ||
+			strings.Contains(errMsg, "provider config found for organization") {
+			return apperror.New(http.StatusServiceUnavailable, "no_provider",
+				"No LLM provider configured for this project. "+
+					"Please configure a Google AI or Vertex AI credential in your project settings.")
+		}
+		return apperror.New(http.StatusServiceUnavailable, "provider_error",
+			friendlyProviderError(probeErr))
+	}
+	if closer, ok := probeModel.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
+
+	// Build metadata — store guide so it's queryable on the document record.
+	var metadata map[string]any
+	if req.Guide != "" {
+		metadata = map[string]any{"guide": req.Guide}
+	}
+
+	ctx2, uploadSpan := tracing.Start(ctx, "remember.file.upload",
+		attribute.String("memory.project.id", projectID),
+		attribute.String("memory.remember.user_id", user.ID),
+		attribute.String("memory.remember.filename", fh.Filename),
+	)
+	uploadResult, uploadErr := h.uploadHandler.UploadForRemember(ctx2, user.OrgID, projectID, fh, metadata)
+	uploadSpan.End()
+	if uploadErr != nil {
+		return uploadErr
+	}
+	documentID := uploadResult.DocumentID
+
+	// Poll for conversion completion (max 120s, 2s interval).
+	// Duplicate documents are already converted — skip polling.
+	if !uploadResult.IsDuplicate && h.docSvc != nil {
+		const pollTimeout = 120 * time.Second
+		const pollInterval = 2 * time.Second
+		deadline := time.Now().Add(pollTimeout)
+		for time.Now().Before(deadline) {
+			doc, docErr := h.docSvc.GetByID(ctx, projectID, documentID)
+			if docErr != nil {
+				break // proceed anyway; content may still be available
+			}
+			status := ""
+			if doc.ConversionStatus != nil {
+				status = *doc.ConversionStatus
+			}
+			if status == "completed" {
+				break
+			}
+			if status == "failed" {
+				return apperror.New(http.StatusUnprocessableEntity, "conversion_failed",
+					"File could not be converted to text. Check that the file type is supported.")
+			}
+			time.Sleep(pollInterval)
+		}
+	}
+
+	// Fetch parsed plaintext content.
+	var message string
+	if h.docSvc != nil {
+		content, contentErr := h.docSvc.GetContent(ctx, projectID, documentID)
+		if contentErr != nil || content == nil || strings.TrimSpace(*content) == "" {
+			return apperror.New(http.StatusUnprocessableEntity, "no_content",
+				"File was uploaded but no text content could be extracted. "+
+					"Ensure the file is a supported format and not empty.")
+		}
+		message = strings.TrimSpace(*content)
+	}
+
+	ctx, span := tracing.Start(ctx, "remember.run",
+		attribute.String("memory.project.id", projectID),
+		attribute.String("memory.remember.user_id", user.ID),
+		attribute.String("memory.remember.schema_policy", req.SchemaPolicy),
+		attribute.String("memory.remember.mode", req.Mode),
+		attribute.Bool("memory.remember.dry_run", req.DryRun),
+		attribute.String("memory.remember.document_id", documentID),
+		attribute.String("memory.remember.filename", fh.Filename),
+	)
+	defer span.End()
+
+	agentDef, err := h.agentRepo.EnsureDomainRememberAgent(ctx, projectID, req.SchemaPolicy)
+	if err != nil {
+		return apperror.NewInternal("failed to ensure domain-remember-agent", err)
+	}
+
+	agentDefUUID, err := uuid.Parse(agentDef.ID)
+	if err != nil {
+		return apperror.NewInternal("invalid domain-remember-agent ID", err)
+	}
+
+	// Pre-classify the uploaded document.
+	var classifiedStage, classifiedPackName, classifiedSchemaID string
+	if h.domainClassifier != nil {
+		snap, classErr := h.domainClassifier.ClassifyDocument(ctx, projectID, documentID)
+		if classErr == nil {
+			classifiedStage = demoteStageForPolicy(snap.Stage, req.SchemaPolicy)
+			classifiedPackName = snap.SuggestedPackName
+			if classifiedPackName == "" {
+				classifiedPackName = snap.Label
+			}
+			if snap.SchemaID != nil {
+				classifiedSchemaID = *snap.SchemaID
+			}
+		} else {
+			h.log.Warn("pre-classify failed for remember/file, agent will classify",
+				slog.String("document_id", documentID),
+				slog.String("error", classErr.Error()),
+			)
+		}
+	}
+
+	agentMessage := fmt.Sprintf("document_id: %s\nschema_policy: %s\ndry_run: %v\nclassified_stage: %s\nclassified_pack_name: %s\nclassified_schema_id: %s\n\n%s",
+		documentID, req.SchemaPolicy, req.DryRun, classifiedStage, classifiedPackName, classifiedSchemaID, message)
+	if req.Guide != "" {
+		agentMessage = "guide: " + req.Guide + "\n" + agentMessage
+	}
+
+	// Build or reuse conversation.
+	var conv *Conversation
+	if req.ConversationID != "" {
+		convUUID, parseErr := uuid.Parse(req.ConversationID)
+		if parseErr == nil {
+			conv, _ = h.svc.GetConversation(ctx, projectID, convUUID)
+		}
+	}
+	if conv == nil {
+		title := fh.Filename
+		if req.Guide != "" {
+			title = req.Guide
+			if len(title) > 50 {
+				title = title[:50] + "..."
+			}
+		} else if len(title) > 50 {
+			title = title[:50] + "..."
+		}
+		var createErr error
+		conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
+			Title:   title,
+			Message: agentMessage,
+		})
+		if createErr != nil {
+			span.RecordError(createErr)
+			span.SetStatus(codes.Error, createErr.Error())
+			return apperror.NewInternal("failed to create conversation", createErr)
+		}
+	}
+	conv.AgentDefinitionID = &agentDefUUID
+	span.SetAttributes(attribute.String("memory.remember.conversation_id", conv.ID.String()))
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+		h.log.Warn("failed to set agent_definition_id on remember/file conversation",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	switch req.Mode {
+	case "async":
+		dummyName := "Remember session for " + agentDef.Name
+		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
+		if dummyAgent == nil {
+			dummyAgent = &agents.Agent{
+				ProjectID:         projectID,
+				Name:              dummyName,
+				StrategyType:      "remember-session:" + agentDef.ID,
+				AgentDefinitionID: &agentDef.ID,
+				CronSchedule:      "0 0 * * *",
+				TriggerType:       "manual",
+			}
+			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
+				return apperror.NewInternal("failed to create agent session for async remember/file", err)
+			}
+		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
+			dummyAgent.AgentDefinitionID = &agentDef.ID
+			_ = h.agentRepo.Update(ctx, dummyAgent)
+		}
+		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
+		if runErr != nil {
+			return apperror.NewInternal("failed to create async run record", runErr)
+		}
+		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID}
+		execReq := agents.ExecuteRequest{
+			Agent:           dummyAgent,
+			AgentDefinition: agentDef,
+			ProjectID:       projectID,
+			OrgID:           user.OrgID,
+			UserID:          user.ID,
+			UserMessage:     agentMessage,
+			PreCreatedRun:   preCreated,
+		}
+		if req.ParentRunID != "" {
+			execReq.ParentRunID = &req.ParentRunID
+		}
+		if req.RootRunID != "" {
+			execReq.RootRunID = &req.RootRunID
+		}
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					h.log.Error("panic in async remember/file goroutine",
+						slog.String("run_id", run.ID),
+						slog.Any("panic", r),
+					)
+					bgCtx2 := context.Background()
+					if updateErr := h.agentRepo.FailRun(bgCtx2, run.ID, fmt.Sprintf("panic: %v", r)); updateErr != nil {
+						h.log.Warn("async remember/file: failed to mark run as failed after panic",
+							slog.String("run_id", run.ID),
+							slog.String("error", updateErr.Error()),
+						)
+					}
+				}
+			}()
+			bgCtx := context.Background()
+			if req.Namespace != "" {
+				bgCtx = auth.ContextWithNamespace(bgCtx, req.Namespace)
+			}
+			bgCtx = auth.ContextWithProjectID(bgCtx, projectID)
+			result, execErr := h.agentExecutor.Execute(bgCtx, execReq)
+			if execErr != nil {
+				h.log.Warn("async remember/file: agent execution failed",
+					slog.String("run_id", run.ID),
+					slog.String("error", execErr.Error()),
+				)
+				if updateErr := h.agentRepo.FailRun(bgCtx, run.ID, execErr.Error()); updateErr != nil {
+					h.log.Warn("async remember/file: failed to mark run as failed",
+						slog.String("run_id", run.ID),
+						slog.String("error", updateErr.Error()),
+					)
+				}
+			}
+			if result != nil && result.Cleanup != nil {
+				result.Cleanup()
+			}
+		}()
+		return c.JSON(http.StatusAccepted, map[string]any{
+			"run_id":      run.ID,
+			"status":      "running",
+			"document_id": documentID,
+		})
+
+	case "sync":
+		dummyName := "Remember session for " + agentDef.Name
+		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
+		if dummyAgent == nil {
+			dummyAgent = &agents.Agent{
+				ProjectID:         projectID,
+				Name:              dummyName,
+				StrategyType:      "remember-session:" + agentDef.ID,
+				AgentDefinitionID: &agentDef.ID,
+				CronSchedule:      "0 0 * * *",
+				TriggerType:       "manual",
+			}
+			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
+				return apperror.NewInternal("failed to create agent session for sync remember/file", err)
+			}
+		} else if dummyAgent.AgentDefinitionID == nil || *dummyAgent.AgentDefinitionID != agentDef.ID {
+			dummyAgent.AgentDefinitionID = &agentDef.ID
+			_ = h.agentRepo.Update(ctx, dummyAgent)
+		}
+		execReq := agents.ExecuteRequest{
+			Agent:           dummyAgent,
+			AgentDefinition: agentDef,
+			ProjectID:       projectID,
+			OrgID:           user.OrgID,
+			UserID:          user.ID,
+			UserMessage:     agentMessage,
+		}
+		if req.ParentRunID != "" {
+			execReq.ParentRunID = &req.ParentRunID
+		}
+		if req.RootRunID != "" {
+			execReq.RootRunID = &req.RootRunID
+		}
+		result, execErr := h.agentExecutor.Execute(ctx, execReq)
+		if execErr != nil {
+			return apperror.NewInternal("agent execution failed", execErr)
+		}
+		if result != nil && result.Cleanup != nil {
+			defer result.Cleanup()
+		}
+		span.SetStatus(codes.Ok, "")
+		return c.JSON(http.StatusOK, map[string]any{
+			"run_id":      result.RunID,
+			"status":      string(result.Status),
+			"summary":     result.Summary,
+			"document_id": documentID,
+		})
+
+	default: // "stream"
+		sseWriter := sse.NewWriter(c.Response().Writer)
+		if err := sseWriter.Start(); err != nil {
+			return apperror.ErrInternal.WithMessage("failed to start SSE stream")
+		}
+		if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
+			return nil
+		}
+		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, req.ParentRunID, req.RootRunID, "")
+		span.SetStatus(codes.Ok, "")
+		var rememberRunID string
+		if rememberResult != nil {
+			rememberRunID = rememberResult.RunID
+		}
+		sseWriter.WriteData(sse.NewDoneEventWithRun(rememberRunID))
+		sseWriter.Close()
+		if rememberResult != nil && rememberResult.Cleanup != nil {
+			go rememberResult.Cleanup()
+		}
+		return nil
+	}
+}
+
 // message so the cli-assistant-agent is always aware of auth/project state.
 // The block is formatted as a system note rather than part of the question.
 func buildAskContextPrefix(user *auth.AuthUser, projectID string) string {
@@ -1921,4 +2352,280 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// demoteStageForPolicy applies schema-policy enforcement to a classifier stage.
+// When policy is "reuse_only" and the classifier found no matching schema
+// (stage=="new_domain"), the stage is demoted to "no_match" so the agent
+// skips schema creation entirely rather than routing to a potentially
+// unrelated existing schema.
+func demoteStageForPolicy(stage, schemaPolicy string) string {
+	if stage == "new_domain" && schemaPolicy == "reuse_only" {
+		return "no_match"
+	}
+	return stage
+}
+
+// ForgetStreamRequest is the request body for the forget endpoint.
+type ForgetStreamRequest struct {
+	Message        string `json:"message"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Strategy       string `json:"strategy,omitempty"`      // "auto" | "confirm" (default) | "ask"
+	CascadeDepth   int    `json:"cascade_depth,omitempty"` // 1 | 2 (default) | 3
+	DryRun         bool   `json:"dry_run,omitempty"`
+	ParentRunID    string `json:"parent_run_id,omitempty"`
+	RootRunID      string `json:"root_run_id,omitempty"`
+	// Mode controls response style: "stream" (default SSE), "sync" (JSON, wait), "async" (JSON 202).
+	Mode string `json:"mode,omitempty"`
+}
+
+// buildForgetAgentMessage constructs the agent message injected as context for a forget run.
+func buildForgetAgentMessage(userQuery, strategy string, cascadeDepth int, dryRun bool) string {
+	dryRunStr := "false"
+	if dryRun {
+		dryRunStr = "true"
+	}
+	return fmt.Sprintf("strategy: %s\ncascade_depth: %d\ndry_run: %s\n\n%s",
+		strategy, cascadeDepth, dryRunStr, userQuery)
+}
+
+// ForgetStream handles POST /api/projects/:projectId/forget.
+// It finds graph objects matching the user's natural-language query and soft-deletes them
+// using the forget-agent. Soft-deletes are reversible via entity-restore.
+func (h *Handler) ForgetStream(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req ForgetStreamRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		return apperror.ErrBadRequest.WithMessage("message is required")
+	}
+
+	// Normalise strategy — default to "confirm".
+	strategy := req.Strategy
+	if strategy == "" {
+		strategy = "confirm"
+	}
+	if strategy != "auto" && strategy != "confirm" && strategy != "ask" {
+		return apperror.ErrBadRequest.WithMessage("strategy must be one of: auto, confirm, ask")
+	}
+
+	// Normalise cascade_depth — default to 2.
+	cascadeDepth := req.CascadeDepth
+	if cascadeDepth == 0 {
+		cascadeDepth = 2
+	}
+	if cascadeDepth < 1 || cascadeDepth > 3 {
+		return apperror.ErrBadRequest.WithMessage("cascade_depth must be 1, 2, or 3")
+	}
+
+	// Normalise mode.
+	mode := req.Mode
+	if mode == "" {
+		mode = c.Request().Header.Get("X-Forget-Mode")
+	}
+	if mode == "" {
+		mode = "stream"
+	}
+	if mode != "stream" && mode != "sync" && mode != "async" {
+		return apperror.ErrBadRequest.WithMessage("mode must be one of: stream, sync, async")
+	}
+
+	parentRunID := req.ParentRunID
+	if parentRunID == "" {
+		parentRunID = c.Request().Header.Get("X-Parent-Run-Id")
+	}
+	rootRunID := req.RootRunID
+	if rootRunID == "" {
+		rootRunID = c.Request().Header.Get("X-Root-Run-Id")
+	}
+
+	ctx := c.Request().Context()
+	if auth.ProjectIDFromContext(ctx) == "" && projectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, projectID)
+	}
+
+	// Probe LLM provider before opening SSE stream.
+	if h.modelFactory == nil {
+		return apperror.New(http.StatusServiceUnavailable, "no_provider",
+			"No LLM provider configured for this project.")
+	}
+
+	// Ensure the forget-agent exists (idempotent).
+	agentDef, err := h.agentRepo.EnsureForgetAgent(ctx, projectID, strategy, cascadeDepth)
+	if err != nil {
+		return apperror.NewInternal("failed to ensure forget-agent", err)
+	}
+
+	agentDefUUID, err := uuid.Parse(agentDef.ID)
+	if err != nil {
+		return apperror.NewInternal("invalid forget-agent ID", err)
+	}
+
+	agentMessage := buildForgetAgentMessage(message, strategy, cascadeDepth, req.DryRun)
+
+	// Reuse or create conversation.
+	var conv *Conversation
+	if req.ConversationID != "" {
+		convUUID, parseErr := uuid.Parse(req.ConversationID)
+		if parseErr == nil {
+			conv, _ = h.svc.GetConversation(ctx, projectID, convUUID)
+		}
+	}
+	if conv == nil {
+		title := message
+		if len(title) > 50 {
+			title = title[:50] + "..."
+		}
+		var createErr error
+		conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
+			Title:   title,
+			Message: agentMessage,
+		})
+		if createErr != nil {
+			return apperror.NewInternal("failed to create conversation", createErr)
+		}
+	}
+	conv.AgentDefinitionID = &agentDefUUID
+	if err := h.svc.SetAgentDefinitionID(ctx, projectID, conv.ID, &agentDefUUID); err != nil {
+		h.log.Warn("failed to set agent_definition_id on forget conversation",
+			slog.String("conversation_id", conv.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	switch mode {
+	case "async":
+		dummyName := "Forget session for " + agentDef.Name
+		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
+		if dummyAgent == nil {
+			dummyAgent = &agents.Agent{
+				ProjectID:         projectID,
+				Name:              dummyName,
+				StrategyType:      "forget-session:" + agentDef.ID,
+				AgentDefinitionID: &agentDef.ID,
+				CronSchedule:      "0 0 * * *",
+				TriggerType:       "manual",
+			}
+			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
+				return apperror.NewInternal("failed to create agent session for async forget", err)
+			}
+		}
+		run, runErr := h.agentRepo.CreateRun(ctx, dummyAgent.ID)
+		if runErr != nil {
+			return apperror.NewInternal("failed to create async run record", runErr)
+		}
+		preCreated := &agents.AgentRun{ID: run.ID, AgentID: dummyAgent.ID}
+		execReq := agents.ExecuteRequest{
+			Agent:           dummyAgent,
+			AgentDefinition: agentDef,
+			ProjectID:       projectID,
+			OrgID:           user.OrgID,
+			UserID:          user.ID,
+			UserMessage:     agentMessage,
+			PreCreatedRun:   preCreated,
+		}
+		if parentRunID != "" {
+			execReq.ParentRunID = &parentRunID
+		}
+		if rootRunID != "" {
+			execReq.RootRunID = &rootRunID
+		}
+		go func() {
+			bgCtx := context.Background()
+			bgCtx = auth.ContextWithProjectID(bgCtx, projectID)
+			result, execErr := h.agentExecutor.Execute(bgCtx, execReq)
+			if execErr != nil {
+				h.log.Warn("async forget: agent execution failed",
+					slog.String("run_id", run.ID),
+					slog.String("error", execErr.Error()),
+				)
+				_ = h.agentRepo.FailRun(bgCtx, run.ID, execErr.Error())
+			}
+			if result != nil && result.Cleanup != nil {
+				result.Cleanup()
+			}
+		}()
+		return c.JSON(http.StatusAccepted, map[string]any{
+			"run_id": run.ID,
+			"status": "running",
+		})
+
+	case "sync":
+		dummyName := "Forget session for " + agentDef.Name
+		dummyAgent, _ := h.agentRepo.FindByName(ctx, projectID, dummyName)
+		if dummyAgent == nil {
+			dummyAgent = &agents.Agent{
+				ProjectID:         projectID,
+				Name:              dummyName,
+				StrategyType:      "forget-session:" + agentDef.ID,
+				AgentDefinitionID: &agentDef.ID,
+				CronSchedule:      "0 0 * * *",
+				TriggerType:       "manual",
+			}
+			if err := h.agentRepo.Create(ctx, dummyAgent); err != nil {
+				return apperror.NewInternal("failed to create agent session for sync forget", err)
+			}
+		}
+		execReq := agents.ExecuteRequest{
+			Agent:           dummyAgent,
+			AgentDefinition: agentDef,
+			ProjectID:       projectID,
+			OrgID:           user.OrgID,
+			UserID:          user.ID,
+			UserMessage:     agentMessage,
+		}
+		if parentRunID != "" {
+			execReq.ParentRunID = &parentRunID
+		}
+		if rootRunID != "" {
+			execReq.RootRunID = &rootRunID
+		}
+		result, execErr := h.agentExecutor.Execute(ctx, execReq)
+		if execErr != nil {
+			return apperror.NewInternal("agent execution failed", execErr)
+		}
+		if result != nil && result.Cleanup != nil {
+			defer result.Cleanup()
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"run_id":  result.RunID,
+			"status":  string(result.Status),
+			"summary": result.Summary,
+		})
+
+	default: // "stream"
+		sseWriter := sse.NewWriter(c.Response().Writer)
+		if err := sseWriter.Start(); err != nil {
+			return apperror.ErrInternal.WithMessage("failed to start SSE stream")
+		}
+		if err := sseWriter.WriteData(sse.NewMetaEvent(conv.ID.String())); err != nil {
+			return nil
+		}
+		forgetResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, "")
+		var forgetRunID string
+		if forgetResult != nil {
+			forgetRunID = forgetResult.RunID
+		}
+		sseWriter.WriteData(sse.NewDoneEventWithRun(forgetRunID))
+		sseWriter.Close()
+		if forgetResult != nil && forgetResult.Cleanup != nil {
+			go forgetResult.Cleanup()
+		}
+		return nil
+	}
 }

@@ -672,7 +672,13 @@ func (s *Service) executeDeleteRelationship(ctx context.Context, projectID strin
 		return nil, fmt.Errorf("invalid relationship_id: %w", err)
 	}
 
-	result, err := s.graphService.DeleteRelationship(ctx, projectUUID, relID, nil)
+	// Optional reason
+	var reason *string
+	if r, ok := args["reason"].(string); ok && r != "" {
+		reason = &r
+	}
+
+	result, err := s.graphService.DeleteRelationship(ctx, projectUUID, relID, nil, reason)
 	if err != nil {
 		return nil, fmt.Errorf("delete relationship: %w", err)
 	}
