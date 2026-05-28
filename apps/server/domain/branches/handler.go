@@ -22,11 +22,12 @@ func NewHandler(svc *Service) *Handler {
 
 // List handles GET /api/graph/branches
 // @Summary      List branches
-// @Description  Returns all branches, optionally filtered by project
+// @Description  Returns branches for the current project. Project is resolved from (in priority order): ?project_id query param, X-Project-ID header, API token project binding.
 // @Tags         branches
 // @Accept       json
 // @Produce      json
-// @Param        project_id query string false "Filter by project ID (UUID)"
+// @Param        project_id query string false "Filter by project ID (UUID); overrides X-Project-ID header"
+// @Param        X-Project-ID header string false "Project ID (used when project_id query param is absent)"
 // @Success      200 {array} BranchResponse "List of branches"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
@@ -39,14 +40,15 @@ func (h *Handler) List(c echo.Context) error {
 		return apperror.ErrUnauthorized
 	}
 
-	// project_id is optional for list
+	// Resolve project ID: explicit query param takes precedence, then X-Project-ID / API token.
 	var projectID *string
 	if pid := c.QueryParam("project_id"); pid != "" {
-		// Validate UUID format
 		if _, err := uuid.Parse(pid); err != nil {
 			return apperror.ErrBadRequest.WithMessage("invalid project_id format")
 		}
 		projectID = &pid
+	} else if contextPID, err := auth.GetProjectID(c); err == nil && contextPID != "" {
+		projectID = &contextPID
 	}
 
 	branches, err := h.svc.List(c.Request().Context(), projectID)

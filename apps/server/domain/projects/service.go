@@ -29,11 +29,18 @@ type TokenRevoker interface {
 	RevokeByProjectAndUser(ctx context.Context, projectID, userID string) error
 }
 
+// BranchReader can look up a project's main branch.
+// Satisfied by branches.Store via fx injection.
+type BranchReader interface {
+	GetMainBranchID(ctx context.Context, projectID string) (*string, error)
+}
+
 // Service handles business logic for projects
 type Service struct {
 	repo         *Repository
 	agentRepo    *agents.Repository
 	tokenRevoker TokenRevoker // optional; nil is safe
+	branchReader BranchReader // optional; nil is safe
 	log          *slog.Logger
 }
 
@@ -52,6 +59,11 @@ func (s *Service) SetTokenRevoker(r TokenRevoker) {
 	s.tokenRevoker = r
 }
 
+// SetBranchReader wires in the branch reader so that project responses include main_branch_id.
+func (s *Service) SetBranchReader(r BranchReader) {
+	s.branchReader = r
+}
+
 // ServiceListParams defines parameters for listing projects
 type ServiceListParams struct {
 	UserID       string
@@ -59,6 +71,19 @@ type ServiceListParams struct {
 	ProjectID    string // If set, restrict results to this single project (for API token scope)
 	IncludeStats bool   // Whether to include aggregate statistics
 	Limit        int
+}
+
+// enrichWithMainBranch populates dto.MainBranchID from the branch store (best-effort; non-fatal).
+func (s *Service) enrichWithMainBranch(ctx context.Context, dto *ProjectDTO) {
+	if s.branchReader == nil {
+		return
+	}
+	id, err := s.branchReader.GetMainBranchID(ctx, dto.ID)
+	if err != nil {
+		s.log.WarnContext(ctx, "failed to fetch main branch id", "project_id", dto.ID, "err", err)
+		return
+	}
+	dto.MainBranchID = id
 }
 
 // List returns all projects the user is a member of
@@ -94,7 +119,9 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 
 	result := make([]ProjectDTO, len(projects))
 	for i, p := range projects {
-		result[i] = p.ToDTO()
+		dto := p.ToDTO()
+		s.enrichWithMainBranch(ctx, &dto)
+		result[i] = dto
 	}
 	return result, nil
 }
@@ -114,6 +141,7 @@ func (s *Service) GetByID(ctx context.Context, id string, includeStats bool) (*P
 	}
 
 	dto := project.ToDTO()
+	s.enrichWithMainBranch(ctx, &dto)
 	return &dto, nil
 }
 
@@ -207,6 +235,7 @@ func (s *Service) Create(ctx context.Context, req CreateProjectRequest, userID s
 	}
 
 	dto := project.ToDTO()
+	s.enrichWithMainBranch(ctx, &dto)
 	return &dto, nil
 }
 
@@ -282,6 +311,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 	// If no updates, return current project
 	if !hasUpdates {
 		dto := project.ToDTO()
+		s.enrichWithMainBranch(ctx, &dto)
 		return &dto, nil
 	}
 
@@ -295,6 +325,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 		slog.String("name", project.Name))
 
 	dto := project.ToDTO()
+	s.enrichWithMainBranch(ctx, &dto)
 	return &dto, nil
 }
 

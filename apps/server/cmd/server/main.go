@@ -187,6 +187,11 @@ func coreFxOptions() fx.Option {
 		fx.Invoke(func(svc *projects.Service, tokenRepo *apitoken.Repository) {
 			svc.SetTokenRevoker(tokenRepo)
 		}),
+
+		// Cross-domain wiring: give projects.Service access to branch store for main_branch_id
+		fx.Invoke(func(svc *projects.Service, branchStore *branches.Store) {
+			svc.SetBranchReader(branchStore)
+		}),
 	)
 }
 

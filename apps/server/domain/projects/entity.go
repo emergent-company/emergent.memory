@@ -112,6 +112,10 @@ type ProjectDTO struct {
 	AutoExtractObjects *bool          `json:"auto_extract_objects,omitempty"`
 	AutoExtractConfig  map[string]any `json:"auto_extract_config,omitempty"`
 	Stats              *ProjectStats  `json:"stats,omitempty"`
+	// MainBranchID is the UUID of the project's root branch (parent_branch_id IS NULL).
+	// Callers can use this as targetBranchID when merging without knowing the branch UUID,
+	// or pass the magic string "main" to the merge endpoint directly.
+	MainBranchID *string `json:"main_branch_id,omitempty"`
 }
 
 // ProjectMemberDTO is the response DTO for project member endpoints

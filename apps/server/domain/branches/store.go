@@ -197,6 +197,37 @@ func (s *Store) ListMerged(ctx context.Context, projectID *string) ([]*Branch, e
 	return branches, nil
 }
 
+// GetMainBranch returns the main (root) branch for a project — the branch with no parent.
+// Returns nil when the project has no main branch yet.
+func (s *Store) GetMainBranch(ctx context.Context, projectID string) (*Branch, error) {
+	branch := new(Branch)
+	err := s.db.NewSelect().
+		Model(branch).
+		Where("project_id = ?", projectID).
+		Where("parent_branch_id IS NULL").
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return branch, nil
+}
+
+// GetMainBranchID returns the ID of the project's root branch, or nil if none exists.
+// Satisfies the projects.BranchReader interface.
+func (s *Store) GetMainBranchID(ctx context.Context, projectID string) (*string, error) {
+	branch, err := s.GetMainBranch(ctx, projectID)
+	if err != nil || branch == nil {
+		return nil, err
+	}
+	id := branch.ID
+	return &id, nil
+}
+
 // SetMergedAt stamps a branch as merged by setting merged_at.
 func (s *Store) SetMergedAt(ctx context.Context, branchID string, mergedAt time.Time) error {
 	_, err := s.db.NewUpdate().
