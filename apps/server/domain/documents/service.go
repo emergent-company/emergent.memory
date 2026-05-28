@@ -248,6 +248,10 @@ func (s *Service) CreateFromUpload(ctx context.Context, params UploadParams) (*U
 	sourceType := "upload"
 	doc.SourceType = &sourceType
 
+	if len(params.Metadata) > 0 {
+		doc.Metadata = params.Metadata
+	}
+
 	err = s.repo.Create(ctx, doc)
 	if err != nil {
 		// Handle race condition: another request may have created the same document

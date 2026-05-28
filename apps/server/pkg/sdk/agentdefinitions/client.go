@@ -107,11 +107,16 @@ type ACPConfig struct {
 // APIResponse wraps API responses with success flag.
 
 // ToolPolicy controls how a specific tool is invoked.
+// Used by /remember to enforce schema_policy:
+//   - schema_policy=ask       → Confirm:true on "finalize-discovery" (executor pauses for human approval)
+//   - schema_policy=reuse_only → Disabled:true on "finalize-discovery" (executor hard-blocks the tool)
 type ToolPolicy struct {
 	// Confirm requires human approval before the tool executes.
 	Confirm bool `json:"confirm"`
 	// Message is the confirmation prompt shown to the user.
 	Message string `json:"message,omitempty"`
+	// Disabled hard-blocks the tool; executor returns an error without calling it.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // CreateAgentDefinitionRequest is the request body for creating an agent definition.

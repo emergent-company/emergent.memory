@@ -399,6 +399,13 @@ func (m *Middleware) authenticate(c echo.Context) (*AuthUser, error) {
 		if user := m.checkStandaloneAPIKey(c.Request()); user != nil {
 			return user, nil
 		}
+		// Also accept the standalone API key presented as a Bearer token
+		// (e.g. from the CLI which uses Authorization: Bearer for emt_* tokens).
+		if token := m.extractToken(c.Request()); token != "" && token == m.cfg.Standalone.APIKey {
+			if user := m.checkStandaloneAPIKey(m.requestWithXAPIKey(c.Request(), token)); user != nil {
+				return user, nil
+			}
+		}
 	}
 
 	token := m.extractToken(c.Request())
@@ -407,6 +414,13 @@ func (m *Middleware) authenticate(c echo.Context) (*AuthUser, error) {
 	}
 
 	return m.validateToken(c.Request().Context(), token)
+}
+
+// requestWithXAPIKey returns a shallow copy of r with X-API-Key set to key.
+func (m *Middleware) requestWithXAPIKey(r *http.Request, key string) *http.Request {
+	r2 := r.Clone(r.Context())
+	r2.Header.Set("X-API-Key", key)
+	return r2
 }
 
 // extractToken extracts the bearer token from request

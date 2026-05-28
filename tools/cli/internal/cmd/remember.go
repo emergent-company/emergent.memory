@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,28 +20,32 @@ import (
 )
 
 var rememberCmd = &cobra.Command{
-	Use:     "remember <text>",
+	Use:     "remember [text]",
 	Short:   "Store information in the knowledge graph using natural language",
 	GroupID: "knowledge",
 	Long: `Store information in the knowledge graph using natural language.
 
-The graph-insert-agent understands your input, checks for existing entities to avoid
-duplicates, creates a branch, writes structured data (entities + relationships), and
-merges back to the main graph — all automatically.
+The domain-remember-agent understands your input, classifies the content,
+discovers or reuses a schema pack, and queues structured extraction — all automatically.
+
+You can remember plain text or upload a file (PDF, DOCX, TXT, etc.) which is
+converted to plaintext first and then processed the same way.
 
 Schema policy controls what happens when no matching entity type exists:
-  auto        Create new schema types as needed (default)
-  reuse_only  Never create new types; use the closest existing type
+  reuse_only  Never create new types; use the closest existing type (default)
+  auto        Create new schema types as needed
   ask         Prompt before creating any new type (requires interactive terminal)
 
 Examples:
   memory remember "I have to buy toilet paper at Lidl"
   memory remember "Meeting with Sarah tomorrow at 3pm about the Q3 roadmap"
-  memory remember "The API server is deployed on aws-eu-west-1, running Go 1.22"
+  memory remember --file notes.pdf
+  memory remember --file report.docx --guide "this is my quarterly financial report"
+  memory remember --guide "shopping list for birthday party" "milk, eggs, candles"
   memory remember --schema-policy reuse_only "Task: fix login bug, priority high"
   memory remember --dry-run "Note: team offsite on 15 June in Berlin"
   memory remember --project abc123 "remember to call dentist next week"`,
-	Args: cobra.MinimumNArgs(1),
+	Args: cobra.ArbitraryArgs,
 	RunE: runRemember,
 }
 
@@ -51,23 +57,25 @@ var (
 	rememberShowTime     bool
 	rememberJSON         bool
 	rememberSessionID    string
+	rememberFile         string
+	rememberGuide        string
 )
 
 func init() {
 	rootCmd.AddCommand(rememberCmd)
 
 	rememberCmd.Flags().StringVar(&rememberProjectID, "project", "", "Project ID (uses default project if not specified)")
-	rememberCmd.Flags().StringVar(&rememberSchemaPolicy, "schema-policy", "auto", "Schema creation policy: auto, reuse_only, ask")
+	rememberCmd.Flags().StringVar(&rememberSchemaPolicy, "schema-policy", "reuse_only", "Schema creation policy: auto, reuse_only, ask")
 	rememberCmd.Flags().BoolVar(&rememberDryRun, "dry-run", false, "Create branch and write data but do not merge to main")
 	rememberCmd.Flags().BoolVar(&rememberShowTools, "show-tools", false, "Show tool calls made by the agent")
 	rememberCmd.Flags().BoolVar(&rememberShowTime, "show-time", false, "Show elapsed time")
 	rememberCmd.Flags().BoolVar(&rememberJSON, "json", false, "Output results as JSON")
 	rememberCmd.Flags().StringVar(&rememberSessionID, "session", "", "Continue a previous remember session (use session ID printed after a run)")
+	rememberCmd.Flags().StringVar(&rememberFile, "file", "", "Path to a file to upload, convert, and remember (PDF, DOCX, TXT, etc.)")
+	rememberCmd.Flags().StringVar(&rememberGuide, "guide", "", "Natural-language hint for the agent on how to interpret the content")
 }
 
 func runRemember(cmd *cobra.Command, args []string) error {
-	text := strings.Join(args, " ")
-
 	c, err := getClient(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
@@ -80,6 +88,14 @@ func runRemember(cmd *cobra.Command, args []string) error {
 
 	c.SetContext("", projectID)
 
+	if rememberFile != "" {
+		return runRememberFile(cmd.Context(), c, rememberFile, projectID)
+	}
+
+	if len(args) == 0 {
+		return fmt.Errorf("text argument is required (or use --file to upload a file)")
+	}
+	text := strings.Join(args, " ")
 	return runRememberAgent(cmd.Context(), c, text, projectID)
 }
 
@@ -92,6 +108,9 @@ func runRememberAgent(ctx context.Context, c *client.Client, text, projectID str
 	}
 	if rememberSessionID != "" {
 		reqBody["conversation_id"] = rememberSessionID
+	}
+	if rememberGuide != "" {
+		reqBody["guide"] = rememberGuide
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -110,6 +129,65 @@ func runRememberAgent(ctx context.Context, c *client.Client, text, projectID str
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
+	return streamRememberSSE(ctx, httpReq, text, projectID)
+}
+
+// runRememberFile posts to POST /api/projects/:projectId/remember/file as multipart
+// and streams the SSE response.
+func runRememberFile(ctx context.Context, c *client.Client, filePath, projectID string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file %q: %w", filePath, err)
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+
+	part, err := mw.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Add optional parameters.
+	_ = mw.WriteField("schema_policy", rememberSchemaPolicy)
+	if rememberDryRun {
+		_ = mw.WriteField("dry_run", "true")
+	}
+	if rememberGuide != "" {
+		_ = mw.WriteField("guide", rememberGuide)
+	}
+	if rememberSessionID != "" {
+		_ = mw.WriteField("conversation_id", rememberSessionID)
+	}
+
+	if err := mw.Close(); err != nil {
+		return fmt.Errorf("failed to finalise multipart form: %w", err)
+	}
+
+	endpoint := c.BaseURL() + "/api/projects/" + url.PathEscape(projectID) + "/remember/file"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, &buf)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", mw.FormDataContentType())
+	if err := c.SDK.AuthenticateRequest(httpReq); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	label := filepath.Base(filePath)
+	if rememberGuide != "" {
+		label = rememberGuide
+	}
+	return streamRememberSSE(ctx, httpReq, label, projectID)
+}
+
+// streamRememberSSE executes the request and parses the SSE stream, printing output.
+func streamRememberSSE(ctx context.Context, httpReq *http.Request, label, projectID string) error {
 	start := time.Now()
 	httpClient := &http.Client{Timeout: 0} // no timeout — SSE streams until server closes
 	resp, err := httpClient.Do(httpReq)
@@ -123,7 +201,6 @@ func runRememberAgent(ctx context.Context, c *client.Client, text, projectID str
 		return parseAPIError(resp.StatusCode, body)
 	}
 
-	// Parse SSE stream.
 	var response strings.Builder
 	var tools []string
 	var streamErr string
@@ -189,13 +266,19 @@ func runRememberAgent(ctx context.Context, c *client.Client, text, projectID str
 
 	if rememberJSON || output == "json" {
 		out := map[string]interface{}{
-			"text":          text,
+			"label":         label,
 			"projectId":     projectID,
 			"schema_policy": rememberSchemaPolicy,
 			"dry_run":       rememberDryRun,
 			"response":      response.String(),
 			"tools":         tools,
 			"elapsedMs":     elapsed.Milliseconds(),
+		}
+		if rememberGuide != "" {
+			out["guide"] = rememberGuide
+		}
+		if rememberFile != "" {
+			out["file"] = rememberFile
 		}
 		if streamErr != "" {
 			out["error"] = streamErr

@@ -448,10 +448,6 @@ func TestPtrToString(t *testing.T) {
 	}
 }
 
-func strPtr(s string) *string {
-	return &s
-}
-
 func TestParseObjectTypeSchemas(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -574,7 +570,15 @@ func TestParseObjectTypeSchemas(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseObjectTypeSchemas(tt.input)
+			var raw json.RawMessage
+			if tt.input != nil {
+				b, err := json.Marshal(tt.input)
+				if err != nil {
+					t.Fatalf("marshal input: %v", err)
+				}
+				raw = b
+			}
+			result := parseObjectTypeSchemas(raw)
 
 			if len(result) != len(tt.expected) {
 				t.Errorf("len(result) = %d, want %d", len(result), len(tt.expected))
@@ -674,7 +678,15 @@ func TestParseRelationshipTypeSchemas(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseRelationshipTypeSchemas(tt.input)
+			var raw json.RawMessage
+			if tt.input != nil {
+				b, err := json.Marshal(tt.input)
+				if err != nil {
+					t.Fatalf("marshal input: %v", err)
+				}
+				raw = b
+			}
+			result := parseRelationshipTypeSchemas(raw)
 
 			if len(result) != len(tt.expected) {
 				t.Errorf("len(result) = %d, want %d", len(result), len(tt.expected))

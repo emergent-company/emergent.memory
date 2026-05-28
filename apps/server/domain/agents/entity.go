@@ -316,6 +316,10 @@ type ToolPolicy struct {
 	// Message is the confirmation prompt shown to the user.
 	// Supports template variables: {tool_name}, {args_json}.
 	Message string `json:"message,omitempty"`
+	// Disabled hard-blocks the tool: the executor returns an error to the
+	// agent without calling the tool at all. Use for policy enforcement
+	// (e.g. schema_policy=reuse_only blocks finalize-discovery).
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // AgentDefinition stores agent configurations from product manifests.

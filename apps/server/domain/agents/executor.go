@@ -1575,6 +1575,20 @@ func (ae *AgentExecutor) runPipeline(
 			})
 		}
 
+		// Check tool policy — Disabled:true hard-blocks the tool (policy enforcement).
+		if req.AgentDefinition != nil {
+			if policy, ok := req.AgentDefinition.ToolPolicies[t.Name()]; ok && policy.Disabled {
+				ae.log.Info("tool_policy: tool disabled by policy, blocking call",
+					slog.String("run_id", run.ID),
+					slog.String("tool", t.Name()),
+				)
+				return map[string]any{
+					"error":  fmt.Sprintf("tool %q is disabled by schema policy and cannot be called", t.Name()),
+					"policy": "disabled",
+				}, nil
+			}
+		}
+
 		// Check tool policy — if Confirm:true, pause the run and ask the user.
 		if req.AgentDefinition != nil {
 			if policy, ok := req.AgentDefinition.ToolPolicies[t.Name()]; ok && policy.Confirm {

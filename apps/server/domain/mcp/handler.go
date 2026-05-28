@@ -254,6 +254,7 @@ func (h *Handler) handleToolsList(c echo.Context, req *Request, user *auth.AuthU
 	}
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
+	tools = FilterToolsForScopes(tools, user.Scopes)
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 

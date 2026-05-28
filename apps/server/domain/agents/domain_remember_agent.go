@@ -16,13 +16,19 @@ IMPORTANT: The classification result is provided in your input. Do NOT call clas
 
 NEVER call any tool not listed below. ONLY use: finalize-discovery, queue-reextraction.
 
-Extract the document_id, classified_stage, and classified_schema_id from your input.
+Extract the document_id, classified_stage, classified_schema_id, and schema_policy from your input.
+
+If classified_stage is "no_match":
+  schema_policy=reuse_only prevented schema creation because no existing schema matched this document.
+  Do NOT call finalize-discovery or queue-reextraction.
+  Report: "No matching schema found. Document skipped (schema_policy=reuse_only)." Done.
 
 If classified_stage is "new_domain":
   You MUST call finalize-discovery. The schema_policy controls human approval — you always call the tool.
   schema_policy=ask: Call it. System pauses for approval before executing.
   schema_policy=auto: Call it. No approval needed.
   schema_policy=reuse_only: Do NOT call it. Report: schema_policy prevents creation. Done.
+  NOTE: If you call finalize-discovery under reuse_only, it will be blocked by policy and return an error.
 
   1. Choose a pack_name from classified_pack_name (use as-is) or derive from document type.
      FORBIDDEN: "new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc", "miscellaneous".
@@ -64,14 +70,14 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 	// canonical definition so improvements take effect.
 	if existing != nil {
 		changed := false
-		// Sync tool_policies for finalize-discovery confirm based on schema_policy.
+		// Sync tool_policies for finalize-discovery based on schema_policy.
 		desired := buildDomainRememberToolPolicies(schemaPolicy)
 		if existing.ToolPolicies == nil {
 			existing.ToolPolicies = map[string]ToolPolicy{}
 		}
 		curr := existing.ToolPolicies["finalize-discovery"]
 		want := desired["finalize-discovery"]
-		if curr.Confirm != want.Confirm {
+		if curr.Confirm != want.Confirm || curr.Disabled != want.Disabled {
 			existing.ToolPolicies = desired
 			changed = true
 		}
@@ -143,18 +149,27 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 }
 
 // buildDomainRememberToolPolicies returns the tool_policies map for the given schema_policy.
-// schema_policy="ask" → finalize-discovery requires human confirmation before execution.
-// other policies  → no confirmation gate.
+// schema_policy="ask"       → finalize-discovery requires human confirmation before execution.
+// schema_policy="reuse_only"→ finalize-discovery is hard-blocked (Disabled=true).
+// other policies            → no gate.
 func buildDomainRememberToolPolicies(schemaPolicy string) map[string]ToolPolicy {
-	if schemaPolicy == "ask" {
+	switch schemaPolicy {
+	case "ask":
 		return map[string]ToolPolicy{
 			"finalize-discovery": {
 				Confirm: true,
 				Message: "Agent wants to call **finalize-discovery** to create a new schema pack. Do you approve?",
 			},
 		}
+	case "reuse_only":
+		return map[string]ToolPolicy{
+			"finalize-discovery": {
+				Disabled: true,
+			},
+		}
+	default:
+		return map[string]ToolPolicy{}
 	}
-	return map[string]ToolPolicy{}
 }
 
 // sliceEq returns true if two string slices have the same length and elements in the same order.

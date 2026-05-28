@@ -150,6 +150,7 @@ type UploadParams struct {
 	StorageKey  string
 	StorageURL  string
 	AutoExtract bool
+	Metadata    map[string]any
 }
 
 // BatchUploadResult is the response for batch file upload

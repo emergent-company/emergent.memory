@@ -414,6 +414,117 @@ func (h *UploadHandler) processFileUpload(ctx context.Context, user *auth.AuthUs
 	}
 }
 
+// RememberUploadResult is returned by UploadForRemember.
+type RememberUploadResult struct {
+	DocumentID  string
+	IsDuplicate bool
+}
+
+// UploadForRemember uploads a file, creates a document record, and queues a parsing job
+// without auto-extraction. It is intended for the /remember/file endpoint which polls
+// for conversion completion and then runs the remember agent on the parsed plaintext.
+// The caller is responsible for waiting for ConversionStatus=="completed" before reading content.
+func (h *UploadHandler) UploadForRemember(ctx context.Context, orgID, projectID string, fh *multipart.FileHeader, metadata map[string]any) (*RememberUploadResult, error) {
+	filename := fh.Filename
+	if filename == "" {
+		filename = "upload"
+	}
+
+	if fh.Size > MaxUploadSize {
+		return nil, apperror.ErrBadRequest.WithMessage("file size exceeds maximum of 500MB")
+	}
+
+	src, err := fh.Open()
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("failed to read file")
+	}
+	defer src.Close()
+
+	buf := new(bytes.Buffer)
+	n, err := io.Copy(buf, src)
+	if err != nil {
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	fileBytes := buf.Bytes()
+
+	fileHash := computeFileHash(fileBytes)
+
+	mimeType := fh.Header.Get("Content-Type")
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = http.DetectContentType(fileBytes)
+	}
+	if mimeType == "application/zip" {
+		mimeType = refineMimeTypeByExtension(mimeType, fh.Filename)
+	}
+
+	if !h.storage.Enabled() {
+		return nil, apperror.New(http.StatusServiceUnavailable, "storage_unavailable", "Storage service is not configured")
+	}
+
+	uploadResult, err := h.storage.UploadDocument(
+		ctx,
+		bytes.NewReader(fileBytes),
+		n,
+		storage.DocumentUploadOptions{
+			OrgID:     orgID,
+			ProjectID: projectID,
+			Filename:  filename,
+			UploadOptions: storage.UploadOptions{
+				ContentType: mimeType,
+			},
+		},
+	)
+	if err != nil {
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+
+	response, err := h.svc.CreateFromUpload(ctx, UploadParams{
+		ProjectID:   projectID,
+		OrgID:       orgID,
+		Filename:    filename,
+		MimeType:    mimeType,
+		FileSize:    n,
+		FileHash:    fileHash,
+		StorageKey:  uploadResult.Key,
+		StorageURL:  uploadResult.StorageURL,
+		AutoExtract: false,
+		Metadata:    metadata,
+	})
+	if err != nil {
+		_ = h.storage.Delete(ctx, uploadResult.Key)
+		return nil, err
+	}
+
+	if response.IsDuplicate {
+		_ = h.storage.Delete(ctx, uploadResult.Key)
+		var docID string
+		if response.ExistingDocumentID != nil {
+			docID = *response.ExistingDocumentID
+		} else if response.Document != nil {
+			docID = response.Document.ID
+		}
+		return &RememberUploadResult{DocumentID: docID, IsDuplicate: true}, nil
+	}
+
+	if h.parsingJobsService != nil {
+		if err := h.parsingJobsService.CreateJob(ctx, ParsingJobOptions{
+			OrganizationID: orgID,
+			ProjectID:      projectID,
+			DocumentID:     response.Document.ID,
+			SourceType:     "file_upload",
+			SourceFilename: &filename,
+			MimeType:       &mimeType,
+			FileSizeBytes:  &n,
+			StorageKey:     &uploadResult.Key,
+			AutoExtract:    false,
+		}); err != nil {
+			h.log.Error("failed to create parsing job for remember", slog.String("document_id", response.Document.ID), logger.Error(err))
+		}
+	}
+
+	return &RememberUploadResult{DocumentID: response.Document.ID, IsDuplicate: false}, nil
+}
+
 // computeFileHash computes SHA-256 hash of file bytes
 func computeFileHash(data []byte) string {
 	hash := sha256.Sum256(data)
