@@ -3902,7 +3902,7 @@ Use --remove to remove the project-level override and fall back to the org confi
 Supported providers:
   google            — Google AI (Gemini API); requires --api-key
   google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
-  openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
+  openai             — OpenAI API; requires --api-key
   deepseek          — DeepSeek AI models; requires --api-key
 
 The project is read from --project or the MEMORY_PROJECT_ID environment variable.
@@ -3910,7 +3910,7 @@ The project is read from --project or the MEMORY_PROJECT_ID environment variable
 Examples:
   memory provider configure-project google --api-key AIzaSy...
   memory provider configure-project google-vertex --gcp-project my-proj --location us-central1 --key-file sa.json
-  memory provider configure-project openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
+  memory provider configure-project openai --api-key sk-...
   memory provider configure-project deepseek --api-key sk-... --generative-model deepseek-v4-flash
   memory provider configure-project google --remove
 
@@ -3946,13 +3946,13 @@ on success. Models are auto-selected from the catalog if not specified.
 Supported providers:
   google            — Google AI (Gemini API); requires --api-key
   google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
-  openai-compatible — OpenAI-compatible API (Ollama, vLLM, etc.); requires --api-key, --base-url, --generative-model
+  openai             — OpenAI API; requires --api-key
   deepseek          — DeepSeek AI models; requires --api-key
 
 Examples:
   memory provider configure google --api-key AIzaSy...
   memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
-  memory provider configure openai-compatible --api-key sk-... --base-url http://localhost:11434/v1 --generative-model llama3
+  memory provider configure openai --api-key sk-...
   memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
   memory provider configure deepseek --api-key sk-...
   memory provider configure deepseek --api-key sk-... --generative-model deepseek-v4-flash
@@ -4206,35 +4206,41 @@ Store information in the knowledge graph using natural language
 
 Store information in the knowledge graph using natural language.
 
-The graph-insert-agent understands your input, checks for existing entities to avoid
-duplicates, creates a branch, writes structured data (entities + relationships), and
-merges back to the main graph — all automatically.
+The domain-remember-agent understands your input, classifies the content,
+discovers or reuses a schema pack, and queues structured extraction — all automatically.
+
+You can remember plain text or upload a file (PDF, DOCX, TXT, etc.) which is
+converted to plaintext first and then processed the same way.
 
 Schema policy controls what happens when no matching entity type exists:
-  auto        Create new schema types as needed (default)
-  reuse_only  Never create new types; use the closest existing type
+  reuse_only  Never create new types; use the closest existing type (default)
+  auto        Create new schema types as needed
   ask         Prompt before creating any new type (requires interactive terminal)
 
 Examples:
   memory remember "I have to buy toilet paper at Lidl"
   memory remember "Meeting with Sarah tomorrow at 3pm about the Q3 roadmap"
-  memory remember "The API server is deployed on aws-eu-west-1, running Go 1.22"
+  memory remember --file notes.pdf
+  memory remember --file report.docx --guide "this is my quarterly financial report"
+  memory remember --guide "shopping list for birthday party" "milk, eggs, candles"
   memory remember --schema-policy reuse_only "Task: fix login bug, priority high"
   memory remember --dry-run "Note: team offsite on 15 June in Berlin"
   memory remember --project abc123 "remember to call dentist next week"
 
 ```
-memory remember <text> [flags]
+memory remember [text] [flags]
 ```
 
 ### Options
 
 ```
       --dry-run                Create branch and write data but do not merge to main
+      --file string            Path to a file to upload, convert, and remember (PDF, DOCX, TXT, etc.)
+      --guide string           Natural-language hint for the agent on how to interpret the content
   -h, --help                   help for remember
       --json                   Output results as JSON
       --project string         Project ID (uses default project if not specified)
-      --schema-policy string   Schema creation policy: auto, reuse_only, ask (default "auto")
+      --schema-policy string   Schema creation policy: auto, reuse_only, ask (default "reuse_only")
       --session string         Continue a previous remember session (use session ID printed after a run)
       --show-time              Show elapsed time
       --show-tools             Show tool calls made by the agent

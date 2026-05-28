@@ -1,5 +1,12 @@
 # Auto Schema Discovery — Test Suite Session Notes
 
+> **Note (2026-05):** References to `ask_user` as the HITL mechanism in this document are superseded.
+> The `ask` schema policy now uses `ToolPolicy{Confirm:true}` on `finalize-discovery` — the executor
+> pauses the run and creates a `kb.agent_questions` row. `ask_user` is no longer involved in the
+> `/remember` schema-discovery flow. The `reuse_only` policy now also hard-blocks `finalize-discovery`
+> via `ToolPolicy{Disabled:true}` and demotes `new_domain` classifier results to `no_match`.
+> Default policy changed from `auto` → `reuse_only`.
+
 ## What We Built
 
 End-to-end test suite for the domain-aware extraction pipeline:

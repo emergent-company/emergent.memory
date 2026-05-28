@@ -129,8 +129,22 @@ If user just created "AI Chat" pack for doc 1, it is available as an extend opti
 | policy | classifier match | classifier new_domain |
 |---|---|---|
 | `auto` | extract with domain guidance | general extraction + trigger discovery agent |
-| `reuse_only` | extract with domain guidance | general extraction only, no discovery |
-| `ask` | ask_user even on match (user reviews) | general extraction + trigger discovery agent |
+| `reuse_only` | extract with domain guidance | stage demoted to `no_match`; agent skips all tools |
+| `ask` | extract with domain guidance | `finalize-discovery` gated by `ToolPolicy{Confirm:true}` — agent calls it, executor pauses for human approval |
+
+#### reuse_only enforcement (three layers)
+
+1. **Handler demotion** — `classified_stage=new_domain` is overwritten to `no_match` before the agent message is built. The agent never sees `new_domain`.
+2. **Prompt instruction** — agent system prompt instructs: on `no_match`, report "no matching schema" and stop. Do not call any tool.
+3. **Executor hard-block** — `finalize-discovery` has `ToolPolicy{Disabled:true}` set by `buildDomainRememberToolPolicies("reuse_only")`. If the agent calls it despite the prompt, the `beforeToolCb` in the executor returns a policy-error result without invoking the tool.
+
+#### ask enforcement
+
+`ToolPolicy{Confirm:true}` is set on `finalize-discovery` (not `ask_user`). When the agent calls `finalize-discovery`, the executor pauses the run, creates a `kb.agent_questions` row, and emits a suspend event. The run resumes after the user approves/rejects via the questions API.
+
+#### Default policy
+
+The default (when `schema_policy` is omitted from the request) is `reuse_only`. Pass `schema_policy=auto` explicitly to enable schema creation.
 
 ---
 

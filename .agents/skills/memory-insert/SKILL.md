@@ -43,7 +43,7 @@ memory remember --json "user prefers dark mode"
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--project` | config default | Project ID |
-| `--schema-policy` | `auto` | `auto` / `reuse_only` / `ask` |
+| `--schema-policy` | `reuse_only` | `auto` / `reuse_only` / `ask` |
 | `--dry-run` | false | Write branch, skip merge |
 | `--show-tools` | false | Print tool calls |
 | `--show-time` | false | Print elapsed time |
@@ -54,9 +54,9 @@ memory remember --json "user prefers dark mode"
 
 | Policy | Behaviour |
 |--------|-----------|
-| `auto` | Creates new schema types when no existing type fits |
-| `reuse_only` | Always reuses closest existing type, never creates |
-| `ask` | Pauses and asks before creating any new type |
+| `reuse_only` | **Default.** Never creates new schema types. If no schema matches the document, the agent skips extraction and reports "no matching schema found". `finalize-discovery` is hard-blocked via `ToolPolicy{Disabled:true}`. |
+| `auto` | Creates new schema types automatically when no existing type fits the document. |
+| `ask` | Pauses and asks for human approval before creating any new schema type. Uses `ToolPolicy{Confirm:true}` on `finalize-discovery` — the executor suspends the run and creates a confirmation question. |
 
 ## HTTP API
 
@@ -66,7 +66,7 @@ Content-Type: application/json
 
 {
   "message": "buy toilet paper at Lidl",
-  "schema_policy": "auto",
+  "schema_policy": "reuse_only",
   "dry_run": false,
   "conversation_id": "<optional-session-id>"
 }
@@ -76,14 +76,26 @@ Response: SSE stream with `meta`, `token`, `mcp_tool`, `done` events — same fo
 
 ## What the agent does (steps)
 
-1. **Parse** — extract entities, properties, relationships from input
-2. **Check schema** — `schema-compiled-types` → find matching types
-3. **Dedup** — `search-hybrid` per entity → update if match found
-4. **Branch** — `graph-branch-create` with name `remember/<slug>`
-5. **Write** — `entity-create` + `relationship-create` on branch
-6. **Merge** — `graph-branch-merge execute=true` → main (skip if `dry_run`)
-7. **Cleanup** — `graph-branch-delete`
-8. **Report** — markdown summary of what was created/updated
+1. **Classify** — document is pre-classified against installed schemas before the agent runs
+2. **Parse** — extract entities, properties, relationships from input
+3. **Check schema** — `schema-compiled-types` → find matching types
+4. **Dedup** — `search-hybrid` per entity → update if match found
+5. **Branch** — `graph-branch-create` with name `remember/<slug>`
+6. **Write** — `entity-create` + `relationship-create` on branch
+7. **Merge** — `graph-branch-merge execute=true` → main (skip if `dry_run`)
+8. **Cleanup** — `graph-branch-delete`
+9. **Report** — markdown summary of what was created/updated
+
+## Classifier stages
+
+The pre-classifier runs before the agent and sets `classified_stage` in the agent message:
+
+| Stage | Meaning | Agent action |
+|-------|---------|-------------|
+| `vector` | Schema matched via embedding cosine ≥ 0.85 | Call `queue-reextraction` |
+| `llm` | Schema matched via LLM (ambiguous vector) | Call `queue-reextraction` |
+| `new_domain` | No schema matched; `schema_policy=auto` or `ask` | Call `finalize-discovery` |
+| `no_match` | No schema matched; `schema_policy=reuse_only` | Report skip, call no tools |
 
 ## Example output
 
