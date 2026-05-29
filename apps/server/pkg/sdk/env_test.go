@@ -6,34 +6,6 @@ import (
 	"testing"
 )
 
-func TestParseDotenv(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".env")
-	content := `
-# comment
-MEMORY_SERVER_URL=http://test-server
-MEMORY_ACCOUNT_API_KEY="my-key"
-MEMORY_ORG_ID='org-1'
-EMPTY=
-`
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	m, err := parseDotenv(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m["MEMORY_SERVER_URL"] != "http://test-server" {
-		t.Errorf("got %q", m["MEMORY_SERVER_URL"])
-	}
-	if m["MEMORY_ACCOUNT_API_KEY"] != "my-key" {
-		t.Errorf("got %q", m["MEMORY_ACCOUNT_API_KEY"])
-	}
-	if m["MEMORY_ORG_ID"] != "org-1" {
-		t.Errorf("got %q", m["MEMORY_ORG_ID"])
-	}
-}
-
 func TestParseSimpleYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -64,37 +36,13 @@ cache:
 	}
 }
 
-func TestWalkUpFind(t *testing.T) {
-	// Create a temp dir tree: root/sub/sub2
-	root := t.TempDir()
-	sub := filepath.Join(root, "sub")
-	sub2 := filepath.Join(sub, "sub2")
-	if err := os.MkdirAll(sub2, 0755); err != nil {
-		t.Fatal(err)
-	}
-	// Place .env.local in root
-	envPath := filepath.Join(root, ".env.local")
-	if err := os.WriteFile(envPath, []byte("KEY=val"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Change to sub2 and walk up
-	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	if err := os.Chdir(sub2); err != nil {
-		t.Fatal(err)
-	}
-
-	found := walkUpFind(".env.local")
-	if found != envPath {
-		t.Errorf("expected %q, got %q", envPath, found)
-	}
-}
-
-func TestNewFromEnvDotenvLocal(t *testing.T) {
+// TestNewFromEnvIgnoresDotenvFiles verifies that NewFromEnv does NOT read .env
+// or .env.local files from the filesystem — the calling app controls file loading.
+func TestNewFromEnvIgnoresDotenvFiles(t *testing.T) {
 	dir := t.TempDir()
+	// Write a .env.local that would set a different server URL if read.
 	envFile := filepath.Join(dir, ".env.local")
-	content := "MEMORY_SERVER_URL=http://dotenv-server\nMEMORY_ACCOUNT_API_KEY=dotenv-key\n"
+	content := "MEMORY_SERVER_URL=http://should-not-be-used\nMEMORY_ACCOUNT_API_KEY=dotenv-key\n"
 	if err := os.WriteFile(envFile, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -105,20 +53,21 @@ func TestNewFromEnvDotenvLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Clear relevant env vars
-	os.Unsetenv("MEMORY_SERVER_URL")
-	os.Unsetenv("MEMORY_API_URL")
-	os.Unsetenv("MEMORY_ACCOUNT_API_KEY")
-	os.Unsetenv("MEMORY_ACCOUNT_API_KEY")
-	os.Unsetenv("MEMORY_PROJECT_API_KEY")
-	os.Unsetenv("MEMORY_PROJECT_API_KEY")
+	// Set the real env vars to different values.
+	os.Setenv("MEMORY_SERVER_URL", "http://real-server")
+	os.Setenv("MEMORY_ACCOUNT_API_KEY", "real-key")
+	defer func() {
+		os.Unsetenv("MEMORY_SERVER_URL")
+		os.Unsetenv("MEMORY_ACCOUNT_API_KEY")
+	}()
 
 	client, err := NewFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.base != "http://dotenv-server" {
-		t.Errorf("expected http://dotenv-server, got %q", client.base)
+	// Must use the process env value, not the .env.local value.
+	if client.base != "http://real-server" {
+		t.Errorf("expected http://real-server, got %q — SDK must not read .env files", client.base)
 	}
 }
 

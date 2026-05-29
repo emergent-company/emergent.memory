@@ -181,21 +181,22 @@ func New(cfg Config) (*Client, error) {
 // NewFromEnv creates a new Emergent API client by auto-discovering configuration.
 //
 // Resolution order (highest priority wins):
-//  1. ~/.memory/config.yaml — CLI config file
-//  2. .env — dotenv file (walked up from current directory)
-//  3. .env.local — local overrides (walked up from current directory)
-//  4. MEMORY_* environment variables
+//  1. ~/.memory/config.yaml — user-level CLI config file
+//  2. MEMORY_* environment variables (process environment)
+//
+// Note: .env / .env.local files are NOT read. The calling application is
+// responsible for loading dotenv files and exporting the values into the
+// process environment before calling NewFromEnv().
 //
 // Recognised variables / YAML keys:
 //   - MEMORY_SERVER_URL / server_url — server URL (falls back to http://localhost:3002)
-//   - MEMORY_ACCOUNT_API_KEY / api_key — account-level API key or emt_* token (canonical); MEMORY_ACCOUNT_API_KEY is a deprecated alias
-//   - MEMORY_PROJECT_API_KEY / project_token — project-scoped emt_* token (overrides api_key); MEMORY_PROJECT_API_KEY is a deprecated alias
+//   - MEMORY_ACCOUNT_API_KEY / api_key — account-level API key or emt_* token (canonical)
+//   - MEMORY_API_KEY — deprecated alias for MEMORY_ACCOUNT_API_KEY
+//   - MEMORY_PROJECT_API_KEY / project_token — project-scoped emt_* token (overrides api_key)
+//   - MEMORY_PROJECT_TOKEN — deprecated alias for MEMORY_PROJECT_API_KEY
 //   - MEMORY_ORG_ID / org_id — default organisation ID
 //   - MEMORY_PROJECT_ID / project_id — default project ID
-//
-// MEMORY_API_URL is accepted as an alias for MEMORY_SERVER_URL.
-// MEMORY_ACCOUNT_API_KEY is accepted as a deprecated alias for MEMORY_ACCOUNT_API_KEY.
-// MEMORY_PROJECT_API_KEY is accepted as a deprecated alias for MEMORY_PROJECT_API_KEY.
+//   - MEMORY_API_URL — alias for MEMORY_SERVER_URL
 func NewFromEnv() (*Client, error) {
 	discovered := loadEnvConfig()
 

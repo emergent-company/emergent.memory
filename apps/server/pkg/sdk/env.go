@@ -18,6 +18,14 @@ type envConfig struct {
 
 // loadEnvConfig discovers configuration from multiple sources in priority order.
 // Higher-priority sources overwrite lower-priority ones.
+//
+// Sources (lowest to highest priority):
+//  1. ~/.memory/config.yaml — user-level config file
+//  2. Environment variables (os.Getenv) — highest priority
+//
+// Note: .env / .env.local files are intentionally NOT read here. The calling
+// application is responsible for loading any dotenv files and setting the
+// resulting values in the process environment before calling NewFromEnv().
 func loadEnvConfig() envConfig {
 	cfg := envConfig{}
 
@@ -29,70 +37,10 @@ func loadEnvConfig() envConfig {
 		}
 	}
 
-	// 2. .env (walk up from cwd)
-	if p := walkUpFind(".env"); p != "" {
-		if raw, err := parseDotenv(p); err == nil {
-			applyEnvMap(&cfg, raw)
-		}
-	}
-
-	// 3. .env.local (walk up from cwd, overrides .env)
-	if p := walkUpFind(".env.local"); p != "" {
-		if raw, err := parseDotenv(p); err == nil {
-			applyEnvMap(&cfg, raw)
-		}
-	}
-
-	// 4. Actual environment variables (highest priority)
+	// 2. Actual environment variables (highest priority)
 	applyEnvMap(&cfg, nil) // nil means read from os.Getenv
 
 	return cfg
-}
-
-// walkUpFind searches for filename starting from cwd, walking up to root.
-func walkUpFind(filename string) string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	for {
-		candidate := filepath.Join(dir, filename)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-		dir = parent
-	}
-}
-
-// parseDotenv parses a .env file into a map. Handles KEY=VALUE and KEY="VALUE".
-func parseDotenv(path string) (map[string]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	result := make(map[string]string)
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
-			continue
-		}
-		idx := strings.Index(line, "=")
-		key := strings.TrimSpace(line[:idx])
-		val := strings.TrimSpace(line[idx+1:])
-		// Strip surrounding quotes
-		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
-			val = val[1 : len(val)-1]
-		}
-		result[key] = val
-	}
-	return result, scanner.Err()
 }
 
 // parseSimpleYAML parses a simple flat YAML file (key: value lines only).
