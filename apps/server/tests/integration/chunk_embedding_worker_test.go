@@ -71,14 +71,7 @@ func (s *ChunkEmbeddingWorkerTestSuite) SetupTest() {
 	s.projectID = uuid.New().String()
 	s.documentID = uuid.New().String()
 
-	err = testutil.CreateTestOrganization(s.ctx, s.testDB.DB, s.orgID, "Test Org for Chunk Embedding Worker")
-	s.Require().NoError(err)
-
-	err = testutil.CreateTestProject(s.ctx, s.testDB.DB, testutil.TestProject{
-		ID:    s.projectID,
-		OrgID: s.orgID,
-		Name:  "Test Project for Chunk Embedding Worker",
-	}, testutil.AdminUser.ID)
+	err = testutil.SetupFullTestProject(s.ctx, s.testDB.DB, s.orgID, s.projectID)
 	s.Require().NoError(err)
 
 	// Create a test document

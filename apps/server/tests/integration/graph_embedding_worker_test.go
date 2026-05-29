@@ -71,14 +71,7 @@ func (s *GraphEmbeddingWorkerTestSuite) SetupTest() {
 	s.orgID = uuid.New().String()
 	s.projectID = uuid.New().String()
 
-	err = testutil.CreateTestOrganization(s.ctx, s.testDB.DB, s.orgID, "Test Org for Embedding Worker")
-	s.Require().NoError(err)
-
-	err = testutil.CreateTestProject(s.ctx, s.testDB.DB, testutil.TestProject{
-		ID:    s.projectID,
-		OrgID: s.orgID,
-		Name:  "Test Project for Embedding Worker",
-	}, testutil.AdminUser.ID)
+	err = testutil.SetupFullTestProject(s.ctx, s.testDB.DB, s.orgID, s.projectID)
 	s.Require().NoError(err)
 }
 

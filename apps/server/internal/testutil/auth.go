@@ -4,12 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -484,4 +488,102 @@ func SeedTestProjectModelConfig(ctx context.Context, db bun.IDB, projectID, gene
 			updated_at = NOW()
 	`, projectID, generativeModel, embeddingModel).Exec(ctx)
 	return err
+}
+
+// SeedTestProjectProviderConfig encrypts apiKey and upserts a provider credential
+// row into kb.project_provider_configs.  credSvc must have encryption configured
+// (i.e. LLM_ENCRYPTION_KEY present in the environment).
+//
+// generativeModel and embeddingModel are stored bare (no provider prefix) because
+// the provider column already identifies the provider.  Pass "" to omit them.
+func SeedTestProjectProviderConfig(
+	ctx context.Context,
+	db bun.IDB,
+	credSvc *provider.CredentialService,
+	projectID string,
+	providerName provider.ProviderType,
+	apiKey string,
+	generativeModel string,
+	embeddingModel string,
+) error {
+	ciphertext, nonce, err := credSvc.EncryptCredential([]byte(apiKey))
+	if err != nil {
+		return fmt.Errorf("SeedTestProjectProviderConfig: encrypt: %w", err)
+	}
+	cfg := &provider.ProjectProviderConfig{
+		ProjectID:           projectID,
+		Provider:            providerName,
+		EncryptedCredential: ciphertext,
+		EncryptionNonce:     nonce,
+		GenerativeModel:     generativeModel,
+		EmbeddingModel:      embeddingModel,
+	}
+	repo := provider.NewRepository(db, slog.Default())
+	return repo.UpsertProjectProviderConfig(ctx, cfg)
+}
+
+// SetupFullTestProject creates a fully-configured test project in one call:
+//   - organisation (orgID)
+//   - project (projectID) owned by AdminUser
+//   - org + project memberships for AdminUser (admin role)
+//   - provider credential rows for every API key found in env
+//   - project model config: generative model from env, embedding "google/gemini-embedding-2-preview"
+//
+// It calls LoadEnvFiles() internally so .env / .env.local keys are available.
+// If no LLM credentials are found in env the project is still created, just
+// without provider / model config rows (tests that need LLM should skipIfNoLLM).
+func SetupFullTestProject(ctx context.Context, db bun.IDB, orgID, projectID string) error {
+	LoadEnvFiles()
+
+	// 1. Create org + project + memberships.
+	if err := CreateTestOrganization(ctx, db, orgID, "test-org-"+orgID[:8]); err != nil {
+		return fmt.Errorf("SetupFullTestProject: org: %w", err)
+	}
+	if err := CreateTestProject(ctx, db, TestProject{
+		ID:    projectID,
+		OrgID: orgID,
+		Name:  "test-project-" + projectID[:8],
+	}, AdminUser.ID); err != nil {
+		return fmt.Errorf("SetupFullTestProject: project: %w", err)
+	}
+	if err := CreateTestOrgMembership(ctx, db, orgID, AdminUser.ID, "admin"); err != nil {
+		return fmt.Errorf("SetupFullTestProject: org membership: %w", err)
+	}
+	if err := CreateTestProjectMembership(ctx, db, projectID, AdminUser.ID, "admin"); err != nil {
+		return fmt.Errorf("SetupFullTestProject: project membership: %w", err)
+	}
+
+	// 2. Seed provider credentials from env.
+	cfg, err := config.NewConfig(slog.Default())
+	if err != nil || !cfg.LLMProvider.IsEncryptionConfigured() {
+		// No encryption key — skip provider + model config seeding.
+		return nil
+	}
+	repo := provider.NewRepository(db, slog.Default())
+	credSvc := provider.NewCredentialService(repo, provider.NewRegistry(), nil, cfg, slog.Default())
+
+	type providerSeed struct {
+		name   provider.ProviderType
+		apiKey string
+	}
+	seeds := []providerSeed{
+		{provider.ProviderDeepSeek, cfg.LLM.DeepSeekAPIKey},
+		{provider.ProviderGoogleAI, cfg.LLM.GoogleAPIKey},
+		{provider.ProviderOpenAI, cfg.LLM.OpenAIAPIKey},
+	}
+	for _, s := range seeds {
+		if s.apiKey == "" {
+			continue
+		}
+		if err := SeedTestProjectProviderConfig(ctx, db, credSvc, projectID, s.name, s.apiKey, "", ""); err != nil {
+			return fmt.Errorf("SetupFullTestProject: seed provider %s: %w", s.name, err)
+		}
+	}
+
+	// 3. Seed model config.
+	genModel := BareGenerativeModelFromEnv()
+	if genModel == "" {
+		return nil
+	}
+	return SeedTestProjectModelConfig(ctx, db, projectID, genModel, "google/gemini-embedding-2-preview")
 }

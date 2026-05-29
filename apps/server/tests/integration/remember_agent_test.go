@@ -107,20 +107,7 @@ func (s *RememberAgentTestSuite) SetupTest() {
 	s.orgID = uuid.New().String()
 	s.projectID = uuid.New().String()
 
-	err = testutil.CreateTestOrganization(s.ctx, s.testDB.DB, s.orgID, "Test Org for Remember")
-	s.Require().NoError(err)
-
-	err = testutil.CreateTestProject(s.ctx, s.testDB.DB, testutil.TestProject{
-		ID:    s.projectID,
-		OrgID: s.orgID,
-		Name:  "remember-test",
-	}, testutil.AdminUser.ID)
-	s.Require().NoError(err)
-
-	err = testutil.CreateTestOrgMembership(s.ctx, s.testDB.DB, s.orgID, testutil.AdminUser.ID, "admin")
-	s.Require().NoError(err)
-
-	err = testutil.CreateTestProjectMembership(s.ctx, s.testDB.DB, s.projectID, testutil.AdminUser.ID, "admin")
+	err = testutil.SetupFullTestProject(s.ctx, s.testDB.DB, s.orgID, s.projectID)
 	s.Require().NoError(err)
 
 	s.inProcess = testutil.NewTestServer(s.testDB)
