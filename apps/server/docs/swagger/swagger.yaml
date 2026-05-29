@@ -2774,6 +2774,21 @@ definitions:
     required:
     - vector
     type: object
+  domain_health.AllJobMetrics:
+    properties:
+      project_id:
+        description: set when scope=project
+        type: string
+      queues:
+        items:
+          $ref: '#/definitions/domain_health.JobQueueMetrics'
+        type: array
+      scope:
+        description: '"project" or "account"'
+        type: string
+      timestamp:
+        type: string
+    type: object
   domain_health.Check:
     properties:
       message:
@@ -2797,6 +2812,25 @@ definitions:
         type: string
       version:
         type: string
+    type: object
+  domain_health.JobQueueMetrics:
+    properties:
+      completed:
+        type: integer
+      failed:
+        type: integer
+      last_24_hours:
+        type: integer
+      last_hour:
+        type: integer
+      pending:
+        type: integer
+      processing:
+        type: integer
+      queue:
+        type: string
+      total:
+        type: integer
     type: object
   domain_health.TracingInfo:
     properties:
@@ -3309,12 +3343,12 @@ definitions:
     enum:
     - project
     - org
-    - env
+    - none
     type: string
     x-enum-varnames:
     - ModelSourceProject
     - ModelSourceOrg
-    - ModelSourceEnv
+    - ModelSourceNone
   domain_modelconfig.UpsertModelConfigRequest:
     properties:
       embeddingModel:
@@ -3816,6 +3850,13 @@ definitions:
         type: string
       project_info:
         type: string
+    type: object
+  domain_projects.currentProjectResponse:
+    properties:
+      message:
+        type: string
+      project:
+        $ref: '#/definitions/domain_projects.ProjectDTO'
     type: object
   domain_provider.ModelType:
     enum:
@@ -6585,7 +6626,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.41.117
+  version: 0.41.121
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -11312,6 +11353,53 @@ paths:
       summary: Execute Model Context Protocol JSON-RPC 2.0 requests
       tags:
       - mcp
+  /api/metrics/jobs:
+    get:
+      description: Returns processing pipeline metrics for all job queues. Project-scoped
+        tokens see only their project's data. Account-level tokens see all projects
+        (optionally filtered by project_id query param).
+      parameters:
+      - description: Filter by project ID (account-level tokens only; ignored for
+          project-scoped tokens)
+        in: query
+        name: project_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Job queue metrics
+          schema:
+            $ref: '#/definitions/domain_health.AllJobMetrics'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get job queue metrics
+      tags:
+      - metrics
+  /api/metrics/scheduler:
+    get:
+      description: Returns metrics for scheduled background tasks
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Scheduler metrics
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get scheduler metrics
+      tags:
+      - metrics
   /api/monitoring/extraction-jobs:
     get:
       consumes:
@@ -12980,6 +13068,32 @@ paths:
       summary: Update API token scopes
       tags:
       - api-tokens
+  /api/projects/current:
+    get:
+      description: Returns the project bound to the current authentication token.
+        For project-scoped tokens this is the single bound project. For account-level
+        API keys or OAuth sessions no project is bound and the response will contain
+        only a message.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current project or informational message
+          schema:
+            $ref: '#/definitions/domain_projects.currentProjectResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get current project
+      tags:
+      - projects
   /api/schema-registry/projects/{projectId}:
     get:
       consumes:

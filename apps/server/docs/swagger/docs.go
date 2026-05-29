@@ -7193,6 +7193,77 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/metrics/jobs": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns processing pipeline metrics for all job queues. Project-scoped tokens see only their project's data. Account-level tokens see all projects (optionally filtered by project_id query param).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Get job queue metrics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by project ID (account-level tokens only; ignored for project-scoped tokens)",
+                        "name": "project_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Job queue metrics",
+                        "schema": {
+                            "$ref": "#/definitions/domain_health.AllJobMetrics"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/metrics/scheduler": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns metrics for scheduled background tasks",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Get scheduler metrics",
+                "responses": {
+                    "200": {
+                        "description": "Scheduler metrics",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/monitoring/extraction-jobs": {
             "get": {
                 "security": [
@@ -8405,6 +8476,43 @@ const docTemplate = `{
                         "description": "Invalid request body",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/current": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the project bound to the current authentication token. For project-scoped tokens this is the single bound project. For account-level API keys or OAuth sessions no project is bound and the response will contain only a message.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Get current project",
+                "responses": {
+                    "200": {
+                        "description": "Current project or informational message",
+                        "schema": {
+                            "$ref": "#/definitions/domain_projects.currentProjectResponse"
                         }
                     },
                     "401": {
@@ -22220,6 +22328,28 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_health.AllJobMetrics": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "description": "set when scope=project",
+                    "type": "string"
+                },
+                "queues": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_health.JobQueueMetrics"
+                    }
+                },
+                "scope": {
+                    "description": "\"project\" or \"account\"",
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_health.Check": {
             "type": "object",
             "properties": {
@@ -22254,6 +22384,35 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_health.JobQueueMetrics": {
+            "type": "object",
+            "properties": {
+                "completed": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "last_24_hours": {
+                    "type": "integer"
+                },
+                "last_hour": {
+                    "type": "integer"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "processing": {
+                    "type": "integer"
+                },
+                "queue": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },
@@ -23020,12 +23179,12 @@ const docTemplate = `{
             "enum": [
                 "project",
                 "org",
-                "env"
+                "none"
             ],
             "x-enum-varnames": [
                 "ModelSourceProject",
                 "ModelSourceOrg",
-                "ModelSourceEnv"
+                "ModelSourceNone"
             ]
         },
         "domain_modelconfig.UpsertModelConfigRequest": {
@@ -23780,6 +23939,17 @@ const docTemplate = `{
                 },
                 "project_info": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_projects.currentProjectResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "project": {
+                    "$ref": "#/definitions/domain_projects.ProjectDTO"
                 }
             }
         },
@@ -27915,7 +28085,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.41.117",
+	Version:          "0.41.121",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
