@@ -80,8 +80,8 @@ func (s *ChunkEmbeddingJobsTestSuite) SetupTest() {
 // createTestDocument creates a test document for chunk creation
 func (s *ChunkEmbeddingJobsTestSuite) createTestDocument() {
 	_, err := s.testDB.DB.NewRaw(`
-		INSERT INTO kb.documents (id, project_id, source_type, filename, content, sync_version, created_at, updated_at)
-		VALUES (?, ?, 'upload', 'test-document.txt', 'Test content', 1, now(), now())
+		INSERT INTO kb.documents (id, project_id, source_type, filename, content, created_at, updated_at)
+		VALUES (?, ?, 'upload', 'test-document.txt', 'Test content', now(), now())
 	`, s.documentID, s.projectID).Exec(s.ctx)
 	s.Require().NoError(err)
 }

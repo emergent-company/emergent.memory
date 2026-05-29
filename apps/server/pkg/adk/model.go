@@ -74,6 +74,9 @@ func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger, resolver Credentia
 //
 // The resolved model name must include a provider prefix (e.g. "deepseek/deepseek-v4-flash").
 func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
+	if f == nil {
+		return nil, fmt.Errorf("ModelFactory is nil — no LLM provider configured")
+	}
 	if f.modelResolver != nil {
 		projectID := ProjectIDFromContext(ctx)
 		if projectID == "" {

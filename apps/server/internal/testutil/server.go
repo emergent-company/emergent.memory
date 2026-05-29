@@ -485,7 +485,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register discovery jobs routes (nil modelFactory — LLM-dependent tests skip in-process)
 	discoveryRepo := discoveryjobs.NewRepository(db, log)
-	discoverySvc := discoveryjobs.NewService(discoveryRepo, docsSvc, testDB.Config, nil, log)
+	discoverySvc := discoveryjobs.NewService(discoveryRepo, docsSvc, testDB.Config, (*adk.ModelFactory)(nil), log)
 	discoveryHandler := discoveryjobs.NewHandler(discoverySvc)
 	discoveryjobs.RegisterRoutes(e, discoveryHandler, authMiddleware)
 

@@ -78,8 +78,8 @@ func (s *ObjectExtractionJobsTestSuite) SetupTest() {
 // createTestDocument creates a test document for FK tests
 func (s *ObjectExtractionJobsTestSuite) createTestDocument() {
 	_, err := s.testDB.DB.NewRaw(`
-		INSERT INTO kb.documents (id, project_id, source_type, filename, content, sync_version, created_at, updated_at)
-		VALUES (?, ?, 'upload', 'test-document.txt', 'Test content for extraction', 1, now(), now())
+		INSERT INTO kb.documents (id, project_id, source_type, filename, content, created_at, updated_at)
+		VALUES (?, ?, 'upload', 'test-document.txt', 'Test content for extraction', now(), now())
 	`, s.documentID, s.projectID).Exec(s.ctx)
 	s.Require().NoError(err)
 }

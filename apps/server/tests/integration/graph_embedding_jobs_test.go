@@ -22,6 +22,7 @@ type GraphEmbeddingJobsTestSuite struct {
 	ctx         context.Context
 	jobsService *extraction.GraphEmbeddingJobsService
 	log         *slog.Logger
+	projectID   string
 }
 
 func TestGraphEmbeddingJobsSuite(t *testing.T) {
@@ -37,6 +38,14 @@ func (s *GraphEmbeddingJobsTestSuite) SetupSuite() {
 	s.Require().NoError(err, "Failed to setup test database")
 	s.testDB = testDB
 
+	// Set up org/project fixtures required for FK constraints
+	err = testutil.SetupTestFixtures(s.ctx, testDB.DB)
+	s.Require().NoError(err)
+	orgID := uuid.NewString()
+	s.projectID = uuid.NewString()
+	err = testutil.SetupFullTestProject(s.ctx, testDB.DB, orgID, s.projectID)
+	s.Require().NoError(err)
+
 	// Create the graph embedding jobs service
 	cfg := &extraction.GraphEmbeddingConfig{
 		BaseRetryDelaySec: 60,
@@ -45,6 +54,18 @@ func (s *GraphEmbeddingJobsTestSuite) SetupSuite() {
 		WorkerBatchSize:   10,
 	}
 	s.jobsService = extraction.NewGraphEmbeddingJobsService(testDB.DB, s.log, cfg)
+}
+
+// createGraphObject inserts a real graph_objects row and returns its ID.
+// Required because graph_embedding_jobs has a FK → graph_objects.id.
+func (s *GraphEmbeddingJobsTestSuite) createGraphObject() string {
+	id := uuid.NewString()
+	_, err := s.testDB.DB.NewRaw(`
+		INSERT INTO kb.graph_objects (id, project_id, canonical_id, type, key, properties, created_at, updated_at)
+		VALUES (?, ?, ?, 'TestObject', ?, '{}', now(), now())
+	`, id, s.projectID, id, "obj-"+id).Exec(s.ctx)
+	s.Require().NoError(err)
+	return id
 }
 
 func (s *GraphEmbeddingJobsTestSuite) TearDownSuite() {
@@ -64,7 +85,7 @@ func (s *GraphEmbeddingJobsTestSuite) SetupTest() {
 // =============================================================================
 
 func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_CreatesJob() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 
 	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
 		ObjectID: objectID,
@@ -79,7 +100,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_CreatesJob() {
 }
 
 func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_WithPriority() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 
 	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
 		ObjectID: objectID,
@@ -91,7 +112,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_WithPriority() {
 }
 
 func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_Idempotent() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 
 	// First enqueue
 	job1, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
@@ -104,7 +125,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_Idempotent() {
 }
 
 func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_AfterCompletion_CreatesNew() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 
 	// Enqueue first job
 	job1, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
@@ -125,7 +146,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestEnqueue_AfterCompletion_CreatesNew() {
 // =============================================================================
 
 func (s *GraphEmbeddingJobsTestSuite) TestEnqueueBatch_CreatesMultipleJobs() {
-	objectIDs := []string{uuid.NewString(), uuid.NewString(), uuid.NewString()}
+	objectIDs := []string{s.createGraphObject(), s.createGraphObject(), s.createGraphObject()}
 
 	count, err := s.jobsService.EnqueueBatch(s.ctx, objectIDs, 5)
 
@@ -143,12 +164,12 @@ func (s *GraphEmbeddingJobsTestSuite) TestEnqueueBatch_CreatesMultipleJobs() {
 
 func (s *GraphEmbeddingJobsTestSuite) TestEnqueueBatch_SkipsExisting() {
 	// Pre-create a job
-	existingID := uuid.NewString()
+	existingID := s.createGraphObject()
 	_, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: existingID})
 	s.NoError(err)
 
 	// Batch enqueue including existing
-	objectIDs := []string{existingID, uuid.NewString(), uuid.NewString()}
+	objectIDs := []string{existingID, s.createGraphObject(), s.createGraphObject()}
 	count, err := s.jobsService.EnqueueBatch(s.ctx, objectIDs, 0)
 
 	s.NoError(err)
@@ -160,7 +181,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestEnqueueBatch_SkipsExisting() {
 // =============================================================================
 
 func (s *GraphEmbeddingJobsTestSuite) TestDequeue_ClaimsJobs() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 	_, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
 	s.NoError(err)
 
@@ -175,7 +196,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestDequeue_ClaimsJobs() {
 
 func (s *GraphEmbeddingJobsTestSuite) TestDequeue_RespectsScheduledAt() {
 	// Create a job scheduled for future
-	futureID := uuid.NewString()
+	futureID := s.createGraphObject()
 	future := time.Now().Add(1 * time.Hour)
 	_, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
 		ObjectID:   futureID,
@@ -184,7 +205,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestDequeue_RespectsScheduledAt() {
 	s.NoError(err)
 
 	// Create a job ready now
-	nowID := uuid.NewString()
+	nowID := s.createGraphObject()
 	_, err = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: nowID})
 	s.NoError(err)
 
@@ -198,7 +219,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestDequeue_RespectsScheduledAt() {
 
 func (s *GraphEmbeddingJobsTestSuite) TestDequeue_RespectsPriority() {
 	// Create low priority job first
-	lowID := uuid.NewString()
+	lowID := s.createGraphObject()
 	_, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
 		ObjectID: lowID,
 		Priority: 1,
@@ -206,7 +227,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestDequeue_RespectsPriority() {
 	s.NoError(err)
 
 	// Create high priority job second
-	highID := uuid.NewString()
+	highID := s.createGraphObject()
 	_, err = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{
 		ObjectID: highID,
 		Priority: 10,
@@ -226,7 +247,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestDequeue_RespectsPriority() {
 // =============================================================================
 
 func (s *GraphEmbeddingJobsTestSuite) TestMarkCompleted_UpdatesJob() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
 
 	// Dequeue first (simulating worker picking up)
@@ -247,7 +268,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestMarkCompleted_UpdatesJob() {
 // =============================================================================
 
 func (s *GraphEmbeddingJobsTestSuite) TestMarkFailed_RequeuesForRetry() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
 
 	// Dequeue to set to processing
@@ -269,7 +290,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestMarkFailed_RequeuesForRetry() {
 // =============================================================================
 
 func (s *GraphEmbeddingJobsTestSuite) TestRecoverStaleJobs_RecoversProcessingJobs() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
 
 	// Dequeue to set to processing
@@ -293,7 +314,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestRecoverStaleJobs_RecoversProcessingJob
 }
 
 func (s *GraphEmbeddingJobsTestSuite) TestRecoverStaleJobs_IgnoresRecentProcessingJobs() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 	_, _ = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
 
 	// Dequeue to set to processing (started just now)
@@ -311,7 +332,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestRecoverStaleJobs_IgnoresRecentProcessi
 
 func (s *GraphEmbeddingJobsTestSuite) TestStats_ReturnsCorrectCounts() {
 	// Create various jobs
-	obj1, obj2, obj3 := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	obj1, obj2, obj3 := s.createGraphObject(), s.createGraphObject(), s.createGraphObject()
 
 	// Pending job
 	_, _ = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: obj1})
@@ -337,7 +358,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestStats_ReturnsCorrectCounts() {
 // =============================================================================
 
 func (s *GraphEmbeddingJobsTestSuite) TestGetActiveJobForObject_ReturnsActiveJob() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
 
 	activeJob, err := s.jobsService.GetActiveJobForObject(s.ctx, objectID)
@@ -347,7 +368,7 @@ func (s *GraphEmbeddingJobsTestSuite) TestGetActiveJobForObject_ReturnsActiveJob
 }
 
 func (s *GraphEmbeddingJobsTestSuite) TestGetActiveJobForObject_ReturnsNilWhenCompleted() {
-	objectID := uuid.NewString()
+	objectID := s.createGraphObject()
 	job, _ := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
 	_ = s.jobsService.MarkCompleted(s.ctx, job.ID)
 

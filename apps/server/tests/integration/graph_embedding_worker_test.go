@@ -348,46 +348,43 @@ func (s *GraphEmbeddingWorkerTestSuite) TestWorker_HandlesEmbeddingFailure() {
 }
 
 func (s *GraphEmbeddingWorkerTestSuite) TestWorker_HandlesMissingObject() {
-	// Enqueue job for non-existent object
-	nonExistentID := uuid.NewString()
-	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: nonExistentID})
+	// Enqueue job for an object, then delete the object to simulate it disappearing.
+	// The FK constraint (ON DELETE CASCADE) cascades the deletion to the job row.
+	// This test verifies the cascade behaviour and that the worker dequeues nothing.
+	objectID := s.createGraphObject("Person", "to-be-deleted", map[string]interface{}{"name": "Ghost"})
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
 	s.NoError(err)
 
-	// Create and start worker
-	mockEmbeds := newMockEmbeddingService(true)
+	// Delete the graph object — CASCADE removes the job too
+	_, err = s.testDB.DB.NewRaw("DELETE FROM kb.graph_objects WHERE id = ?", objectID).Exec(s.ctx)
+	s.NoError(err)
+
+	// Verify the job was cascade-deleted
+	deletedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Nil(deletedJob, "Job should be deleted via FK cascade when object is deleted")
+
+	// Worker should process zero jobs (nothing in queue)
+	mockEmbeds := newMockEmbeddingService(false)
 	worker := extraction.NewGraphEmbeddingWorker(s.jobsService, mockEmbeds, s.testDB.DB, s.cfg, s.log, nil, nil, nil, false)
 	err = worker.Start(s.ctx)
 	s.NoError(err)
 
-	// Wait for job to be attempted
-	s.Eventually(func() bool {
-		updatedJob, _ := s.jobsService.GetJob(s.ctx, job.ID)
-		if updatedJob == nil {
-			return false
-		}
-		// Job should be requeued with error
-		return updatedJob.LastError != nil
-	}, 5*time.Second, 100*time.Millisecond, "Job should fail for missing object")
+	// Give worker a short window to poll — expect no processing
+	time.Sleep(300 * time.Millisecond)
 
-	// Stop worker
 	stopCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
 	worker.Stop(stopCtx)
 
-	// Verify job has error
-	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
-	s.NoError(err)
-	s.NotNil(updatedJob.LastError)
-	s.Contains(*updatedJob.LastError, "object_missing")
-
 	// Embedding service should not be called
 	s.Equal(int64(0), mockEmbeds.CallCount())
 
-	// Verify metrics
+	// Verify metrics show nothing processed
 	metrics := worker.Metrics()
-	s.Equal(int64(1), metrics.Processed)
+	s.Equal(int64(0), metrics.Processed)
 	s.Equal(int64(0), metrics.Succeeded)
-	s.Equal(int64(1), metrics.Failed)
+	s.Equal(int64(0), metrics.Failed)
 }
 
 // =============================================================================

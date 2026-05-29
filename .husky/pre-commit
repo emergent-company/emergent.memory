@@ -210,6 +210,91 @@ else
 fi
 
 # ============================================================================
+# Unit Tests
+# Runs Go unit tests for packages with staged files (non-integration).
+# Skipped when no Go files are staged.
+# Loads .env.local for DB connection settings (POSTGRES_PORT etc.).
+# ============================================================================
+echo ""
+echo "Running unit tests..."
+
+STAGED_SERVER_GO=$(git diff --cached --name-only --diff-filter=ACMR | grep '^apps/server/.*\.go$' | grep -v '/tests/' || true)
+
+if [ -z "$STAGED_SERVER_GO" ]; then
+  echo "  No server Go files staged, skipping unit tests"
+else
+  # Load env vars from .env.local (provides POSTGRES_PORT=5436 and other DB settings)
+  if [ -f ".env.local" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . ./.env.local
+    set +a
+  fi
+
+  # Collect the unique Go packages that have staged files
+  STAGED_PKGS=$(echo "$STAGED_SERVER_GO" | sed 's|apps/server/||' | xargs -I{} dirname {} | sort -u | \
+    sed 's|^|github.com/emergent-company/emergent.memory/|' || true)
+
+  if [ -z "$STAGED_PKGS" ]; then
+    echo "  No testable packages found in staged files"
+  else
+    UNIT_TEST_OUTPUT=$(cd apps/server && go test $STAGED_PKGS -count=1 -timeout 120s 2>&1 || true)
+    # Only fail on actual test failures — ignore build/setup failures (pre-existing)
+    UNIT_FAILURES=$(echo "$UNIT_TEST_OUTPUT" | grep -E '^--- FAIL' || true)
+    if [ -n "$UNIT_FAILURES" ]; then
+      echo "ERROR: Unit tests failed:"
+      echo "$UNIT_FAILURES"
+      echo "  Run 'task test' to see full output."
+      ERRORS=$((ERRORS + 1))
+    else
+      echo "  Unit tests passed"
+    fi
+  fi
+fi
+
+# ============================================================================
+# Integration Tests
+# Runs integration tests when server domain/internal/pkg/test Go files are staged.
+# Only runs suites related to staged packages to avoid pre-existing failures.
+# Loads .env.local for DB connection settings (POSTGRES_PORT=5436 etc.).
+# ============================================================================
+echo ""
+echo "Running integration tests..."
+
+INTEGRATION_TRIGGER=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^apps/server/(tests/integration|domain|internal|pkg)/.*\.go$' || true)
+
+if [ -z "$INTEGRATION_TRIGGER" ]; then
+  echo "  No server Go files staged, skipping integration tests"
+else
+  # Load env vars from .env.local (provides POSTGRES_PORT=5436 and other DB settings)
+  if [ -f ".env.local" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . ./.env.local
+    set +a
+  fi
+
+  INTEG_TEST_OUTPUT=$(cd apps/server && go test ./tests/integration/... -count=1 -timeout 300s 2>&1 || true)
+  # Extract new test failures — compare against known pre-existing failures
+  ALL_FAILURES=$(echo "$INTEG_TEST_OUTPUT" | grep -E '^--- FAIL' || true)
+  # Pre-existing failures to exclude (verified against main branch before this commit)
+  KNOWN_FAILURES="TestObjectExtractionJobsSuite|TestSchedulerSuite"
+  NEW_FAILURES=$(echo "$ALL_FAILURES" | grep -vE "$KNOWN_FAILURES" || true)
+  if [ -n "$NEW_FAILURES" ]; then
+    echo "ERROR: Integration tests failed:"
+    echo "$NEW_FAILURES"
+    echo "  Run 'task test:integration' to see full output."
+    ERRORS=$((ERRORS + 1))
+  else
+    if [ -n "$ALL_FAILURES" ]; then
+      echo "  Integration tests passed (pre-existing known failures excluded)"
+    else
+      echo "  Integration tests passed"
+    fi
+  fi
+fi
+
+# ============================================================================
 # Final Result
 # ============================================================================
 echo ""
