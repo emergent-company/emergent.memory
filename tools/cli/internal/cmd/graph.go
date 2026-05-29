@@ -304,7 +304,7 @@ Examples:
 				obj.Type,
 				fmt.Sprintf("%d", obj.Version),
 				status,
-				obj.CreatedAt.Format("2006-01-02"),
+				fmtTime(obj.CreatedAt),
 			})
 		}
 		fmt.Fprint(out, table.Render())
@@ -423,7 +423,7 @@ Examples:
 		if len(obj.Labels) > 0 {
 			fmt.Fprintf(out, "Labels:      %s\n", strings.Join(obj.Labels, ", "))
 		}
-		fmt.Fprintf(out, "Created:     %s\n", obj.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Created:     %s\n", fmtTime(obj.CreatedAt))
 		if obj.SchemaVersion != nil && *obj.SchemaVersion != "" {
 			fmt.Fprintf(out, "Schema Ver:  %s\n", *obj.SchemaVersion)
 		}
@@ -1153,7 +1153,7 @@ the full list as JSON.`,
 				r.Type,
 				r.SrcID,
 				r.DstID,
-				r.CreatedAt.Format("2006-01-02"),
+				fmtTime(r.CreatedAt),
 			})
 		}
 		fmt.Fprint(out, table.Render())
@@ -1209,7 +1209,7 @@ JSON. Use --output json to receive the full relationship as JSON instead.`,
 		fmt.Fprintf(out, "From:       %s\n", r.SrcID)
 		fmt.Fprintf(out, "To:         %s\n", r.DstID)
 		fmt.Fprintf(out, "Version:    %d\n", r.Version)
-		fmt.Fprintf(out, "Created:    %s\n", r.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Created:    %s\n", fmtTime(r.CreatedAt))
 		if len(r.Properties) > 0 {
 			propsJSON, _ := json.MarshalIndent(r.Properties, "            ", "  ")
 			fmt.Fprintf(out, "Properties: %s\n", propsJSON)

@@ -359,7 +359,7 @@ JSON instead.`,
 			fmt.Fprintf(out, "Author:      %s\n", author)
 		}
 		fmt.Fprintf(out, "Draft:       %v\n", pack.Draft)
-		fmt.Fprintf(out, "Created:     %s\n", pack.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Created:     %s\n", fmtTime(pack.CreatedAt))
 
 		return nil
 	},
@@ -1778,12 +1778,12 @@ func printMigrationJob(out io.Writer, job *sdkschemas.SchemaMigrationJob) {
 	if job.Error != nil {
 		fmt.Fprintf(out, "Error:           %s\n", *job.Error)
 	}
-	fmt.Fprintf(out, "Created:         %s\n", job.CreatedAt)
+	fmt.Fprintf(out, "Created:         %s\n", fmtTimeStr(job.CreatedAt))
 	if job.StartedAt != nil {
-		fmt.Fprintf(out, "Started:         %s\n", *job.StartedAt)
+		fmt.Fprintf(out, "Started:         %s\n", fmtTimePStr(job.StartedAt))
 	}
 	if job.CompletedAt != nil {
-		fmt.Fprintf(out, "Completed:       %s\n", *job.CompletedAt)
+		fmt.Fprintf(out, "Completed:       %s\n", fmtTimePStr(job.CompletedAt))
 	}
 }
 

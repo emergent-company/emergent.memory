@@ -121,7 +121,7 @@ var sessionsListCmd = &cobra.Command{
 		fmt.Println(strings.Repeat("-", 90))
 		for _, s := range resp.Items {
 			title := titleFromProps(s.Properties)
-			fmt.Printf("%-36s  %-40s  %s\n", s.VersionID, title, s.CreatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("%-36s  %-40s  %s\n", s.VersionID, title, fmtTime(s.CreatedAt))
 		}
 
 		if resp.NextCursor != nil {
@@ -160,7 +160,7 @@ var sessionsGetCmd = &cobra.Command{
 
 		fmt.Printf("ID:         %s\n", session.VersionID)
 		fmt.Printf("Title:      %s\n", titleFromProps(session.Properties))
-		fmt.Printf("Created:    %s\n", session.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("Created:    %s\n", fmtTime(session.CreatedAt))
 		if v, ok := session.Properties["agent_version"]; ok {
 			fmt.Printf("Agent:      %v\n", v)
 		}

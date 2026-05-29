@@ -68,7 +68,7 @@ last Updated timestamp in the format:
 
 			// Format output
 			for _, s := range sessions {
-				fmt.Printf("ID: %s | App: %s | User: %s | Updated: %s\n", s.ID, s.AppName, s.UserID, s.UpdateTime.Format("2006-01-02 15:04:05"))
+				fmt.Printf("ID: %s | App: %s | User: %s | Updated: %s\n", s.ID, s.AppName, s.UserID, fmtTime(s.UpdateTime))
 			}
 
 			return nil

@@ -859,7 +859,7 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 			valueOrDash(cfg.BaseURL),
 			valueOrDash(cfg.GCPProject),
 			valueOrDash(cfg.Location),
-			cfg.UpdatedAt.Format(time.DateOnly),
+			fmtTime(cfg.UpdatedAt),
 		})
 	}
 	for _, cfg := range projectConfigs {
@@ -872,7 +872,7 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 			valueOrDash(cfg.BaseURL),
 			valueOrDash(cfg.GCPProject),
 			valueOrDash(cfg.Location),
-			cfg.UpdatedAt.Format(time.DateOnly),
+			fmtTime(cfg.UpdatedAt),
 		})
 	}
 	fmt.Print(t.Render())

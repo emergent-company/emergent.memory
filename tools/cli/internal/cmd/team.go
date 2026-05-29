@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/invitations"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/completion"
@@ -66,12 +65,7 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 		if m.DisplayName != nil && *m.DisplayName != "" {
 			displayName = *m.DisplayName
 		}
-		joinedAt := ""
-		if t, parseErr := time.Parse(time.RFC3339, m.JoinedAt); parseErr == nil {
-			joinedAt = t.Format("2006-01-02")
-		} else {
-			joinedAt = m.JoinedAt
-		}
+		joinedAt := fmtTimeStr(m.JoinedAt)
 		fmt.Printf("%d. %-30s %-30s %-20s joined %s\n",
 			i+1, displayName, m.Email, m.Role, joinedAt)
 	}
@@ -305,7 +299,7 @@ func runTeamInvites(cmd *cobra.Command, args []string) error {
 
 		expiry := "no expiry"
 		if inv.ExpiresAt != nil {
-			expiry = "expires " + inv.ExpiresAt.Format("2006-01-02")
+			expiry = "expires " + fmtTimePTime(inv.ExpiresAt)
 		}
 
 		tokenDisplay := inv.Token

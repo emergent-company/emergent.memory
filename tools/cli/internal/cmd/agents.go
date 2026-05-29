@@ -299,13 +299,13 @@ func runGetAgent(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if a.LastRunAt != nil {
-		fmt.Printf("  Last Run At:    %s\n", a.LastRunAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("  Last Run At:    %s\n", fmtTime(*a.LastRunAt))
 	}
 	if a.LastRunStatus != nil {
 		fmt.Printf("  Last Run Status: %s\n", *a.LastRunStatus)
 	}
-	fmt.Printf("  Created At:     %s\n", a.CreatedAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("  Updated At:     %s\n", a.UpdatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Created At:     %s\n", fmtTime(a.CreatedAt))
+	fmt.Printf("  Updated At:     %s\n", fmtTime(a.UpdatedAt))
 
 	if len(a.Config) > 0 {
 		configJSON, _ := json.MarshalIndent(a.Config, "  ", "  ")
@@ -627,9 +627,9 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 	for i, r := range result.Data {
 		fmt.Printf("%d. Run %s\n", i+1, r.ID)
 		fmt.Printf("   Status:    %s\n", r.Status)
-		fmt.Printf("   Started:   %s\n", r.StartedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("   Started:   %s\n", fmtTime(r.StartedAt))
 		if r.CompletedAt != nil {
-			fmt.Printf("   Completed: %s\n", r.CompletedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("   Completed: %s\n", fmtTimePTime(r.CompletedAt))
 		}
 		if r.DurationMs != nil {
 			fmt.Printf("   Duration:  %dms\n", *r.DurationMs)
@@ -741,9 +741,9 @@ func runGetRunByID(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Run: %s\n", r.ID)
 	fmt.Printf("  Agent:     %s\n", agentDisplayName)
 	fmt.Printf("  Status:    %s\n", r.Status)
-	fmt.Printf("  Started:   %s\n", r.StartedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Started:   %s\n", fmtTime(r.StartedAt))
 	if r.CompletedAt != nil {
-		fmt.Printf("  Completed: %s\n", r.CompletedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("  Completed: %s\n", fmtTimePTime(r.CompletedAt))
 	}
 	if r.DurationMs != nil {
 		fmt.Printf("  Duration:  %dms\n", *r.DurationMs)
@@ -887,7 +887,7 @@ func runListHooks(cmd *cobra.Command, args []string) error {
 		if h.RateLimitConfig != nil {
 			fmt.Printf("   Rate Limit: %d req/min (burst: %d)\n", h.RateLimitConfig.RequestsPerMinute, h.RateLimitConfig.BurstSize)
 		}
-		fmt.Printf("   Created:   %s\n", h.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("   Created:   %s\n", fmtTime(h.CreatedAt))
 		fmt.Println()
 	}
 

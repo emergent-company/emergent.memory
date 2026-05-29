@@ -800,7 +800,7 @@ func checkAuth(cfg *config.Config, configPath string) checkResult {
 	return checkResult{
 		name:    "Authentication",
 		status:  "pass",
-		message: fmt.Sprintf("Authenticated (token valid until %s)", creds.ExpiresAt.Format("2006-01-02 15:04")),
+		message: fmt.Sprintf("Authenticated (token valid until %s)", fmtTime(creds.ExpiresAt)),
 	}
 }
 

@@ -34,7 +34,7 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 type APIToken struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
-	Prefix    string   `json:"prefix"`
+	Prefix    string   `json:"tokenPrefix"`
 	Token     string   `json:"token,omitempty"` // Full token value - available when retrieved by ID
 	Scopes    []string `json:"scopes"`
 	CreatedAt string   `json:"createdAt"`
@@ -46,7 +46,7 @@ type CreateTokenResponse struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
 	Token     string   `json:"token"` // Full token value - only returned at creation
-	Prefix    string   `json:"prefix"`
+	Prefix    string   `json:"tokenPrefix"`
 	Scopes    []string `json:"scopes"`
 	CreatedAt string   `json:"createdAt"`
 }

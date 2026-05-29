@@ -127,7 +127,7 @@ Created date. Use --limit to control how many records are returned. Use
 				mime,
 				size,
 				status,
-				doc.CreatedAt.Format("2006-01-02"),
+				fmtTime(doc.CreatedAt),
 			})
 		}
 		fmt.Fprint(out, table.Render())
@@ -197,10 +197,10 @@ the full document record as JSON instead.`,
 			fmt.Fprintf(out, "Relationships:      %d\n", *doc.RelationshipsCreated)
 		}
 		if doc.LastExtractionAt != nil {
-			fmt.Fprintf(out, "Last Extracted:     %s\n", doc.LastExtractionAt.Format("2006-01-02 15:04:05"))
+			fmt.Fprintf(out, "Last Extracted:     %s\n", fmtTimePTime(doc.LastExtractionAt))
 		}
-		fmt.Fprintf(out, "Created:            %s\n", doc.CreatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(out, "Updated:            %s\n", doc.UpdatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Created:            %s\n", fmtTime(doc.CreatedAt))
+		fmt.Fprintf(out, "Updated:            %s\n", fmtTime(doc.UpdatedAt))
 
 		return nil
 	},
@@ -350,7 +350,7 @@ for a machine-readable response.`,
 		}
 
 		fmt.Fprintf(out, "Job ID:               %s\n", summary.JobID)
-		fmt.Fprintf(out, "Completed At:         %s\n", summary.CompletedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Completed At:         %s\n", fmtTime(summary.CompletedAt))
 		fmt.Fprintf(out, "Objects Created:      %d\n", summary.ObjectsCreated)
 		fmt.Fprintf(out, "Relationships:        %d\n", summary.RelationshipsCreated)
 		fmt.Fprintf(out, "Chunks Processed:     %d / %d\n", summary.ChunksProcessed, summary.TotalChunks)

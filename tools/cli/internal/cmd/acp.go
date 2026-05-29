@@ -447,9 +447,9 @@ Displays run status, output messages, and timing. If the run is paused
 		fmt.Printf("Run ID:     %s\n", run.ID)
 		fmt.Printf("Agent:      %s\n", run.AgentName)
 		fmt.Printf("Status:     %s\n", run.Status)
-		fmt.Printf("Created:    %s\n", run.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("Created:    %s\n", fmtTime(run.CreatedAt))
 		if run.UpdatedAt != nil {
-			fmt.Printf("Updated:    %s\n", run.UpdatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Updated:    %s\n", fmtTimePTime(run.UpdatedAt))
 		}
 		if run.SessionID != nil {
 			fmt.Printf("Session ID: %s\n", *run.SessionID)
@@ -644,8 +644,8 @@ Use --json for raw JSON output.`,
 		if session.AgentName != nil {
 			fmt.Printf("Agent:      %s\n", *session.AgentName)
 		}
-		fmt.Printf("Created:    %s\n", session.CreatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Printf("Updated:    %s\n", session.UpdatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("Created:    %s\n", fmtTime(session.CreatedAt))
+		fmt.Printf("Updated:    %s\n", fmtTime(session.UpdatedAt))
 
 		if len(session.History) == 0 {
 			fmt.Println("\nNo runs in this session")
@@ -658,7 +658,7 @@ Use --json for raw JSON output.`,
 		for _, r := range session.History {
 			t.AddRow([]string{
 				r.ID, r.AgentName, r.Status,
-				r.CreatedAt.Format("2006-01-02 15:04:05"),
+				fmtTime(r.CreatedAt),
 			})
 		}
 		fmt.Print(t.Render())

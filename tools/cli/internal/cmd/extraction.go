@@ -380,10 +380,10 @@ Requires an API key with admin:read scope.`,
 			if len(data.DiscoveredTypes) > 0 {
 				fmt.Fprintf(out, "Discovered Types: %s\n", strings.Join(data.DiscoveredTypes, ", "))
 			}
-			fmt.Fprintf(out, "Created At:      %s\n", data.CreatedAt.Format(time.RFC3339))
-			fmt.Fprintf(out, "Updated At:      %s\n", data.UpdatedAt.Format(time.RFC3339))
+			fmt.Fprintf(out, "Created At:      %s\n", fmtTime(data.CreatedAt))
+			fmt.Fprintf(out, "Updated At:      %s\n", fmtTime(data.UpdatedAt))
 			if !data.CompletedAt.IsZero() {
-				fmt.Fprintf(out, "Completed At:    %s\n", data.CompletedAt.Format(time.RFC3339))
+				fmt.Fprintf(out, "Completed At:    %s\n", fmtTime(data.CompletedAt))
 			}
 			if data.Error != "" {
 				fmt.Fprintf(out, "Error:           %s\n", data.Error)
@@ -490,7 +490,7 @@ Requires an API key with admin:read scope.`,
 					job.ID,
 					job.SourceID,
 					job.Status,
-					job.CreatedAt.Format("2006-01-02 15:04:05"),
+					fmtTime(job.CreatedAt),
 				})
 			}
 			fmt.Fprint(out, table.Render())

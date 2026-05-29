@@ -73,19 +73,19 @@ var deleteAgentDefCmd = &cobra.Command{
 
 // Flags for agent definitions
 var (
-	defName           string
-	defDescription    string
-	defSystemPrompt   string
-	defModelName      string
-	defTools          string
-	defSkills         string
-	defFlowType       string
-	defVisibility     string
-	defIsDefault      string
-	defMaxSteps       int
-	defDefaultTimeout int
-	defListLimit      int
-	defListPage       int
+	defName                 string
+	defDescription          string
+	defSystemPrompt         string
+	defModelName            string
+	defTools                string
+	defSkills               string
+	defFlowType             string
+	defVisibility           string
+	defIsDefault            string
+	defMaxSteps             int
+	defDefaultTimeout       int
+	defListLimit            int
+	defListPage             int
 	listAgentDefsJSONOutput bool
 	getAgentDefJSONOutput   bool
 )
@@ -265,8 +265,8 @@ func runGetAgentDef(cmd *cobra.Command, args []string) error {
 			fmt.Printf("    Capabilities:  %s\n", strings.Join(d.ACPConfig.Capabilities, ", "))
 		}
 	}
-	fmt.Printf("  Created At:      %s\n", d.CreatedAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("  Updated At:      %s\n", d.UpdatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Created At:      %s\n", fmtTime(d.CreatedAt))
+	fmt.Printf("  Updated At:      %s\n", fmtTime(d.UpdatedAt))
 
 	if len(d.Config) > 0 {
 		configJSON, _ := json.MarshalIndent(d.Config, "  ", "  ")

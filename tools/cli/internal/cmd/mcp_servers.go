@@ -211,7 +211,7 @@ func runListMCPServers(cmd *cobra.Command, args []string) error {
 				fmt.Printf("             • %s%s\n", t.ToolName, suffix)
 			}
 		}
-		fmt.Printf("   Created:   %s\n", s.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("   Created:   %s\n", fmtTime(s.CreatedAt))
 		fmt.Println()
 	}
 
@@ -306,8 +306,8 @@ func runGetMCPServer(cmd *cobra.Command, args []string) error {
 	if len(s.Headers) > 0 {
 		fmt.Printf("  Headers:    %d configured\n", len(s.Headers))
 	}
-	fmt.Printf("  Created:    %s\n", s.CreatedAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("  Updated:    %s\n", s.UpdatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Created:    %s\n", fmtTime(s.CreatedAt))
+	fmt.Printf("  Updated:    %s\n", fmtTime(s.UpdatedAt))
 
 	if len(s.Tools) > 0 {
 		fmt.Printf("\n  Tools (%d):\n", len(s.Tools))

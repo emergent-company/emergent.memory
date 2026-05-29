@@ -252,9 +252,9 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 			fmt.Printf("   Prefix:  %s\n", t.Prefix)
 			fmt.Printf("   Type:    account\n")
 			fmt.Printf("   Scopes:  %s\n", strings.Join(t.Scopes, ", "))
-			fmt.Printf("   Created: %s\n", t.CreatedAt)
+			fmt.Printf("   Created: %s\n", fmtTimeStr(t.CreatedAt))
 			if t.RevokedAt != nil {
-				fmt.Printf("   Revoked: %s\n", *t.RevokedAt)
+				fmt.Printf("   Revoked: %s\n", fmtTimePStr(t.RevokedAt))
 			}
 			fmt.Println()
 		}
@@ -310,9 +310,9 @@ func runListTokens(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("   Type:    project\n")
 		fmt.Printf("   Scopes:  %s\n", strings.Join(t.Scopes, ", "))
-		fmt.Printf("   Created: %s\n", t.CreatedAt)
+		fmt.Printf("   Created: %s\n", fmtTimeStr(t.CreatedAt))
 		if t.RevokedAt != nil {
-			fmt.Printf("   Revoked: %s\n", *t.RevokedAt)
+			fmt.Printf("   Revoked: %s\n", fmtTimePStr(t.RevokedAt))
 		}
 		fmt.Println()
 	}
@@ -361,7 +361,7 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Type:    account\n")
 		fmt.Printf("  Prefix:  %s\n", result.Prefix)
 		fmt.Printf("  Scopes:  %s\n", strings.Join(result.Scopes, ", "))
-		fmt.Printf("  Created: %s\n", result.CreatedAt)
+		fmt.Printf("  Created: %s\n", fmtTimeStr(result.CreatedAt))
 		fmt.Println()
 
 		return nil
@@ -393,7 +393,7 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Type:    project\n")
 	fmt.Printf("  Prefix:  %s\n", result.Prefix)
 	fmt.Printf("  Scopes:  %s\n", strings.Join(result.Scopes, ", "))
-	fmt.Printf("  Created: %s\n", result.CreatedAt)
+	fmt.Printf("  Created: %s\n", fmtTimeStr(result.CreatedAt))
 	fmt.Println()
 	fmt.Println("  Retrieve this token later: memory tokens get " + result.ID)
 	fmt.Println()
@@ -432,9 +432,9 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 			fmt.Println("  ------------------------------------------------------------")
 		}
 		fmt.Printf("  Scopes:  %s\n", strings.Join(token.Scopes, ", "))
-		fmt.Printf("  Created: %s\n", token.CreatedAt)
+		fmt.Printf("  Created: %s\n", fmtTimeStr(token.CreatedAt))
 		if token.RevokedAt != nil {
-			fmt.Printf("  Revoked: %s\n", *token.RevokedAt)
+			fmt.Printf("  Revoked: %s\n", fmtTimePStr(token.RevokedAt))
 		}
 		return nil
 	}
@@ -471,9 +471,9 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 		fmt.Println("  ------------------------------------------------------------")
 	}
 	fmt.Printf("  Scopes:  %s\n", strings.Join(token.Scopes, ", "))
-	fmt.Printf("  Created: %s\n", token.CreatedAt)
+	fmt.Printf("  Created: %s\n", fmtTimeStr(token.CreatedAt))
 	if token.RevokedAt != nil {
-		fmt.Printf("  Revoked: %s\n", *token.RevokedAt)
+		fmt.Printf("  Revoked: %s\n", fmtTimePStr(token.RevokedAt))
 	}
 
 	return nil
@@ -509,7 +509,7 @@ func runRegenerateToken(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Type:    account\n")
 		fmt.Printf("  Prefix:  %s\n", result.Prefix)
 		fmt.Printf("  Scopes:  %s\n", strings.Join(result.Scopes, ", "))
-		fmt.Printf("  Created: %s\n", result.CreatedAt)
+		fmt.Printf("  Created: %s\n", fmtTimeStr(result.CreatedAt))
 		fmt.Println()
 		return nil
 	}
@@ -545,7 +545,7 @@ func runRegenerateToken(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Type:    project\n")
 	fmt.Printf("  Prefix:  %s\n", result.Prefix)
 	fmt.Printf("  Scopes:  %s\n", strings.Join(result.Scopes, ", "))
-	fmt.Printf("  Created: %s\n", result.CreatedAt)
+	fmt.Printf("  Created: %s\n", fmtTimeStr(result.CreatedAt))
 	fmt.Println()
 
 	return nil

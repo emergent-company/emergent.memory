@@ -164,7 +164,7 @@ Examples:
 			if br.ParentBranchID != nil {
 				parent = *br.ParentBranchID
 			}
-			table.AddRow([]string{br.ID, br.Name, desc, parent, br.CreatedAt})
+			table.AddRow([]string{br.ID, br.Name, desc, parent, fmtTimeStr(br.CreatedAt)})
 		}
 		fmt.Fprint(out, table.Render())
 		return nil
@@ -214,7 +214,7 @@ Examples:
 		if branch.ParentBranchID != nil {
 			fmt.Fprintf(out, "Parent:   %s\n", *branch.ParentBranchID)
 		}
-		fmt.Fprintf(out, "Created:  %s\n", branch.CreatedAt)
+		fmt.Fprintf(out, "Created:  %s\n", fmtTimeStr(branch.CreatedAt))
 
 		return nil
 	},
@@ -295,7 +295,7 @@ Examples:
 		if branch.ParentBranchID != nil {
 			fmt.Fprintf(out, "Parent:   %s\n", *branch.ParentBranchID)
 		}
-		fmt.Fprintf(out, "Created:  %s\n", branch.CreatedAt)
+		fmt.Fprintf(out, "Created:  %s\n", fmtTimeStr(branch.CreatedAt))
 
 		return nil
 	},
@@ -355,7 +355,7 @@ Examples:
 		if branch.ProjectID != nil {
 			fmt.Fprintf(out, "Project:  %s\n", *branch.ProjectID)
 		}
-		fmt.Fprintf(out, "Created:  %s\n", branch.CreatedAt)
+		fmt.Fprintf(out, "Created:  %s\n", fmtTimeStr(branch.CreatedAt))
 
 		return nil
 	},

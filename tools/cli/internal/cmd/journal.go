@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/glamour"
 	"golang.org/x/term"
@@ -184,18 +183,6 @@ func actorLabel(actorType string) string {
 	}
 }
 
-// formatTimestamp parses an RFC3339 string and formats it as "2006-01-02 15:04:05".
-func formatTimestamp(s string) string {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		t, err = time.Parse(time.RFC3339Nano, s)
-		if err != nil {
-			return s
-		}
-	}
-	return t.Local().Format("2006-01-02 15:04:05")
-}
-
 // metaStr extracts a string value from metadata by key.
 func metaStr(metadata map[string]any, key string) string {
 	if metadata == nil {
@@ -223,7 +210,7 @@ func metaInt(metadata map[string]any, key string) int {
 
 // printJournalEntry prints a single journal entry in the log format.
 func printJournalEntry(e journalEntry) {
-	ts := formatTimestamp(e.CreatedAt)
+	ts := fmtTimeStr(e.CreatedAt)
 	actor := actorLabel(e.ActorType)
 	et := strings.ToUpper(e.EventType)
 
@@ -305,7 +292,7 @@ func renderMarkdown(body string) string {
 
 // printAttachedNote prints a note attached to a journal entry.
 func printAttachedNote(n journalNote) {
-	ts := formatTimestamp(n.CreatedAt)
+	ts := fmtTimeStr(n.CreatedAt)
 	actor := actorLabel(n.ActorType)
 	body := strings.TrimSpace(n.Body)
 	fmt.Printf("  %-19s  %-8s  NOTE\n", ts, actor)
@@ -319,7 +306,7 @@ func printAttachedNote(n journalNote) {
 
 // printStandaloneNote prints a standalone journal note.
 func printStandaloneNote(n journalNote) {
-	ts := formatTimestamp(n.CreatedAt)
+	ts := fmtTimeStr(n.CreatedAt)
 	actor := actorLabel(n.ActorType)
 	body := strings.TrimSpace(n.Body)
 	fmt.Printf("%-19s  %-8s  NOTE\n", ts, actor)

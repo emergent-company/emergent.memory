@@ -256,8 +256,8 @@ JSON response instead.`,
 		fmt.Fprintf(out, "Name:        %s\n", skill.Name)
 		fmt.Fprintf(out, "Description: %s\n", skill.Description)
 		fmt.Fprintf(out, "Scope:       %s\n", scope)
-		fmt.Fprintf(out, "Created:     %s\n", skill.CreatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(out, "Updated:     %s\n", skill.UpdatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Created:     %s\n", fmtTime(skill.CreatedAt))
+		fmt.Fprintf(out, "Updated:     %s\n", fmtTime(skill.UpdatedAt))
 		fmt.Fprintf(out, "\n--- Content ---\n%s\n", skill.Content)
 		return nil
 	},
