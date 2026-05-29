@@ -12,7 +12,7 @@ func TestParseDotenv(t *testing.T) {
 	content := `
 # comment
 MEMORY_SERVER_URL=http://test-server
-MEMORY_API_KEY="my-key"
+MEMORY_ACCOUNT_API_KEY="my-key"
 MEMORY_ORG_ID='org-1'
 EMPTY=
 `
@@ -26,8 +26,8 @@ EMPTY=
 	if m["MEMORY_SERVER_URL"] != "http://test-server" {
 		t.Errorf("got %q", m["MEMORY_SERVER_URL"])
 	}
-	if m["MEMORY_API_KEY"] != "my-key" {
-		t.Errorf("got %q", m["MEMORY_API_KEY"])
+	if m["MEMORY_ACCOUNT_API_KEY"] != "my-key" {
+		t.Errorf("got %q", m["MEMORY_ACCOUNT_API_KEY"])
 	}
 	if m["MEMORY_ORG_ID"] != "org-1" {
 		t.Errorf("got %q", m["MEMORY_ORG_ID"])
@@ -94,7 +94,7 @@ func TestWalkUpFind(t *testing.T) {
 func TestNewFromEnvDotenvLocal(t *testing.T) {
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, ".env.local")
-	content := "MEMORY_SERVER_URL=http://dotenv-server\nMEMORY_API_KEY=dotenv-key\n"
+	content := "MEMORY_SERVER_URL=http://dotenv-server\nMEMORY_ACCOUNT_API_KEY=dotenv-key\n"
 	if err := os.WriteFile(envFile, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +108,10 @@ func TestNewFromEnvDotenvLocal(t *testing.T) {
 	// Clear relevant env vars
 	os.Unsetenv("MEMORY_SERVER_URL")
 	os.Unsetenv("MEMORY_API_URL")
-	os.Unsetenv("MEMORY_API_KEY")
-	os.Unsetenv("MEMORY_PROJECT_TOKEN")
+	os.Unsetenv("MEMORY_ACCOUNT_API_KEY")
+	os.Unsetenv("MEMORY_ACCOUNT_API_KEY")
+	os.Unsetenv("MEMORY_PROJECT_API_KEY")
+	os.Unsetenv("MEMORY_PROJECT_API_KEY")
 
 	client, err := NewFromEnv()
 	if err != nil {
@@ -129,12 +131,12 @@ func TestNewFromEnvProjectTokenOverridesAPIKey(t *testing.T) {
 	}
 
 	os.Setenv("MEMORY_SERVER_URL", "http://test")
-	os.Setenv("MEMORY_API_KEY", "regular-key")
-	os.Setenv("MEMORY_PROJECT_TOKEN", "emt_project_token")
+	os.Setenv("MEMORY_ACCOUNT_API_KEY", "regular-key")
+	os.Setenv("MEMORY_PROJECT_API_KEY", "emt_project_token")
 	defer func() {
 		os.Unsetenv("MEMORY_SERVER_URL")
-		os.Unsetenv("MEMORY_API_KEY")
-		os.Unsetenv("MEMORY_PROJECT_TOKEN")
+		os.Unsetenv("MEMORY_ACCOUNT_API_KEY")
+		os.Unsetenv("MEMORY_PROJECT_API_KEY")
 	}()
 
 	client, err := NewFromEnv()
@@ -143,4 +145,72 @@ func TestNewFromEnvProjectTokenOverridesAPIKey(t *testing.T) {
 	}
 	// The auth provider should have been initialized with the project token
 	_ = client // just verify no error
+}
+
+func TestNewFromEnvDeprecatedAPIKeyFallback(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Old MEMORY_ACCOUNT_API_KEY should still work when MEMORY_ACCOUNT_API_KEY is not set.
+	os.Setenv("MEMORY_SERVER_URL", "http://test")
+	os.Setenv("MEMORY_ACCOUNT_API_KEY", "legacy-key")
+	defer func() {
+		os.Unsetenv("MEMORY_SERVER_URL")
+		os.Unsetenv("MEMORY_ACCOUNT_API_KEY")
+	}()
+
+	_, err := NewFromEnv()
+	if err != nil {
+		t.Fatalf("expected legacy MEMORY_ACCOUNT_API_KEY to be accepted, got error: %v", err)
+	}
+}
+
+func TestNewFromEnvDeprecatedProjectTokenFallback(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Old MEMORY_PROJECT_API_KEY should still work when MEMORY_PROJECT_API_KEY is not set.
+	os.Setenv("MEMORY_SERVER_URL", "http://test")
+	os.Setenv("MEMORY_PROJECT_API_KEY", "emt_legacy_project_token")
+	defer func() {
+		os.Unsetenv("MEMORY_SERVER_URL")
+		os.Unsetenv("MEMORY_PROJECT_API_KEY")
+	}()
+
+	_, err := NewFromEnv()
+	if err != nil {
+		t.Fatalf("expected legacy MEMORY_PROJECT_API_KEY to be accepted, got error: %v", err)
+	}
+}
+
+func TestNewFromEnvNewNameWinsOverDeprecated(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// When both old and new names are set, new name wins.
+	os.Setenv("MEMORY_SERVER_URL", "http://test")
+	os.Setenv("MEMORY_ACCOUNT_API_KEY", "new-key")
+	os.Setenv("MEMORY_API_KEY", "old-key")
+	defer func() {
+		os.Unsetenv("MEMORY_SERVER_URL")
+		os.Unsetenv("MEMORY_ACCOUNT_API_KEY")
+		os.Unsetenv("MEMORY_API_KEY")
+	}()
+
+	cfg := loadEnvConfig()
+	if cfg.APIKey != "new-key" {
+		t.Errorf("expected MEMORY_ACCOUNT_API_KEY to win, got %q", cfg.APIKey)
+	}
 }

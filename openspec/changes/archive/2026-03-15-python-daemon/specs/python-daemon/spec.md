@@ -30,7 +30,7 @@ The daemon SHALL fork a child process for each script execution request. Each ch
 The daemon SHALL accept per-call environment variables as part of the execution request and apply them to the child process only, without affecting the daemon's own environment or any other concurrent or future child.
 
 #### Scenario: Session credentials injected into child
-- **WHEN** a run_python request includes `MEMORY_API_KEY` and `MEMORY_API_URL` values
+- **WHEN** a run_python request includes `MEMORY_ACCOUNT_API_KEY` and `MEMORY_API_URL` values
 - **THEN** the child process SHALL have those values in its environment when the script runs
 
 #### Scenario: Daemon environment remains unpolluted
@@ -38,7 +38,7 @@ The daemon SHALL accept per-call environment variables as part of the execution 
 - **THEN** the daemon's own `os.environ` SHALL NOT contain the injected credentials from that call
 
 #### Scenario: Different sessions use different credentials
-- **WHEN** two successive script executions are sent with different `MEMORY_API_KEY` values
+- **WHEN** two successive script executions are sent with different `MEMORY_ACCOUNT_API_KEY` values
 - **THEN** each child process SHALL use only its own injected key and not the other session's key
 
 ### Requirement: FIFO-based IPC between Go tool layer and daemon

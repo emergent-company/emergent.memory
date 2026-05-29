@@ -7,11 +7,6 @@ description: >
   experiments on rejection or proactively at the configured test rate. Reports
   pool health upward to the orchestrator.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.3
-  maxTokens: 8192
-
 flowType: agentic
 maxSteps: 15
 isDefault: false

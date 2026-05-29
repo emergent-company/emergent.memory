@@ -6,11 +6,6 @@ description: >
   output with citations and key findings as graph objects. Use this agent for tasks
   requiring external web content, public documentation, news, or online data.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.5
-  maxTokens: 8192
-
 flowType: agentic
 maxSteps: 12
 isDefault: false

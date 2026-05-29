@@ -8,7 +8,7 @@ The Memory platform documentation spans three layers that must stay in sync:
 Audit findings:
 - `apps/server/domain/mcp/README.md` still uses legacy underscore tool names (`hybrid_search`, `semantic_search`, `find_similar`, `traverse_graph`, `list_relationships`, `batch_create_entities`, `batch_create_relationships`, `restore_entity`, `list_tags`) and reports "29 tools" (now ~50+ across all tool files). Auth examples show `X-API-Key` while the actual handler also accepts `Authorization: Bearer`; the developer guide (the canonical reference) correctly uses `Bearer`.
 - Five CLI commands (`memory init`, `memory ask`, `memory adk-sessions`, `memory mcp-guide`, `memory install-memory-skills`) are fully implemented but absent from all site docs.
-- `memory-onboard` skill uses `MEMORY_PROJECT` as the only env var; `memory init` and `memory projects set` write `MEMORY_PROJECT_ID` + `MEMORY_PROJECT_NAME` + `MEMORY_PROJECT_TOKEN` — agents using the skill may not recognise the env vars their init step produces.
+- `memory-onboard` skill uses `MEMORY_PROJECT` as the only env var; `memory init` and `memory projects set` write `MEMORY_PROJECT_ID` + `MEMORY_PROJECT_NAME` + `MEMORY_PROJECT_API_KEY` — agents using the skill may not recognise the env vars their init step produces.
 - `memory-blueprints` skill is missing the standard `## Rules` block that every other skill includes.
 
 ## Goals / Non-Goals
@@ -17,7 +17,7 @@ Audit findings:
 - Correct tool names and counts in `apps/server/domain/mcp/README.md`
 - Standardise auth documentation to `Authorization: Bearer` throughout the MCP README
 - Add developer guide coverage for undocumented CLI commands
-- Update `memory-onboard` skill to mention `MEMORY_PROJECT_ID`/`MEMORY_PROJECT_TOKEN`
+- Update `memory-onboard` skill to mention `MEMORY_PROJECT_ID`/`MEMORY_PROJECT_API_KEY`
 - Add `## Rules` block to `memory-blueprints` skill
 
 **Non-Goals:**
@@ -39,7 +39,7 @@ Audit findings:
 **Alternative considered**: Add each command to the most relevant existing page (e.g., `mcp-guide` on `mcp-servers.md`). Rejected because it scatters coverage and some commands (like `ask`, `init`) don't fit any existing page.
 
 ### Decision: memory-onboard skill mentions both env var styles
-**Rationale**: `MEMORY_PROJECT` (name-based resolution) and `MEMORY_PROJECT_ID` (direct ID) both work. The skill should guide agents to check for either and understand that `memory init` produces `MEMORY_PROJECT_ID` + `MEMORY_PROJECT_TOKEN`. Rewriting the skill to only use `MEMORY_PROJECT_ID` would break workflows that pre-date `memory init`.
+**Rationale**: `MEMORY_PROJECT` (name-based resolution) and `MEMORY_PROJECT_ID` (direct ID) both work. The skill should guide agents to check for either and understand that `memory init` produces `MEMORY_PROJECT_ID` + `MEMORY_PROJECT_API_KEY`. Rewriting the skill to only use `MEMORY_PROJECT_ID` would break workflows that pre-date `memory init`.
 
 ## Risks / Trade-offs
 

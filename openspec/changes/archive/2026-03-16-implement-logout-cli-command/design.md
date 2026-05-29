@@ -1,8 +1,8 @@
 ## Context
 
 The Memory CLI (`tools/cli/`) authenticates via three mechanisms, in priority order:
-1. **Project token** (`config.yaml` → `project_token` or `MEMORY_PROJECT_TOKEN` env var) — scoped to a single project
-2. **API key** (`config.yaml` → `api_key` or `MEMORY_API_KEY` env var) — account-level
+1. **Project token** (`config.yaml` → `project_token` or `MEMORY_PROJECT_API_KEY` env var) — scoped to a single project
+2. **API key** (`config.yaml` → `api_key` or `MEMORY_ACCOUNT_API_KEY` env var) — account-level
 3. **OAuth credentials** (`~/.memory/credentials.json`) — acquired via `memory login` using OIDC Device Authorization Grant against Zitadel
 
 The current `memory logout` command (in `tools/cli/internal/cmd/auth.go`) only deletes `~/.memory/credentials.json`. It does not revoke tokens server-side, and there is no mechanism to clear API keys or project tokens from `config.yaml`.

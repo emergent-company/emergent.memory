@@ -4,7 +4,7 @@
 # Quick Start:
 #   1. docker compose -f docker-compose.local.yml up -d
 #   2. Configure CLI: export MEMORY_SERVER_URL=http://localhost:3002
-#   3. Configure API key: export MEMORY_API_KEY=your-key-from-env
+#   3. Configure API key: export MEMORY_ACCOUNT_API_KEY=your-key-from-env
 
 services:
   db:

@@ -184,6 +184,10 @@ def _apply_env_key(cfg: Dict[str, str], key: str, value: str) -> None:
     mapping = {
         "MEMORY_SERVER_URL": "server_url",
         "MEMORY_API_URL": "server_url",  # alias, lower priority handled by order
+        # Canonical names (new)
+        "MEMORY_ACCOUNT_API_KEY": "api_key",
+        "MEMORY_PROJECT_API_KEY": "project_token",
+        # Deprecated aliases (kept for backward compatibility)
         "MEMORY_API_KEY": "api_key",
         "MEMORY_ORG_ID": "org_id",
         "MEMORY_PROJECT_ID": "project_id",
@@ -200,6 +204,13 @@ def _apply_env_key(cfg: Dict[str, str], key: str, value: str) -> None:
             and os.environ.get("MEMORY_SERVER_URL")
         ):
             return  # MEMORY_SERVER_URL already set it
+        # New canonical names take priority over deprecated aliases:
+        # skip MEMORY_API_KEY if MEMORY_ACCOUNT_API_KEY already set it,
+        # skip MEMORY_PROJECT_TOKEN if MEMORY_PROJECT_API_KEY already set it.
+        if key == "MEMORY_API_KEY" and cfg.get("api_key") and os.environ.get("MEMORY_ACCOUNT_API_KEY"):
+            return
+        if key == "MEMORY_PROJECT_TOKEN" and cfg.get("project_token") and os.environ.get("MEMORY_PROJECT_API_KEY"):
+            return
         cfg[mapping[key]] = value
 
 
@@ -311,15 +322,16 @@ class Client:
         Recognised variables / YAML keys:
 
         * ``MEMORY_SERVER_URL`` / ``server_url`` — server URL (required)
-        * ``MEMORY_API_KEY`` / ``api_key`` — API key or emt_* token
-        * ``MEMORY_PROJECT_TOKEN`` / ``project_token`` — project-scoped emt_* token
+        * ``MEMORY_ACCOUNT_API_KEY`` / ``api_key`` — account-level API key or emt_* token (canonical); ``MEMORY_ACCOUNT_API_KEY`` is a deprecated alias
+        * ``MEMORY_PROJECT_API_KEY`` / ``project_token`` — project-scoped emt_* token (canonical); ``MEMORY_PROJECT_API_KEY`` is a deprecated alias
         * ``MEMORY_ORG_ID`` / ``org_id`` — default organisation ID
         * ``MEMORY_PROJECT_ID`` / ``project_id`` — default project ID
 
         ``MEMORY_API_URL`` is accepted as an alias for ``MEMORY_SERVER_URL``.
 
-        If ``MEMORY_PROJECT_TOKEN`` is set it is used as the credential (Bearer
-        auth); otherwise ``MEMORY_API_KEY`` is used.
+        If ``MEMORY_PROJECT_API_KEY`` (or deprecated ``MEMORY_PROJECT_API_KEY``) is set
+        it is used as the credential (Bearer auth); otherwise ``MEMORY_ACCOUNT_API_KEY``
+        (or deprecated ``MEMORY_ACCOUNT_API_KEY``) is used.
 
         Raises
         ------
@@ -340,7 +352,7 @@ class Client:
             )
         if not api_key:
             raise EnvironmentError(
-                "No API key found. Set MEMORY_API_KEY (or MEMORY_PROJECT_TOKEN), "
+                "No API key found. Set MEMORY_ACCOUNT_API_KEY (or MEMORY_PROJECT_API_KEY), "
                 "add api_key to ~/.memory/config.yaml, or create a .env.local file."
             )
 

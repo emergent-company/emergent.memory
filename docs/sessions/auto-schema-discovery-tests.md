@@ -147,7 +147,7 @@ python3 bench/ask-test/test_ask_user.py
   - configured via `PUT /api/projects/{pid}/providers/openai-compatible`
   - `baseUrl: http://litellm:4000/v1`, `generativeModel: deepseek-v4-flash`
 - Blueprint install: `~/.memory/bin/memory blueprints install blueprints/test-agents --project <pid> --server <url>`
-  - uses `MEMORY_PROJECT_TOKEN` (not `EMERGENT_MEMORY_TOKEN`)
+  - uses `MEMORY_PROJECT_API_KEY` (not `EMERGENT_MEMORY_TOKEN`)
 
 ---
 

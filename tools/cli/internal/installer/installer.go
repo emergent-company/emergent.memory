@@ -730,7 +730,7 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, 
       "args": ["mcp"],
       "env": {
         "MEMORY_SERVER_URL": "http://localhost:%d",
-        "MEMORY_API_KEY": "%s"
+        "MEMORY_ACCOUNT_API_KEY": "%s"
       }
     }
   }

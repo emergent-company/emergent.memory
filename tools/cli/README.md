@@ -67,7 +67,7 @@ go build -o ~/.memory/bin/memory ./cmd/main.go
 
 ```bash
 export MEMORY_SERVER_URL=https://api.your-instance.com
-export MEMORY_API_KEY=your-api-key
+export MEMORY_ACCOUNT_API_KEY=your-api-key
 
 memory projects list
 ```
@@ -112,7 +112,7 @@ completion:
 | Variable | Description |
 |---|---|
 | `MEMORY_SERVER_URL` | Base URL of the Memory server |
-| `MEMORY_API_KEY` | API key for standalone/self-hosted mode |
+| `MEMORY_ACCOUNT_API_KEY` | API key for standalone/self-hosted mode |
 | `MEMORY_ORG_ID` | Default organization ID |
 | `MEMORY_PROJECT_ID` | Default project ID |
 

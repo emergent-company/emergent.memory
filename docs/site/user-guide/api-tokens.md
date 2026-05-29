@@ -73,7 +73,7 @@ Assign only the scopes your integration needs.
     ```bash
     memory --project-token emt_abc123... agents list
     # or via environment variable:
-    export MEMORY_PROJECT_TOKEN=emt_abc123...
+    export MEMORY_PROJECT_API_KEY=emt_abc123...
     memory agents list
     ```
 
@@ -132,5 +132,5 @@ The token is invalidated immediately. Any requests using it will receive `401 Un
     memory agents trigger $AGENT_ID --project $PROJECT_ID
   env:
     MEMORY_SERVER_URL: https://api.dev.emergent-company.ai
-    MEMORY_PROJECT_TOKEN: ${{ secrets.MEMORY_TOKEN }}
+    MEMORY_PROJECT_API_KEY: ${{ secrets.MEMORY_TOKEN }}
 ```

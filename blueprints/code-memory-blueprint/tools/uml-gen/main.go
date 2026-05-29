@@ -71,10 +71,10 @@ func main() {
 }
 
 type GraphData struct {
-	Entities      []*sdkgraph.GraphObject
-	Fields        []*sdkgraph.GraphObject
-	HasField      []*sdkgraph.GraphRelationship
-	References    []*sdkgraph.GraphRelationship
+	Entities   []*sdkgraph.GraphObject
+	Fields     []*sdkgraph.GraphObject
+	HasField   []*sdkgraph.GraphRelationship
+	References []*sdkgraph.GraphRelationship
 }
 
 func fetchData(ctx context.Context, client *sdk.Client) (*GraphData, error) {

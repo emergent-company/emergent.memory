@@ -5,11 +5,6 @@ description: >
   then writes structured objects back to the knowledge graph. Works exclusively
   against its assigned Task's acceptance criteria.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.3
-  maxTokens: 4096
-
 flowType: agentic
 maxSteps: 8
 isDefault: false

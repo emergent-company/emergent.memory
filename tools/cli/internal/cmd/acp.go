@@ -26,7 +26,7 @@ func getACPClient(cmd *cobra.Command) (*acp.Client, error) {
 	baseURL := c.BaseURL()
 	token := c.AuthorizationHeader()
 	if token == "" {
-		return nil, fmt.Errorf("no authentication configured — run 'memory login' or set MEMORY_PROJECT_TOKEN")
+		return nil, fmt.Errorf("no authentication configured — run 'memory login' or set MEMORY_PROJECT_API_KEY")
 	}
 	// AuthorizationHeader returns "Bearer <token>"; we need just the token.
 	token = strings.TrimPrefix(token, "Bearer ")

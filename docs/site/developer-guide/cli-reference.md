@@ -24,7 +24,7 @@ On completion it writes the following variables to `.env.local` and automaticall
 |---|---|
 | `MEMORY_PROJECT_ID` | UUID of the configured project |
 | `MEMORY_PROJECT_NAME` | Human-readable project name |
-| `MEMORY_PROJECT_TOKEN` | Project-scoped API token |
+| `MEMORY_PROJECT_API_KEY` | Project-scoped API token |
 
 Running `memory init` again in an already-configured directory detects the existing configuration and offers to verify or reconfigure each step.
 

@@ -24,7 +24,7 @@ func detectProjectSource(cmd *cobra.Command) string {
 	if cmd.Flags().Changed("project-token") {
 		return "project API key via --project-token"
 	}
-	if os.Getenv("MEMORY_PROJECT_TOKEN") != "" {
+	if os.Getenv("MEMORY_PROJECT_API_KEY") != "" || os.Getenv("MEMORY_PROJECT_TOKEN") != "" {
 		return "project API key"
 	}
 	if os.Getenv("MEMORY_PROJECT") != "" {
@@ -108,7 +108,7 @@ func getAccountClient(cmd *cobra.Command) (*client.Client, error) {
 }
 
 // getAccountClientForServer builds an account-level client guaranteed to
-// authenticate against targetServerURL. Any MEMORY_API_KEY loaded from the
+// authenticate against targetServerURL. Any MEMORY_ACCOUNT_API_KEY loaded from the
 // environment is probed against targetServerURL first; if it fails (stale key
 // from a different server) it is discarded so OAuth credentials are used
 // instead. Returns an IsAuthError-compatible error when credentials are missing

@@ -141,14 +141,14 @@ type ExecuteRequest struct {
 	Model           string         // Optional per-run model override; takes precedence over AgentDefinition.Model
 
 	// Ephemeral sandbox token — set by the chat handler before calling Execute.
-	// AuthToken is the raw emt_* token value to inject into sandbox containers as MEMORY_API_KEY.
+	// AuthToken is the raw emt_* token value to inject into sandbox containers as MEMORY_ACCOUNT_API_KEY.
 	// EphemeralTokenID is the DB id of the token; the executor revokes it on workspace teardown.
 	AuthToken        string
 	EphemeralTokenID string
 
 	// EnvVars are runtime environment variables passed per-run by the caller.
 	// They are merged into the sandbox container environment with lower priority
-	// than system keys (MEMORY_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
+	// than system keys (MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
 	EnvVars map[string]string
 
 	// ACPSessionID links this run to an ACP session so built-in tools like
@@ -2504,7 +2504,7 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningRes
 	// Merge priority (later wins):
 	//   1. Static env vars from agent definition (cfg.EnvVars)
 	//   2. Runtime env vars from trigger request (req.EnvVars)
-	//   3. System keys (MEMORY_API_KEY, etc.) — always win
+	//   3. System keys (MEMORY_ACCOUNT_API_KEY, etc.) — always win
 	sessionEnv := map[string]string{}
 
 	// 1. Static env vars from agent sandbox config
@@ -2521,7 +2521,9 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningRes
 
 	// 3. System keys — always win
 	if req.AuthToken != "" {
-		sessionEnv["MEMORY_API_KEY"] = req.AuthToken
+		// Inject under both canonical and deprecated names for container compat.
+		sessionEnv["MEMORY_ACCOUNT_API_KEY"] = req.AuthToken
+		sessionEnv["MEMORY_API_KEY"] = req.AuthToken // deprecated alias — remove in a future release
 		sessionEnv["MEMORY_PROJECT_ID"] = req.ProjectID
 		sessionEnv["MEMORY_SERVER_URL"] = "http://host.docker.internal:3002"
 	}

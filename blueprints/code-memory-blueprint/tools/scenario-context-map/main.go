@@ -7,12 +7,13 @@
 // which Context it occurs in and which Actions are linked.
 //
 // Traversal:
-//   Scenario →[has_step]→ ScenarioStep →[occurs_in]→ Context
-//                                       →[has_action]→ Action
+//
+//	Scenario →[has_step]→ ScenarioStep →[occurs_in]→ Context
+//	                                    →[has_action]→ Action
 //
 // Usage:
 //
-//	MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
+//	MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
 //	  --domain <slug>       filter to scenarios in one domain (key prefix match)
 //	  --scenario <key>      filter to one scenario by key
 //	  --context <key>       filter to scenarios that use a specific context
@@ -39,13 +40,13 @@ import (
 )
 
 var (
-	flagDomain      = flag.String("domain", "", "Filter by domain slug (key prefix, e.g. 'agents')")
-	flagScenario    = flag.String("scenario", "", "Filter to one scenario by key")
-	flagContext     = flag.String("context", "", "Filter to scenarios using a specific context key")
-	flagFormat      = flag.String("format", "tree", "Output format: tree, json, csv, summary")
-	flagShowEmpty   = flag.Bool("show-empty", false, "Include steps with no action")
-	flagMinSteps    = flag.Int("min-steps", 0, "Only show scenarios with >= N steps")
-	flagNoActOnly   = flag.Bool("no-action-only", false, "Only show scenarios where ALL steps have no action")
+	flagDomain    = flag.String("domain", "", "Filter by domain slug (key prefix, e.g. 'agents')")
+	flagScenario  = flag.String("scenario", "", "Filter to one scenario by key")
+	flagContext   = flag.String("context", "", "Filter to scenarios using a specific context key")
+	flagFormat    = flag.String("format", "tree", "Output format: tree, json, csv, summary")
+	flagShowEmpty = flag.Bool("show-empty", false, "Include steps with no action")
+	flagMinSteps  = flag.Int("min-steps", 0, "Only show scenarios with >= N steps")
+	flagNoActOnly = flag.Bool("no-action-only", false, "Only show scenarios where ALL steps have no action")
 )
 
 // ── data model ────────────────────────────────────────────────────────────────
@@ -75,12 +76,12 @@ type Report struct {
 }
 
 type Stats struct {
-	TotalScenarios    int `json:"total_scenarios"`
-	TotalSteps        int `json:"total_steps"`
-	StepsWithAction   int `json:"steps_with_action"`
-	StepsWithContext  int `json:"steps_with_context"`
-	StepsNoAction     int `json:"steps_no_action"`
-	UniqueContexts    int `json:"unique_contexts"`
+	TotalScenarios   int `json:"total_scenarios"`
+	TotalSteps       int `json:"total_steps"`
+	StepsWithAction  int `json:"steps_with_action"`
+	StepsWithContext int `json:"steps_with_context"`
+	StepsNoAction    int `json:"steps_no_action"`
+	UniqueContexts   int `json:"unique_contexts"`
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -96,7 +97,12 @@ func main() {
 func run() error {
 	client, err := sdk.New(sdk.Config{
 		ServerURL: os.Getenv("MEMORY_SERVER_URL"),
-		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: os.Getenv("MEMORY_API_KEY")},
+		Auth: sdk.AuthConfig{Mode: "apikey", APIKey: func() string {
+			if v := os.Getenv("MEMORY_ACCOUNT_API_KEY"); v != "" {
+				return v
+			}
+			return os.Getenv("MEMORY_API_KEY")
+		}()},
 		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 	})
 	if err != nil {
@@ -109,16 +115,16 @@ func run() error {
 	fmt.Fprintln(os.Stderr, "→ Fetching graph data...")
 
 	var (
-		scenarios  []*sdkgraph.GraphObject
-		steps      []*sdkgraph.GraphObject
-		contexts   []*sdkgraph.GraphObject
-		actions    []*sdkgraph.GraphObject
-		hasStep    []*sdkgraph.GraphRelationship
-		occursIn   []*sdkgraph.GraphRelationship
-		hasAction  []*sdkgraph.GraphRelationship
-		mu         sync.Mutex
-		wg         sync.WaitGroup
-		fetchErr   error
+		scenarios []*sdkgraph.GraphObject
+		steps     []*sdkgraph.GraphObject
+		contexts  []*sdkgraph.GraphObject
+		actions   []*sdkgraph.GraphObject
+		hasStep   []*sdkgraph.GraphRelationship
+		occursIn  []*sdkgraph.GraphRelationship
+		hasAction []*sdkgraph.GraphRelationship
+		mu        sync.Mutex
+		wg        sync.WaitGroup
+		fetchErr  error
 	)
 
 	fetch := func(fn func() error) {
@@ -126,7 +132,9 @@ func run() error {
 		go func() {
 			defer wg.Done()
 			if e := fn(); e != nil {
-				mu.Lock(); fetchErr = e; mu.Unlock()
+				mu.Lock()
+				fetchErr = e
+				mu.Unlock()
 			}
 		}()
 	}

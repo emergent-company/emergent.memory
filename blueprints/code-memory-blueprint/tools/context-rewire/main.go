@@ -9,7 +9,7 @@
 //
 // Usage:
 //
-//	MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
+//	MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
 //	  --dry-run     print plan without making changes (default: true)
 //	  --apply       actually delete+create rels
 //	  --domain <d>  only process scenarios in this domain
@@ -38,11 +38,11 @@ var (
 // coarseContextIDs: entity IDs of the coarse contexts to split.
 // Key = entity_id, Value = human label for logging.
 var coarseContextIDs = map[string]string{
-	"60e0c550-b91e-46b6-b0eb-fce7774e4c54": "ctx-cli-agents-trigger",   // memory agents trigger
-	"c8e5f3a2-1234-0000-0000-000000000000": "ctx-cli-terminal",          // CLI Terminal — placeholder, resolved at runtime
-	"00000000-0000-0000-0000-000000000001": "cli-login",                 // memory login — placeholder
-	"00000000-0000-0000-0000-000000000002": "cli-graph-objects",         // memory graph objects — placeholder
-	"00000000-0000-0000-0000-000000000003": "cli-extraction",            // memory extraction — placeholder
+	"60e0c550-b91e-46b6-b0eb-fce7774e4c54": "ctx-cli-agents-trigger", // memory agents trigger
+	"c8e5f3a2-1234-0000-0000-000000000000": "ctx-cli-terminal",       // CLI Terminal — placeholder, resolved at runtime
+	"00000000-0000-0000-0000-000000000001": "cli-login",              // memory login — placeholder
+	"00000000-0000-0000-0000-000000000002": "cli-graph-objects",      // memory graph objects — placeholder
+	"00000000-0000-0000-0000-000000000003": "cli-extraction",         // memory extraction — placeholder
 }
 
 // oldCtxDomainToNewCtxKey: (old_context_key, domain_slug) → new granular context key.
@@ -58,14 +58,14 @@ var oldCtxDomainToNewCtxKey = map[string]map[string]string{
 		"graph-branches": "cli-branches",
 		"graph-journal":  "cli-journal",
 		// cli-domain scenarios that ended up in graph-objects context
-		"cli":            "ctx-cli-graph-core",
+		"cli": "ctx-cli-graph-core",
 	},
 	"ctx-cli-agents-trigger": {
 		"agents":         "ctx-cli-agents",
 		"agents-sandbox": "ctx-cli-agents-sandbox",
 		"agents-batch":   "ctx-cli-agents-batch",
 		// cli-domain scenarios that use agents-trigger context stay in agents
-		"cli":            "ctx-cli-agents",
+		"cli": "ctx-cli-agents",
 	},
 	"ctx-cli-terminal": {
 		"cli":           "ctx-cli-core",
@@ -74,7 +74,7 @@ var oldCtxDomainToNewCtxKey = map[string]map[string]string{
 		"chat":          "ctx-cli-chat",
 		"observability": "ctx-cli-observability",
 		// agents scenarios that ended up in CLI Terminal
-		"agents":        "ctx-cli-agents",
+		"agents": "ctx-cli-agents",
 	},
 	"cli-extraction": {
 		"extraction":    "ctx-cli-extraction-jobs",
@@ -85,14 +85,14 @@ var oldCtxDomainToNewCtxKey = map[string]map[string]string{
 }
 
 type rewireOp struct {
-	oldRelID    string
-	stepID      string
-	stepKey     string
-	scenKey     string
-	domainSlug  string
-	oldCtxKey   string
-	newCtxKey   string
-	newCtxID    string
+	oldRelID   string
+	stepID     string
+	stepKey    string
+	scenKey    string
+	domainSlug string
+	oldCtxKey  string
+	newCtxKey  string
+	newCtxID   string
 }
 
 func main() {
@@ -109,7 +109,12 @@ func main() {
 func run() error {
 	client, err := sdk.New(sdk.Config{
 		ServerURL: os.Getenv("MEMORY_SERVER_URL"),
-		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: os.Getenv("MEMORY_API_KEY")},
+		Auth: sdk.AuthConfig{Mode: "apikey", APIKey: func() string {
+			if v := os.Getenv("MEMORY_ACCOUNT_API_KEY"); v != "" {
+				return v
+			}
+			return os.Getenv("MEMORY_API_KEY")
+		}()},
 		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 	})
 	if err != nil {
@@ -122,14 +127,14 @@ func run() error {
 	fmt.Fprintln(os.Stderr, "→ Fetching graph data...")
 
 	var (
-		scenarios  []*sdkgraph.GraphObject
-		steps      []*sdkgraph.GraphObject
-		contexts   []*sdkgraph.GraphObject
-		hasStep    []*sdkgraph.GraphRelationship
-		occursIn   []*sdkgraph.GraphRelationship
-		mu         sync.Mutex
-		wg         sync.WaitGroup
-		fetchErr   error
+		scenarios []*sdkgraph.GraphObject
+		steps     []*sdkgraph.GraphObject
+		contexts  []*sdkgraph.GraphObject
+		hasStep   []*sdkgraph.GraphRelationship
+		occursIn  []*sdkgraph.GraphRelationship
+		mu        sync.Mutex
+		wg        sync.WaitGroup
+		fetchErr  error
 	)
 
 	fetch := func(fn func() error) {
@@ -137,7 +142,9 @@ func run() error {
 		go func() {
 			defer wg.Done()
 			if e := fn(); e != nil {
-				mu.Lock(); fetchErr = e; mu.Unlock()
+				mu.Lock()
+				fetchErr = e
+				mu.Unlock()
 			}
 		}()
 	}
@@ -215,7 +222,7 @@ func run() error {
 	// occurs_in rels pointing to coarse contexts
 	// relID → (stepID, ctxID)
 	type occursInRel struct {
-		relID string
+		relID  string
 		stepID string
 		ctxID  string
 	}

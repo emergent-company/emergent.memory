@@ -367,7 +367,10 @@ func (ap *AutoProvisioner) attemptProvision(
 	// the API server from inside Docker.  We only need to add the token and
 	// project ID here.
 	if authToken != "" {
-		containerEnv["MEMORY_API_KEY"] = authToken
+		// Inject under both the canonical new name and the deprecated alias so that
+		// containers running older SDK versions still authenticate correctly.
+		containerEnv["MEMORY_ACCOUNT_API_KEY"] = authToken
+		containerEnv["MEMORY_API_KEY"] = authToken // deprecated alias — remove in a future release
 		containerEnv["MEMORY_PROJECT_ID"] = projectID
 	}
 	if len(containerEnv) > 0 {

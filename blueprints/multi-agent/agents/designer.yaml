@@ -5,11 +5,6 @@ description: >
   descriptions), and technical design documents. Output is stored in the graph
   as TaskResult objects for downstream agents to reference.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.4
-  maxTokens: 16384
-
 flowType: agentic
 maxSteps: 15
 isDefault: false

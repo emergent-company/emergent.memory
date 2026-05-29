@@ -52,7 +52,7 @@ After project selection or creation, the wizard SHALL obtain a project API token
 
 #### Scenario: .env.local written
 - **WHEN** the token is obtained
-- **THEN** the wizard writes `MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, and `MEMORY_PROJECT_TOKEN` to `.env.local` in the current directory
+- **THEN** the wizard writes `MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, and `MEMORY_PROJECT_API_KEY` to `.env.local` in the current directory
 - **AND** preserves any other existing keys in `.env.local`
 
 ### Requirement: Global config update

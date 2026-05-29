@@ -366,7 +366,7 @@ func (s *Service) GetAccountToken(ctx context.Context, tokenID, userID string) (
 // call RevokeEphemeral when the sandbox is torn down to ensure early revocation.
 //
 // Returns (tokenID, rawToken, error). rawToken must be injected into the container
-// as MEMORY_API_KEY; it is never stored in plaintext.
+// as MEMORY_ACCOUNT_API_KEY; it is never stored in plaintext.
 func (s *Service) CreateEphemeral(ctx context.Context, projectID, orgID, userID string, ttl time.Duration) (tokenID, rawToken string, err error) {
 	// Generate a new emt_* token
 	raw, genErr := generateToken()

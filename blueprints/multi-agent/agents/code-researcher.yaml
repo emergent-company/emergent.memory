@@ -6,11 +6,6 @@ description: >
   source code, repository structure, implementation details, or technical
   architecture exploration.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.5
-  maxTokens: 8192
-
 flowType: agentic
 maxSteps: 20
 isDefault: false

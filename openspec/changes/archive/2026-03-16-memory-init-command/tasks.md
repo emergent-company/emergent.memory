@@ -24,7 +24,7 @@
 
 - [x] 4.1 List existing tokens via `SDK.APITokens.List`; if a token exists, retrieve it via `SDK.APITokens.Get`
 - [x] 4.2 If no token available, create one via `SDK.APITokens.Create` with name `"cli-auto-token"` and scopes `["data:read", "data:write", "schema:read"]`
-- [x] 4.3 Write `MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, `MEMORY_PROJECT_TOKEN` to `.env.local` via `godotenv.Write`, preserving existing keys
+- [x] 4.3 Write `MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, `MEMORY_PROJECT_API_KEY` to `.env.local` via `godotenv.Write`, preserving existing keys
 - [x] 4.4 Update global config (`~/.memory/config.yaml`) with `ProjectID`; warn on failure but do not abort
 
 ## 5. .gitignore Auto-update

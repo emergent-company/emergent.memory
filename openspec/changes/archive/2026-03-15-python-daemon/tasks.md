@@ -33,7 +33,7 @@
 - [x] 4.2 Manually verify daemon starts: `docker run --rm emergent-memory-python-sdk:latest sh -c 'sleep 2 && test -p /tmp/pyrunner.in && echo OK'`
 - [x] 4.3 Write and run a minimal Go unit test or integration test for `runViaDaemon` that sends a trivial script and asserts exit code 0 and non-empty output
 - [x] 4.4 Test the fallback path: start a container without the daemon and confirm `run_python` still works via the cold path
-- [x] 4.5 Test credential isolation: send two requests with different `MEMORY_API_KEY` values and verify each child receives the correct key (can be done with a script that prints `os.environ.get("MEMORY_API_KEY")`)
+- [x] 4.5 Test credential isolation: send two requests with different `MEMORY_ACCOUNT_API_KEY` values and verify each child receives the correct key (can be done with a script that prints `os.environ.get("MEMORY_ACCOUNT_API_KEY")`)
 
 ## 5. Cleanup and observability
 

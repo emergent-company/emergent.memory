@@ -188,12 +188,14 @@ func New(cfg Config) (*Client, error) {
 //
 // Recognised variables / YAML keys:
 //   - MEMORY_SERVER_URL / server_url — server URL (falls back to http://localhost:3002)
-//   - MEMORY_API_KEY / api_key — API key or emt_* token (required)
-//   - MEMORY_PROJECT_TOKEN / project_token — project-scoped emt_* token (overrides api_key)
+//   - MEMORY_ACCOUNT_API_KEY / api_key — account-level API key or emt_* token (canonical); MEMORY_ACCOUNT_API_KEY is a deprecated alias
+//   - MEMORY_PROJECT_API_KEY / project_token — project-scoped emt_* token (overrides api_key); MEMORY_PROJECT_API_KEY is a deprecated alias
 //   - MEMORY_ORG_ID / org_id — default organisation ID
 //   - MEMORY_PROJECT_ID / project_id — default project ID
 //
 // MEMORY_API_URL is accepted as an alias for MEMORY_SERVER_URL.
+// MEMORY_ACCOUNT_API_KEY is accepted as a deprecated alias for MEMORY_ACCOUNT_API_KEY.
+// MEMORY_PROJECT_API_KEY is accepted as a deprecated alias for MEMORY_PROJECT_API_KEY.
 func NewFromEnv() (*Client, error) {
 	discovered := loadEnvConfig()
 
@@ -203,7 +205,7 @@ func NewFromEnv() (*Client, error) {
 		apiKey = discovered.APIKey
 	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("no API key found: set MEMORY_API_KEY, add api_key to ~/.memory/config.yaml, or create a .env.local file")
+		return nil, fmt.Errorf("no API key found: set MEMORY_ACCOUNT_API_KEY, add api_key to ~/.memory/config.yaml, or create a .env.local file")
 	}
 
 	serverURL := discovered.ServerURL

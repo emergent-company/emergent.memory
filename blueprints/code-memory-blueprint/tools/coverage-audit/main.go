@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
+//	MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
 //	  --format table|json|markdown   (default: table)
 //	  --domain <name>                filter to one domain
 //	  --min-coverage <0-100>         only show domains below this threshold (default: 100)
@@ -49,7 +49,7 @@ type DomainReport struct {
 	TestedByCount   int      `json:"tested_by_count"`
 	CoveragePercent int      `json:"coverage_percent"` // real tests only; planned don't count
 	HasTests        bool     `json:"has_tests"`
-	HasPlanned      bool     `json:"has_planned"`      // planned TestSuites exist (intent)
+	HasPlanned      bool     `json:"has_planned"` // planned TestSuites exist (intent)
 	TestSuiteNames  []string `json:"test_suite_names,omitempty"`
 }
 
@@ -72,7 +72,12 @@ func main() {
 func run() error {
 	client, err := sdk.New(sdk.Config{
 		ServerURL: os.Getenv("MEMORY_SERVER_URL"),
-		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: os.Getenv("MEMORY_API_KEY")},
+		Auth: sdk.AuthConfig{Mode: "apikey", APIKey: func() string {
+			if v := os.Getenv("MEMORY_ACCOUNT_API_KEY"); v != "" {
+				return v
+			}
+			return os.Getenv("MEMORY_API_KEY")
+		}()},
 		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 	})
 	if err != nil {
@@ -116,27 +121,33 @@ func run() error {
 
 	fetch(func() error {
 		r, e := listAllObjects(ctx, client.Graph, "Service", branch)
-		services = r; return e
+		services = r
+		return e
 	})
 	fetch(func() error {
 		r, e := listAllObjects(ctx, client.Graph, "TestSuite", branch)
-		testSuites = r; return e
+		testSuites = r
+		return e
 	})
 	fetch(func() error {
 		r, e := listAllRels(ctx, client.Graph, "tested_by", branch)
-		testedByRels = r; return e
+		testedByRels = r
+		return e
 	})
 	fetch(func() error {
 		r, e := listAllObjects(ctx, client.Graph, "APIEndpoint", branch)
-		endpoints = r; return e
+		endpoints = r
+		return e
 	})
 	fetch(func() error {
 		r, e := listAllObjects(ctx, client.Graph, "Method", branch)
-		methods = r; return e
+		methods = r
+		return e
 	})
 	fetch(func() error {
 		r, e := listAllObjects(ctx, client.Graph, "Domain", branch)
-		domains = r; return e
+		domains = r
+		return e
 	})
 
 	wg.Wait()
@@ -252,7 +263,7 @@ func run() error {
 			CoveragePercent: coverage,
 			HasTests:        hasRealTests,
 			HasPlanned:      hasPlanned,
-			TestSuiteNames: tsNames,
+			TestSuiteNames:  tsNames,
 		})
 	}
 

@@ -144,11 +144,11 @@ func LoadWithEnv(path string) (*Config, error) {
 	v.AutomaticEnv()
 
 	_ = v.BindEnv("server_url")
-	_ = v.BindEnv("api_key")
+	_ = v.BindEnv("api_key", "MEMORY_ACCOUNT_API_KEY", "MEMORY_API_KEY")
 	_ = v.BindEnv("email")
 	_ = v.BindEnv("org_id")
 	_ = v.BindEnv("project_id")
-	_ = v.BindEnv("project_token")
+	_ = v.BindEnv("project_token", "MEMORY_PROJECT_API_KEY", "MEMORY_PROJECT_TOKEN")
 	_ = v.BindEnv("project_name")
 	_ = v.BindEnv("debug")
 	_ = v.BindEnv("cache.ttl")
@@ -179,7 +179,7 @@ func LoadWithEnv(path string) (*Config, error) {
 	// MEMORY_PROJECT holds a project name or slug and is used to scope the
 	// CLI to a single project directory-wide. It is resolved to a project ID
 	// at runtime — it is NOT a token. For a project-scoped API token use
-	// MEMORY_PROJECT_TOKEN (emt_... value) instead.
+	// MEMORY_PROJECT_API_KEY (emt_... value) instead.
 	if cfg.ProjectID == "" {
 		if name := os.Getenv("MEMORY_PROJECT"); name != "" {
 			// Store the name in ProjectName so callers can display it before

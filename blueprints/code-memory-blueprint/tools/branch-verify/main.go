@@ -25,7 +25,7 @@ func run() error {
 	branchID := flag.String("branch", "", "Branch ID to verify (required)")
 	targetBranch := flag.String("target", "main", "Target branch ID or \"main\"")
 	serverURL := flag.String("server", envOr("MEMORY_SERVER_URL", "http://localhost:3012"), "Memory server URL")
-	apiKey := flag.String("api-key", envOr("MEMORY_API_KEY", envOr("MEMORY_PROJECT_TOKEN", "")), "API key")
+	apiKey := flag.String("api-key", envOr("MEMORY_ACCOUNT_API_KEY", envOr("MEMORY_API_KEY", envOr("MEMORY_PROJECT_API_KEY", envOr("MEMORY_PROJECT_TOKEN", "")))), "API key")
 	projectID := flag.String("project-id", envOr("MEMORY_PROJECT_ID", ""), "Project ID")
 	repoRoot := flag.String("repo", ".", "Repo root path")
 	doMerge := flag.Bool("merge", false, "Execute merge after successful verification")
@@ -37,7 +37,7 @@ func run() error {
 		return fmt.Errorf("--branch is required")
 	}
 	if *apiKey == "" {
-		return fmt.Errorf("--api-key or MEMORY_API_KEY is required")
+		return fmt.Errorf("--api-key or MEMORY_ACCOUNT_API_KEY is required")
 	}
 	if *projectID == "" {
 		return fmt.Errorf("--project-id or MEMORY_PROJECT_ID is required")
@@ -94,7 +94,7 @@ func run() error {
 
 	// 2. Fetch object details
 	fmt.Println("\nDISK VERIFICATION")
-	
+
 	nonUnchanged := make([]*sdkgraph.BranchMergeObjectSummary, 0)
 	for _, obj := range resp.Objects {
 		if obj.Status != "unchanged" {
@@ -106,7 +106,7 @@ func run() error {
 		fmt.Println("  (no changes to verify)")
 	} else {
 		results := verifyObjects(ctx, client.Graph, nonUnchanged, absRepo, *verbose)
-		
+
 		passed := 0
 		failed := 0
 		skipped := 0
@@ -124,7 +124,7 @@ func run() error {
 		fmt.Printf("  Checked  : %d\n", passed+failed)
 		fmt.Printf("  Passed   : %d\n", passed)
 		fmt.Printf("  Failed   : %d\n", failed)
-		fmt.Printf("  Skipped  : %d\n", skipped + (resp.TotalObjects - len(nonUnchanged)))
+		fmt.Printf("  Skipped  : %d\n", skipped+(resp.TotalObjects-len(nonUnchanged)))
 
 		if failed > 0 {
 			fmt.Printf("\n✗ VERIFICATION FAILED — %d checks failed. Fix implementation before merging.\n", failed)
@@ -347,7 +347,7 @@ func checkDisk(obj *sdkgraph.GraphObject, status string, repoRoot string, allSum
 func checkPath(path string, shouldBeGone bool, isDir bool) verifyResult {
 	info, err := os.Stat(path)
 	exists := err == nil
-	
+
 	rel, _ := filepath.Rel(".", path)
 
 	if shouldBeGone {

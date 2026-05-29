@@ -10,7 +10,7 @@
 //
 // Usage:
 //
-//	MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
+//	MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
 //	  --dry-run      print what would be created without writing
 //	  --cleanup      also delete APIEndpoint belongs_to Domain rels after seeding
 package main
@@ -35,11 +35,16 @@ var (
 func main() {
 	flag.Parse()
 
-	apiKey := os.Getenv("MEMORY_API_KEY")
+	apiKey := func() string {
+		if v := os.Getenv("MEMORY_ACCOUNT_API_KEY"); v != "" {
+			return v
+		}
+		return os.Getenv("MEMORY_API_KEY")
+	}()
 	projectID := os.Getenv("MEMORY_PROJECT_ID")
 	serverURL := os.Getenv("MEMORY_SERVER_URL")
 	if apiKey == "" || projectID == "" || serverURL == "" {
-		fmt.Fprintln(os.Stderr, "MEMORY_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL required")
+		fmt.Fprintln(os.Stderr, "MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL required")
 		os.Exit(1)
 	}
 
@@ -98,9 +103,9 @@ func main() {
 
 	// 3. Build exposes rels
 	type rel struct {
-		svcID string
-		epID  string
-		epKey string
+		svcID   string
+		epID    string
+		epKey   string
 		svcName string
 	}
 	var toCreate []rel
@@ -161,9 +166,9 @@ func main() {
 		items := make([]sdkgraph.CreateRelationshipRequest, len(batch))
 		for j, r := range batch {
 			items[j] = sdkgraph.CreateRelationshipRequest{
-				Type:  "exposes",
-				SrcID: r.svcID,
-				DstID: r.epID,
+				Type:   "exposes",
+				SrcID:  r.svcID,
+				DstID:  r.epID,
 				Upsert: true,
 			}
 		}

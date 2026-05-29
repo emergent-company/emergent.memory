@@ -60,7 +60,7 @@ def get_config() -> Config:
     if _cfg is None:
         _cfg = Config(
             api_url=os.environ.get("MEMORY_API_URL", "http://localhost:3012"),
-            api_key=os.environ.get("MEMORY_API_KEY", ""),
+            api_key=os.environ.get("MEMORY_ACCOUNT_API_KEY") or os.environ.get("MEMORY_API_KEY", ""),
             project_id=os.environ.get("MEMORY_PROJECT_ID", ""),
             eval_llm_base_url=os.environ.get("EVAL_LLM_BASE_URL", "https://api.openai.com/v1"),
             eval_llm_api_key=os.environ.get("EVAL_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),

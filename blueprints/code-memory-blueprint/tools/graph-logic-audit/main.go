@@ -3,24 +3,26 @@
 // Pure graph analysis — no file scanning.
 //
 // Checks:
-//   CONFIGVAR_ORPHAN     ConfigVar config_group has no plausible domain mapping
-//   DOMAIN_NO_ENDPOINTS  Domain exists but has zero APIEndpoints
-//   DOMAIN_NO_SERVICE    Domain exists but has no matching Service
-//   DOMAIN_NO_TESTS      Domain has endpoints but zero real TestSuites
-//   ENDPOINT_HEAVY       Domain has 3x average endpoint count (god domain)
-//   ENDPOINT_SPARSE      Domain has endpoints but only 1-2 (stub domain)
-//   JOB_NO_ENDPOINT      Job domain has zero APIEndpoints (no trigger surface)
-//   EVENT_NO_ENDPOINT    Event domain has no SSE/stream endpoint
-//   SERVICE_NO_DOMAIN    Service name doesn't map to any Domain
-//   SCENARIO_NO_ENDPOINT Scenario domain has zero APIEndpoints (planned but unimplemented)
-//   SCENARIO_PLANNED     Scenario with status=planned (implementation gap summary)
-//   EXTDEP_DUPLICATE     Multiple ExternalDependencies in same category (consolidation candidate)
+//
+//	CONFIGVAR_ORPHAN     ConfigVar config_group has no plausible domain mapping
+//	DOMAIN_NO_ENDPOINTS  Domain exists but has zero APIEndpoints
+//	DOMAIN_NO_SERVICE    Domain exists but has no matching Service
+//	DOMAIN_NO_TESTS      Domain has endpoints but zero real TestSuites
+//	ENDPOINT_HEAVY       Domain has 3x average endpoint count (god domain)
+//	ENDPOINT_SPARSE      Domain has endpoints but only 1-2 (stub domain)
+//	JOB_NO_ENDPOINT      Job domain has zero APIEndpoints (no trigger surface)
+//	EVENT_NO_ENDPOINT    Event domain has no SSE/stream endpoint
+//	SERVICE_NO_DOMAIN    Service name doesn't map to any Domain
+//	SCENARIO_NO_ENDPOINT Scenario domain has zero APIEndpoints (planned but unimplemented)
+//	SCENARIO_PLANNED     Scenario with status=planned (implementation gap summary)
+//	EXTDEP_DUPLICATE     Multiple ExternalDependencies in same category (consolidation candidate)
 //
 // Usage:
-//   MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
-//     --format table|json|markdown   (default: table)
-//     --checks CHECK1,CHECK2,...      (default: all)
-//     --domain <name>                filter to one domain
+//
+//	MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
+//	  --format table|json|markdown   (default: table)
+//	  --checks CHECK1,CHECK2,...      (default: all)
+//	  --domain <name>                filter to one domain
 package main
 
 import (
@@ -51,18 +53,18 @@ var (
 // ── data model ───────────────────────────────────────────────────────────────
 
 type Finding struct {
-	Check   string `json:"check"`
-	Domain  string `json:"domain"`
-	Object  string `json:"object"`
-	Detail  string `json:"detail"`
-	Tier    int    `json:"tier"` // 1=bug, 2=design, 3=concept
+	Check  string `json:"check"`
+	Domain string `json:"domain"`
+	Object string `json:"object"`
+	Detail string `json:"detail"`
+	Tier   int    `json:"tier"` // 1=bug, 2=design, 3=concept
 }
 
 type CheckSummary struct {
-	Check    string `json:"check"`
-	Count    int    `json:"count"`
-	Tier     int    `json:"tier"`
-	Desc     string `json:"desc"`
+	Check string `json:"check"`
+	Count int    `json:"count"`
+	Tier  int    `json:"tier"`
+	Desc  string `json:"desc"`
 }
 
 type Report struct {
@@ -79,14 +81,14 @@ var configGroupToDomain = map[string]string{
 	"database":      "graph",
 	"email":         "email",
 	"embeddings":    "extraction",
-	"features":      "",   // cross-cutting
+	"features":      "", // cross-cutting
 	"graph":         "graph",
 	"llm":           "provider",
-	"observability": "",   // cross-cutting
+	"observability": "", // cross-cutting
 	"parsing":       "extraction",
 	"sandbox":       "sandbox",
 	"search":        "search",
-	"server":        "",   // cross-cutting
+	"server":        "", // cross-cutting
 	"standalone":    "standalone",
 	"storage":       "datasource",
 	"transcription": "extraction",
@@ -106,7 +108,12 @@ func main() {
 func run() error {
 	client, err := sdk.New(sdk.Config{
 		ServerURL: os.Getenv("MEMORY_SERVER_URL"),
-		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: os.Getenv("MEMORY_API_KEY")},
+		Auth: sdk.AuthConfig{Mode: "apikey", APIKey: func() string {
+			if v := os.Getenv("MEMORY_ACCOUNT_API_KEY"); v != "" {
+				return v
+			}
+			return os.Getenv("MEMORY_API_KEY")
+		}()},
 		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 	})
 	if err != nil {
@@ -134,15 +141,15 @@ func run() error {
 
 	// ── Parallel fetch ────────────────────────────────────────────────────────
 	var (
-		domains     []*sdkgraph.GraphObject
-		endpoints   []*sdkgraph.GraphObject
-		services    []*sdkgraph.GraphObject
-		testSuites  []*sdkgraph.GraphObject
-		configVars  []*sdkgraph.GraphObject
-		jobs        []*sdkgraph.GraphObject
-		events      []*sdkgraph.GraphObject
-		scenarios   []*sdkgraph.GraphObject
-		extDeps     []*sdkgraph.GraphObject
+		domains       []*sdkgraph.GraphObject
+		endpoints     []*sdkgraph.GraphObject
+		services      []*sdkgraph.GraphObject
+		testSuites    []*sdkgraph.GraphObject
+		configVars    []*sdkgraph.GraphObject
+		jobs          []*sdkgraph.GraphObject
+		events        []*sdkgraph.GraphObject
+		scenarios     []*sdkgraph.GraphObject
+		extDeps       []*sdkgraph.GraphObject
 		testedByRels  []*sdkgraph.GraphRelationship
 		belongsToRels []*sdkgraph.GraphRelationship
 		exposesRels   []*sdkgraph.GraphRelationship
@@ -156,7 +163,9 @@ func run() error {
 		go func() {
 			defer wg.Done()
 			if e := fn(); e != nil {
-				mu.Lock(); fetchErr = e; mu.Unlock()
+				mu.Lock()
+				fetchErr = e
+				mu.Unlock()
 			}
 		}()
 	}
@@ -509,7 +518,10 @@ func run() error {
 
 	// CHECK: SCENARIO_PLANNED
 	if checkEnabled("SCENARIO_PLANNED") {
-		type domainCount struct{ domain string; count int }
+		type domainCount struct {
+			domain string
+			count  int
+		}
 		var planned []domainCount
 		for domain, names := range plannedScenByDomain {
 			planned = append(planned, domainCount{domain, len(names)})

@@ -32,7 +32,7 @@ pip install -r requirements.txt
 
 # 2. Set env vars
 export MEMORY_API_URL=http://localhost:3012
-export MEMORY_API_KEY=<your-api-key>
+export MEMORY_ACCOUNT_API_KEY=<your-api-key>
 export MEMORY_PROJECT_ID=<your-project-id>
 ```
 
@@ -90,7 +90,7 @@ results/
 | Var | Default | Description |
 |-----|---------|-------------|
 | `MEMORY_API_URL` | `http://localhost:3012` | Memory server |
-| `MEMORY_API_KEY` | — | API key |
+| `MEMORY_ACCOUNT_API_KEY` | — | API key |
 | `MEMORY_PROJECT_ID` | — | Project ID |
 | `EVAL_LLM_BASE_URL` | OpenAI | LLM judge base URL |
 | `EVAL_LLM_API_KEY` | `$OPENAI_API_KEY` | LLM judge key |

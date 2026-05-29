@@ -35,7 +35,7 @@ Walks through:
   2. LLM provider configuration (org-level)
   3. Memory skills installation for AI agents
 
-Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN
+Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY
 to .env.local and auto-adds .env.local to .gitignore.
 
 Running 'memory init' again detects existing configuration and offers
@@ -124,7 +124,7 @@ func runInitProject(cmd *cobra.Command, args []string) error {
 	// ------------------------------------------------------------------
 	//
 	// We can't simply call getAccountClient and check its error, because a
-	// stale MEMORY_API_KEY in .env.local (pointing at a different server)
+	// stale MEMORY_ACCOUNT_API_KEY in .env.local (pointing at a different server)
 	// causes getAccountClient to succeed but every subsequent API call to
 	// return 401. Instead we build the client against resolvedServerURL and
 	// probe it with a real call, triggering login on any auth failure.
@@ -520,18 +520,18 @@ func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, project
 	}
 	envMap["MEMORY_PROJECT_ID"] = projectID
 	envMap["MEMORY_PROJECT_NAME"] = projectName
-	envMap["MEMORY_PROJECT_TOKEN"] = tokenValue
+	envMap["MEMORY_PROJECT_API_KEY"] = tokenValue
 
 	// When the user chose local scope for --server, write MEMORY_SERVER_URL.
 	if localServerScope && localServerURL != "" {
 		envMap["MEMORY_SERVER_URL"] = localServerURL
 	}
 
-	// When we performed an inline login, write MEMORY_API_KEY so subsequent
+	// When we performed an inline login, write MEMORY_ACCOUNT_API_KEY so subsequent
 	// CLI invocations in this directory authenticate without needing
 	// ~/.memory/credentials.json (useful in project-local contexts).
 	if localServerScope && oauthAccessToken != "" {
-		envMap["MEMORY_API_KEY"] = oauthAccessToken
+		envMap["MEMORY_ACCOUNT_API_KEY"] = oauthAccessToken
 	}
 
 	if err := godotenv.Write(envMap, ".env.local"); err != nil {

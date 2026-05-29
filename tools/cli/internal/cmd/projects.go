@@ -85,7 +85,7 @@ var setProjectCmd = &cobra.Command{
 	Long: `Set the active project context.
 
 Updates project_id in ~/.memory/config.yaml and writes MEMORY_PROJECT_ID,
-MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN into .env.local in the current
+MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY into .env.local in the current
 directory so that subsequent CLI commands and application code automatically use
 the selected project. If no existing token is found for the project, a new one
 is created automatically. Run without arguments to select interactively from a
@@ -103,7 +103,7 @@ var projectsCreateTokenCmd = &cobra.Command{
 	Long: `Create a new project-scoped API token (emt_...) and print it.
 
 The token is also written to .env.local in the current directory as
-MEMORY_PROJECT_TOKEN so subsequent CLI commands pick it up automatically.
+MEMORY_PROJECT_API_KEY so subsequent CLI commands pick it up automatically.
 
 Scopes default to: data:read data:write schema:read agents:read agents:write
 
@@ -156,11 +156,11 @@ func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
 		if envMap == nil {
 			envMap = make(map[string]string)
 		}
-		envMap["MEMORY_PROJECT_TOKEN"] = resp.Token
+		envMap["MEMORY_PROJECT_API_KEY"] = resp.Token
 		if err := godotenv.Write(envMap, ".env.local"); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not write .env.local: %v\n", err)
 		} else {
-			fmt.Println("MEMORY_PROJECT_TOKEN written to .env.local")
+			fmt.Println("MEMORY_PROJECT_API_KEY written to .env.local")
 		}
 	}
 
@@ -843,7 +843,7 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 	}
 	envMap["MEMORY_PROJECT_ID"] = selectedProjectID
 	envMap["MEMORY_PROJECT_NAME"] = selectedProjectName
-	envMap["MEMORY_PROJECT_TOKEN"] = tokenValue
+	envMap["MEMORY_PROJECT_API_KEY"] = tokenValue
 
 	err = godotenv.Write(envMap, ".env.local")
 	if err != nil {

@@ -163,7 +163,7 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 	}
 
 	// ── Resolve API key + org ID ───────────────────────────────────────────────
-	apiKey := os.Getenv("MEMORY_API_KEY")
+	apiKey := os.Getenv("MEMORY_ACCOUNT_API_KEY")
 	orgID := dbLovdataFlags.orgID
 	if apiKey == "" || orgID == "" {
 		cfgPath := config.DiscoverPath(dbLovdataFlags.configPath)

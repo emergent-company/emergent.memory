@@ -684,7 +684,7 @@ cat << MCPEOF
       "args": ["mcp"],
       "env": {
         "MEMORY_SERVER_URL": "http://localhost:${SERVER_PORT}",
-        "MEMORY_API_KEY": "${API_KEY}"
+        "MEMORY_ACCOUNT_API_KEY": "${API_KEY}"
       }
     }
   }

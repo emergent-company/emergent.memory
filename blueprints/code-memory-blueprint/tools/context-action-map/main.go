@@ -2,11 +2,12 @@
 // context-action-map: lists every Context with its reachable Actions.
 //
 // Traversal (pure graph, no file scanning):
-//   Context ←[occurs_in]← ScenarioStep →[has_action]→ Action
+//
+//	Context ←[occurs_in]← ScenarioStep →[has_action]→ Action
 //
 // Usage:
 //
-//	MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
+//	MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
 //	  --context <key>        filter to one context by key
 //	  --type <cli|server>    filter by context_type
 //	  --format table|json    (default: table)
@@ -55,7 +56,12 @@ func main() {
 func run() error {
 	client, err := sdk.New(sdk.Config{
 		ServerURL: os.Getenv("MEMORY_SERVER_URL"),
-		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: os.Getenv("MEMORY_API_KEY")},
+		Auth: sdk.AuthConfig{Mode: "apikey", APIKey: func() string {
+			if v := os.Getenv("MEMORY_ACCOUNT_API_KEY"); v != "" {
+				return v
+			}
+			return os.Getenv("MEMORY_API_KEY")
+		}()},
 		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 	})
 	if err != nil {

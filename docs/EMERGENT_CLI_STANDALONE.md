@@ -19,7 +19,7 @@ Use this mode when connecting to a standalone Emergent server that uses simple A
 
 ```bash
 export MEMORY_SERVER_URL=http://localhost:9090
-export MEMORY_API_KEY=your-api-key-here
+export MEMORY_ACCOUNT_API_KEY=your-api-key-here
 ```
 
 **Example:**
@@ -27,7 +27,7 @@ export MEMORY_API_KEY=your-api-key-here
 ```bash
 # Set environment variables
 export MEMORY_SERVER_URL=http://localhost:9090
-export MEMORY_API_KEY=a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7
+export MEMORY_ACCOUNT_API_KEY=a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7
 
 # Use CLI commands
 emergent-cli projects list
@@ -61,7 +61,7 @@ The CLI automatically detects which authentication mode to use:
                   │
                   v
          ┌────────────────────┐
-         │ Is MEMORY_API_KEY│
+         │ Is MEMORY_ACCOUNT_API_KEY│
          │   configured?      │
          └────────┬───────────┘
                   │
@@ -82,7 +82,7 @@ The CLI automatically detects which authentication mode to use:
 | Variable              | Description                 | Required | Example                                                            |
 | --------------------- | --------------------------- | -------- | ------------------------------------------------------------------ |
 | `MEMORY_SERVER_URL` | Server API base URL         | Yes      | `http://localhost:9090`                                            |
-| `MEMORY_API_KEY`    | API key for standalone mode | No\*     | `a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7` |
+| `MEMORY_ACCOUNT_API_KEY`    | API key for standalone mode | No\*     | `a1e9e1ec8a81886ab68bbdf4a32a1deb36d3e523c639e0ad841d96263dc8b0a7` |
 | `MEMORY_EMAIL`      | User email (optional)       | No       | `user@example.com`                                                 |
 | `MEMORY_ORG_ID`     | Default organization ID     | No       | `uuid-here`                                                        |
 | `MEMORY_PROJECT_ID` | Default project ID          | No       | `uuid-here`                                                        |
@@ -133,7 +133,7 @@ grep STANDALONE_API_KEY .env
 
 ```bash
 export MEMORY_SERVER_URL=http://localhost:9090
-export MEMORY_API_KEY=$(grep STANDALONE_API_KEY .env | cut -d'=' -f2)
+export MEMORY_ACCOUNT_API_KEY=$(grep STANDALONE_API_KEY .env | cut -d'=' -f2)
 
 emergent-cli projects list
 ```
@@ -158,16 +158,16 @@ Error: failed to make request: not authenticated. Run 'emergent-cli login' first
 ```
 
 **Solution:**
-Make sure `MEMORY_API_KEY` is set:
+Make sure `MEMORY_ACCOUNT_API_KEY` is set:
 
 ```bash
-echo $MEMORY_API_KEY  # Should output your API key
+echo $MEMORY_ACCOUNT_API_KEY  # Should output your API key
 ```
 
 If empty, set it:
 
 ```bash
-export MEMORY_API_KEY=your-api-key-here
+export MEMORY_ACCOUNT_API_KEY=your-api-key-here
 ```
 
 ### "request failed with status 401"
@@ -234,7 +234,7 @@ jobs:
       - name: List projects
         env:
           MEMORY_SERVER_URL: ${{ secrets.MEMORY_SERVER_URL }}
-          MEMORY_API_KEY: ${{ secrets.MEMORY_API_KEY }}
+          MEMORY_ACCOUNT_API_KEY: ${{ secrets.MEMORY_ACCOUNT_API_KEY }}
         run: |
           ./emergent-cli projects list
 ```
@@ -251,7 +251,7 @@ test:
     - ./emergent-cli projects list
   variables:
     MEMORY_SERVER_URL: $MEMORY_SERVER_URL
-    MEMORY_API_KEY: $MEMORY_API_KEY
+    MEMORY_ACCOUNT_API_KEY: $MEMORY_ACCOUNT_API_KEY
 ```
 
 ## Implementation Details

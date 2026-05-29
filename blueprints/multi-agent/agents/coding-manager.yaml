@@ -5,11 +5,6 @@ description: >
   the coding pool. Escalates to premium-tier models when standard variants
   repeatedly fail acceptance criteria.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.3
-  maxTokens: 8192
-
 flowType: agentic
 maxSteps: 15
 isDefault: false

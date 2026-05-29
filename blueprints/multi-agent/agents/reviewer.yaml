@@ -5,11 +5,6 @@ description: >
   it only evaluates work produced by other agents. Rejections must reference
   specific criteria that were not met.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.2
-  maxTokens: 4096
-
 flowType: agentic
 maxSteps: 8
 isDefault: false

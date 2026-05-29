@@ -5,11 +5,6 @@ description: >
   and returns structured output with self-assessment. Operates at the standard model
   tier to balance quality and cost.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.2
-  maxTokens: 16384
-
 flowType: agentic
 maxSteps: 20
 isDefault: false

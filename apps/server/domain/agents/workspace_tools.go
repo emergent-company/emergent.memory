@@ -24,7 +24,7 @@ type WorkspaceToolDeps struct {
 	Config          *sandbox.AgentSandboxConfig
 	Logger          *slog.Logger
 	CheckoutService *sandbox.CheckoutService // optional; enables credential-aware git clone
-	SessionEnv      map[string]string        // per-session env vars (e.g. MEMORY_API_KEY for warm containers)
+	SessionEnv      map[string]string        // per-session env vars (e.g. MEMORY_ACCOUNT_API_KEY for warm containers)
 }
 
 // BuildWorkspaceTools creates ADK tool.Tool wrappers for workspace tools.
@@ -433,7 +433,7 @@ The sandbox has the Emergent Go SDK pre-installed. Use sdk.NewFromEnv() to conne
     }
 
 The code must define package main with a main() function.
-Credentials are injected automatically via MEMORY_API_KEY / MEMORY_API_URL.
+Credentials are injected automatically via MEMORY_ACCOUNT_API_KEY / MEMORY_API_URL.
 
 Returns structured output: {"stdout": "...", "stderr": "...", "exit_code": N, "duration_ms": N}.
 A non-zero exit_code means the program failed — check stderr for the error.`,

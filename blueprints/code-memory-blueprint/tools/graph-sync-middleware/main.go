@@ -25,7 +25,7 @@
 //
 // Usage:
 //
-//	MEMORY_API_KEY=<token> MEMORY_PROJECT_ID=<id> MEMORY_SERVER_URL=https://... \
+//	MEMORY_ACCOUNT_API_KEY=<token> MEMORY_PROJECT_ID=<id> MEMORY_SERVER_URL=https://... \
 //	  go run . --repo /path/to/repo [--dry-run] [--format table|json]
 package main
 
@@ -50,11 +50,11 @@ import (
 
 // routeMiddleware describes the middleware stack for a single route.
 type routeMiddleware struct {
-	Domain      string
-	Handler     string
-	Middleware  []string // ordered list of middleware names applied
-	Scopes      []string // extracted scope strings from RequireAPITokenScopes / RequireScopes
-	IsPublic    bool     // true if no RequireAuth in stack
+	Domain     string
+	Handler    string
+	Middleware []string // ordered list of middleware names applied
+	Scopes     []string // extracted scope strings from RequireAPITokenScopes / RequireScopes
+	IsPublic   bool     // true if no RequireAuth in stack
 }
 
 // relRecord is a pending applies_to relationship to create.
@@ -74,7 +74,7 @@ func main() {
 
 func run() error {
 	serverURL := flag.String("server", envOr("MEMORY_SERVER_URL", "http://localhost:3012"), "Memory server URL")
-	apiKey := flag.String("api-key", envOr("MEMORY_API_KEY", envOr("MEMORY_PROJECT_TOKEN", "")), "API key or project token")
+	apiKey := flag.String("api-key", envOr("MEMORY_ACCOUNT_API_KEY", envOr("MEMORY_API_KEY", envOr("MEMORY_PROJECT_API_KEY", envOr("MEMORY_PROJECT_TOKEN", "")))), "API key or project token")
 	orgID := flag.String("org-id", envOr("MEMORY_ORG_ID", ""), "Organization ID")
 	projectID := flag.String("project-id", envOr("MEMORY_PROJECT_ID", ""), "Project ID")
 	repoRoot := flag.String("repo", envOr("MEMORY_REPO_ROOT", "."), "Path to repository root")
@@ -86,7 +86,7 @@ func run() error {
 	flag.Parse()
 
 	if *apiKey == "" {
-		return fmt.Errorf("--api-key or MEMORY_API_KEY is required")
+		return fmt.Errorf("--api-key or MEMORY_ACCOUNT_API_KEY is required")
 	}
 	if *projectID == "" {
 		return fmt.Errorf("--project-id or MEMORY_PROJECT_ID is required")

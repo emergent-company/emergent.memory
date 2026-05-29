@@ -1,6 +1,5 @@
 // Deprecated: use `codebase fix stale` instead. Run `codebase --help` for details.
 
-
 package main
 
 import (
@@ -24,7 +23,12 @@ func main() {
 func run() error {
 	client, err := sdk.New(sdk.Config{
 		ServerURL: os.Getenv("MEMORY_SERVER_URL"),
-		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: os.Getenv("MEMORY_API_KEY")},
+		Auth: sdk.AuthConfig{Mode: "apikey", APIKey: func() string {
+			if v := os.Getenv("MEMORY_ACCOUNT_API_KEY"); v != "" {
+				return v
+			}
+			return os.Getenv("MEMORY_API_KEY")
+		}()},
 		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 	})
 	if err != nil {
@@ -98,8 +102,8 @@ func run() error {
 		"ep-agent-runs-list",
 		"ep-agent-definitions-list",
 		"ep-agent-definitions-create",
-		"ep-agents-trigger",  // wrong path /api/admin/agents/:id/trigger
-		"ep-search-search",   // duplicate of ep-tracing-searchtraces
+		"ep-agents-trigger", // wrong path /api/admin/agents/:id/trigger
+		"ep-search-search",  // duplicate of ep-tracing-searchtraces
 	}
 	for _, k := range deleteKeys {
 		ep, ok := byKey[k]
@@ -168,66 +172,66 @@ func run() error {
 
 	newEPs := []NewEP{
 		// ACP routes (agents)
-		{"ep-agents-acp-ping",          "agents",      "GET",    "/acp/v1/ping",                                                    "Ping",                 "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-getrun",        "agents",      "GET",    "/acp/v1/agents/:name/runs/:runId",                                "GetRun",               "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-getrunevents",  "agents",      "GET",    "/acp/v1/agents/:name/runs/:runId/events",                        "GetRunEvents",         "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-createrun",     "agents",      "POST",   "/acp/v1/agents/:name/runs",                                      "CreateRun",            "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-resumerun",     "agents",      "POST",   "/acp/v1/agents/:name/runs/:runId/resume",                        "ResumeRun",            "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-createsession", "agents",      "POST",   "/acp/v1/sessions",                                               "CreateSession",        "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-getrunbyid",        "agents",      "GET",    "/api/v1/runs/:runId",                                            "GetRunByID",           "apps/server/domain/agents/routes.go"},
+		{"ep-agents-acp-ping", "agents", "GET", "/acp/v1/ping", "Ping", "apps/server/domain/agents/acp_routes.go"},
+		{"ep-agents-acp-getrun", "agents", "GET", "/acp/v1/agents/:name/runs/:runId", "GetRun", "apps/server/domain/agents/acp_routes.go"},
+		{"ep-agents-acp-getrunevents", "agents", "GET", "/acp/v1/agents/:name/runs/:runId/events", "GetRunEvents", "apps/server/domain/agents/acp_routes.go"},
+		{"ep-agents-acp-createrun", "agents", "POST", "/acp/v1/agents/:name/runs", "CreateRun", "apps/server/domain/agents/acp_routes.go"},
+		{"ep-agents-acp-resumerun", "agents", "POST", "/acp/v1/agents/:name/runs/:runId/resume", "ResumeRun", "apps/server/domain/agents/acp_routes.go"},
+		{"ep-agents-acp-createsession", "agents", "POST", "/acp/v1/sessions", "CreateSession", "apps/server/domain/agents/acp_routes.go"},
+		{"ep-agents-getrunbyid", "agents", "GET", "/api/v1/runs/:runId", "GetRunByID", "apps/server/domain/agents/routes.go"},
 		// authinfo
-		{"ep-authinfo-issuer",          "authinfo",    "GET",    "/api/auth/issuer",                                               "Issuer",               "apps/server/domain/authinfo/routes.go"},
+		{"ep-authinfo-issuer", "authinfo", "GET", "/api/auth/issuer", "Issuer", "apps/server/domain/authinfo/routes.go"},
 		// docs
-		{"ep-docs-getcategories",       "docs",        "GET",    "/api/docs/categories",                                           "GetCategories",        "apps/server/domain/docs/routes.go"},
+		{"ep-docs-getcategories", "docs", "GET", "/api/docs/categories", "GetCategories", "apps/server/domain/docs/routes.go"},
 		// extraction embedding (already exist in graph, but skipped by sync — update via file_updates above)
 		// githubapp
-		{"ep-githubapp-callback",       "githubapp",   "GET",    "/api/v1/settings/github/callback",                               "Callback",             "apps/server/domain/githubapp/routes.go"},
-		{"ep-githubapp-clisetup",       "githubapp",   "POST",   "/api/v1/settings/github/cli",                                    "CLISetup",             "apps/server/domain/githubapp/routes.go"},
-		{"ep-githubapp-webhook",        "githubapp",   "POST",   "/api/v1/settings/github/webhook",                                "Webhook",              "apps/server/domain/githubapp/routes.go"},
+		{"ep-githubapp-callback", "githubapp", "GET", "/api/v1/settings/github/callback", "Callback", "apps/server/domain/githubapp/routes.go"},
+		{"ep-githubapp-clisetup", "githubapp", "POST", "/api/v1/settings/github/cli", "CLISetup", "apps/server/domain/githubapp/routes.go"},
+		{"ep-githubapp-webhook", "githubapp", "POST", "/api/v1/settings/github/webhook", "Webhook", "apps/server/domain/githubapp/routes.go"},
 		// health
-		{"ep-health-healthz",           "health",      "GET",    "/healthz",                                                       "Healthz",              "apps/server/domain/health/routes.go"},
+		{"ep-health-healthz", "health", "GET", "/healthz", "Healthz", "apps/server/domain/health/routes.go"},
 		// mcpregistry
-		{"ep-mcpregistry-listbuiltintools",   "mcpregistry", "GET",   "/api/admin/builtin-tools",                                  "ListBuiltinTools",     "apps/server/domain/mcpregistry/routes.go"},
-		{"ep-mcpregistry-updatebuiltintool",  "mcpregistry", "PATCH", "/api/admin/builtin-tools/:toolId",                          "UpdateBuiltinTool",    "apps/server/domain/mcpregistry/routes.go"},
-		{"ep-mcpregistry-searchregistry",     "mcpregistry", "GET",   "/api/admin/mcp-registry/search",                            "SearchRegistry",       "apps/server/domain/mcpregistry/routes.go"},
-		{"ep-mcpregistry-getregistryserver",  "mcpregistry", "GET",   "/api/admin/mcp-registry/servers/:name",                     "GetRegistryServer",    "apps/server/domain/mcpregistry/routes.go"},
-		{"ep-mcpregistry-installfromregistry","mcpregistry", "POST",  "/api/admin/mcp-registry/install",                           "InstallFromRegistry",  "apps/server/domain/mcpregistry/routes.go"},
+		{"ep-mcpregistry-listbuiltintools", "mcpregistry", "GET", "/api/admin/builtin-tools", "ListBuiltinTools", "apps/server/domain/mcpregistry/routes.go"},
+		{"ep-mcpregistry-updatebuiltintool", "mcpregistry", "PATCH", "/api/admin/builtin-tools/:toolId", "UpdateBuiltinTool", "apps/server/domain/mcpregistry/routes.go"},
+		{"ep-mcpregistry-searchregistry", "mcpregistry", "GET", "/api/admin/mcp-registry/search", "SearchRegistry", "apps/server/domain/mcpregistry/routes.go"},
+		{"ep-mcpregistry-getregistryserver", "mcpregistry", "GET", "/api/admin/mcp-registry/servers/:name", "GetRegistryServer", "apps/server/domain/mcpregistry/routes.go"},
+		{"ep-mcpregistry-installfromregistry", "mcpregistry", "POST", "/api/admin/mcp-registry/install", "InstallFromRegistry", "apps/server/domain/mcpregistry/routes.go"},
 		// orgs tool-settings (already exist in graph, updated via file_updates above)
 		// provider
-		{"ep-provider-listallmodels",   "provider",    "GET",    "/api/v1/models",                                                 "ListAllModels",        "apps/server/domain/provider/routes.go"},
+		{"ep-provider-listallmodels", "provider", "GET", "/api/v1/models", "ListAllModels", "apps/server/domain/provider/routes.go"},
 		// sandbox new routes
-		{"ep-sandbox-attachsession",    "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/attach",                             "AttachSession",        "apps/server/domain/sandbox/routes.go"},
-		{"ep-sandbox-createsnapshot",   "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/snapshot",                           "CreateSnapshot",       "apps/server/domain/sandbox/routes.go"},
-		{"ep-sandbox-bashtool",         "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/bash",                               "BashTool",             "apps/server/domain/sandbox/routes.go"},
-		{"ep-sandbox-readtool",         "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/read",                               "ReadTool",             "apps/server/domain/sandbox/routes.go"},
-		{"ep-sandbox-writetool",        "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/write",                              "WriteTool",            "apps/server/domain/sandbox/routes.go"},
-		{"ep-sandbox-edittool",         "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/edit",                               "EditTool",             "apps/server/domain/sandbox/routes.go"},
-		{"ep-sandbox-globtool",         "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/glob",                               "GlobTool",             "apps/server/domain/sandbox/routes.go"},
-		{"ep-sandbox-greptool",         "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/grep",                               "GrepTool",             "apps/server/domain/sandbox/routes.go"},
-		{"ep-sandbox-gittool",          "sandbox",     "POST",   "/api/v1/agent/sandboxes/:id/git",                                "GitTool",              "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-attachsession", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/attach", "AttachSession", "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-createsnapshot", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/snapshot", "CreateSnapshot", "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-bashtool", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/bash", "BashTool", "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-readtool", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/read", "ReadTool", "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-writetool", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/write", "WriteTool", "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-edittool", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/edit", "EditTool", "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-globtool", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/glob", "GlobTool", "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-greptool", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/grep", "GrepTool", "apps/server/domain/sandbox/routes.go"},
+		{"ep-sandbox-gittool", "sandbox", "POST", "/api/v1/agent/sandboxes/:id/git", "GitTool", "apps/server/domain/sandbox/routes.go"},
 		// schemas
-		{"ep-schemas-createpack",       "schemas",     "POST",   "/api/schemas",                                                   "CreatePack",           "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-getpack",          "schemas",     "GET",    "/api/schemas/:packId",                                           "GetPack",              "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-updatepack",       "schemas",     "PUT",    "/api/schemas/:packId",                                           "UpdatePack",           "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-deletepack",       "schemas",     "DELETE", "/api/schemas/:packId",                                           "DeletePack",           "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-getavailablepacks","schemas",     "GET",    "/api/schemas/projects/:projectId/available",                     "GetAvailablePacks",    "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-getinstalledpacks","schemas",     "GET",    "/api/schemas/projects/:projectId/installed",                     "GetInstalledPacks",    "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-assignpack",       "schemas",     "POST",   "/api/schemas/projects/:projectId/assign",                        "AssignPack",           "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-updateassignment", "schemas",     "PATCH",  "/api/schemas/projects/:projectId/assignments/:assignmentId",     "UpdateAssignment",     "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-deleteassignment", "schemas",     "DELETE", "/api/schemas/projects/:projectId/assignments/:assignmentId",     "DeleteAssignment",     "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-getschemahistory", "schemas",     "GET",    "/api/schemas/projects/:projectId/history",                       "GetSchemaHistory",     "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-validateobjects",  "schemas",     "GET",    "/api/schemas/projects/:projectId/validate",                      "ValidateObjects",      "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-previewmigration", "schemas",     "POST",   "/api/schemas/projects/:projectId/migrate/preview",               "PreviewMigration",     "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-executemigration", "schemas",     "POST",   "/api/schemas/projects/:projectId/migrate/execute",               "ExecuteMigration",     "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-rollbackmigration","schemas",     "POST",   "/api/schemas/projects/:projectId/migrate/rollback",              "RollbackMigration",    "apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-commitmigration",  "schemas",     "POST",   "/api/schemas/projects/:projectId/migrate/commit",                "CommitMigrationArchive","apps/server/domain/schemas/routes.go"},
-		{"ep-schemas-getmigrationjob",  "schemas",     "GET",    "/api/schemas/projects/:projectId/migration-jobs/:jobId",         "GetMigrationJobStatus","apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-createpack", "schemas", "POST", "/api/schemas", "CreatePack", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-getpack", "schemas", "GET", "/api/schemas/:packId", "GetPack", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-updatepack", "schemas", "PUT", "/api/schemas/:packId", "UpdatePack", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-deletepack", "schemas", "DELETE", "/api/schemas/:packId", "DeletePack", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-getavailablepacks", "schemas", "GET", "/api/schemas/projects/:projectId/available", "GetAvailablePacks", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-getinstalledpacks", "schemas", "GET", "/api/schemas/projects/:projectId/installed", "GetInstalledPacks", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-assignpack", "schemas", "POST", "/api/schemas/projects/:projectId/assign", "AssignPack", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-updateassignment", "schemas", "PATCH", "/api/schemas/projects/:projectId/assignments/:assignmentId", "UpdateAssignment", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-deleteassignment", "schemas", "DELETE", "/api/schemas/projects/:projectId/assignments/:assignmentId", "DeleteAssignment", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-getschemahistory", "schemas", "GET", "/api/schemas/projects/:projectId/history", "GetSchemaHistory", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-validateobjects", "schemas", "GET", "/api/schemas/projects/:projectId/validate", "ValidateObjects", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-previewmigration", "schemas", "POST", "/api/schemas/projects/:projectId/migrate/preview", "PreviewMigration", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-executemigration", "schemas", "POST", "/api/schemas/projects/:projectId/migrate/execute", "ExecuteMigration", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-rollbackmigration", "schemas", "POST", "/api/schemas/projects/:projectId/migrate/rollback", "RollbackMigration", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-commitmigration", "schemas", "POST", "/api/schemas/projects/:projectId/migrate/commit", "CommitMigrationArchive", "apps/server/domain/schemas/routes.go"},
+		{"ep-schemas-getmigrationjob", "schemas", "GET", "/api/schemas/projects/:projectId/migration-jobs/:jobId", "GetMigrationJobStatus", "apps/server/domain/schemas/routes.go"},
 		// devtools
-		{"ep-devtools-servedocsindex",  "devtools",    "GET",    "/docs",                                                          "ServeDocsIndex",       "apps/server/domain/devtools/module.go"},
-		{"ep-devtools-servedocs",       "devtools",    "GET",    "/docs/*",                                                        "ServeDocs",            "apps/server/domain/devtools/module.go"},
-		{"ep-devtools-serveopenapi",    "devtools",    "GET",    "/openapi.json",                                                  "ServeOpenAPISpec",     "apps/server/domain/devtools/module.go"},
-		{"ep-devtools-servecoverage",   "devtools",    "GET",    "/coverage",                                                      "ServeCoverage",        "apps/server/domain/devtools/module.go"},
-		{"ep-devtools-servecoveragefiles","devtools",  "GET",    "/coverage/*",                                                    "ServeCoverageFiles",   "apps/server/domain/devtools/module.go"},
+		{"ep-devtools-servedocsindex", "devtools", "GET", "/docs", "ServeDocsIndex", "apps/server/domain/devtools/module.go"},
+		{"ep-devtools-servedocs", "devtools", "GET", "/docs/*", "ServeDocs", "apps/server/domain/devtools/module.go"},
+		{"ep-devtools-serveopenapi", "devtools", "GET", "/openapi.json", "ServeOpenAPISpec", "apps/server/domain/devtools/module.go"},
+		{"ep-devtools-servecoverage", "devtools", "GET", "/coverage", "ServeCoverage", "apps/server/domain/devtools/module.go"},
+		{"ep-devtools-servecoveragefiles", "devtools", "GET", "/coverage/*", "ServeCoverageFiles", "apps/server/domain/devtools/module.go"},
 	}
 
 	// Filter out ones that already exist by key or by method+path

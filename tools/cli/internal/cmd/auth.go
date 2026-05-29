@@ -484,7 +484,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			fmt.Println("\nSign in or create a new account:")
 			fmt.Println("  memory login")
 			fmt.Println("\nOr configure a static API key:")
-			fmt.Println("  export MEMORY_API_KEY=your-api-key")
+			fmt.Println("  export MEMORY_ACCOUNT_API_KEY=your-api-key")
 			fmt.Println("  # or add 'api_key: your-api-key' to ~/.memory/config.yaml")
 			return nil
 		}
@@ -1215,8 +1215,8 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 				"command": cliPath,
 				"args":    []string{"mcp"},
 				"env": map[string]string{
-					"MEMORY_SERVER_URL": cfg.ServerURL,
-					"MEMORY_API_KEY":    cfg.APIKey,
+					"MEMORY_SERVER_URL":      cfg.ServerURL,
+					"MEMORY_ACCOUNT_API_KEY": cfg.APIKey,
 				},
 			},
 		},
@@ -1490,7 +1490,7 @@ func runMCPGuide(cmd *cobra.Command, args []string) error {
 					"Create one with:\n" +
 					"  memory tokens create --name mcp-config\n" +
 					"Then set it with:\n" +
-					"  export MEMORY_API_KEY=<token>")
+					"  export MEMORY_ACCOUNT_API_KEY=<token>")
 		}
 
 		projects, projErr := fetchProjects(cfg.ServerURL, creds.AccessToken)
@@ -1504,10 +1504,10 @@ func runMCPGuide(cmd *cobra.Command, args []string) error {
 		fmt.Println(separator)
 		fmt.Println()
 		fmt.Println("Note: You are authenticated via OAuth. MCP configs need a stable API key")
-		fmt.Println("      because OAuth tokens expire. Create one and set MEMORY_API_KEY:")
+		fmt.Println("      because OAuth tokens expire. Create one and set MEMORY_ACCOUNT_API_KEY:")
 		fmt.Println()
 		fmt.Println("  memory tokens create --name mcp-config")
-		fmt.Println("  export MEMORY_API_KEY=<token>")
+		fmt.Println("  export MEMORY_ACCOUNT_API_KEY=<token>")
 		fmt.Println()
 
 		// Print template with placeholder

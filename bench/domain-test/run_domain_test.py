@@ -217,9 +217,9 @@ def apply_blueprint(project_id):
     import subprocess
     env = os.environ.copy()
     # Use the project token so CLI resolves the project correctly
-    env["MEMORY_PROJECT_TOKEN"] = _project_token or TOKEN
+    env["MEMORY_PROJECT_API_KEY"] = _project_token or TOKEN
     env.pop("EMERGENT_MEMORY_TOKEN", None)
-    env.pop("MEMORY_API_KEY", None)
+    env.pop("MEMORY_ACCOUNT_API_KEY", None); env.pop("MEMORY_API_KEY", None)
 
     result = subprocess.run(
         [
@@ -290,8 +290,8 @@ def configure_provider(project_id):
     env = os.environ.copy()
     # Use org token — project tokens don't have provider:write scope
     env["EMERGENT_MEMORY_TOKEN"] = ORG_TOKEN
-    env.pop("MEMORY_PROJECT_TOKEN", None)
-    env.pop("MEMORY_API_KEY", None)
+    env.pop("MEMORY_PROJECT_API_KEY", None); env.pop("MEMORY_PROJECT_TOKEN", None)
+    env.pop("MEMORY_ACCOUNT_API_KEY", None); env.pop("MEMORY_API_KEY", None)
     result = subprocess.run(
         [
             os.path.expanduser("~/.memory/bin/memory"),

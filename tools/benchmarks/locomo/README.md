@@ -30,7 +30,7 @@ pip install -r requirements.txt
 
 # 3. Set env vars
 export MEMORY_API_URL=http://localhost:3012
-export MEMORY_API_KEY=<your-api-key>
+export MEMORY_ACCOUNT_API_KEY=<your-api-key>
 export MEMORY_PROJECT_ID=<your-project-id>
 ```
 

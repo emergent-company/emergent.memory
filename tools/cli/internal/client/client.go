@@ -85,7 +85,7 @@ func NewAccountClient(cfg *config.Config) (*Client, error) {
 					"A project token is configured but cannot be used for account-level operations.\n\n" +
 					"Options:\n" +
 					"  - Run 'memory login' to authenticate with your account\n" +
-					"  - Set MEMORY_API_KEY to an account-level API key")
+					"  - Set MEMORY_ACCOUNT_API_KEY to an account-level API key")
 			}
 			return nil, err
 		}
@@ -206,14 +206,14 @@ func (c *Client) AuthorizationHeader() string {
 }
 
 // HasProjectToken reports whether the client was configured with a project-scoped
-// token (MEMORY_PROJECT_TOKEN). When true the token already identifies a single
+// token (MEMORY_PROJECT_API_KEY). When true the token already identifies a single
 // project, so interactive project selection can be skipped.
 func (c *Client) HasProjectToken() bool {
 	return c.cfg.ProjectToken != ""
 }
 
 // HasProjectScope reports whether the client has any project scope set — either
-// via a project token (MEMORY_PROJECT_TOKEN) or a pre-resolved project ID
+// via a project token (MEMORY_PROJECT_API_KEY) or a pre-resolved project ID
 // (MEMORY_PROJECT_ID / MEMORY_PROJECT name resolution). When true, interactive
 // project selection can be skipped.
 func (c *Client) HasProjectScope() bool {

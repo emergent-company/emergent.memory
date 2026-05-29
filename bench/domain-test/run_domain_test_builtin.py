@@ -224,8 +224,8 @@ def configure_provider(project_id):
     import subprocess
     env = os.environ.copy()
     env["EMERGENT_MEMORY_TOKEN"] = ORG_TOKEN
-    env.pop("MEMORY_PROJECT_TOKEN", None)
-    env.pop("MEMORY_API_KEY", None)
+    env.pop("MEMORY_PROJECT_API_KEY", None); env.pop("MEMORY_PROJECT_TOKEN", None)
+    env.pop("MEMORY_ACCOUNT_API_KEY", None); env.pop("MEMORY_API_KEY", None)
     result = subprocess.run(
         [
             os.path.expanduser("~/.memory/bin/memory"),

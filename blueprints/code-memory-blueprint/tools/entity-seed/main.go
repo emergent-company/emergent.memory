@@ -60,13 +60,13 @@ var entityFiles = []string{
 }
 
 type Entity struct {
-	Key      string
-	Name     string
-	Schema   string
-	Table    string
-	Domain   string
-	Fields   []Field
-	ID       string // Graph ID
+	Key       string
+	Name      string
+	Schema    string
+	Table     string
+	Domain    string
+	Fields    []Field
+	ID        string // Graph ID
 	Relations []Relation
 }
 
@@ -131,24 +131,24 @@ func main() {
 				return
 			}
 
-		obj, err := client.Graph.UpsertObject(ctx, &sdkgraph.CreateObjectRequest{
-			Type: "Entity",
-			Key:  strPtr(e.Key),
-			Properties: map[string]any{
-				"name":      e.Name,
-				"db_schema": e.Schema,
-				"table":     e.Table,
-				"domain":    e.Domain,
-			},
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error upserting entity %s: %v\n", e.Key, err)
-			return
-		}
-		e.ID = obj.EntityID // stable canonical ID, not version ID
-		if *verbose {
-			fmt.Printf("Upserted Entity: %s id=%s\n", e.Key, e.ID)
-		}
+			obj, err := client.Graph.UpsertObject(ctx, &sdkgraph.CreateObjectRequest{
+				Type: "Entity",
+				Key:  strPtr(e.Key),
+				Properties: map[string]any{
+					"name":      e.Name,
+					"db_schema": e.Schema,
+					"table":     e.Table,
+					"domain":    e.Domain,
+				},
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error upserting entity %s: %v\n", e.Key, err)
+				return
+			}
+			e.ID = obj.EntityID // stable canonical ID, not version ID
+			if *verbose {
+				fmt.Printf("Upserted Entity: %s id=%s\n", e.Key, e.ID)
+			}
 		}(i)
 	}
 	wg.Wait()
@@ -180,35 +180,35 @@ func main() {
 					return
 				}
 
-			obj, err := client.Graph.UpsertObject(ctx, &sdkgraph.CreateObjectRequest{
-				Type: "Field",
-				Key:  strPtr(f.Key),
-				Properties: map[string]any{
-					"name":        f.Name,
-					"column":      f.Column,
-					"go_type":     f.GoType,
-					"db_type":     f.DBType,
-					"is_pk":       f.IsPK,
-					"is_fk":       f.IsFK,
-					"nullable":    f.Nullable,
-					"default_val": f.DefaultVal,
-					"ordinal":     f.Ordinal,
-				},
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error upserting field %s: %v\n", f.Key, err)
-				return
-			}
+				obj, err := client.Graph.UpsertObject(ctx, &sdkgraph.CreateObjectRequest{
+					Type: "Field",
+					Key:  strPtr(f.Key),
+					Properties: map[string]any{
+						"name":        f.Name,
+						"column":      f.Column,
+						"go_type":     f.GoType,
+						"db_type":     f.DBType,
+						"is_pk":       f.IsPK,
+						"is_fk":       f.IsFK,
+						"nullable":    f.Nullable,
+						"default_val": f.DefaultVal,
+						"ordinal":     f.Ordinal,
+					},
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error upserting field %s: %v\n", f.Key, err)
+					return
+				}
 				f.ID = obj.EntityID // stable canonical ID
 
-			_, err = client.Graph.UpsertRelationship(ctx, &sdkgraph.CreateRelationshipRequest{
-				Type:  "has_field",
-				SrcID: ent.ID,
-				DstID: f.ID,
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error upserting has_field rel for %s: %v\n", f.Key, err)
-			}
+				_, err = client.Graph.UpsertRelationship(ctx, &sdkgraph.CreateRelationshipRequest{
+					Type:  "has_field",
+					SrcID: ent.ID,
+					DstID: f.ID,
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error upserting has_field rel for %s: %v\n", f.Key, err)
+				}
 
 				if *verbose {
 					fmt.Printf("Created Field: %s\n", f.Key)
@@ -246,16 +246,16 @@ func main() {
 					return
 				}
 
-			_, err := client.Graph.UpsertRelationship(ctx, &sdkgraph.CreateRelationshipRequest{
-				Type:  "references",
-				SrcID: srcEnt.ID,
-				DstID: dstEnt.ID,
-				Properties: map[string]any{
-					"relation":  r.Type, // schema property name is "relation" not "type"
-					"join":      r.Join,
-					"via_field": r.ViaField,
-				},
-			})
+				_, err := client.Graph.UpsertRelationship(ctx, &sdkgraph.CreateRelationshipRequest{
+					Type:  "references",
+					SrcID: srcEnt.ID,
+					DstID: dstEnt.ID,
+					Properties: map[string]any{
+						"relation":  r.Type, // schema property name is "relation" not "type"
+						"join":      r.Join,
+						"via_field": r.ViaField,
+					},
+				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error creating reference %s -> %s: %v\n", srcEnt.Key, dstEnt.Key, err)
 				}
@@ -495,14 +495,14 @@ func parseEntities() []Entity {
 					goType := exprToString(field.Type)
 					isPK := strings.Contains(bunTag, ",pk")
 					nullable := strings.HasPrefix(goType, "*") || !strings.Contains(bunTag, "notnull")
-					
+
 					isFK := strings.Contains(bunTag, "rel:") || (strings.HasSuffix(fieldName, "ID") && (strings.Contains(goType, "uuid") || strings.Contains(goType, "string")))
 
 					dbType := ""
-				defaultVal := ""
-				// Parse type: and default: from bun tag, respecting parens (e.g. numeric(10,6))
-				dbType = extractBunTagValue(bunTag, "type:")
-				defaultVal = extractBunTagValue(bunTag, "default:")
+					defaultVal := ""
+					// Parse type: and default: from bun tag, respecting parens (e.g. numeric(10,6))
+					dbType = extractBunTagValue(bunTag, "type:")
+					defaultVal = extractBunTagValue(bunTag, "default:")
 
 					fKey := fmt.Sprintf("field-%s-%s", entKey, strings.ReplaceAll(column, "_", "-"))
 					fKey = strings.ToLower(fKey)

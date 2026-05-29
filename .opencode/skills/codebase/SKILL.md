@@ -11,7 +11,7 @@ Operate the `codebase` CLI — a unified tool for syncing codebase structure int
 ## Rules
 
 - **Project config is auto-discovered** — the CLI walks up from cwd to find `.codebase.yml` containing `project_id`. Only pass `--project-id` to override.
-- **Auth is auto-discovered** — reads `~/.memory/config.yaml`, `.env.local`, or `MEMORY_API_KEY`. No manual auth needed.
+- **Auth is auto-discovered** — reads `~/.memory/config.yaml`, `.env.local`, or `MEMORY_ACCOUNT_API_KEY`. No manual auth needed.
 - **Dry-run first for destructive ops** — `sync routes --dry-run`, `fix stale --dry-run` before committing changes.
 - **`--format json`** for machine-readable output; default is `table`.
 - **`--all`** on `graph list` to paginate through all results (default limit is 50).

@@ -17,9 +17,9 @@ import (
 )
 
 func main() {
-	apiKey := os.Getenv("MEMORY_API_KEY")
+	apiKey := os.Getenv("MEMORY_ACCOUNT_API_KEY")
 	if apiKey == "" {
-		log.Fatal("MEMORY_API_KEY environment variable required")
+		log.Fatal("MEMORY_ACCOUNT_API_KEY environment variable required")
 	}
 
 	serverURL := os.Getenv("MEMORY_SERVER_URL")

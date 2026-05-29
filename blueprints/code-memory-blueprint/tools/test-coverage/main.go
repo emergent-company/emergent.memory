@@ -39,7 +39,7 @@ func main() {
 
 func run() error {
 	serverURL := flag.String("server", envOr("MEMORY_SERVER_URL", "http://localhost:3012"), "Memory server URL")
-	apiKey := flag.String("api-key", envOr("MEMORY_API_KEY", envOr("MEMORY_PROJECT_TOKEN", "")), "API key or project token")
+	apiKey := flag.String("api-key", envOr("MEMORY_ACCOUNT_API_KEY", envOr("MEMORY_API_KEY", envOr("MEMORY_PROJECT_API_KEY", envOr("MEMORY_PROJECT_TOKEN", "")))), "API key or project token")
 	orgID := flag.String("org-id", envOr("MEMORY_ORG_ID", ""), "Organization ID")
 	projectID := flag.String("project-id", envOr("MEMORY_PROJECT_ID", ""), "Project ID")
 	format := flag.String("format", "table", "Output format: table, markdown, json")
@@ -50,7 +50,7 @@ func run() error {
 	flag.Parse()
 
 	if *apiKey == "" {
-		return fmt.Errorf("--api-key or MEMORY_API_KEY is required")
+		return fmt.Errorf("--api-key or MEMORY_ACCOUNT_API_KEY is required")
 	}
 	if *projectID == "" {
 		return fmt.Errorf("--project-id or MEMORY_PROJECT_ID is required")

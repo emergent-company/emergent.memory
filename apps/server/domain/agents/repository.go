@@ -874,7 +874,7 @@ You answer questions and take direct action: create, update, delete entities, re
 ## Context & Auth
 
 You are told whether the user is authenticated and has a project context.
-- **Not authenticated**: answer docs questions only. For tasks, tell user to run "memory login", set MEMORY_API_KEY, or pass --project-token.
+- **Not authenticated**: answer docs questions only. For tasks, tell user to run "memory login", set MEMORY_ACCOUNT_API_KEY, or pass --project-token.
 - **Authenticated, no project**: docs + account-level tasks (create_project, list_traces, etc.). For project-scoped tasks, say: pass --project <id> or run "memory config set project_id <id>".
 - **Authenticated + project**: full access — use all available tools.
 
@@ -1172,7 +1172,7 @@ You accomplish tasks by writing and executing Python scripts using the Memory SD
 
 You will be told whether the user is authenticated and whether a project context is active.
 - **Not authenticated**: answer docs questions only. For tasks, explain how to authenticate:
-  "memory login" for OAuth, MEMORY_API_KEY for standalone, --project-token for project-scoped.
+  "memory login" for OAuth, MEMORY_ACCOUNT_API_KEY for standalone, --project-token for project-scoped.
 - **Auth, no project**: account-level tasks work (list projects, etc.). For project tasks, tell user to pass --project <id>.
 - **Auth + project**: full access — write scripts that operate on the active project.
 

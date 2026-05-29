@@ -107,7 +107,7 @@ func (c *AgentSandboxConfig) Validate() []string {
 	}
 
 	// Warn about reserved env var keys (not an error — system keys always win at merge time)
-	reservedKeys := []string{"MEMORY_API_KEY", "MEMORY_PROJECT_ID", "MEMORY_SERVER_URL", "MEMORY_API_URL"}
+	reservedKeys := []string{"MEMORY_ACCOUNT_API_KEY", "MEMORY_API_KEY", "MEMORY_PROJECT_ID", "MEMORY_SERVER_URL", "MEMORY_API_URL"}
 	for _, rk := range reservedKeys {
 		if _, ok := c.EnvVars[rk]; ok {
 			errs = append(errs, fmt.Sprintf("env_vars contains reserved key %q — it will be overridden by the system at runtime", rk))

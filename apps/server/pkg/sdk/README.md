@@ -254,7 +254,7 @@ See the `examples/` directory for complete working examples:
 
 ```bash
 cd apps/server-go/pkg/sdk/examples/basic
-export MEMORY_API_KEY="your_api_key"
+export MEMORY_ACCOUNT_API_KEY="your_api_key"
 go run main.go
 ```
 

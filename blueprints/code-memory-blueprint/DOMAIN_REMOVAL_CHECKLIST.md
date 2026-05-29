@@ -10,13 +10,13 @@ When removing a Go domain package, run these steps IN ORDER to keep the graph co
 
 2. **Run `graph-logic-audit`** — catches structural orphans (JOB_NO_ENDPOINT, etc.)
    ```
-   MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... \
+   MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... \
      go run ./blueprints/code-memory-blueprint/tools/graph-logic-audit/...
    ```
 
 3. **Run `graph-sync-routes --dry-run`** — catches stale APIEndpoint objects whose handlers no longer exist in code
    ```
-   MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... \
+   MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... \
      go run ./blueprints/code-memory-blueprint/tools/graph-sync-routes/... \
      --repo . --dry-run
    ```

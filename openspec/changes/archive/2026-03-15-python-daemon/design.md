@@ -16,7 +16,7 @@ The container runs with `sleep infinity` as its CMD (or a custom cmd for MCP con
 - Eliminate per-call Python VM init + SDK import overhead for `run_python`
 - Maintain full process isolation between calls (each script runs in its own forked child process)
 - Ensure a crash/segfault/`sys.exit()` in user code cannot kill the daemon or affect subsequent calls
-- Per-invocation env var injection (`MEMORY_API_KEY`, `MEMORY_API_URL`) must still work correctly
+- Per-invocation env var injection (`MEMORY_ACCOUNT_API_KEY`, `MEMORY_API_URL`) must still work correctly
 - Graceful fallback to cold `python3` if the daemon is not running (e.g. immediately after container assignment from warm pool before daemon starts)
 - No changes to the `Provider` interface, DB schema, or API surface
 - No new Go dependencies
@@ -60,9 +60,9 @@ The container runs with `sleep infinity` as its CMD (or a custom cmd for MCP con
 
 ### D4: Env var injection via FIFO request payload, not fork-inherited env
 
-**Decision**: The Go tool layer sends `MEMORY_API_KEY` and `MEMORY_API_URL` as part of the FIFO request JSON. The daemon applies them to the child process environment before forking (using `os.environ` in the parent temporarily, then restoring, or applying in child before exec).
+**Decision**: The Go tool layer sends `MEMORY_ACCOUNT_API_KEY` and `MEMORY_API_URL` as part of the FIFO request JSON. The daemon applies them to the child process environment before forking (using `os.environ` in the parent temporarily, then restoring, or applying in child before exec).
 
-**Rationale**: The daemon's own process has no `MEMORY_API_KEY` at start time — credentials are injected per session via `sessionEnv` in `WorkspaceToolDeps`. If we relied on fork-inherited env the key would need to be in the daemon's env, which would mean different sessions running against the same container would share credentials — not acceptable. Sending the env per-call and applying it in the child before running user code keeps isolation correct.
+**Rationale**: The daemon's own process has no `MEMORY_ACCOUNT_API_KEY` at start time — credentials are injected per session via `sessionEnv` in `WorkspaceToolDeps`. If we relied on fork-inherited env the key would need to be in the daemon's env, which would mean different sessions running against the same container would share credentials — not acceptable. Sending the env per-call and applying it in the child before running user code keeps isolation correct.
 
 **Implementation detail**: The child process calls `os.environ.update(injected_env)` before `exec()`ing the script, so the parent's environment is never polluted.
 

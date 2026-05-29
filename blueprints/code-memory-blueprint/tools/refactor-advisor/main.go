@@ -14,7 +14,7 @@
 //
 // Usage:
 //
-//	MEMORY_API_KEY=<token> MEMORY_PROJECT_ID=<id> MEMORY_SERVER_URL=https://... \
+//	MEMORY_ACCOUNT_API_KEY=<token> MEMORY_PROJECT_ID=<id> MEMORY_SERVER_URL=https://... \
 //	  go run . [--format table|markdown|json] [--top N] [--min-priority N]
 package main
 
@@ -69,7 +69,7 @@ func main() {
 
 func run() error {
 	serverURL := flag.String("server", envOr("MEMORY_SERVER_URL", "http://localhost:3012"), "Memory server URL")
-	apiKey := flag.String("api-key", envOr("MEMORY_API_KEY", envOr("MEMORY_PROJECT_TOKEN", "")), "API key or project token")
+	apiKey := flag.String("api-key", envOr("MEMORY_ACCOUNT_API_KEY", envOr("MEMORY_API_KEY", envOr("MEMORY_PROJECT_API_KEY", envOr("MEMORY_PROJECT_TOKEN", "")))), "API key or project token")
 	orgID := flag.String("org-id", envOr("MEMORY_ORG_ID", ""), "Organization ID")
 	projectID := flag.String("project-id", envOr("MEMORY_PROJECT_ID", ""), "Project ID")
 	format := flag.String("format", "table", "Output format: table, markdown, json")
@@ -79,7 +79,7 @@ func run() error {
 	flag.Parse()
 
 	if *apiKey == "" {
-		return fmt.Errorf("--api-key or MEMORY_API_KEY is required")
+		return fmt.Errorf("--api-key or MEMORY_ACCOUNT_API_KEY is required")
 	}
 	if *projectID == "" {
 		return fmt.Errorf("--project-id or MEMORY_PROJECT_ID is required")
@@ -126,9 +126,21 @@ func run() error {
 	fetch(func() error { var e error; jobs, e = listAllObjects(ctx, client.Graph, "Job"); return e })
 	fetch(func() error { var e error; testSuites, e = listAllObjects(ctx, client.Graph, "TestSuite"); return e })
 	fetch(func() error { var e error; sourceFiles, e = listAllObjects(ctx, client.Graph, "SourceFile"); return e })
-	fetch(func() error { var e error; definedInRels, e = listAllRelationships(ctx, client.Graph, "defined_in"); return e })
-	fetch(func() error { var e error; testedByRels, e = listAllRelationships(ctx, client.Graph, "tested_by"); return e })
-	fetch(func() error { var e error; handlesRels, e = listAllRelationships(ctx, client.Graph, "handles"); return e })
+	fetch(func() error {
+		var e error
+		definedInRels, e = listAllRelationships(ctx, client.Graph, "defined_in")
+		return e
+	})
+	fetch(func() error {
+		var e error
+		testedByRels, e = listAllRelationships(ctx, client.Graph, "tested_by")
+		return e
+	})
+	fetch(func() error {
+		var e error
+		handlesRels, e = listAllRelationships(ctx, client.Graph, "handles")
+		return e
+	})
 
 	wg.Wait()
 	if len(errs) > 0 {

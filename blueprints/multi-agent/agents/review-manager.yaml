@@ -5,11 +5,6 @@ description: >
   Tracks reviewer rejection quality — a reviewer that routinely fails to cite
   specific criteria is itself underperforming.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.2
-  maxTokens: 4096
-
 flowType: agentic
 maxSteps: 10
 isDefault: false

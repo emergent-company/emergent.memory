@@ -390,7 +390,7 @@ cd tools/benchmarks/locomo
 
 # Set env
 export MEMORY_API_URL=http://localhost:3012
-export MEMORY_API_KEY=<your-key>
+export MEMORY_ACCOUNT_API_KEY=<your-key>
 export MEMORY_PROJECT_ID=<project-id>
 export MEMORY_LLM_MODEL=deepseek-v4-flash   # avoid Google AI quota issues
 

@@ -5,11 +5,6 @@ description: >
   summaries and checkpoint reviews to the human. Always proposes three options
   before starting significant work or making strategic decisions.
 
-model:
-  name: gemini-3.1-flash-lite-preview
-  temperature: 0.3
-  maxTokens: 16384
-
 flowType: agentic
 maxSteps: 40
 isDefault: true

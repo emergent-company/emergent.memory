@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: CLI reference page documents memory init
-The developer guide SHALL include documentation for `memory init` covering its purpose (interactive wizard to set up a Memory project in a directory), the env vars it writes (`MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, `MEMORY_PROJECT_TOKEN`), and its flags (`--skip-provider`, `--skip-skills`).
+The developer guide SHALL include documentation for `memory init` covering its purpose (interactive wizard to set up a Memory project in a directory), the env vars it writes (`MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, `MEMORY_PROJECT_API_KEY`), and its flags (`--skip-provider`, `--skip-skills`).
 
 #### Scenario: Developer finds init documentation
 - **WHEN** a developer navigates to the developer guide CLI reference page

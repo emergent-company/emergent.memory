@@ -18,7 +18,7 @@ client = Client.from_api_key("https://api.emergent-company.ai", "emt_abc123")
 client = Client.from_env()
 # Resolution order (highest priority wins):
 #   MEMORY_* env vars > .env.local (walk up) > .env (walk up) > ~/.memory/config.yaml
-# Keys: MEMORY_SERVER_URL, MEMORY_API_KEY, MEMORY_PROJECT_TOKEN, MEMORY_ORG_ID, MEMORY_PROJECT_ID
+# Keys: MEMORY_SERVER_URL, MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_API_KEY, MEMORY_ORG_ID, MEMORY_PROJECT_ID
 
 # Full config
 client = Client(Config(

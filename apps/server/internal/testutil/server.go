@@ -9,10 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/uptrace/bun"
+	"google.golang.org/adk/session"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
@@ -48,6 +52,8 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/users"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings"
@@ -69,6 +75,142 @@ type TestServer struct {
 // NewTestServer creates a test server with all routes registered.
 func NewTestServer(testDB *TestDB) *TestServer {
 	return newTestServerWithDB(testDB, testDB.GetDB())
+}
+
+// LoadEnvFiles loads .env and .env.local from the repo root.
+// It walks up from the caller's source file until it finds a go.mod, then
+// loads .env and .env.local (local values win via Overload).
+// Safe to call multiple times — failures are silently ignored so tests still
+// run even if the files are absent.
+func LoadEnvFiles() {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return
+	}
+	dir := filepath.Dir(thisFile)
+	for i := 0; i < 10; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			_ = godotenv.Load(filepath.Join(dir, ".env"))
+			_ = godotenv.Overload(filepath.Join(dir, ".env.local"))
+			return
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+}
+
+// NewTestServerWithLLM creates a test server wired with a real LLM provider
+// loaded from .env / .env.local files at the repo root.
+// If no LLM credentials are found the server falls back to the same behaviour
+// as NewTestServer (nil modelFactory), so callers must guard with skipIfNoLLM().
+func NewTestServerWithLLM(testDB *TestDB) *TestServer {
+	LoadEnvFiles()
+
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	// Re-parse config now that env vars are loaded from .env files.
+	cfg, err := config.NewConfig(log)
+	if err != nil || !cfg.LLM.IsEnabled() {
+		// No LLM credentials — fall back to nil-LLM server.
+		return newTestServerWithDB(testDB, testDB.GetDB())
+	}
+
+	db := testDB.GetDB()
+
+	// Build ModelFactory from env-var credentials (no DB resolver needed in tests).
+	modelFactory := adk.NewModelFactory(&cfg.LLM, log, nil, nil, nil)
+
+	// Shared repositories / services — must match signatures in newTestServerWithDB.
+	encryptionSvc := encryption.NewService(testDB.DB, log)
+	agentRepo := agents.NewRepository(db)
+	skillsRepo := skills.NewRepository(db, log)
+	embeddingsSvc := embeddings.NewNoopService(log)
+	providerRepo := provider.NewRepository(db, log)
+	eventsSvc := events.NewService(log)
+	apitokenRepo := apitoken.NewRepository(db, log)
+	apitokenSvc := apitoken.NewService(apitokenRepo, encryptionSvc, log)
+
+	sessionSvc := session.Service(bunsession.NewService(testDB.DB))
+
+	testGraphCfg := &config.Config{}
+	testGraphCfg.Graph.MaxBatchObjects = 500
+	testGraphCfg.Graph.MaxBatchRelationships = 500
+	testGraphCfg.Graph.MaxListLimit = 1000
+	testGraphCfg.Graph.DefaultListLimit = 100
+	graphRepo := graph.NewRepository(db, log, testGraphCfg)
+	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
+	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, nil, nil, nil, nil, nil)
+
+	docsRepo := documents.NewRepository(db, log)
+	docsSvc := documents.NewService(docsRepo, log)
+
+	searchRepo := search.NewRepository(db, log)
+	searchSvc := search.NewService(searchRepo, graphSvc, embeddingsSvc, log)
+
+	mcpSvc := mcp.NewService(mcp.ServiceParams{
+		DB:           db,
+		GraphService: graphSvc,
+		SearchSvc:    searchSvc,
+		Cfg:          testDB.Config,
+		Log:          log,
+		DocumentsSvc: docsSvc,
+		SkillsRepo:   skillsRepo,
+		ApitokenSvc:  apitokenSvc,
+	})
+
+	toolPool := agents.NewToolPool(agents.ToolPoolConfig{
+		MCPService: mcpSvc,
+		Logger:     log,
+	})
+
+	executor := agents.NewAgentExecutor(
+		modelFactory,
+		toolPool,
+		agentRepo,
+		skillsRepo,
+		embeddingsSvc,
+		nil, // sandbox provisioner — disabled in tests
+		cfg,
+		sessionSvc,
+		nil, // model limits lookup
+		apitokenSvc,
+		nil, // usage service
+		eventsSvc,
+		log,
+	)
+
+	// Build the base server (registers all routes with nil LLM).
+	ts := newTestServerWithDB(testDB, db)
+
+	// Re-register chat routes with the live executor + modelFactory, overriding
+	// the nil-LLM registration from newTestServerWithDB.
+	chatRepo := chat.NewRepository(db, log)
+	chatSvc := chat.NewService(chatRepo, log)
+	providerRegistry := provider.NewRegistry()
+	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
+	credSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, cfg, log)
+
+	chatHandler := chat.NewHandler(
+		chatSvc,
+		nil, // legacy vertex client — unused when modelFactory is set
+		searchSvc,
+		executor,
+		agentRepo,
+		credSvc,
+		modelFactory,
+		apitokenSvc,
+		nil, // docSvc — not needed for forget tests
+		nil, // uploadHandler
+		nil, // domainClassifier
+		cfg,
+		log,
+	)
+	chat.RegisterRoutes(ts.Echo, chatHandler, ts.AuthMiddleware)
+
+	return ts
 }
 
 // newTestServerWithDB creates a test server with a specific DB connection

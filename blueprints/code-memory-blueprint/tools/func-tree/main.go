@@ -11,7 +11,7 @@
 //
 // Usage:
 //
-//	MEMORY_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
+//	MEMORY_ACCOUNT_API_KEY=... MEMORY_PROJECT_ID=... MEMORY_SERVER_URL=... go run ./...
 //	  --format tree|markdown|json   (default: tree)
 //	  --domain <name>               filter to one domain
 //	  --show-scenarios              include scenario list (default: counts only)
@@ -35,11 +35,11 @@ import (
 )
 
 var (
-	flagFormat       = flag.String("format", "tree", "Output format: tree, markdown, json")
-	flagDomain       = flag.String("domain", "", "Filter to one domain (key slug, e.g. 'agents')")
+	flagFormat        = flag.String("format", "tree", "Output format: tree, markdown, json")
+	flagDomain        = flag.String("domain", "", "Filter to one domain (key slug, e.g. 'agents')")
 	flagShowScenarios = flag.Bool("show-scenarios", false, "List individual scenarios")
 	flagShowEndpoints = flag.Bool("show-endpoints", false, "List individual endpoints")
-	flagMinScenarios = flag.Int("min-scenarios", 0, "Only show domains with >= N scenarios")
+	flagMinScenarios  = flag.Int("min-scenarios", 0, "Only show domains with >= N scenarios")
 )
 
 // domainKeySlug extracts the code slug from a domain key (domain-<slug>)
@@ -51,11 +51,11 @@ func domainKeySlug(key string) string {
 // Matches against known domain slugs (longest first to avoid prefix collisions).
 // Also handles aliased prefixes (e.g. s-org-* → org-user).
 var scenarioKeyAliases = map[string]string{
-	"org-user":     "org-user",
-	"org":          "org-user",
-	"graph-objects": "graph-objects",
+	"org-user":            "org-user",
+	"org":                 "org-user",
+	"graph-objects":       "graph-objects",
 	"graph-relationships": "graph-relationships",
-	"graph":        "graph-objects", // graph code domain → KG Objects conceptual domain
+	"graph":               "graph-objects", // graph code domain → KG Objects conceptual domain
 }
 
 func scenarioDomainSlug(key string, domainSlugs []string) string {
@@ -91,9 +91,9 @@ type ScenarioInfo struct {
 }
 
 type DomainNode struct {
-	Key      string
-	Name     string
-	Services []string
+	Key       string
+	Name      string
+	Services  []string
 	Endpoints []EndpointInfo
 	Scenarios []ScenarioInfo
 }
@@ -119,7 +119,12 @@ func main() {
 func run() error {
 	client, err := sdk.New(sdk.Config{
 		ServerURL: os.Getenv("MEMORY_SERVER_URL"),
-		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: os.Getenv("MEMORY_API_KEY")},
+		Auth: sdk.AuthConfig{Mode: "apikey", APIKey: func() string {
+			if v := os.Getenv("MEMORY_ACCOUNT_API_KEY"); v != "" {
+				return v
+			}
+			return os.Getenv("MEMORY_API_KEY")
+		}()},
 		ProjectID: os.Getenv("MEMORY_PROJECT_ID"),
 	})
 	if err != nil {
@@ -148,7 +153,9 @@ func run() error {
 		go func() {
 			defer wg.Done()
 			if e := fn(); e != nil {
-				mu.Lock(); fetchErr = e; mu.Unlock()
+				mu.Lock()
+				fetchErr = e
+				mu.Unlock()
 			}
 		}()
 	}

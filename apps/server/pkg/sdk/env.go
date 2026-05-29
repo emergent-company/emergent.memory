@@ -159,7 +159,10 @@ func applyEnvMap(cfg *envConfig, m map[string]string) {
 	} else if v := get("MEMORY_API_URL"); v != "" && cfg.ServerURL == "" {
 		cfg.ServerURL = v
 	}
-	if v := get("MEMORY_API_KEY"); v != "" {
+	// MEMORY_ACCOUNT_API_KEY is the canonical name; MEMORY_API_KEY is the deprecated alias.
+	if v := get("MEMORY_ACCOUNT_API_KEY"); v != "" {
+		cfg.APIKey = v
+	} else if v := get("MEMORY_API_KEY"); v != "" {
 		cfg.APIKey = v
 	}
 	if v := get("MEMORY_ORG_ID"); v != "" {
@@ -168,7 +171,10 @@ func applyEnvMap(cfg *envConfig, m map[string]string) {
 	if v := get("MEMORY_PROJECT_ID"); v != "" {
 		cfg.ProjectID = v
 	}
-	if v := get("MEMORY_PROJECT_TOKEN"); v != "" {
+	// MEMORY_PROJECT_API_KEY is the canonical name; MEMORY_PROJECT_TOKEN is the deprecated alias.
+	if v := get("MEMORY_PROJECT_API_KEY"); v != "" {
+		cfg.ProjectToken = v
+	} else if v := get("MEMORY_PROJECT_TOKEN"); v != "" {
 		cfg.ProjectToken = v
 	}
 }

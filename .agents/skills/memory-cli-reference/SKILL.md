@@ -2616,7 +2616,7 @@ Walks through:
   2. LLM provider configuration (org-level)
   3. Memory skills installation for AI agents
 
-Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN
+Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY
 to .env.local and auto-adds .env.local to .gitignore.
 
 Running 'memory init' again detects existing configuration and offers
@@ -2850,7 +2850,7 @@ Create a new API token for a project
 Create a new project-scoped API token (emt_...) and print it.
 
 The token is also written to .env.local in the current directory as
-MEMORY_PROJECT_TOKEN so subsequent CLI commands pick it up automatically.
+MEMORY_PROJECT_API_KEY so subsequent CLI commands pick it up automatically.
 
 Scopes default to: data:read data:write schema:read agents:read agents:write
 
@@ -3065,7 +3065,7 @@ Set active project
 Set the active project context.
 
 Updates project_id in ~/.memory/config.yaml and writes MEMORY_PROJECT_ID,
-MEMORY_PROJECT_NAME, and MEMORY_PROJECT_TOKEN into .env.local in the current
+MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY into .env.local in the current
 directory so that subsequent CLI commands and application code automatically use
 the selected project. If no existing token is found for the project, a new one
 is created automatically. Run without arguments to select interactively from a

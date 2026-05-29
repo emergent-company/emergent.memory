@@ -151,7 +151,7 @@ func SetupAuth(t *testing.T, token string) {
 // by running `emergent projects create-token <projectID> --no-env --server <url>`.
 // It returns the raw token string (e.g. "emt_...").
 //
-// The token can then be written to the workspace .env.local as MEMORY_PROJECT_TOKEN
+// The token can then be written to the workspace .env.local as MEMORY_PROJECT_API_KEY
 // so that CLI commands (like `emergent query`) running inside the opencode agent
 // workspace are authenticated for the project.
 func CreateProjectToken(t *testing.T, projectID string) string {
@@ -202,7 +202,7 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 
 // runCLIInDir runs `emergent <args>` from dir and returns combined output.
 // When dir is empty the command inherits the test process working directory.
-// In both cases, project-scoped environment variables (MEMORY_PROJECT_TOKEN,
+// In both cases, project-scoped environment variables (MEMORY_PROJECT_API_KEY,
 // MEMORY_PROJECT, MEMORY_PROJECT_ID) are stripped from the subprocess
 // environment to prevent a workspace .env.local in the test process's cwd
 // from interfering with org-level harness calls.
@@ -223,9 +223,11 @@ func runCLIInDir(t *testing.T, dir string, args ...string) (string, error) {
 	filtered := make([]string, 0, len(os.Environ()))
 	for _, kv := range os.Environ() {
 		switch {
-		case strings.HasPrefix(kv, "MEMORY_PROJECT_TOKEN="),
+		case strings.HasPrefix(kv, "MEMORY_PROJECT_API_KEY="),
+			strings.HasPrefix(kv, "MEMORY_PROJECT_TOKEN="),
 			strings.HasPrefix(kv, "MEMORY_PROJECT="),
 			strings.HasPrefix(kv, "MEMORY_PROJECT_ID="),
+			strings.HasPrefix(kv, "MEMORY_ACCOUNT_API_KEY="),
 			strings.HasPrefix(kv, "MEMORY_API_KEY="):
 			// skip — these would override our credentials.json auth
 		default:

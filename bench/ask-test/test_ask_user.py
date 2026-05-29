@@ -111,9 +111,9 @@ def create_project() -> tuple[str, str]:
 def apply_blueprint(project_id: str):
     print(f"  Installing blueprint into project {project_id}...")
     env = os.environ.copy()
-    env["MEMORY_PROJECT_TOKEN"] = _project_token or ORG_TOKEN
+    env["MEMORY_PROJECT_API_KEY"] = _project_token or ORG_TOKEN
     env.pop("EMERGENT_MEMORY_TOKEN", None)
-    env.pop("MEMORY_API_KEY", None)
+    env.pop("MEMORY_ACCOUNT_API_KEY", None); env.pop("MEMORY_API_KEY", None)
     result = subprocess.run(
         [
             os.path.expanduser("~/.memory/bin/memory"),
@@ -185,8 +185,8 @@ def configure_provider(project_id: str):
         return
     env = os.environ.copy()
     env["EMERGENT_MEMORY_TOKEN"] = ORG_TOKEN
-    env.pop("MEMORY_PROJECT_TOKEN", None)
-    env.pop("MEMORY_API_KEY", None)
+    env.pop("MEMORY_PROJECT_API_KEY", None); env.pop("MEMORY_PROJECT_TOKEN", None)
+    env.pop("MEMORY_ACCOUNT_API_KEY", None); env.pop("MEMORY_API_KEY", None)
     result = subprocess.run(
         [os.path.expanduser("~/.memory/bin/memory"), "provider", "configure", provider] + extra +
         ["--project", project_id, "--server", SERVER, "--org-id", ORG_ID],

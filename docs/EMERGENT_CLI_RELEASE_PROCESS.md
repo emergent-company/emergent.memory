@@ -60,7 +60,7 @@ sudo mv emergent-cli-linux-amd64 /usr/local/bin/emergent-cli
 docker pull ghcr.io/emergent-company/emergent.memory-cli:latest
 
 docker run --rm -e MEMORY_SERVER_URL=http://host.docker.internal:9090 \
-  -e MEMORY_API_KEY=your-key \
+  -e MEMORY_ACCOUNT_API_KEY=your-key \
   ghcr.io/emergent-company/emergent.memory-cli:latest projects list
 ```
 

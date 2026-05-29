@@ -6,7 +6,7 @@ Documentation and skills have accumulated drift relative to the current platform
 
 - **MCP README** (`apps/server/domain/mcp/README.md`): update tool count (was "18 → 29", now 30+ real tools across all files), replace legacy tool names (`hybrid_search` → `search-hybrid`, `semantic_search` → `search-semantic`, etc.) with current hyphenated names, correct the `X-API-Key` / `Authorization: Bearer` discrepancy between README and actual handler
 - **Developer guide MCP page** (`docs/site/developer-guide/mcp-servers.md`): add note about `memory mcp-guide` CLI command for generating client config snippets
-- **memory-onboard skill** (`.agents/skills/memory-onboard/SKILL.md`): update env var guidance to acknowledge `MEMORY_PROJECT_ID`/`MEMORY_PROJECT_TOKEN` written by `memory init` in addition to `MEMORY_PROJECT`
+- **memory-onboard skill** (`.agents/skills/memory-onboard/SKILL.md`): update env var guidance to acknowledge `MEMORY_PROJECT_ID`/`MEMORY_PROJECT_API_KEY` written by `memory init` in addition to `MEMORY_PROJECT`
 - **memory-blueprints skill** (`.agents/skills/memory-blueprints/SKILL.md`): add the standard `## Rules` block that all other skills have
 - **Developer guide**: add a new CLI reference page covering `memory init`, `memory ask`, `memory adk-sessions`, `memory mcp-guide`, `memory install-memory-skills` — these exist in the CLI but have zero site documentation
 
