@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/olekukonko/tablewriter"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -483,17 +483,18 @@ Requires an API key with admin:read scope.`,
 				return nil
 			}
 
-			table := tablewriter.NewWriter(out)
-			table.Header("Job ID", "Source ID", "Status", "Created At")
+			table := internalui.NewTable(internalui.TableConfig{Compact: true})
+			table.SetHeaders([]string{"Job ID", "Source ID", "Status", "Created At"})
 			for _, job := range result.Data.Jobs {
-				_ = table.Append(
+				table.AddRow([]string{
 					job.ID,
 					job.SourceID,
 					job.Status,
 					job.CreatedAt.Format("2006-01-02 15:04:05"),
-				)
+				})
 			}
-			return table.Render()
+			fmt.Fprint(out, table.Render())
+			return nil
 		}
 
 		fmt.Fprintln(out, string(body))

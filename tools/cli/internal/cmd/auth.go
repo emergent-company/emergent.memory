@@ -16,6 +16,7 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -1278,8 +1279,8 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 		},
 	}
 
-	stdioJSON, _ := json.MarshalIndent(stdioConfig, "", "  ")
-	fmt.Println(string(stdioJSON))
+	stdioJSON, _ := internalui.FormatJSON(stdioConfig, noColor)
+	fmt.Println(stdioJSON)
 
 	fmt.Println()
 	fmt.Println("Alternative (SSE transport - for Cursor, Continue, etc.):")
@@ -1297,8 +1298,8 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 		},
 	}
 
-	sseJSON, _ := json.MarshalIndent(sseConfig, "", "  ")
-	fmt.Println(string(sseJSON))
+	sseJSON, _ := internalui.FormatJSON(sseConfig, noColor)
+	fmt.Println(sseJSON)
 	fmt.Println()
 }
 

@@ -20,6 +20,8 @@ var (
 	cYellow = color.New(color.FgYellow, color.Bold).SprintFunc()
 	cCyan   = color.New(color.FgCyan).SprintFunc()
 	cHeader = color.New(color.Bold).SprintFunc()
+	cGreen  = color.New(color.FgGreen).SprintFunc()
+	cRed    = color.New(color.FgRed).SprintFunc()
 )
 
 // colorRole returns a colored role string: yellow for admin roles, cyan for others.

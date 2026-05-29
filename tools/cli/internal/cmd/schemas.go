@@ -13,7 +13,7 @@ import (
 
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
-	"github.com/olekukonko/tablewriter"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -210,8 +210,8 @@ Output is a table. Use --output json to receive the full list as JSON.`,
 				fmt.Fprintln(out, "Schemas are typically installed via 'memory blueprints install', not the registry.")
 				return nil
 			}
-			table := tablewriter.NewWriter(out)
-			table.Header("ID", "Name", "Version", "Description")
+			table := internalui.NewTable(internalui.TableConfig{Compact: true})
+			table.SetHeaders([]string{"ID", "Name", "Version", "Description"})
 			for _, p := range packs {
 				desc := ""
 				if p.Description != nil {
@@ -220,9 +220,10 @@ Output is a table. Use --output json to receive the full list as JSON.`,
 				if len(desc) > 60 {
 					desc = desc[:59] + "…"
 				}
-				_ = table.Append(p.ID, p.Name, p.Version, desc)
+				table.AddRow([]string{p.ID, p.Name, p.Version, desc})
 			}
-			return table.Render()
+			fmt.Fprint(out, table.Render())
+			return nil
 		}
 
 		// Default: show installed schemas (same as 'schemas installed')
@@ -238,16 +239,17 @@ Output is a table. Use --output json to receive the full list as JSON.`,
 			fmt.Fprintln(out, "Install schemas via: memory blueprints install <source>")
 			return nil
 		}
-		table := tablewriter.NewWriter(out)
-		table.Header("Schema ID", "Name", "Version", "Active", "Installed")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"Schema ID", "Name", "Version", "Active", "Installed"})
 		for _, p := range packs {
 			active := "yes"
 			if !p.Active {
 				active = "no"
 			}
-			_ = table.Append(p.SchemaID, p.Name, p.Version, active, p.InstalledAt.Format("2006-01-02"))
+			table.AddRow([]string{p.SchemaID, p.Name, p.Version, active, p.InstalledAt.Format("2006-01-02")})
 		}
-		return table.Render()
+		fmt.Fprint(out, table.Render())
+		return nil
 	},
 }
 
@@ -286,23 +288,24 @@ Active (yes/no), and Installed date. The Assignment ID is used with
 			return nil
 		}
 
-		table := tablewriter.NewWriter(out)
-		table.Header("Assignment ID", "Schema ID", "Name", "Version", "Active", "Installed")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"Assignment ID", "Schema ID", "Name", "Version", "Active", "Installed"})
 		for _, p := range packs {
 			active := "yes"
 			if !p.Active {
 				active = "no"
 			}
-			_ = table.Append(
+			table.AddRow([]string{
 				p.ID,
 				p.SchemaID,
 				p.Name,
 				p.Version,
 				active,
 				p.InstalledAt.Format("2006-01-02"),
-			)
+			})
 		}
-		return table.Render()
+		fmt.Fprint(out, table.Render())
+		return nil
 	},
 }
 
@@ -758,11 +761,11 @@ a warning to stderr.`,
 		if len(types.ObjectTypes) == 0 {
 			fmt.Fprintln(out, "  (none)")
 		} else {
-			table := tablewriter.NewWriter(out)
+			table := internalui.NewTable(internalui.TableConfig{Compact: true})
 			if verbose {
-				table.Header("Name", "Label", "Schema", "Version", "Shadowed", "Description")
+				table.SetHeaders([]string{"Name", "Label", "Schema", "Version", "Shadowed", "Description"})
 			} else {
-				table.Header("Name", "Label", "Schema", "Description")
+				table.SetHeaders([]string{"Name", "Label", "Schema", "Description"})
 			}
 			for _, t := range types.ObjectTypes {
 				desc := t.Description
@@ -774,25 +777,23 @@ a warning to stderr.`,
 					if t.Shadowed {
 						shadowed = "yes"
 					}
-					_ = table.Append(t.Name, t.Label, t.SchemaName, t.SchemaVersion, shadowed, desc)
+					table.AddRow([]string{t.Name, t.Label, t.SchemaName, t.SchemaVersion, shadowed, desc})
 				} else {
-					_ = table.Append(t.Name, t.Label, t.SchemaName, desc)
+					table.AddRow([]string{t.Name, t.Label, t.SchemaName, desc})
 				}
 			}
-			if err := table.Render(); err != nil {
-				return err
-			}
+			fmt.Fprint(out, table.Render())
 		}
 
 		fmt.Fprintf(out, "\nRelationship Types (%d):\n", len(types.RelationshipTypes))
 		if len(types.RelationshipTypes) == 0 {
 			fmt.Fprintln(out, "  (none)")
 		} else {
-			table := tablewriter.NewWriter(out)
+			table := internalui.NewTable(internalui.TableConfig{Compact: true})
 			if verbose {
-				table.Header("Name", "Label", "Source → Target", "Schema", "Version", "Shadowed")
+				table.SetHeaders([]string{"Name", "Label", "Source → Target", "Schema", "Version", "Shadowed"})
 			} else {
-				table.Header("Name", "Label", "Source → Target", "Schema")
+				table.SetHeaders([]string{"Name", "Label", "Source → Target", "Schema"})
 			}
 			for _, t := range types.RelationshipTypes {
 				srcDst := t.SourceType + " → " + t.TargetType
@@ -801,14 +802,12 @@ a warning to stderr.`,
 					if t.Shadowed {
 						shadowed = "yes"
 					}
-					_ = table.Append(t.Name, t.Label, srcDst, t.SchemaName, t.SchemaVersion, shadowed)
+					table.AddRow([]string{t.Name, t.Label, srcDst, t.SchemaName, t.SchemaVersion, shadowed})
 				} else {
-					_ = table.Append(t.Name, t.Label, srcDst, t.SchemaName)
+					table.AddRow([]string{t.Name, t.Label, srcDst, t.SchemaName})
 				}
 			}
-			if err := table.Render(); err != nil {
-				return err
-			}
+			fmt.Fprint(out, table.Render())
 		}
 
 		return nil
@@ -1238,18 +1237,18 @@ Returns a list of entity IDs, their types, keys, and the specific issues
 
 		fmt.Fprintf(out, "Found %d stale object(s) out of %d total.\n\n", resp.StaleObjects, resp.TotalObjects)
 
-		table := tablewriter.NewWriter(out)
-		table.Header("ENTITY ID", "TYPE", "KEY", "SCHEMA VERSION", "ISSUES")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"ENTITY ID", "TYPE", "KEY", "SCHEMA VERSION", "ISSUES"})
 		for _, r := range resp.Results {
-			_ = table.Append(
+			table.AddRow([]string{
 				r.EntityID,
 				r.Type,
 				r.Key,
 				r.SchemaVersion,
 				strings.Join(r.Issues, ", "),
-			)
+			})
 		}
-		_ = table.Render()
+		fmt.Fprint(out, table.Render())
 
 		// Exit with code 1 as stale objects were found
 		os.Exit(1)
@@ -1291,23 +1290,24 @@ Installed, Removed. Use --output json to receive the full list as JSON.`,
 			return nil
 		}
 
-		table := tablewriter.NewWriter(out)
-		table.Header("Assignment ID", "Schema ID", "Name", "Version", "Installed", "Removed")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"Assignment ID", "Schema ID", "Name", "Version", "Installed", "Removed"})
 		for _, h := range history {
 			removed := ""
 			if h.RemovedAt != nil {
 				removed = h.RemovedAt.Format("2006-01-02")
 			}
-			_ = table.Append(
+			table.AddRow([]string{
 				h.ID,
 				h.SchemaID,
 				h.Name,
 				h.Version,
 				h.InstalledAt.Format("2006-01-02"),
 				removed,
-			)
+			})
 		}
-		return table.Render()
+		fmt.Fprint(out, table.Render())
+		return nil
 	},
 }
 
@@ -1471,15 +1471,13 @@ Use --from and --to to specify the source and target schema IDs.`,
 		fmt.Fprintf(out, "Overall risk:      %s\n\n", result.OverallRiskLevel)
 
 		if len(result.TypeBreakdown) > 0 {
-			table := tablewriter.NewWriter(out)
-			table.Header("Type", "Risk", "Objects", "Dropped Fields", "Block Reason")
+			table := internalui.NewTable(internalui.TableConfig{Compact: true})
+			table.SetHeaders([]string{"Type", "Risk", "Objects", "Dropped Fields", "Block Reason"})
 			for _, t := range result.TypeBreakdown {
-				_ = table.Append(t.TypeName, t.RiskLevel, fmt.Sprintf("%d", t.ObjectCount),
-					fmt.Sprintf("%d", t.DroppedFields), t.BlockReason)
+				table.AddRow([]string{t.TypeName, t.RiskLevel, fmt.Sprintf("%d", t.ObjectCount),
+					fmt.Sprintf("%d", t.DroppedFields), t.BlockReason})
 			}
-			if err := table.Render(); err != nil {
-				return err
-			}
+			fmt.Fprint(out, table.Render())
 		}
 
 		// Suggest a migrations YAML block based on the from/to schema IDs

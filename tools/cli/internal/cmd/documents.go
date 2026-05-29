@@ -7,7 +7,7 @@ import (
 	"os"
 
 	sdkdocs "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/documents"
-	"github.com/olekukonko/tablewriter"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -102,8 +102,8 @@ Created date. Use --limit to control how many records are returned. Use
 			return nil
 		}
 
-		table := tablewriter.NewWriter(out)
-		table.Header("ID", "Filename", "MIME Type", "Size (bytes)", "Status", "Created")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"ID", "Filename", "MIME Type", "Size (bytes)", "Status", "Created"})
 		for _, doc := range result.Documents {
 			filename := ""
 			if doc.Filename != nil {
@@ -121,16 +121,17 @@ Created date. Use --limit to control how many records are returned. Use
 			if doc.ProcessingStatus != nil {
 				status = *doc.ProcessingStatus
 			}
-			_ = table.Append(
+			table.AddRow([]string{
 				doc.ID,
 				filename,
 				mime,
 				size,
 				status,
 				doc.CreatedAt.Format("2006-01-02"),
-			)
+			})
 		}
-		return table.Render()
+		fmt.Fprint(out, table.Render())
+		return nil
 	},
 }
 
@@ -360,12 +361,12 @@ for a machine-readable response.`,
 
 		if len(summary.ObjectsByType) > 0 {
 			fmt.Fprintln(out, "\nObjects by Type:")
-			table := tablewriter.NewWriter(out)
-			table.Header("Type", "Count")
+			table := internalui.NewTable(internalui.TableConfig{Compact: true})
+			table.SetHeaders([]string{"Type", "Count"})
 			for typLabel, count := range summary.ObjectsByType {
-				_ = table.Append(typLabel, fmt.Sprintf("%d", count))
+				table.AddRow([]string{typLabel, fmt.Sprintf("%d", count)})
 			}
-			return table.Render()
+			fmt.Fprint(out, table.Render())
 		}
 
 		return nil

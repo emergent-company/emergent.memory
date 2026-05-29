@@ -15,15 +15,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ANSI color codes (inline — cmd package has no shared color constants)
-const (
-	diagReset  = "\033[0m"
-	diagBold   = "\033[1m"
-	diagGreen  = "\033[0;32m"
-	diagRed    = "\033[0;31m"
-	diagYellow = "\033[0;33m"
-	diagCyan   = "\033[0;36m"
-)
+// ANSI color helpers (inline — db_diagnose has unique color patterns)
+// Uses fatih/color sprint funcs from color.go — respects NO_COLOR / TTY.
+func diagColorBoldCyan(s string) string { return cBold(cCyan(s)) }
+func diagColorGreen(s string) string    { return cGreen(s) }
+func diagColorRed(s string) string      { return cRed(s) }
+func diagColorYellow(s string) string   { return cYellow(s) }
+func diagColorCyan(s string) string     { return cCyan(s) }
 
 // ── flags ─────────────────────────────────────────────────────────────────────
 
@@ -75,7 +73,7 @@ type diagResult struct {
 // ── entry point ───────────────────────────────────────────────────────────────
 
 func runDbDiagnose(cmd *cobra.Command, _ []string) error {
-	fmt.Printf("\n%s%sEmergent Database Diagnostics%s\n", diagBold, diagCyan, diagReset)
+	fmt.Printf("\n%s\n", diagColorBoldCyan("Emergent Database Diagnostics"))
 	fmt.Println("═══════════════════════════════════════════════════════")
 	fmt.Println()
 
@@ -95,7 +93,7 @@ func runDbDiagnose(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("Fetching server diagnostics from %s ... ", url)
 	resp, err := client.Get(url)
 	if err == nil && resp.StatusCode == http.StatusOK {
-		fmt.Printf("%sOK%s\n", diagGreen, diagReset)
+		fmt.Printf("%s\n", diagColorGreen("OK"))
 		var apiRes map[string]any
 		if json.NewDecoder(resp.Body).Decode(&apiRes) == nil {
 			b, _ := json.MarshalIndent(apiRes, "", "  ")
@@ -103,14 +101,14 @@ func runDbDiagnose(cmd *cobra.Command, _ []string) error {
 		}
 		resp.Body.Close()
 	} else {
-		fmt.Printf("%sFAILED%s (err: %v)\n", diagRed, diagReset, err)
+		fmt.Printf("%s (err: %v)\n", diagColorRed("FAILED"), err)
 		if resp != nil {
 			resp.Body.Close()
 		}
 	}
 	fmt.Println()
 	if err != nil || dsn == "" {
-		fmt.Printf("%s✗ PostgreSQL connection string not available (skipping EXPLAIN checks)%s\n", diagYellow, diagReset)
+		fmt.Printf("%s\n", diagColorYellow("✗ PostgreSQL connection string not available (skipping EXPLAIN checks)"))
 		fmt.Println("Set one via --dsn or the MEMORY_DATABASE_URL environment variable to run query planner checks.")
 		return nil
 	}
@@ -119,10 +117,10 @@ func runDbDiagnose(cmd *cobra.Command, _ []string) error {
 	fmt.Print("Connecting to PostgreSQL... ")
 	if out, err := psql(dsn, "SELECT 1"); err != nil {
 		fmt.Println("FAILED")
-		fmt.Printf("%s%s%s\n", diagRed, out, diagReset)
+		fmt.Printf("%s\n", diagColorRed(out))
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	fmt.Printf("OK  %s(%s)%s\n\n", diagCyan, maskDiagDSN(dsn), diagReset)
+	fmt.Printf("OK  %s\n\n", diagColorCyan("("+maskDiagDSN(dsn)+")"))
 
 	// ── Run checks ──────────────────────────────────────────────────────────────
 	var results []diagResult
@@ -551,20 +549,22 @@ func printDiagSummary(results []diagResult) {
 	}
 
 	fmt.Println()
-	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", diagBold, diagCyan, diagReset)
-	fmt.Printf("%s%s  Report%s\n", diagBold, diagCyan, diagReset)
-	fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", diagBold, diagCyan, diagReset)
+	fmt.Printf("%s\n", diagColorBoldCyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
+	fmt.Printf("%s\n", diagColorBoldCyan("  Report"))
+	fmt.Printf("%s\n", diagColorBoldCyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
 	fmt.Println()
 
 	for _, r := range results {
-		icon, col := "✓", diagGreen
+		var colored string
 		switch r.status {
 		case "warn":
-			icon, col = "⚠", diagYellow
+			colored = diagColorYellow("⚠ " + r.name)
 		case "fail":
-			icon, col = "✗", diagRed
+			colored = diagColorRed("✗ " + r.name)
+		default:
+			colored = diagColorGreen("✓ " + r.name)
 		}
-		fmt.Printf("%s%s %s%s\n", col, icon, r.name, diagReset)
+		fmt.Printf("%s\n", colored)
 		if r.message != "" {
 			for _, line := range strings.Split(r.message, "\n") {
 				fmt.Printf("    %s\n", line)
@@ -574,7 +574,7 @@ func printDiagSummary(results []diagResult) {
 		// Show table size breakdown if verbose or non-pass
 		if r.planText != "" && (dbDiagnoseFlags.verbose || r.status != "pass") {
 			fmt.Println()
-			fmt.Printf("    %sDetail:%s\n", diagCyan, diagReset)
+			fmt.Printf("    %s\n", diagColorCyan("Detail:"))
 			for _, line := range strings.Split(r.planText, "\n") {
 				fmt.Printf("    %s\n", line)
 			}
@@ -582,17 +582,17 @@ func printDiagSummary(results []diagResult) {
 		fmt.Println()
 	}
 
-	fmt.Printf("Checks: %s%d passed%s", diagGreen, passed, diagReset)
+	fmt.Printf("Checks: %s", diagColorGreen(fmt.Sprintf("%d passed", passed)))
 	if warned > 0 {
-		fmt.Printf(", %s%d warnings%s", diagYellow, warned, diagReset)
+		fmt.Printf(", %s", diagColorYellow(fmt.Sprintf("%d warnings", warned)))
 	}
 	if failed > 0 {
-		fmt.Printf(", %s%d failed%s", diagRed, failed, diagReset)
+		fmt.Printf(", %s", diagColorRed(fmt.Sprintf("%d failed", failed)))
 	}
 	fmt.Println()
 	fmt.Println()
 
 	if warned > 0 || failed > 0 {
-		fmt.Printf("%sTip:%s Use --verbose to see the full EXPLAIN plan for every query.\n\n", diagYellow, diagReset)
+		fmt.Printf("%s Use --verbose to see the full EXPLAIN plan for every query.\n\n", diagColorYellow("Tip:"))
 	}
 }

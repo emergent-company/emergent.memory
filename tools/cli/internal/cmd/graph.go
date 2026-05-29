@@ -11,7 +11,7 @@ import (
 
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
-	"github.com/olekukonko/tablewriter"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -292,24 +292,22 @@ Examples:
 			return nil
 		}
 
-		table := tablewriter.NewWriter(out)
-		table.Header("Entity ID", "Type", "Version", "Status", "Created")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"Entity ID", "Type", "Version", "Status", "Created"})
 		for _, obj := range resp.Items {
 			status := ""
 			if obj.Status != nil {
 				status = *obj.Status
 			}
-			_ = table.Append(
+			table.AddRow([]string{
 				obj.EntityID,
 				obj.Type,
 				fmt.Sprintf("%d", obj.Version),
 				status,
 				obj.CreatedAt.Format("2006-01-02"),
-			)
+			})
 		}
-		if err := table.Render(); err != nil {
-			return err
-		}
+		fmt.Fprint(out, table.Render())
 		if resp.Total > 0 {
 			shown := len(resp.Items)
 			if shown < resp.Total {
@@ -836,8 +834,8 @@ Examples:
 			return nil
 		}
 
-		table := tablewriter.NewWriter(out)
-		table.Header("Score", "Type", "Entity ID", "Status", "Key")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"Score", "Type", "Entity ID", "Status", "Key"})
 		for _, r := range results {
 			score := fmt.Sprintf("%.4f", 1-r.Distance)
 			key := ""
@@ -848,9 +846,10 @@ Examples:
 			if r.CanonicalID != nil {
 				canonicalID = *r.CanonicalID
 			}
-			_ = table.Append(score, r.Type, canonicalID, r.Status, key)
+			table.AddRow([]string{score, r.Type, canonicalID, r.Status, key})
 		}
-		return table.Render()
+		fmt.Fprint(out, table.Render())
+		return nil
 	},
 }
 
@@ -1146,20 +1145,18 @@ the full list as JSON.`,
 			return nil
 		}
 
-		table := tablewriter.NewWriter(out)
-		table.Header("Entity ID", "Type", "From", "To", "Created")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"Entity ID", "Type", "From", "To", "Created"})
 		for _, r := range resp.Items {
-			_ = table.Append(
+			table.AddRow([]string{
 				r.EntityID,
 				r.Type,
 				r.SrcID,
 				r.DstID,
 				r.CreatedAt.Format("2006-01-02"),
-			)
+			})
 		}
-		if err := table.Render(); err != nil {
-			return err
-		}
+		fmt.Fprint(out, table.Render())
 		if resp.Total > 0 {
 			shown := len(resp.Items)
 			if shown < resp.Total {

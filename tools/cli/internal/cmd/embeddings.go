@@ -73,7 +73,7 @@ func init() {
 
 // ─── resolve server URL (same logic as db bench) ──────────────────────────────
 
-func resolveEmbeddingsServerURL() string {
+func resolveEmbeddingsServerURL() (string, error) {
 	u := embeddingsFlags.server
 	if u == "" {
 		if v := os.Getenv("MEMORY_SERVER_URL"); v != "" {
@@ -87,15 +87,18 @@ func resolveEmbeddingsServerURL() string {
 		}
 	}
 	if u == "" {
-		u = "http://localhost:3002"
+		return "", fmt.Errorf("no server URL configured; set --server, MEMORY_SERVER_URL, or run 'memory configure'")
 	}
-	return strings.TrimRight(u, "/")
+	return strings.TrimRight(u, "/"), nil
 }
 
 // ─── shared HTTP helper ───────────────────────────────────────────────────────
 
 func embeddingsDoRequest(method, path string) (map[string]any, error) {
-	svrURL := resolveEmbeddingsServerURL()
+	svrURL, err := resolveEmbeddingsServerURL()
+	if err != nil {
+		return nil, err
+	}
 	url := svrURL + path
 
 	req, err := http.NewRequest(method, url, nil)
@@ -131,7 +134,10 @@ func embeddingsDoRequest(method, path string) (map[string]any, error) {
 }
 
 func embeddingsDoRequestJSON(method, path string, payload map[string]any) (map[string]any, error) {
-	svrURL := resolveEmbeddingsServerURL()
+	svrURL, err := resolveEmbeddingsServerURL()
+	if err != nil {
+		return nil, err
+	}
 	url := svrURL + path
 
 	bodyBytes, err := json.Marshal(payload)

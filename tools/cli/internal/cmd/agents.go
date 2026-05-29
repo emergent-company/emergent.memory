@@ -10,6 +10,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agents"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -134,9 +135,9 @@ var (
 	getRunJSONOutput      bool
 	agentListLimit        int
 	agentListPage         int
-	listAgentsJSONOutput bool
-	getAgentJSONOutput   bool
-	runsAgentJSONOutput  bool
+	listAgentsJSONOutput  bool
+	getAgentJSONOutput    bool
+	runsAgentJSONOutput   bool
 	triggerInputFlag      string
 	triggerModelFlag      string
 	triggerEnvVarsFlag    []string
@@ -971,11 +972,11 @@ func runListQuestions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list questions: %w", err)
 	}
 
-	out, err := json.MarshalIndent(result, "", "  ")
+	s, err := internalui.FormatJSON(result, noColor)
 	if err != nil {
 		return fmt.Errorf("failed to marshal response: %w", err)
 	}
-	fmt.Println(string(out))
+	fmt.Println(s)
 	return nil
 }
 
@@ -995,11 +996,11 @@ func runListProjectQuestions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list project questions: %w", err)
 	}
 
-	out, err := json.MarshalIndent(result, "", "  ")
+	s, err := internalui.FormatJSON(result, noColor)
 	if err != nil {
 		return fmt.Errorf("failed to marshal response: %w", err)
 	}
-	fmt.Println(string(out))
+	fmt.Println(s)
 	return nil
 }
 
@@ -1026,11 +1027,11 @@ func runRespondToQuestion(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to respond to question: %w", err)
 	}
 
-	out, err := json.MarshalIndent(result, "", "  ")
+	s, err := internalui.FormatJSON(result, noColor)
 	if err != nil {
 		return fmt.Errorf("failed to marshal response: %w", err)
 	}
-	fmt.Println(string(out))
+	fmt.Println(s)
 	return nil
 }
 

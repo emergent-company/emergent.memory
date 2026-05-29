@@ -78,8 +78,8 @@ func (h *Handler) List(c echo.Context) error {
 		return apperror.ErrUnauthorized
 	}
 
-	// Parse query parameters
-	limit := DefaultLimit
+	// Parse query parameters; 0 (default) means no limit
+	limit := 0
 	if limitStr := c.QueryParam("limit"); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil {
 			limit = parsed

@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	// DefaultLimit is the default number of projects to return
-	DefaultLimit = 100
-	// MaxLimit is the maximum number of projects to return
-	MaxLimit = 500
+	// DefaultLimit of 0 means no limit — return all projects
+	DefaultLimit = 0
+	// MaxLimit caps explicit limit requests
+	MaxLimit = 1000
 )
 
 var (
@@ -92,10 +92,10 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 		return []ProjectDTO{}, nil
 	}
 
-	// Validate and apply limits
+	// Validate and apply limits; 0 means no limit (return all)
 	limit := params.Limit
-	if limit <= 0 {
-		limit = DefaultLimit
+	if limit < 0 {
+		limit = 0
 	}
 	if limit > MaxLimit {
 		limit = MaxLimit

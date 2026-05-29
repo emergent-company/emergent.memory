@@ -343,6 +343,46 @@ func (c *Client) ListMembers(ctx context.Context, projectID string) ([]ProjectMe
 	return members, nil
 }
 
+// CurrentProjectResponse is returned by GetCurrent.
+// When the token is project-scoped, Project is populated.
+// When the token is account-level, Project is nil and Message explains why.
+type CurrentProjectResponse struct {
+	Project *Project `json:"project"`
+	Message string   `json:"message,omitempty"`
+}
+
+// GetCurrent returns the project bound to the current authentication token.
+// For project-scoped tokens this is the single bound project.
+// For account-level API keys or OAuth sessions, Project will be nil and
+// Message will contain an informational note.
+func (c *Client) GetCurrent(ctx context.Context) (*CurrentProjectResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/current", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result CurrentProjectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // RemoveMember removes a user from a project.
 func (c *Client) RemoveMember(ctx context.Context, projectID, userID string) error {
 	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+url.PathEscape(projectID)+"/members/"+url.PathEscape(userID), nil)

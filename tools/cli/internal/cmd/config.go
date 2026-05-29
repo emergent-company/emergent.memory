@@ -8,7 +8,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
-	"github.com/olekukonko/tablewriter"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -133,30 +133,30 @@ overriding environment variables.`,
 			creds, _ := auth.Load(credsPath)
 
 			fmt.Println("Current Configuration:")
-			table := tablewriter.NewWriter(os.Stdout)
-			table.Header("Setting", "Value")
+			table := internalui.NewTable(internalui.TableConfig{Compact: true})
+			table.SetHeaders([]string{"Setting", "Value"})
 
 			serverURL := cfg.ServerURL
 			if creds != nil && creds.IssuerURL != "" && creds.IssuerURL != cfg.ServerURL {
 				serverURL = fmt.Sprintf("%s (config) / %s (authenticated)", cfg.ServerURL, creds.IssuerURL)
 			}
-			_ = table.Append("Server URL", serverURL)
+			table.AddRow([]string{"Server URL", serverURL})
 
 			if cfg.APIKey != "" {
 				maskedKey := cfg.APIKey[:8] + "..." + cfg.APIKey[len(cfg.APIKey)-4:]
-				_ = table.Append("API Key", maskedKey+" (configured)")
+				table.AddRow([]string{"API Key", maskedKey + " (configured)"})
 			} else {
-				_ = table.Append("API Key", "(not set)")
+				table.AddRow([]string{"API Key", "(not set)"})
 			}
 
-			_ = table.Append("Email", cfg.Email)
-			_ = table.Append("Organization ID", cfg.OrgID)
-			_ = table.Append("Project ID", cfg.ProjectID)
-			_ = table.Append("Debug", fmt.Sprintf("%v", cfg.Debug))
-			_ = table.Append("Config File", configPath)
-			_ = table.Append("Auto-Update Enabled", fmt.Sprintf("%v", cfg.AutoUpdate.Enabled))
-			_ = table.Append("Auto-Update Mode", cfg.AutoUpdate.Mode)
-			_ = table.Append("Auto-Update Interval", cfg.AutoUpdate.CheckInterval)
+			table.AddRow([]string{"Email", cfg.Email})
+			table.AddRow([]string{"Organization ID", cfg.OrgID})
+			table.AddRow([]string{"Project ID", cfg.ProjectID})
+			table.AddRow([]string{"Debug", fmt.Sprintf("%v", cfg.Debug)})
+			table.AddRow([]string{"Config File", configPath})
+			table.AddRow([]string{"Auto-Update Enabled", fmt.Sprintf("%v", cfg.AutoUpdate.Enabled)})
+			table.AddRow([]string{"Auto-Update Mode", cfg.AutoUpdate.Mode})
+			table.AddRow([]string{"Auto-Update Interval", cfg.AutoUpdate.CheckInterval})
 
 			// Show environment variables from standalone .env.local if it exists
 			homeDir, _ = os.UserHomeDir()
@@ -170,29 +170,30 @@ overriding environment variables.`,
 							val := strings.TrimPrefix(line, "GOOGLE_API_KEY=")
 							if val != "" {
 								masked := val[:minInt(8, len(val))] + "..." + val[maxInt(0, len(val)-4):]
-								_ = table.Append("GOOGLE_API_KEY", masked+" (.env.local)")
+								table.AddRow([]string{"GOOGLE_API_KEY", masked + " (.env.local)"})
 							}
 						}
 						if strings.HasPrefix(line, "OPENAI_BASE_URL=") {
 							val := strings.TrimPrefix(line, "OPENAI_BASE_URL=")
-							_ = table.Append("OPENAI_BASE_URL", val+" (.env.local)")
+							table.AddRow([]string{"OPENAI_BASE_URL", val + " (.env.local)"})
 						}
 						if strings.HasPrefix(line, "OPENAI_API_KEY=") {
 							val := strings.TrimPrefix(line, "OPENAI_API_KEY=")
 							if val != "" {
 								masked := val[:minInt(8, len(val))] + "..." + val[maxInt(0, len(val)-4):]
-								_ = table.Append("OPENAI_API_KEY", masked+" (.env.local)")
+								table.AddRow([]string{"OPENAI_API_KEY", masked + " (.env.local)"})
 							}
 						}
 						if strings.HasPrefix(line, "LLM_MODEL=") {
 							val := strings.TrimPrefix(line, "LLM_MODEL=")
-							_ = table.Append("LLM_MODEL", val+" (.env.local)")
+							table.AddRow([]string{"LLM_MODEL", val + " (.env.local)"})
 						}
 					}
 				}
 			}
 
-			return table.Render()
+			fmt.Print(table.Render())
+			return nil
 		},
 	}
 

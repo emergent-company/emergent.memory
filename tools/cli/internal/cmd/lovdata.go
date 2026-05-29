@@ -207,7 +207,7 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 		StartedAt:     time.Now(),
 	}
 
-	fmt.Printf("\n%s%sEmergent db lovdata%s\n", diagBold, diagCyan, diagReset)
+	fmt.Printf("\n%s\n", diagColorBoldCyan("Emergent db lovdata"))
 	fmt.Printf("server=%s (%s)  dataset=%s  seed=%d  workers=%d  skip-eu=%v\n\n",
 		svrURL, report.ServerVersion, dbLovdataFlags.dataset, dbLovdataFlags.seed,
 		dbLovdataFlags.workers, dbLovdataFlags.skipEU)
@@ -368,15 +368,15 @@ func runDbLovdata(_ *cobra.Command, _ []string) error {
 		fmt.Printf("\nPhase 6: Cleaning up project %s ...\n", projectID)
 		doneClean := report.begin("cleanup_project")
 		if err := benchDeleteProject(ctx, baseClient, projectID); err != nil {
-			fmt.Printf("%sWARN: cleanup failed: %v%s\n", diagYellow, err, diagReset)
+			fmt.Printf("%s\n", diagColorYellow(fmt.Sprintf("WARN: cleanup failed: %v", err)))
 		}
 		doneClean()
 	}
 
 	benchAppendLog(logFile, report)
 
-	fmt.Printf("\n%sObjects: %d  Relationships: %d  Errors: %d%s\n",
-		diagGreen, objCount, report.Relations, relFailed, diagReset)
+	fmt.Printf("\n%s\n",
+		diagColorGreen(fmt.Sprintf("Objects: %d  Relationships: %d  Errors: %d", objCount, report.Relations, relFailed)))
 	fmt.Printf("Project: %s\n", projectID)
 	return nil
 }

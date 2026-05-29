@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/installer"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -66,7 +67,7 @@ var ctlStatusCmd = &cobra.Command{
 
 Runs 'docker compose ps' for the local installation and prints the container
 name, state (running/exited), and port mappings for each service.`,
-	RunE:  runCtlStatus,
+	RunE: runCtlStatus,
 }
 
 var ctlLogsCmd = &cobra.Command{
@@ -90,7 +91,7 @@ var ctlHealthCmd = &cobra.Command{
 Makes an HTTP GET request to the server's /health endpoint and prints whether
 the server is healthy (✓) or not responding (✗). On a healthy response the
 full JSON health payload is printed in indented format.`,
-	RunE:  runCtlHealth,
+	RunE: runCtlHealth,
 }
 
 var ctlShellCmd = &cobra.Command{
@@ -266,8 +267,8 @@ func runCtlHealth(cmd *cobra.Command, args []string) error {
 
 	var prettyJSON map[string]interface{}
 	if err := json.Unmarshal(body, &prettyJSON); err == nil {
-		formatted, _ := json.MarshalIndent(prettyJSON, "", "  ")
-		fmt.Println(string(formatted))
+		formatted, _ := internalui.FormatJSON(prettyJSON, noColor)
+		fmt.Println(formatted)
 	} else {
 		fmt.Println(strings.TrimSpace(string(body)))
 	}

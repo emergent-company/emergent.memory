@@ -8,7 +8,7 @@ import (
 
 	sdkbranches "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/branches"
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
-	"github.com/olekukonko/tablewriter"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -153,8 +153,8 @@ Examples:
 			return nil
 		}
 
-		table := tablewriter.NewWriter(out)
-		table.Header("ID", "Name", "Description", "Parent Branch ID", "Created")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"ID", "Name", "Description", "Parent Branch ID", "Created"})
 		for _, br := range branches {
 			desc := ""
 			if br.Description != nil {
@@ -164,9 +164,10 @@ Examples:
 			if br.ParentBranchID != nil {
 				parent = *br.ParentBranchID
 			}
-			_ = table.Append(br.ID, br.Name, desc, parent, br.CreatedAt)
+			table.AddRow([]string{br.ID, br.Name, desc, parent, br.CreatedAt})
 		}
-		return table.Render()
+		fmt.Fprint(out, table.Render())
+		return nil
 	},
 }
 

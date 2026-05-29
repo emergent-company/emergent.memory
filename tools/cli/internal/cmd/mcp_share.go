@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcp"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -59,8 +59,8 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
 	if mcpShareJSON {
-		out, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(out))
+		s, _ := internalui.FormatJSON(result, noColor)
+		fmt.Println(s)
 		return nil
 	}
 
@@ -132,8 +132,8 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 			},
 		},
 	}
-	out, _ := json.MarshalIndent(openCodeConfig, "", "  ")
-	fmt.Println(string(out))
+	s, _ := internalui.FormatJSON(openCodeConfig, noColor)
+	fmt.Println(s)
 	fmt.Println()
 
 	fmt.Println("─────────────────────────────────────────────────────────────────")
@@ -158,8 +158,8 @@ func printMCPClientConfig(mcpURL, token string) {
 			},
 		},
 	}
-	out, _ := json.MarshalIndent(cfg, "", "  ")
-	fmt.Println(string(out))
+	s, _ := internalui.FormatJSON(cfg, noColor)
+	fmt.Println(s)
 }
 
 var mcpShareProjectID string

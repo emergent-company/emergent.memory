@@ -14,7 +14,7 @@ import (
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/skillsfs"
-	"github.com/olekukonko/tablewriter"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -140,8 +140,8 @@ skill list as JSON.`,
 		if h := paginationHeader(total, skillListLimit, skillListPage); h != "" {
 			fmt.Fprintln(out, h)
 		}
-		table := tablewriter.NewWriter(out)
-		table.Header("NAME", "DESCRIPTION", "SCOPE", "ID")
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"NAME", "DESCRIPTION", "SCOPE", "ID"})
 		for _, s := range skills {
 			scope := "global"
 			if s.ProjectID != nil && *s.ProjectID != "" {
@@ -153,9 +153,10 @@ skill list as JSON.`,
 			if len(desc) > 55 {
 				desc = desc[:54] + "…"
 			}
-			_ = table.Append(s.Name, desc, scope, s.ID)
+			table.AddRow([]string{s.Name, desc, scope, s.ID})
 		}
-		return table.Render()
+		fmt.Fprint(out, table.Render())
+		return nil
 	},
 }
 

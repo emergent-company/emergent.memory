@@ -529,17 +529,20 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 		return enc.Encode(project)
 	}
 
-	fmt.Printf("Project: %s (%s)\n", project.Name, project.ID)
-	orgDisplay := project.OrgID
+	orgName := project.OrgID
 	if orgList, err2 := c.SDK.Orgs.List(context.Background()); err2 == nil {
 		for _, o := range orgList {
 			if o.ID == project.OrgID {
-				orgDisplay = fmt.Sprintf("%s (%s)", o.Name, project.OrgID)
+				orgName = o.Name
 				break
 			}
 		}
 	}
-	fmt.Printf("  Org:        %s\n", orgDisplay)
+	fmt.Printf("%s\n", cHeader("Project"))
+	fmt.Println()
+	fmt.Printf("  %s  %s\n", cBold(orgName), cDim(project.OrgID))
+	fmt.Println()
+	fmt.Printf("    %s  %s\n", cBold(project.Name), cDim(project.ID))
 	// Print stats if requested
 	if projectStatsFlag && project.Stats != nil {
 		fmt.Println()

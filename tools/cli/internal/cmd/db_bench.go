@@ -259,7 +259,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		StartedAt:     time.Now(),
 	}
 
-	fmt.Printf("\n%s%sEmergent db bench v%s%s\n", diagBold, diagCyan, benchVersion, diagReset)
+	fmt.Printf("\n%s\n", diagColorBoldCyan("Emergent db bench v"+benchVersion))
 	fmt.Printf("server=%s (%s)  git=%s  seed=%d  offset=%d\n\n",
 		svrURL, report.ServerVersion, report.GitCommit, dbBenchFlags.seed, dbBenchFlags.offset)
 
@@ -425,7 +425,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	// ── Phase 5: EXPLAIN checks (db diagnose) ─────────────────────────────────
 	dsn, _ := resolveBenchDSN()
 	if dsn != "" {
-		fmt.Printf("\n%s%sPhase 5: EXPLAIN checks on live data%s\n", diagBold, diagCyan, diagReset)
+		fmt.Printf("\n%s\n", diagColorBoldCyan("Phase 5: EXPLAIN checks on live data"))
 		fmt.Println("═══════════════════════════════════════════════════════")
 		fmt.Println()
 
@@ -433,7 +433,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		explainResults := runBenchExplain(dsn, projectID)
 		printDiagSummary(explainResults)
 	} else {
-		fmt.Printf("\n%sPhase 5: EXPLAIN checks skipped — no DSN found%s\n", diagYellow, diagReset)
+		fmt.Printf("\n%s\n", diagColorYellow("Phase 5: EXPLAIN checks skipped — no DSN found"))
 		fmt.Println("  Set --dsn or MEMORY_DATABASE_URL to enable EXPLAIN analysis.")
 	}
 
@@ -442,7 +442,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		fmt.Printf("\nPhase 6: Cleaning up project %s ...\n", projectID)
 		doneClean := report.begin("cleanup_project")
 		if err := benchDeleteProject(ctx, baseClient, projectID); err != nil {
-			fmt.Printf("%sWARN: cleanup failed: %v%s\n", diagYellow, err, diagReset)
+			fmt.Printf("%s\n", diagColorYellow(fmt.Sprintf("WARN: cleanup failed: %v", err)))
 		}
 		doneClean()
 	}
@@ -450,8 +450,8 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 	// ── Append JSONL log ──────────────────────────────────────────────────────
 	benchAppendLog(logFile, report)
 
-	fmt.Printf("\n%sObjects: %d  Relationships: %d  Errors: %d%s\n",
-		diagGreen, objCount, relCount, relFailed, diagReset)
+	fmt.Printf("\n%s\n",
+		diagColorGreen(fmt.Sprintf("Objects: %d  Relationships: %d  Errors: %d", objCount, relCount, relFailed)))
 	fmt.Printf("Project: %s\n", projectID)
 
 	return nil
@@ -1737,12 +1737,12 @@ func benchBulkUploadRelationships(ctx context.Context, client *sdkgraph.Client, 
 
 func benchAppendLog(logFile string, report *benchReport) {
 	if err := os.MkdirAll(filepath.Dir(logFile), 0755); err != nil {
-		fmt.Printf("%sWARN: cannot create log dir: %v%s\n", diagYellow, err, diagReset)
+		fmt.Printf("%s\n", diagColorYellow(fmt.Sprintf("WARN: cannot create log dir: %v", err)))
 		return
 	}
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		fmt.Printf("%sWARN: cannot open log file %s: %v%s\n", diagYellow, logFile, err, diagReset)
+		fmt.Printf("%s\n", diagColorYellow(fmt.Sprintf("WARN: cannot open log file %s: %v", logFile, err)))
 		return
 	}
 	defer f.Close()
@@ -1801,7 +1801,7 @@ func benchAppendLog(logFile string, report *benchReport) {
 
 	data, err := json.Marshal(entry)
 	if err != nil {
-		fmt.Printf("%sWARN: cannot marshal log entry: %v%s\n", diagYellow, err, diagReset)
+		fmt.Printf("%s\n", diagColorYellow(fmt.Sprintf("WARN: cannot marshal log entry: %v", err)))
 		return
 	}
 	f.Write(data)         //nolint:errcheck

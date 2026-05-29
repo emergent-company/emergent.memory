@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -145,8 +146,8 @@ func runMCPRelayTools(cmd *cobra.Command, args []string) error {
 		fmt.Println(string(body))
 		return nil
 	}
-	pretty, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Println(string(pretty))
+	pretty, _ := internalui.FormatJSON(out, noColor)
+	fmt.Println(pretty)
 	return nil
 }
 
@@ -227,8 +228,8 @@ func runMCPRelayCall(cmd *cobra.Command, args []string) error {
 		fmt.Println(string(body))
 		return nil
 	}
-	pretty, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Println(string(pretty))
+	pretty, _ := internalui.FormatJSON(out, noColor)
+	fmt.Println(pretty)
 	return nil
 }
 
