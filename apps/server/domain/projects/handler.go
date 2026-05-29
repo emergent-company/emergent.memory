@@ -20,6 +20,46 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+// currentProjectResponse is the response for the /api/projects/current endpoint.
+// When no project is bound to the token, Project is nil and Message explains why.
+type currentProjectResponse struct {
+	Project *ProjectDTO `json:"project"`
+	Message string      `json:"message,omitempty"`
+}
+
+// Current returns the project bound to the current auth token.
+// For project-scoped tokens it returns that single project.
+// For account-level tokens or OAuth sessions it returns a 200 with no project
+// and an informational message.
+// @Summary      Get current project
+// @Description  Returns the project bound to the current authentication token. For project-scoped tokens this is the single bound project. For account-level API keys or OAuth sessions no project is bound and the response will contain only a message.
+// @Tags         projects
+// @Produce      json
+// @Success      200 {object} currentProjectResponse "Current project or informational message"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/current [get]
+// @Security     bearerAuth
+func (h *Handler) Current(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	if user.APITokenProjectID == "" {
+		return c.JSON(http.StatusOK, currentProjectResponse{
+			Message: "no current project — using account-level API key",
+		})
+	}
+
+	project, err := h.svc.GetByID(c.Request().Context(), user.APITokenProjectID, false)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, currentProjectResponse{Project: project})
+}
+
 // List returns all projects the authenticated user is a member of
 // @Summary      List user's projects
 // @Description  Returns all projects the authenticated user is a member of. Supports filtering by organization and pagination.

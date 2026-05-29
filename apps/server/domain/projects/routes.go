@@ -8,7 +8,13 @@ import (
 
 // RegisterRoutes registers project routes
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
-	// All project endpoints require authentication
+	// /api/projects/current — no projects:read scope required; any valid auth token works.
+	// Must be registered before the scoped group so Echo doesn't treat "current" as an :id param.
+	noScope := e.Group("/api/projects")
+	noScope.Use(authMiddleware.RequireAuth())
+	noScope.GET("/current", h.Current)
+
+	// All other project endpoints require authentication
 	g := e.Group("/api/projects")
 	g.Use(authMiddleware.RequireAuth())
 	// When accessed via emt_* API token, require projects:read scope.

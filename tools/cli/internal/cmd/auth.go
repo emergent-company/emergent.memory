@@ -664,24 +664,52 @@ func printAPIKeyStatus(cfg *config.Config) {
 		fmt.Printf("  Health:      ✗ Unreachable (%v)\n", healthErr)
 	}
 
+	// Fetch current project info — works for all token types, no projects:read required.
+	currentProj, currentProjErr := fetchCurrentProject(cfg.ServerURL, activeKey)
+
+	if isProjectToken {
+		fmt.Println()
+		fmt.Println("Project:")
+		if currentProjErr == nil && currentProj.Project != nil {
+			fmt.Printf("  Name:        %s\n", currentProj.Project.Name)
+			fmt.Printf("  ID:          %s\n", currentProj.Project.ID)
+			fmt.Println("  Access:      project token (scoped)")
+			if healthErr == nil {
+				printUsageStats(cfg, activeKey, currentProj.Project.ID)
+			}
+		} else if currentProjErr == nil && currentProj.Message != "" {
+			fmt.Printf("  Current:     (%s)\n", currentProj.Message)
+		} else {
+			// Fall back to fetchProjects for legacy servers
+			projects, projErr := fetchProjects(cfg.ServerURL, activeKey)
+			if projErr == nil && len(projects) > 0 {
+				project := &projects[0]
+				fmt.Printf("  Name:        %s\n", project.Name)
+				fmt.Printf("  ID:          %s\n", project.ID)
+				fmt.Println("  Access:      project token (scoped)")
+				if healthErr == nil {
+					printUsageStats(cfg, activeKey, project.ID)
+				}
+			} else {
+				fmt.Println("  Current:     (unavailable — token may lack projects:read scope)")
+			}
+		}
+		return
+	}
+
+	// Account-level token: show current project context (if any) then full project list.
+	if currentProjErr == nil && currentProj.Message != "" {
+		fmt.Println()
+		fmt.Println("Project:")
+		fmt.Printf("  Current:     (none — %s)\n", currentProj.Message)
+	}
+
 	projects, projErr := fetchProjects(cfg.ServerURL, activeKey)
 	if projErr != nil || len(projects) == 0 {
 		return
 	}
 
-	if isProjectToken {
-		// Project-scoped token: show single project
-		project := &projects[0]
-		fmt.Println()
-		fmt.Println("Project:")
-		fmt.Printf("  Name:        %s\n", project.Name)
-		fmt.Printf("  ID:          %s\n", project.ID)
-		fmt.Println("  Access:      project token (scoped)")
-
-		if healthErr == nil {
-			printUsageStats(cfg, activeKey, project.ID)
-		}
-	} else if hasNameScope {
+	if hasNameScope {
 		// Account API key scoped to one project by name — find the matching project.
 		var matchedProject *projectResponse
 		for i := range projects {
@@ -721,6 +749,38 @@ func printAPIKeyStatus(cfg *config.Config) {
 			printAggregatedUsageStats(cfg, activeKey, projects)
 		}
 	}
+}
+
+// currentProjectAPIResponse mirrors the server's currentProjectResponse shape.
+type currentProjectAPIResponse struct {
+	Project *projectResponse `json:"project"`
+	Message string           `json:"message,omitempty"`
+}
+
+// fetchCurrentProject calls GET /api/projects/current — no projects:read scope required.
+func fetchCurrentProject(serverURL, apiKey string) (*currentProjectAPIResponse, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", serverURL+"/api/projects/current", nil)
+	if err != nil {
+		return nil, err
+	}
+	setAuthHeader(req, apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	var result currentProjectAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // --- Usage statistics types ---

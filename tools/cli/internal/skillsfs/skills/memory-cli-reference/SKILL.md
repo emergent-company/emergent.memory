@@ -2182,6 +2182,51 @@ memory extraction jobs stats [flags]
   -h, --help   help for stats
 ```
 
+## memory forget
+
+Soft-delete knowledge graph objects matching a natural-language query
+
+### Synopsis
+
+Find and soft-delete graph objects that match a natural-language query.
+
+Deletes are REVERSIBLE — use 'memory graph restore <id>' to undo any deletion.
+
+Strategy controls confirmation behaviour:
+  confirm   Ask for approval before executing a batch of deletes (default)
+  auto      Delete automatically without asking
+  ask       Require per-delete confirmation (interactive terminals only)
+
+Cascade depth controls how many hops of neighbors are also deleted:
+  1   Direct matches only
+  2   Direct matches + 1-hop neighbors (default)
+  3   Direct matches + 2-hop neighbors
+
+Examples:
+  memory forget "all auth related nodes"
+  memory forget --strategy auto "temporary test objects"
+  memory forget --cascade 1 "the node named foo"
+  memory forget --dry-run "everything tagged deprecated"
+  memory forget --project abc123 "old migration objects"
+
+```
+memory forget [text] [flags]
+```
+
+### Options
+
+```
+      --cascade int       Cascade depth: 1 (direct only), 2 (1-hop), 3 (2-hop) (default 2)
+      --dry-run           Report what would be deleted without performing any deletes
+  -h, --help              help for forget
+      --json              Output results as JSON
+      --project string    Project ID (uses default project if not specified)
+      --session string    Continue a previous forget session
+      --show-time         Show elapsed time
+      --show-tools        Show tool calls made by the agent
+      --strategy string   Deletion strategy: auto, confirm, ask (default "confirm")
+```
+
 ## memory graph
 
 Manage graph objects and relationships
