@@ -2080,9 +2080,12 @@ func (ae *AgentExecutor) runPipeline(
 
 				// Retry on transient Google AI API errors (503 UNAVAILABLE, 429 rate-limit)
 				// without injecting a new message — simply re-run from current content.
-				isTransient := strings.Contains(errStr, "503") ||
+				// Explicitly exclude Postgres FK violations (SQLSTATE 23503) whose error
+				// string contains "503" as a substring — those are hard errors, not retryable.
+				isFKViolation := strings.Contains(errStr, "23503") || strings.Contains(errStr, "foreign key constraint")
+				isTransient := !isFKViolation && (strings.Contains(errStr, "503") ||
 					strings.Contains(errStr, "UNAVAILABLE") ||
-					strings.Contains(errStr, "429")
+					strings.Contains(errStr, "429"))
 				if isTransient && transientErrCount < maxTransientRetries {
 					transientErrCount++
 					// Fixed 5s delay — rate limit errors need a brief pause, not

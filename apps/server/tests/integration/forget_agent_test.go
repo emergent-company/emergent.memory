@@ -658,12 +658,13 @@ func (s *ForgetAgentTestSuite) TestForget_ConfirmStrategy_PausesRun() {
 	runID, _ := body["run_id"].(string)
 	s.Require().NotEmpty(runID, "async response must contain run_id")
 
-	// Poll the run status; expect it to reach paused/input-required quickly.
+	// Poll the run status; expect it to reach paused/input-required once the LLM
+	// calls ask_user.  Allow up to 90s since the first LLM call may take 5-30s.
 	var finalStatus string
-	for i := 0; i < 20; i++ {
-		time.Sleep(250 * time.Millisecond)
+	for i := 0; i < 90; i++ {
+		time.Sleep(1 * time.Second)
 		statusResp := s.client.GET(
-			fmt.Sprintf("/api/agents/runs/%s", runID),
+			fmt.Sprintf("/api/v1/runs/%s", runID),
 			testutil.WithAuth(s.authToken),
 		)
 		if statusResp.StatusCode != http.StatusOK {
@@ -673,7 +674,10 @@ func (s *ForgetAgentTestSuite) TestForget_ConfirmStrategy_PausesRun() {
 		if err := json.Unmarshal(statusResp.Body, &runBody); err != nil {
 			continue
 		}
-		status, _ := runBody["status"].(string)
+		// API envelope: {data: {status: "..."}, status: "success"}
+		// Run status is inside data, not the envelope status field.
+		data, _ := runBody["data"].(map[string]any)
+		status, _ := data["status"].(string)
 		if status == "paused" || status == "input-required" || status == "error" || status == "success" {
 			finalStatus = status
 			break

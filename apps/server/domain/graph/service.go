@@ -1124,6 +1124,18 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 		}
 	}
 
+	// Cascade: soft-delete all live relationships touching this canonical object.
+	// This mirrors the expected behaviour: deleting a node orphans its edges.
+	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, current.CanonicalID, GetEdgesParams{})
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(fmt.Errorf("cascade delete edges: %w", err))
+	}
+	for _, rel := range append(incoming, outgoing...) {
+		if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, rel, reason); err != nil {
+			return apperror.ErrDatabase.WithInternal(fmt.Errorf("cascade delete relationship %s: %w", rel.CanonicalID, err))
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
