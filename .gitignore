@@ -20,6 +20,7 @@ docker/.env
 
 # Environment files for specific deployments (never commit)
 .env.staging
+.env.test.external
 .env.production
 
 # Backup and temporary files
