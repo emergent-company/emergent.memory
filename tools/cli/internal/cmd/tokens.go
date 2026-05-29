@@ -3,11 +3,50 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens"
 	"github.com/spf13/cobra"
 )
+
+var uuidRegexp = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// resolveTokenIDForProject resolves a token name or ID to an ID for project-scoped tokens.
+// If nameOrID looks like a UUID, it is returned as-is. Otherwise, tokens are listed and
+// the first active token matching the name is returned.
+func resolveTokenIDForProject(ctx context.Context, c *apitokens.Client, projectID, nameOrID string) (string, error) {
+	if uuidRegexp.MatchString(nameOrID) {
+		return nameOrID, nil
+	}
+	result, err := c.List(ctx, projectID)
+	if err != nil {
+		return "", fmt.Errorf("failed to list tokens: %w", err)
+	}
+	for _, t := range result.Tokens {
+		if t.Name == nameOrID && t.RevokedAt == nil {
+			return t.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no active project token named %q found", nameOrID)
+}
+
+// resolveTokenIDForAccount resolves a token name or ID to an ID for account-level tokens.
+func resolveTokenIDForAccount(ctx context.Context, c *apitokens.Client, nameOrID string) (string, error) {
+	if uuidRegexp.MatchString(nameOrID) {
+		return nameOrID, nil
+	}
+	result, err := c.ListAccountTokens(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list account tokens: %w", err)
+	}
+	for _, t := range result.Tokens {
+		if t.Name == nameOrID && t.RevokedAt == nil {
+			return t.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no active account token named %q found", nameOrID)
+}
 
 var tokensCmd = &cobra.Command{
 	Use:     "tokens",
@@ -363,11 +402,16 @@ func runCreateToken(cmd *cobra.Command, args []string) error {
 }
 
 func runGetToken(cmd *cobra.Command, args []string) error {
-	tokenID := args[0]
+	nameOrID := args[0]
 
 	// If --project not provided, look up an account-level token
 	if tokenProjectID == "" {
 		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		tokenID, err := resolveTokenIDForAccount(context.Background(), c.SDK.APITokens, nameOrID)
 		if err != nil {
 			return err
 		}
@@ -406,6 +450,11 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	tokenID, err := resolveTokenIDForProject(context.Background(), c.SDK.APITokens, projectID, nameOrID)
+	if err != nil {
+		return err
+	}
+
 	token, err := c.SDK.APITokens.Get(context.Background(), projectID, tokenID)
 	if err != nil {
 		return fmt.Errorf("failed to get token: %w", err)
@@ -431,11 +480,16 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 }
 
 func runRegenerateToken(cmd *cobra.Command, args []string) error {
-	tokenID := args[0]
+	nameOrID := args[0]
 
 	if tokenProjectID == "" {
 		// Account-level token
 		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		tokenID, err := resolveTokenIDForAccount(context.Background(), c.SDK.APITokens, nameOrID)
 		if err != nil {
 			return err
 		}
@@ -471,6 +525,11 @@ func runRegenerateToken(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	tokenID, err := resolveTokenIDForProject(context.Background(), c.SDK.APITokens, projectID, nameOrID)
+	if err != nil {
+		return err
+	}
+
 	result, err := c.SDK.APITokens.Regenerate(context.Background(), projectID, tokenID)
 	if err != nil {
 		return fmt.Errorf("failed to regenerate token: %w", err)
@@ -493,11 +552,16 @@ func runRegenerateToken(cmd *cobra.Command, args []string) error {
 }
 
 func runRevokeToken(cmd *cobra.Command, args []string) error {
-	tokenID := args[0]
+	nameOrID := args[0]
 
 	// If --project not provided, revoke an account-level token
 	if tokenProjectID == "" {
 		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		tokenID, err := resolveTokenIDForAccount(context.Background(), c.SDK.APITokens, nameOrID)
 		if err != nil {
 			return err
 		}
@@ -507,7 +571,7 @@ func runRevokeToken(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to revoke account token: %w", err)
 		}
 
-		fmt.Printf("Account token %s has been revoked successfully.\n", tokenID)
+		fmt.Printf("Account token %s has been revoked successfully.\n", nameOrID)
 		return nil
 	}
 
@@ -522,12 +586,17 @@ func runRevokeToken(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	tokenID, err := resolveTokenIDForProject(context.Background(), c.SDK.APITokens, projectID, nameOrID)
+	if err != nil {
+		return err
+	}
+
 	err = c.SDK.APITokens.Revoke(context.Background(), projectID, tokenID)
 	if err != nil {
 		return fmt.Errorf("failed to revoke token: %w", err)
 	}
 
-	fmt.Printf("Token %s has been revoked successfully.\n", tokenID)
+	fmt.Printf("Token %s has been revoked successfully.\n", nameOrID)
 
 	return nil
 }
