@@ -52,7 +52,7 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 	}
 
 	if teamListJSON {
-		return json.NewEncoder(os.Stdout).Encode(members)
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(members)
 	}
 
 	if len(members) == 0 {
@@ -276,7 +276,7 @@ func runTeamInvites(cmd *cobra.Command, args []string) error {
 	}
 
 	if teamInvitesJSON {
-		return json.NewEncoder(os.Stdout).Encode(invites)
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(invites)
 	}
 
 	if len(invites) == 0 {

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -59,7 +60,10 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
 	if mcpShareJSON {
-		s, _ := internalui.FormatJSON(result, noColor)
+		s, err := internalui.FormatJSON(result, noColor)
+		if err != nil {
+			return fmt.Errorf("failed to format JSON: %w", err)
+		}
 		fmt.Println(s)
 		return nil
 	}
@@ -132,7 +136,10 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 			},
 		},
 	}
-	s, _ := internalui.FormatJSON(openCodeConfig, noColor)
+	s, err := internalui.FormatJSON(openCodeConfig, noColor)
+		if err != nil {
+			return fmt.Errorf("failed to format JSON: %w", err)
+		}
 	fmt.Println(s)
 	fmt.Println()
 
@@ -158,7 +165,11 @@ func printMCPClientConfig(mcpURL, token string) {
 			},
 		},
 	}
-	s, _ := internalui.FormatJSON(cfg, noColor)
+	s, fmtErr := internalui.FormatJSON(cfg, noColor)
+	if fmtErr != nil {
+		b, _ := json.MarshalIndent(cfg, "", "  ")
+		s = string(b)
+	}
 	fmt.Println(s)
 }
 

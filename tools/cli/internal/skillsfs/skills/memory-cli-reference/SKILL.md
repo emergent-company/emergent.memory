@@ -5532,6 +5532,28 @@ memory tokens list [flags]
       --page int             Page number (1-based, used with --limit) (default 1)
 ```
 
+## memory tokens regenerate
+
+Regenerate an API token
+
+### Synopsis
+
+Atomically revoke an existing API token and issue a new one with the same name and scopes.
+
+Without --project, regenerates an account-level token. With --project, regenerates a project-scoped token.
+
+The new plaintext token value is printed once — save it immediately.
+
+```
+memory tokens regenerate [token-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for regenerate
+```
+
 ## memory tokens revoke
 
 Revoke an API token

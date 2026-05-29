@@ -88,18 +88,18 @@ func runRemember(cmd *cobra.Command, args []string) error {
 	c.SetContext("", projectID)
 
 	if rememberFile != "" {
-		return runRememberFile(cmd.Context(), c, rememberFile, projectID)
+		return runRememberFile(cmd.Context(), cmd.OutOrStdout(), c, rememberFile, projectID)
 	}
 
 	if len(args) == 0 {
 		return fmt.Errorf("text argument is required (or use --file to upload a file)")
 	}
 	text := strings.Join(args, " ")
-	return runRememberAgent(cmd.Context(), c, text, projectID)
+	return runRememberAgent(cmd.Context(), cmd.OutOrStdout(), c, text, projectID)
 }
 
 // runRememberAgent posts to POST /api/projects/:projectId/remember and streams the SSE response.
-func runRememberAgent(ctx context.Context, c *client.Client, text, projectID string) error {
+func runRememberAgent(ctx context.Context, out io.Writer, c *client.Client, text, projectID string) error {
 	reqBody := map[string]interface{}{
 		"message":       text,
 		"schema_policy": rememberSchemaPolicy,
@@ -128,12 +128,12 @@ func runRememberAgent(ctx context.Context, c *client.Client, text, projectID str
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
-	return streamRememberSSE(httpReq, text, projectID)
+	return streamRememberSSE(out, httpReq, text, projectID)
 }
 
 // runRememberFile posts to POST /api/projects/:projectId/remember/file as multipart
 // and streams the SSE response.
-func runRememberFile(ctx context.Context, c *client.Client, filePath, projectID string) error {
+func runRememberFile(ctx context.Context, out io.Writer, c *client.Client, filePath, projectID string) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open file %q: %w", filePath, err)
@@ -182,11 +182,11 @@ func runRememberFile(ctx context.Context, c *client.Client, filePath, projectID 
 	if rememberGuide != "" {
 		label = rememberGuide
 	}
-	return streamRememberSSE(httpReq, label, projectID)
+	return streamRememberSSE(out, httpReq, label, projectID)
 }
 
 // streamRememberSSE executes the request and parses the SSE stream, printing output.
-func streamRememberSSE(httpReq *http.Request, label, projectID string) error {
+func streamRememberSSE(out io.Writer, httpReq *http.Request, label, projectID string) error {
 	jsonMode := rememberJSON || output == "json"
 	result, err := StreamSSE(httpReq, SSEOptions{
 		LivePrint: !jsonMode,
@@ -198,7 +198,7 @@ func streamRememberSSE(httpReq *http.Request, label, projectID string) error {
 	}
 
 	if jsonMode {
-		out := map[string]interface{}{
+		jsonOut := map[string]interface{}{
 			"label":         label,
 			"projectId":     projectID,
 			"schema_policy": rememberSchemaPolicy,
@@ -208,20 +208,20 @@ func streamRememberSSE(httpReq *http.Request, label, projectID string) error {
 			"elapsedMs":     result.Elapsed.Milliseconds(),
 		}
 		if rememberGuide != "" {
-			out["guide"] = rememberGuide
+			jsonOut["guide"] = rememberGuide
 		}
 		if rememberFile != "" {
-			out["file"] = rememberFile
+			jsonOut["file"] = rememberFile
 		}
 		if result.StreamErr != "" {
-			out["error"] = result.StreamErr
+			jsonOut["error"] = result.StreamErr
 		}
 		if result.SessionID != "" {
-			out["session_id"] = result.SessionID
+			jsonOut["session_id"] = result.SessionID
 		}
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(out)
+		return encoder.Encode(jsonOut)
 	}
 
 	fmt.Printf("\n\n")

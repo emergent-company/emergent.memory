@@ -267,7 +267,10 @@ func runCtlHealth(cmd *cobra.Command, args []string) error {
 
 	var prettyJSON map[string]interface{}
 	if err := json.Unmarshal(body, &prettyJSON); err == nil {
-		formatted, _ := internalui.FormatJSON(prettyJSON, noColor)
+		formatted, fmtErr := internalui.FormatJSON(prettyJSON, noColor)
+		if fmtErr != nil {
+			formatted = strings.TrimSpace(string(body))
+		}
 		fmt.Println(formatted)
 	} else {
 		fmt.Println(strings.TrimSpace(string(body)))

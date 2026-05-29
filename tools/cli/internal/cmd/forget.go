@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -84,11 +84,11 @@ func runForget(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("text argument is required — describe what to forget")
 	}
 	text := strings.Join(args, " ")
-	return runForgetAgent(cmd.Context(), c, text, projectID)
+	return runForgetAgent(cmd.Context(), cmd.OutOrStdout(), c, text, projectID)
 }
 
 // runForgetAgent posts to POST /api/projects/:projectId/forget and streams the SSE response.
-func runForgetAgent(ctx context.Context, c *client.Client, text, projectID string) error {
+func runForgetAgent(ctx context.Context, out io.Writer, c *client.Client, text, projectID string) error {
 	reqBody := map[string]interface{}{
 		"message":       text,
 		"strategy":      forgetStrategy,
@@ -114,11 +114,11 @@ func runForgetAgent(ctx context.Context, c *client.Client, text, projectID strin
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
-	return streamForgetSSE(httpReq, text, projectID)
+	return streamForgetSSE(out, httpReq, text, projectID)
 }
 
 // streamForgetSSE executes the request and parses the SSE stream, printing output.
-func streamForgetSSE(httpReq *http.Request, label, projectID string) error {
+func streamForgetSSE(out io.Writer, httpReq *http.Request, label, projectID string) error {
 	jsonMode := forgetJSON || output == "json"
 	result, err := StreamSSE(httpReq, SSEOptions{
 		LivePrint: !jsonMode,
@@ -130,7 +130,7 @@ func streamForgetSSE(httpReq *http.Request, label, projectID string) error {
 	}
 
 	if jsonMode {
-		out := map[string]interface{}{
+		jsonOut := map[string]interface{}{
 			"label":         label,
 			"projectId":     projectID,
 			"strategy":      forgetStrategy,
@@ -141,14 +141,14 @@ func streamForgetSSE(httpReq *http.Request, label, projectID string) error {
 			"elapsedMs":     result.Elapsed.Milliseconds(),
 		}
 		if result.StreamErr != "" {
-			out["error"] = result.StreamErr
+			jsonOut["error"] = result.StreamErr
 		}
 		if result.SessionID != "" {
-			out["session_id"] = result.SessionID
+			jsonOut["session_id"] = result.SessionID
 		}
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(out)
+		return encoder.Encode(jsonOut)
 	}
 
 	fmt.Printf("\n\n")

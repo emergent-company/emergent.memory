@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -125,12 +126,12 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		c.SetContext("", projectID)
 	}
 
-	return runAskStream(cmd.Context(), c, baseURL, question, projectID, askRuntime, askV2)
+	return runAskStream(cmd.Context(), cmd.OutOrStdout(), c, baseURL, question, projectID, askRuntime, askV2)
 }
 
 // runAskStream posts to the appropriate ask endpoint and streams the SSE response.
 // c may be nil when the caller has no valid credentials (unauthenticated path).
-func runAskStream(ctx context.Context, c *client.Client, baseURL, question, projectID, runtime string, v2 bool) error {
+func runAskStream(ctx context.Context, out io.Writer, c *client.Client, baseURL, question, projectID, runtime string, v2 bool) error {
 	reqBody := map[string]interface{}{
 		"message": question,
 	}
@@ -182,21 +183,21 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 	}
 
 	if jsonMode {
-		out := map[string]interface{}{
+		jsonOut := map[string]interface{}{
 			"question":  question,
 			"response":  result.Response,
 			"tools":     result.Tools,
 			"elapsedMs": result.Elapsed.Milliseconds(),
 		}
 		if projectID != "" {
-			out["projectId"] = projectID
+			jsonOut["projectId"] = projectID
 		}
 		if result.StreamErr != "" {
-			out["error"] = result.StreamErr
+			jsonOut["error"] = result.StreamErr
 		}
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(out)
+		return encoder.Encode(jsonOut)
 	}
 
 	// Render the full markdown response.

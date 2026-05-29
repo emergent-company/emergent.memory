@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -95,16 +95,16 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	c.SetContext("", projectID)
 
 	if queryMode == "agent" {
-		return runAgentQuery(cmd.Context(), c, query, projectID)
+		return runAgentQuery(cmd.Context(), cmd.OutOrStdout(), c, query, projectID)
 	} else if queryMode == "search" {
-		return runSearchQuery(cmd.Context(), c, query, projectID)
+		return runSearchQuery(cmd.Context(), cmd.OutOrStdout(), c, query, projectID)
 	}
 	return fmt.Errorf("invalid mode %q (must be 'agent' or 'search')", queryMode)
 }
 
 // runAgentQuery posts to POST /api/projects/:projectId/query.
 // The server manages the graph-query-agent entirely — no agent ID needed client-side.
-func runAgentQuery(ctx context.Context, c *client.Client, query, projectID string) error {
+func runAgentQuery(ctx context.Context, out io.Writer, c *client.Client, query, projectID string) error {
 	reqBody := map[string]interface{}{
 		"message": query,
 	}
@@ -139,7 +139,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	}
 
 	if jsonMode {
-		out := map[string]interface{}{
+		jsonOut := map[string]interface{}{
 			"query":     query,
 			"projectId": projectID,
 			"response":  result.Response,
@@ -147,14 +147,14 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 			"elapsedMs": result.Elapsed.Milliseconds(),
 		}
 		if result.StreamErr != "" {
-			out["error"] = result.StreamErr
+			jsonOut["error"] = result.StreamErr
 		}
 		if result.SessionID != "" {
-			out["session_id"] = result.SessionID
+			jsonOut["session_id"] = result.SessionID
 		}
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(out)
+		return encoder.Encode(jsonOut)
 	}
 
 	fmt.Printf("\n\n")
@@ -174,7 +174,7 @@ func runAgentQuery(ctx context.Context, c *client.Client, query, projectID strin
 	return nil
 }
 
-func runSearchQuery(ctx context.Context, c *client.Client, query, projectID string) error {
+func runSearchQuery(ctx context.Context, out io.Writer, c *client.Client, query, projectID string) error {
 	start := time.Now()
 	searchReq := &search.SearchRequest{
 		Query:          query,
@@ -210,7 +210,7 @@ func runSearchQuery(ctx context.Context, c *client.Client, query, projectID stri
 			"results":   response.Results,
 			"elapsedMs": elapsed.Milliseconds(),
 		}
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(output)
 	}

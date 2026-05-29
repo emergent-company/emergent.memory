@@ -1279,7 +1279,11 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 		},
 	}
 
-	stdioJSON, _ := internalui.FormatJSON(stdioConfig, noColor)
+	stdioJSON, err := internalui.FormatJSON(stdioConfig, noColor)
+	if err != nil {
+		b, _ := json.MarshalIndent(stdioConfig, "", "  ")
+		stdioJSON = string(b)
+	}
 	fmt.Println(stdioJSON)
 
 	fmt.Println()
@@ -1298,7 +1302,11 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 		},
 	}
 
-	sseJSON, _ := internalui.FormatJSON(sseConfig, noColor)
+	sseJSON, err := internalui.FormatJSON(sseConfig, noColor)
+	if err != nil {
+		b, _ := json.MarshalIndent(sseConfig, "", "  ")
+		sseJSON = string(b)
+	}
 	fmt.Println(sseJSON)
 	fmt.Println()
 }

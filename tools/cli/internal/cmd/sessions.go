@@ -13,18 +13,7 @@ import (
 var sessionsProjectFlag string
 
 func getSessionsGraphClient(cmd *cobra.Command) (*sdkgraph.Client, error) {
-	c, err := getClient(cmd)
-	if err != nil {
-		return nil, err
-	}
-
-	projectID, err := resolveProjectContext(cmd, sessionsProjectFlag)
-	if err != nil {
-		return nil, err
-	}
-
-	c.SetContext("", projectID)
-	return c.SDK.Graph, nil
+	return getProjectScopedGraphClient(cmd, sessionsProjectFlag)
 }
 
 var sessionsCmd = &cobra.Command{
@@ -72,7 +61,8 @@ var sessionsCreateCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			out, _ := internalui.FormatJSON(session, noColor)
+			out, err := internalui.FormatJSON(session, noColor)
+			if err != nil { return err }
 			fmt.Println(out)
 			return nil
 		}
@@ -107,7 +97,8 @@ var sessionsListCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			out, _ := internalui.FormatJSON(resp, noColor)
+			out, err := internalui.FormatJSON(resp, noColor)
+			if err != nil { return err }
 			fmt.Println(out)
 			return nil
 		}
@@ -153,7 +144,8 @@ var sessionsGetCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			out, _ := internalui.FormatJSON(session, noColor)
+			out, err := internalui.FormatJSON(session, noColor)
+			if err != nil { return err }
 			fmt.Println(out)
 			return nil
 		}
@@ -212,7 +204,8 @@ as a snapshot at spawn time. The child then operates independently — no live s
 		}
 
 		if jsonFlag || output == "json" {
-			out, _ := internalui.FormatJSON(result, noColor)
+			out, err := internalui.FormatJSON(result, noColor)
+			if err != nil { return err }
 			fmt.Println(out)
 			return nil
 		}
@@ -275,7 +268,8 @@ var messagesAddCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			out, _ := internalui.FormatJSON(msg, noColor)
+			out, err := internalui.FormatJSON(msg, noColor)
+			if err != nil { return err }
 			fmt.Println(out)
 			return nil
 		}
@@ -312,7 +306,8 @@ var messagesListCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			out, _ := internalui.FormatJSON(resp, noColor)
+			out, err := internalui.FormatJSON(resp, noColor)
+			if err != nil { return err }
 			fmt.Println(out)
 			return nil
 		}

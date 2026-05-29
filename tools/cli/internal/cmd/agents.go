@@ -211,7 +211,7 @@ func runListAgents(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(result.Data) == 0 {
-		fmt.Println("No agents found.")
+		fmt.Fprintln(cmd.OutOrStdout(), "No agents found.")
 		return nil
 	}
 
@@ -220,34 +220,34 @@ func runListAgents(cmd *cobra.Command, args []string) error {
 
 	if compact {
 		for _, a := range data {
-			fmt.Printf("%-40s  %s\n", a.Name, a.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "%-40s  %s\n", a.Name, a.ID)
 		}
 		return nil
 	}
 
 	if h := paginationHeader(total, agentListLimit, agentListPage); h != "" {
-		fmt.Printf("%s:\n\n", h)
+		fmt.Fprintf(cmd.OutOrStdout(), "%s:\n\n", h)
 	} else {
-		fmt.Printf("Found %d agent(s):\n\n", total)
+		fmt.Fprintf(cmd.OutOrStdout(), "Found %d agent(s):\n\n", total)
 	}
 	for i, a := range data {
-		fmt.Printf("%d. %s\n", i+1, a.Name)
-		fmt.Printf("   ID:           %s\n", a.ID)
-		fmt.Printf("   Enabled:      %v\n", a.Enabled)
-		fmt.Printf("   Trigger Type: %s\n", a.TriggerType)
+		fmt.Fprintf(cmd.OutOrStdout(), "%d. %s\n", i+1, a.Name)
+		fmt.Fprintf(cmd.OutOrStdout(), "   ID:           %s\n", a.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "   Enabled:      %v\n", a.Enabled)
+		fmt.Fprintf(cmd.OutOrStdout(), "   Trigger Type: %s\n", a.TriggerType)
 		if a.CronSchedule != "" {
-			fmt.Printf("   Cron:         %s\n", a.CronSchedule)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Cron:         %s\n", a.CronSchedule)
 		}
 		if a.Description != nil && *a.Description != "" {
-			fmt.Printf("   Description:  %s\n", *a.Description)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Description:  %s\n", *a.Description)
 		}
 		if a.LastRunAt != nil {
-			fmt.Printf("   Last Run:     %s\n", a.LastRunAt.Format("2006-01-02 15:04:05"))
+			fmt.Fprintf(cmd.OutOrStdout(), "   Last Run:     %s\n", a.LastRunAt.Format("2006-01-02 15:04:05"))
 		}
 		if a.LastRunStatus != nil {
-			fmt.Printf("   Last Status:  %s\n", *a.LastRunStatus)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Last Status:  %s\n", *a.LastRunStatus)
 		}
-		fmt.Println()
+		fmt.Fprintln(cmd.OutOrStdout())
 	}
 
 	return nil
@@ -273,43 +273,43 @@ func runGetAgent(cmd *cobra.Command, args []string) error {
 	if getAgentJSONOutput {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(a)
 	}
-	fmt.Printf("Agent: %s\n", a.Name)
-	fmt.Printf("  ID:             %s\n", a.ID)
-	fmt.Printf("  Project ID:     %s\n", a.ProjectID)
-	fmt.Printf("  Strategy Type:  %s\n", a.StrategyType)
-	fmt.Printf("  Enabled:        %v\n", a.Enabled)
-	fmt.Printf("  Trigger Type:   %s\n", a.TriggerType)
-	fmt.Printf("  Execution Mode: %s\n", a.ExecutionMode)
+	fmt.Fprintf(cmd.OutOrStdout(), "Agent: %s\n", a.Name)
+	fmt.Fprintf(cmd.OutOrStdout(), "  ID:             %s\n", a.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Project ID:     %s\n", a.ProjectID)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Strategy Type:  %s\n", a.StrategyType)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Enabled:        %v\n", a.Enabled)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Trigger Type:   %s\n", a.TriggerType)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Execution Mode: %s\n", a.ExecutionMode)
 	if a.CronSchedule != "" {
-		fmt.Printf("  Cron Schedule:  %s\n", a.CronSchedule)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Cron Schedule:  %s\n", a.CronSchedule)
 	}
 	if a.Description != nil && *a.Description != "" {
-		fmt.Printf("  Description:    %s\n", *a.Description)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Description:    %s\n", *a.Description)
 	}
 	if a.Prompt != nil && *a.Prompt != "" {
-		fmt.Printf("  Prompt:         %s\n", *a.Prompt)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Prompt:         %s\n", *a.Prompt)
 	}
 	if a.ReactionConfig != nil {
-		fmt.Printf("  Reaction Config:\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "  Reaction Config:\n")
 		if len(a.ReactionConfig.ObjectTypes) > 0 {
-			fmt.Printf("    Object Types: %s\n", strings.Join(a.ReactionConfig.ObjectTypes, ", "))
+			fmt.Fprintf(cmd.OutOrStdout(), "    Object Types: %s\n", strings.Join(a.ReactionConfig.ObjectTypes, ", "))
 		}
 		if len(a.ReactionConfig.Events) > 0 {
-			fmt.Printf("    Events:       %s\n", strings.Join(a.ReactionConfig.Events, ", "))
+			fmt.Fprintf(cmd.OutOrStdout(), "    Events:       %s\n", strings.Join(a.ReactionConfig.Events, ", "))
 		}
 	}
 	if a.LastRunAt != nil {
-		fmt.Printf("  Last Run At:    %s\n", fmtTime(*a.LastRunAt))
+		fmt.Fprintf(cmd.OutOrStdout(), "  Last Run At:    %s\n", fmtTime(*a.LastRunAt))
 	}
 	if a.LastRunStatus != nil {
-		fmt.Printf("  Last Run Status: %s\n", *a.LastRunStatus)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Last Run Status: %s\n", *a.LastRunStatus)
 	}
-	fmt.Printf("  Created At:     %s\n", fmtTime(a.CreatedAt))
-	fmt.Printf("  Updated At:     %s\n", fmtTime(a.UpdatedAt))
+	fmt.Fprintf(cmd.OutOrStdout(), "  Created At:     %s\n", fmtTime(a.CreatedAt))
+	fmt.Fprintf(cmd.OutOrStdout(), "  Updated At:     %s\n", fmtTime(a.UpdatedAt))
 
 	if len(a.Config) > 0 {
 		configJSON, _ := json.MarshalIndent(a.Config, "  ", "  ")
-		fmt.Printf("  Config:         %s\n", string(configJSON))
+		fmt.Fprintf(cmd.OutOrStdout(), "  Config:         %s\n", string(configJSON))
 	}
 
 	return nil
@@ -373,9 +373,9 @@ func runCreateAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	a := result.Data
-	fmt.Println("Agent created successfully!")
-	fmt.Printf("  ID:   %s\n", a.ID)
-	fmt.Printf("  Name: %s\n", a.Name)
+	fmt.Fprintln(cmd.OutOrStdout(), "Agent created successfully!")
+	fmt.Fprintf(cmd.OutOrStdout(), "  ID:   %s\n", a.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Name: %s\n", a.Name)
 
 	return nil
 }
@@ -434,10 +434,10 @@ func runUpdateAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	a := result.Data
-	fmt.Println("Agent updated successfully!")
-	fmt.Printf("  ID:      %s\n", a.ID)
-	fmt.Printf("  Name:    %s\n", a.Name)
-	fmt.Printf("  Enabled: %v\n", a.Enabled)
+	fmt.Fprintln(cmd.OutOrStdout(), "Agent updated successfully!")
+	fmt.Fprintf(cmd.OutOrStdout(), "  ID:      %s\n", a.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Name:    %s\n", a.Name)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Enabled: %v\n", a.Enabled)
 
 	return nil
 }
@@ -458,7 +458,7 @@ func runDeleteAgent(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete agent: %w", err)
 	}
 
-	fmt.Printf("Agent %s deleted successfully.\n", agentID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Agent %s deleted successfully.\n", agentID)
 	return nil
 }
 
@@ -501,14 +501,14 @@ func runTriggerAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	if result.Success {
-		fmt.Println("Agent triggered successfully!")
+		fmt.Fprintln(cmd.OutOrStdout(), "Agent triggered successfully!")
 		if result.Message != nil {
-			fmt.Printf("  %s\n", *result.Message)
+			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", *result.Message)
 		}
 	} else {
-		fmt.Println("Agent trigger failed.")
+		fmt.Fprintln(cmd.OutOrStdout(), "Agent trigger failed.")
 		if result.Error != nil {
-			fmt.Printf("  Error: %s\n", *result.Error)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Error: %s\n", *result.Error)
 		}
 	}
 
@@ -549,7 +549,7 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(result.Data) == 0 {
-		fmt.Printf("No runs found for agent %s.\n", agentLabel)
+		fmt.Fprintf(cmd.OutOrStdout(), "No runs found for agent %s.\n", agentLabel)
 		return nil
 	}
 
@@ -623,34 +623,34 @@ func runGetAgentRuns(cmd *cobra.Command, args []string) error {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
 
-	fmt.Printf("Runs for agent: %s\n\n", agentLabel)
+	fmt.Fprintf(cmd.OutOrStdout(), "Runs for agent: %s\n\n", agentLabel)
 	for i, r := range result.Data {
-		fmt.Printf("%d. Run %s\n", i+1, r.ID)
-		fmt.Printf("   Status:    %s\n", r.Status)
-		fmt.Printf("   Started:   %s\n", fmtTime(r.StartedAt))
+		fmt.Fprintf(cmd.OutOrStdout(), "%d. Run %s\n", i+1, r.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "   Status:    %s\n", r.Status)
+		fmt.Fprintf(cmd.OutOrStdout(), "   Started:   %s\n", fmtTime(r.StartedAt))
 		if r.CompletedAt != nil {
-			fmt.Printf("   Completed: %s\n", fmtTimePTime(r.CompletedAt))
+			fmt.Fprintf(cmd.OutOrStdout(), "   Completed: %s\n", fmtTimePTime(r.CompletedAt))
 		}
 		if r.DurationMs != nil {
-			fmt.Printf("   Duration:  %dms\n", *r.DurationMs)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Duration:  %dms\n", *r.DurationMs)
 		}
 		if u := usageByIdx[i]; u != nil {
-			fmt.Printf("   Tokens:    %d in / %d out\n", u.TotalInputTokens, u.TotalOutputTokens)
-			fmt.Printf("   Cost:      $%.6f\n", u.EstimatedCostUSD)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Tokens:    %d in / %d out\n", u.TotalInputTokens, u.TotalOutputTokens)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Cost:      $%.6f\n", u.EstimatedCostUSD)
 		}
 		if r.TraceID != nil && *r.TraceID != "" {
-			fmt.Printf("   Trace:     %s\n", *r.TraceID)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Trace:     %s\n", *r.TraceID)
 		}
 		if r.RootRunID != nil && *r.RootRunID != "" && *r.RootRunID != r.ID {
-			fmt.Printf("   Root Run:  %s\n", *r.RootRunID)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Root Run:  %s\n", *r.RootRunID)
 		}
 		if r.ErrorMessage != nil {
-			fmt.Printf("   Error:     %s\n", *r.ErrorMessage)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Error:     %s\n", *r.ErrorMessage)
 		}
 		if r.SkipReason != nil {
-			fmt.Printf("   Skipped:   %s\n", *r.SkipReason)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Skipped:   %s\n", *r.SkipReason)
 		}
-		fmt.Println()
+		fmt.Fprintln(cmd.OutOrStdout())
 	}
 
 	return nil
@@ -738,31 +738,31 @@ func runGetRunByID(cmd *cobra.Command, args []string) error {
 		return enc.Encode(out)
 	}
 
-	fmt.Printf("Run: %s\n", r.ID)
-	fmt.Printf("  Agent:     %s\n", agentDisplayName)
-	fmt.Printf("  Status:    %s\n", r.Status)
-	fmt.Printf("  Started:   %s\n", fmtTime(r.StartedAt))
+	fmt.Fprintf(cmd.OutOrStdout(), "Run: %s\n", r.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Agent:     %s\n", agentDisplayName)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Status:    %s\n", r.Status)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Started:   %s\n", fmtTime(r.StartedAt))
 	if r.CompletedAt != nil {
-		fmt.Printf("  Completed: %s\n", fmtTimePTime(r.CompletedAt))
+		fmt.Fprintf(cmd.OutOrStdout(), "  Completed: %s\n", fmtTimePTime(r.CompletedAt))
 	}
 	if r.DurationMs != nil {
-		fmt.Printf("  Duration:  %dms\n", *r.DurationMs)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Duration:  %dms\n", *r.DurationMs)
 	}
 	if usage != nil {
-		fmt.Printf("  Tokens:    %d in / %d out\n", usage.TotalInputTokens, usage.TotalOutputTokens)
-		fmt.Printf("  Cost:      $%.6f\n", usage.EstimatedCostUSD)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Tokens:    %d in / %d out\n", usage.TotalInputTokens, usage.TotalOutputTokens)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Cost:      $%.6f\n", usage.EstimatedCostUSD)
 	}
 	if r.TraceID != nil && *r.TraceID != "" {
-		fmt.Printf("  Trace:     %s\n", *r.TraceID)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Trace:     %s\n", *r.TraceID)
 	}
 	if r.RootRunID != nil && *r.RootRunID != "" && *r.RootRunID != r.ID {
-		fmt.Printf("  Root Run:  %s\n", *r.RootRunID)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Root Run:  %s\n", *r.RootRunID)
 	}
 	if r.ErrorMessage != nil {
-		fmt.Printf("  Error:     %s\n", *r.ErrorMessage)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Error:     %s\n", *r.ErrorMessage)
 	}
 	if r.SkipReason != nil {
-		fmt.Printf("  Skipped:   %s\n", *r.SkipReason)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Skipped:   %s\n", *r.SkipReason)
 	}
 
 	return nil
@@ -875,20 +875,20 @@ func runListHooks(cmd *cobra.Command, args []string) error {
 
 	hooks := result.Data
 	if len(hooks) == 0 {
-		fmt.Println("No webhook hooks found for this agent.")
+		fmt.Fprintln(cmd.OutOrStdout(), "No webhook hooks found for this agent.")
 		return nil
 	}
 
-	fmt.Printf("Found %d webhook hook(s):\n\n", len(hooks))
+	fmt.Fprintf(cmd.OutOrStdout(), "Found %d webhook hook(s):\n\n", len(hooks))
 	for i, h := range hooks {
-		fmt.Printf("%d. %s\n", i+1, h.Label)
-		fmt.Printf("   ID:        %s\n", h.ID)
-		fmt.Printf("   Enabled:   %v\n", h.Enabled)
+		fmt.Fprintf(cmd.OutOrStdout(), "%d. %s\n", i+1, h.Label)
+		fmt.Fprintf(cmd.OutOrStdout(), "   ID:        %s\n", h.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "   Enabled:   %v\n", h.Enabled)
 		if h.RateLimitConfig != nil {
-			fmt.Printf("   Rate Limit: %d req/min (burst: %d)\n", h.RateLimitConfig.RequestsPerMinute, h.RateLimitConfig.BurstSize)
+			fmt.Fprintf(cmd.OutOrStdout(), "   Rate Limit: %d req/min (burst: %d)\n", h.RateLimitConfig.RequestsPerMinute, h.RateLimitConfig.BurstSize)
 		}
-		fmt.Printf("   Created:   %s\n", fmtTime(h.CreatedAt))
-		fmt.Println()
+		fmt.Fprintf(cmd.OutOrStdout(), "   Created:   %s\n", fmtTime(h.CreatedAt))
+		fmt.Fprintln(cmd.OutOrStdout())
 	}
 
 	return nil
@@ -926,12 +926,12 @@ func runCreateHook(cmd *cobra.Command, args []string) error {
 	}
 
 	h := result.Data
-	fmt.Println("Webhook hook created successfully!")
-	fmt.Printf("  ID:    %s\n", h.ID)
-	fmt.Printf("  Label: %s\n", h.Label)
+	fmt.Fprintln(cmd.OutOrStdout(), "Webhook hook created successfully!")
+	fmt.Fprintf(cmd.OutOrStdout(), "  ID:    %s\n", h.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Label: %s\n", h.Label)
 	if h.Token != nil {
-		fmt.Printf("\n  Token: %s\n", *h.Token)
-		fmt.Println("\n  WARNING: Save this token now. It will not be shown again.")
+		fmt.Fprintf(cmd.OutOrStdout(), "\n  Token: %s\n", *h.Token)
+		fmt.Fprintln(cmd.OutOrStdout(), "\n  WARNING: Save this token now. It will not be shown again.")
 	}
 
 	return nil
@@ -951,7 +951,7 @@ func runDeleteHook(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete webhook hook: %w", err)
 	}
 
-	fmt.Printf("Webhook hook %s deleted successfully.\n", hookID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Webhook hook %s deleted successfully.\n", hookID)
 	return nil
 }
 
@@ -976,7 +976,7 @@ func runListQuestions(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal response: %w", err)
 	}
-	fmt.Println(s)
+	fmt.Fprintln(cmd.OutOrStdout(), s)
 	return nil
 }
 
@@ -1000,7 +1000,7 @@ func runListProjectQuestions(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal response: %w", err)
 	}
-	fmt.Println(s)
+	fmt.Fprintln(cmd.OutOrStdout(), s)
 	return nil
 }
 
@@ -1031,7 +1031,7 @@ func runRespondToQuestion(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal response: %w", err)
 	}
-	fmt.Println(s)
+	fmt.Fprintln(cmd.OutOrStdout(), s)
 	return nil
 }
 

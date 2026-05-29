@@ -93,7 +93,7 @@ Use --json to output the raw JSON response.`,
 		}
 
 		if output == "json" {
-			return acpPrintJSON(agents)
+			return acpPrintJSON(cmd.OutOrStdout(), agents)
 		}
 
 		if len(agents) == 0 {
@@ -143,7 +143,7 @@ and status metrics. Use --json for the raw JSON response.`,
 		}
 
 		if output == "json" {
-			return acpPrintJSON(agent)
+			return acpPrintJSON(cmd.OutOrStdout(), agent)
 		}
 
 		// Formatted output
@@ -256,7 +256,7 @@ Use --session to link the run to an existing ACP session.`,
 		}
 
 		if output == "json" {
-			return acpPrintJSON(run)
+			return acpPrintJSON(cmd.OutOrStdout(), run)
 		}
 
 		// Async mode: print ID and exit
@@ -441,7 +441,7 @@ Displays run status, output messages, and timing. If the run is paused
 		}
 
 		if output == "json" {
-			return acpPrintJSON(run)
+			return acpPrintJSON(cmd.OutOrStdout(), run)
 		}
 
 		fmt.Printf("Run ID:     %s\n", run.ID)
@@ -558,7 +558,7 @@ Use --mode to control execution mode (sync, async, stream).`,
 		}
 
 		if output == "json" {
-			return acpPrintJSON(run)
+			return acpPrintJSON(cmd.OutOrStdout(), run)
 		}
 
 		printRunOutput(run)
@@ -601,7 +601,7 @@ session to a specific agent.`,
 		}
 
 		if output == "json" {
-			return acpPrintJSON(session)
+			return acpPrintJSON(cmd.OutOrStdout(), session)
 		}
 
 		fmt.Printf("Session ID: %s\n", session.ID)
@@ -637,7 +637,7 @@ Use --json for raw JSON output.`,
 		}
 
 		if output == "json" {
-			return acpPrintJSON(session)
+			return acpPrintJSON(cmd.OutOrStdout(), session)
 		}
 
 		fmt.Printf("Session ID: %s\n", session.ID)
@@ -668,9 +668,9 @@ Use --json for raw JSON output.`,
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// acpPrintJSON encodes v as indented JSON to stdout.
-func acpPrintJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
+// acpPrintJSON encodes v as indented JSON to w.
+func acpPrintJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

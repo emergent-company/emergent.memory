@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -105,7 +104,7 @@ messages, agent responses, and tool calls) in the session history.`,
 			}
 
 			// Dump as JSON for inspection
-			enc := json.NewEncoder(os.Stdout)
+			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(session); err != nil {
 				return fmt.Errorf("failed to encode session json: %w", err)

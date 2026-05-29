@@ -169,7 +169,7 @@ overriding environment variables.`,
 						if strings.HasPrefix(line, "GOOGLE_API_KEY=") {
 							val := strings.TrimPrefix(line, "GOOGLE_API_KEY=")
 							if val != "" {
-								masked := val[:minInt(8, len(val))] + "..." + val[maxInt(0, len(val)-4):]
+								masked := val[:min(8, len(val))] + "..." + val[max(0, len(val)-4):]
 								table.AddRow([]string{"GOOGLE_API_KEY", masked + " (.env.local)"})
 							}
 						}
@@ -180,7 +180,7 @@ overriding environment variables.`,
 						if strings.HasPrefix(line, "OPENAI_API_KEY=") {
 							val := strings.TrimPrefix(line, "OPENAI_API_KEY=")
 							if val != "" {
-								masked := val[:minInt(8, len(val))] + "..." + val[maxInt(0, len(val)-4):]
+								masked := val[:min(8, len(val))] + "..." + val[max(0, len(val)-4):]
 								table.AddRow([]string{"OPENAI_API_KEY", masked + " (.env.local)"})
 							}
 						}
@@ -201,19 +201,7 @@ overriding environment variables.`,
 	return cmd
 }
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
 
 // Settable keys and their mapping for standalone .env.local
 var standaloneEnvKeys = map[string]string{

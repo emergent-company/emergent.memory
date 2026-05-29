@@ -146,7 +146,10 @@ func runMCPRelayTools(cmd *cobra.Command, args []string) error {
 		fmt.Println(string(body))
 		return nil
 	}
-	pretty, _ := internalui.FormatJSON(out, noColor)
+	pretty, err := internalui.FormatJSON(out, noColor)
+	if err != nil {
+		return fmt.Errorf("failed to format JSON: %w", err)
+	}
 	fmt.Println(pretty)
 	return nil
 }
@@ -228,7 +231,10 @@ func runMCPRelayCall(cmd *cobra.Command, args []string) error {
 		fmt.Println(string(body))
 		return nil
 	}
-	pretty, _ := internalui.FormatJSON(out, noColor)
+	pretty, err := internalui.FormatJSON(out, noColor)
+	if err != nil {
+		return fmt.Errorf("failed to format JSON: %w", err)
+	}
 	fmt.Println(pretty)
 	return nil
 }

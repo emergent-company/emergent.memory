@@ -77,7 +77,7 @@ func runListOrgs(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(orgList)
 	}
@@ -131,7 +131,7 @@ func runGetOrg(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(org)
 	}
@@ -159,7 +159,7 @@ func runCreateOrg(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(org)
 	}

@@ -439,7 +439,7 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 		}
 
 		if usageJSONFlag || output == "json" {
-			enc := json.NewEncoder(os.Stdout)
+			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
 			return enc.Encode(result)
 		}
@@ -497,7 +497,7 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 	}
 
 	if usageJSONFlag || output == "json" {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(summary)
 	}
@@ -608,7 +608,7 @@ func runProviderUsageTimeseries(cmd *cobra.Command, args []string) error {
 	}
 
 	if timeseriesJSONFlag || output == "json" {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(result)
 	}
@@ -841,7 +841,7 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 			Org:      orgConfigs,
 			Projects: projectConfigs,
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
 	}

@@ -403,7 +403,7 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(projectList)
 	}
@@ -524,7 +524,7 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 	}
 
 	if output == "json" {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(project)
 	}

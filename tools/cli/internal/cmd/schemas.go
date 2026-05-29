@@ -1250,9 +1250,8 @@ Returns a list of entity IDs, their types, keys, and the specific issues
 		}
 		fmt.Fprint(out, table.Render())
 
-		// Exit with code 1 as stale objects were found
-		os.Exit(1)
-		return nil
+		// Return error to exit with code 1 as stale objects were found
+		return fmt.Errorf("stale objects found")
 	},
 }
 

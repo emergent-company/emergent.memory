@@ -76,7 +76,7 @@ in-place. Does not touch a self-hosted server installation — use
 Examples:
   memory upgrade            # Upgrade the CLI binary
   memory upgrade --force    # Upgrade even when running a dev build`,
-	Run: runUpgrade,
+	RunE: runUpgrade,
 }
 
 // serverUpgradeCmd is the "memory server upgrade" sub-command.
@@ -180,7 +180,7 @@ func runUpgradeServer(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runUpgrade(cmd *cobra.Command, args []string) {
+func runUpgrade(cmd *cobra.Command, args []string) error {
 	fmt.Println("Checking for updates...")
 
 	// Check if installed via package manager
@@ -197,7 +197,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		fmt.Println()
 		fmt.Println("The 'memory upgrade' command is for standalone installations only.")
 		fmt.Println()
-		return
+		return nil
 	}
 
 	// Check if CLI is in PATH
@@ -215,8 +215,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 
 	release, err := getLatestRelease()
 	if err != nil {
-		fmt.Printf("Error checking for updates: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error checking for updates: %w", err)
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "cli-")
@@ -229,7 +228,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		fmt.Println("You are running a development version. Upgrade skipped.")
 		fmt.Printf("Latest release: %s\n", displayLatest)
 		fmt.Println("Use --force to upgrade anyway.")
-		return
+		return nil
 	}
 
 	cliNeedsUpgrade := latestVersion != currentVersion || upgradeFlags.force
@@ -237,7 +236,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	if !cliNeedsUpgrade {
 		displayCurrent := strings.TrimPrefix(Version, "v")
 		fmt.Printf("CLI is already up to date: %s\n", displayCurrent)
-		return
+		return nil
 	}
 
 	fmt.Println()
@@ -262,21 +261,19 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 		_, _ = fmt.Scanln(&confirm)
 		if strings.ToLower(confirm) != "y" {
 			fmt.Println("Upgrade canceled.")
-			return
+			return nil
 		}
 	}
 
 	assetURL, assetName, err := findAsset(release.Assets)
 	if err != nil {
-		fmt.Printf("Error finding compatible asset: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error finding compatible asset: %w", err)
 	}
 
 	fmt.Printf("Downloading %s...\n", assetName)
 	_, err = installUpdate(assetURL, assetName)
 	if err != nil {
-		fmt.Printf("CLI upgrade failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("CLI upgrade failed: %w", err)
 	}
 
 	fmt.Println()
@@ -289,6 +286,7 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 
 	fmt.Println()
 	fmt.Println("To upgrade the server: memory server upgrade")
+	return nil
 }
 
 func getLatestRelease() (*Release, error) {

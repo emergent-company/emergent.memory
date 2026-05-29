@@ -128,7 +128,6 @@ var (
 	graphFilterFlag   []string
 	graphFilterOpFlag string
 	graphIDsFlag      string
-	graphJSONFlag     bool
 	graphForceFlag    bool
 
 	// bulk action flags
@@ -193,12 +192,18 @@ func parsePropertyFilters(filters []string, op string) ([]sdkgraph.PropertyFilte
 }
 
 func getGraphClient(cmd *cobra.Command) (*sdkgraph.Client, error) {
+	return getProjectScopedGraphClient(cmd, graphProjectFlag)
+}
+
+// getProjectScopedGraphClient is the generic helper used by getGraphClient
+// and any other domain that needs a project-scoped Graph client.
+func getProjectScopedGraphClient(cmd *cobra.Command, projectFlag string) (*sdkgraph.Client, error) {
 	c, err := getClient(cmd)
 	if err != nil {
 		return nil, err
 	}
 
-	projectID, err := resolveProjectContext(cmd, graphProjectFlag)
+	projectID, err := resolveProjectContext(cmd, projectFlag)
 	if err != nil {
 		return nil, err
 	}
@@ -898,24 +903,11 @@ Examples:
 		}
 
 		// Property filters from --filter key=value pairs
-		if len(graphFilterFlag) > 0 {
-			op := graphFilterOpFlag
-			if op == "" {
-				op = "eq"
-			}
-			for _, f := range graphFilterFlag {
-				parts := strings.SplitN(f, "=", 2)
-				pf := sdkgraph.PropertyFilter{Op: op}
-				if len(parts) == 2 {
-					pf.Path = parts[0]
-					pf.Value = parts[1]
-				} else {
-					pf.Path = f
-					pf.Op = "exists"
-				}
-				req.Filter.PropertyFilters = append(req.Filter.PropertyFilters, pf)
-			}
+		pfs, err := parsePropertyFilters(graphFilterFlag, graphFilterOpFlag)
+		if err != nil {
+			return err
 		}
+		req.Filter.PropertyFilters = pfs
 
 		// Label filters
 		if len(graphBulkLabelsFlag) > 0 {
@@ -981,22 +973,11 @@ Examples:
 		}
 
 		if len(graphFilterFlag) > 0 {
-			op := graphFilterOpFlag
-			if op == "" {
-				op = "eq"
+			pfs, err := parsePropertyFilters(graphFilterFlag, graphFilterOpFlag)
+			if err != nil {
+				return err
 			}
-			for _, f := range graphFilterFlag {
-				parts := strings.SplitN(f, "=", 2)
-				pf := sdkgraph.PropertyFilter{Op: op}
-				if len(parts) == 2 {
-					pf.Path = parts[0]
-					pf.Value = parts[1]
-				} else {
-					pf.Path = f
-					pf.Op = "exists"
-				}
-				req.Filter.PropertyFilters = append(req.Filter.PropertyFilters, pf)
-			}
+			req.Filter.PropertyFilters = pfs
 		}
 
 		resp, err := g.BulkAction(context.Background(), req)
@@ -1058,7 +1039,7 @@ Examples:
 		}
 		out := cmd.OutOrStdout()
 
-		if graphJSONFlag {
+		if jsonFlag {
 			graphOutputFlag = "json"
 		}
 
@@ -1883,7 +1864,6 @@ func init() {
 	graphObjectsListCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Filter by object key (direct key-based lookup)")
 
 	graphObjectsGetCmd.Flags().StringVar(&graphOutputFlag, "output", "table", "Output format: table or json")
-	graphObjectsGetCmd.Flags().BoolVar(&graphJSONFlag, "json", false, "Output as JSON (shorthand for --output json)")
 	graphObjectsGetCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch ID or name to resolve the key against (omit for main branch)")
 
 	graphObjectsCreateCmd.Flags().StringVar(&graphTypeFlag, "type", "", "Object type (required)")
@@ -1970,8 +1950,6 @@ func init() {
 	graphObjectsCmd.AddCommand(graphObjectsMoveCmd)
 	graphObjectsCmd.AddCommand(graphObjectsBulkUpdateCmd)
 	graphObjectsCmd.AddCommand(graphObjectsBulkDeleteCmd)
-	graphObjectsCmd.AddCommand(graphObjectsBulkUpdateCmd)
-	graphObjectsCmd.AddCommand(graphObjectsBulkDeleteCmd)
 
 	// Assemble relationships subcommands
 	graphRelationshipsCmd.AddCommand(graphRelationshipsListCmd)
@@ -1988,6 +1966,4 @@ func init() {
 
 	rootCmd.AddCommand(graphCmd)
 
-	// Suppress unused import warning for os
-	_ = os.Stderr
 }
