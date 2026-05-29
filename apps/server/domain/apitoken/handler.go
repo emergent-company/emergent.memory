@@ -360,6 +360,75 @@ func (h *Handler) UpdateScopes(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+// RegenerateToken atomically revokes a project API token and issues a new one with the same name and scopes.
+// @Summary      Regenerate API token
+// @Description  Atomically revokes an existing project API token and creates a replacement with the same name and scopes. Returns the new plaintext token value once.
+// @Tags         api-tokens
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} CreateApiTokenResponseDTO "New token (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid project ID or token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      409 {object} apperror.Error "Token already revoked"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/tokens/{tokenId}/regenerate [post]
+// @Security     bearerAuth
+func (h *Handler) RegenerateToken(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID := c.Param("projectId")
+	tokenID := c.Param("tokenId")
+
+	if projectID == "" || tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId and tokenId are required")
+	}
+
+	result, err := h.svc.Regenerate(c.Request().Context(), tokenID, projectID, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// RegenerateAccountToken atomically revokes an account-level API token and issues a new one.
+// @Summary      Regenerate account API token
+// @Description  Atomically revokes an existing account-level API token and creates a replacement with the same name and scopes. Returns the new plaintext token value once.
+// @Tags         api-tokens
+// @Produce      json
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} CreateApiTokenResponseDTO "New token (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      409 {object} apperror.Error "Token already revoked"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens/{tokenId}/regenerate [post]
+// @Security     bearerAuth
+func (h *Handler) RegenerateAccountToken(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	tokenID := c.Param("tokenId")
+	if tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("tokenId is required")
+	}
+
+	result, err := h.svc.RegenerateAccountToken(c.Request().Context(), tokenID, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
 // UpdateAccountTokenScopes updates the scopes of an existing account-level API token
 // @Summary      Update account API token scopes
 // @Description  Updates the scopes of a non-revoked account-level API token owned by the authenticated user

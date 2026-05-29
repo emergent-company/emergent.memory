@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/encryption"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
@@ -23,14 +25,16 @@ const (
 
 // Service handles business logic for API tokens
 type Service struct {
+	db   bun.IDB
 	repo *Repository
 	enc  *encryption.Service
 	log  *slog.Logger
 }
 
 // NewService creates a new API token service
-func NewService(repo *Repository, enc *encryption.Service, log *slog.Logger) *Service {
+func NewService(db bun.IDB, repo *Repository, enc *encryption.Service, log *slog.Logger) *Service {
 	return &Service{
+		db:   db,
 		repo: repo,
 		enc:  enc,
 		log:  log.With(logger.Scope("apitoken.svc")),
@@ -530,6 +534,187 @@ func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID 
 		slog.String("tokenID", tokenID),
 		slog.String("userID", userID))
 	return &dto, nil
+}
+
+// Regenerate atomically revokes a project token and creates a new one with the same name and scopes.
+// Returns the new token (with plaintext value). If the insert fails, the revoke is rolled back.
+func (s *Service) Regenerate(ctx context.Context, tokenID, projectID, userID string) (*CreateApiTokenResponseDTO, error) {
+	// Fetch existing token to get name + scopes
+	existing, err := s.repo.GetByID(ctx, tokenID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, apperror.ErrNotFound.WithMessage("Token not found")
+	}
+	if existing.RevokedAt != nil {
+		return nil, apperror.New(409, "token_already_revoked", "Token is already revoked")
+	}
+
+	// Viewer scope restriction
+	if userID != "" && projectID != "" {
+		role, err := s.repo.GetUserProjectRole(ctx, projectID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if role == "project_viewer" {
+			for _, scope := range existing.Scopes {
+				if !viewerReadOnlyScopes[scope] {
+					return nil, apperror.New(403, "viewer-write-scope-denied",
+						"project_viewer may only regenerate tokens with read-only scopes")
+				}
+			}
+		}
+	}
+
+	// Generate new token material before the transaction
+	rawToken, err := generateToken()
+	if err != nil {
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+
+	var tokenEncrypted *string
+	if s.enc != nil && s.enc.IsConfigured() {
+		encrypted, encErr := s.enc.EncryptJSON(ctx, rawToken)
+		if encErr != nil {
+			s.log.Warn("failed to encrypt regenerated token for storage",
+				slog.String("error", encErr.Error()))
+		} else {
+			tokenEncrypted = &encrypted
+		}
+	}
+
+	newToken := &ApiToken{
+		ProjectID:      &projectID,
+		UserID:         existing.UserID,
+		Name:           existing.Name,
+		TokenHash:      hashToken(rawToken),
+		TokenPrefix:    getTokenPrefix(rawToken),
+		TokenEncrypted: tokenEncrypted,
+		Scopes:         existing.Scopes,
+	}
+
+	// Atomic: revoke old, insert new
+	if err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := tx.NewUpdate().
+			Model((*ApiToken)(nil)).
+			Set("revoked_at = NOW()").
+			Where("id = ?", tokenID).
+			Where("project_id = ?", projectID).
+			Where("revoked_at IS NULL").
+			Exec(ctx)
+		if err != nil {
+			return apperror.ErrDatabase.WithInternal(err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return apperror.ErrDatabase.WithInternal(err)
+		}
+		if rows == 0 {
+			return apperror.ErrNotFound.WithMessage("Token not found or already revoked")
+		}
+
+		if _, err := tx.NewInsert().Model(newToken).Exec(ctx); err != nil {
+			return apperror.ErrDatabase.WithInternal(err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	s.log.Info("regenerated project API token",
+		slog.String("name", existing.Name),
+		slog.String("oldID", tokenID),
+		slog.String("newID", newToken.ID),
+		slog.String("projectID", projectID))
+
+	return &CreateApiTokenResponseDTO{
+		ApiTokenDTO: newToken.ToDTO(),
+		Token:       rawToken,
+	}, nil
+}
+
+// RegenerateAccountToken atomically revokes an account-level token and creates a new one
+// with the same name and scopes. Returns the new token (with plaintext value).
+func (s *Service) RegenerateAccountToken(ctx context.Context, tokenID, userID string) (*CreateApiTokenResponseDTO, error) {
+	// Fetch existing token
+	existing, err := s.repo.GetByIDAndUser(ctx, tokenID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, apperror.ErrNotFound.WithMessage("Token not found")
+	}
+	if existing.RevokedAt != nil {
+		return nil, apperror.New(409, "token_already_revoked", "Token is already revoked")
+	}
+
+	// Generate new token material
+	rawToken, err := generateToken()
+	if err != nil {
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+
+	var tokenEncrypted *string
+	if s.enc != nil && s.enc.IsConfigured() {
+		encrypted, encErr := s.enc.EncryptJSON(ctx, rawToken)
+		if encErr != nil {
+			s.log.Warn("failed to encrypt regenerated account token for storage",
+				slog.String("error", encErr.Error()))
+		} else {
+			tokenEncrypted = &encrypted
+		}
+	}
+
+	newToken := &ApiToken{
+		ProjectID:      nil,
+		UserID:         &userID,
+		Name:           existing.Name,
+		TokenHash:      hashToken(rawToken),
+		TokenPrefix:    getTokenPrefix(rawToken),
+		TokenEncrypted: tokenEncrypted,
+		Scopes:         existing.Scopes,
+	}
+
+	// Atomic: revoke old, insert new
+	if err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := tx.NewUpdate().
+			Model((*ApiToken)(nil)).
+			Set("revoked_at = NOW()").
+			Where("id = ?", tokenID).
+			Where("user_id = ?", userID).
+			Where("project_id IS NULL").
+			Where("revoked_at IS NULL").
+			Exec(ctx)
+		if err != nil {
+			return apperror.ErrDatabase.WithInternal(err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return apperror.ErrDatabase.WithInternal(err)
+		}
+		if rows == 0 {
+			return apperror.ErrNotFound.WithMessage("Token not found or already revoked")
+		}
+
+		if _, err := tx.NewInsert().Model(newToken).Exec(ctx); err != nil {
+			return apperror.ErrDatabase.WithInternal(err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	s.log.Info("regenerated account API token",
+		slog.String("name", existing.Name),
+		slog.String("oldID", tokenID),
+		slog.String("newID", newToken.ID),
+		slog.String("userID", userID))
+
+	return &CreateApiTokenResponseDTO{
+		ApiTokenDTO: newToken.ToDTO(),
+		Token:       rawToken,
+	}, nil
 }
 
 // RevokeAccountToken revokes an account-level token owned by the user

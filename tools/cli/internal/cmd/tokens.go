@@ -64,6 +64,18 @@ var revokeTokenCmd = &cobra.Command{
 	RunE:  runRevokeToken,
 }
 
+var regenerateTokenCmd = &cobra.Command{
+	Use:   "regenerate [token-id]",
+	Short: "Regenerate an API token",
+	Long: `Atomically revoke an existing API token and issue a new one with the same name and scopes.
+
+Without --project, regenerates an account-level token. With --project, regenerates a project-scoped token.
+
+The new plaintext token value is printed once — save it immediately.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runRegenerateToken,
+}
+
 var cleanupTokensCmd = &cobra.Command{
 	Use:   "cleanup",
 	Short: "Bulk-revoke account tokens by name prefix",
@@ -418,6 +430,68 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runRegenerateToken(cmd *cobra.Command, args []string) error {
+	tokenID := args[0]
+
+	if tokenProjectID == "" {
+		// Account-level token
+		c, err := getAccountClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		result, err := c.SDK.APITokens.RegenerateAccountToken(context.Background(), tokenID)
+		if err != nil {
+			return fmt.Errorf("failed to regenerate account token: %w", err)
+		}
+
+		fmt.Println("Account token regenerated successfully!")
+		fmt.Println()
+		fmt.Printf("  Token:   %s\n", result.Token)
+		fmt.Println()
+		fmt.Println("------------------------------------------------------------")
+		fmt.Printf("  ID:      %s\n", result.ID)
+		fmt.Printf("  Name:    %s\n", result.Name)
+		fmt.Printf("  Type:    account\n")
+		fmt.Printf("  Prefix:  %s\n", result.Prefix)
+		fmt.Printf("  Scopes:  %s\n", strings.Join(result.Scopes, ", "))
+		fmt.Printf("  Created: %s\n", result.CreatedAt)
+		fmt.Println()
+		return nil
+	}
+
+	// Project-scoped token
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveProjectContext(cmd, tokenProjectID)
+	if err != nil {
+		return err
+	}
+
+	result, err := c.SDK.APITokens.Regenerate(context.Background(), projectID, tokenID)
+	if err != nil {
+		return fmt.Errorf("failed to regenerate token: %w", err)
+	}
+
+	fmt.Println("Token regenerated successfully!")
+	fmt.Println()
+	fmt.Printf("  Token:   %s\n", result.Token)
+	fmt.Println()
+	fmt.Println("------------------------------------------------------------")
+	fmt.Printf("  ID:      %s\n", result.ID)
+	fmt.Printf("  Name:    %s\n", result.Name)
+	fmt.Printf("  Type:    project\n")
+	fmt.Printf("  Prefix:  %s\n", result.Prefix)
+	fmt.Printf("  Scopes:  %s\n", strings.Join(result.Scopes, ", "))
+	fmt.Printf("  Created: %s\n", result.CreatedAt)
+	fmt.Println()
+
+	return nil
+}
+
 func runRevokeToken(cmd *cobra.Command, args []string) error {
 	tokenID := args[0]
 
@@ -481,6 +555,7 @@ func init() {
 	tokensCmd.AddCommand(createTokenCmd)
 	tokensCmd.AddCommand(getTokenCmd)
 	tokensCmd.AddCommand(revokeTokenCmd)
+	tokensCmd.AddCommand(regenerateTokenCmd)
 	tokensCmd.AddCommand(cleanupTokensCmd)
 	rootCmd.AddCommand(tokensCmd)
 }

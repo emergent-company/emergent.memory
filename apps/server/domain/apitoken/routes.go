@@ -23,6 +23,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.GET("/:tokenId", h.Get)
 	g.PATCH("/:tokenId", h.UpdateScopes)
 	g.DELETE("/:tokenId", h.Revoke)
+	g.POST("/:tokenId/regenerate", h.RegenerateToken)
 
 	// Account-level token routes (not bound to a project)
 	ag := e.Group("/api/tokens")
@@ -33,4 +34,5 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	ag.GET("/:tokenId", h.GetAccountToken)
 	ag.PATCH("/:tokenId", h.UpdateAccountTokenScopes)
 	ag.DELETE("/:tokenId", h.RevokeAccountToken)
+	ag.POST("/:tokenId/regenerate", h.RegenerateAccountToken)
 }

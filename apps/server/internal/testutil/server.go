@@ -138,7 +138,7 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 	providerRepo := provider.NewRepository(db, log)
 	eventsSvc := events.NewService(log)
 	apitokenRepo := apitoken.NewRepository(db, log)
-	apitokenSvc := apitoken.NewService(apitokenRepo, encryptionSvc, log)
+	apitokenSvc := apitoken.NewService(db, apitokenRepo, encryptionSvc, log)
 
 	sessionSvc := session.Service(bunsession.NewService(testDB.DB))
 
@@ -336,7 +336,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register apitoken routes
 	apitokenRepo := apitoken.NewRepository(db, log)
-	apitokenSvc := apitoken.NewService(apitokenRepo, encryptionSvc, log)
+	apitokenSvc := apitoken.NewService(db, apitokenRepo, encryptionSvc, log)
 	apitokenHandler := apitoken.NewHandler(apitokenSvc, userSvc)
 	apitoken.RegisterRoutes(e, apitokenHandler, authMiddleware)
 

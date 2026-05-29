@@ -292,6 +292,68 @@ func (c *Client) GetAccountToken(ctx context.Context, tokenID string) (*APIToken
 	return &token, nil
 }
 
+// Regenerate atomically revokes a project API token and creates a replacement with the same name and scopes.
+// Returns the new token with its plaintext value (shown once).
+func (c *Client) Regenerate(ctx context.Context, projectID, tokenID string) (*CreateTokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		c.base+"/api/projects/"+url.PathEscape(projectID)+"/tokens/"+url.PathEscape(tokenID)+"/regenerate", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token CreateTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
+// RegenerateAccountToken atomically revokes an account-level API token and creates a replacement.
+// Returns the new token with its plaintext value (shown once).
+func (c *Client) RegenerateAccountToken(ctx context.Context, tokenID string) (*CreateTokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		c.base+"/api/tokens/"+url.PathEscape(tokenID)+"/regenerate", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var token CreateTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &token, nil
+}
+
 // RevokeAccountToken revokes an account-level API token.
 func (c *Client) RevokeAccountToken(ctx context.Context, tokenID string) error {
 	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/tokens/"+url.PathEscape(tokenID), nil)
