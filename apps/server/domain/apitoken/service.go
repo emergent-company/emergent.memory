@@ -643,6 +643,12 @@ func (s *Service) RegenerateAccountToken(ctx context.Context, tokenID, userID st
 		return nil, err
 	}
 	if existing == nil {
+		// Token not found as account-level — check if it's a project-scoped token owned by this user.
+		// If so, delegate transparently so the caller doesn't need to know the project ID.
+		projectToken, lookupErr := s.repo.GetByIDForUser(ctx, tokenID, userID)
+		if lookupErr == nil && projectToken != nil && projectToken.ProjectID != nil {
+			return s.Regenerate(ctx, tokenID, *projectToken.ProjectID, userID)
+		}
 		return nil, apperror.ErrNotFound.WithMessage("Token not found")
 	}
 	if existing.RevokedAt != nil {

@@ -188,6 +188,25 @@ func (r *Repository) GetByIDAndUser(ctx context.Context, tokenID, userID string)
 	return &token, nil
 }
 
+// GetByIDForUser returns any token (account-level or project-scoped) by ID and user ID.
+// Unlike GetByIDAndUser, this does not filter by project_id IS NULL.
+func (r *Repository) GetByIDForUser(ctx context.Context, tokenID, userID string) (*ApiToken, error) {
+	var token ApiToken
+	err := r.db.NewSelect().
+		Model(&token).
+		Where("id = ?", tokenID).
+		Where("user_id = ?", userID).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &token, nil
+}
+
 // RevokeByID revokes any token by ID regardless of project (used for ephemeral token teardown).
 func (r *Repository) RevokeByID(ctx context.Context, tokenID string) (bool, error) {
 	result, err := r.db.NewUpdate().
