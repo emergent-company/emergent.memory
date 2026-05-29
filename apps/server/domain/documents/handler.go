@@ -3,6 +3,7 @@ package documents
 import (
 	"context"
 	"log/slog"
+	"mime"
 	"net/http"
 	"time"
 
@@ -521,7 +522,7 @@ func (h *Handler) Download(c echo.Context) error {
 	// Generate signed URL for download
 	contentDisposition := ""
 	if info.Filename != nil && *info.Filename != "" {
-		contentDisposition = `attachment; filename="` + *info.Filename + `"`
+		contentDisposition = mime.FormatMediaType("attachment", map[string]string{"filename": *info.Filename})
 	}
 
 	signedURL, err := h.storage.GetSignedDownloadURL(
@@ -574,102 +575,6 @@ func (h *Handler) GetExtractionSummary(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, summary)
-}
-
-// Upload handles POST /api/documents/upload
-// @Summary      Upload document
-// @Description  Upload a file and create a document record (with automatic deduplication)
-// @Tags         documents
-// @Accept       multipart/form-data
-// @Produce      json
-// @Param        X-Project-ID header string true "Project ID"
-// @Param        file formData file true "File to upload (max 100MB)"
-// @Param        source_type formData string false "Source type (default: upload)"
-// @Success      201 {object} map[string]any "Document created"
-// @Success      200 {object} map[string]any "Existing document returned (deduplicated)"
-// @Failure      400 {object} apperror.Error
-// @Failure      401 {object} apperror.Error
-// @Failure      413 {object} apperror.Error "File too large (>100MB)"
-// @Failure      503 {object} apperror.Error "Storage service unavailable"
-// @Router       /api/documents/upload [post]
-// @Security     bearerAuth
-func (h *Handler) Upload(c echo.Context) error {
-	user := auth.GetUser(c)
-	if user == nil {
-		return apperror.ErrUnauthorized
-	}
-
-	if user.ProjectID == "" {
-		return apperror.ErrBadRequest.WithMessage("x-project-id header required")
-	}
-
-	if !h.storage.Enabled() {
-		return apperror.New(503, "storage_unavailable", "Storage service is not configured")
-	}
-
-	file, err := c.FormFile("file")
-	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("file required in multipart form")
-	}
-
-	maxSize := int64(300 * 1024 * 1024)
-	if file.Size > maxSize {
-		return apperror.New(413, "file_too_large", "File size exceeds 300MB limit")
-	}
-
-	src, err := file.Open()
-	if err != nil {
-		return apperror.ErrInternal.WithMessage("failed to read uploaded file")
-	}
-	defer src.Close()
-
-	uploadResult, err := h.storage.UploadDocument(
-		c.Request().Context(),
-		src,
-		file.Size,
-		storage.DocumentUploadOptions{
-			ProjectID: user.ProjectID,
-			OrgID:     user.OrgID,
-			Filename:  file.Filename,
-			UploadOptions: storage.UploadOptions{
-				ContentType: file.Header.Get("Content-Type"),
-			},
-		},
-	)
-	if err != nil {
-		return apperror.ErrInternal.WithInternal(err).WithMessage("failed to upload file")
-	}
-
-	sourceType := "upload"
-	if st := c.FormValue("source_type"); st != "" {
-		sourceType = st
-	}
-
-	doc, wasCreated, err := h.svc.Create(c.Request().Context(), CreateParams{
-		ProjectID:     user.ProjectID,
-		Filename:      &file.Filename,
-		StorageKey:    &uploadResult.Key,
-		SourceType:    &sourceType,
-		MimeType:      &uploadResult.ContentType,
-		FileSizeBytes: &uploadResult.Size,
-	})
-	if err != nil {
-		return apperror.ErrInternal.WithInternal(err).WithMessage("failed to create document record")
-	}
-
-	response := map[string]any{
-		"document":    doc,
-		"was_created": wasCreated,
-		"message":     "Document uploaded successfully",
-	}
-
-	status := http.StatusCreated
-	if !wasCreated {
-		status = http.StatusOK
-		response["message"] = "Document already exists (deduplicated by content hash)"
-	}
-
-	return c.JSON(status, response)
 }
 
 // RetryExtraction handles POST /api/documents/:id/retry-extraction

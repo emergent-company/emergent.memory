@@ -49,7 +49,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{
 			name:     "unicode characters replaced",
 			input:    "документ.pdf",
-			expected: ".pdf",
+			expected: "unnamed.pdf", // all base chars are non-ASCII; extension preserved
 		},
 		{
 			name:     "leading underscore trimmed",
@@ -59,7 +59,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{
 			name:     "trailing underscore trimmed",
 			input:    "document_.pdf",
-			expected: "document_.pdf", // This preserves because the underscore is followed by .pdf
+			expected: "document.pdf", // trailing underscore on base trimmed before extension added
 		},
 		{
 			name:     "multiple underscores collapsed",
@@ -69,7 +69,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{
 			name:     "parentheses replaced",
 			input:    "document (1).pdf",
-			expected: "document_1_.pdf",
+			expected: "document_1.pdf", // trailing underscore from ) before .pdf trimmed
 		},
 		{
 			name:     "dashes preserved",
@@ -99,7 +99,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{
 			name:     "emojis replaced",
 			input:    "doc📄.pdf",
-			expected: "doc_.pdf",
+			expected: "doc.pdf", // emoji becomes underscore, trailing underscore trimmed before extension
 		},
 		{
 			name:     "newlines replaced",

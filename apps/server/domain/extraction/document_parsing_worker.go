@@ -476,7 +476,11 @@ func (w *DocumentParsingWorker) extractPlainText(ctx context.Context, storageKey
 	return string(content), nil
 }
 
-// downloadFile downloads a file from storage
+// downloadFile downloads a file from storage into memory.
+// Reading is capped at maxDownloadBytes+1 to detect oversized files without
+// buffering the entire stream first.
+const maxDownloadBytes = 500 * 1024 * 1024 // 500 MB — matches MaxUploadSize
+
 func (w *DocumentParsingWorker) downloadFile(ctx context.Context, storageKey string) ([]byte, error) {
 	if !w.storageService.Enabled() {
 		return nil, fmt.Errorf("storage service not enabled")
@@ -488,9 +492,13 @@ func (w *DocumentParsingWorker) downloadFile(ctx context.Context, storageKey str
 	}
 	defer reader.Close()
 
-	content, err := io.ReadAll(reader)
+	limited := &io.LimitedReader{R: reader, N: maxDownloadBytes + 1}
+	content, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("read file content: %w", err)
+	}
+	if limited.N == 0 {
+		return nil, fmt.Errorf("file exceeds maximum download size of %d MB", maxDownloadBytes/(1024*1024))
 	}
 
 	return content, nil

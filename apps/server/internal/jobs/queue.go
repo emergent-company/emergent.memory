@@ -305,10 +305,16 @@ func (q *Queue) GetJobByID(ctx context.Context, id string, dest interface{}) err
 	return err
 }
 
-// truncateError truncates an error message to 500 characters
-func truncateError(msg string) string {
-	if len(msg) > 500 {
-		return msg[:500]
+// TruncateError truncates an error message to max characters.
+func TruncateError(msg string, max int) string {
+	if len(msg) > max {
+		return msg[:max]
 	}
 	return msg
+}
+
+// truncateError truncates an error message to 500 characters.
+// Deprecated: use TruncateError(msg, 500).
+func truncateError(msg string) string {
+	return TruncateError(msg, 500)
 }

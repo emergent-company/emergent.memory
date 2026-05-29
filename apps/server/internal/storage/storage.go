@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -337,15 +338,21 @@ func GenerateDocumentKey(projectID, orgID, filename string) string {
 	return fmt.Sprintf("%s/%s/%s-%s", projectID, orgID, id, sanitized)
 }
 
-// SanitizeFilename cleans a filename for storage
+// SanitizeFilename cleans a filename for storage. Non-ASCII and special characters
+// are replaced with underscores. The file extension is always preserved so that
+// unicode-only basenames (e.g. "документ.pdf") produce a valid name ("unnamed.pdf")
+// rather than losing all identity.
 func SanitizeFilename(filename string) string {
 	if filename == "" {
 		return "unnamed"
 	}
 
+	ext := strings.ToLower(filepath.Ext(filename))
+	base := strings.TrimSuffix(filename, filepath.Ext(filename))
+
 	// Replace special characters with underscores
 	re := regexp.MustCompile(`[^a-zA-Z0-9._-]`)
-	sanitized := re.ReplaceAllString(filename, "_")
+	sanitized := re.ReplaceAllString(base, "_")
 
 	// Collapse multiple underscores
 	re = regexp.MustCompile(`_{2,}`)
@@ -357,16 +364,20 @@ func SanitizeFilename(filename string) string {
 	// Lowercase
 	sanitized = strings.ToLower(sanitized)
 
-	// Limit length
-	if len(sanitized) > 200 {
-		sanitized = sanitized[:200]
+	// Limit length (reserve room for extension)
+	maxBase := 200 - len(ext)
+	if maxBase < 1 {
+		maxBase = 1
+	}
+	if len(sanitized) > maxBase {
+		sanitized = sanitized[:maxBase]
 	}
 
 	if sanitized == "" {
-		return "unnamed"
+		sanitized = "unnamed"
 	}
 
-	return sanitized
+	return sanitized + ext
 }
 
 // GetSignedDownloadURLOptions configures a signed download URL

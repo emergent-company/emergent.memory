@@ -508,7 +508,8 @@ func (s *GraphEmbeddingJobsService) DeleteJob(ctx context.Context, id string) er
 	return nil
 }
 
-// truncateError truncates an error message to 1000 characters
+// truncateError truncates an error message to 1000 characters.
+// Deprecated: use jobs.TruncateError(msg, 1000).
 func truncateError(msg string) string {
 	if len(msg) > 1000 {
 		return msg[:1000]

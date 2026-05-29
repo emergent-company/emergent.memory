@@ -352,6 +352,10 @@ type StorageConfig struct {
 	UseSSL bool `env:"MINIO_USE_SSL" envDefault:"false"`
 	// Region is the bucket region (for S3 compatibility)
 	Region string `env:"MINIO_REGION" envDefault:"us-east-1"`
+	// AllowedMIMETypes is a comma-separated list of permitted MIME types for uploads.
+	// When empty, all MIME types are accepted (no restriction).
+	// Example: "application/pdf,image/jpeg,image/png,text/plain"
+	AllowedMIMETypes string `env:"ALLOWED_MIME_TYPES" envDefault:""`
 }
 
 // IsConfigured returns true if storage is configured
