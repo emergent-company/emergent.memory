@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"strings"
 	"time"
 
@@ -451,5 +452,36 @@ func CreateTestChunk(ctx context.Context, db bun.IDB, chunk TestChunk) error {
 			text = EXCLUDED.text,
 			updated_at = NOW()
 	`, chunk.ID, chunk.DocumentID, chunk.ChunkIndex, chunk.Text).Exec(ctx)
+	return err
+}
+
+// BareGenerativeModelFromEnv returns the bare model name (without provider prefix)
+// from the first configured env var (DEEPSEEK_MODEL → OPENAI_MODEL → VERTEX_AI_MODEL).
+// Returns "" if none are set.
+func BareGenerativeModelFromEnv() string {
+	for _, envVar := range []string{"DEEPSEEK_MODEL", "OPENAI_MODEL", "VERTEX_AI_MODEL"} {
+		v := os.Getenv(envVar)
+		if v == "" {
+			continue
+		}
+		// Strip provider prefix if present (e.g. "deepseek/deepseek-v4-flash" → "deepseek/deepseek-v4-flash")
+		// The value is already provider-prefixed; return as-is for use with SeedTestProjectModelConfig.
+		return v
+	}
+	return ""
+}
+
+// SeedTestProjectModelConfig upserts a project model config row for testing.
+// generativeModel and embeddingModel must be provider-prefixed (e.g. "deepseek/deepseek-v4-flash").
+// Pass "" to leave a field unchanged (existing row preserved by ON CONFLICT ... DO UPDATE).
+func SeedTestProjectModelConfig(ctx context.Context, db bun.IDB, projectID, generativeModel, embeddingModel string) error {
+	_, err := db.NewRaw(`
+		INSERT INTO kb.project_model_config (project_id, generative_model, embedding_model, created_at, updated_at)
+		VALUES (?, ?, ?, NOW(), NOW())
+		ON CONFLICT (project_id) DO UPDATE SET
+			generative_model = CASE WHEN EXCLUDED.generative_model != '' THEN EXCLUDED.generative_model ELSE kb.project_model_config.generative_model END,
+			embedding_model  = CASE WHEN EXCLUDED.embedding_model  != '' THEN EXCLUDED.embedding_model  ELSE kb.project_model_config.embedding_model  END,
+			updated_at = NOW()
+	`, projectID, generativeModel, embeddingModel).Exec(ctx)
 	return err
 }

@@ -2,12 +2,12 @@ package modelconfig
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // Service resolves and manages model configuration.
@@ -15,13 +15,24 @@ import (
 // when no per-agent override is present.
 type Service struct {
 	store *Store
-	cfg   *config.Config
 	log   *slog.Logger
 }
 
 // NewService creates a new model config Service.
-func NewService(store *Store, cfg *config.Config, log *slog.Logger) *Service {
-	return &Service{store: store, cfg: cfg, log: log}
+func NewService(store *Store, log *slog.Logger) *Service {
+	return &Service{store: store, log: log}
+}
+
+// validateModelName returns an error if the model name does not include a
+// provider prefix (e.g. "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash").
+func validateModelName(field, name string) error {
+	if name == "" {
+		return nil // empty is allowed (means "not set")
+	}
+	if !strings.Contains(name, "/") {
+		return fmt.Errorf("%s %q must include a provider prefix (e.g. \"deepseek/deepseek-v4-flash\", \"google/gemini-2.5-flash\", \"google-vertex/gemini-2.5-flash\")", field, name)
+	}
+	return nil
 }
 
 // --- Project model config ---
@@ -39,7 +50,15 @@ func (s *Service) GetProjectModelConfig(ctx context.Context, projectID uuid.UUID
 }
 
 // UpsertProjectModelConfig sets the explicit default models for a project.
+// Both generativeModel and embeddingModel must include a provider prefix
+// (e.g. "deepseek/deepseek-v4-flash", "google/gemini-embedding-2-preview").
 func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.UUID, req UpsertModelConfigRequest) (*ModelConfigResponse, error) {
+	if err := validateModelName("generativeModel", req.GenerativeModel); err != nil {
+		return nil, err
+	}
+	if err := validateModelName("embeddingModel", req.EmbeddingModel); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	cfg := &ProjectModelConfig{
 		ProjectID:       projectID,
@@ -60,7 +79,6 @@ func (s *Service) UpsertProjectModelConfig(ctx context.Context, projectID uuid.U
 }
 
 // DeleteProjectModelConfig clears the project's explicit model config.
-// After deletion, org config or env defaults will be used.
 func (s *Service) DeleteProjectModelConfig(ctx context.Context, projectID uuid.UUID) error {
 	return s.store.DeleteProjectModelConfig(ctx, projectID)
 }
@@ -80,7 +98,14 @@ func (s *Service) GetOrgModelConfig(ctx context.Context, orgID uuid.UUID) (*Mode
 }
 
 // UpsertOrgModelConfig sets the explicit default models for an org.
+// Both generativeModel and embeddingModel must include a provider prefix.
 func (s *Service) UpsertOrgModelConfig(ctx context.Context, orgID uuid.UUID, req UpsertModelConfigRequest) (*ModelConfigResponse, error) {
+	if err := validateModelName("generativeModel", req.GenerativeModel); err != nil {
+		return nil, err
+	}
+	if err := validateModelName("embeddingModel", req.EmbeddingModel); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	cfg := &OrgModelConfig{
 		OrgID:           orgID,
@@ -110,7 +135,10 @@ func (s *Service) DeleteOrgModelConfig(ctx context.Context, orgID uuid.UUID) err
 // ResolveGenerativeModel returns the effective generative model name for a project
 // and the source it was resolved from.
 //
-// Chain: project config → org config → env default (VERTEX_AI_MODEL / LLM_MODEL).
+// Chain: project config → org config.
+// Returns ("", ModelSourceProject, nil) when no config is set at any level —
+// callers must treat an empty model name as "not configured" and surface an
+// appropriate error to the user.
 func (s *Service) ResolveGenerativeModel(ctx context.Context, projectID uuid.UUID) (model string, source ModelSource, err error) {
 	// 1. Project config.
 	projCfg, err := s.store.GetProjectModelConfig(ctx, projectID)
@@ -124,8 +152,7 @@ func (s *Service) ResolveGenerativeModel(ctx context.Context, projectID uuid.UUI
 	// 2. Org config.
 	orgID, err := s.store.GetProjectOrgID(ctx, projectID)
 	if err != nil {
-		// Non-fatal: fall through to env default with a warning.
-		s.log.Warn("could not resolve org for project, falling back to env default",
+		s.log.Warn("could not resolve org for project",
 			slog.String("projectID", projectID.String()),
 			slog.String("error", err.Error()),
 		)
@@ -136,15 +163,15 @@ func (s *Service) ResolveGenerativeModel(ctx context.Context, projectID uuid.UUI
 		}
 	}
 
-	// 3. Env default.
-	envModel := s.envGenerativeModel()
-	return envModel, ModelSourceEnv, nil
+	// No config found at any level.
+	return "", ModelSourceNone, nil
 }
 
 // ResolveEmbeddingModel returns the effective embedding model name for a project
 // and the source it was resolved from.
 //
-// Chain: project config → org config → env default (EMBEDDING_MODEL).
+// Chain: project config → org config.
+// Returns ("", ModelSourceNone, nil) when no config is set at any level.
 func (s *Service) ResolveEmbeddingModel(ctx context.Context, projectID uuid.UUID) (model string, source ModelSource, err error) {
 	// 1. Project config.
 	projCfg, err := s.store.GetProjectModelConfig(ctx, projectID)
@@ -158,7 +185,7 @@ func (s *Service) ResolveEmbeddingModel(ctx context.Context, projectID uuid.UUID
 	// 2. Org config.
 	orgID, err := s.store.GetProjectOrgID(ctx, projectID)
 	if err != nil {
-		s.log.Warn("could not resolve org for project, falling back to env default",
+		s.log.Warn("could not resolve org for project",
 			slog.String("projectID", projectID.String()),
 			slog.String("error", err.Error()),
 		)
@@ -169,8 +196,8 @@ func (s *Service) ResolveEmbeddingModel(ctx context.Context, projectID uuid.UUID
 		}
 	}
 
-	// 3. Env default.
-	return s.cfg.Embeddings.Model, ModelSourceEnv, nil
+	// No config found at any level.
+	return "", ModelSourceNone, nil
 }
 
 // ResolveEffectiveModels returns the full effective model config for a project.
@@ -189,18 +216,6 @@ func (s *Service) ResolveEffectiveModels(ctx context.Context, projectID uuid.UUI
 		EmbeddingModel:        embModel,
 		EmbeddingModelSource:  embSource,
 	}, nil
-}
-
-// envGenerativeModel returns the server-level default generative model name.
-// Priority: DEEPSEEK_MODEL → OPENAI_MODEL → VERTEX_AI_MODEL.
-func (s *Service) envGenerativeModel() string {
-	if s.cfg.LLM.DeepSeekAPIKey != "" && s.cfg.LLM.DeepSeekModel != "" {
-		return s.cfg.LLM.DeepSeekModel
-	}
-	if s.cfg.LLM.OpenAIAPIKey != "" && s.cfg.LLM.OpenAIModel != "" {
-		return s.cfg.LLM.OpenAIModel
-	}
-	return s.cfg.LLM.Model
 }
 
 // --- Helpers ---

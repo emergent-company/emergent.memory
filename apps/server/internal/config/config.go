@@ -210,8 +210,10 @@ type LLMConfig struct {
 	// Vertex AI location ("global" required for Gemini 3 models)
 	VertexAILocation string `env:"VERTEX_AI_LOCATION" envDefault:"global"`
 
-	// Chat model name
-	Model string `env:"VERTEX_AI_MODEL" envDefault:"gemini-3.1-flash-lite-preview"`
+	// Chat model name — must include provider prefix (e.g. "deepseek/deepseek-v4-flash").
+	// Intentionally no default: model must be configured explicitly via project/org DB config
+	// or via VERTEX_AI_MODEL / DEEPSEEK_MODEL / OPENAI_MODEL env vars.
+	Model string `env:"VERTEX_AI_MODEL" envDefault:""`
 
 	// Max output tokens for chat completions (65536 for Gemini 3 thinking models)
 	MaxOutputTokens int `env:"LLM_MAX_OUTPUT_TOKENS" envDefault:"65536"`

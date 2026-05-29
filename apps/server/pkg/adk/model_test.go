@@ -43,24 +43,6 @@ func TestModelFactoryCreateModelWithName_ValidationErrors(t *testing.T) {
 		wantErr   string
 	}{
 		{
-			name: "missing GCP project ID",
-			cfg: &config.LLMConfig{
-				GCPProjectID:     "",
-				VertexAILocation: "us-central1",
-			},
-			modelName: "gemini-1.5-pro",
-			wantErr:   "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints",
-		},
-		{
-			name: "missing Vertex AI location",
-			cfg: &config.LLMConfig{
-				GCPProjectID:     "test-project",
-				VertexAILocation: "",
-			},
-			modelName: "gemini-1.5-pro",
-			wantErr:   "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints",
-		},
-		{
 			name: "missing model name",
 			cfg: &config.LLMConfig{
 				GCPProjectID:     "test-project",
@@ -68,6 +50,15 @@ func TestModelFactoryCreateModelWithName_ValidationErrors(t *testing.T) {
 			},
 			modelName: "",
 			wantErr:   "model name is required",
+		},
+		{
+			name: "bare model name without provider prefix",
+			cfg: &config.LLMConfig{
+				GCPProjectID:     "test-project",
+				VertexAILocation: "us-central1",
+			},
+			modelName: "gemini-1.5-pro",
+			wantErr:   `model name "gemini-1.5-pro" must include a provider prefix (e.g. deepseek/deepseek-v4-flash, openai/gpt-4o, google/gemini-2.5-flash)`,
 		},
 	}
 
@@ -253,31 +244,13 @@ func TestModelFactoryCreateModel_ValidationErrors(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "missing GCP project ID",
-			cfg: &config.LLMConfig{
-				GCPProjectID:     "",
-				VertexAILocation: "us-central1",
-				Model:            "gemini-1.5-pro",
-			},
-			wantErr: "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints",
-		},
-		{
-			name: "missing Vertex AI location",
-			cfg: &config.LLMConfig{
-				GCPProjectID:     "test-project",
-				VertexAILocation: "",
-				Model:            "gemini-1.5-pro",
-			},
-			wantErr: "no LLM credentials configured: set GCP_PROJECT_ID+VERTEX_AI_LOCATION for Vertex AI, GOOGLE_API_KEY for Google AI, or OPENAI_BASE_URL+OPENAI_API_KEY+LLM_MODEL for OpenAI-compatible endpoints",
-		},
-		{
 			name: "missing model name (uses config's empty model)",
 			cfg: &config.LLMConfig{
 				GCPProjectID:     "test-project",
 				VertexAILocation: "us-central1",
 				Model:            "",
 			},
-			wantErr: "model name is required",
+			wantErr: "no generative model configured: set DEEPSEEK_MODEL, OPENAI_MODEL, or VERTEX_AI_MODEL",
 		},
 	}
 

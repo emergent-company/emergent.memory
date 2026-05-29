@@ -513,16 +513,13 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	// opening the SSE stream so clients get a proper HTTP error code, not a
 	// success status with an error buried in the stream.
 	if h.modelFactory != nil {
-		probeModelName := h.modelFactory.ModelName()
-		if probeModelName == "" {
-			probeModelName = "gemini-2.0-flash"
-		}
-		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+		probeModel, probeErr := h.modelFactory.CreateModel(ctx)
 		if probeErr != nil {
 			errMsg := probeErr.Error()
 			if strings.Contains(errMsg, "no LLM credentials configured") ||
 				strings.Contains(errMsg, "no_provider") ||
-				strings.Contains(errMsg, "provider config found for organization") {
+				strings.Contains(errMsg, "provider config found for organization") ||
+				strings.Contains(errMsg, "no generative model configured") {
 				return apperror.New(http.StatusServiceUnavailable, "no_provider",
 					"No LLM provider configured for this project. "+
 						"Please configure a Google AI or Vertex AI credential in your project settings.")
@@ -689,14 +686,11 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	var fullResponse strings.Builder
 	var llmErr error
 	if h.modelFactory != nil {
-		modelName := h.modelFactory.ModelName()
-		if modelName == "" {
-			modelName = "gemini-2.0-flash"
-		}
-		llmModel, createErr := h.modelFactory.CreateModelWithName(ctx, modelName)
+		llmModel, createErr := h.modelFactory.CreateModel(ctx)
 		if createErr != nil {
 			llmErr = createErr
 		} else {
+			modelName := h.modelFactory.ModelName()
 			llmCtx, llmSpan := tracing.Start(ctx, "chat.llm_generate",
 				attribute.String("memory.llm.model", modelName),
 			)
@@ -1229,31 +1223,20 @@ func (h *Handler) QueryStream(c echo.Context) error {
 	// opening the SSE stream so clients get a proper HTTP error code, not a
 	// success status with an error buried in the stream.
 	if h.modelFactory != nil {
-		// Use the configured default model name; fall back to a well-known default
-		// so that DB-resolved credentials (org/project) can still be probed even
-		// when LLM_MODEL is not set in the server environment.
-		probeModelName := h.modelFactory.ModelName()
-		if probeModelName == "" {
-			probeModelName = "gemini-3.1-flash-lite-preview"
-		}
-		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+		probeModel, probeErr := h.modelFactory.CreateModel(ctx)
 		if probeErr != nil {
 			errMsg := probeErr.Error()
-			// Only return "no_provider" when there genuinely is no credential
-			// configured. For other errors (decryption failure, invalid creds,
-			// DB errors) surface the real error so it's not masked.
 			if strings.Contains(errMsg, "no LLM credentials configured") ||
 				strings.Contains(errMsg, "no_provider") ||
-				strings.Contains(errMsg, "provider config found for organization") {
+				strings.Contains(errMsg, "provider config found for organization") ||
+				strings.Contains(errMsg, "no generative model configured") {
 				return apperror.New(http.StatusServiceUnavailable, "no_provider",
 					"No LLM provider configured for this project. "+
 						"Please configure a Google AI or Vertex AI credential in your project settings.")
 			}
-			// Real credential error — surface it clearly.
 			return apperror.New(http.StatusServiceUnavailable, "provider_error",
 				friendlyProviderError(probeErr))
 		}
-		// Close the probe model if it implements io.Closer (best-effort).
 		if closer, ok := probeModel.(interface{ Close() error }); ok {
 			_ = closer.Close()
 		}
@@ -1419,16 +1402,13 @@ func (h *Handler) AskStream(c echo.Context) error {
 	// Probe the LLM provider before opening the SSE stream so callers get a proper
 	// HTTP error instead of a success status with an error buried in the stream.
 	if h.modelFactory != nil {
-		probeModelName := h.modelFactory.ModelName()
-		if probeModelName == "" {
-			probeModelName = "gemini-3.1-flash-lite-preview"
-		}
-		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+		probeModel, probeErr := h.modelFactory.CreateModel(ctx)
 		if probeErr != nil {
 			errMsg := probeErr.Error()
 			if strings.Contains(errMsg, "no LLM credentials configured") ||
 				strings.Contains(errMsg, "no_provider") ||
-				strings.Contains(errMsg, "provider config found for organization") {
+				strings.Contains(errMsg, "provider config found for organization") ||
+				strings.Contains(errMsg, "no generative model configured") {
 				return apperror.New(http.StatusServiceUnavailable, "no_provider",
 					"No LLM provider configured for this project. "+
 						"Please configure a Google AI or Vertex AI credential in your project settings.")
@@ -1615,16 +1595,13 @@ func (h *Handler) RememberStream(c echo.Context) error {
 				"Please configure a Google AI or Vertex AI credential in your project settings.")
 	}
 	if h.modelFactory != nil {
-		probeModelName := h.modelFactory.ModelName()
-		if probeModelName == "" {
-			probeModelName = "gemini-3.1-flash-lite-preview"
-		}
-		probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+		probeModel, probeErr := h.modelFactory.CreateModel(ctx)
 		if probeErr != nil {
 			errMsg := probeErr.Error()
 			if strings.Contains(errMsg, "no LLM credentials configured") ||
 				strings.Contains(errMsg, "no_provider") ||
-				strings.Contains(errMsg, "provider config found for organization") {
+				strings.Contains(errMsg, "provider config found for organization") ||
+				strings.Contains(errMsg, "no generative model configured") {
 				return apperror.New(http.StatusServiceUnavailable, "no_provider",
 					"No LLM provider configured for this project. "+
 						"Please configure a Google AI or Vertex AI credential in your project settings.")
@@ -1997,16 +1974,13 @@ func (h *Handler) RememberFile(c echo.Context) error {
 			"No LLM provider configured for this project. "+
 				"Please configure a Google AI or Vertex AI credential in your project settings.")
 	}
-	probeModelName := h.modelFactory.ModelName()
-	if probeModelName == "" {
-		probeModelName = "gemini-3.1-flash-lite-preview"
-	}
-	probeModel, probeErr := h.modelFactory.CreateModelWithName(ctx, probeModelName)
+	probeModel, probeErr := h.modelFactory.CreateModel(ctx)
 	if probeErr != nil {
 		errMsg := probeErr.Error()
 		if strings.Contains(errMsg, "no LLM credentials configured") ||
 			strings.Contains(errMsg, "no_provider") ||
-			strings.Contains(errMsg, "provider config found for organization") {
+			strings.Contains(errMsg, "provider config found for organization") ||
+			strings.Contains(errMsg, "no generative model configured") {
 			return apperror.New(http.StatusServiceUnavailable, "no_provider",
 				"No LLM provider configured for this project. "+
 					"Please configure a Google AI or Vertex AI credential in your project settings.")

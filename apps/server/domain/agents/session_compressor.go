@@ -12,7 +12,7 @@ package agents
 //
 //  1. Split events into HEAD (oldest ~50 %) and TAIL (newest ~50 %).
 //  2. Serialize HEAD into plain text, stripping tool call / result noise.
-//  3. Call the summarizer model (configurable; defaults to gemini-2.5-flash).
+//  3. Call the summarizer model (agent's own model, or project default from DB config).
 //  4. Delete the current session and create a fresh one with the same ID.
 //  5. Append two synthetic events:
 //       user  → "[CONTEXT SUMMARY]\n<summary>"
@@ -40,10 +40,6 @@ import (
 )
 
 const (
-	// compressorDefaultModel is the cheap/fast model used for summarisation.
-	// Overridable via AgentDefinition.Compression.Model in the future.
-	compressorDefaultModel = "gemini-2.5-flash"
-
 	// compressThresholdRatio triggers compression when promptTokens/contextWindow
 	// exceeds this ratio (only relevant when the sliding window is exhausted or
 	// the context window is unknown).
@@ -130,17 +126,17 @@ func (ae *AgentExecutor) compressSession(
 	promptText := sb.String()
 
 	// --- Call summariser LLM ---
-	summarizerModelName := compressorDefaultModel
+	// Prefer the agent's own model; otherwise resolve from DB project config.
+	var llm model.LLM
+	var err error
 	if modelName != "" {
-		// Prefer the agent's own model for the summarizer so credentials
-		// are always available; only override if a fast model is explicitly set.
-		summarizerModelName = modelName
+		llm, err = ae.modelFactory.CreateModelWithName(ctx, modelName)
+	} else {
+		llm, err = ae.modelFactory.CreateModel(ctx)
 	}
-
-	llm, err := ae.modelFactory.CreateModelWithName(ctx, summarizerModelName)
 	if err != nil {
 		ae.log.Warn("session compressor: failed to create summariser model, skipping compression",
-			slog.String("model", summarizerModelName), logger.Error(err))
+			slog.String("model", modelName), logger.Error(err))
 		return sess, nil
 	}
 
@@ -278,7 +274,7 @@ func (ae *AgentExecutor) compressSession(
 
 	ae.log.Info("session compressed",
 		slog.String("session_id", sessionID),
-		slog.String("model", summarizerModelName),
+		slog.String("model", modelName),
 		slog.Int("events_before", n),
 		slog.Int("events_after", getResp.Session.Events().Len()),
 		slog.Int("head_summarized", headCount),

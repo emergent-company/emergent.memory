@@ -87,18 +87,25 @@ func LoadEnvFiles() {
 	if !ok {
 		return
 	}
+	// Walk upward tracking every directory that contains a go.mod — the last
+	// one found (topmost) is the repo root where .env / .env.local live.
+	// This is necessary because the source file may be nested under a module
+	// subdirectory (e.g. apps/server/go.mod) that would be found first.
 	dir := filepath.Dir(thisFile)
-	for i := 0; i < 10; i++ {
+	var rootDir string
+	for i := 0; i < 15; i++ {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			_ = godotenv.Load(filepath.Join(dir, ".env"))
-			_ = godotenv.Overload(filepath.Join(dir, ".env.local"))
-			return
+			rootDir = dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			break
 		}
 		dir = parent
+	}
+	if rootDir != "" {
+		_ = godotenv.Load(filepath.Join(rootDir, ".env"))
+		_ = godotenv.Overload(filepath.Join(rootDir, ".env.local"))
 	}
 }
 

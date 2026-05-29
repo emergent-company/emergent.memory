@@ -7,7 +7,11 @@
 //  1. Per-agent override (AgentDefinition.Model.Name) — handled by executor, not here
 //  2. Project model config (kb.project_model_config)
 //  3. Org model config    (kb.org_model_config)
-//  4. Server env default  (VERTEX_AI_MODEL / LLM_MODEL for generative, EMBEDDING_MODEL for embedding)
+//
+// Model names must always include a provider prefix: "provider/model-name"
+// (e.g. "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash").
+// If no config is found at any level, resolution returns ("", ModelSourceNone, nil)
+// and callers must surface a "model not configured" error to the user.
 package modelconfig
 
 import (
@@ -48,7 +52,9 @@ type ModelSource string
 const (
 	ModelSourceProject ModelSource = "project"
 	ModelSourceOrg     ModelSource = "org"
-	ModelSourceEnv     ModelSource = "env"
+	// ModelSourceNone means no config was found at any level (project or org).
+	// Callers must treat this as "not configured" and return an appropriate error.
+	ModelSourceNone ModelSource = "none"
 )
 
 // UpsertModelConfigRequest is the request body for setting model config.

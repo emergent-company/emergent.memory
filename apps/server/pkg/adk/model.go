@@ -65,32 +65,41 @@ func NewModelFactory(cfg *config.LLMConfig, log *slog.Logger, resolver Credentia
 
 // CreateModel creates an ADK-compatible LLM model.
 //
-// Model resolution order for the default (no explicit model name):
-//  1. ModelResolver.ResolveGenerativeModelByID — project → org → env chain (DB-backed)
-//  2. env-var default (DEEPSEEK_MODEL / OPENAI_MODEL / VERTEX_AI_MODEL)
+// Model resolution order:
+//  1. ModelResolver.ResolveGenerativeModelByID — project → org DB chain.
+//     If the resolved model is empty (no DB config) an error is returned.
+//  2. If no ModelResolver is wired (tests / env-var-only mode), falls back to
+//     the first configured env-var model (DEEPSEEK_MODEL → OPENAI_MODEL →
+//     VERTEX_AI_MODEL). If none are set, returns ErrNoModelConfigured.
 //
 // The resolved model name must include a provider prefix (e.g. "deepseek/deepseek-v4-flash").
 func (f *ModelFactory) CreateModel(ctx context.Context) (model.LLM, error) {
-	defaultModel := f.cfg.Model
 	if f.modelResolver != nil {
-		if projectID := ProjectIDFromContext(ctx); projectID != "" {
-			resolved, source, err := f.modelResolver.ResolveGenerativeModelByID(ctx, projectID)
-			if err != nil {
-				f.log.Warn("model resolver returned error, using env default",
-					slog.String("projectID", projectID),
-					slog.String("error", err.Error()),
-				)
-			} else if resolved != "" {
-				f.log.Debug("resolved generative model",
-					slog.String("model", resolved),
-					slog.String("source", source),
-					slog.String("projectID", projectID),
-				)
-				defaultModel = resolved
-			}
+		projectID := ProjectIDFromContext(ctx)
+		if projectID == "" {
+			return nil, fmt.Errorf("no project ID in context — cannot resolve generative model")
 		}
+		resolved, source, err := f.modelResolver.ResolveGenerativeModelByID(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("model resolver error for project %s: %w", projectID, err)
+		}
+		if resolved == "" {
+			return nil, fmt.Errorf("no generative model configured for project %s — set a model via the project model-config API", projectID)
+		}
+		f.log.Debug("resolved generative model",
+			slog.String("model", resolved),
+			slog.String("source", source),
+			slog.String("projectID", projectID),
+		)
+		return f.CreateModelWithName(ctx, resolved)
 	}
-	return f.CreateModelWithName(ctx, defaultModel)
+
+	// No DB resolver — fall back to env vars (used in tests and env-var-only mode).
+	envModel := f.ModelName()
+	if envModel == "" {
+		return nil, fmt.Errorf("no generative model configured: set DEEPSEEK_MODEL, OPENAI_MODEL, or VERTEX_AI_MODEL")
+	}
+	return f.CreateModelWithName(ctx, envModel)
 }
 
 // CreateModelWithName creates an ADK-compatible Gemini model with a specific model name.
@@ -353,9 +362,21 @@ func (f *ModelFactory) IsEnabled() bool {
 	return f.cfg.IsEnabled()
 }
 
-// ModelName returns the configured default model name.
+// ModelName returns the first configured model name across all env-var providers.
+// Priority: DEEPSEEK_MODEL → OPENAI_MODEL → VERTEX_AI_MODEL.
+// Returns "" if no provider is configured via env vars.
+// Used primarily in tests and env-var-only mode; production resolves models via DB.
 func (f *ModelFactory) ModelName() string {
-	return f.cfg.Model
+	if f.cfg.DeepSeekAPIKey != "" && f.cfg.DeepSeekModel != "" {
+		return f.cfg.DeepSeekModel
+	}
+	if f.cfg.OpenAIAPIKey != "" && f.cfg.OpenAIModel != "" {
+		return f.cfg.OpenAIModel
+	}
+	if f.cfg.Model != "" {
+		return f.cfg.Model
+	}
+	return ""
 }
 
 // Helper function for pointer values

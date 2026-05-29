@@ -8,7 +8,6 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
-	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -31,8 +30,8 @@ func provideStore(db bun.IDB, log *slog.Logger) *Store {
 	return NewStore(db, log)
 }
 
-func provideService(store *Store, cfg *config.Config, log *slog.Logger) *Service {
-	return NewService(store, cfg, log)
+func provideService(store *Store, log *slog.Logger) *Service {
+	return NewService(store, log)
 }
 
 func provideADKModelResolverAdapter(svc *Service) adk.ModelResolver {
