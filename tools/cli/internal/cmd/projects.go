@@ -325,10 +325,10 @@ func printProjectStats(stats *projects.ProjectStats) {
 	if stats == nil {
 		return
 	}
-	fmt.Println("   Stats:")
-	fmt.Printf("     • Documents: %d\n", stats.DocumentCount)
-	fmt.Printf("     • Objects: %d\n", stats.ObjectCount)
-	fmt.Printf("     • Relationships: %d\n", stats.RelationshipCount)
+	fmt.Println("  Stats:")
+	fmt.Printf("    • Documents: %d\n", stats.DocumentCount)
+	fmt.Printf("    • Objects: %d\n", stats.ObjectCount)
+	fmt.Printf("    • Relationships: %d\n", stats.RelationshipCount)
 
 	jobsStr := fmt.Sprintf("%d total", stats.TotalJobs)
 	if stats.RunningJobs > 0 {
@@ -337,25 +337,25 @@ func printProjectStats(stats *projects.ProjectStats) {
 	if stats.QueuedJobs > 0 {
 		jobsStr += fmt.Sprintf(", %d queued", stats.QueuedJobs)
 	}
-	fmt.Printf("     • Extraction jobs: %s\n", jobsStr)
+	fmt.Printf("    • Extraction jobs: %s\n", jobsStr)
 
 	if len(stats.Schemas) == 0 {
-		fmt.Println("     • Schemas: none")
+		fmt.Println("    • Schemas: none")
 	} else {
-		fmt.Println("     • Schemas:")
+		fmt.Println("    • Schemas:")
 		for _, pack := range stats.Schemas {
-			fmt.Printf("       - %s@%s\n", pack.Name, pack.Version)
+			fmt.Printf("      - %s@%s\n", pack.Name, pack.Version)
 
 			if len(pack.ObjectTypes) > 0 {
-				fmt.Printf("         Objects: %s\n", strings.Join(pack.ObjectTypes, ", "))
+				fmt.Printf("        Objects: %s\n", strings.Join(pack.ObjectTypes, ", "))
 			} else {
-				fmt.Println("         Objects: none")
+				fmt.Println("        Objects: none")
 			}
 
 			if len(pack.RelationshipTypes) > 0 {
-				fmt.Printf("         Relationships: %s\n", strings.Join(pack.RelationshipTypes, ", "))
+				fmt.Printf("        Relationships: %s\n", strings.Join(pack.RelationshipTypes, ", "))
 			} else {
-				fmt.Println("         Relationships: none")
+				fmt.Println("        Relationships: none")
 			}
 		}
 	}
@@ -538,11 +538,9 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
-	fmt.Printf("%s\n", cHeader("Project"))
 	fmt.Println()
-	fmt.Printf("  %s  %s\n", cBold(orgName), cDim(project.OrgID))
-	fmt.Println()
-	fmt.Printf("    %s  %s\n", cBold(project.Name), cDim(project.ID))
+	fmt.Printf("  Name:        %s  %s\n", cBold(project.Name), cDim(project.ID))
+	fmt.Printf("  Org:         %s  %s\n", cBold(orgName), cDim(project.OrgID))
 	// Print stats if requested
 	if projectStatsFlag && project.Stats != nil {
 		fmt.Println()
