@@ -466,7 +466,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	cfg, err := config.LoadWithEnv(configPath)
 	if err == nil && cfg != nil && cfg.APIKey != "" {
-		printAPIKeyStatus(cfg)
+		printAPIKeyStatus(cfg, configPath)
 		return nil
 	}
 
@@ -602,7 +602,42 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func printAPIKeyStatus(cfg *config.Config) {
+// abbreviatePath replaces the home directory prefix with ~.
+func abbreviatePath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if strings.HasPrefix(path, home) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
+// detectKeySource returns a human-readable description of where the active key was read from.
+// For env vars: "MEMORY_PROJECT_TOKEN (env)"
+// For config file: "~/.memory/config.yaml → project_token"
+func detectKeySource(cfg *config.Config, configPath string) string {
+	isProjectToken := cfg.ProjectToken != "" || strings.HasPrefix(cfg.APIKey, "emt_")
+	if isProjectToken {
+		if os.Getenv("MEMORY_PROJECT_API_KEY") != "" {
+			return "MEMORY_PROJECT_API_KEY (env)"
+		}
+		if os.Getenv("MEMORY_PROJECT_TOKEN") != "" {
+			return "MEMORY_PROJECT_TOKEN (env)"
+		}
+		return abbreviatePath(configPath) + " → project_token"
+	}
+	if os.Getenv("MEMORY_ACCOUNT_API_KEY") != "" {
+		return "MEMORY_ACCOUNT_API_KEY (env)"
+	}
+	if os.Getenv("MEMORY_API_KEY") != "" {
+		return "MEMORY_API_KEY (env)"
+	}
+	return abbreviatePath(configPath) + " → api_key"
+}
+
+func printAPIKeyStatus(cfg *config.Config, configPath string) {
 	separator := strings.Repeat("━", 50)
 
 	fmt.Println()
@@ -643,6 +678,7 @@ func printAPIKeyStatus(cfg *config.Config) {
 	} else {
 		fmt.Println("  Mode:        Account API key (access to all projects)")
 	}
+	fmt.Printf("  Key source:  %s\n", detectKeySource(cfg, configPath))
 	fmt.Printf("  Server:      %s\n", cfg.ServerURL)
 	fmt.Printf("  Key:         %s\n", maskAPIKey(activeKey))
 
@@ -815,10 +851,6 @@ type installedPackResponse struct {
 	Active  bool   `json:"active"`
 }
 
-type jobMetricsResponse struct {
-	Queues []jobQueueMetrics `json:"queues"`
-}
-
 type jobQueueMetrics struct {
 	Queue      string `json:"queue"`
 	Pending    int64  `json:"pending"`
@@ -918,11 +950,11 @@ func printUsageStats(cfg *config.Config, apiKey string, projectID string) {
 		}
 	}
 
-	// Job queue metrics (no auth required)
-	jobMetrics := fetchJobMetrics(cfg.ServerURL)
-	if len(jobMetrics) > 0 {
+	// Job queue metrics — auth required; project tokens see only their project's data.
+	jobMetricsResp := fetchJobMetrics(cfg.ServerURL, apiKey, projectID)
+	if jobMetricsResp != nil && len(jobMetricsResp.Queues) > 0 {
 		hasAnyJobs := false
-		for _, q := range jobMetrics {
+		for _, q := range jobMetricsResp.Queues {
 			if q.Total > 0 {
 				hasAnyJobs = true
 				break
@@ -930,8 +962,12 @@ func printUsageStats(cfg *config.Config, apiKey string, projectID string) {
 		}
 		if hasAnyJobs {
 			fmt.Println()
-			fmt.Println("Processing Pipeline:")
-			for _, q := range jobMetrics {
+			scopeLabel := "(all projects)"
+			if jobMetricsResp.Scope == "project" {
+				scopeLabel = "(project-scoped)"
+			}
+			fmt.Printf("Processing Pipeline:  %s\n", scopeLabel)
+			for _, q := range jobMetricsResp.Queues {
 				if q.Total == 0 {
 					continue
 				}
@@ -947,6 +983,9 @@ func printUsageStats(cfg *config.Config, apiKey string, projectID string) {
 				}
 				if q.Failed > 0 {
 					parts = append(parts, fmt.Sprintf("%d failed", q.Failed))
+				}
+				if len(parts) == 0 {
+					parts = append(parts, fmt.Sprintf("%d total", q.Total))
 				}
 				label := formatQueueName(q.Queue)
 				fmt.Printf("  %-16s %s\n", label+":", strings.Join(parts, ", "))
@@ -1036,11 +1075,11 @@ func printAggregatedUsageStats(cfg *config.Config, apiKey string, projects []pro
 		}
 	}
 
-	// Job queue metrics (not project-scoped)
-	jobMetrics := fetchJobMetrics(cfg.ServerURL)
-	if len(jobMetrics) > 0 {
+	// Job queue metrics — account-level, no project filter, shows all queues including email.
+	jobMetricsResp := fetchJobMetrics(cfg.ServerURL, apiKey, "")
+	if jobMetricsResp != nil && len(jobMetricsResp.Queues) > 0 {
 		hasActive := false
-		for _, jm := range jobMetrics {
+		for _, jm := range jobMetricsResp.Queues {
 			if jm.Pending > 0 || jm.Processing > 0 {
 				hasActive = true
 				break
@@ -1048,8 +1087,8 @@ func printAggregatedUsageStats(cfg *config.Config, apiKey string, projects []pro
 		}
 		if hasActive {
 			fmt.Println()
-			fmt.Println("Active Jobs:")
-			for _, jm := range jobMetrics {
+			fmt.Println("Active Jobs:  (all projects)")
+			for _, jm := range jobMetricsResp.Queues {
 				if jm.Pending > 0 || jm.Processing > 0 {
 					label := formatQueueName(jm.Queue)
 					parts := []string{}
@@ -1145,9 +1184,26 @@ func fetchInstalledPacks(serverURL, apiKey, projectID string) []installedPackRes
 	return resp
 }
 
-func fetchJobMetrics(serverURL string) []jobQueueMetrics {
+// jobMetricsAPIResponse mirrors the server AllJobMetrics shape including scope info.
+type jobMetricsAPIResponse struct {
+	Queues    []jobQueueMetrics `json:"queues"`
+	Scope     string            `json:"scope"`
+	ProjectID string            `json:"project_id,omitempty"`
+	Timestamp string            `json:"timestamp"`
+}
+
+func fetchJobMetrics(serverURL, apiKey, projectID string) *jobMetricsAPIResponse {
+	url := serverURL + "/api/metrics/jobs"
+	if projectID != "" {
+		url += "?project_id=" + projectID
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(serverURL + "/api/metrics/jobs")
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil
+	}
+	setAuthHeader(req, apiKey)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil
 	}
@@ -1159,11 +1215,11 @@ func fetchJobMetrics(serverURL string) []jobQueueMetrics {
 	if err != nil {
 		return nil
 	}
-	var metrics jobMetricsResponse
+	var metrics jobMetricsAPIResponse
 	if err := json.Unmarshal(body, &metrics); err != nil {
 		return nil
 	}
-	return metrics.Queues
+	return &metrics
 }
 
 func fetchTaskCounts(serverURL, apiKey, projectID string) *taskCountsResponse {

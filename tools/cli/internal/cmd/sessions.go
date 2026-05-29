@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -72,8 +72,8 @@ var sessionsCreateCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			b, _ := json.MarshalIndent(session, "", "  ")
-			fmt.Println(string(b))
+			out, _ := internalui.FormatJSON(session, noColor)
+			fmt.Println(out)
 			return nil
 		}
 
@@ -107,8 +107,8 @@ var sessionsListCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			b, _ := json.MarshalIndent(resp, "", "  ")
-			fmt.Println(string(b))
+			out, _ := internalui.FormatJSON(resp, noColor)
+			fmt.Println(out)
 			return nil
 		}
 
@@ -153,8 +153,8 @@ var sessionsGetCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			b, _ := json.MarshalIndent(session, "", "  ")
-			fmt.Println(string(b))
+			out, _ := internalui.FormatJSON(session, noColor)
+			fmt.Println(out)
 			return nil
 		}
 
@@ -212,8 +212,8 @@ as a snapshot at spawn time. The child then operates independently — no live s
 		}
 
 		if jsonFlag || output == "json" {
-			b, _ := json.MarshalIndent(result, "", "  ")
-			fmt.Println(string(b))
+			out, _ := internalui.FormatJSON(result, noColor)
+			fmt.Println(out)
 			return nil
 		}
 
@@ -275,8 +275,8 @@ var messagesAddCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			b, _ := json.MarshalIndent(msg, "", "  ")
-			fmt.Println(string(b))
+			out, _ := internalui.FormatJSON(msg, noColor)
+			fmt.Println(out)
 			return nil
 		}
 
@@ -312,8 +312,8 @@ var messagesListCmd = &cobra.Command{
 		}
 
 		if jsonFlag || output == "json" {
-			b, _ := json.MarshalIndent(resp, "", "  ")
-			fmt.Println(string(b))
+			out, _ := internalui.FormatJSON(resp, noColor)
+			fmt.Println(out)
 			return nil
 		}
 

@@ -49,32 +49,52 @@ var (
 // Helper: get HTTP client with auth
 // ─────────────────────────────────────────────
 
-// getExtractionHTTPClient returns (baseURL, apiKey, *http.Client) for making
-// raw HTTP calls to the admin extraction API. It uses the existing getClient
-// helper to retrieve authentication credentials.
-func getExtractionHTTPClient(cmd *cobra.Command) (string, string, *http.Client, error) {
+// extractionClient bundles the base URL, authenticated SDK client, and an
+// HTTP client for making raw HTTP calls to the admin extraction API.
+type extractionClient struct {
+	baseURL    string
+	sdkClient  interface{ AuthenticateRequest(*http.Request) error }
+	httpClient *http.Client
+}
+
+// authenticateRequest attaches auth headers to req via the SDK's auth provider.
+// This correctly handles all credential types (X-API-Key, Authorization: Bearer).
+func (ec *extractionClient) authenticateRequest(req *http.Request) error {
+	return ec.sdkClient.AuthenticateRequest(req)
+}
+
+// getExtractionClient returns an extractionClient for making authenticated raw
+// HTTP calls to the admin extraction API.
+func getExtractionClient(cmd *cobra.Command) (*extractionClient, error) {
 	c, err := getClient(cmd)
 	if err != nil {
-		return "", "", nil, err
+		return nil, err
 	}
 
-	baseURL := c.BaseURL()
-	apiKey := c.APIKey()
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	return &extractionClient{
+		baseURL:    c.BaseURL(),
+		sdkClient:  c.SDK,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+	}, nil
+}
 
-	return baseURL, apiKey, httpClient, nil
+// getExtractionHTTPClient is kept for watchExtractionJob which needs a longer timeout.
+func getExtractionHTTPClient(cmd *cobra.Command) (*extractionClient, *http.Client, error) {
+	ec, err := getExtractionClient(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+	longClient := &http.Client{Timeout: 60 * time.Second}
+	return ec, longClient, nil
 }
 
 // watchExtractionJob polls an extraction job until it reaches a terminal state
 // (completed, failed, or cancelled) or the timeout is exceeded.
 func watchExtractionJob(cmd *cobra.Command, jobID string) error {
-	baseURL, apiKey, _, err := getExtractionHTTPClient(cmd)
+	ec, httpClient, err := getExtractionHTTPClient(cmd)
 	if err != nil {
 		return err
 	}
-
-	// Use a longer timeout for watch requests (account for network delays + server processing)
-	httpClient := &http.Client{Timeout: 60 * time.Second}
 
 	out := cmd.OutOrStdout()
 
@@ -95,12 +115,14 @@ func watchExtractionJob(cmd *cobra.Command, jobID string) error {
 
 	for time.Now().Before(deadline) {
 		// GET job status
-		url := baseURL + "/api/admin/extraction-jobs/" + jobID
+		url := ec.baseURL + "/api/admin/extraction-jobs/" + jobID
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("X-API-Key", apiKey)
+		if err := ec.authenticateRequest(req); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
@@ -111,7 +133,7 @@ func watchExtractionJob(cmd *cobra.Command, jobID string) error {
 		resp.Body.Close()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return parseAPIError(resp.StatusCode, body)
 		}
 
 		// Parse response
@@ -211,7 +233,7 @@ Requires an API key with admin:write scope.`,
 			return fmt.Errorf("--document is required")
 		}
 
-		baseURL, apiKey, httpClient, err := getExtractionHTTPClient(cmd)
+		ec, err := getExtractionClient(cmd)
 		if err != nil {
 			return err
 		}
@@ -229,15 +251,17 @@ Requires an API key with admin:write scope.`,
 		}
 		bodyJSON, _ := json.Marshal(reqBody)
 
-		url := baseURL + "/api/admin/extraction-jobs"
+		url := ec.baseURL + "/api/admin/extraction-jobs"
 		req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(bodyJSON)))
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-API-Key", apiKey)
+		if err := ec.authenticateRequest(req); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
 
-		resp, err := httpClient.Do(req)
+		resp, err := ec.httpClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to create extraction job: %w", err)
 		}
@@ -245,7 +269,7 @@ Requires an API key with admin:write scope.`,
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return parseAPIError(resp.StatusCode, body)
 		}
 
 		out := cmd.OutOrStdout()
@@ -296,19 +320,21 @@ Requires an API key with admin:read scope.`,
 			return watchExtractionJob(cmd, jobID)
 		}
 
-		baseURL, apiKey, httpClient, err := getExtractionHTTPClient(cmd)
+		ec, err := getExtractionClient(cmd)
 		if err != nil {
 			return err
 		}
 
-		url := baseURL + "/api/admin/extraction-jobs/" + jobID
+		url := ec.baseURL + "/api/admin/extraction-jobs/" + jobID
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("X-API-Key", apiKey)
+		if err := ec.authenticateRequest(req); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
 
-		resp, err := httpClient.Do(req)
+		resp, err := ec.httpClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to get extraction job: %w", err)
 		}
@@ -316,7 +342,7 @@ Requires an API key with admin:read scope.`,
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return parseAPIError(resp.StatusCode, body)
 		}
 
 		out := cmd.OutOrStdout()
@@ -385,7 +411,7 @@ Use --limit to control the number of results (default 50).
 
 Requires an API key with admin:read scope.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		baseURL, apiKey, httpClient, err := getExtractionHTTPClient(cmd)
+		ec, err := getExtractionClient(cmd)
 		if err != nil {
 			return err
 		}
@@ -396,7 +422,7 @@ Requires an API key with admin:read scope.`,
 		}
 
 		// Build query parameters
-		url := fmt.Sprintf("%s/api/admin/extraction-jobs/projects/%s", baseURL, projectID)
+		url := fmt.Sprintf("%s/api/admin/extraction-jobs/projects/%s", ec.baseURL, projectID)
 		params := []string{}
 		if extractionStatusFlag != "" {
 			params = append(params, fmt.Sprintf("status=%s", extractionStatusFlag))
@@ -415,9 +441,11 @@ Requires an API key with admin:read scope.`,
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("X-API-Key", apiKey)
+		if err := ec.authenticateRequest(req); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
 
-		resp, err := httpClient.Do(req)
+		resp, err := ec.httpClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to list extraction jobs: %w", err)
 		}
@@ -425,7 +453,7 @@ Requires an API key with admin:read scope.`,
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return parseAPIError(resp.StatusCode, body)
 		}
 
 		out := cmd.OutOrStdout()
@@ -489,19 +517,21 @@ Requires an API key with admin:write scope.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		jobID := args[0]
 
-		baseURL, apiKey, httpClient, err := getExtractionHTTPClient(cmd)
+		ec, err := getExtractionClient(cmd)
 		if err != nil {
 			return err
 		}
 
-		url := fmt.Sprintf("%s/api/admin/extraction-jobs/%s/cancel", baseURL, jobID)
+		url := fmt.Sprintf("%s/api/admin/extraction-jobs/%s/cancel", ec.baseURL, jobID)
 		req, err := http.NewRequest(http.MethodPost, url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("X-API-Key", apiKey)
+		if err := ec.authenticateRequest(req); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
 
-		resp, err := httpClient.Do(req)
+		resp, err := ec.httpClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to cancel extraction job: %w", err)
 		}
@@ -509,7 +539,7 @@ Requires an API key with admin:write scope.`,
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return parseAPIError(resp.StatusCode, body)
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Extraction job %s cancelled successfully\n", jobID)
@@ -533,19 +563,21 @@ Requires an API key with admin:write scope.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		jobID := args[0]
 
-		baseURL, apiKey, httpClient, err := getExtractionHTTPClient(cmd)
+		ec, err := getExtractionClient(cmd)
 		if err != nil {
 			return err
 		}
 
-		url := fmt.Sprintf("%s/api/admin/extraction-jobs/%s/retry", baseURL, jobID)
+		url := fmt.Sprintf("%s/api/admin/extraction-jobs/%s/retry", ec.baseURL, jobID)
 		req, err := http.NewRequest(http.MethodPost, url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("X-API-Key", apiKey)
+		if err := ec.authenticateRequest(req); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
 
-		resp, err := httpClient.Do(req)
+		resp, err := ec.httpClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to retry extraction job: %w", err)
 		}
@@ -553,7 +585,7 @@ Requires an API key with admin:write scope.`,
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return parseAPIError(resp.StatusCode, body)
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Extraction job %s retry initiated successfully\n", jobID)
@@ -577,19 +609,21 @@ Requires an API key with admin:read scope.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		jobID := args[0]
 
-		baseURL, apiKey, httpClient, err := getExtractionHTTPClient(cmd)
+		ec, err := getExtractionClient(cmd)
 		if err != nil {
 			return err
 		}
 
-		url := fmt.Sprintf("%s/api/admin/extraction-jobs/%s/logs", baseURL, jobID)
+		url := fmt.Sprintf("%s/api/admin/extraction-jobs/%s/logs", ec.baseURL, jobID)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("X-API-Key", apiKey)
+		if err := ec.authenticateRequest(req); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
 
-		resp, err := httpClient.Do(req)
+		resp, err := ec.httpClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to get extraction job logs: %w", err)
 		}
@@ -597,7 +631,7 @@ Requires an API key with admin:read scope.`,
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return parseAPIError(resp.StatusCode, body)
 		}
 
 		out := cmd.OutOrStdout()
@@ -649,7 +683,7 @@ Shows counts by status (queued, running, completed, failed, cancelled) and other
 
 Requires an API key with admin:read scope.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		baseURL, apiKey, httpClient, err := getExtractionHTTPClient(cmd)
+		ec, err := getExtractionClient(cmd)
 		if err != nil {
 			return err
 		}
@@ -659,14 +693,16 @@ Requires an API key with admin:read scope.`,
 			return err
 		}
 
-		url := fmt.Sprintf("%s/api/admin/extraction-jobs/projects/%s/statistics", baseURL, projectID)
+		url := fmt.Sprintf("%s/api/admin/extraction-jobs/projects/%s/statistics", ec.baseURL, projectID)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
-		req.Header.Set("X-API-Key", apiKey)
+		if err := ec.authenticateRequest(req); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
 
-		resp, err := httpClient.Do(req)
+		resp, err := ec.httpClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to get extraction job stats: %w", err)
 		}
@@ -674,7 +710,7 @@ Requires an API key with admin:read scope.`,
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return parseAPIError(resp.StatusCode, body)
 		}
 
 		out := cmd.OutOrStdout()

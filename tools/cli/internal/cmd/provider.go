@@ -11,6 +11,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -311,12 +312,13 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 			fmt.Println("Check that credentials are configured with 'memory provider configure'.")
 			return nil
 		}
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "MODEL\tTYPE\tSLUG")
+		t := internalui.NewTable(internalui.TableConfig{Compact: true})
+		t.SetHeaders([]string{"MODEL", "TYPE", "SLUG"})
 		for _, m := range sortModelsByType(models) {
-			fmt.Fprintf(w, "%s\t%s\t%s/%s\n", m.ModelName, m.ModelType, providerArg, m.ModelName)
+			t.AddRow([]string{m.ModelName, m.ModelType, providerArg + "/" + m.ModelName})
 		}
-		return w.Flush()
+		fmt.Print(t.Render())
+		return nil
 	}
 
 	// No provider argument: iterate all orgs and collect models from every
@@ -331,8 +333,8 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROVIDER\tMODEL\tTYPE\tSLUG")
+	t := internalui.NewTable(internalui.TableConfig{Compact: true})
+	t.SetHeaders([]string{"PROVIDER", "MODEL", "TYPE", "SLUG"})
 
 	seenProviders := map[string]bool{}
 	anyModels := false
@@ -354,20 +356,20 @@ func runProviderModels(cmd *cobra.Command, args []string) error {
 				continue
 			}
 			for _, m := range sortModelsByType(models) {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s/%s\n", pc.Provider, m.ModelName, m.ModelType, pc.Provider, m.ModelName)
+				t.AddRow([]string{pc.Provider, m.ModelName, m.ModelType, pc.Provider + "/" + m.ModelName})
 				anyModels = true
 			}
 		}
 	}
 
 	if !anyModels {
-		w.Flush()
 		fmt.Println("No models cached for any configured provider.")
 		fmt.Println("Tip: use --type embedding or --type generative to filter by model type.")
 		return nil
 	}
 
-	return w.Flush()
+	fmt.Print(t.Render())
+	return nil
 }
 
 // ── usage ─────────────────────────────────────────────────────────────────────
@@ -453,25 +455,25 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 		}
 
 		var totalCost float64
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "PROJECT\tTEXT IN\tIMAGE\tVIDEO\tAUDIO\tOUTPUT\tEST. COST (USD)")
+		t := internalui.NewTable(internalui.TableConfig{Compact: true})
+		t.SetHeaders([]string{"PROJECT", "TEXT IN", "IMAGE", "VIDEO", "AUDIO", "OUTPUT", "EST. COST (USD)"})
 		for _, row := range result.Data {
 			name := row.ProjectName
 			if name == "" {
 				name = row.ProjectID
 			}
-			fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t$%.4f\n",
+			t.AddRow([]string{
 				name,
-				row.TotalText,
-				row.TotalImage,
-				row.TotalVideo,
-				row.TotalAudio,
-				row.TotalOutput,
-				row.EstimatedCostUSD,
-			)
+				fmt.Sprintf("%d", row.TotalText),
+				fmt.Sprintf("%d", row.TotalImage),
+				fmt.Sprintf("%d", row.TotalVideo),
+				fmt.Sprintf("%d", row.TotalAudio),
+				fmt.Sprintf("%d", row.TotalOutput),
+				fmt.Sprintf("$%.4f", row.EstimatedCostUSD),
+			})
 			totalCost += row.EstimatedCostUSD
 		}
-		_ = w.Flush()
+		fmt.Print(t.Render())
 		fmt.Printf("\nTotal estimated cost: $%.4f\n", totalCost)
 		return nil
 	}
@@ -511,22 +513,22 @@ func runProviderUsage(cmd *cobra.Command, args []string) error {
 	}
 
 	var totalCost float64
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROVIDER\tMODEL\tTEXT IN\tIMAGE\tVIDEO\tAUDIO\tOUTPUT\tEST. COST (USD)")
+	t := internalui.NewTable(internalui.TableConfig{Compact: true})
+	t.SetHeaders([]string{"PROVIDER", "MODEL", "TEXT IN", "IMAGE", "VIDEO", "AUDIO", "OUTPUT", "EST. COST (USD)"})
 	for _, row := range summary.Data {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t$%.4f\n",
+		t.AddRow([]string{
 			row.Provider,
 			row.Model,
-			row.TotalText,
-			row.TotalImage,
-			row.TotalVideo,
-			row.TotalAudio,
-			row.TotalOutput,
-			row.EstimatedCostUSD,
-		)
+			fmt.Sprintf("%d", row.TotalText),
+			fmt.Sprintf("%d", row.TotalImage),
+			fmt.Sprintf("%d", row.TotalVideo),
+			fmt.Sprintf("%d", row.TotalAudio),
+			fmt.Sprintf("%d", row.TotalOutput),
+			fmt.Sprintf("$%.4f", row.EstimatedCostUSD),
+		})
 		totalCost += row.EstimatedCostUSD
 	}
-	_ = w.Flush()
+	fmt.Print(t.Render())
 	fmt.Printf("\nTotal estimated cost: $%.4f\n", totalCost)
 	return nil
 }
@@ -845,11 +847,12 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Table output
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SCOPE\tPROVIDER\tGENERATIVE MODEL\tEMBEDDING MODEL\tBASE URL\tGCP PROJECT\tLOCATION\tUPDATED")
+	t := internalui.NewTable(internalui.TableConfig{Compact: true})
+	t.SetHeaders([]string{"SCOPE", "PROVIDER", "GENERATIVE MODEL", "EMBEDDING MODEL", "BASE URL", "GCP PROJECT", "LOCATION", "UPDATED"})
 
 	for _, cfg := range orgConfigs {
-		fmt.Fprintf(w, "org\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		t.AddRow([]string{
+			"org",
 			cfg.Provider,
 			valueOrDash(cfg.GenerativeModel),
 			valueOrDash(cfg.EmbeddingModel),
@@ -857,11 +860,11 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 			valueOrDash(cfg.GCPProject),
 			valueOrDash(cfg.Location),
 			cfg.UpdatedAt.Format(time.DateOnly),
-		)
+		})
 	}
 	for _, cfg := range projectConfigs {
 		scope := "project:" + shortID(cfg.ProjectID)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		t.AddRow([]string{
 			scope,
 			cfg.Provider,
 			valueOrDash(cfg.GenerativeModel),
@@ -870,9 +873,10 @@ func runProviderList(cmd *cobra.Command, _ []string) error {
 			valueOrDash(cfg.GCPProject),
 			valueOrDash(cfg.Location),
 			cfg.UpdatedAt.Format(time.DateOnly),
-		)
+		})
 	}
-	return w.Flush()
+	fmt.Print(t.Render())
+	return nil
 }
 
 // valueOrDash returns the value or "-" if empty.

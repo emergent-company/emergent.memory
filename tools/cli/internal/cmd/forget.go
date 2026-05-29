@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -121,97 +119,32 @@ func runForgetAgent(ctx context.Context, c *client.Client, text, projectID strin
 
 // streamForgetSSE executes the request and parses the SSE stream, printing output.
 func streamForgetSSE(httpReq *http.Request, label, projectID string) error {
-	start := time.Now()
-	httpClient := &http.Client{Timeout: 0}
-	resp, err := httpClient.Do(httpReq)
+	jsonMode := forgetJSON || output == "json"
+	result, err := StreamSSE(httpReq, SSEOptions{
+		LivePrint: !jsonMode,
+		ShowTools: forgetShowTools,
+		JSONMode:  jsonMode,
+	})
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return parseAPIError(resp.StatusCode, body)
+		return err
 	}
 
-	var response strings.Builder
-	var tools []string
-	var streamErr string
-	var sessionID string
-	reader := bufio.NewReader(resp.Body)
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err != io.EOF {
-				return fmt.Errorf("error reading response: %w", err)
-			}
-			break
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "" {
-			continue
-		}
-
-		var event map[string]interface{}
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
-		}
-
-		eventType, _ := event["type"].(string)
-		switch eventType {
-		case "meta":
-			if id, ok := event["conversationId"].(string); ok && id != "" {
-				sessionID = id
-			}
-		case "token":
-			if token, ok := event["token"].(string); ok {
-				response.WriteString(token)
-				if !forgetJSON && output != "json" {
-					fmt.Print(token)
-				}
-			}
-		case "mcp_tool":
-			if status, ok := event["status"].(string); ok && status == "started" {
-				if tool, ok := event["tool"].(string); ok {
-					tools = append(tools, tool)
-					if forgetShowTools {
-						fmt.Printf("\n[Tool: %s]\n", tool)
-					}
-				}
-			}
-		case "error":
-			if errMsg, ok := event["error"].(string); ok {
-				streamErr = errMsg
-				if !forgetJSON && output != "json" {
-					fmt.Fprintf(os.Stderr, "\nError: %s\n", errMsg)
-				}
-			}
-		}
-	}
-
-	elapsed := time.Since(start)
-
-	if forgetJSON || output == "json" {
+	if jsonMode {
 		out := map[string]interface{}{
 			"label":         label,
 			"projectId":     projectID,
 			"strategy":      forgetStrategy,
 			"cascade_depth": forgetCascade,
 			"dry_run":       forgetDryRun,
-			"response":      response.String(),
-			"tools":         tools,
-			"elapsedMs":     elapsed.Milliseconds(),
+			"response":      result.Response,
+			"tools":         result.Tools,
+			"elapsedMs":     result.Elapsed.Milliseconds(),
 		}
-		if streamErr != "" {
-			out["error"] = streamErr
+		if result.StreamErr != "" {
+			out["error"] = result.StreamErr
 		}
-		if sessionID != "" {
-			out["session_id"] = sessionID
+		if result.SessionID != "" {
+			out["session_id"] = result.SessionID
 		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
@@ -219,21 +152,21 @@ func streamForgetSSE(httpReq *http.Request, label, projectID string) error {
 	}
 
 	fmt.Printf("\n\n")
-	if forgetShowTools && len(tools) > 0 {
-		fmt.Printf("Tools used: %s\n", strings.Join(tools, ", "))
+	if forgetShowTools && len(result.Tools) > 0 {
+		fmt.Printf("Tools used: %s\n", strings.Join(result.Tools, ", "))
 	}
 	if forgetShowTime {
-		fmt.Printf("Time: %v\n", elapsed.Round(time.Millisecond))
+		fmt.Printf("Time: %v\n", result.Elapsed.Round(time.Millisecond))
 	}
 	if forgetDryRun {
 		fmt.Printf("(dry run — no deletes performed)\n")
 	}
-	if sessionID != "" {
-		fmt.Printf("Session: %s  (use --session %s to continue)\n", sessionID, sessionID)
+	if result.SessionID != "" {
+		fmt.Printf("Session: %s  (use --session %s to continue)\n", result.SessionID, result.SessionID)
 	}
 
-	if streamErr != "" {
-		return fmt.Errorf("%s", streamErr)
+	if result.StreamErr != "" {
+		return fmt.Errorf("%s", result.StreamErr)
 	}
 	return nil
 }

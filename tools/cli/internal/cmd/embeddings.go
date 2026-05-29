@@ -103,6 +103,11 @@ func embeddingsDoRequest(method, path string) (map[string]any, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
+	cfgPath := config.DiscoverPath(embeddingsFlags.configPath)
+	if cfg, err := config.LoadWithEnv(cfgPath); err == nil && cfg.APIKey != "" {
+		req.Header.Set("X-API-Key", cfg.APIKey)
+	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request to %s failed: %w", url, err)
@@ -139,6 +144,11 @@ func embeddingsDoRequestJSON(method, path string, payload map[string]any) (map[s
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	cfgPath := config.DiscoverPath(embeddingsFlags.configPath)
+	if cfg, err := config.LoadWithEnv(cfgPath); err == nil && cfg.APIKey != "" {
+		req.Header.Set("X-API-Key", cfg.APIKey)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

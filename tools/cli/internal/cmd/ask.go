@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -172,91 +170,33 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 		}
 	}
 
-	start := time.Now()
-	httpClient := &http.Client{Timeout: 0} // no timeout — SSE streams until server closes; server enforces its own agent timeout
-	resp, err := httpClient.Do(httpReq)
+	jsonMode := askJSON || output == "json"
+	// ask buffers all tokens and renders markdown at the end — no live print.
+	result, err := StreamSSE(httpReq, SSEOptions{
+		LivePrint: false,
+		ShowTools: askShowTools,
+		JSONMode:  jsonMode,
+	})
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return parseAPIError(resp.StatusCode, body)
+		return err
 	}
 
-	// Parse and stream SSE events.
-	var response strings.Builder
-	var tools []string
-	var streamErr string
-	reader := bufio.NewReader(resp.Body)
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err != io.EOF {
-				return fmt.Errorf("error reading response: %w", err)
-			}
-			break
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "" {
-			continue
-		}
-
-		var event map[string]interface{}
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
-		}
-
-		eventType, _ := event["type"].(string)
-		switch eventType {
-		case "token":
-			if token, ok := event["token"].(string); ok {
-				response.WriteString(token)
-			}
-		case "mcp_tool":
-			if status, ok := event["status"].(string); ok && status == "started" {
-				if tool, ok := event["tool"].(string); ok {
-					tools = append(tools, tool)
-					if askShowTools {
-						fmt.Fprintf(os.Stderr, "\n[Tool: %s]\n", tool)
-					}
-				}
-			}
-		case "error":
-			if errMsg, ok := event["error"].(string); ok {
-				streamErr = errMsg
-				if !askJSON && output != "json" {
-					fmt.Fprintf(os.Stderr, "\nError: %s\n", errMsg)
-				}
-			}
-		}
-	}
-
-	elapsed := time.Since(start)
-
-	if askJSON || output == "json" {
-		output := map[string]interface{}{
+	if jsonMode {
+		out := map[string]interface{}{
 			"question":  question,
-			"response":  response.String(),
-			"tools":     tools,
-			"elapsedMs": elapsed.Milliseconds(),
+			"response":  result.Response,
+			"tools":     result.Tools,
+			"elapsedMs": result.Elapsed.Milliseconds(),
 		}
 		if projectID != "" {
-			output["projectId"] = projectID
+			out["projectId"] = projectID
 		}
-		if streamErr != "" {
-			output["error"] = streamErr
+		if result.StreamErr != "" {
+			out["error"] = result.StreamErr
 		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(output)
+		return encoder.Encode(out)
 	}
 
 	// Render the full markdown response.
@@ -275,27 +215,27 @@ func runAskStream(ctx context.Context, c *client.Client, baseURL, question, proj
 			glamour.WithWordWrap(width),
 		)
 		if err == nil {
-			if rendered, err := renderer.Render(response.String()); err == nil {
+			if rendered, err := renderer.Render(result.Response); err == nil {
 				fmt.Print(rendered)
 			} else {
-				fmt.Print(response.String())
+				fmt.Print(result.Response)
 			}
 		} else {
-			fmt.Print(response.String())
+			fmt.Print(result.Response)
 		}
 	} else {
-		fmt.Print(response.String())
+		fmt.Print(result.Response)
 	}
 
-	if askShowTools && len(tools) > 0 {
-		fmt.Fprintf(os.Stderr, "Tools used: %s\n", strings.Join(tools, ", "))
+	if askShowTools && len(result.Tools) > 0 {
+		fmt.Fprintf(os.Stderr, "Tools used: %s\n", strings.Join(result.Tools, ", "))
 	}
 	if askShowTime {
-		fmt.Fprintf(os.Stderr, "Time: %v\n", elapsed.Round(time.Millisecond))
+		fmt.Fprintf(os.Stderr, "Time: %v\n", result.Elapsed.Round(time.Millisecond))
 	}
 
-	if streamErr != "" {
-		return fmt.Errorf("%s", streamErr)
+	if result.StreamErr != "" {
+		return fmt.Errorf("%s", result.StreamErr)
 	}
 	return nil
 }

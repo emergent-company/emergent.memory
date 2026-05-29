@@ -8,10 +8,10 @@ import (
 	"io"
 	"os"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/acp"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
+	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -101,8 +101,8 @@ Use --json to output the raw JSON response.`,
 			return nil
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tDESCRIPTION\tVERSION\tSUCCESS RATE")
+		t := internalui.NewTable(internalui.TableConfig{Compact: true})
+		t.SetHeaders([]string{"NAME", "DESCRIPTION", "VERSION", "SUCCESS RATE"})
 		for _, a := range agents {
 			desc := truncate(a.Description, 50)
 			version := a.Version
@@ -113,9 +113,10 @@ Use --json to output the raw JSON response.`,
 			if a.Status != nil && a.Status.SuccessRate != nil {
 				successRate = fmt.Sprintf("%.0f%%", *a.Status.SuccessRate*100)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.Name, desc, version, successRate)
+			t.AddRow([]string{a.Name, desc, version, successRate})
 		}
-		return w.Flush()
+		fmt.Print(t.Render())
+		return nil
 	},
 }
 
@@ -652,14 +653,16 @@ Use --json for raw JSON output.`,
 		}
 
 		fmt.Printf("\nRuns (%d):\n", len(session.History))
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "  RUN ID\tAGENT\tSTATUS\tCREATED")
+		t := internalui.NewTable(internalui.TableConfig{Compact: true})
+		t.SetHeaders([]string{"RUN ID", "AGENT", "STATUS", "CREATED"})
 		for _, r := range session.History {
-			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n",
+			t.AddRow([]string{
 				r.ID, r.AgentName, r.Status,
-				r.CreatedAt.Format("2006-01-02 15:04:05"))
+				r.CreatedAt.Format("2006-01-02 15:04:05"),
+			})
 		}
-		return w.Flush()
+		fmt.Print(t.Render())
+		return nil
 	},
 }
 
