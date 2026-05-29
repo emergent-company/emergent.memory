@@ -34,6 +34,11 @@ func (r *Repository) DB() bun.IDB {
 	return r.db
 }
 
+// MaxListLimit returns the configured maximum number of items per list page.
+func (r *Repository) MaxListLimit() int {
+	return r.maxListLimit
+}
+
 // NewRepository creates a new graph repository.
 func NewRepository(db bun.IDB, log *slog.Logger, cfg *config.Config) *Repository {
 	return &Repository{
@@ -154,33 +159,35 @@ type ListParams struct {
 // applyPropertyFilters applies JSONB property filters to a Bun select query.
 // Each PropertyFilter generates a WHERE clause against the properties JSONB column.
 // Supported operators: eq, neq, gt, gte, lt, lte, contains, exists, in
+// propertyAccessors computes the text (->>) and json (->) JSONB accessors for a
+// dot-notation property path.
+// "name"         → ("properties->>'name'", "properties->'name'")
+// "address.city" → ("properties->'address'->>'city'", "properties->'address'->'city'")
+func propertyAccessors(path string) (textAccessor, jsonAccessor string, ok bool) {
+	segments := strings.Split(path, ".")
+	if len(segments) == 0 {
+		return "", "", false
+	}
+	if len(segments) == 1 {
+		return "properties->>'" + segments[0] + "'", "properties->'" + segments[0] + "'", true
+	}
+	var b strings.Builder
+	b.WriteString("properties")
+	for _, seg := range segments[:len(segments)-1] {
+		b.WriteString("->'" + seg + "'")
+	}
+	base := b.String()
+	last := segments[len(segments)-1]
+	return base + "->>'" + last + "'", base + "->'" + last + "'", true
+}
+
+// applyPropertyFilterConditions applies JSONB property filter conditions to a bun.SelectQuery.
 func applyPropertyFilters(q *bun.SelectQuery, filters []PropertyFilter) *bun.SelectQuery {
 	for _, f := range filters {
-		// Convert dot-notation path to PostgreSQL JSONB accessor.
-		// "name"         → properties->>'name'
-		// "address.city" → properties->'address'->>'city'
-		segments := strings.Split(f.Path, ".")
-		if len(segments) == 0 {
+		textAccessor, jsonAccessor, ok := propertyAccessors(f.Path)
+		if !ok {
 			continue
 		}
-
-		// Build the accessor: intermediate segments use -> (returns JSON), last uses ->> (returns text)
-		var textAccessor string // returns text via ->>
-		var jsonAccessor string // returns jsonb via ->
-		if len(segments) == 1 {
-			textAccessor = "properties->>'" + segments[0] + "'"
-			jsonAccessor = "properties->'" + segments[0] + "'"
-		} else {
-			// Build intermediate path with -> and final with ->>
-			var builder strings.Builder
-			builder.WriteString("properties")
-			for _, seg := range segments[:len(segments)-1] {
-				builder.WriteString("->'" + seg + "'")
-			}
-			jsonAccessor = builder.String() + "->'" + segments[len(segments)-1] + "'"
-			textAccessor = builder.String() + "->>'" + segments[len(segments)-1] + "'"
-		}
-
 		switch f.Op {
 		case "eq":
 			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
@@ -195,13 +202,10 @@ func applyPropertyFilters(q *bun.SelectQuery, filters []PropertyFilter) *bun.Sel
 		case "lte":
 			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
 		case "contains":
-			// Text contains (ILIKE) for string values
 			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
 		case "exists":
-			// Check if the key exists in the JSONB object
 			q = q.Where(jsonAccessor + " IS NOT NULL")
 		case "in":
-			// Value should be an array
 			if arr, ok := f.Value.([]interface{}); ok {
 				strVals := make([]string, 0, len(arr))
 				for _, v := range arr {
@@ -214,123 +218,48 @@ func applyPropertyFilters(q *bun.SelectQuery, filters []PropertyFilter) *bun.Sel
 	return q
 }
 
-// List returns graph objects matching the given parameters.
-// Returns only HEAD versions (latest version per canonical_id).
-func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObject, error) {
-	if params.Limit <= 0 {
-		params.Limit = 50
-	}
-	if params.Limit > r.maxListLimit {
-		params.Limit = r.maxListLimit
-	}
-	if params.Order == "" {
-		params.Order = "desc"
-	}
-
-	// Build subquery to get HEAD versions
-	subq := r.db.NewSelect().
-		Model((*GraphObject)(nil)).
-		Column("id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-			"type", "key", "status", "properties", "labels", "change_summary",
-			"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
-			"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
-			"content_hash").
-		Where("project_id = ?", params.ProjectID).
-		Where("supersedes_id IS NULL") // HEAD versions have no successor
-
-	if params.BranchID != nil {
-		subq = subq.Where("branch_id = ?", *params.BranchID)
-	} else {
-		subq = subq.Where("branch_id IS NULL")
-	}
-
-	// Filter by specific IDs if provided (accepts both physical id and canonical_id)
-	if len(params.IDs) > 0 {
-		subq = subq.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
-	}
-
-	// Support both single type and multiple types
-	if params.Type != nil {
-		subq = subq.Where("type = ?", *params.Type)
-	} else if len(params.Types) > 0 {
-		subq = subq.Where("type IN (?)", bun.In(params.Types))
-	}
-
-	// Support both single label and multiple labels
-	if params.Label != nil {
-		subq = subq.Where("? = ANY(labels)", *params.Label)
-	} else if len(params.Labels) > 0 {
-		subq = subq.Where("labels && ?::text[]", formatTextArray(params.Labels))
-	}
-
-	if params.Status != nil {
-		subq = subq.Where("status = ?", *params.Status)
-	}
-
-	if params.Key != nil {
-		subq = subq.Where("key = ?", *params.Key)
-	}
-
-	if params.ExtractionJobID != nil {
-		subq = subq.Where("extraction_job_id = ?", *params.ExtractionJobID)
-	}
-
-	if params.Namespace != nil {
-		subq = subq.Where("namespace = ?", *params.Namespace)
-	}
-
-	if !params.IncludeDeleted {
-		subq = subq.Where("deleted_at IS NULL")
-	}
-
-	// Apply JSONB property filters
-	if len(params.PropertyFilters) > 0 {
-		subq = applyPropertyFilters(subq, params.PropertyFilters)
-	}
-
-	// Filter by related object: only return objects that are dst_id in a relationship
-	// where src_id = RelatedToID and the relationship is a HEAD (supersedes_id IS NULL).
-	if params.RelatedToID != nil {
-		subq = subq.Where(`canonical_id IN (
-			SELECT dst_id FROM kb.graph_relationships
-			WHERE src_id = ? AND supersedes_id IS NULL AND deleted_at IS NULL AND project_id = ?
-		)`, *params.RelatedToID, params.ProjectID)
-	}
-
-	// Pagination via cursor (created_at, id)
-	if params.Cursor != nil {
-		// Decode cursor: base64(json({"created_at": "...", "id": "..."}))
-		cursorData, err := decodeCursor(*params.Cursor)
-		if err != nil {
-			return nil, apperror.ErrBadRequest.WithMessage("invalid cursor")
+// applyPropertyFiltersUpdate applies JSONB property filter conditions to a bun.UpdateQuery.
+func applyPropertyFiltersUpdate(q *bun.UpdateQuery, filters []PropertyFilter) *bun.UpdateQuery {
+	for _, f := range filters {
+		textAccessor, jsonAccessor, ok := propertyAccessors(f.Path)
+		if !ok {
+			continue
 		}
-		if params.Order == "asc" {
-			subq = subq.Where("(created_at, id) > (?, ?)", cursorData.CreatedAt, cursorData.ID)
-		} else {
-			subq = subq.Where("(created_at, id) < (?, ?)", cursorData.CreatedAt, cursorData.ID)
+		switch f.Op {
+		case "eq":
+			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
+		case "neq":
+			q = q.Where("("+textAccessor+" IS NULL OR "+textAccessor+" != ?)", fmt.Sprintf("%v", f.Value))
+		case "gt":
+			q = q.Where("("+textAccessor+")::numeric > ?::numeric", f.Value)
+		case "gte":
+			q = q.Where("("+textAccessor+")::numeric >= ?::numeric", f.Value)
+		case "lt":
+			q = q.Where("("+textAccessor+")::numeric < ?::numeric", f.Value)
+		case "lte":
+			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
+		case "contains":
+			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
+		case "exists":
+			q = q.Where(jsonAccessor + " IS NOT NULL")
+		case "in":
+			if arr, ok := f.Value.([]interface{}); ok {
+				strVals := make([]string, 0, len(arr))
+				for _, v := range arr {
+					strVals = append(strVals, fmt.Sprintf("%v", v))
+				}
+				q = q.Where(textAccessor+" IN (?)", bun.In(strVals))
+			}
 		}
 	}
-
-	if params.Order == "asc" {
-		subq = subq.Order("created_at ASC", "id ASC")
-	} else {
-		subq = subq.Order("created_at DESC", "id DESC")
-	}
-	subq = subq.Limit(params.Limit + 1)
-
-	var objects []*GraphObject
-	err := subq.Scan(ctx, &objects)
-	if err != nil {
-		r.log.Error("failed to list graph objects", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-
-	return objects, nil
+	return q
 }
 
-// Count returns the total count of graph objects matching the given parameters.
-// This is used for pagination to return the true total, not just the page count.
-func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) {
+// buildObjectBaseQuery constructs a SELECT query for HEAD graph objects with all
+// ListParams filters applied (project, branch, IDs, types, labels, status, key,
+// extraction job, namespace, deleted, property filters, and related-to).
+// Cursor, ordering, and LIMIT are NOT applied — callers add those as needed.
+func (r *Repository) buildObjectBaseQuery(params ListParams) *bun.SelectQuery {
 	q := r.db.NewSelect().
 		Model((*GraphObject)(nil)).
 		Where("project_id = ?", params.ProjectID).
@@ -342,7 +271,7 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 		q = q.Where("branch_id IS NULL")
 	}
 
-	// Filter by specific IDs if provided (accepts both physical id and canonical_id)
+	// Filter by specific IDs (accepts both physical id and canonical_id)
 	if len(params.IDs) > 0 {
 		q = q.Where("(id IN (?) OR canonical_id IN (?))", bun.In(params.IDs), bun.In(params.IDs))
 	}
@@ -373,21 +302,87 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 		q = q.Where("extraction_job_id = ?", *params.ExtractionJobID)
 	}
 
+	if params.Namespace != nil {
+		q = q.Where("namespace = ?", *params.Namespace)
+	}
+
 	if !params.IncludeDeleted {
 		q = q.Where("deleted_at IS NULL")
 	}
 
-	// Apply JSONB property filters
 	if len(params.PropertyFilters) > 0 {
 		q = applyPropertyFilters(q, params.PropertyFilters)
 	}
 
-	count, err := q.Count(ctx)
+	// Filter by related object: only return objects that are dst_id in a relationship
+	// where src_id = RelatedToID and the relationship is a HEAD (supersedes_id IS NULL).
+	if params.RelatedToID != nil {
+		q = q.Where(`canonical_id IN (
+			SELECT dst_id FROM kb.graph_relationships
+			WHERE src_id = ? AND supersedes_id IS NULL AND deleted_at IS NULL AND project_id = ?
+		)`, *params.RelatedToID, params.ProjectID)
+	}
+
+	return q
+}
+
+// List returns graph objects matching the given parameters.
+// Returns only HEAD versions (latest version per canonical_id).
+func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+	if params.Limit > r.maxListLimit {
+		params.Limit = r.maxListLimit
+	}
+	if params.Order == "" {
+		params.Order = "desc"
+	}
+
+	q := r.buildObjectBaseQuery(params).
+		Column("id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
+			"type", "key", "status", "properties", "labels", "change_summary",
+			"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
+			"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
+			"content_hash")
+
+	// Pagination via cursor (created_at, id)
+	if params.Cursor != nil {
+		cursorData, err := decodeCursor(*params.Cursor)
+		if err != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid cursor")
+		}
+		if params.Order == "asc" {
+			q = q.Where("(created_at, id) > (?, ?)", cursorData.CreatedAt, cursorData.ID)
+		} else {
+			q = q.Where("(created_at, id) < (?, ?)", cursorData.CreatedAt, cursorData.ID)
+		}
+	}
+
+	if params.Order == "asc" {
+		q = q.Order("created_at ASC", "id ASC")
+	} else {
+		q = q.Order("created_at DESC", "id DESC")
+	}
+	q = q.Limit(params.Limit + 1)
+
+	var objects []*GraphObject
+	if err := q.Scan(ctx, &objects); err != nil {
+		r.log.Error("failed to list graph objects", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return objects, nil
+}
+
+// Count returns the total count of graph objects matching the given parameters.
+// This is used for pagination to return the true total, not just the page count.
+func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) {
+	count, err := r.buildObjectBaseQuery(params).Count(ctx)
 	if err != nil {
 		r.log.Error("failed to count graph objects", logger.Error(err))
 		return 0, apperror.ErrDatabase.WithInternal(err)
 	}
-
 	return count, nil
 }
 
@@ -453,9 +448,9 @@ func (r *Repository) GetHeadByCanonicalID(ctx context.Context, db bun.IDB, proje
 	return &obj, nil
 }
 
-// Create inserts a new graph object (version 1).
-func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
-	// Set defaults
+// initGraphObject sets default fields on a new (version 1) GraphObject.
+// Must be called before inserting a new object.
+func initGraphObject(obj *GraphObject) {
 	if obj.ID == uuid.Nil {
 		obj.ID = uuid.New()
 	}
@@ -467,21 +462,20 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 	now := time.Now()
 	obj.CreatedAt = now
 	obj.UpdatedAt = now
-
 	if obj.Properties == nil {
 		obj.Properties = make(map[string]any)
 	}
 	if obj.Labels == nil {
 		obj.Labels = []string{}
 	}
+}
 
-	_, err := r.db.NewInsert().
-		Model(obj).
-		Exec(ctx)
-
+// insertGraphObject executes the INSERT for a new graph object using the given db handle.
+// Returns a formatted conflict error on duplicate key, or a database error.
+func (r *Repository) insertGraphObject(ctx context.Context, db bun.IDB, obj *GraphObject) error {
+	_, err := db.NewInsert().Model(obj).Exec(ctx)
 	if err != nil {
 		if pgutils.IsUniqueViolation(err) {
-			// Handle duplicate key - likely concurrent upsert race condition
 			r.log.Warn("graph object with same key already exists",
 				slog.String("project_id", obj.ProjectID.String()),
 				slog.String("type", obj.Type),
@@ -498,8 +492,13 @@ func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
 		r.log.Error("failed to create graph object", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
-
 	return nil
+}
+
+// Create inserts a new graph object (version 1).
+func (r *Repository) Create(ctx context.Context, obj *GraphObject) error {
+	initGraphObject(obj)
+	return r.insertGraphObject(ctx, r.db, obj)
 }
 
 // CreateVersion creates a new version of an existing graph object.
@@ -760,51 +759,8 @@ func (r *Repository) AcquireObjectUpsertLock(ctx context.Context, tx bun.Tx, pro
 
 // CreateInTx inserts a new graph object (version 1) within an existing transaction.
 func (r *Repository) CreateInTx(ctx context.Context, tx bun.Tx, obj *GraphObject) error {
-	// Set defaults
-	if obj.ID == uuid.Nil {
-		obj.ID = uuid.New()
-	}
-	if obj.CanonicalID == uuid.Nil {
-		obj.CanonicalID = obj.ID // First version: canonical_id == id
-	}
-	obj.Version = 1
-	obj.ContentHash = computeContentHash(obj.Properties, obj.Status, obj.Key, obj.Labels)
-	now := time.Now()
-	obj.CreatedAt = now
-	obj.UpdatedAt = now
-
-	if obj.Properties == nil {
-		obj.Properties = make(map[string]any)
-	}
-	if obj.Labels == nil {
-		obj.Labels = []string{}
-	}
-
-	_, err := tx.NewInsert().
-		Model(obj).
-		Exec(ctx)
-
-	if err != nil {
-		if pgutils.IsUniqueViolation(err) {
-			// Handle duplicate key - likely concurrent upsert race condition
-			r.log.Warn("graph object with same key already exists (in tx)",
-				slog.String("project_id", obj.ProjectID.String()),
-				slog.String("type", obj.Type),
-				slog.Any("key", obj.Key),
-				logger.Error(err))
-			keyStr := "<nil>"
-			if obj.Key != nil {
-				keyStr = *obj.Key
-			}
-			return apperror.New(409, "conflict", fmt.Sprintf(
-				"Graph object with type '%s' and key '%s' already exists",
-				obj.Type, keyStr))
-		}
-		r.log.Error("failed to create graph object in tx", logger.Error(err))
-		return apperror.ErrDatabase.WithInternal(err)
-	}
-
-	return nil
+	initGraphObject(obj)
+	return r.insertGraphObject(ctx, tx, obj)
 }
 
 // BeginTx starts a new database transaction.
@@ -2750,7 +2706,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 	}
 	// Apply property filters to count query.
 	if len(resolvedFilters) > 0 {
-		countQ = applyBulkPropertyFilters(countQ, resolvedFilters)
+		countQ = applyPropertyFilters(countQ, resolvedFilters)
 	}
 
 	var cntResult struct{ Cnt int }
@@ -2825,7 +2781,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		if params.Filter.Namespace != nil {
 			subQ = subQ.Where("namespace = ?", *params.Filter.Namespace)
 		}
-		subQ = applyBulkPropertyFilters(subQ, resolvedFilters)
+		subQ = applyPropertyFilters(subQ, resolvedFilters)
 		result, qErr := r.db.NewDelete().
 			TableExpr("kb.graph_objects").
 			Where("id IN (?)", subQ).
@@ -2931,113 +2887,10 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 	return matched, affected, nil
 }
 
-// applyBulkPropertyFilters applies property filters to a raw select query (used for counting).
-func applyBulkPropertyFilters(q *bun.SelectQuery, filters []PropertyFilter) *bun.SelectQuery {
-	for _, f := range filters {
-		segments := strings.Split(f.Path, ".")
-		if len(segments) == 0 {
-			continue
-		}
-		var textAccessor, jsonAccessor string
-		if len(segments) == 1 {
-			textAccessor = "properties->>'" + segments[0] + "'"
-			jsonAccessor = "properties->'" + segments[0] + "'"
-		} else {
-			var builder strings.Builder
-			builder.WriteString("properties")
-			for _, seg := range segments[:len(segments)-1] {
-				builder.WriteString("->'" + seg + "'")
-			}
-			jsonAccessor = builder.String() + "->'" + segments[len(segments)-1] + "'"
-			textAccessor = builder.String() + "->>'" + segments[len(segments)-1] + "'"
-		}
-
-		switch f.Op {
-		case "eq":
-			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
-		case "neq":
-			q = q.Where("("+textAccessor+" IS NULL OR "+textAccessor+" != ?)", fmt.Sprintf("%v", f.Value))
-		case "gt":
-			q = q.Where("("+textAccessor+")::numeric > ?::numeric", f.Value)
-		case "gte":
-			q = q.Where("("+textAccessor+")::numeric >= ?::numeric", f.Value)
-		case "lt":
-			q = q.Where("("+textAccessor+")::numeric < ?::numeric", f.Value)
-		case "lte":
-			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
-		case "contains":
-			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
-		case "exists":
-			q = q.Where(jsonAccessor + " IS NOT NULL")
-		case "in":
-			if arr, ok := f.Value.([]interface{}); ok {
-				strVals := make([]string, 0, len(arr))
-				for _, v := range arr {
-					strVals = append(strVals, fmt.Sprintf("%v", v))
-				}
-				q = q.Where(textAccessor+" IN (?)", bun.In(strVals))
-			}
-		}
-	}
-	return q
-}
-
-// applyBulkPropertyFiltersUpdate applies property filters to a Bun update query.
-func applyBulkPropertyFiltersUpdate(q *bun.UpdateQuery, filters []PropertyFilter) *bun.UpdateQuery {
-	for _, f := range filters {
-		segments := strings.Split(f.Path, ".")
-		if len(segments) == 0 {
-			continue
-		}
-		var textAccessor, jsonAccessor string
-		if len(segments) == 1 {
-			textAccessor = "properties->>'" + segments[0] + "'"
-			jsonAccessor = "properties->'" + segments[0] + "'"
-		} else {
-			var builder strings.Builder
-			builder.WriteString("properties")
-			for _, seg := range segments[:len(segments)-1] {
-				builder.WriteString("->'" + seg + "'")
-			}
-			jsonAccessor = builder.String() + "->'" + segments[len(segments)-1] + "'"
-			textAccessor = builder.String() + "->>'" + segments[len(segments)-1] + "'"
-		}
-		_ = jsonAccessor
-
-		switch f.Op {
-		case "eq":
-			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
-		case "neq":
-			q = q.Where("("+textAccessor+" IS NULL OR "+textAccessor+" != ?)", fmt.Sprintf("%v", f.Value))
-		case "gt":
-			q = q.Where("("+textAccessor+")::numeric > ?::numeric", f.Value)
-		case "gte":
-			q = q.Where("("+textAccessor+")::numeric >= ?::numeric", f.Value)
-		case "lt":
-			q = q.Where("("+textAccessor+")::numeric < ?::numeric", f.Value)
-		case "lte":
-			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
-		case "contains":
-			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
-		case "exists":
-			q = q.Where("properties->'" + segments[0] + "' IS NOT NULL")
-		case "in":
-			if arr, ok := f.Value.([]interface{}); ok {
-				strVals := make([]string, 0, len(arr))
-				for _, v := range arr {
-					strVals = append(strVals, fmt.Sprintf("%v", v))
-				}
-				q = q.Where(textAccessor+" IN (?)", bun.In(strVals))
-			}
-		}
-	}
-	return q
-}
-
 // applyBulkFilterToUpdate applies the BulkActionFilter (types, labels, property filters, limit)
 // to a Bun update query. Uses a subquery for limit support.
 func applyBulkFilterToUpdate(q *bun.UpdateQuery, filter BulkActionFilter, resolvedFilters []PropertyFilter, limit int) *bun.UpdateQuery {
-	q = applyBulkPropertyFiltersUpdate(q, resolvedFilters)
+	q = applyPropertyFiltersUpdate(q, resolvedFilters)
 	if len(filter.Types) > 0 {
 		q = q.Where("type IN (?)", bun.In(filter.Types))
 	}

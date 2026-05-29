@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
@@ -142,6 +143,58 @@ func (s *Service) emitObjectDeleted(projectID, canonicalID, objType string) {
 	s.events.EmitDeleted(events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
 		ObjectType: objType,
 	})
+}
+
+// labelsEqual returns true if two label slices contain the same set of strings (order-independent).
+func labelsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]bool, len(a))
+	for _, l := range a {
+		set[l] = true
+	}
+	for _, l := range b {
+		if !set[l] {
+			return false
+		}
+	}
+	return true
+}
+
+// validateObjectProperties validates and coerces object properties against the schema
+// for the given project and type. If the schema provider is nil or has no schema for
+// the type, the original properties are returned unchanged (unknown types are allowed).
+// Returns the validated/coerced properties, or an error if validation fails.
+func (s *Service) validateObjectProperties(ctx context.Context, projectID uuid.UUID, objType string, props map[string]any) (map[string]any, error) {
+	if s.schemaProvider == nil {
+		return props, nil
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil {
+		s.log.Warn("failed to load schemas, skipping validation",
+			slog.String("project_id", projectID.String()),
+			slog.String("error", err.Error()))
+		return props, nil
+	}
+	if schemas.ObjectSchemas == nil {
+		return props, nil
+	}
+	schema, ok := schemas.ObjectSchemas[objType]
+	if !ok {
+		// Unknown object types are allowed — the schema defines constraints for known
+		// types but does not act as an allowlist.
+		return props, nil
+	}
+	start := time.Now()
+	validated, err := validateProperties(props, schema)
+	duration := time.Since(start)
+	if err != nil {
+		s.incrementValidationError(duration)
+		return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+	}
+	s.incrementValidationSuccess(duration)
+	return validated, nil
 }
 
 // nameFromProps extracts the "name" property from a properties map, or returns an empty string.
@@ -412,32 +465,39 @@ func (s *Service) CountObjects(ctx context.Context, params ListParams) (int, err
 	return s.repo.Count(ctx, params)
 }
 
-// maxListLimit is the maximum number of items returned per page for list endpoints.
-// It must match the cap applied in repository.go to ensure hasMore detection is consistent.
-const maxListLimit = 5000
-
 // List returns graph objects matching the given parameters.
 func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObjectsResponse, error) {
 	// Cap the limit so the service and repository agree on the effective page size.
 	// Without this cap, the repository silently clamps params.Limit in its own stack
 	// frame, causing hasMore to evaluate against the unclamped value and drop next_cursor.
+	maxLimit := s.repo.MaxListLimit()
 	if params.Limit <= 0 {
 		params.Limit = 50
 	}
-	if params.Limit > maxListLimit {
-		params.Limit = maxListLimit
+	if params.Limit > maxLimit {
+		params.Limit = maxLimit
 	}
 
-	// Run count and list queries
-	// Note: For better performance, these could be run in parallel with errgroup
-	total, err := s.repo.Count(ctx, params)
-	if err != nil {
-		return nil, err
-	}
-
-	objects, err := s.repo.List(ctx, params)
-	if err != nil {
-		return nil, err
+	// Run count and list queries in parallel.
+	var (
+		total   int
+		objects []*GraphObject
+	)
+	{
+		eg, egCtx := errgroup.WithContext(ctx)
+		eg.Go(func() error {
+			var err error
+			total, err = s.repo.Count(egCtx, params)
+			return err
+		})
+		eg.Go(func() error {
+			var err error
+			objects, err = s.repo.List(egCtx, params)
+			return err
+		})
+		if err := eg.Wait(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Check if there are more results
@@ -557,31 +617,9 @@ func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
 	actorType := "user"
 
-	validatedProps := req.Properties
-	if s.schemaProvider != nil {
-		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
-		if err != nil {
-			s.log.Warn("failed to load schemas, skipping validation",
-				slog.String("project_id", projectID.String()),
-				slog.String("error", err.Error()))
-		} else if schemas.ObjectSchemas != nil {
-			if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
-				start := time.Now()
-				validated, err := validateProperties(req.Properties, schema)
-				duration := time.Since(start)
-
-				if err != nil {
-					s.incrementValidationError(duration)
-					return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
-				}
-				s.incrementValidationSuccess(duration)
-				validatedProps = validated
-			}
-			// Unknown object types are allowed — the schema defines constraints
-			// for known types but does not act as an allowlist. Users may create
-			// objects with any type name, including domain-specific ones like
-			// ServiceMethod, Scenario, Context, etc.
-		}
+	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
+	if err != nil {
+		return nil, err
 	}
 
 	obj := &GraphObject{
@@ -645,29 +683,9 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	// Validate properties against schema
-	validatedProps := req.Properties
-	if s.schemaProvider != nil {
-		schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
-		if err != nil {
-			s.log.Warn("failed to load schemas, skipping validation",
-				slog.String("project_id", projectID.String()),
-				slog.String("error", err.Error()))
-		} else if schemas.ObjectSchemas != nil {
-			if schema, ok := schemas.ObjectSchemas[req.Type]; ok {
-				start := time.Now()
-				validated, err := validateProperties(req.Properties, schema)
-				duration := time.Since(start)
-
-				if err != nil {
-					s.incrementValidationError(duration)
-					return nil, false, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
-				}
-				s.incrementValidationSuccess(duration)
-				validatedProps = validated
-			}
-			// Unknown object types are allowed — the schema defines constraints
-			// for known types but does not act as an allowlist.
-		}
+	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
+	if err != nil {
+		return nil, false, err
 	}
 
 	// Start transaction
@@ -771,30 +789,10 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	// Check if labels changed
-	labelsChanged := false
 	newLabels := existing.Labels
-	if req.Labels != nil {
-		existingLabelSet := make(map[string]bool, len(existing.Labels))
-		for _, l := range existing.Labels {
-			existingLabelSet[l] = true
-		}
-		reqLabelSet := make(map[string]bool, len(req.Labels))
-		for _, l := range req.Labels {
-			reqLabelSet[l] = true
-		}
-		if len(existingLabelSet) != len(reqLabelSet) {
-			labelsChanged = true
-		} else {
-			for l := range reqLabelSet {
-				if !existingLabelSet[l] {
-					labelsChanged = true
-					break
-				}
-			}
-		}
-		if labelsChanged {
-			newLabels = req.Labels
-		}
+	labelsChanged := req.Labels != nil && !labelsEqual(existing.Labels, req.Labels)
+	if labelsChanged {
+		newLabels = req.Labels
 	}
 
 	if diff == nil && !statusChanged && !labelsChanged {
@@ -995,21 +993,7 @@ func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *Patch
 	}
 
 	// Check if labels changed
-	labelsChanged := false
-	if len(newLabels) != len(current.Labels) {
-		labelsChanged = true
-	} else {
-		existingLabelSet := make(map[string]bool, len(current.Labels))
-		for _, l := range current.Labels {
-			existingLabelSet[l] = true
-		}
-		for _, l := range newLabels {
-			if !existingLabelSet[l] {
-				labelsChanged = true
-				break
-			}
-		}
-	}
+	labelsChanged := !labelsEqual(current.Labels, newLabels)
 
 	// Check if key changed
 	keyChanged := false
@@ -1461,12 +1445,12 @@ func (s *Service) CountRelationships(ctx context.Context, params RelationshipLis
 }
 
 func (s *Service) ListRelationships(ctx context.Context, params RelationshipListParams) (*SearchRelationshipsResponse, error) {
-	// Cap the limit for the same reason as List — see maxListLimit.
+	// Cap the limit for the same reason as List — see Repository.MaxListLimit.
 	if params.Limit <= 0 {
 		params.Limit = 50
 	}
-	if params.Limit > maxListLimit {
-		params.Limit = maxListLimit
+	if params.Limit > s.repo.MaxListLimit() {
+		params.Limit = s.repo.MaxListLimit()
 	}
 
 	// Resolve SrcID/DstID to canonical_id values, since relationships store canonical IDs.
@@ -1896,28 +1880,6 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 		return nil, apperror.ErrBadRequest.WithMessage("cannot patch deleted relationship")
 	}
 
-	tx, err := s.repo.BeginTx(ctx)
-	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-	defer tx.Rollback()
-
-	// Acquire lock
-	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
-		return nil, err
-	}
-
-	// Re-fetch HEAD after lock
-	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Ensure we're patching the HEAD version
-	if head.ID != current.ID {
-		return nil, apperror.ErrBadRequest.WithMessage("cannot_patch_non_head_version")
-	}
-
 	// Merge properties
 	newProps := make(map[string]any)
 	for k, v := range current.Properties {
@@ -1949,9 +1911,9 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 		}
 	}
 
-	tx, txErr := s.repo.BeginTx(ctx)
-	if txErr != nil {
-		return nil, apperror.ErrDatabase.WithInternal(txErr)
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 	defer tx.Rollback()
 
@@ -1961,9 +1923,9 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 	}
 
 	// Re-fetch HEAD after lock
-	head, headErr := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
-	if headErr != nil {
-		return nil, headErr
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+	if err != nil {
+		return nil, err
 	}
 
 	// Ensure we're patching the HEAD version
@@ -2200,7 +2162,8 @@ func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSe
 
 	if len(objectIDs) > 0 {
 		go func() {
-			bgCtx := context.Background()
+			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 			if err := s.repo.UpdateAccessTimestamps(bgCtx, objectIDs); err != nil {
 				s.log.Warn("failed to update access timestamps", logger.Error(err))
 			}
@@ -2264,7 +2227,8 @@ func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *Ve
 
 	if len(objectIDs) > 0 {
 		go func() {
-			bgCtx := context.Background()
+			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 			if err := s.repo.UpdateAccessTimestamps(bgCtx, objectIDs); err != nil {
 				s.log.Warn("failed to update access timestamps", logger.Error(err))
 			}
@@ -3660,6 +3624,11 @@ func (s *Service) applyMerge(
 	// Used to remap relationship endpoints when both endpoints are new.
 	canonicalIDMap := make(map[uuid.UUID]uuid.UUID)
 
+	// Collect object IDs that need embedding after the transaction commits.
+	// Using a slice instead of defer-in-loop avoids accumulating N deferred
+	// calls and ensures embedding is only triggered on successful commit.
+	var embeddingIDs []string
+
 	appliedCount := 0
 
 	// ── Objects ──────────────────────────────────────────────────────────────
@@ -3709,9 +3678,9 @@ func (s *Service) applyMerge(
 			if n, _ := res.RowsAffected(); n > 0 {
 				canonicalIDMap[cid] = newCanonicalID
 				appliedCount++
-				// Enqueue embedding best-effort after commit (use physical version ID,
+				// Collect for batch embedding enqueue after commit (use physical version ID,
 				// not canonical ID — graph_embedding_jobs.object_id FK references graph_objects.id).
-				defer s.enqueueEmbedding(ctx, clone.ID.String())
+				embeddingIDs = append(embeddingIDs, clone.ID.String())
 			}
 
 		case "fast_forward":
@@ -3753,7 +3722,7 @@ func (s *Service) applyMerge(
 			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
-			defer s.enqueueEmbedding(ctx, newVersion.ID.String())
+			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
 
 		case "conflict":
 			if strategy == "preserve_target" {
@@ -3825,7 +3794,7 @@ func (s *Service) applyMerge(
 			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
-			defer s.enqueueEmbedding(ctx, newVersion.ID.String())
+			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
 
 		case "deleted":
 			// Soft delete on target branch
@@ -3910,6 +3879,13 @@ func (s *Service) applyMerge(
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit merge: %w", err)
+	}
+
+	// Enqueue embeddings in batch now that the transaction has committed.
+	if len(embeddingIDs) > 0 && s.embeddingEnqueuer != nil {
+		if _, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, embeddingIDs); err != nil {
+			s.log.Warn("failed to enqueue batch embeddings after merge", logger.Error(err))
+		}
 	}
 
 	return appliedCount, nil
