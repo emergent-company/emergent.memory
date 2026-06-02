@@ -1,2 +1,33 @@
-project_id: 9b26a641-fe3f-4c44-87a0-f7102a63b67e
+project: ""
+project_id: 846ccb7c-8190-475b-bf9b-b6a9d4767771
 server: https://memory.emergent-company.ai
+api_key: ""
+sync:
+    routes:
+        framework: ""
+        command: ""
+        runtime: ""
+        glob: ""
+        domain_segment: 0
+    views:
+        glob: ""
+        routes_file: ""
+        platform: []
+    components:
+        glob: ""
+    actions:
+        glob: ""
+        pattern: ""
+    scenarios:
+        file: ""
+        router_file: ""
+        store_glob: ""
+apps:
+    - key: go-http-backend
+      name: Go HTTP Backend
+      root_path: .
+      app_type: backend
+      patterns:
+        - service_exposes_endpoint
+        - middleware_applies_to_routes
+        - handler_in_routes_file

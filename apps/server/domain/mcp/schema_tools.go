@@ -14,7 +14,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/internal/database"
-	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -116,9 +115,6 @@ func (s *Service) executeSchemaVersion(ctx context.Context) (*ToolResult, error)
 
 func (s *Service) executeListSchemas(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	search, _ := args["search"].(string)
-	includeDeprecated, _ := args["include_deprecated"].(bool)
-
-	orgID := auth.OrgIDFromContext(ctx)
 
 	limit := 20
 	if l, ok := args["limit"].(float64); ok {
@@ -141,9 +137,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 		Name        string `bun:"name"`
 		Version     string `bun:"version"`
 		Description string `bun:"description"`
-		Visibility  string `bun:"visibility"`
 		ProjectID   string `bun:"project_id"`
-		OrgID       string `bun:"org_id"`
 		Source      string `bun:"source"`
 		CreatedAt   string `bun:"created_at"`
 		UpdatedAt   string `bun:"updated_at"`
@@ -151,20 +145,14 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 
 	query := s.db.NewSelect().
 		TableExpr("kb.graph_schemas").
-		Column("id", "name", "version", "description", "visibility", "project_id", "org_id", "source", "created_at", "updated_at")
+		Column("id", "name", "version", "description", "project_id", "source", "created_at", "updated_at")
 
 	if projectID != "" {
-		query = query.Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID)
-	} else {
-		query = query.Where("(org_id = ? AND visibility = 'organization') OR (project_id IS NULL AND org_id IS NULL)", orgID)
+		query = query.Where("project_id = ? OR project_id IS NULL", projectID)
 	}
 
 	if search != "" {
 		query = query.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
-	}
-
-	if !includeDeprecated {
-		query = query.Where("deprecated_at IS NULL")
 	}
 
 	query = query.Order("updated_at DESC").Limit(limit).Offset(offset)
@@ -181,9 +169,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 			Name:        r.Name,
 			Version:     r.Version,
 			Description: r.Description,
-			Visibility:  r.Visibility,
 			ProjectID:   r.ProjectID,
-			OrgID:       r.OrgID,
 			Source:      r.Source,
 			CreatedAt:   r.CreatedAt,
 			UpdatedAt:   r.UpdatedAt,
@@ -194,17 +180,12 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 	var total int
 	countQuery := s.db.NewSelect().TableExpr("kb.graph_schemas")
 	if projectID != "" {
-		countQuery = countQuery.Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, orgID)
-	} else {
-		countQuery = countQuery.Where("(org_id = ? AND visibility = 'organization') OR (project_id IS NULL AND org_id IS NULL)", orgID)
+		countQuery = countQuery.Where("project_id = ? OR project_id IS NULL", projectID)
 	}
 	if search != "" {
 		countQuery = countQuery.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
-	if !includeDeprecated {
-		countQuery = countQuery.Where("deprecated_at IS NULL")
-	}
-	err = countQuery.Scan(ctx, &total)
+	err = countQuery.ColumnExpr("COUNT(*)").Scan(ctx, &total)
 	if err != nil {
 		s.log.Warn("failed to count schemas", logger.Error(err))
 		total = len(schemas)
@@ -226,14 +207,12 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 		return nil, fmt.Errorf("schema_id is required")
 	}
 
-	orgID := auth.OrgIDFromContext(ctx)
-
 	var schema SchemaInfo
 	err := s.db.NewRaw(`
-		SELECT id, name, version, description, visibility, project_id, org_id, source, created_at, updated_at
+		SELECT id, name, version, description, project_id, source, created_at, updated_at
 		FROM kb.graph_schemas
-		WHERE id = ? AND (project_id = ? OR (org_id = ? AND visibility = 'organization'))
-	`, schemaID, projectID, orgID).Scan(ctx, &schema)
+		WHERE id = ? AND (project_id = ? OR project_id IS NULL)
+	`, schemaID, projectID).Scan(ctx, &schema)
 	if err != nil {
 		return nil, fmt.Errorf("schema not found: %s", schemaID)
 	}
@@ -326,106 +305,14 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 }
 
 func (s *Service) executeGetAvailableTemplates(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
-	orgID := auth.OrgIDFromContext(ctx)
-
-	limit := 50
-	if l, ok := args["limit"].(float64); ok {
-		limit = int(l)
-	}
-	if limit < 1 {
-		limit = 1
-	}
-	if limit > 200 {
-		limit = 200
-	}
-
-	search, _ := args["search"].(string)
-	category, _ := args["category"].(string)
-
-	var rows []struct {
-		ID          string `bun:"id"`
-		Name        string `bun:"name"`
-		Version     string `bun:"version"`
-		Description string `bun:"description"`
-		Visibility  string `bun:"visibility"`
-		ProjectID   string `bun:"project_id"`
-		OrgID       string `bun:"org_id"`
-		Source      string `bun:"source"`
-		Categories  string `bun:"categories"`
-	}
-
-	query := s.db.NewSelect().
-		TableExpr("kb.graph_schemas").
-		Column("id", "name", "version", "description", "visibility", "project_id", "org_id", "source", "categories")
-
-	query = query.Where("(org_id = ? AND visibility = 'organization') OR (project_id = ? AND visibility = 'project')", orgID, projectID)
-
-	if search != "" {
-		query = query.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
-	}
-
-	if category != "" {
-		query = query.Where("categories ? ?", category)
-	}
-
-	query = query.Where("source = 'template'").
-		Where("deprecated_at IS NULL").
-		Order("created_at DESC").
-		Limit(limit)
-
-	err := query.Scan(ctx, &rows)
+	packs, err := s.schemasSvc.GetAvailablePacks(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get available templates: %w", err)
 	}
-
-	type templateRow struct {
-		ID         string   `bun:"id"`
-		Name       string   `bun:"name"`
-		Version    string   `bun:"version"`
-		Categories []string `bun:"categories"`
-	}
-
-	var templateRows []templateRow
-	err = s.db.NewRaw(`
-		SELECT id, name, version, categories
-		FROM kb.graph_schemas
-		WHERE source = 'template' AND deprecated_at IS NULL
-		ORDER BY created_at DESC
-		LIMIT 100
-	`).Scan(ctx, &templateRows)
-	if err != nil {
-		s.log.Warn("failed to query template categories", logger.Error(err))
-	}
-
-	categories := make(map[string]bool)
-	for _, r := range templateRows {
-		if len(r.Categories) > 0 {
-			for _, c := range r.Categories {
-				categories[c] = true
-			}
-		}
-	}
-
-	templates := make([]TemplateInfo, len(rows))
-	for i, r := range rows {
-		template := TemplateInfo{
-			ID:          r.ID,
-			Name:        r.Name,
-			Version:     r.Version,
-			Description: r.Description,
-			Visibility:  r.Visibility,
-			ProjectID:   r.ProjectID,
-			OrgID:       r.OrgID,
-			Source:      r.Source,
-		}
-		templates[i] = template
-	}
-
 	result := map[string]any{
 		"project_id": projectID,
-		"templates":  templates,
-		"total":      len(templates),
-		"categories": categories,
+		"templates":  packs,
+		"total":      len(packs),
 	}
 	return s.wrapResult(result)
 }
@@ -482,6 +369,9 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 	if err != nil {
 		s.log.Warn("failed to query template info", logger.Error(err))
 	}
+	if templates == nil {
+		templates = []templatesRow{}
+	}
 
 	type installedInfo struct {
 		ID            string  `bun:"id"`
@@ -533,21 +423,19 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 	force, _ := args["force"].(bool)
 
 	var schemaRow struct {
-		ID         string `bun:"id"`
-		Name       string `bun:"name"`
-		Visibility string `bun:"visibility"`
-		OrgID      string `bun:"org_id"`
+		ID   string `bun:"id"`
+		Name string `bun:"name"`
 	}
 	err = s.db.NewRaw(`
-		SELECT id, name, visibility, org_id
+		SELECT id, name
 		FROM kb.graph_schemas
-		WHERE id = ? AND (visibility = 'organization' OR (project_id = ? AND visibility = 'project'))
+		WHERE id = ? AND (project_id = ? OR project_id IS NULL)
 	`, schemaID, projectID).Scan(ctx, &schemaRow)
 	if err != nil {
 		return nil, fmt.Errorf("schema not found: %s", schemaID)
 	}
 
-	if schemaRow.Visibility == "project" {
+	{
 		var existing struct {
 			ID string `bun:"id"`
 		}
@@ -754,8 +642,8 @@ func (s *Service) executeCreateSchema(ctx context.Context, projectID string, arg
 			ID string `bun:"id"`
 		}
 		err := tx.NewRaw(`
-			INSERT INTO kb.graph_schemas (id, project_id, name, version, description, visibility, source, object_type_schemas, relationship_type_schemas)
-			VALUES (gen_random_uuid(), ?, ?, ?, ?, 'project', 'custom', ?::jsonb, ?::jsonb)
+			INSERT INTO kb.graph_schemas (id, project_id, name, version, description, source, object_type_schemas, relationship_type_schemas)
+			VALUES (gen_random_uuid(), ?, ?, ?, ?, 'custom', ?::jsonb, ?::jsonb)
 			RETURNING id
 		`, projectUUID, name, version, description, string(objTypeSchemasJSON), string(relTypeSchemasJSON)).Scan(ctx, &createdSchema)
 		if err != nil {
@@ -826,7 +714,7 @@ func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, arg
 		TableExpr("kb.graph_schemas").
 		Column("id", "name", "source").
 		Where("id = ?", packID).
-		Where("(project_id = ? OR (org_id = ? AND visibility = 'organization'))", projectID, auth.OrgIDFromContext(ctx)).
+		Where("(project_id = ? OR project_id IS NULL)", projectID).
 		Scan(ctx, &pack)
 
 	if err != nil {
@@ -851,8 +739,8 @@ func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, arg
 	}
 
 	_, err = s.db.NewRaw(`
-		DELETE FROM kb.graph_schemas WHERE id = ? AND (project_id = ? OR (org_id = ? AND visibility = 'organization'))
-	`, packID, projectID, auth.OrgIDFromContext(ctx)).Exec(ctx)
+		DELETE FROM kb.graph_schemas WHERE id = ? AND (project_id = ? OR project_id IS NULL)
+	`, packID, projectID).Exec(ctx)
 
 	if err != nil {
 		return nil, fmt.Errorf("delete schema: %w", err)

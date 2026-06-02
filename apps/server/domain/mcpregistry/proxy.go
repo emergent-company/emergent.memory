@@ -146,6 +146,10 @@ func (pm *ProxyManager) DiscoverTools(ctx context.Context, server *MCPServer) ([
 // tools, prompts, and resources based on what the server advertises. The connection
 // is closed when done. This is a diagnostic/test operation.
 func (pm *ProxyManager) InspectServer(ctx context.Context, server *MCPServer) (*MCPServerInspectDTO, error) {
+	// Cap total inspect time so unreachable servers don't block indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	startTime := time.Now()
 
 	result := &MCPServerInspectDTO{

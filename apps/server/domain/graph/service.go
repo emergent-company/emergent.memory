@@ -1150,7 +1150,7 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *
 
 // Restore restores a soft-deleted graph object.
 func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID) (*GraphObjectResponse, error) {
-	current, err := s.repo.GetByID(ctx, projectID, id)
+	current, err := s.repo.GetByIDIncludeDeleted(ctx, projectID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1652,7 +1652,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	tx.Rollback()
 
 	// Read HEAD outside any transaction (no lock needed — the row is stable).
-	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
 	if err != nil {
 		return nil, err
 	}
@@ -1683,7 +1683,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 	}
 
 	// Re-fetch inside the locked tx to get the definitive current HEAD.
-	existing, err = s.repo.GetRelationshipHead(ctx, tx2.Tx, projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	existing, err = s.repo.GetRelationshipHead(ctx, tx2.Tx, projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
 	if err != nil {
 		return nil, err
 	}

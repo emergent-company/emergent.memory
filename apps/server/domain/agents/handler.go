@@ -397,6 +397,9 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 	}
 
 	if err := h.repo.Create(c.Request().Context(), agent); err != nil {
+		if strings.Contains(err.Error(), "foreign key") || strings.Contains(err.Error(), "violates foreign key") {
+			return apperror.NewNotFound("project", "not found")
+		}
 		return apperror.NewInternal("failed to create agent", err)
 	}
 

@@ -165,6 +165,24 @@ func (r *Repository) GetByID(ctx context.Context, projectID, documentID string) 
 	return &doc, nil
 }
 
+// GetContentByID retrieves just the document content (and basic fields) by ID.
+// Uses Model() to avoid computed-column scan issues with Bun.
+func (r *Repository) GetContentByID(ctx context.Context, projectID, documentID string) (*Document, error) {
+	var doc Document
+	err := r.db.NewSelect().
+		Model(&doc).
+		Where("id = ?", documentID).
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get document: %w", err)
+	}
+	return &doc, nil
+}
+
 // GetByContentHash retrieves a document by content hash (for deduplication)
 func (r *Repository) GetByContentHash(ctx context.Context, projectID, contentHash string) (*Document, error) {
 	var doc Document

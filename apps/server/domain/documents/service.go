@@ -46,6 +46,19 @@ func (s *Service) GetByID(ctx context.Context, projectID, documentID string) (*D
 	return doc, nil
 }
 
+// GetContentByID retrieves just the document content by ID (no computed columns).
+// Used by workers that only need document text.
+func (s *Service) GetContentByID(ctx context.Context, projectID, documentID string) (*Document, error) {
+	doc, err := s.repo.GetContentByID(ctx, projectID, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, apperror.ErrNotFound.WithMessage("Document not found")
+	}
+	return doc, nil
+}
+
 // GetSourceTypes returns all distinct source types with document counts for a project
 func (s *Service) GetSourceTypes(ctx context.Context, projectID string) ([]SourceTypeWithCount, error) {
 	return s.repo.GetDistinctSourceTypes(ctx, projectID)

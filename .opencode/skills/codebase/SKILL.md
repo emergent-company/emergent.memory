@@ -1,9 +1,9 @@
 ---
 name: codebase
-description: Use the `codebase` CLI to populate, audit, and explore the Memory knowledge graph for a codebase. Use when the user wants to onboard a project, sync routes, check API quality, analyze domain structure, manage graph objects, manage constitution rules, or install skills.
+description: Use the `codebase` CLI to populate, audit, and explore the Memory knowledge graph for a codebase. Use when the user wants to onboard a project, sync routes, check API quality, analyze domain structure, manage graph objects, manage constitution rules, track competitors and market trends, or install skills.
 metadata:
   author: emergent
-  version: "1.1"
+  version: "1.2"
 ---
 
 Operate the `codebase` CLI — a unified tool for syncing codebase structure into the Memory knowledge graph and querying it.
@@ -11,7 +11,7 @@ Operate the `codebase` CLI — a unified tool for syncing codebase structure int
 ## Rules
 
 - **Project config is auto-discovered** — the CLI walks up from cwd to find `.codebase.yml` containing `project_id`. Only pass `--project-id` to override.
-- **Auth is auto-discovered** — reads `~/.memory/config.yaml`, `.env.local`, or `MEMORY_ACCOUNT_API_KEY`. No manual auth needed.
+- **Auth is auto-discovered** — reads `~/.memory/config.yaml`, `.env.local`, or `MEMORY_API_KEY`. No manual auth needed.
 - **Dry-run first for destructive ops** — `sync routes --dry-run`, `fix stale --dry-run` before committing changes.
 - **`--format json`** for machine-readable output; default is `table`.
 - **`--all`** on `graph list` to paginate through all results (default limit is 50).
@@ -48,6 +48,16 @@ server: https://memory.emergent-company.ai   # optional, defaults to localhost
 | "sync the routes", "update endpoints" | `codebase sync routes` |
 | "audit the API", "check endpoint quality" | `codebase check api` |
 | "show domain structure", "what does this domain do" | `codebase analyze tree --domain <name>` |
+| "show the competitive landscape", "who are our competitors" | `codebase analyze competitive` |
+| "drill into a competitor", "what does X offer" | `codebase analyze competitive --competitor <key>` |
+| "add a competitor", "track this product" | `codebase create competitor <name>` |
+| "add a feature gap", "we're missing X vs competitors" | `codebase create featuregap <name>` |
+| "add a strategic initiative", "we should respond to X" | `codebase create strategicinitiative <name>` |
+| "add a market trend" | `codebase create markettrend <name>` |
+| "link an initiative to a scenario" | `codebase graph relate --from init-<slug> --to scn-<slug> --type drives` |
+| "I want to make a batch of graph changes safely" | create a branch first via `memory graph branches create` |
+| "preview changes before they hit main" | write to branch, then `memory graph branches merge main --source <id>` (dry run) |
+| "merge my branch into main" | `memory graph branches merge main --source <id> --execute` |
 
 ---
 
@@ -294,6 +304,10 @@ codebase analyze scenarios --domain agents  # filter to one domain
 codebase analyze contexts                   # Context→Action map
 codebase analyze contexts --type screen     # filter by context_type
 codebase analyze contexts --show-empty      # include contexts with no actions
+
+codebase analyze competitive                            # full matrix: competitors, gaps, initiatives, trends
+codebase analyze competitive --competitor comp-hermes   # drill-down for one competitor
+codebase analyze competitive --format json              # machine-readable output
 ```
 
 ### graph — CRUD on graph objects
@@ -331,6 +345,13 @@ codebase graph prune
 # Batch (JSON array of ops)
 echo '[{"op":"create","type":"Domain","key":"domain-x","props":{"name":"X"}}]' | codebase graph batch
 codebase graph batch --file ops.json
+
+# Query — natural language / hybrid search (FTS + vector)
+codebase graph query "MCP proxy support"
+codebase graph query "authentication scenarios" --type Scenario
+codebase graph query "open source competitors" --type Competitor --limit 10
+codebase graph query "login flow" --mode fts --format json
+# Use this whenever a user asks to "find", "search", or "what objects relate to X"
 ```
 
 ### seed — write seed objects
@@ -349,11 +370,167 @@ codebase fix stale              # delete APIEndpoints with no matching code rout
 codebase fix rewire --from old-ctx-key --map "slug1=ctx-new-1,slug2=ctx-new-2"
 ```
 
-### branch — graph branch operations
+### create / key — type-specific object creation
+
+Standard codebase types: `context`, `uicomponent`, `helper`, `action`, `apiendpoint`, `sourcefile`, `domain`, `scenario`, `step`, `actor`
+
+**Competitive landscape types:**
 
 ```bash
-codebase branch verify --branch <branch-id>
-codebase branch verify --branch <branch-id> --merge   # merge after verify
+# Add a competitor
+codebase create competitor "Hermes" \
+  --category personal-agent --status active --open-source \
+  --repo-url https://github.com/example/hermes \
+  --tech-stack "Go, MCP" --target-audience "developers"
+
+# Add a feature gap
+codebase create featuregap "MCP Proxy" \
+  --impact critical --effort medium --in-progress
+
+# Add a strategic initiative (links back to competitive pressure)
+codebase create strategicinitiative "Build MCP Support" \
+  --priority high --status planned \
+  --competitive-driver "Multiple competitors already ship MCP proxy" \
+  --owner "platform-team"
+
+# Add a market trend
+codebase create markettrend "MCP Standardization" \
+  --impact-level high \
+  --impact-on-diane "Diane must support MCP to stay relevant as a personal agent platform" \
+  --source "Anthropic MCP spec, Nov 2024"
+
+# Add a comparison point (Diane vs competitor on a feature)
+codebase create comparisonpoint "mcp-proxy" \
+  --competitor comp-hermes --feature mcp-proxy \
+  --assessment weaker \
+  --reasoning "Hermes ships native MCP proxy; Diane has none" \
+  --priority high
+
+# Add competitor feature
+codebase create competitorfeature "MCP Proxy" \
+  --competitor comp-hermes --capability-area connectivity --core --maturity-level stable
+
+# Add pricing model for a competitor
+codebase create pricingmodel "hermes-pricing" \
+  --competitor comp-hermes --model-type freemium --price-range "$0-20/mo" --currency USD
+
+# Add an integration a competitor supports
+codebase create integration "GitHub" \
+  --competitor comp-hermes --type native --maturity-level stable
+
+# Link initiative → scenario (cross-pack traceability)
+codebase graph relate \
+  --from init-build-mcp-support \
+  --to scn-implement-mcp-proxy \
+  --type drives
+
+# Link competitor → feature gap (competitor exposes this gap)
+codebase graph relate \
+  --from comp-hermes \
+  --to gap-mcp-proxy \
+  --type exposes_gap
+
+# Link initiative → competitor (responding to competitive pressure)
+codebase graph relate \
+  --from init-build-mcp-support \
+  --to comp-hermes \
+  --type responds_to
+
+# Dry-run key generation (no graph write)
+codebase key competitor "Hermes"              # → comp-hermes
+codebase key featuregap "MCP Proxy"           # → gap-mcp-proxy
+codebase key strategicinitiative "Build MCP"  # → init-build-mcp
+```
+
+**Key prefixes for competitive types:**
+
+| Type | Prefix | Example |
+|---|---|---|
+| Competitor | `comp-` | `comp-hermes` |
+| CompetitorFeature | `feat-<comp>-` | `feat-hermes-mcp-proxy` |
+| FeatureGap | `gap-` | `gap-mcp-proxy` |
+| StrategicInitiative | `init-` | `init-build-mcp-support` |
+| MarketTrend | `trend-` | `trend-mcp-standardization` |
+| CapabilityMatrix | `matrix-` | `matrix-q2-2026` |
+| ComparisonPoint | `cmp-<comp>-` | `cmp-hermes-mcp-proxy` |
+| PricingModel | `price-<comp>` | `price-hermes` |
+| Integration | `intg-<comp>-` | `intg-hermes-github` |
+
+> **Key generation is idempotent** — the CLI strips known prefixes before prepending them.
+> `codebase key competitor "Hermes"` and `codebase key competitor "comp-hermes"` both produce `comp-hermes`.
+> Never manually add the prefix when passing a name — pass the human name and let the CLI generate the key.
+
+### branch — graph branch operations
+
+Branches are isolated workspaces. Use them whenever you are making a batch of changes to the graph that should be reviewed before hitting main — e.g. a competitive landscape import, a large sync, a schema refactor, or experimental planning.
+
+**Branches are created via the `memory` CLI, not `codebase`:**
+
+```bash
+# 1. Create a branch
+BRANCH_ID=$(memory graph branches create --name "competitive/q2-2026" --output json \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+echo $BRANCH_ID   # save this — use it for all writes below
+
+# 2. All codebase writes go to the branch via --branch
+codebase create competitor "Hermes" --branch "$BRANCH_ID" --category personal-agent --status active
+codebase create featuregap "MCP Proxy" --branch "$BRANCH_ID" --impact critical
+codebase graph relate --from comp-hermes --to gap-mcp-proxy --type exposes_gap --branch "$BRANCH_ID"
+codebase sync routes --branch "$BRANCH_ID"
+
+# 3. Inspect what's on the branch
+codebase graph list --type Competitor --branch "$BRANCH_ID" --all
+codebase graph tree comp-hermes --branch "$BRANCH_ID"
+
+# 4. Verify branch contents (codebase verify)
+codebase branch verify --branch "$BRANCH_ID"
+
+# 5. Preview merge — dry run first, always
+memory graph branches merge main --source "$BRANCH_ID"
+
+# 6. Inspect conflicts (if any)
+memory graph branches merge main --source "$BRANCH_ID" --output json
+
+# 7. Execute merge when clean
+memory graph branches merge main --source "$BRANCH_ID" --execute
+
+# 8. Delete branch after merge
+memory graph branches delete "$BRANCH_ID"
+```
+
+**When to use a branch:**
+
+| Situation | Branch? |
+|---|---|
+| Adding/updating a single graph object | No — write directly to main |
+| Importing a full competitor + features + gaps | Yes |
+| Running `codebase sync routes` on a large codebase | Yes — preview before committing |
+| Experimental planning or "what if" analysis | Yes |
+| Bulk `codebase graph batch` operations | Yes |
+
+**Branch naming conventions:**
+
+| Purpose | Name pattern |
+|---|---|
+| Competitive landscape import | `competitive/<period>` e.g. `competitive/q2-2026` |
+| Route sync preview | `sync/routes-<date>` |
+| Scenario planning | `plan/<scenario-slug>` |
+| Feature exploration | `feature/<slug>` |
+
+**Merge conflict rules:**
+- Conflicts occur when an object changed on **both** the branch and main since the branch was created
+- `--execute` is blocked if any conflicts exist
+- Resolve by updating either the branch object or the main object to match, then re-run dry run
+
+```bash
+# List all branches
+memory graph branches list
+
+# Get branch details
+memory graph branches get "$BRANCH_ID"
+
+# Fork an existing branch (for branching off a branch)
+memory graph branches fork "$BRANCH_ID" --name "sub-branch"
 ```
 
 ### skills — manage agent skills
@@ -369,6 +546,177 @@ codebase skills install --dir /path     # custom destination
 ---
 
 ## Common Workflows
+
+### Bootstrap a graph from scratch (scenarios-first)
+
+This is the recommended approach for starting a fresh graph on a new or existing project.
+The strategy: define the **intended behaviour** (scenarios) first, validate them, then use
+`branch verify` to determine what structural components are needed, and build out from there.
+
+#### Phase 1 — Project setup
+
+```bash
+# Bind the project (one-time)
+cat .codebase.yml           # confirm project_id + server are set
+codebase graph list --type Domain   # smoke test — should succeed (empty is fine)
+```
+
+If `.codebase.yml` doesn't exist:
+```yaml
+# .codebase.yml
+project_id: <your-memory-project-id>
+server: https://memory.emergent-company.ai
+```
+
+#### Phase 2 — Create scenarios on a branch
+
+Work on a branch so nothing hits main until you're satisfied.
+
+```bash
+# Create a planning branch
+BRANCH_ID=$(memory graph branches create --name "plan/initial-scenarios" --output json \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+echo "branch: $BRANCH_ID"
+
+# Create scenarios — one per user-facing capability
+codebase create scenario "User registers an account" --branch "$BRANCH_ID" \
+  --given "User is on the registration page" \
+  --when "User fills in email and password and submits" \
+  --then "Account is created and user is redirected to dashboard"
+
+codebase create scenario "User lists their agents" --branch "$BRANCH_ID" \
+  --given "User is authenticated" \
+  --when "User navigates to the agents page" \
+  --then "A paginated list of the user's agents is displayed"
+
+# Add steps to each scenario
+codebase create step "Open registration page" \
+  --scenario scn-user-registers-an-account --order 1 --branch "$BRANCH_ID"
+
+codebase create step "Submit registration form" \
+  --scenario scn-user-registers-an-account --order 2 --branch "$BRANCH_ID"
+
+codebase create step "See confirmation" \
+  --scenario scn-user-registers-an-account --order 3 --branch "$BRANCH_ID"
+```
+
+#### Phase 3 — Validate scenarios
+
+Check that scenarios are structurally sound before building on top of them.
+
+```bash
+# Inspect scenario structure — look for missing steps, contexts, actions
+codebase analyze scenarios --branch "$BRANCH_ID" --show-empty
+
+# Check logical consistency
+codebase check logic --branch "$BRANCH_ID" --verbose
+
+# Red flags to fix before continuing:
+#   - Scenarios with 0 steps
+#   - Steps with no context (occurs_in missing)
+#   - Steps with no action (has_action missing) except the final step
+```
+
+A scenario is **valid** when:
+- It has ≥ 1 step
+- Every non-terminal step has a context (`occurs_in`) and an action (`has_action`)
+- The terminal step has a context but no action (it's the outcome, not a trigger)
+
+Fix any issues before moving to Phase 4:
+```bash
+# Add a context to a step
+codebase create context "Registration Page" --branch "$BRANCH_ID" --route /register
+codebase graph relate \
+  --from step-user-registers-an-account-1 \
+  --to ctx-registration-page \
+  --type occurs_in \
+  --branch "$BRANCH_ID"
+
+# Add an action to a step
+codebase create action "Submit Registration" --branch "$BRANCH_ID" \
+  --type submit --domain auth
+codebase graph relate \
+  --from step-user-registers-an-account-2 \
+  --to act-auth-submit-registration \
+  --type has_action \
+  --branch "$BRANCH_ID"
+```
+
+#### Phase 4 — Verify: determine what needs to be built
+
+`branch verify` compares the branch graph against the main graph and surfaces what's
+pending. Use it after Phase 3 to see the full list of objects and relationships the
+scenarios require that don't exist yet.
+
+```bash
+# Dry-run: what would merge into main?
+codebase branch verify --branch "$BRANCH_ID" --verbose
+
+# Full merge diff in JSON — pipe to jq for analysis
+memory graph branches merge main --source "$BRANCH_ID" --output json \
+  | jq '.items[] | select(.classification == "added") | .object.type + " " + .object.key'
+```
+
+This tells you exactly which `APIEndpoint`, `Service`, `UIComponent`, `Context`, and other
+objects need to be created — grounding implementation work in the validated scenario plan.
+
+#### Phase 5 — Build out the graph
+
+With validated scenarios as the anchor, fill in the structural layer:
+
+```bash
+# Sync routes from code (adds APIEndpoint objects)
+codebase sync routes --branch "$BRANCH_ID" --dry-run
+codebase sync routes --branch "$BRANCH_ID"
+
+# Sync source files
+codebase sync files --branch "$BRANCH_ID"
+
+# Seed entities from Go source
+codebase seed entities --branch "$BRANCH_ID" \
+  --glob "apps/server/domain/**/*.go"
+
+# Wire Service→exposes→APIEndpoint
+codebase seed exposes --branch "$BRANCH_ID"
+
+# Install the constitution (coding rules)
+codebase constitution create --branch "$BRANCH_ID"
+```
+
+#### Phase 6 — Final validation and merge
+
+```bash
+# Re-run logic check — should be clean
+codebase check logic --branch "$BRANCH_ID"
+
+# Check API quality
+codebase check api --branch "$BRANCH_ID"
+
+# Dry-run merge
+memory graph branches merge main --source "$BRANCH_ID"
+
+# Merge when clean
+memory graph branches merge main --source "$BRANCH_ID" --execute
+
+# Clean up
+memory graph branches delete "$BRANCH_ID"
+```
+
+#### Summary: fresh graph checklist
+
+```
+[ ] .codebase.yml bound to project
+[ ] Planning branch created
+[ ] Scenarios created with steps
+[ ] Scenarios validated (analyze scenarios --show-empty, check logic)
+[ ] Every non-terminal step has context + action
+[ ] branch verify run — pending objects identified
+[ ] Routes synced, entities seeded
+[ ] check api clean
+[ ] Dry-run merge passes (no conflicts)
+[ ] Merged to main
+[ ] Branch deleted
+```
 
 ### First-time graph population
 
@@ -418,6 +766,31 @@ codebase graph update --key ep-agents-listagents --props '{"description":"update
 
 # Wire a new relationship
 codebase graph relate --from ep-agents-listagents --to svc-agents-list --type calls
+```
+
+### Competitive landscape import (with branch)
+
+```bash
+# 1. Create branch
+BRANCH_ID=$(memory graph branches create --name "competitive/q2-2026" --output json \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+
+# 2. Add competitors + data to branch
+codebase create competitor "Hermes" --branch "$BRANCH_ID" --category personal-agent --status active --open-source
+codebase create featuregap "MCP Proxy" --branch "$BRANCH_ID" --impact critical --effort medium
+codebase create strategicinitiative "Build MCP Support" --branch "$BRANCH_ID" --priority high --status planned
+codebase graph relate --from comp-hermes --to gap-mcp-proxy --type exposes_gap --branch "$BRANCH_ID"
+codebase graph relate --from init-build-mcp-support --to comp-hermes --type responds_to --branch "$BRANCH_ID"
+
+# 3. Review
+codebase analyze competitive --branch "$BRANCH_ID"
+
+# 4. Dry-run merge
+memory graph branches merge main --source "$BRANCH_ID"
+
+# 5. Execute when clean
+memory graph branches merge main --source "$BRANCH_ID" --execute
+memory graph branches delete "$BRANCH_ID"
 ```
 
 ---

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -540,27 +541,28 @@ func (m *openaiCompatibleModel) GenerateContent(ctx context.Context, req *model.
 			body.MaxTokens = req.Config.MaxOutputTokens
 			if req.Config.ResponseMIMEType == "application/json" {
 				body.ResponseFormat = &responseFormat{Type: "json_object"}
-				// Some providers (e.g. DeepSeek) require the word "json" to appear
-				// in the LAST user message. Find the last user message and ensure
-				// it contains "json"; inject if not.
+				// DeepSeek requires the word "json" to appear in a user message
+				// (not just the system message). Ensure the last user message
+				// contains "json"; if no user message exists, add one.
 				lastUserIdx := -1
-				for i := len(body.Messages) - 1; i >= 0; i-- {
-					if body.Messages[i].Role == "user" {
+				for i, msg := range body.Messages {
+					if msg.Role == "user" {
 						lastUserIdx = i
-						break
 					}
 				}
-				lastUserHasJSON := lastUserIdx >= 0 &&
-					strings.Contains(strings.ToLower(body.Messages[lastUserIdx].Content), "json")
-				if !lastUserHasJSON {
-					if lastUserIdx >= 0 {
-						body.Messages[lastUserIdx].Content += " Respond in JSON."
+				if lastUserIdx >= 0 {
+					if !strings.Contains(strings.ToLower(body.Messages[lastUserIdx].Content), "json") {
+						body.Messages[lastUserIdx].Content += " Respond in json."
+						slog.Debug("openai-model: injected json into user message", "model", m.modelName, "msg_idx", lastUserIdx)
 					} else {
-						body.Messages = append(body.Messages, openaiMessage{
-							Role:    "user",
-							Content: "Respond in JSON.",
-						})
+						slog.Debug("openai-model: user message already contains json", "model", m.modelName, "msg_idx", lastUserIdx)
 					}
+				} else {
+					body.Messages = append(body.Messages, openaiMessage{
+						Role:    "user",
+						Content: "Respond in json.",
+					})
+					slog.Debug("openai-model: added json user message (none existed)", "model", m.modelName)
 				}
 			}
 		}

@@ -55,14 +55,15 @@ func (r *Repository) FindOrgToolSetting(ctx context.Context, orgID, toolName str
 func (r *Repository) UpsertOrgToolSetting(ctx context.Context, setting *OrgToolSetting) (*OrgToolSetting, error) {
 	setting.UpdatedAt = time.Now()
 
-	_, err := r.db.NewInsert().
-		Model(setting).
-		On("CONFLICT (org_id, tool_name) DO UPDATE").
-		Set("enabled = EXCLUDED.enabled").
-		Set("config = EXCLUDED.config").
-		Set("updated_at = EXCLUDED.updated_at").
-		Returning("*").
-		Exec(ctx)
+	err := r.db.NewRaw(`
+		INSERT INTO kb.org_tool_settings (org_id, tool_name, enabled, config, updated_at)
+		VALUES (?, ?, ?, ?::jsonb, ?)
+		ON CONFLICT (org_id, tool_name) DO UPDATE
+		SET enabled = EXCLUDED.enabled,
+		    config = EXCLUDED.config,
+		    updated_at = EXCLUDED.updated_at
+		RETURNING *
+	`, setting.OrgID, setting.ToolName, setting.Enabled, setting.Config, setting.UpdatedAt).Scan(ctx, setting)
 
 	if err != nil {
 		r.log.Error("failed to upsert org tool setting", logger.Error(err),

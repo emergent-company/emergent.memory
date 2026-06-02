@@ -421,6 +421,35 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 	return &objects[0], nil
 }
 
+// GetByIDIncludeDeleted returns a graph object by ID or canonical ID, including soft-deleted objects.
+func (r *Repository) GetByIDIncludeDeleted(ctx context.Context, projectID, id uuid.UUID) (*GraphObject, error) {
+	var objects []GraphObject
+	err := r.db.NewSelect().
+		Model(&objects).
+		Where("(id = ? OR canonical_id = ?)", id, id).
+		Where("project_id = ?", projectID).
+		OrderExpr("supersedes_id ASC NULLS FIRST"). // HEAD first
+		Scan(ctx)
+
+	if err != nil {
+		r.log.Error("failed to get graph object (include deleted)", logger.Error(err), slog.String("id", id.String()))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if len(objects) == 0 {
+		return nil, apperror.ErrNotFound
+	}
+
+	// Prefer the HEAD version (supersedes_id IS NULL)
+	for i := range objects {
+		if objects[i].SupersedesID == nil {
+			return &objects[i], nil
+		}
+	}
+
+	return &objects[0], nil
+}
+
 // GetHeadByCanonicalID returns the HEAD version of a graph object by canonical ID.
 func (r *Repository) GetHeadByCanonicalID(ctx context.Context, db bun.IDB, projectID, canonicalID uuid.UUID, branchID *uuid.UUID) (*GraphObject, error) {
 	var obj GraphObject

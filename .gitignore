@@ -246,3 +246,6 @@ blueprints/code-memory-blueprint/cmd/codebase/codebase
 /bench/memorybench/
 bench/domain-test/.env
 .server_pid
+
+# auto-added by commit skill — 2026-06-02
+.runlog/

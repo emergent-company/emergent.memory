@@ -925,7 +925,8 @@ func (h *Handler) ListRelationships(c echo.Context) error {
 	}
 
 	if relType := c.QueryParam("type"); relType != "" {
-		params.Type = &relType
+		normalized := strings.ToLower(relType)
+		params.Type = &normalized
 	}
 
 	if srcID := c.QueryParam("src_id"); srcID != "" {

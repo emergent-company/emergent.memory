@@ -524,7 +524,7 @@ func (w *ObjectExtractionWorker) loadDocumentText(ctx context.Context, job *Obje
 		if job.DocumentID == nil {
 			return "", fmt.Errorf("document source type requires document_id")
 		}
-		doc, err := w.docService.GetByID(ctx, job.ProjectID, *job.DocumentID)
+		doc, err := w.docService.GetContentByID(ctx, job.ProjectID, *job.DocumentID)
 		if err != nil {
 			return "", fmt.Errorf("get document: %w", err)
 		}
@@ -539,18 +539,30 @@ func (w *ObjectExtractionWorker) loadDocumentText(ctx context.Context, job *Obje
 }
 
 // loadSchemas loads object and relationship schemas for the project.
+// Inline schemas from job.ExtractionConfig take precedence over installed schemas.
 func (w *ObjectExtractionWorker) loadSchemas(ctx context.Context, job *ObjectExtractionJob) (*ExtractionSchemas, error) {
-	if w.schemaProvider != nil {
-		return w.schemaProvider.GetProjectSchemas(ctx, job.ProjectID)
-	}
-
-	// Fall back to extraction config if no schema provider
 	schemas := &ExtractionSchemas{
 		ObjectSchemas:       make(map[string]agents.ObjectSchema),
 		RelationshipSchemas: make(map[string]agents.RelationshipSchema),
 	}
 
-	// Try to get schemas from job's extraction config
+	// Load installed project schemas first (base layer)
+	if w.schemaProvider != nil {
+		installed, err := w.schemaProvider.GetProjectSchemas(ctx, job.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		if installed != nil {
+			for k, v := range installed.ObjectSchemas {
+				schemas.ObjectSchemas[k] = v
+			}
+			for k, v := range installed.RelationshipSchemas {
+				schemas.RelationshipSchemas[k] = v
+			}
+		}
+	}
+
+	// Merge inline schemas from extraction_config (override installed schemas)
 	if job.ExtractionConfig != nil {
 		if objSchemas, ok := job.ExtractionConfig["object_schemas"].(map[string]any); ok {
 			for name, schema := range objSchemas {

@@ -1,6 +1,10 @@
 package adk
 
-import "context"
+import (
+	"context"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
 
 type contextKey string
 
@@ -13,10 +17,13 @@ func WithProjectID(ctx context.Context, projectID string) context.Context {
 }
 
 // ProjectIDFromContext retrieves the project ID from context.
+// Checks the adk-specific key first, then falls back to the auth package key
+// (set by auth.ContextWithProjectID in request handlers).
 // Returns empty string if not set.
 func ProjectIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(projectIDKey).(string); ok {
+	if v, ok := ctx.Value(projectIDKey).(string); ok && v != "" {
 		return v
 	}
-	return ""
+	// Fall back to the auth package context key used by request handlers.
+	return auth.ProjectIDFromContext(ctx)
 }
