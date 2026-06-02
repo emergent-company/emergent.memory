@@ -2,6 +2,8 @@
 
 Agents are AI workers that read and write your knowledge graph autonomously. You define what they do (system prompt, tools, model) and when they run (on demand, on a schedule, or in response to events).
 
+> **Prerequisites:** Agents require a generative model configured at the project or org level. If you haven't done that yet, see [Model Setup](model-setup.md) first.
+
 ## Concepts
 
 | Concept | Description |

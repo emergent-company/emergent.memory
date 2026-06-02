@@ -4,7 +4,7 @@ Package `provider` provides a client for the Emergent Provider API.
 
 The provider client is a **non-context client** — it requires no org or project context headers. It manages LLM credentials at the organization level, the model catalog for each provider, and per-project provider policies (which credential source to use and which models to call).
 
-Supported providers: **Google AI** (`google-ai`) and **Vertex AI** (`vertex-ai`).
+Supported providers: **Google AI** (`google`), **Vertex AI** (`google-vertex`), **OpenAI** (`openai`), and **DeepSeek** (`deepseek`).
 
 ## Import
 
@@ -28,8 +28,10 @@ Obtained via `sdk.Client.Provider`. No `SetContext` call is needed or available.
 
 ```go
 const (
-    ProviderGoogleAI ProviderType = "google-ai"
-    ProviderVertexAI ProviderType = "vertex-ai"
+    ProviderGoogleAI ProviderType = "google"
+    ProviderVertexAI ProviderType = "google-vertex"
+    ProviderOpenAI   ProviderType = "openai"
+    ProviderDeepSeek ProviderType = "deepseek"
 )
 ```
 
@@ -68,38 +70,62 @@ const (
 
 ## Methods
 
-### Organization Credential Methods
+### Organization Config Methods
 
 ```go
-// Save a Google AI API key for an org
-func (c *Client) SaveGoogleAICredential(ctx context.Context, orgID string, req *SaveGoogleAICredentialRequest) error
+// Store credentials + auto-select models for an org's provider.
+// Runs a live credential test and syncs the model catalog on success.
+func (c *Client) UpsertOrgConfig(ctx context.Context, orgID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error)
 
-// Save Vertex AI service account credentials for an org
-func (c *Client) SaveVertexAICredential(ctx context.Context, orgID string, req *SaveVertexAICredentialRequest) error
+// Get stored config metadata (no secrets) for an org's provider.
+func (c *Client) GetOrgConfig(ctx context.Context, orgID, provider string) (*ProviderConfig, error)
 
-// Delete stored credentials for a provider/org combination
-func (c *Client) DeleteOrgCredential(ctx context.Context, orgID, provider string) error
+// Delete stored config for an org's provider.
+func (c *Client) DeleteOrgConfig(ctx context.Context, orgID, provider string) error
 
-// List stored credential metadata (no secrets) for an org
-func (c *Client) ListOrgCredentials(ctx context.Context, orgID string) ([]OrgCredential, error)
-
-// Set default models for an org + provider
-func (c *Client) SetOrgModelSelection(ctx context.Context, orgID, provider string, req *SetOrgModelSelectionRequest) error
+// List all provider configs for an org.
+func (c *Client) ListOrgConfigs(ctx context.Context, orgID string) ([]ProviderConfig, error)
 ```
 
 **Endpoints:**
-- `POST /api/v1/organizations/{orgID}/providers/google-ai/credentials`
-- `POST /api/v1/organizations/{orgID}/providers/vertex-ai/credentials`
-- `DELETE /api/v1/organizations/{orgID}/providers/{provider}/credentials`
-- `GET /api/v1/organizations/{orgID}/providers/credentials`
-- `PUT /api/v1/organizations/{orgID}/providers/{provider}/models`
+- `PUT /api/v1/organizations/{orgID}/providers/{provider}`
+- `GET /api/v1/organizations/{orgID}/providers/{provider}`
+- `DELETE /api/v1/organizations/{orgID}/providers/{provider}`
+- `GET /api/v1/organizations/{orgID}/providers`
+
+---
+
+### Project Config Methods
+
+```go
+// Store a project-level provider override (beats org config in resolution chain).
+func (c *Client) UpsertProjectConfig(ctx context.Context, projectID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error)
+
+// Get project-level provider config.
+func (c *Client) GetProjectConfig(ctx context.Context, projectID, provider string) (*ProviderConfig, error)
+
+// Delete project-level override; project falls back to org config.
+func (c *Client) DeleteProjectConfig(ctx context.Context, projectID, provider string) error
+
+// List all project-level provider configs for a project.
+func (c *Client) ListProjectConfigs(ctx context.Context, projectID string) ([]ProjectProviderConfig, error)
+
+// List project-level overrides across all projects in an org.
+func (c *Client) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfig, error)
+```
+
+**Endpoints:**
+- `PUT /api/v1/projects/{projectID}/providers/{provider}`
+- `GET /api/v1/projects/{projectID}/providers/{provider}`
+- `DELETE /api/v1/projects/{projectID}/providers/{provider}`
+- `GET /api/v1/projects/{projectID}/providers`
 
 ---
 
 ### Model Catalog Methods
 
 ```go
-// List models for a provider; modelType is optional ("embedding" or "generative")
+// List models for a provider; modelType is optional ("embedding" or "generative").
 func (c *Client) ListModels(ctx context.Context, provider, modelType string) ([]SupportedModel, error)
 ```
 
@@ -107,59 +133,76 @@ func (c *Client) ListModels(ctx context.Context, provider, modelType string) ([]
 
 ---
 
-### Project Policy Methods
+### Test Methods
 
 ```go
-// Set the provider policy for a project
-func (c *Client) SetProjectPolicy(ctx context.Context, projectID, provider string, req *SetProjectPolicyRequest) error
-
-// Get the current provider policy for a project
-func (c *Client) GetProjectPolicy(ctx context.Context, projectID, provider string) (*ProjectPolicy, error)
-
-// List all provider policies for a project
-func (c *Client) ListProjectPolicies(ctx context.Context, projectID string) ([]ProjectPolicy, error)
+// Run a live generate call to verify credentials are working.
+// Pass projectID to test via the project's resolved credential chain; pass orgID to test org credentials directly.
+func (c *Client) TestProvider(ctx context.Context, provider, projectID, orgID string) (*TestProviderResponse, error)
 ```
 
-**Endpoints:**
-- `PUT /api/v1/projects/{projectID}/providers/{provider}/policy`
-- `GET /api/v1/projects/{projectID}/providers/{provider}/policy`
-- `GET /api/v1/projects/{projectID}/providers/policies`
+**Endpoint:** `POST /api/v1/providers/{provider}/test`
 
 ---
 
 ### Usage Methods
 
 ```go
-// Aggregated usage + estimated cost for a project (since/until optional; pass zero time.Time to omit)
+// Aggregated usage + estimated cost for a project (pass zero time.Time to omit since/until).
 func (c *Client) GetProjectUsage(ctx context.Context, projectID string, since, until time.Time) (*UsageSummary, error)
 
-// Aggregated usage + estimated cost across all projects in an org
+// Aggregated usage across all projects in an org.
 func (c *Client) GetOrgUsage(ctx context.Context, orgID string, since, until time.Time) (*UsageSummary, error)
+
+// Usage broken down per project within an org.
+func (c *Client) GetOrgUsageByProject(ctx context.Context, orgID string, since, until time.Time) (*OrgUsageByProject, error)
 ```
 
 **Endpoints:**
 - `GET /api/v1/projects/{projectID}/usage`
 - `GET /api/v1/organizations/{orgID}/usage`
+- `GET /api/v1/organizations/{orgID}/usage/by-project`
 
 ---
 
 ## Types
 
-### OrgCredential
+### ProviderConfig
 
 ```go
-type OrgCredential struct {
-    ID         string    `json:"id"`
-    OrgID      string    `json:"orgId"`
-    Provider   string    `json:"provider"`
-    GCPProject string    `json:"gcpProject,omitempty"`
-    Location   string    `json:"location,omitempty"`
-    CreatedAt  time.Time `json:"createdAt"`
-    UpdatedAt  time.Time `json:"updatedAt"`
+type ProviderConfig struct {
+    ID              string    `json:"id"`
+    OrgID           string    `json:"orgId"`
+    Provider        string    `json:"provider"`
+    GCPProject      string    `json:"gcpProject,omitempty"`
+    Location        string    `json:"location,omitempty"`
+    GenerativeModel string    `json:"generativeModel,omitempty"`
+    EmbeddingModel  string    `json:"embeddingModel,omitempty"`
+    CreatedAt       time.Time `json:"createdAt"`
+    UpdatedAt       time.Time `json:"updatedAt"`
 }
 ```
 
-Credential metadata only — no API key or service account JSON is returned.
+Credential secrets are never returned.
+
+---
+
+### ProjectProviderConfig
+
+```go
+type ProjectProviderConfig struct {
+    ID              string    `json:"id"`
+    ProjectID       string    `json:"projectId"`
+    OrgID           string    `json:"orgId"`
+    Provider        string    `json:"provider"`
+    GCPProject      string    `json:"gcpProject,omitempty"`
+    Location        string    `json:"location,omitempty"`
+    GenerativeModel string    `json:"generativeModel,omitempty"`
+    EmbeddingModel  string    `json:"embeddingModel,omitempty"`
+    CreatedAt       time.Time `json:"createdAt"`
+    UpdatedAt       time.Time `json:"updatedAt"`
+}
+```
 
 ---
 
@@ -178,20 +221,14 @@ type SupportedModel struct {
 
 ---
 
-### ProjectPolicy
+### TestProviderResponse
 
 ```go
-type ProjectPolicy struct {
-    ID              string    `json:"id"`
-    ProjectID       string    `json:"projectId"`
-    Provider        string    `json:"provider"`
-    Policy          string    `json:"policy"` // "none", "organization", "project"
-    GCPProject      string    `json:"gcpProject,omitempty"`
-    Location        string    `json:"location,omitempty"`
-    EmbeddingModel  string    `json:"embeddingModel,omitempty"`
-    GenerativeModel string    `json:"generativeModel,omitempty"`
-    CreatedAt       time.Time `json:"createdAt"`
-    UpdatedAt       time.Time `json:"updatedAt"`
+type TestProviderResponse struct {
+    Provider  string `json:"provider"`
+    Success   bool   `json:"success"`
+    Message   string `json:"message,omitempty"`
+    Model     string `json:"model,omitempty"`
 }
 ```
 
@@ -219,42 +256,29 @@ type UsageSummaryRow struct {
 
 ---
 
-### Request types
+### UpsertProviderConfigRequest
 
 ```go
-type SaveGoogleAICredentialRequest struct {
-    APIKey string `json:"apiKey"`
-}
-
-type SaveVertexAICredentialRequest struct {
-    ServiceAccountJSON string `json:"serviceAccountJson"`
-    GCPProject         string `json:"gcpProject"`
-    Location           string `json:"location"`
-}
-
-type SetOrgModelSelectionRequest struct {
-    EmbeddingModel  string `json:"embeddingModel"`
-    GenerativeModel string `json:"generativeModel"`
-}
-
-type SetProjectPolicyRequest struct {
-    Policy             string `json:"policy"`
-    APIKey             string `json:"apiKey,omitempty"`
-    ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
-    GCPProject         string `json:"gcpProject,omitempty"`
-    Location           string `json:"location,omitempty"`
-    EmbeddingModel     string `json:"embeddingModel,omitempty"`
-    GenerativeModel    string `json:"generativeModel,omitempty"`
+type UpsertProviderConfigRequest struct {
+    APIKey             string `json:"apiKey,omitempty"`             // google, openai, deepseek
+    ServiceAccountJSON string `json:"serviceAccountJson,omitempty"` // google-vertex
+    GCPProject         string `json:"gcpProject,omitempty"`         // google-vertex
+    Location           string `json:"location,omitempty"`           // google-vertex
+    BaseURL            string `json:"baseUrl,omitempty"`            // openai (custom endpoint)
+    GenerativeModel    string `json:"generativeModel,omitempty"`    // auto-selected if omitted
+    EmbeddingModel     string `json:"embeddingModel,omitempty"`     // auto-selected if omitted
 }
 ```
+
+Model names must include the provider prefix (e.g. `"google/gemini-2.5-flash"`).
 
 ---
 
 ## Example
 
 ```go
-// Store a Google AI API key for an org
-err := client.Provider.SaveGoogleAICredential(ctx, orgID, &provider.SaveGoogleAICredentialRequest{
+// Store a Google AI API key at org level (auto-selects models)
+_, err := client.Provider.UpsertOrgConfig(ctx, orgID, provider.ProviderGoogleAI, &provider.UpsertProviderConfigRequest{
     APIKey: os.Getenv("GOOGLE_AI_API_KEY"),
 })
 if err != nil {
@@ -270,15 +294,22 @@ for _, m := range models {
     fmt.Printf("%s (%s)\n", m.ModelName, m.DisplayName)
 }
 
-// Configure a project to use org credentials with a specific model
-err = client.Provider.SetProjectPolicy(ctx, projectID, provider.ProviderGoogleAI, &provider.SetProjectPolicyRequest{
-    Policy:          provider.PolicyOrganization,
-    GenerativeModel: "gemini-1.5-pro",
-    EmbeddingModel:  "text-embedding-004",
+// Override model selection for a specific project
+_, err = client.Provider.UpsertProjectConfig(ctx, projectID, provider.ProviderGoogleAI, &provider.UpsertProviderConfigRequest{
+    APIKey:          os.Getenv("GOOGLE_AI_API_KEY"),
+    GenerativeModel: "google/gemini-2.5-pro",
+    EmbeddingModel:  "google/text-embedding-004",
 })
 if err != nil {
     log.Fatal(err)
 }
+
+// Verify credentials are working
+result, err := client.Provider.TestProvider(ctx, provider.ProviderGoogleAI, projectID, "")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("test passed: %v — model: %s\n", result.Success, result.Model)
 
 // Query usage this month
 since := time.Now().UTC().AddDate(0, -1, 0)
