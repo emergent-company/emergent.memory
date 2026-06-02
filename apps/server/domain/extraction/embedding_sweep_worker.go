@@ -227,12 +227,27 @@ func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
 	err := w.db.NewRaw(`
 		SELECT o.id::text
 		FROM kb.graph_objects o
+		JOIN kb.projects p ON p.id = o.project_id
 		WHERE o.embedding_v2 IS NULL
 		  AND o.deleted_at IS NULL
 		  AND NOT EXISTS (
 		    SELECT 1 FROM kb.graph_embedding_jobs j
 		    WHERE j.object_id = o.id
 		      AND j.status IN ('pending', 'processing')
+		  )
+		  AND (
+		    EXISTS (
+		      SELECT 1 FROM kb.project_model_config pmc
+		      WHERE pmc.project_id = o.project_id
+		        AND pmc.embedding_model IS NOT NULL
+		        AND pmc.embedding_model != ''
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM kb.org_model_config omc
+		      WHERE omc.org_id = p.organization_id
+		        AND omc.embedding_model IS NOT NULL
+		        AND omc.embedding_model != ''
+		    )
 		  )
 		ORDER BY o.created_at ASC
 		LIMIT ?`, w.cfg.BatchSize).Scan(ctx, &objectIDs)
@@ -285,10 +300,25 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 		FROM kb.graph_relationships r
 		JOIN kb.graph_objects src ON src.id = r.src_id
 		JOIN kb.graph_objects dst ON dst.id = r.dst_id
+		JOIN kb.projects p ON p.id = r.project_id
 		WHERE r.embedding IS NULL
 		  AND r.deleted_at IS NULL
 		  AND src.deleted_at IS NULL
 		  AND dst.deleted_at IS NULL
+		  AND (
+		    EXISTS (
+		      SELECT 1 FROM kb.project_model_config pmc
+		      WHERE pmc.project_id = r.project_id
+		        AND pmc.embedding_model IS NOT NULL
+		        AND pmc.embedding_model != ''
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM kb.org_model_config omc
+		      WHERE omc.org_id = p.organization_id
+		        AND omc.embedding_model IS NOT NULL
+		        AND omc.embedding_model != ''
+		    )
+		  )
 		ORDER BY r.created_at ASC
 		LIMIT ?`, w.cfg.BatchSize).Scan(ctx, &rows)
 	if err != nil {
