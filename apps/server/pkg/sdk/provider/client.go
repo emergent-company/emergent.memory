@@ -148,10 +148,13 @@ type OrgUsageByProject struct {
 
 // TestProviderResponse is returned by the provider test endpoint.
 type TestProviderResponse struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	Reply     string `json:"reply"`
-	LatencyMs int64  `json:"latencyMs"`
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Reply          string `json:"reply"`
+	LatencyMs      int64  `json:"latencyMs"`
+	EmbeddingModel string `json:"embeddingModel,omitempty"`
+	EmbeddingOK    bool   `json:"embeddingOk"`
+	EmbeddingError string `json:"embeddingError,omitempty"`
 }
 
 // --- Request types ---

@@ -739,8 +739,16 @@ func runProviderTest(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		fmt.Printf("OK (%dms)\n", result.LatencyMs)
-		fmt.Printf("  Model:  %s\n", result.Model)
-		fmt.Printf("  Reply:  %s\n", result.Reply)
+		fmt.Printf("  Generative:  %s\n", result.Model)
+		fmt.Printf("  Reply:       %s\n", result.Reply)
+		if result.EmbeddingError != "" {
+			fmt.Printf("  Embedding:   FAILED — %s\n", result.EmbeddingError)
+			anyFailed = true
+		} else if result.EmbeddingModel == "not supported" || result.EmbeddingModel == "" {
+			fmt.Printf("  Embedding:   not supported by this provider\n")
+		} else {
+			fmt.Printf("  Embedding:   %s\n", result.EmbeddingModel)
+		}
 	}
 
 	if anyFailed {

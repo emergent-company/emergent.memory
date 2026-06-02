@@ -51,7 +51,7 @@ func TestResolve_UnsupportedProvider(t *testing.T) {
 	svc := newTestCredentialService(cfg)
 
 	ctx := context.Background()
-	_, err := svc.Resolve(ctx, ProviderType("openai"))
+	_, err := svc.Resolve(ctx, ProviderType("unsupported-provider-xyz"))
 	if err == nil {
 		t.Fatal("expected error for unsupported provider")
 	}

@@ -712,6 +712,7 @@ func printAPIKeyStatus(cfg *config.Config, configPath string) {
 			fmt.Printf("  ID:          %s\n", currentProj.Project.ID)
 			fmt.Println("  Access:      project token (scoped)")
 			if healthErr == nil {
+				printModelStatus(cfg, activeKey, currentProj.Project.ID)
 				printUsageStats(cfg, activeKey, currentProj.Project.ID)
 			}
 		} else if currentProjErr == nil && currentProj.Message != "" {
@@ -725,6 +726,7 @@ func printAPIKeyStatus(cfg *config.Config, configPath string) {
 				fmt.Printf("  ID:          %s\n", project.ID)
 				fmt.Println("  Access:      project token (scoped)")
 				if healthErr == nil {
+					printModelStatus(cfg, activeKey, project.ID)
 					printUsageStats(cfg, activeKey, project.ID)
 				}
 			} else {
@@ -764,6 +766,7 @@ func printAPIKeyStatus(cfg *config.Config, configPath string) {
 			fmt.Println("  Access:      account key (MEMORY_PROJECT scoped)")
 
 			if healthErr == nil {
+				printModelStatus(cfg, activeKey, matchedProject.ID)
 				printUsageStats(cfg, activeKey, matchedProject.ID)
 			}
 		} else {
@@ -866,6 +869,48 @@ type taskCountsResponse struct {
 	Accepted  int64 `json:"accepted"`
 	Rejected  int64 `json:"rejected"`
 	Cancelled int64 `json:"cancelled"`
+}
+
+// printModelStatus fetches and displays effective model configuration for the project.
+func printModelStatus(cfg *config.Config, apiKey string, projectID string) {
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	url := strings.TrimSuffix(cfg.ServerURL, "/") + "/api/v1/projects/" + projectID + "/model-config/effective"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return
+	}
+	setAuthHeader(req, apiKey)
+	resp, err := httpClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return
+	}
+	defer resp.Body.Close()
+
+	var effective struct {
+		GenerativeModel       string `json:"generativeModel"`
+		GenerativeModelSource string `json:"generativeModelSource"`
+		EmbeddingModel        string `json:"embeddingModel"`
+		EmbeddingModelSource  string `json:"embeddingModelSource"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&effective); err != nil {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("  Models:")
+	if effective.GenerativeModel != "" && effective.GenerativeModelSource != "none" {
+		fmt.Printf("    Generative:  %s (from %s)\n", effective.GenerativeModel, effective.GenerativeModelSource)
+	} else {
+		fmt.Println("    Generative:  ⚠ not configured — run: memory provider configure <provider>")
+	}
+	if effective.EmbeddingModel != "" && effective.EmbeddingModelSource != "none" {
+		fmt.Printf("    Embedding:   %s (from %s)\n", effective.EmbeddingModel, effective.EmbeddingModelSource)
+	} else {
+		fmt.Println("    Embedding:   ⚠ not configured — run: memory provider configure <provider>")
+	}
 }
 
 // printUsageStats fetches and displays usage statistics for the project.

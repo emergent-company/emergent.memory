@@ -295,7 +295,16 @@ func TestApiToken_ToDTO(t *testing.T) {
 
 func TestValidApiTokenScopes(t *testing.T) {
 	// Verify the expected scopes are defined
-	expected := []string{"schema:read", "schema:write", "data:read", "data:write", "agents:read", "agents:write", "projects:read", "projects:write", "chat:use"}
+	expected := []string{
+		"schema:read", "schema:write", "data:read", "data:write",
+		"agents:read", "agents:write", "projects:read", "projects:write", "chat:use",
+		"graph:read", "graph:write", "schema:migrate",
+		"branches:read", "branches:write", "search",
+		"journal:read", "journal:write",
+		"skills:read", "skills:write",
+		"documents:read", "documents:write",
+		"admin",
+	}
 	if len(ValidApiTokenScopes) != len(expected) {
 		t.Errorf("ValidApiTokenScopes has %d items, want %d", len(ValidApiTokenScopes), len(expected))
 	}

@@ -557,20 +557,32 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("provider test failed: " + err.Error())
 	}
 
-	return c.JSON(http.StatusOK, TestProjectProviderResponse{
+	embModel, embErr := h.catalog.TestEmbed(ctx, p, cred)
+	resp := TestProjectProviderResponse{
 		Provider:  providerParam,
 		Model:     model,
 		Reply:     reply,
 		LatencyMs: time.Since(start).Milliseconds(),
-	})
+	}
+	if embErr != nil {
+		resp.EmbeddingError = embErr.Error()
+	} else {
+		resp.EmbeddingModel = embModel
+		resp.EmbeddingOK = embModel != "not supported"
+	}
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 // TestProviderResponse is the response body for the provider test endpoint.
 type TestProviderResponse struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	Reply     string `json:"reply"`
-	LatencyMs int64  `json:"latencyMs"`
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Reply          string `json:"reply"`
+	LatencyMs      int64  `json:"latencyMs"`
+	EmbeddingModel string `json:"embeddingModel,omitempty"`
+	EmbeddingOK    bool   `json:"embeddingOk"`
+	EmbeddingError string `json:"embeddingError,omitempty"`
 }
 
 // TestProvider sends a live "hello" generate call to verify provider credentials work end-to-end.
@@ -613,12 +625,21 @@ func (h *Handler) TestProvider(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("provider test failed: " + err.Error())
 	}
 
-	return c.JSON(http.StatusOK, TestProviderResponse{
+	embModel, embErr := h.catalog.TestEmbed(ctx, p, cred)
+	resp := TestProviderResponse{
 		Provider:  providerParam,
 		Model:     model,
 		Reply:     reply,
 		LatencyMs: time.Since(start).Milliseconds(),
-	})
+	}
+	if embErr != nil {
+		resp.EmbeddingError = embErr.Error()
+	} else {
+		resp.EmbeddingModel = embModel
+		resp.EmbeddingOK = embModel != "not supported"
+	}
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 // GetCurrentUserUsageSummary returns aggregated LLM usage for the authenticated user.

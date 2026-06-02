@@ -94,6 +94,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		results = append(results, checkAuth(cfg, configPath))
 		results = append(results, checkAPI(cfg))
 		results = append(results, checkMCP(cfg))
+		results = append(results, checkModelConfig(cfg)...)
 	}
 
 	fmt.Println()
@@ -1427,6 +1428,217 @@ func getContainerVersion(containerName string) string {
 		version = "v" + version
 	}
 	return version
+}
+
+// checkModelConfig verifies that the active project has a generative and
+// embedding model configured and reachable via a live provider test.
+func checkModelConfig(cfg *config.Config) []checkResult {
+	if cfg == nil || cfg.ServerURL == "" || cfg.APIKey == "" {
+		return nil
+	}
+
+	// Determine project ID — project-scoped tokens embed it on /api/projects/current.
+	projectID := cfg.ProjectID
+	if projectID == "" {
+		proj, err := fetchCurrentProject(cfg.ServerURL, cfg.APIKey)
+		if err == nil && proj != nil && proj.Project != nil {
+			projectID = proj.Project.ID
+		}
+	}
+	if projectID == "" {
+		return nil // no project context — skip silently
+	}
+
+	// Fetch effective model config for the project.
+	fmt.Print("Checking model config... ")
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	url := strings.TrimSuffix(cfg.ServerURL, "/") + "/api/v1/projects/" + projectID + "/model-config/effective"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		fmt.Println("ERROR")
+		return []checkResult{{name: "Model Config", status: "fail", message: fmt.Sprintf("cannot build request: %v", err)}}
+	}
+	setAuthHeader(req, cfg.APIKey)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Println("UNREACHABLE")
+		return []checkResult{{name: "Model Config", status: "fail", message: fmt.Sprintf("cannot reach model-config endpoint: %v", err)}}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized {
+		fmt.Println("SKIPPED")
+		return nil // endpoint not available or token lacks permission — non-fatal
+	}
+
+	var effective struct {
+		GenerativeModel       string `json:"generativeModel"`
+		GenerativeModelSource string `json:"generativeModelSource"`
+		EmbeddingModel        string `json:"embeddingModel"`
+		EmbeddingModelSource  string `json:"embeddingModelSource"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&effective); err != nil {
+		fmt.Println("INVALID RESPONSE")
+		return []checkResult{{name: "Model Config", status: "warn", message: "could not parse model-config response"}}
+	}
+
+	var results []checkResult
+
+	// Generative model check
+	if effective.GenerativeModel == "" || effective.GenerativeModelSource == "none" {
+		fmt.Println("NOT CONFIGURED")
+		results = append(results, checkResult{
+			name:    "Model Config — Generative",
+			status:  "fail",
+			message: "no generative model configured — run: memory provider configure <provider> --api-key <key>",
+			fixable: false,
+		})
+	} else {
+		fmt.Println("OK")
+		results = append(results, checkResult{
+			name:    "Model Config — Generative",
+			status:  "pass",
+			message: fmt.Sprintf("%s (source: %s)", effective.GenerativeModel, effective.GenerativeModelSource),
+		})
+	}
+
+	// Embedding model check
+	if effective.EmbeddingModel == "" || effective.EmbeddingModelSource == "none" {
+		results = append(results, checkResult{
+			name:    "Model Config — Embedding",
+			status:  "fail",
+			message: "no embedding model configured — run: memory provider configure <provider> --api-key <key>",
+			fixable: false,
+		})
+	} else {
+		results = append(results, checkResult{
+			name:    "Model Config — Embedding",
+			status:  "pass",
+			message: fmt.Sprintf("%s (source: %s)", effective.EmbeddingModel, effective.EmbeddingModelSource),
+		})
+	}
+
+	// Live provider test — only if both models are configured
+	if effective.GenerativeModel != "" && effective.EmbeddingModel != "" &&
+		effective.GenerativeModelSource != "none" && effective.EmbeddingModelSource != "none" {
+		fmt.Print("Testing models (live)... ")
+		testResults := runProviderLiveTest(cfg, projectID)
+		results = append(results, testResults...)
+	}
+
+	return results
+}
+
+// runProviderLiveTest calls POST /api/v1/projects/:id/providers/:provider/test
+// for all configured providers and returns check results.
+func runProviderLiveTest(cfg *config.Config, projectID string) []checkResult {
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+
+	type testResp struct {
+		Provider       string `json:"provider"`
+		Model          string `json:"model"`
+		Reply          string `json:"reply"`
+		LatencyMs      int64  `json:"latencyMs"`
+		EmbeddingModel string `json:"embeddingModel,omitempty"`
+		EmbeddingOK    bool   `json:"embeddingOk"`
+		EmbeddingError string `json:"embeddingError,omitempty"`
+	}
+
+	// Discover which providers are configured by listing project configs.
+	listURL := strings.TrimSuffix(cfg.ServerURL, "/") + "/api/v1/projects/" + projectID + "/providers"
+	listReq, _ := http.NewRequest("GET", listURL, nil)
+	setAuthHeader(listReq, cfg.APIKey)
+	listResp, err := httpClient.Do(listReq)
+
+	providers := []string{}
+	if err == nil && listResp.StatusCode == http.StatusOK {
+		var configs []struct {
+			Provider string `json:"provider"`
+		}
+		if json.NewDecoder(listResp.Body).Decode(&configs) == nil {
+			for _, c := range configs {
+				providers = append(providers, c.Provider)
+			}
+		}
+		listResp.Body.Close()
+	}
+	// Fallback: try common providers if list unavailable
+	if len(providers) == 0 {
+		providers = []string{"google", "google-vertex", "openai", "deepseek"}
+	}
+
+	var results []checkResult
+	tested := false
+	for _, provider := range providers {
+		testURL := strings.TrimSuffix(cfg.ServerURL, "/") +
+			"/api/v1/projects/" + projectID + "/providers/" + provider + "/test"
+		req, _ := http.NewRequest("POST", testURL, nil)
+		setAuthHeader(req, cfg.APIKey)
+		resp, err := httpClient.Do(req)
+		if err != nil || resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			continue
+		}
+		var tr testResp
+		if jsonErr := json.NewDecoder(resp.Body).Decode(&tr); jsonErr != nil {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+		tested = true
+
+		// Generative result
+		results = append(results, checkResult{
+			name:    fmt.Sprintf("  %s — generative test", provider),
+			status:  "pass",
+			message: fmt.Sprintf("%s (%dms)", tr.Model, tr.LatencyMs),
+		})
+
+		// Embedding result
+		if tr.EmbeddingError != "" {
+			results = append(results, checkResult{
+				name:    fmt.Sprintf("  %s — embedding test", provider),
+				status:  "fail",
+				message: tr.EmbeddingError,
+			})
+		} else if tr.EmbeddingModel == "not supported" || tr.EmbeddingModel == "" {
+			results = append(results, checkResult{
+				name:    fmt.Sprintf("  %s — embedding test", provider),
+				status:  "warn",
+				message: "not supported by this provider",
+			})
+		} else {
+			results = append(results, checkResult{
+				name:    fmt.Sprintf("  %s — embedding test", provider),
+				status:  "pass",
+				message: tr.EmbeddingModel,
+			})
+		}
+		break // one successful test is enough
+	}
+
+	if !tested {
+		fmt.Println("SKIPPED")
+		return nil
+	}
+
+	// Print summary line based on results
+	allPass := true
+	for _, r := range results {
+		if r.status == "fail" {
+			allPass = false
+		}
+	}
+	if allPass {
+		fmt.Println("OK")
+	} else {
+		fmt.Println("PARTIAL")
+	}
+	return results
 }
 
 func printSystemInfo(installDir string, isStandalone bool) {
