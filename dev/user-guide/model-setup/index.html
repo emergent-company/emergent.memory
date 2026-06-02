@@ -2256,6 +2256,57 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#full-project-init-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Full Project Init Example
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Full Project Init Example">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-a-shared-org-credentials-recommended-for-teams" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option A — shared org credentials (recommended for teams)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-b-explicit-model-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option B — explicit model selection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-c-per-project-override" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option C — per-project override
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#check-whats-configured" class="md-nav__link">
+    <span class="md-ellipsis">
+      Check what's configured
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#next-steps" class="md-nav__link">
     <span class="md-ellipsis">
       Next Steps
@@ -2449,6 +2500,82 @@
 </tr>
 </tbody>
 </table>
+<hr />
+<hr />
+<h2 id="full-project-init-example">Full Project Init Example<a class="headerlink" href="#full-project-init-example" title="Permanent link">&para;</a></h2>
+<p>A complete sequence from zero to a working project with models configured.</p>
+<h3 id="option-a-shared-org-credentials-recommended-for-teams">Option A — shared org credentials (recommended for teams)<a class="headerlink" href="#option-a-shared-org-credentials-recommended-for-teams" title="Permanent link">&para;</a></h3>
+<p>Configure credentials once at the org level; all projects inherit them automatically.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># 1. Create org and project</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>memory<span class="w"> </span>orgs<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span><span class="s2">&quot;Acme Corp&quot;</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>memory<span class="w"> </span>projects<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span><span class="s2">&quot;Product Research&quot;</span><span class="w"> </span>--org-id<span class="w"> </span>&lt;org-id&gt;
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1"># 2. Set the new project as active (writes MEMORY_PROJECT_ID to .env.local)</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>memory<span class="w"> </span>projects<span class="w"> </span><span class="nb">set</span><span class="w"> </span><span class="s2">&quot;Product Research&quot;</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1"># 3. Configure provider at org level — auto-selects recommended models</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>memory<span class="w"> </span>provider<span class="w"> </span>configure<span class="w"> </span>google<span class="w"> </span>--api-key<span class="w"> </span><span class="nv">$GOOGLE_AI_API_KEY</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="c1"># 4. Verify effective config for the project</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>memory<span class="w"> </span>provider<span class="w"> </span>list
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="c1"># 5. Smoke test — runs a live generate call through the project&#39;s credential chain</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>memory<span class="w"> </span>provider<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--project<span class="w"> </span>&lt;project-id&gt;
+</code></pre></div>
+<p>After step 3, every project in the org can run agents and embeddings without further setup.</p>
+<hr />
+<h3 id="option-b-explicit-model-selection">Option B — explicit model selection<a class="headerlink" href="#option-b-explicit-model-selection" title="Permanent link">&para;</a></h3>
+<p>When you need specific model versions rather than auto-selected defaults:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Google AI with pinned models</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>memory<span class="w"> </span>provider<span class="w"> </span>configure<span class="w"> </span>google<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span>--api-key<span class="w"> </span><span class="nv">$GOOGLE_AI_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span>--generative-model<span class="w"> </span><span class="s2">&quot;google/gemini-2.5-flash&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span>--embedding-model<span class="w"> </span><span class="s2">&quot;google/text-embedding-004&quot;</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1"># DeepSeek for generation + Google for embeddings (split provider setup)</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>memory<span class="w"> </span>provider<span class="w"> </span>configure<span class="w"> </span>deepseek<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">  </span>--api-key<span class="w"> </span><span class="nv">$DEEPSEEK_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">  </span>--generative-model<span class="w"> </span><span class="s2">&quot;deepseek/deepseek-chat&quot;</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>memory<span class="w"> </span>provider<span class="w"> </span>configure<span class="w"> </span>google<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">  </span>--api-key<span class="w"> </span><span class="nv">$GOOGLE_AI_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="w">  </span>--embedding-model<span class="w"> </span><span class="s2">&quot;google/text-embedding-004&quot;</span>
+</code></pre></div>
+<blockquote>
+<p>Model names must be provider-prefixed: <code>google/gemini-2.5-flash</code>, not <code>gemini-2.5-flash</code>.</p>
+</blockquote>
+<hr />
+<h3 id="option-c-per-project-override">Option C — per-project override<a class="headerlink" href="#option-c-per-project-override" title="Permanent link">&para;</a></h3>
+<p>When one project needs different models than the org default:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Org uses google/gemini-2.5-flash by default</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="c1"># This project should use a more capable model</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>memory<span class="w"> </span>provider<span class="w"> </span>configure-project<span class="w"> </span>google<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span>--api-key<span class="w"> </span><span class="nv">$GOOGLE_AI_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span>--generative-model<span class="w"> </span><span class="s2">&quot;google/gemini-2.5-pro&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span>--embedding-model<span class="w"> </span><span class="s2">&quot;google/text-embedding-004&quot;</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="c1"># Revert back to org config later</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>memory<span class="w"> </span>provider<span class="w"> </span>configure-project<span class="w"> </span>google<span class="w"> </span>--remove
+</code></pre></div>
+<hr />
+<h3 id="check-whats-configured">Check what's configured<a class="headerlink" href="#check-whats-configured" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Show all org + project configs with resolved model names</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>memory<span class="w"> </span>provider<span class="w"> </span>list
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># Show the resolved effective models for a project (with source: project/org/none)</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="c1"># Via API:</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;token&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">  </span>https://api.dev.emergent-company.ai/api/v1/projects/&lt;project-id&gt;/model-config/effective
+</code></pre></div>
+<p>Response:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="p">{</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">&quot;generativeModel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;google/gemini-2.5-flash&quot;</span><span class="p">,</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span><span class="nt">&quot;generativeModelSource&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;org&quot;</span><span class="p">,</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span><span class="nt">&quot;embeddingModel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;google/text-embedding-004&quot;</span><span class="p">,</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">  </span><span class="nt">&quot;embeddingModelSource&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;org&quot;</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="p">}</span>
+</code></pre></div></p>
+<p>If either <code>*Source</code> is <code>"none"</code>, that model is not configured — agents and embeddings will fail until you set it.</p>
 <hr />
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
