@@ -2031,9 +2031,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#organization-credential-methods" class="md-nav__link">
+  <a href="#organization-config-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Organization Credential Methods
+      Organization Config Methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#project-config-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project Config Methods
     </span>
   </a>
   
@@ -2049,9 +2058,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#project-policy-methods" class="md-nav__link">
+  <a href="#test-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Project Policy Methods
+      Test Methods
     </span>
   </a>
   
@@ -2082,9 +2091,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#orgcredential" class="md-nav__link">
+  <a href="#providerconfig" class="md-nav__link">
     <span class="md-ellipsis">
-      OrgCredential
+      ProviderConfig
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#projectproviderconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      ProjectProviderConfig
     </span>
   </a>
   
@@ -2100,9 +2118,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#projectpolicy" class="md-nav__link">
+  <a href="#testproviderresponse" class="md-nav__link">
     <span class="md-ellipsis">
-      ProjectPolicy
+      TestProviderResponse
     </span>
   </a>
   
@@ -2118,9 +2136,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#request-types" class="md-nav__link">
+  <a href="#upsertproviderconfigrequest" class="md-nav__link">
     <span class="md-ellipsis">
-      Request types
+      UpsertProviderConfigRequest
     </span>
   </a>
   
@@ -2438,9 +2456,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#organization-credential-methods" class="md-nav__link">
+  <a href="#organization-config-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Organization Credential Methods
+      Organization Config Methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#project-config-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project Config Methods
     </span>
   </a>
   
@@ -2456,9 +2483,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#project-policy-methods" class="md-nav__link">
+  <a href="#test-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Project Policy Methods
+      Test Methods
     </span>
   </a>
   
@@ -2489,9 +2516,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#orgcredential" class="md-nav__link">
+  <a href="#providerconfig" class="md-nav__link">
     <span class="md-ellipsis">
-      OrgCredential
+      ProviderConfig
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#projectproviderconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      ProjectProviderConfig
     </span>
   </a>
   
@@ -2507,9 +2543,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#projectpolicy" class="md-nav__link">
+  <a href="#testproviderresponse" class="md-nav__link">
     <span class="md-ellipsis">
-      ProjectPolicy
+      TestProviderResponse
     </span>
   </a>
   
@@ -2525,9 +2561,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#request-types" class="md-nav__link">
+  <a href="#upsertproviderconfigrequest" class="md-nav__link">
     <span class="md-ellipsis">
-      Request types
+      UpsertProviderConfigRequest
     </span>
   </a>
   
@@ -2568,7 +2604,7 @@
 <h1 id="provider">provider<a class="headerlink" href="#provider" title="Permanent link">&para;</a></h1>
 <p>Package <code>provider</code> provides a client for the Emergent Provider API.</p>
 <p>The provider client is a <strong>non-context client</strong> — it requires no org or project context headers. It manages LLM credentials at the organization level, the model catalog for each provider, and per-project provider policies (which credential source to use and which models to call).</p>
-<p>Supported providers: <strong>Google AI</strong> (<code>google-ai</code>) and <strong>Vertex AI</strong> (<code>vertex-ai</code>).</p>
+<p>Supported providers: <strong>Google AI</strong> (<code>google</code>), <strong>Vertex AI</strong> (<code>google-vertex</code>), <strong>OpenAI</strong> (<code>openai</code>), and <strong>DeepSeek</strong> (<code>deepseek</code>).</p>
 <h2 id="import">Import<a class="headerlink" href="#import" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="s">&quot;github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider&quot;</span>
 </code></pre></div>
@@ -2580,9 +2616,11 @@
 <h2 id="constants">Constants<a class="headerlink" href="#constants" title="Permanent link">&para;</a></h2>
 <h3 id="providertype">ProviderType<a class="headerlink" href="#providertype" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kd">const</span><span class="w"> </span><span class="p">(</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="nx">ProviderGoogleAI</span><span class="w"> </span><span class="nx">ProviderType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;google-ai&quot;</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nx">ProviderVertexAI</span><span class="w"> </span><span class="nx">ProviderType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;vertex-ai&quot;</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="nx">ProviderGoogleAI</span><span class="w"> </span><span class="nx">ProviderType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;google&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nx">ProviderVertexAI</span><span class="w"> </span><span class="nx">ProviderType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;google-vertex&quot;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nx">ProviderOpenAI</span><span class="w">   </span><span class="nx">ProviderType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;openai&quot;</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nx">ProviderDeepSeek</span><span class="w"> </span><span class="nx">ProviderType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;deepseek&quot;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
 </code></pre></div>
 <hr />
 <h3 id="providerpolicy">ProviderPolicy<a class="headerlink" href="#providerpolicy" title="Permanent link">&para;</a></h3>
@@ -2624,183 +2662,202 @@
 </code></pre></div>
 <hr />
 <h2 id="methods">Methods<a class="headerlink" href="#methods" title="Permanent link">&para;</a></h2>
-<h3 id="organization-credential-methods">Organization Credential Methods<a class="headerlink" href="#organization-credential-methods" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1">// Save a Google AI API key for an org</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">SaveGoogleAICredential</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">req</span><span class="w"> </span><span class="o">*</span><span class="nx">SaveGoogleAICredentialRequest</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1">// Save Vertex AI service account credentials for an org</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">SaveVertexAICredential</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">req</span><span class="w"> </span><span class="o">*</span><span class="nx">SaveVertexAICredentialRequest</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1">// Delete stored credentials for a provider/org combination</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">DeleteOrgCredential</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="c1">// List stored credential metadata (no secrets) for an org</span>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">ListOrgCredentials</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">OrgCredential</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>
-<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="c1">// Set default models for an org + provider</span>
-<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">SetOrgModelSelection</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">req</span><span class="w"> </span><span class="o">*</span><span class="nx">SetOrgModelSelectionRequest</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
+<h3 id="organization-config-methods">Organization Config Methods<a class="headerlink" href="#organization-config-methods" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1">// Store credentials + auto-select models for an org&#39;s provider.</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1">// Runs a live credential test and syncs the model catalog on success.</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">UpsertOrgConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">req</span><span class="w"> </span><span class="o">*</span><span class="nx">UpsertProviderConfigRequest</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">ProviderConfig</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1">// Get stored config metadata (no secrets) for an org&#39;s provider.</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">GetOrgConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">ProviderConfig</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="c1">// Delete stored config for an org&#39;s provider.</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">DeleteOrgConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="c1">// List all provider configs for an org.</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">ListOrgConfigs</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">ProviderConfig</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
 </code></pre></div>
 <p><strong>Endpoints:</strong>
-- <code>POST /api/v1/organizations/{orgID}/providers/google-ai/credentials</code>
-- <code>POST /api/v1/organizations/{orgID}/providers/vertex-ai/credentials</code>
-- <code>DELETE /api/v1/organizations/{orgID}/providers/{provider}/credentials</code>
-- <code>GET /api/v1/organizations/{orgID}/providers/credentials</code>
-- <code>PUT /api/v1/organizations/{orgID}/providers/{provider}/models</code></p>
+- <code>PUT /api/v1/organizations/{orgID}/providers/{provider}</code>
+- <code>GET /api/v1/organizations/{orgID}/providers/{provider}</code>
+- <code>DELETE /api/v1/organizations/{orgID}/providers/{provider}</code>
+- <code>GET /api/v1/organizations/{orgID}/providers</code></p>
+<hr />
+<h3 id="project-config-methods">Project Config Methods<a class="headerlink" href="#project-config-methods" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1">// Store a project-level provider override (beats org config in resolution chain).</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">UpsertProjectConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">req</span><span class="w"> </span><span class="o">*</span><span class="nx">UpsertProviderConfigRequest</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">ProviderConfig</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1">// Get project-level provider config.</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">GetProjectConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">ProviderConfig</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1">// Delete project-level override; project falls back to org config.</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">DeleteProjectConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="c1">// List all project-level provider configs for a project.</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">ListProjectConfigs</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">ProjectProviderConfig</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="c1">// List project-level overrides across all projects in an org.</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">ListProjectConfigsByOrg</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">ProjectProviderConfig</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Endpoints:</strong>
+- <code>PUT /api/v1/projects/{projectID}/providers/{provider}</code>
+- <code>GET /api/v1/projects/{projectID}/providers/{provider}</code>
+- <code>DELETE /api/v1/projects/{projectID}/providers/{provider}</code>
+- <code>GET /api/v1/projects/{projectID}/providers</code></p>
 <hr />
 <h3 id="model-catalog-methods">Model Catalog Methods<a class="headerlink" href="#model-catalog-methods" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1">// List models for a provider; modelType is optional (&quot;embedding&quot; or &quot;generative&quot;)</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">ListModels</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">,</span><span class="w"> </span><span class="nx">modelType</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">SupportedModel</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1">// List models for a provider; modelType is optional (&quot;embedding&quot; or &quot;generative&quot;).</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">ListModels</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">,</span><span class="w"> </span><span class="nx">modelType</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">SupportedModel</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
 </code></pre></div>
 <p><strong>Endpoint:</strong> <code>GET /api/v1/providers/{provider}/models</code></p>
 <hr />
-<h3 id="project-policy-methods">Project Policy Methods<a class="headerlink" href="#project-policy-methods" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1">// Set the provider policy for a project</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">SetProjectPolicy</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">req</span><span class="w"> </span><span class="o">*</span><span class="nx">SetProjectPolicyRequest</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1">// Get the current provider policy for a project</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">GetProjectPolicy</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">ProjectPolicy</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="c1">// List all provider policies for a project</span>
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">ListProjectPolicies</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">ProjectPolicy</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<h3 id="test-methods">Test Methods<a class="headerlink" href="#test-methods" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1">// Run a live generate call to verify credentials are working.</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="c1">// Pass projectID to test via the project&#39;s resolved credential chain; pass orgID to test org credentials directly.</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">TestProvider</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">TestProviderResponse</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
 </code></pre></div>
-<p><strong>Endpoints:</strong>
-- <code>PUT /api/v1/projects/{projectID}/providers/{provider}/policy</code>
-- <code>GET /api/v1/projects/{projectID}/providers/{provider}/policy</code>
-- <code>GET /api/v1/projects/{projectID}/providers/policies</code></p>
+<p><strong>Endpoint:</strong> <code>POST /api/v1/providers/{provider}/test</code></p>
 <hr />
 <h3 id="usage-methods">Usage Methods<a class="headerlink" href="#usage-methods" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1">// Aggregated usage + estimated cost for a project (since/until optional; pass zero time.Time to omit)</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">GetProjectUsage</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">since</span><span class="p">,</span><span class="w"> </span><span class="nx">until</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">UsageSummary</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1">// Aggregated usage + estimated cost across all projects in an org</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">GetOrgUsage</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">since</span><span class="p">,</span><span class="w"> </span><span class="nx">until</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">UsageSummary</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1">// Aggregated usage + estimated cost for a project (pass zero time.Time to omit since/until).</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">GetProjectUsage</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">since</span><span class="p">,</span><span class="w"> </span><span class="nx">until</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">UsageSummary</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1">// Aggregated usage across all projects in an org.</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">GetOrgUsage</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">since</span><span class="p">,</span><span class="w"> </span><span class="nx">until</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">UsageSummary</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="c1">// Usage broken down per project within an org.</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="nx">GetOrgUsageByProject</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">since</span><span class="p">,</span><span class="w"> </span><span class="nx">until</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">OrgUsageByProject</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
 </code></pre></div>
 <p><strong>Endpoints:</strong>
 - <code>GET /api/v1/projects/{projectID}/usage</code>
-- <code>GET /api/v1/organizations/{orgID}/usage</code></p>
+- <code>GET /api/v1/organizations/{orgID}/usage</code>
+- <code>GET /api/v1/organizations/{orgID}/usage/by-project</code></p>
 <hr />
 <h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
-<h3 id="orgcredential">OrgCredential<a class="headerlink" href="#orgcredential" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">OrgCredential</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="nx">ID</span><span class="w">         </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;id&quot;`</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nx">OrgID</span><span class="w">      </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;orgId&quot;`</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">   </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;provider&quot;`</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nx">GCPProject</span><span class="w"> </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;gcpProject,omitempty&quot;`</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="nx">Location</span><span class="w">   </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;location,omitempty&quot;`</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">    </span><span class="nx">CreatedAt</span><span class="w">  </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;createdAt&quot;`</span>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">    </span><span class="nx">UpdatedAt</span><span class="w">  </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;updatedAt&quot;`</span>
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="p">}</span>
+<h3 id="providerconfig">ProviderConfig<a class="headerlink" href="#providerconfig" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">ProviderConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">    </span><span class="nx">ID</span><span class="w">              </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;id&quot;`</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nx">OrgID</span><span class="w">           </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;orgId&quot;`</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">        </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;provider&quot;`</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nx">GCPProject</span><span class="w">      </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;gcpProject,omitempty&quot;`</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">    </span><span class="nx">Location</span><span class="w">        </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;location,omitempty&quot;`</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="nx">GenerativeModel</span><span class="w"> </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;generativeModel,omitempty&quot;`</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="nx">EmbeddingModel</span><span class="w">  </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;embeddingModel,omitempty&quot;`</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">    </span><span class="nx">CreatedAt</span><span class="w">       </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;createdAt&quot;`</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">    </span><span class="nx">UpdatedAt</span><span class="w">       </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;updatedAt&quot;`</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="p">}</span>
 </code></pre></div>
-<p>Credential metadata only — no API key or service account JSON is returned.</p>
+<p>Credential secrets are never returned.</p>
 <hr />
-<h3 id="supportedmodel">SupportedModel<a class="headerlink" href="#supportedmodel" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">SupportedModel</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">    </span><span class="nx">ID</span><span class="w">          </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;id&quot;`</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">    </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;provider&quot;`</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nx">ModelName</span><span class="w">   </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;modelName&quot;`</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nx">ModelType</span><span class="w">   </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;modelType&quot;`</span><span class="w"> </span><span class="c1">// &quot;embedding&quot; or &quot;generative&quot;</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">    </span><span class="nx">DisplayName</span><span class="w"> </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;displayName,omitempty&quot;`</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="nx">LastSynced</span><span class="w">  </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;lastSynced&quot;`</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="p">}</span>
-</code></pre></div>
-<hr />
-<h3 id="projectpolicy">ProjectPolicy<a class="headerlink" href="#projectpolicy" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">ProjectPolicy</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<h3 id="projectproviderconfig">ProjectProviderConfig<a class="headerlink" href="#projectproviderconfig" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">ProjectProviderConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">    </span><span class="nx">ID</span><span class="w">              </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;id&quot;`</span>
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nx">ProjectID</span><span class="w">       </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;projectId&quot;`</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">        </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;provider&quot;`</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="nx">Policy</span><span class="w">          </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;policy&quot;`</span><span class="w"> </span><span class="c1">// &quot;none&quot;, &quot;organization&quot;, &quot;project&quot;</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="nx">OrgID</span><span class="w">           </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;orgId&quot;`</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">        </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;provider&quot;`</span>
 <a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">    </span><span class="nx">GCPProject</span><span class="w">      </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;gcpProject,omitempty&quot;`</span>
 <a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">    </span><span class="nx">Location</span><span class="w">        </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;location,omitempty&quot;`</span>
-<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">    </span><span class="nx">EmbeddingModel</span><span class="w">  </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;embeddingModel,omitempty&quot;`</span>
-<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">    </span><span class="nx">GenerativeModel</span><span class="w"> </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;generativeModel,omitempty&quot;`</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">    </span><span class="nx">GenerativeModel</span><span class="w"> </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;generativeModel,omitempty&quot;`</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">    </span><span class="nx">EmbeddingModel</span><span class="w">  </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;embeddingModel,omitempty&quot;`</span>
 <a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">    </span><span class="nx">CreatedAt</span><span class="w">       </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;createdAt&quot;`</span>
 <a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">    </span><span class="nx">UpdatedAt</span><span class="w">       </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;updatedAt&quot;`</span>
 <a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="p">}</span>
 </code></pre></div>
 <hr />
-<h3 id="usagesummary">UsageSummary<a class="headerlink" href="#usagesummary" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">UsageSummary</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">    </span><span class="nx">Note</span><span class="w"> </span><span class="kt">string</span><span class="w">            </span><span class="s">`json:&quot;note&quot;`</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="nx">Data</span><span class="w"> </span><span class="p">[]</span><span class="nx">UsageSummaryRow</span><span class="w"> </span><span class="s">`json:&quot;data&quot;`</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="p">}</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="kd">type</span><span class="w"> </span><span class="nx">UsageSummaryRow</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">         </span><span class="kt">string</span><span class="w">  </span><span class="s">`json:&quot;provider&quot;`</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="nx">Model</span><span class="w">            </span><span class="kt">string</span><span class="w">  </span><span class="s">`json:&quot;model&quot;`</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">    </span><span class="nx">TotalText</span><span class="w">        </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_text&quot;`</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">    </span><span class="nx">TotalImage</span><span class="w">       </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_image&quot;`</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">    </span><span class="nx">TotalVideo</span><span class="w">       </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_video&quot;`</span>
-<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="w">    </span><span class="nx">TotalAudio</span><span class="w">       </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_audio&quot;`</span>
-<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">    </span><span class="nx">TotalOutput</span><span class="w">      </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_output&quot;`</span>
-<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="w">    </span><span class="nx">EstimatedCostUSD</span><span class="w"> </span><span class="kt">float64</span><span class="w"> </span><span class="s">`json:&quot;estimated_cost_usd&quot;`</span>
-<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="p">}</span>
+<h3 id="supportedmodel">SupportedModel<a class="headerlink" href="#supportedmodel" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">SupportedModel</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">    </span><span class="nx">ID</span><span class="w">          </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;id&quot;`</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">    </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;provider&quot;`</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="nx">ModelName</span><span class="w">   </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;modelName&quot;`</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="nx">ModelType</span><span class="w">   </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;modelType&quot;`</span><span class="w"> </span><span class="c1">// &quot;embedding&quot; or &quot;generative&quot;</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="nx">DisplayName</span><span class="w"> </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;displayName,omitempty&quot;`</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="nx">LastSynced</span><span class="w">  </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;lastSynced&quot;`</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="p">}</span>
 </code></pre></div>
 <hr />
-<h3 id="request-types">Request types<a class="headerlink" href="#request-types" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">SaveGoogleAICredentialRequest</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">    </span><span class="nx">APIKey</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;apiKey&quot;`</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="p">}</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="kd">type</span><span class="w"> </span><span class="nx">SaveVertexAICredentialRequest</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">    </span><span class="nx">ServiceAccountJSON</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;serviceAccountJson&quot;`</span>
-<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">    </span><span class="nx">GCPProject</span><span class="w">         </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;gcpProject&quot;`</span>
-<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">    </span><span class="nx">Location</span><span class="w">           </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;location&quot;`</span>
-<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="p">}</span>
-<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>
-<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="kd">type</span><span class="w"> </span><span class="nx">SetOrgModelSelectionRequest</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="w">    </span><span class="nx">EmbeddingModel</span><span class="w">  </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;embeddingModel&quot;`</span>
-<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="w">    </span><span class="nx">GenerativeModel</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;generativeModel&quot;`</span>
-<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="p">}</span>
-<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>
-<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a><span class="kd">type</span><span class="w"> </span><span class="nx">SetProjectPolicyRequest</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a><span class="w">    </span><span class="nx">Policy</span><span class="w">             </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;policy&quot;`</span>
-<a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a><span class="w">    </span><span class="nx">APIKey</span><span class="w">             </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;apiKey,omitempty&quot;`</span>
-<a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a><span class="w">    </span><span class="nx">ServiceAccountJSON</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;serviceAccountJson,omitempty&quot;`</span>
-<a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a><span class="w">    </span><span class="nx">GCPProject</span><span class="w">         </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;gcpProject,omitempty&quot;`</span>
-<a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a><span class="w">    </span><span class="nx">Location</span><span class="w">           </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;location,omitempty&quot;`</span>
-<a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a><span class="w">    </span><span class="nx">EmbeddingModel</span><span class="w">     </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;embeddingModel,omitempty&quot;`</span>
-<a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a><span class="w">    </span><span class="nx">GenerativeModel</span><span class="w">    </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;generativeModel,omitempty&quot;`</span>
-<a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a><span class="p">}</span>
+<h3 id="testproviderresponse">TestProviderResponse<a class="headerlink" href="#testproviderresponse" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">TestProviderResponse</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">  </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;provider&quot;`</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="nx">Success</span><span class="w">   </span><span class="kt">bool</span><span class="w">   </span><span class="s">`json:&quot;success&quot;`</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="nx">Message</span><span class="w">   </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;message,omitempty&quot;`</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="nx">Model</span><span class="w">     </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;model,omitempty&quot;`</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="p">}</span>
 </code></pre></div>
+<hr />
+<h3 id="usagesummary">UsageSummary<a class="headerlink" href="#usagesummary" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">UsageSummary</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">    </span><span class="nx">Note</span><span class="w"> </span><span class="kt">string</span><span class="w">            </span><span class="s">`json:&quot;note&quot;`</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nx">Data</span><span class="w"> </span><span class="p">[]</span><span class="nx">UsageSummaryRow</span><span class="w"> </span><span class="s">`json:&quot;data&quot;`</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="p">}</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="kd">type</span><span class="w"> </span><span class="nx">UsageSummaryRow</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">    </span><span class="nx">Provider</span><span class="w">         </span><span class="kt">string</span><span class="w">  </span><span class="s">`json:&quot;provider&quot;`</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">    </span><span class="nx">Model</span><span class="w">            </span><span class="kt">string</span><span class="w">  </span><span class="s">`json:&quot;model&quot;`</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">    </span><span class="nx">TotalText</span><span class="w">        </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_text&quot;`</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="w">    </span><span class="nx">TotalImage</span><span class="w">       </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_image&quot;`</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="w">    </span><span class="nx">TotalVideo</span><span class="w">       </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_video&quot;`</span>
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="w">    </span><span class="nx">TotalAudio</span><span class="w">       </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_audio&quot;`</span>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="w">    </span><span class="nx">TotalOutput</span><span class="w">      </span><span class="kt">int64</span><span class="w">   </span><span class="s">`json:&quot;total_output&quot;`</span>
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="w">    </span><span class="nx">EstimatedCostUSD</span><span class="w"> </span><span class="kt">float64</span><span class="w"> </span><span class="s">`json:&quot;estimated_cost_usd&quot;`</span>
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="p">}</span>
+</code></pre></div>
+<hr />
+<h3 id="upsertproviderconfigrequest">UpsertProviderConfigRequest<a class="headerlink" href="#upsertproviderconfigrequest" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">UpsertProviderConfigRequest</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">    </span><span class="nx">APIKey</span><span class="w">             </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;apiKey,omitempty&quot;`</span><span class="w">             </span><span class="c1">// google, openai, deepseek</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="nx">ServiceAccountJSON</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;serviceAccountJson,omitempty&quot;`</span><span class="w"> </span><span class="c1">// google-vertex</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="nx">GCPProject</span><span class="w">         </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;gcpProject,omitempty&quot;`</span><span class="w">         </span><span class="c1">// google-vertex</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span><span class="nx">Location</span><span class="w">           </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;location,omitempty&quot;`</span><span class="w">           </span><span class="c1">// google-vertex</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">    </span><span class="nx">BaseURL</span><span class="w">            </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;baseUrl,omitempty&quot;`</span><span class="w">            </span><span class="c1">// openai (custom endpoint)</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">    </span><span class="nx">GenerativeModel</span><span class="w">    </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;generativeModel,omitempty&quot;`</span><span class="w">    </span><span class="c1">// auto-selected if omitted</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">    </span><span class="nx">EmbeddingModel</span><span class="w">     </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;embeddingModel,omitempty&quot;`</span><span class="w">     </span><span class="c1">// auto-selected if omitted</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="p">}</span>
+</code></pre></div>
+<p>Model names must include the provider prefix (e.g. <code>"google/gemini-2.5-flash"</code>).</p>
 <hr />
 <h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1">// Store a Google AI API key for an org</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">SaveGoogleAICredential</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">provider</span><span class="p">.</span><span class="nx">SaveGoogleAICredentialRequest</span><span class="p">{</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nx">APIKey</span><span class="p">:</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Getenv</span><span class="p">(</span><span class="s">&quot;GOOGLE_AI_API_KEY&quot;</span><span class="p">),</span>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="p">})</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="p">}</span>
-<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>
-<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="c1">// List available generative models</span>
-<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="nx">models</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">ListModels</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">.</span><span class="nx">ProviderGoogleAI</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">.</span><span class="nx">ModelTypeGenerative</span><span class="p">)</span>
-<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
-<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="p">}</span>
-<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">models</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%s (%s)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">ModelName</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">DisplayName</span><span class="p">)</span>
-<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="p">}</span>
-<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a>
-<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="c1">// Configure a project to use org credentials with a specific model</span>
-<a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">SetProjectPolicy</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">.</span><span class="nx">ProviderGoogleAI</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">provider</span><span class="p">.</span><span class="nx">SetProjectPolicyRequest</span><span class="p">{</span>
-<a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a><span class="w">    </span><span class="nx">Policy</span><span class="p">:</span><span class="w">          </span><span class="nx">provider</span><span class="p">.</span><span class="nx">PolicyOrganization</span><span class="p">,</span>
-<a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a><span class="w">    </span><span class="nx">GenerativeModel</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gemini-1.5-pro&quot;</span><span class="p">,</span>
-<a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a><span class="w">    </span><span class="nx">EmbeddingModel</span><span class="p">:</span><span class="w">  </span><span class="s">&quot;text-embedding-004&quot;</span><span class="p">,</span>
-<a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a><span class="p">})</span>
-<a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
-<a id="__codelineno-14-26" name="__codelineno-14-26" href="#__codelineno-14-26"></a><span class="p">}</span>
-<a id="__codelineno-14-27" name="__codelineno-14-27" href="#__codelineno-14-27"></a>
-<a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a><span class="c1">// Query usage this month</span>
-<a id="__codelineno-14-29" name="__codelineno-14-29" href="#__codelineno-14-29"></a><span class="nx">since</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">().</span><span class="nx">UTC</span><span class="p">().</span><span class="nx">AddDate</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-14-30" name="__codelineno-14-30" href="#__codelineno-14-30"></a><span class="nx">usage</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">GetProjectUsage</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">since</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">{})</span>
-<a id="__codelineno-14-31" name="__codelineno-14-31" href="#__codelineno-14-31"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-14-32" name="__codelineno-14-32" href="#__codelineno-14-32"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
-<a id="__codelineno-14-33" name="__codelineno-14-33" href="#__codelineno-14-33"></a><span class="p">}</span>
-<a id="__codelineno-14-34" name="__codelineno-14-34" href="#__codelineno-14-34"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">usage</span><span class="p">.</span><span class="nx">Data</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-14-35" name="__codelineno-14-35" href="#__codelineno-14-35"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%s / %s: $%.4f\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="p">.</span><span class="nx">Provider</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="p">.</span><span class="nx">Model</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="p">.</span><span class="nx">EstimatedCostUSD</span><span class="p">)</span>
-<a id="__codelineno-14-36" name="__codelineno-14-36" href="#__codelineno-14-36"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1">// Store a Google AI API key at org level (auto-selects models)</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">UpsertOrgConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">orgID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">.</span><span class="nx">ProviderGoogleAI</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">provider</span><span class="p">.</span><span class="nx">UpsertProviderConfigRequest</span><span class="p">{</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">    </span><span class="nx">APIKey</span><span class="p">:</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Getenv</span><span class="p">(</span><span class="s">&quot;GOOGLE_AI_API_KEY&quot;</span><span class="p">),</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="p">})</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="p">}</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="c1">// List available generative models</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="nx">models</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">ListModels</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">.</span><span class="nx">ProviderGoogleAI</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">.</span><span class="nx">ModelTypeGenerative</span><span class="p">)</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="p">}</span>
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">models</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%s (%s)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">ModelName</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">DisplayName</span><span class="p">)</span>
+<a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a><span class="p">}</span>
+<a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>
+<a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a><span class="c1">// Override model selection for a specific project</span>
+<a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">UpsertProjectConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">.</span><span class="nx">ProviderGoogleAI</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">provider</span><span class="p">.</span><span class="nx">UpsertProviderConfigRequest</span><span class="p">{</span>
+<a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a><span class="w">    </span><span class="nx">APIKey</span><span class="p">:</span><span class="w">          </span><span class="nx">os</span><span class="p">.</span><span class="nx">Getenv</span><span class="p">(</span><span class="s">&quot;GOOGLE_AI_API_KEY&quot;</span><span class="p">),</span>
+<a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a><span class="w">    </span><span class="nx">GenerativeModel</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;google/gemini-2.5-pro&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a><span class="w">    </span><span class="nx">EmbeddingModel</span><span class="p">:</span><span class="w">  </span><span class="s">&quot;google/text-embedding-004&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a><span class="p">})</span>
+<a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a><span class="p">}</span>
+<a id="__codelineno-16-27" name="__codelineno-16-27" href="#__codelineno-16-27"></a>
+<a id="__codelineno-16-28" name="__codelineno-16-28" href="#__codelineno-16-28"></a><span class="c1">// Verify credentials are working</span>
+<a id="__codelineno-16-29" name="__codelineno-16-29" href="#__codelineno-16-29"></a><span class="nx">result</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">TestProvider</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">provider</span><span class="p">.</span><span class="nx">ProviderGoogleAI</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">)</span>
+<a id="__codelineno-16-30" name="__codelineno-16-30" href="#__codelineno-16-30"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-31" name="__codelineno-16-31" href="#__codelineno-16-31"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<a id="__codelineno-16-32" name="__codelineno-16-32" href="#__codelineno-16-32"></a><span class="p">}</span>
+<a id="__codelineno-16-33" name="__codelineno-16-33" href="#__codelineno-16-33"></a><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;test passed: %v — model: %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">result</span><span class="p">.</span><span class="nx">Success</span><span class="p">,</span><span class="w"> </span><span class="nx">result</span><span class="p">.</span><span class="nx">Model</span><span class="p">)</span>
+<a id="__codelineno-16-34" name="__codelineno-16-34" href="#__codelineno-16-34"></a>
+<a id="__codelineno-16-35" name="__codelineno-16-35" href="#__codelineno-16-35"></a><span class="c1">// Query usage this month</span>
+<a id="__codelineno-16-36" name="__codelineno-16-36" href="#__codelineno-16-36"></a><span class="nx">since</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">().</span><span class="nx">UTC</span><span class="p">().</span><span class="nx">AddDate</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-16-37" name="__codelineno-16-37" href="#__codelineno-16-37"></a><span class="nx">usage</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Provider</span><span class="p">.</span><span class="nx">GetProjectUsage</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">projectID</span><span class="p">,</span><span class="w"> </span><span class="nx">since</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">{})</span>
+<a id="__codelineno-16-38" name="__codelineno-16-38" href="#__codelineno-16-38"></a><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-39" name="__codelineno-16-39" href="#__codelineno-16-39"></a><span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<a id="__codelineno-16-40" name="__codelineno-16-40" href="#__codelineno-16-40"></a><span class="p">}</span>
+<a id="__codelineno-16-41" name="__codelineno-16-41" href="#__codelineno-16-41"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">usage</span><span class="p">.</span><span class="nx">Data</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-42" name="__codelineno-16-42" href="#__codelineno-16-42"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%s / %s: $%.4f\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="p">.</span><span class="nx">Provider</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="p">.</span><span class="nx">Model</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="p">.</span><span class="nx">EstimatedCostUSD</span><span class="p">)</span>
+<a id="__codelineno-16-43" name="__codelineno-16-43" href="#__codelineno-16-43"></a><span class="p">}</span>
 </code></pre></div>
 
 
