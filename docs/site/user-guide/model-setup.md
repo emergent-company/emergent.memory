@@ -158,6 +158,107 @@ memory provider models deepseek
 
 ---
 
+---
+
+## Full Project Init Example
+
+A complete sequence from zero to a working project with models configured.
+
+### Option A — shared org credentials (recommended for teams)
+
+Configure credentials once at the org level; all projects inherit them automatically.
+
+```bash
+# 1. Create org and project
+memory orgs create --name "Acme Corp"
+memory projects create --name "Product Research" --org-id <org-id>
+
+# 2. Set the new project as active (writes MEMORY_PROJECT_ID to .env.local)
+memory projects set "Product Research"
+
+# 3. Configure provider at org level — auto-selects recommended models
+memory provider configure google --api-key $GOOGLE_AI_API_KEY
+
+# 4. Verify effective config for the project
+memory provider list
+
+# 5. Smoke test — runs a live generate call through the project's credential chain
+memory provider test --project <project-id>
+```
+
+After step 3, every project in the org can run agents and embeddings without further setup.
+
+---
+
+### Option B — explicit model selection
+
+When you need specific model versions rather than auto-selected defaults:
+
+```bash
+# Google AI with pinned models
+memory provider configure google \
+  --api-key $GOOGLE_AI_API_KEY \
+  --generative-model "google/gemini-2.5-flash" \
+  --embedding-model "google/text-embedding-004"
+
+# DeepSeek for generation + Google for embeddings (split provider setup)
+memory provider configure deepseek \
+  --api-key $DEEPSEEK_API_KEY \
+  --generative-model "deepseek/deepseek-chat"
+
+memory provider configure google \
+  --api-key $GOOGLE_AI_API_KEY \
+  --embedding-model "google/text-embedding-004"
+```
+
+> Model names must be provider-prefixed: `google/gemini-2.5-flash`, not `gemini-2.5-flash`.
+
+---
+
+### Option C — per-project override
+
+When one project needs different models than the org default:
+
+```bash
+# Org uses google/gemini-2.5-flash by default
+# This project should use a more capable model
+memory provider configure-project google \
+  --api-key $GOOGLE_AI_API_KEY \
+  --generative-model "google/gemini-2.5-pro" \
+  --embedding-model "google/text-embedding-004"
+
+# Revert back to org config later
+memory provider configure-project google --remove
+```
+
+---
+
+### Check what's configured
+
+```bash
+# Show all org + project configs with resolved model names
+memory provider list
+
+# Show the resolved effective models for a project (with source: project/org/none)
+# Via API:
+curl -H "Authorization: Bearer <token>" \
+  https://api.dev.emergent-company.ai/api/v1/projects/<project-id>/model-config/effective
+```
+
+Response:
+```json
+{
+  "generativeModel": "google/gemini-2.5-flash",
+  "generativeModelSource": "org",
+  "embeddingModel": "google/text-embedding-004",
+  "embeddingModelSource": "org"
+}
+```
+
+If either `*Source` is `"none"`, that model is not configured — agents and embeddings will fail until you set it.
+
+---
+
 ## Next Steps
 
 - [Agents](agents.md) — create agents that use the configured model

@@ -161,8 +161,9 @@ Update your display name and contact details.
 
 ## What's next?
 
-Now that you have an org, a project, and your team, you're ready to start building your knowledge graph:
+Now that you have an org, a project, and your team, configure a model so AI features work:
 
+- [Configure models →](model-setup.md) ← **required before agents, chat, or embeddings**
 - [Add documents →](documents.md)
 - [Create graph objects →](knowledge-graph.md)
 - [Start a chat conversation →](chat.md)
