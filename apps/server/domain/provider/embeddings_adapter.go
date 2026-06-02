@@ -21,7 +21,7 @@ func NewEmbeddingCredentialAdapter(svc *CredentialService) *EmbeddingCredentialA
 
 // ResolveEmbedding satisfies embeddings.EmbeddingResolver.
 func (a *EmbeddingCredentialAdapter) ResolveEmbedding(ctx context.Context) (*embeddings.ResolvedEmbeddingCredential, error) {
-	cred, err := a.svc.ResolveAny(ctx)
+	cred, err := a.svc.ResolveAnyForEmbedding(ctx)
 	if err != nil {
 		return nil, err
 	}

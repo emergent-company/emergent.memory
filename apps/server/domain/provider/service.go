@@ -239,6 +239,17 @@ func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*R
 //
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
+	return s.resolveAny(ctx, false)
+}
+
+// ResolveAnyForEmbedding is like ResolveAny but skips providers that have no
+// embedding model configured. This prevents a DeepSeek/OpenAI generative-only
+// config from shadowing a Google AI config that does have an embedding model.
+func (s *CredentialService) ResolveAnyForEmbedding(ctx context.Context) (*ResolvedCredential, error) {
+	return s.resolveAny(ctx, true)
+}
+
+func (s *CredentialService) resolveAny(ctx context.Context, embeddingOnly bool) (*ResolvedCredential, error) {
 	// Resolution order: project-scoped credentials take full priority over
 	// org-scoped ones, regardless of provider type. Within each scope, prefer
 	// DeepSeek/OpenAI over Google so that projects with a custom
@@ -253,6 +264,9 @@ func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential
 		for _, provider := range providerOrder {
 			cfg, err := s.repo.GetProjectProviderConfig(projectOnlyCtx, projectID, provider)
 			if err != nil || cfg == nil {
+				continue
+			}
+			if embeddingOnly && cfg.EmbeddingModel == "" {
 				continue
 			}
 			cred, err := s.decryptProjectConfig(cfg)
@@ -279,6 +293,9 @@ func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential
 				slog.String("error", err.Error()),
 			)
 			lastErr = err
+			continue
+		}
+		if cred != nil && embeddingOnly && cred.EmbeddingModel == "" {
 			continue
 		}
 		if cred != nil {
