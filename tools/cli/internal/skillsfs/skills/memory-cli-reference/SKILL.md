@@ -2824,7 +2824,6 @@ memory graph objects get <id|key> [flags]
 ```
       --branch string   Branch ID or name to resolve the key against (omit for main branch)
   -h, --help            help for get
-      --json            Output as JSON (shorthand for --output json)
       --output string   Output format: table or json (default "table")
 ```
 
@@ -3712,6 +3711,32 @@ memory projects set-info [project-name-or-id] [flags]
       --text string   Inline project info text
 ```
 
+## memory projects set-models
+
+Set the default generative and/or embedding model for a project
+
+### Synopsis
+
+Set the default generative and/or embedding model for a project.
+Model names must include a provider prefix: provider/model-name
+
+Examples:
+  memory projects set-models --generative google/gemini-2.5-flash --embedding google/gemini-embedding-001
+  memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>
+
+```
+memory projects set-models [flags]
+```
+
+### Options
+
+```
+      --embedding string    Embedding model with provider prefix, e.g. google/gemini-embedding-001
+      --generative string   Generative model with provider prefix, e.g. google/gemini-2.5-flash
+  -h, --help                help for set-models
+      --project string      Project ID (auto-detected from MEMORY_PROJECT_ID)
+```
+
 ## memory projects set-provider
 
 Configure the LLM provider for a project
@@ -3800,6 +3825,30 @@ memory projects share-mcp [flags]
       --json                Output raw JSON response
       --name string         Display name for the token (default: auto-generated)
       --project string      Project name or ID (required if not set in config)
+```
+
+## memory projects show-models
+
+Show the effective model config for a project
+
+### Synopsis
+
+Show the resolved generative and embedding models for a project,
+including where each model was resolved from (project config or none).
+
+Examples:
+  memory projects show-models
+  memory projects show-models --project <projectId>
+
+```
+memory projects show-models [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for show-models
+      --project string   Project ID (auto-detected from MEMORY_PROJECT_ID)
 ```
 
 ## memory projects team
@@ -3976,48 +4025,6 @@ memory provider configure-project <provider> [flags]
       --location string           GCP region, e.g. us-central1 (required for google-vertex)
       --project string            Project ID (auto-detected from MEMORY_PROJECT_ID)
       --remove                    Remove the project-level override and inherit org config
-```
-
-## memory provider configure
-
-Save LLM provider credentials and model selections for the organization
-
-### Synopsis
-
-Save LLM provider credentials (and optionally model selections) for the
-current organization. Runs a live credential test and syncs the model catalog
-on success. Models are auto-selected from the catalog if not specified.
-
-Supported providers:
-  google            — Google AI (Gemini API); requires --api-key
-  google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
-  openai             — OpenAI API; requires --api-key
-  deepseek          — DeepSeek AI models; requires --api-key
-
-Examples:
-  memory provider configure google --api-key AIzaSy...
-  memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
-  memory provider configure openai --api-key sk-...
-  memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
-  memory provider configure deepseek --api-key sk-...
-  memory provider configure deepseek --api-key sk-... --generative-model deepseek-v4-flash
-
-```
-memory provider configure <provider> [flags]
-```
-
-### Options
-
-```
-      --api-key string            API key (required for google)
-      --base-url string           OpenAI-compatible base URL (required for openai-compatible)
-      --embedding-model string    Embedding model to use (auto-selected from catalog if omitted)
-      --gcp-project string        GCP project ID (required for google-vertex)
-      --generative-model string   Generative model to use (auto-selected from catalog if omitted)
-  -h, --help                      help for configure
-      --key-file string           Path to service account JSON key file (google-vertex)
-      --location string           GCP region, e.g. us-central1 (required for google-vertex)
-      --org-id string             Organization ID (auto-detected from config)
 ```
 
 ## memory provider list
@@ -4289,6 +4296,76 @@ memory remember [text] [flags]
       --session string         Continue a previous remember session (use session ID printed after a run)
       --show-time              Show elapsed time
       --show-tools             Show tool calls made by the agent
+```
+
+## memory runs
+
+View agent runs for a project
+
+### Synopsis
+
+View agent runs for a project.
+
+This includes runs triggered by /remember, /forget, /query, chat sessions,
+and any scheduled or manually triggered agents.
+
+Use "memory runs get <run-id>" to see messages and tool calls for a run.
+Use "memory runs logs <run-id>" to stream execution logs for a run.
+
+```
+memory runs [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for runs
+      --json             Output as JSON
+      --limit int        Maximum number of runs to return (max 100) (default 20)
+      --project string   Project ID (overrides default project)
+      --status string    Filter by status: running, completed, failed
+```
+
+## memory runs get
+
+Get full details for a run
+
+### Synopsis
+
+Get full details for a run: metadata, messages, and tool calls.
+
+No --project flag is required — run IDs are globally unique.
+
+```
+memory runs get <run-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for get
+      --json             Output as JSON
+      --project string   Project ID (needed for messages/tool calls)
+```
+
+## memory runs logs
+
+Stream execution logs for a run
+
+### Synopsis
+
+Stream the execution log for a run to stdout.
+
+No --project flag is required — run IDs are globally unique.
+
+```
+memory runs logs <run-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for logs
 ```
 
 ## memory schemas

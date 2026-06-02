@@ -175,50 +175,18 @@ type UpsertProviderConfigRequest struct {
 	EmbeddingModel     string `json:"embeddingModel,omitempty"`
 }
 
-// --- Organization Provider Config Methods ---
+// --- Project Provider Config Methods ---
 
-// UpsertOrgConfig stores credentials and model selections for an organization's provider.
-// Runs a live credential test and syncs the model catalog on success.
-func (c *Client) UpsertOrgConfig(ctx context.Context, orgID, provider string, req *UpsertProviderConfigRequest) (*ProviderConfig, error) {
-	var result ProviderConfig
-	err := c.doJSON(ctx, "PUT",
-		fmt.Sprintf("/api/v1/organizations/%s/providers/%s",
-			url.PathEscape(orgID), url.PathEscape(provider)),
-		req, &result)
-	if err != nil {
-		return nil, err
-	}
-	return &result, nil
+// ListOrgConfigs is deprecated. Org-level provider config is no longer supported.
+// Use ListProjectConfigs instead.
+func (c *Client) ListOrgConfigs(_ context.Context, _ string) ([]ProviderConfig, error) {
+	return nil, fmt.Errorf("org-level provider config is deprecated; use project-level config via `memory provider configure-project`")
 }
 
-// GetOrgConfig returns the stored config metadata (no secrets) for an org's provider.
-func (c *Client) GetOrgConfig(ctx context.Context, orgID, provider string) (*ProviderConfig, error) {
-	var result ProviderConfig
-	err := c.doJSON(ctx, "GET",
-		fmt.Sprintf("/api/v1/organizations/%s/providers/%s",
-			url.PathEscape(orgID), url.PathEscape(provider)),
-		nil, &result)
-	if err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// DeleteOrgConfig removes a provider config from an organization.
-func (c *Client) DeleteOrgConfig(ctx context.Context, orgID, provider string) error {
-	return c.doJSON(ctx, "DELETE",
-		fmt.Sprintf("/api/v1/organizations/%s/providers/%s",
-			url.PathEscape(orgID), url.PathEscape(provider)),
-		nil, nil)
-}
-
-// ListOrgConfigs returns all provider config metadata for an organization.
-func (c *Client) ListOrgConfigs(ctx context.Context, orgID string) ([]ProviderConfig, error) {
-	var result []ProviderConfig
-	err := c.doJSON(ctx, "GET",
-		fmt.Sprintf("/api/v1/organizations/%s/providers", url.PathEscape(orgID)),
-		nil, &result)
-	return result, err
+// UpsertOrgConfig is deprecated. Org-level provider config is no longer supported.
+// Use UpsertProjectConfig instead.
+func (c *Client) UpsertOrgConfig(_ context.Context, _, _ string, _ *UpsertProviderConfigRequest) (*ProviderConfig, error) {
+	return nil, fmt.Errorf("org-level provider config is deprecated; use project-level config via `memory provider configure-project`")
 }
 
 // ListProjectConfigsByOrg returns all project-level provider config overrides
@@ -230,8 +198,6 @@ func (c *Client) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]P
 		nil, &result)
 	return result, err
 }
-
-// --- Project Provider Config Methods ---
 
 // ListProjectConfigs returns all provider config overrides for a specific project.
 func (c *Client) ListProjectConfigs(ctx context.Context, projectID string) ([]ProjectProviderConfig, error) {

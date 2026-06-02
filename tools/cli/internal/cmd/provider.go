@@ -23,120 +23,6 @@ var providerCmd = &cobra.Command{
 	GroupID: "ai",
 }
 
-// ── configure (org-level) ─────────────────────────────────────────────────────
-
-var configureCmd = &cobra.Command{
-	Use:   "configure <provider>",
-	Short: "Save LLM provider credentials and model selections for the organization",
-	Long: `Save LLM provider credentials (and optionally model selections) for the
-current organization. Runs a live credential test and syncs the model catalog
-on success. Models are auto-selected from the catalog if not specified.
-
-Supported providers:
-  google            — Google AI (Gemini API); requires --api-key
-  google-vertex     — Google Cloud Vertex AI; requires --gcp-project, --location
-  openai             — OpenAI API; requires --api-key
-  deepseek          — DeepSeek AI models; requires --api-key
-
-Examples:
-  memory provider configure google --api-key AIzaSy...
-  memory provider configure google-vertex --gcp-project my-project --location us-central1 --key-file sa.json
-  memory provider configure openai --api-key sk-...
-  memory provider configure google --api-key AIzaSy... --generative-model gemini-2.5-flash --embedding-model text-embedding-004
-  memory provider configure deepseek --api-key sk-...
-  memory provider configure deepseek --api-key sk-... --generative-model deepseek-v4-flash`,
-	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"google", "google-vertex", "openai", "deepseek"},
-	RunE:      runProviderConfigure,
-}
-
-var (
-	configureAPIKey          string
-	configureKeyFile         string
-	configureGCPProject      string
-	configureLocation        string
-	configureBaseURL         string
-	configureGenerativeModel string
-	configureEmbeddingModel  string
-	configureOrgID           string
-)
-
-func runProviderConfigure(cmd *cobra.Command, args []string) error {
-	providerArg := args[0]
-
-	c, err := getClient(cmd)
-	if err != nil {
-		return err
-	}
-
-	orgID, err := resolveProviderOrgID(c, configureOrgID)
-	if err != nil {
-		return err
-	}
-
-	req := &provider.UpsertProviderConfigRequest{
-		GenerativeModel: configureGenerativeModel,
-		EmbeddingModel:  configureEmbeddingModel,
-	}
-
-	switch providerArg {
-	case provider.ProviderGoogleAI:
-		if configureAPIKey == "" {
-			return fmt.Errorf("--api-key is required for google")
-		}
-		req.APIKey = configureAPIKey
-
-	case provider.ProviderVertexAI:
-		if configureGCPProject == "" {
-			return fmt.Errorf("--gcp-project is required for google-vertex")
-		}
-		if configureLocation == "" {
-			return fmt.Errorf("--location is required for google-vertex")
-		}
-		if configureKeyFile != "" {
-			data, err := os.ReadFile(configureKeyFile)
-			if err != nil {
-				return fmt.Errorf("failed to read key file: %w", err)
-			}
-			req.ServiceAccountJSON = string(data)
-		}
-		req.GCPProject = configureGCPProject
-		req.Location = configureLocation
-
-	case provider.ProviderOpenAI:
-		if configureAPIKey == "" {
-			return fmt.Errorf("--api-key is required for openai")
-		}
-		req.APIKey = configureAPIKey
-		req.BaseURL = configureBaseURL // optional, overrides default https://api.openai.com/v1
-
-	case provider.ProviderDeepSeek:
-		if configureAPIKey == "" {
-			return fmt.Errorf("--api-key is required for deepseek")
-		}
-		req.APIKey = configureAPIKey
-
-	default:
-		return fmt.Errorf("unsupported provider %q; must be google, google-vertex, openai, or deepseek", providerArg)
-	}
-
-	fmt.Printf("Configuring %s for org %s...\n", providerArg, orgID)
-	cfg, err := c.SDK.Provider.UpsertOrgConfig(context.Background(), orgID, providerArg, req)
-	if err != nil {
-		return fmt.Errorf("failed to configure %s: %w", providerArg, err)
-	}
-
-	fmt.Printf("%s configured successfully.\n", providerArg)
-	if cfg.GenerativeModel != "" {
-		fmt.Printf("  Generative model: %s\n", cfg.GenerativeModel)
-	}
-	if cfg.EmbeddingModel != "" {
-		fmt.Printf("  Embedding model:  %s\n", cfg.EmbeddingModel)
-	}
-	fmt.Printf("Run 'memory provider test' to verify the configuration.\n")
-	return nil
-}
-
 // ── configure-project (project-level) ────────────────────────────────────────
 
 var configureProjectCmd = &cobra.Command{
@@ -927,16 +813,6 @@ func resolveProviderOrgID(c *client.Client, explicit string) (string, error) {
 }
 
 func init() {
-	// configure flags
-	configureCmd.Flags().StringVar(&configureAPIKey, "api-key", "", "API key (required for google)")
-	configureCmd.Flags().StringVar(&configureKeyFile, "key-file", "", "Path to service account JSON key file (google-vertex)")
-	configureCmd.Flags().StringVar(&configureGCPProject, "gcp-project", "", "GCP project ID (required for google-vertex)")
-	configureCmd.Flags().StringVar(&configureLocation, "location", "", "GCP region, e.g. us-central1 (required for google-vertex)")
-	configureCmd.Flags().StringVar(&configureBaseURL, "base-url", "", "OpenAI-compatible base URL (required for openai-compatible)")
-	configureCmd.Flags().StringVar(&configureGenerativeModel, "generative-model", "", "Generative model to use (auto-selected from catalog if omitted)")
-	configureCmd.Flags().StringVar(&configureEmbeddingModel, "embedding-model", "", "Embedding model to use (auto-selected from catalog if omitted)")
-	configureCmd.Flags().StringVar(&configureOrgID, "org-id", "", "Organization ID (auto-detected from config)")
-
 	// configure-project flags
 	configureProjectCmd.Flags().StringVar(&configureProjectAPIKey, "api-key", "", "API key (required for google)")
 	configureProjectCmd.Flags().StringVar(&configureProjectKeyFile, "key-file", "", "Path to service account JSON key file (google-vertex)")
@@ -978,7 +854,6 @@ func init() {
 	providerListCmd.Flags().StringVar(&listProjectID, "project", "", "Filter to a specific project (name or ID)")
 
 	// Wire sub-commands
-	providerCmd.AddCommand(configureCmd)
 	providerCmd.AddCommand(configureProjectCmd)
 	providerCmd.AddCommand(providerListCmd)
 	providerCmd.AddCommand(providerModelsCmd)

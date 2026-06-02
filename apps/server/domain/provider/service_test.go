@@ -95,47 +95,6 @@ func TestEncryptCredential_NoKey(t *testing.T) {
 	}
 }
 
-// TestDecryptOrgConfig verifies that decryptOrgConfig correctly decrypts a
-// Google AI org config and populates the resolved credential fields.
-func TestDecryptOrgConfig(t *testing.T) {
-	hexKey, err := crypto.GenerateKey()
-	if err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	enc, _ := crypto.NewEncryptor(hexKey)
-	ciphertext, nonce, _ := enc.Encrypt([]byte("org-api-key"))
-
-	cfg := &config.Config{
-		LLMProvider: config.LLMProviderConfig{
-			EncryptionKey: hexKey,
-		},
-	}
-	svc := NewCredentialService(nil, NewRegistry(), nil, cfg, slog.Default())
-
-	orgCfg := &OrgProviderConfig{
-		Provider:            ProviderGoogleAI,
-		EncryptedCredential: ciphertext,
-		EncryptionNonce:     nonce,
-		GenerativeModel:     "gemini-2.5-flash",
-		EmbeddingModel:      "text-embedding-004",
-	}
-
-	resolved, err := svc.decryptOrgConfig(orgCfg)
-	if err != nil {
-		t.Fatalf("decrypt org config failed: %v", err)
-	}
-	if resolved.APIKey != "org-api-key" {
-		t.Errorf("expected API key 'org-api-key', got %q", resolved.APIKey)
-	}
-	if resolved.Source != SourceOrganization {
-		t.Errorf("expected source organization, got %s", resolved.Source)
-	}
-	if resolved.GenerativeModel != "gemini-2.5-flash" {
-		t.Errorf("expected generative model 'gemini-2.5-flash', got %q", resolved.GenerativeModel)
-	}
-}
-
 // TestDecryptProjectConfig verifies that decryptProjectConfig correctly decrypts
 // a Vertex AI project config and populates all credential fields.
 func TestDecryptProjectConfig(t *testing.T) {

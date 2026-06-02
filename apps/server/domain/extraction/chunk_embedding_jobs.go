@@ -397,3 +397,69 @@ type ChunkEmbeddingQueueStats struct {
 	Completed  int64 `json:"completed"`
 	Failed     int64 `json:"failed"`
 }
+
+// StatsByProject returns queue statistics filtered to a single project.
+func (s *ChunkEmbeddingJobsService) StatsByProject(ctx context.Context, projectID string) (*ChunkEmbeddingQueueStats, error) {
+	stats := &ChunkEmbeddingQueueStats{}
+	err := s.db.NewRaw(`SELECT
+		COUNT(*) FILTER (WHERE j.status = 'pending') as pending,
+		COUNT(*) FILTER (WHERE j.status = 'processing') as processing,
+		COUNT(*) FILTER (WHERE j.status = 'completed') as completed,
+		COUNT(*) FILTER (WHERE j.status = 'failed') as failed
+	FROM kb.chunk_embedding_jobs j
+	JOIN kb.chunks c ON c.id = j.chunk_id
+	JOIN kb.documents d ON d.id = c.document_id
+	WHERE d.project_id = ?`, projectID).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed)
+	if err != nil {
+		return nil, fmt.Errorf("get project chunk stats: %w", err)
+	}
+	return stats, nil
+}
+
+// RetriggerByProject resets failed jobs for a project's chunks to pending.
+// Returns the number of jobs reset.
+func (s *ChunkEmbeddingJobsService) RetriggerByProject(ctx context.Context, projectID string) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
+		SET status = 'pending',
+			scheduled_at = now(),
+			last_error = NULL,
+			updated_at = now()
+		WHERE status = 'failed'
+		  AND chunk_id IN (
+			SELECT c.id FROM kb.chunks c
+			JOIN kb.documents d ON d.id = c.document_id
+			WHERE d.project_id = ?
+		  )`, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("retrigger chunk embedding jobs for project: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("retriggered chunk embedding jobs for project",
+			slog.String("project_id", projectID),
+			slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
+// CancelByProject deletes pending and processing chunk jobs for a project.
+// Returns the number of jobs deleted.
+func (s *ChunkEmbeddingJobsService) CancelByProject(ctx context.Context, projectID string) (int, error) {
+	result, err := s.db.NewRaw(`DELETE FROM kb.chunk_embedding_jobs
+		WHERE status IN ('pending', 'processing')
+		  AND chunk_id IN (
+			SELECT c.id FROM kb.chunks c
+			JOIN kb.documents d ON d.id = c.document_id
+			WHERE d.project_id = ?
+		  )`, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cancel chunk embedding jobs for project: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("cancelled pending chunk embedding jobs for project",
+			slog.String("project_id", projectID),
+			slog.Int64("count", n))
+	}
+	return int(n), nil
+}

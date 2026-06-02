@@ -8,8 +8,10 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
 // Module provides the modelconfig domain as an fx module.
@@ -18,6 +20,7 @@ var Module = fx.Module("modelconfig",
 		provideStore,
 		provideService,
 		provideADKModelResolverAdapter,
+		provideEmbeddingResolverAdapter,
 		NewHandler,
 	),
 	fx.Invoke(
@@ -38,9 +41,15 @@ func provideADKModelResolverAdapter(svc *Service) adk.ModelResolver {
 	return NewADKModelResolverAdapter(svc)
 }
 
+// provideEmbeddingResolverAdapter provides the embeddings.EmbeddingResolver backed
+// by modelconfig (explicit project model selection) + provider credentials.
+// This replaces the old provider.EmbeddingCredentialAdapter.
+func provideEmbeddingResolverAdapter(svc *Service, credsvc *provider.CredentialService) embeddings.EmbeddingResolver {
+	return NewEmbeddingResolverAdapter(svc, credsvc)
+}
+
 // wireAgentsModelResolver injects the model resolver into the agents handler
 // so agent definition GET responses include an effectiveModel field.
-// Uses adk.ModelResolver (the adapter) which is already provided by this module.
 func wireAgentsModelResolver(agentsHandler *agents.Handler, mr adk.ModelResolver) {
 	agentsHandler.WithModelResolver(mr)
 }
@@ -51,9 +60,6 @@ func wireAgentsModelResolver(agentsHandler *agents.Handler, mr adk.ModelResolver
 //	PUT    /api/v1/projects/:projectId/model-config           — set project model config
 //	DELETE /api/v1/projects/:projectId/model-config           — clear project model config
 //	GET    /api/v1/projects/:projectId/model-config/effective — get resolved effective models
-//	GET    /api/v1/organizations/:orgId/model-config          — get org model config
-//	PUT    /api/v1/organizations/:orgId/model-config          — set org model config
-//	DELETE /api/v1/organizations/:orgId/model-config          — clear org model config
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	api := e.Group("/api/v1")
 	api.Use(authMiddleware.RequireAuth())
@@ -64,10 +70,4 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	proj.PUT("", h.UpsertProjectModelConfig)
 	proj.DELETE("", h.DeleteProjectModelConfig)
 	proj.GET("/effective", h.GetEffectiveModelConfig)
-
-	// Org model config
-	org := api.Group("/organizations/:orgId/model-config")
-	org.GET("", h.GetOrgModelConfig)
-	org.PUT("", h.UpsertOrgModelConfig)
-	org.DELETE("", h.DeleteOrgModelConfig)
 }

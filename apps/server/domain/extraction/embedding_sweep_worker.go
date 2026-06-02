@@ -242,12 +242,6 @@ func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
 		        AND pmc.embedding_model IS NOT NULL
 		        AND pmc.embedding_model != ''
 		    )
-		    OR EXISTS (
-		      SELECT 1 FROM kb.org_model_config omc
-		      WHERE omc.org_id = p.organization_id
-		        AND omc.embedding_model IS NOT NULL
-		        AND omc.embedding_model != ''
-		    )
 		  )
 		ORDER BY o.created_at ASC
 		LIMIT ?`, w.cfg.BatchSize).Scan(ctx, &objectIDs)
@@ -311,12 +305,6 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 		      WHERE pmc.project_id = r.project_id
 		        AND pmc.embedding_model IS NOT NULL
 		        AND pmc.embedding_model != ''
-		    )
-		    OR EXISTS (
-		      SELECT 1 FROM kb.org_model_config omc
-		      WHERE omc.org_id = p.organization_id
-		        AND omc.embedding_model IS NOT NULL
-		        AND omc.embedding_model != ''
 		    )
 		  )
 		ORDER BY r.created_at ASC

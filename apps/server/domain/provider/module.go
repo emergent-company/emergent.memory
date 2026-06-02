@@ -10,20 +10,18 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
-	"github.com/emergent-company/emergent.memory/pkg/embeddings"
 )
 
 // Module provides the provider domain as an fx module.
 // It supplies:
 //   - *Repository                  — database access for credentials, policies, pricing
 //   - *Registry                    — list of supported providers
-//   - *CredentialService            — credential resolution hierarchy (Project → Org → Env)
+//   - *CredentialService            — credential resolution hierarchy (Project → Env)
 //   - *ModelCatalogService          — model catalog with API fetch + static fallback
 //   - *UsageService                 — async LLM usage event recording
 //   - *PricingSyncService           — daily pricing sync cron job
 //   - *ModelLimitsSyncService       — daily model output token limits sync from models.dev
 //   - adk.CredentialResolver        — adapts CredentialService to pkg/adk interface
-//   - embeddings.EmbeddingResolver  — adapts CredentialService to pkg/embeddings interface
 var Module = fx.Module("provider",
 	fx.Provide(
 		provideProviderRepository,
@@ -34,7 +32,6 @@ var Module = fx.Module("provider",
 		providePricingSyncService,
 		provideModelLimitsSyncService,
 		provideADKCredentialAdapter,
-		provideEmbeddingCredentialAdapter,
 		provideUsageTrackerAdapter,
 		provideModelLimitAdapter,
 		NewHandler,
@@ -111,12 +108,6 @@ func runStartupModelLimitsSync(lc fx.Lifecycle, limitsSync *ModelLimitsSyncServi
 // per-request credential resolution into ModelFactory.
 func provideADKCredentialAdapter(svc *CredentialService) adk.CredentialResolver {
 	return NewADKCredentialAdapter(svc)
-}
-
-// provideEmbeddingCredentialAdapter exposes CredentialService as embeddings.EmbeddingResolver
-// via the EmbeddingCredentialAdapter. Consumed by embeddings.Module.
-func provideEmbeddingCredentialAdapter(svc *CredentialService) embeddings.EmbeddingResolver {
-	return NewEmbeddingCredentialAdapter(svc)
 }
 
 // provideUsageTrackerAdapter exposes UsageService as adk.ModelWrapper via the

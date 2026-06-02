@@ -13,6 +13,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelconfig"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
@@ -992,6 +993,98 @@ func runSetProjectInfo(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// ── set-models ─────────────────────────────────────────────────────────────────
+
+var (
+	setModelsGenerative string
+	setModelsEmbedding  string
+	setModelsProject    string
+)
+
+var setModelsCmd = &cobra.Command{
+	Use:   "set-models",
+	Short: "Set the default generative and/or embedding model for a project",
+	Long: `Set the default generative and/or embedding model for a project.
+Model names must include a provider prefix: provider/model-name
+
+Examples:
+  memory projects set-models --generative google/gemini-2.5-flash --embedding google/gemini-embedding-001
+  memory projects set-models --embedding google/gemini-embedding-001 --project <projectId>`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := getClient(cmd)
+		if err != nil {
+			return err
+		}
+		projectID := setModelsProject
+		if projectID == "" {
+			projectID = os.Getenv("MEMORY_PROJECT_ID")
+		}
+		if projectID == "" {
+			return fmt.Errorf("--project is required (or set MEMORY_PROJECT_ID)")
+		}
+		req := &modelconfig.UpsertRequest{
+			GenerativeModel: setModelsGenerative,
+			EmbeddingModel:  setModelsEmbedding,
+		}
+		cfg, err := c.SDK.ModelConfig.Upsert(context.Background(), projectID, req)
+		if err != nil {
+			return fmt.Errorf("failed to set models: %w", err)
+		}
+		fmt.Printf("Model config updated for project %s\n", projectID)
+		if cfg.GenerativeModel != "" {
+			fmt.Printf("  Generative: %s\n", cfg.GenerativeModel)
+		}
+		if cfg.EmbeddingModel != "" {
+			fmt.Printf("  Embedding:  %s\n", cfg.EmbeddingModel)
+		}
+		return nil
+	},
+}
+
+// ── show-models ────────────────────────────────────────────────────────────────
+
+var showModelsProject string
+
+var showModelsCmd = &cobra.Command{
+	Use:   "show-models",
+	Short: "Show the effective model config for a project",
+	Long: `Show the resolved generative and embedding models for a project,
+including where each model was resolved from (project config or none).
+
+Examples:
+  memory projects show-models
+  memory projects show-models --project <projectId>`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := getClient(cmd)
+		if err != nil {
+			return err
+		}
+		projectID := showModelsProject
+		if projectID == "" {
+			projectID = os.Getenv("MEMORY_PROJECT_ID")
+		}
+		if projectID == "" {
+			return fmt.Errorf("--project is required (or set MEMORY_PROJECT_ID)")
+		}
+		cfg, err := c.SDK.ModelConfig.GetEffective(context.Background(), projectID)
+		if err != nil {
+			return fmt.Errorf("failed to get model config: %w", err)
+		}
+		fmt.Printf("Effective model config for project %s\n", projectID)
+		genModel := cfg.GenerativeModel
+		if genModel == "" {
+			genModel = "(not set)"
+		}
+		embModel := cfg.EmbeddingModel
+		if embModel == "" {
+			embModel = "(not set)"
+		}
+		fmt.Printf("  Generative: %-40s [%s]\n", genModel, cfg.GenerativeModelSource)
+		fmt.Printf("  Embedding:  %-40s [%s]\n", embModel, cfg.EmbeddingModelSource)
+		return nil
+	},
+}
+
 func init() {
 	createProjectCmd.Flags().StringVar(&projectName, "name", "", "Project name (required)")
 	createProjectCmd.Flags().StringVar(&projectDescription, "description", "", "Project description")
@@ -1026,6 +1119,17 @@ func init() {
 
 	setBudgetCmd.Flags().Float64Var(&setBudgetAmount, "budget", 0, "Monthly budget in USD (set to 0 to clear)")
 	setBudgetCmd.Flags().Float64Var(&setBudgetThreshold, "threshold", 0.8, "Alert threshold as a fraction of budget (e.g. 0.8 = 80%)")
+
+	// set-models flags
+	setModelsCmd.Flags().StringVar(&setModelsGenerative, "generative", "", "Generative model with provider prefix, e.g. google/gemini-2.5-flash")
+	setModelsCmd.Flags().StringVar(&setModelsEmbedding, "embedding", "", "Embedding model with provider prefix, e.g. google/gemini-embedding-001")
+	setModelsCmd.Flags().StringVar(&setModelsProject, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
+
+	// show-models flags
+	showModelsCmd.Flags().StringVar(&showModelsProject, "project", "", "Project ID (auto-detected from MEMORY_PROJECT_ID)")
+
+	projectsCmd.AddCommand(setModelsCmd)
+	projectsCmd.AddCommand(showModelsCmd)
 
 	projectsCmd.AddCommand(listProjectsCmd)
 	projectsCmd.AddCommand(getProjectCmd)

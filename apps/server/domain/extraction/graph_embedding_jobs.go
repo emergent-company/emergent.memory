@@ -497,6 +497,68 @@ func (s *GraphEmbeddingJobsService) ClearPendingJobs(ctx context.Context) (int, 
 	return int(n), nil
 }
 
+// StatsByProject returns queue statistics filtered to a single project.
+func (s *GraphEmbeddingJobsService) StatsByProject(ctx context.Context, projectID string) (*GraphEmbeddingQueueStats, error) {
+	stats := &GraphEmbeddingQueueStats{}
+	err := s.db.NewRaw(`SELECT
+		COUNT(*) FILTER (WHERE j.status = 'pending') as pending,
+		COUNT(*) FILTER (WHERE j.status = 'processing') as processing,
+		COUNT(*) FILTER (WHERE j.status = 'completed') as completed,
+		COUNT(*) FILTER (WHERE j.status = 'failed') as failed,
+		COUNT(*) FILTER (WHERE j.status = 'dead_letter') as dead_letter
+	FROM kb.graph_embedding_jobs j
+	JOIN kb.graph_objects o ON o.id = j.object_id
+	WHERE o.project_id = ?`, projectID).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.DeadLetter)
+	if err != nil {
+		return nil, fmt.Errorf("get project stats: %w", err)
+	}
+	return stats, nil
+}
+
+// RetriggerByProject resets failed and dead_letter jobs for a project to pending.
+// Returns the number of jobs reset.
+func (s *GraphEmbeddingJobsService) RetriggerByProject(ctx context.Context, projectID string) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+		SET status = 'pending',
+			scheduled_at = now(),
+			last_error = NULL,
+			updated_at = now()
+		WHERE status IN ('failed', 'dead_letter')
+		  AND object_id IN (
+			SELECT id FROM kb.graph_objects WHERE project_id = ?
+		  )`, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("retrigger graph embedding jobs for project: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("retriggered graph embedding jobs for project",
+			slog.String("project_id", projectID),
+			slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
+// CancelByProject deletes pending and processing jobs for a project.
+// Returns the number of jobs deleted.
+func (s *GraphEmbeddingJobsService) CancelByProject(ctx context.Context, projectID string) (int, error) {
+	result, err := s.db.NewRaw(`DELETE FROM kb.graph_embedding_jobs
+		WHERE status IN ('pending', 'processing')
+		  AND object_id IN (
+			SELECT id FROM kb.graph_objects WHERE project_id = ?
+		  )`, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cancel graph embedding jobs for project: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		s.log.Info("cancelled pending graph embedding jobs for project",
+			slog.String("project_id", projectID),
+			slog.Int64("count", n))
+	}
+	return int(n), nil
+}
+
 // DeleteJob removes a job from the queue entirely.
 // Use when the referenced object no longer exists and the job should not be retried.
 func (s *GraphEmbeddingJobsService) DeleteJob(ctx context.Context, id string) error {

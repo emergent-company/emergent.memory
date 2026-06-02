@@ -42,13 +42,12 @@ type ResolvedCredential struct {
 type CredentialSource string
 
 const (
-	SourceProject      CredentialSource = "project"
-	SourceOrganization CredentialSource = "organization"
-	SourceEnvironment  CredentialSource = "environment"
+	SourceProject     CredentialSource = "project"
+	SourceEnvironment CredentialSource = "environment"
 )
 
-// CredentialService resolves LLM credentials following the hierarchy:
-// Project config → Organization config → hard error (no env-var fallback).
+// CredentialService resolves LLM credentials from project-level config.
+// All configuration is per-project — there is no org-level fallback.
 type CredentialService struct {
 	repo      *Repository
 	registry  *Registry
@@ -87,95 +86,29 @@ func NewCredentialService(
 }
 
 // Resolve determines the effective credentials for the given provider by
-// evaluating the context (project ID, org ID) against the resolution hierarchy.
+// looking up the project-level config only. No org fallback.
 //
-// Resolution order:
-//  1. If projectID present → look up project config; if found, decrypt+return.
-//  2. Derive orgID (from context or DB lookup); if org config found, decrypt+return.
-//  3. If project or org context present but no config found → hard error.
-//  4. If neither present → return nil, nil (env-var callers handle this).
+// Returns nil, nil when no project context is present (env-var callers).
+// Returns an error when the project has no config for this provider.
 func (s *CredentialService) Resolve(ctx context.Context, provider ProviderType) (*ResolvedCredential, error) {
 	if !s.registry.IsSupported(provider) {
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
 
 	projectID := auth.ProjectIDFromContext(ctx)
-	orgID := auth.OrgIDFromContext(ctx)
-
-	// --- 1. Project-level config ---
-	if projectID != "" {
-		cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, provider)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get project provider config: %w", err)
-		}
-		if cfg != nil {
-			return s.decryptProjectConfig(cfg)
-		}
-
-		// Project present but no project config — resolve orgID and try org.
-		if orgID == "" {
-			resolvedOrgID, err := s.repo.GetOrgIDForProject(ctx, projectID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve org for project %s: %w", projectID, err)
-			}
-			orgID = resolvedOrgID
-		}
+	if projectID == "" {
+		return nil, nil // no project context — env-var callers handle this
 	}
 
-	// --- 2. Org-level config ---
-	if orgID != "" {
-		cfg, err := s.repo.GetOrgProviderConfig(ctx, orgID, provider)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get org provider config: %w", err)
-		}
-		if cfg != nil {
-			return s.decryptOrgConfig(cfg)
-		}
-
-		// Org present but no config → hard error (no silent env-var fallback).
-		return nil, fmt.Errorf("no %s provider config found for organization %s — run `emergent provider configure` to set credentials", provider, orgID)
-	}
-
-	// --- 3. Neither project nor org in context → caller handles env-var fallback ---
-	return nil, nil
-}
-
-// decryptOrgConfig decrypts an org-level provider config.
-func (s *CredentialService) decryptOrgConfig(cfg *OrgProviderConfig) (*ResolvedCredential, error) {
-	if s.encryptor == nil {
-		return nil, fmt.Errorf("credential encryption not configured (LLM_ENCRYPTION_KEY missing)")
-	}
-
-	plaintext, err := s.encryptor.Decrypt(cfg.EncryptedCredential, cfg.EncryptionNonce)
+	cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, provider)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt org credential: %w", err)
+		return nil, fmt.Errorf("failed to get project provider config: %w", err)
+	}
+	if cfg != nil {
+		return s.decryptProjectConfig(cfg)
 	}
 
-	resolved := &ResolvedCredential{
-		Provider:        cfg.Provider,
-		Source:          SourceOrganization,
-		GCPProject:      cfg.GCPProject,
-		Location:        cfg.Location,
-		BaseURL:         cfg.BaseURL,
-		GenerativeModel: cfg.GenerativeModel,
-		EmbeddingModel:  cfg.EmbeddingModel,
-	}
-	switch cfg.Provider {
-	case ProviderGoogleAI:
-		resolved.APIKey = string(plaintext)
-	case ProviderVertexAI:
-		resolved.ServiceAccountJSON = string(plaintext)
-	case ProviderOpenAI:
-		resolved.BaseURL = cfg.BaseURL
-		if resolved.BaseURL == "" {
-			resolved.BaseURL = "https://api.openai.com/v1"
-		}
-		resolved.APIKey = string(plaintext)
-	case ProviderDeepSeek:
-		resolved.BaseURL = "https://api.deepseek.com/v1"
-		resolved.APIKey = string(plaintext)
-	}
-	return resolved, nil
+	return nil, fmt.Errorf("no %s provider config found for project %s — run 'memory provider configure-project %s' to set credentials", provider, projectID, provider)
 }
 
 // decryptProjectConfig decrypts a project-level provider config.
@@ -229,276 +162,56 @@ func (s *CredentialService) ResolveFor(ctx context.Context, provider string) (*R
 }
 
 // ResolveAny attempts to resolve the best available credential for the request
-// context without requiring the caller to specify a provider type.
-//
-// Tries providers in order: Vertex AI first, then Google AI, then OpenAI-compatible.
-// Cloud providers take priority over local/self-hosted endpoints.
-// Returns nil, nil when no credentials are available (neither project nor org
-// context present). Returns an error when credentials were found but could not
-// be resolved (e.g. decryption failure, DB error).
-//
+// context. Tries project-level configs in order: DeepSeek → OpenAI → VertexAI → GoogleAI.
+// Returns nil, nil when no project context is present.
 // This method satisfies the adk.CredentialResolver interface.
 func (s *CredentialService) ResolveAny(ctx context.Context) (*ResolvedCredential, error) {
-	return s.resolveAny(ctx, false)
-}
-
-// ResolveAnyForEmbedding is like ResolveAny but skips providers that have no
-// embedding model configured. This prevents a DeepSeek/OpenAI generative-only
-// config from shadowing a Google AI config that does have an embedding model.
-func (s *CredentialService) ResolveAnyForEmbedding(ctx context.Context) (*ResolvedCredential, error) {
-	return s.resolveAny(ctx, true)
-}
-
-func (s *CredentialService) resolveAny(ctx context.Context, embeddingOnly bool) (*ResolvedCredential, error) {
-	// Resolution order: project-scoped credentials take full priority over
-	// org-scoped ones, regardless of provider type. Within each scope, prefer
-	// DeepSeek/OpenAI over Google so that projects with a custom
-	// endpoint always use it when configured — even if the org has Google AI.
 	providerOrder := []ProviderType{ProviderDeepSeek, ProviderOpenAI, ProviderVertexAI, ProviderGoogleAI}
 
 	projectID := auth.ProjectIDFromContext(ctx)
-
-	// Pass 1: project-level only (strip org from context so Resolve stops at project).
-	if projectID != "" {
-		projectOnlyCtx := auth.ContextWithOrgID(ctx, "")
-		for _, provider := range providerOrder {
-			cfg, err := s.repo.GetProjectProviderConfig(projectOnlyCtx, projectID, provider)
-			if err != nil || cfg == nil {
-				continue
-			}
-			if embeddingOnly && cfg.EmbeddingModel == "" {
-				continue
-			}
-			cred, err := s.decryptProjectConfig(cfg)
-			if err != nil {
-				s.log.Debug("project credential decryption failed, trying next",
-					slog.String("provider", string(provider)),
-					slog.String("error", err.Error()),
-				)
-				continue
-			}
-			if cred != nil {
-				return cred, nil
-			}
-		}
+	if projectID == "" {
+		return nil, nil // no project context
 	}
 
-	// Pass 2: org-level fallback — use original context so Resolve can find org.
-	var lastErr error
-	for _, provider := range providerOrder {
-		cred, err := s.Resolve(ctx, provider)
-		if err != nil {
-			s.log.Debug("provider resolution failed, trying next",
-				slog.String("provider", string(provider)),
-				slog.String("error", err.Error()),
-			)
-			lastErr = err
+	for _, p := range providerOrder {
+		cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, p)
+		if err != nil || cfg == nil {
 			continue
 		}
-		if cred != nil && embeddingOnly && cred.EmbeddingModel == "" {
+		cred, err := s.decryptProjectConfig(cfg)
+		if err != nil {
+			s.log.Debug("project credential decryption failed, trying next",
+				slog.String("provider", string(p)),
+				slog.String("error", err.Error()),
+			)
 			continue
 		}
 		if cred != nil {
 			return cred, nil
 		}
 	}
-
-	if lastErr != nil {
-		return nil, lastErr
-	}
 	return nil, nil
 }
 
-// UpsertOrgConfig saves provider credentials+models for an organization.
-//
-// Flow:
-//  1. Assert caller owns org.
-//  2. Encrypt credential.
-//  3. Live-test the credential (5 s timeout).
-//  4. SyncModels (15 s timeout; non-fatal — logs warning on failure).
-//  5. Auto-select top generative/embedding model if not in req.
-//  6. Upsert row.
+// UpsertOrgConfig is deprecated. Org-level provider config is no longer supported.
+// Use UpsertProjectConfig instead.
 func (s *CredentialService) UpsertOrgConfig(ctx context.Context, orgID string, provider ProviderType, req UpsertProviderConfigRequest) (*ProviderConfigResponse, error) {
-	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
-		return nil, err
-	}
-
-	plaintext, err := s.extractPlaintext(provider, req)
-	if err != nil {
-		return nil, err
-	}
-
-	ciphertext, nonce, err := s.EncryptCredential(plaintext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
-	}
-
-	// Build a temporary resolved cred for live-test and sync.
-	tempCred := s.buildTempResolvedCred(provider, req)
-
-	// Sync model catalog (15s timeout). Non-fatal: a sync failure (e.g. missing
-	// DB column, API timeout) should not block credential storage. The catalog
-	// will be populated on the next startup sync or manual retry.
-	catalogSynced := true
-	syncCtx, syncCancel := context.WithTimeout(ctx, 15*time.Second)
-	defer syncCancel()
-	if err := s.catalog.SyncModels(syncCtx, provider, tempCred); err != nil {
-		s.log.Warn("model catalog sync failed during configure; continuing without catalog update",
-			logger.Error(err), slog.String("provider", string(provider)))
-		catalogSynced = false
-	}
-
-	// Live test using a model from the freshly synced catalog.
-	// OpenAI and DeepSeek endpoints may be slow to produce a first token.
-	testTimeout := 15 * time.Second
-	if provider == ProviderOpenAI || provider == ProviderDeepSeek {
-		testTimeout = 60 * time.Second
-	}
-	testCtx, testCancel := context.WithTimeout(ctx, testTimeout)
-	defer testCancel()
-	// Only test generative when a generative model is explicitly requested.
-	// Embedding-only configs (e.g. Google gemini-embedding-*) must not be forced
-	// through a generative test — the API key may have no generative scope.
-	if req.GenerativeModel != "" || req.EmbeddingModel == "" {
-		if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
-			return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
-		}
-	}
-	// DeepSeek and OpenAI providers have no embedding API — skip the embed test.
-	noEmbedProvider := provider == ProviderDeepSeek || provider == ProviderOpenAI
-	if noEmbedProvider {
-		s.log.Warn(fmt.Sprintf("%s provider configured without embeddings — configure a separate embedding provider for document indexing", provider))
-	} else if req.EmbeddingModel != "" || req.GenerativeModel == "" {
-		if _, err := s.catalog.TestEmbed(testCtx, provider, tempCred); err != nil {
-			return nil, apperror.NewBadRequest(fmt.Sprintf("embedding model test failed: %s", err.Error()))
-		}
-	}
-
-	// Auto-select models if not explicitly provided.
-	generativeModel := req.GenerativeModel
-	embeddingModel := req.EmbeddingModel
-	if generativeModel == "" || embeddingModel == "" {
-		genType := ModelTypeGenerative
-		embType := ModelTypeEmbedding
-		genModels, _ := s.repo.ListSupportedModels(ctx, provider, &genType)
-		embModels, _ := s.repo.ListSupportedModels(ctx, provider, &embType)
-		if generativeModel == "" {
-			generativeModel = s.pickBestGenerativeModel(genModels)
-		}
-		if embeddingModel == "" {
-			embeddingModel = s.pickBestEmbeddingModel(embModels)
-		}
-	}
-
-	// Require an explicit generative model when catalog auto-selection yields nothing.
-	// Providers like DeepSeek must have a model set explicitly — no silent Google fallback.
-	if generativeModel == "" {
-		return nil, apperror.NewBadRequest(fmt.Sprintf(
-			"generativeModel is required for provider %s — catalog is empty and no model was specified", provider,
-		))
-	}
-
-	// Validate explicitly-provided model names against the synced catalog
-	// (only meaningful when catalog sync succeeded).
-	if catalogSynced {
-		if req.GenerativeModel != "" {
-			if err := s.validateModelInCatalog(ctx, provider, req.GenerativeModel, ModelTypeGenerative); err != nil {
-				return nil, err
-			}
-		}
-		if req.EmbeddingModel != "" {
-			if err := s.validateModelInCatalog(ctx, provider, req.EmbeddingModel, ModelTypeEmbedding); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	cfg := &OrgProviderConfig{
-		OrgID:               orgID,
-		Provider:            provider,
-		EncryptedCredential: ciphertext,
-		EncryptionNonce:     nonce,
-		GCPProject:          req.GCPProject,
-		Location:            req.Location,
-		BaseURL:             req.BaseURL,
-		GenerativeModel:     generativeModel,
-		EmbeddingModel:      embeddingModel,
-	}
-
-	if err := s.repo.UpsertOrgProviderConfig(ctx, cfg); err != nil {
-		return nil, err
-	}
-
-	return &ProviderConfigResponse{
-		ID:              cfg.ID,
-		Provider:        cfg.Provider,
-		GCPProject:      cfg.GCPProject,
-		Location:        cfg.Location,
-		BaseURL:         cfg.BaseURL,
-		GenerativeModel: cfg.GenerativeModel,
-		EmbeddingModel:  cfg.EmbeddingModel,
-		CreatedAt:       cfg.CreatedAt,
-		UpdatedAt:       cfg.UpdatedAt,
-	}, nil
+	return nil, apperror.NewBadRequest("org-level provider config is deprecated; use project-level config via `memory provider configure-project`")
 }
 
-// GetOrgConfig retrieves the public-safe metadata for an org's provider config.
-func (s *CredentialService) GetOrgConfig(ctx context.Context, orgID string, provider ProviderType) (*ProviderConfigResponse, error) {
-	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
-		return nil, err
-	}
-	cfg, err := s.repo.GetOrgProviderConfig(ctx, orgID, provider)
-	if err != nil {
-		return nil, err
-	}
-	if cfg == nil {
-		return nil, nil
-	}
-	return &ProviderConfigResponse{
-		ID:              cfg.ID,
-		Provider:        cfg.Provider,
-		GCPProject:      cfg.GCPProject,
-		Location:        cfg.Location,
-		BaseURL:         cfg.BaseURL,
-		GenerativeModel: cfg.GenerativeModel,
-		EmbeddingModel:  cfg.EmbeddingModel,
-		CreatedAt:       cfg.CreatedAt,
-		UpdatedAt:       cfg.UpdatedAt,
-	}, nil
+// GetOrgConfig is deprecated.
+func (s *CredentialService) GetOrgConfig(_ context.Context, _ string, _ ProviderType) (*ProviderConfigResponse, error) {
+	return nil, apperror.NewBadRequest("org-level provider config is deprecated")
 }
 
-// DeleteOrgConfig removes an organization's provider config.
-func (s *CredentialService) DeleteOrgConfig(ctx context.Context, orgID string, provider ProviderType) error {
-	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
-		return err
-	}
-	return s.repo.DeleteOrgProviderConfig(ctx, orgID, provider)
+// DeleteOrgConfig is deprecated.
+func (s *CredentialService) DeleteOrgConfig(_ context.Context, _ string, _ ProviderType) error {
+	return apperror.NewBadRequest("org-level provider config is deprecated")
 }
 
-// ListOrgConfigs returns all org provider configs (metadata only).
-func (s *CredentialService) ListOrgConfigs(ctx context.Context, orgID string) ([]ProviderConfigResponse, error) {
-	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
-		return nil, err
-	}
-	cfgs, err := s.repo.ListOrgProviderConfigs(ctx, orgID)
-	if err != nil {
-		return nil, err
-	}
-	resp := make([]ProviderConfigResponse, len(cfgs))
-	for i, cfg := range cfgs {
-		resp[i] = ProviderConfigResponse{
-			ID:              cfg.ID,
-			Provider:        cfg.Provider,
-			GCPProject:      cfg.GCPProject,
-			Location:        cfg.Location,
-			BaseURL:         cfg.BaseURL,
-			GenerativeModel: cfg.GenerativeModel,
-			EmbeddingModel:  cfg.EmbeddingModel,
-			CreatedAt:       cfg.CreatedAt,
-			UpdatedAt:       cfg.UpdatedAt,
-		}
-	}
-	return resp, nil
+// ListOrgConfigs is deprecated.
+func (s *CredentialService) ListOrgConfigs(_ context.Context, _ string) ([]ProviderConfigResponse, error) {
+	return nil, apperror.NewBadRequest("org-level provider config is deprecated")
 }
 
 // ListProjectConfigs returns all provider configs for a specific project (metadata only).

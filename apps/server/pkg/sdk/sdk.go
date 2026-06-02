@@ -50,6 +50,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/invitations"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcp"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcpregistry"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelconfig"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/monitoring"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/notifications"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/orgs"
@@ -104,10 +105,11 @@ type Client struct {
 	Invitations      *invitations.Client
 
 	// Service clients — non-context (no org/project needed)
-	Health     *health.Client
-	Superadmin *superadmin.Client
-	APIDocs    *apidocs.Client
-	Provider   *provider.Client
+	Health      *health.Client
+	Superadmin  *superadmin.Client
+	APIDocs     *apidocs.Client
+	Provider    *provider.Client
+	ModelConfig *modelconfig.Client
 }
 
 // Config holds configuration for the SDK client.
@@ -331,6 +333,7 @@ func initClients(c *Client) {
 	c.Superadmin = superadmin.NewClient(c.http, c.base, c.auth)
 	c.APIDocs = apidocs.NewClient(c.http, c.base, c.auth)
 	c.Provider = provider.NewClient(c.http, c.base, c.auth)
+	c.ModelConfig = modelconfig.NewClient(c.http, c.base, c.auth)
 }
 
 // SetContext sets the default organization and project context for API calls.

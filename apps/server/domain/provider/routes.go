@@ -10,10 +10,6 @@ import (
 //
 // Route groups:
 //
-//	PUT    /api/v1/organizations/:orgId/providers/:provider   — upsert org config
-//	GET    /api/v1/organizations/:orgId/providers/:provider   — get org config metadata
-//	DELETE /api/v1/organizations/:orgId/providers/:provider   — delete org config
-//	GET    /api/v1/organizations/:orgId/providers             — list org configs
 //	GET    /api/v1/organizations/:orgId/project-providers    — list all project-level overrides for org
 //	GET    /api/v1/projects/:projectId/providers             — list project configs
 //	PUT    /api/v1/projects/:projectId/providers/:provider    — upsert project config
@@ -27,13 +23,6 @@ import (
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	api := e.Group("/api/v1")
 	api.Use(authMiddleware.RequireAuth())
-
-	// Org-level provider configs
-	orgs := api.Group("/organizations/:orgId/providers")
-	orgs.PUT("/:provider", h.SaveOrgConfig)
-	orgs.GET("/:provider", h.GetOrgConfig)
-	orgs.DELETE("/:provider", h.DeleteOrgConfig)
-	orgs.GET("", h.ListOrgConfigs)
 
 	// Org-scoped project-level overrides
 	api.GET("/organizations/:orgId/project-providers", h.ListProjectConfigs)
