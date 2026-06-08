@@ -129,10 +129,16 @@ func (s *GraphEmbeddingJobsService) Enqueue(ctx context.Context, opts EnqueueOpt
 
 	_, err = s.db.NewInsert().
 		Model(job).
+		On("CONFLICT (object_id) WHERE status IN ('pending', 'processing') DO NOTHING").
 		Returning("*").
 		Exec(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("enqueue graph embedding job: %w", err)
+	}
+	// If the ON CONFLICT clause suppressed the insert, job.ID will be empty —
+	// another goroutine raced us and already enqueued. Return nil (best-effort).
+	if job.ID == "" {
+		return nil, nil
 	}
 
 	s.log.Debug("enqueued graph embedding job",
@@ -194,6 +200,7 @@ func (s *GraphEmbeddingJobsService) EnqueueBatch(ctx context.Context, objectIDs 
 
 	_, err = s.db.NewInsert().
 		Model(&jobs).
+		On("CONFLICT (object_id) WHERE status IN ('pending', 'processing') DO NOTHING").
 		Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue batch: %w", err)

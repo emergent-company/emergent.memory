@@ -442,6 +442,11 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 	return nil
 }
 
+// maxEmbeddingChars is the character budget for embedding text.
+// Gemini embedding models accept ~3 000 tokens; at ~5 chars/word this gives
+// plenty of headroom while preventing runaway concatenation on large objects.
+const maxEmbeddingChars = 8000
+
 // skipEmbeddingKey lists property keys that carry no semantic value for embedding.
 var skipEmbeddingKey = map[string]bool{
 	"id":         true,
@@ -458,6 +463,11 @@ var skipEmbeddingKey = map[string]bool{
 	"updated_at": true,
 	"deleted_at": true,
 }
+
+// boostedEmbeddingKeys are semantic fields prepended (and repeated ×2) to
+// increase their weight in the embedding vector. Order is significant: more
+// important fields first so they are never truncated by the char budget.
+var boostedEmbeddingKeys = []string{"name", "title", "description", "summary", "label"}
 
 // isUUID returns true if s looks like a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
 func isUUID(s string) bool {
@@ -477,8 +487,16 @@ func isUUID(s string) bool {
 }
 
 // extractText extracts semantic text from a graph object for embedding.
-// Includes: type, stripped key (after last ':'), and meaningful string property values.
-// Skips: IDs, UUIDs, URLs, internal metadata keys, and numeric-only values.
+//
+// Token order (most important → least important):
+//  1. obj.Type
+//  2. Stripped key (namespace prefix removed)
+//  3. Boosted fields (name/title/description/summary/label) — each repeated ×2
+//     so their cosine-distance weight dominates over incidental properties.
+//  4. Remaining string/numeric/bool property values (boosted keys skipped here).
+//
+// Skips: IDs, UUIDs, URLs, internal metadata keys (skipEmbeddingKey), large numerics.
+// Output is capped at maxEmbeddingChars characters (word-boundary truncation).
 func (w *GraphEmbeddingWorker) extractText(obj *graphObjectRow) string {
 	var tokens []string
 
@@ -495,25 +513,48 @@ func (w *GraphEmbeddingWorker) extractText(obj *graphObjectRow) string {
 		}
 	}
 
-	// Walk properties with key-aware filtering
+	// isEmbeddableString returns true for non-empty, non-UUID, non-URL strings.
+	isEmbeddableString := func(s string) bool {
+		if s == "" || isUUID(s) {
+			return false
+		}
+		if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+			return false
+		}
+		return true
+	}
+
+	// Phase 1: boosted keys — prepend each value twice to increase embedding weight.
+	for _, bk := range boostedEmbeddingKeys {
+		v, ok := obj.Properties[bk]
+		if !ok {
+			continue
+		}
+		if s, ok := v.(string); ok && isEmbeddableString(s) {
+			tokens = append(tokens, s, s) // ×2 repetition
+		}
+	}
+
+	// Phase 2: remaining properties (boosted keys skipped to avoid triple-counting).
+	boostedSet := make(map[string]bool, len(boostedEmbeddingKeys))
+	for _, bk := range boostedEmbeddingKeys {
+		boostedSet[bk] = true
+	}
+
 	var walk func(key string, v interface{})
 	walk = func(key string, v interface{}) {
 		if v == nil {
 			return
 		}
-		if skipEmbeddingKey[strings.ToLower(key)] {
+		lk := strings.ToLower(key)
+		if skipEmbeddingKey[lk] || boostedSet[lk] {
 			return
 		}
 		switch val := v.(type) {
 		case string:
-			if val == "" || isUUID(val) {
-				return
+			if isEmbeddableString(val) {
+				tokens = append(tokens, val)
 			}
-			// Skip bare URLs
-			if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") {
-				return
-			}
-			tokens = append(tokens, val)
 		case float64:
 			// Skip large numeric IDs (>= 1e9); include small counts/years
 			if val < 1e9 {
@@ -536,7 +577,17 @@ func (w *GraphEmbeddingWorker) extractText(obj *graphObjectRow) string {
 		walk(k, v)
 	}
 
-	return strings.Join(tokens, " ")
+	full := strings.Join(tokens, " ")
+
+	// Apply character budget — truncate at word boundary.
+	if len(full) <= maxEmbeddingChars {
+		return full
+	}
+	truncated := full[:maxEmbeddingChars]
+	if i := strings.LastIndex(truncated, " "); i > 0 {
+		truncated = truncated[:i]
+	}
+	return truncated + "..."
 }
 
 // vectorToString converts a float32 slice to PostgreSQL vector string format

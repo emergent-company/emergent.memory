@@ -1210,6 +1210,9 @@ func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID 
 
 	s.emitObjectUpdated(restored.ToResponse())
 
+	// Enqueue embedding — the restored version has a new physical row with NULL embedding_v2.
+	s.enqueueEmbedding(ctx, restored.ID.String())
+
 	return restored.ToResponse(), nil
 }
 
@@ -1972,19 +1975,31 @@ func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID
 		return nil, err
 	}
 
-	// Copy embedding from previous version to new version.
-	// Triplet text (src_name + type + dst_name) doesn't change on patch (only
-	// properties/weight change), so the embedding is still valid.
-	// If the previous version had no embedding, the sweep worker will generate one.
-	_, _ = tx.Tx.NewRaw(`UPDATE kb.graph_relationships
-		SET embedding = prev.embedding, embedding_updated_at = prev.embedding_updated_at
-		FROM kb.graph_relationships prev
-		WHERE kb.graph_relationships.id = ? AND prev.id = ?
-		  AND prev.embedding IS NOT NULL`,
-		newVersion.ID, current.ID).Exec(ctx)
+	// Determine whether the triplet text will change.
+	// buildTripletText uses label as the predicate, so a label change produces a
+	// different embedding. In that case we enqueue a fresh embedding job.
+	// If label is unchanged, copy the previous embedding to avoid an unnecessary API call.
+	labelChanged := (req.Label == nil) != (current.Label == nil) ||
+		(req.Label != nil && current.Label != nil && *req.Label != *current.Label)
+
+	if !labelChanged {
+		// Copy embedding from previous version — triplet text is identical.
+		// If the previous version had no embedding, the sweep worker will generate one.
+		_, _ = tx.Tx.NewRaw(`UPDATE kb.graph_relationships
+			SET embedding = prev.embedding, embedding_updated_at = prev.embedding_updated_at
+			FROM kb.graph_relationships prev
+			WHERE kb.graph_relationships.id = ? AND prev.id = ?
+			  AND prev.embedding IS NOT NULL`,
+			newVersion.ID, current.ID).Exec(ctx)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// If the label changed the triplet text changed — enqueue a fresh embedding.
+	if labelChanged {
+		s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 	}
 
 	// Return the new version
@@ -2077,6 +2092,12 @@ func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UU
 
 	// Return the restored version
 	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID)
+
+	// Enqueue embedding — the restored version has a new physical row with NULL embedding.
+	if restored != nil {
+		s.enqueueRelationshipEmbedding(ctx, restored.ID.String())
+	}
+
 	return restored.ToResponse(), nil
 }
 
@@ -3628,6 +3649,8 @@ func (s *Service) applyMerge(
 	// Using a slice instead of defer-in-loop avoids accumulating N deferred
 	// calls and ensures embedding is only triggered on successful commit.
 	var embeddingIDs []string
+	// Collect relationship IDs for embedding enqueue after commit.
+	var relEmbeddingIDs []string
 
 	appliedCount := 0
 
@@ -3851,6 +3874,7 @@ func (s *Service) applyMerge(
 				return 0, fmt.Errorf("clone relationship %s: %w", cid, err)
 			}
 			appliedCount++
+			relEmbeddingIDs = append(relEmbeddingIDs, rel.ID.String())
 
 		case "fast_forward":
 			src := sourceRels[cid]
@@ -3874,6 +3898,7 @@ func (s *Service) applyMerge(
 				return 0, fmt.Errorf("fast-forward relationship %s: %w", cid, err)
 			}
 			appliedCount++
+			relEmbeddingIDs = append(relEmbeddingIDs, newVersion.ID.String())
 		}
 	}
 
@@ -3881,10 +3906,17 @@ func (s *Service) applyMerge(
 		return 0, fmt.Errorf("commit merge: %w", err)
 	}
 
-	// Enqueue embeddings in batch now that the transaction has committed.
+	// Enqueue object embeddings in batch now that the transaction has committed.
 	if len(embeddingIDs) > 0 && s.embeddingEnqueuer != nil {
 		if _, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, embeddingIDs); err != nil {
 			s.log.Warn("failed to enqueue batch embeddings after merge", logger.Error(err))
+		}
+	}
+
+	// Enqueue relationship embeddings in batch now that the transaction has committed.
+	if len(relEmbeddingIDs) > 0 && s.relEmbeddingEnqueuer != nil {
+		if _, err := s.relEmbeddingEnqueuer.EnqueueBatchRelationshipEmbeddings(ctx, relEmbeddingIDs); err != nil {
+			s.log.Warn("failed to enqueue batch relationship embeddings after merge", logger.Error(err))
 		}
 	}
 
@@ -4079,6 +4111,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	refMap := make(map[string]uuid.UUID, len(req.Objects))
 	objResponses := make([]*GraphObjectResponse, 0, len(req.Objects))
 	objByRef := make(map[string]*GraphObject, len(req.Objects))
+	objEmbedIDs := make([]string, 0, len(req.Objects)) // IDs to enqueue for embedding after commit
 
 	// Phase 1: Create all objects
 	for i, objReq := range req.Objects {
@@ -4123,6 +4156,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		refMap[objReq.Ref] = obj.ID
 		objByRef[objReq.Ref] = obj
 		objResponses = append(objResponses, obj.ToResponse())
+		objEmbedIDs = append(objEmbedIDs, obj.ID.String())
 	}
 
 	// Phase 2: Create all relationships
@@ -4209,6 +4243,13 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	// Commit the transaction
 	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Enqueue async embeddings for all created/updated objects.
+	if len(objEmbedIDs) > 0 && s.embeddingEnqueuer != nil {
+		if _, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, objEmbedIDs); err != nil {
+			s.log.Warn("failed to enqueue batch object embeddings after subgraph creation", logger.Error(err))
+		}
 	}
 
 	// Enqueue async embeddings for all created/updated relationships.

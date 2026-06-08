@@ -124,10 +124,15 @@ func (s *ChunkEmbeddingJobsService) Enqueue(ctx context.Context, opts ChunkEnque
 
 	_, err = s.db.NewInsert().
 		Model(job).
+		On("CONFLICT (chunk_id) WHERE status IN ('pending', 'processing') DO NOTHING").
 		Returning("*").
 		Exec(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("enqueue chunk embedding job: %w", err)
+	}
+	// ON CONFLICT suppressed the insert — another goroutine already enqueued.
+	if job.ID == "" {
+		return nil, nil
 	}
 
 	s.log.Debug("enqueued chunk embedding job",
@@ -189,6 +194,7 @@ func (s *ChunkEmbeddingJobsService) EnqueueBatch(ctx context.Context, chunkIDs [
 
 	_, err = s.db.NewInsert().
 		Model(&jobs).
+		On("CONFLICT (chunk_id) WHERE status IN ('pending', 'processing') DO NOTHING").
 		Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue batch: %w", err)

@@ -78,10 +78,15 @@ func (s *GraphRelationshipEmbeddingJobsService) Enqueue(ctx context.Context, rel
 
 	_, err = s.db.NewInsert().
 		Model(job).
+		On("CONFLICT (relationship_id) WHERE status IN ('pending', 'processing') DO NOTHING").
 		Returning("*").
 		Exec(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("enqueue rel embedding job: %w", err)
+	}
+	// ON CONFLICT suppressed the insert — another goroutine already enqueued.
+	if job.ID == "" {
+		return nil, nil
 	}
 
 	s.log.Debug("enqueued relationship embedding job",
@@ -306,7 +311,10 @@ func (s *GraphRelationshipEmbeddingJobsService) EnqueueBatch(ctx context.Context
 		}
 	}
 
-	_, err = s.db.NewInsert().Model(&jobs).Exec(ctx)
+	_, err = s.db.NewInsert().
+		Model(&jobs).
+		On("CONFLICT (relationship_id) WHERE status IN ('pending', 'processing') DO NOTHING").
+		Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue rel embedding batch: %w", err)
 	}

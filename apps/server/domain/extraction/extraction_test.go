@@ -2,6 +2,7 @@ package extraction
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -1843,6 +1844,173 @@ func TestGraphEmbeddingWorker_ExtractText(t *testing.T) {
 			}
 		})
 	}
+
+	// --- Boosted fields: name appears ×2 before other properties ---
+	t.Run("name field boosted before other props", func(t *testing.T) {
+		obj := &graphObjectRow{
+			Type: "Person",
+			Properties: map[string]interface{}{
+				"name":       "Alice",
+				"occupation": "Engineer",
+			},
+		}
+		result := w.extractText(obj)
+		// name should appear twice (boosted) before occupation
+		words := splitWords(result)
+		// Find first and second occurrence of "Alice"
+		first, second := -1, -1
+		for i, word := range words {
+			if word == "Alice" {
+				if first == -1 {
+					first = i
+				} else {
+					second = i
+				}
+			}
+		}
+		if first == -1 || second == -1 {
+			t.Errorf("extractText() expected 'Alice' to appear twice, result: %q", result)
+		}
+		// Engineer should appear after the second Alice
+		engIdx := -1
+		for i, word := range words {
+			if word == "Engineer" {
+				engIdx = i
+				break
+			}
+		}
+		if engIdx == -1 {
+			t.Errorf("extractText() missing 'Engineer' in result: %q", result)
+		}
+		if second != -1 && engIdx != -1 && engIdx < second {
+			t.Errorf("extractText() expected 'Engineer' after boosted 'Alice', got result: %q", result)
+		}
+	})
+
+	// --- description is boosted ---
+	t.Run("description field boosted", func(t *testing.T) {
+		obj := &graphObjectRow{
+			Type: "Product",
+			Properties: map[string]interface{}{
+				"description": "A great tool",
+				"sku":         "SKU-001",
+			},
+		}
+		result := w.extractText(obj)
+		words := splitWords(result)
+		// "A", "great", "tool" should each appear twice (boosted description)
+		count := 0
+		for _, word := range words {
+			if word == "great" {
+				count++
+			}
+		}
+		if count != 2 {
+			t.Errorf("extractText() expected 'great' to appear 2 times (boosted description), got %d, result: %q", count, result)
+		}
+	})
+
+	// --- char budget truncation ---
+	t.Run("long text truncated at char budget", func(t *testing.T) {
+		// Build a property value longer than maxEmbeddingChars
+		longValue := make([]byte, maxEmbeddingChars+500)
+		for i := range longValue {
+			if i%6 == 5 {
+				longValue[i] = ' '
+			} else {
+				longValue[i] = 'a'
+			}
+		}
+		obj := &graphObjectRow{
+			Type: "Doc",
+			Properties: map[string]interface{}{
+				"summary": string(longValue),
+			},
+		}
+		result := w.extractText(obj)
+		if len(result) > maxEmbeddingChars+10 { // small allowance for "..."
+			t.Errorf("extractText() result length %d exceeds maxEmbeddingChars %d", len(result), maxEmbeddingChars)
+		}
+		if len(result) > 3 && result[len(result)-3:] != "..." {
+			t.Errorf("extractText() truncated result should end with '...', got: %q", result[len(result)-10:])
+		}
+	})
+}
+
+func TestBuildTripletText(t *testing.T) {
+	humanize := func(s string) string {
+		return strings.ToLower(strings.ReplaceAll(s, "_", " "))
+	}
+	_ = humanize
+
+	t.Run("basic triplet no label no props", func(t *testing.T) {
+		result := buildTripletText("Alice", "Acme Corp", "WORKS_FOR", nil, nil)
+		expected := "Alice works for Acme Corp"
+		if result != expected {
+			t.Errorf("buildTripletText() = %q, want %q", result, expected)
+		}
+	})
+
+	t.Run("with label", func(t *testing.T) {
+		label := "founded"
+		result := buildTripletText("Bob", "StartupX", "CREATED", &label, nil)
+		expected := "Bob founded StartupX"
+		if result != expected {
+			t.Errorf("buildTripletText() = %q, want %q", result, expected)
+		}
+	})
+
+	t.Run("with relationship props appended", func(t *testing.T) {
+		props := []byte(`{"role":"senior engineer","since":"2020"}`)
+		result := buildTripletText("Alice", "Acme Corp", "WORKS_FOR", nil, props)
+		if !strings.Contains(result, "Alice works for Acme Corp") {
+			t.Errorf("buildTripletText() missing triplet prefix, got: %q", result)
+		}
+		if !strings.Contains(result, "senior engineer") {
+			t.Errorf("buildTripletText() missing rel prop 'senior engineer', got: %q", result)
+		}
+		if !strings.Contains(result, "2020") {
+			t.Errorf("buildTripletText() missing rel prop '2020', got: %q", result)
+		}
+	})
+
+	t.Run("rel props: UUID values skipped", func(t *testing.T) {
+		props := []byte(`{"ref_id":"123e4567-e89b-12d3-a456-426614174000","role":"manager"}`)
+		result := buildTripletText("X", "Y", "REPORTS_TO", nil, props)
+		if strings.Contains(result, "123e4567") {
+			t.Errorf("buildTripletText() should skip UUID values, got: %q", result)
+		}
+		if !strings.Contains(result, "manager") {
+			t.Errorf("buildTripletText() missing 'manager', got: %q", result)
+		}
+	})
+
+	t.Run("rel props: URL values skipped", func(t *testing.T) {
+		props := []byte(`{"link":"https://example.com","note":"important"}`)
+		result := buildTripletText("A", "B", "LINKS_TO", nil, props)
+		if strings.Contains(result, "https://") {
+			t.Errorf("buildTripletText() should skip URL values, got: %q", result)
+		}
+		if !strings.Contains(result, "important") {
+			t.Errorf("buildTripletText() missing 'important', got: %q", result)
+		}
+	})
+
+	t.Run("nil props no-op", func(t *testing.T) {
+		result := buildTripletText("A", "B", "KNOWS", nil, nil)
+		expected := "A knows B"
+		if result != expected {
+			t.Errorf("buildTripletText() = %q, want %q", result, expected)
+		}
+	})
+
+	t.Run("empty props JSON no-op", func(t *testing.T) {
+		result := buildTripletText("A", "B", "KNOWS", nil, []byte(`{}`))
+		expected := "A knows B"
+		if result != expected {
+			t.Errorf("buildTripletText() = %q, want %q", result, expected)
+		}
+	})
 }
 
 // Helper function to split string into words
