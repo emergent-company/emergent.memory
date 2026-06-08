@@ -10,8 +10,13 @@ import (
 
 // attrRenames maps third-party OTel attribute keys (emitted by the Google ADK)
 // to memory.* equivalents so all span attributes use a consistent namespace.
+//
+// Aligned to ADK v1.2.0 + OTel GenAI semconv v1.36.0.
+// Keys not in this map but prefixed with gcp.vertex.* or gen_ai.* are written
+// to memory.llm.unknown.* by the fallback branch in rewriteSpan — this acts as
+// a safety net so future ADK version bumps don't silently drop span data.
 var attrRenames = map[string]string{
-	// gcp.vertex.agent.* → memory.llm.*
+	// ── gcp.vertex.agent.* → memory.llm.* ────────────────────────────────────
 	"gcp.vertex.agent.llm_request":    "memory.llm.request",
 	"gcp.vertex.agent.llm_response":   "memory.llm.response",
 	"gcp.vertex.agent.tool_call_args": "memory.llm.tool_call_args",
@@ -20,20 +25,28 @@ var attrRenames = map[string]string{
 	"gcp.vertex.agent.invocation_id":  "memory.llm.invocation_id",
 	"gcp.vertex.agent.session_id":     "memory.llm.session_id",
 
-	// gen_ai.* → memory.llm.*
-	"gen_ai.operation.name":                      "memory.llm.operation",
-	"gen_ai.system":                              "memory.llm.system",
-	"gen_ai.request.model":                       "memory.llm.request.model",
-	"gen_ai.request.max_tokens":                  "memory.llm.request.max_tokens",
-	"gen_ai.request.top_p":                       "memory.llm.request.top_p",
-	"gen_ai.response.finish_reason":              "memory.llm.response.finish_reason",
-	"gen_ai.response.prompt_token_count":         "memory.llm.response.input_tokens",
-	"gen_ai.response.candidates_token_count":     "memory.llm.response.output_tokens",
-	"gen_ai.response.cached_content_token_count": "memory.llm.response.cached_tokens",
-	"gen_ai.response.total_token_count":          "memory.llm.response.total_tokens",
-	"gen_ai.tool.name":                           "memory.llm.tool.name",
-	"gen_ai.tool.description":                    "memory.llm.tool.description",
-	"gen_ai.tool.call.id":                        "memory.llm.tool.call_id",
+	// ── gen_ai.operation / request ───────────────────────────────────────────
+	"gen_ai.operation.name": "memory.llm.operation",
+	"gen_ai.request.model":  "memory.llm.request.model",
+
+	// ── gen_ai.agent.* (ADK v1.2.0 / semconv v1.36.0) ───────────────────────
+	"gen_ai.agent.name":        "memory.llm.agent.name",
+	"gen_ai.agent.description": "memory.llm.agent.description",
+	"gen_ai.conversation.id":   "memory.llm.conversation.id",
+
+	// ── gen_ai.usage.* (semconv v1.36.0 — replaces gen_ai.response.*_token_count)
+	"gen_ai.usage.input_tokens":            "memory.llm.usage.input_tokens",
+	"gen_ai.usage.output_tokens":           "memory.llm.usage.output_tokens",
+	"gen_ai.usage.cache_read.input_tokens": "memory.llm.usage.cache_read_tokens",
+	"gen_ai.usage.reasoning.output_tokens": "memory.llm.usage.reasoning_tokens",
+
+	// ── gen_ai.response.* ────────────────────────────────────────────────────
+	"gen_ai.response.finish_reasons": "memory.llm.response.finish_reasons",
+
+	// ── gen_ai.tool.* ────────────────────────────────────────────────────────
+	"gen_ai.tool.name":        "memory.llm.tool.name",
+	"gen_ai.tool.description": "memory.llm.tool.description",
+	"gen_ai.tool.call.id":     "memory.llm.tool.call_id",
 }
 
 // AttrRewriteProcessor is an OTel SpanProcessor that renames third-party

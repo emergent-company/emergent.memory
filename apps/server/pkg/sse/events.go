@@ -99,8 +99,9 @@ func NewErrorEvent(errMsg string) ErrorEvent {
 
 // DoneEvent is the final event signaling end of stream.
 type DoneEvent struct {
-	Type  string `json:"type"`
-	RunID string `json:"runId,omitempty"`
+	Type    string `json:"type"`
+	RunID   string `json:"runId,omitempty"`
+	TraceID string `json:"traceId,omitempty"`
 }
 
 // NewDoneEvent creates a new done event.
@@ -115,5 +116,15 @@ func NewDoneEventWithRun(runID string) DoneEvent {
 	return DoneEvent{
 		Type:  string(EventDone),
 		RunID: runID,
+	}
+}
+
+// NewDoneEventWithRunAndTrace creates a done event carrying the agent run ID
+// and traceId so external callers can query traces without a DB lookup.
+func NewDoneEventWithRunAndTrace(runID, traceID string) DoneEvent {
+	return DoneEvent{
+		Type:    string(EventDone),
+		RunID:   runID,
+		TraceID: traceID,
 	}
 }

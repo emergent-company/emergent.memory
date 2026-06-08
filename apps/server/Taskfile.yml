@@ -136,6 +136,20 @@ tasks:
     cmds:
       - go test ./tests/integration/... -v -count=1 {{.CLI_ARGS}}
 
+  test:remember:
+    desc: Run remember agent integration tests and save full output to logs/tests/remember/
+    cmds:
+      - |
+        LOG_DIR="../../logs/tests/remember"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/run-$(date +%Y%m%d-%H%M%S).log"
+        echo "=== remember agent test run $(date) ===" | tee "$LOG_FILE"
+        go test ./tests/integration/... -v -count=1 -timeout 15m \
+          -run TestRememberAgentSuite \
+          {{.CLI_ARGS}} 2>&1 | tee -a "$LOG_FILE"
+        echo ""
+        echo "=== full log: $LOG_FILE ==="
+
   test:coverage:
     desc: Run tests with coverage report
     cmds:

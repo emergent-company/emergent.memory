@@ -1859,11 +1859,16 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		}
 		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, parentRunID, rootRunID, "")
 		span.SetStatus(codes.Ok, "")
-		var rememberRunID string
+		var rememberRunID, rememberTraceID string
 		if rememberResult != nil {
 			rememberRunID = rememberResult.RunID
+			if rememberRunID != "" {
+				if run, err := h.agentRepo.FindRunByID(ctx, rememberRunID); err == nil && run != nil && run.TraceID != nil {
+					rememberTraceID = *run.TraceID
+				}
+			}
 		}
-		sseWriter.WriteData(sse.NewDoneEventWithRun(rememberRunID))
+		sseWriter.WriteData(sse.NewDoneEventWithRunAndTrace(rememberRunID, rememberTraceID))
 		sseWriter.Close()
 		if rememberResult != nil && rememberResult.Cleanup != nil {
 			go rememberResult.Cleanup()
@@ -2276,11 +2281,16 @@ func (h *Handler) RememberFile(c echo.Context) error {
 		}
 		rememberResult := h.streamAgentChat(ctx, conv, agentMessage, projectID, user.OrgID, user.ID, sseWriter, req.ParentRunID, req.RootRunID, "")
 		span.SetStatus(codes.Ok, "")
-		var rememberRunID string
+		var rememberRunID, rememberTraceID string
 		if rememberResult != nil {
 			rememberRunID = rememberResult.RunID
+			if rememberRunID != "" {
+				if run, err := h.agentRepo.FindRunByID(ctx, rememberRunID); err == nil && run != nil && run.TraceID != nil {
+					rememberTraceID = *run.TraceID
+				}
+			}
 		}
-		sseWriter.WriteData(sse.NewDoneEventWithRun(rememberRunID))
+		sseWriter.WriteData(sse.NewDoneEventWithRunAndTrace(rememberRunID, rememberTraceID))
 		sseWriter.Close()
 		if rememberResult != nil && rememberResult.Cleanup != nil {
 			go rememberResult.Cleanup()

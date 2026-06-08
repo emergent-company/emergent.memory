@@ -46,6 +46,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
+	"github.com/emergent-company/emergent.memory/domain/tracing"
 	"github.com/emergent-company/emergent.memory/domain/useraccess"
 	"github.com/emergent-company/emergent.memory/domain/useractivity"
 	"github.com/emergent-company/emergent.memory/domain/userprofile"
@@ -168,6 +169,11 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 		ApitokenSvc:  apitokenSvc,
 	})
 
+	// Wire discovery service so finalize-discovery tool works in-process.
+	discoveryRepo := discoveryjobs.NewRepository(db, log)
+	discoverySvc := discoveryjobs.NewService(discoveryRepo, docsSvc, testDB.Config, modelFactory, log)
+	mcpSvc.SetDiscoveryService(discoverySvc)
+
 	toolPool := agents.NewToolPool(agents.ToolPoolConfig{
 		MCPService: mcpSvc,
 		Logger:     log,
@@ -209,9 +215,9 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 		credSvc,
 		modelFactory,
 		apitokenSvc,
-		nil, // docSvc — not needed for forget tests
-		nil, // uploadHandler
-		nil, // domainClassifier
+		docsSvc,
+		nil, // uploadHandler — file upload not needed in tests
+		nil, // domainClassifier — classifier uses LLM directly, not needed here
 		cfg,
 		log,
 	)
@@ -488,6 +494,11 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	discoverySvc := discoveryjobs.NewService(discoveryRepo, docsSvc, testDB.Config, (*adk.ModelFactory)(nil), log)
 	discoveryHandler := discoveryjobs.NewHandler(discoverySvc)
 	discoveryjobs.RegisterRoutes(e, discoveryHandler, authMiddleware)
+
+	// Register tracing (Tempo proxy) routes.
+	// When cfg.Otel.Enabled() == false, GetTrace returns 503 — tests react accordingly.
+	tracingHandler := tracing.NewHandler(testDB.Config)
+	tracing.RegisterRoutes(e, tracingHandler, authMiddleware)
 
 	return &TestServer{
 		Echo:           e,
