@@ -20,6 +20,7 @@ import (
 	"github.com/uptrace/bun"
 	"google.golang.org/adk/session"
 
+	"github.com/emergent-company/emergent.memory/domain/agentcompat"
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/authinfo"
@@ -265,6 +266,11 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 		log,
 	)
 	chat.RegisterRoutes(ts.Echo, chatHandler, ts.AuthMiddleware)
+
+	// Register OpenAI-compatible agentcompat routes (/v1/chat/completions, /v1/models).
+	agentCompatSvc := agentcompat.NewService(agentRepo, executor, log)
+	agentCompatHandler := agentcompat.NewHandler(agentCompatSvc)
+	agentcompat.RegisterRoutes(ts.Echo, agentCompatHandler, ts.AuthMiddleware)
 
 	return ts
 }

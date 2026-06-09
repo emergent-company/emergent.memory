@@ -217,6 +217,7 @@ func (s *Service) handleResume(
 	}
 
 	resumeReq := agents.ExecuteRequest{
+		AgentDefinition:      agentDef,
 		ProjectID:            projectID,
 		OrgID:                user.OrgID,
 		UserMessage:          string(resultJSON),
