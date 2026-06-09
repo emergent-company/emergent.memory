@@ -1181,6 +1181,12 @@ func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.
 }
 
 func (ae *AgentExecutor) getRootRunID(ctx context.Context, run *AgentRun) string {
+	// root_run_id is stored on creation (see CreateRunWithOptions) so we can
+	// read it directly without walking the resumed-from chain.
+	if run.RootRunID != nil && *run.RootRunID != "" {
+		return *run.RootRunID
+	}
+	// Fallback for legacy runs that predate root_run_id storage.
 	current := run
 	for current.ResumedFrom != nil {
 		prev, err := ae.repo.FindRunByID(ctx, *current.ResumedFrom)

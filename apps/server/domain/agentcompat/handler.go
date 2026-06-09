@@ -2,12 +2,15 @@ package agentcompat
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -57,7 +60,7 @@ func (h *Handler) ChatCompletion(c echo.Context) error {
 
 	result, err := h.svc.HandleChatCompletion(c.Request().Context(), &req, user)
 	if err != nil {
-		return h.apiError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return h.apiError(c, classifyError(err), classifyErrorType(err), err.Error())
 	}
 
 	if req.Stream {
@@ -300,6 +303,58 @@ func (h *Handler) writeStream(c echo.Context, result *Result, model string, opts
 			}
 		}
 	}
+}
+
+// ─── Error classification ─────────────────────────────────────────────────
+
+// classifyError maps service errors to appropriate HTTP status codes.
+//   - BudgetExceededError  → 429 Too Many Requests
+//   - QueueFullError       → 429 Too Many Requests
+//   - DB / internal errors → 500 Internal Server Error
+//   - Agent/model errors   → 502 Bad Gateway
+//   - Everything else      → 400 Bad Request (invalid request)
+func classifyError(err error) int {
+	var budget *agents.BudgetExceededError
+	if errors.As(err, &budget) {
+		return http.StatusTooManyRequests // 429
+	}
+	var queue *agents.QueueFullError
+	if errors.As(err, &queue) {
+		return http.StatusTooManyRequests // 429
+	}
+	msg := err.Error()
+	// DB errors surfaced as wrapped fmt.Errorf strings contain "sql" or "pq" fragments.
+	if strings.Contains(msg, "database") || strings.Contains(msg, "sql") ||
+		strings.Contains(msg, "DB") || strings.Contains(msg, "scan") {
+		return http.StatusInternalServerError // 500
+	}
+	// LLM/model errors contain "LLM", "model", "provider", "credential".
+	if strings.Contains(msg, "LLM") || strings.Contains(msg, "provider") ||
+		strings.Contains(msg, "credential") || strings.Contains(msg, "model factory") {
+		return http.StatusBadGateway // 502
+	}
+	return http.StatusBadRequest // 400
+}
+
+// classifyErrorType returns the OpenAI-compatible error type string.
+func classifyErrorType(err error) string {
+	var budget *agents.BudgetExceededError
+	if errors.As(err, &budget) {
+		return "rate_limit_exceeded"
+	}
+	var queue *agents.QueueFullError
+	if errors.As(err, &queue) {
+		return "rate_limit_exceeded"
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "database") || strings.Contains(msg, "sql") {
+		return "server_error"
+	}
+	if strings.Contains(msg, "LLM") || strings.Contains(msg, "provider") ||
+		strings.Contains(msg, "credential") {
+		return "server_error"
+	}
+	return "invalid_request_error"
 }
 
 // ─── Error helpers ────────────────────────────────────────────────────────

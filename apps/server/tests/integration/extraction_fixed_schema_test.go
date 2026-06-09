@@ -1400,6 +1400,16 @@ func (s *ExtractionFixedSchemaTestSuite) extractRelationshipsFromProject(project
 	return out
 }
 
+// firstNonEmpty returns the first non-empty string value from props matching any of keys.
+func firstNonEmpty(props map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v := props[k]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func firstStringField(m map[string]any, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := m[k].(string); ok && v != "" {
@@ -1479,14 +1489,22 @@ func (r *qualityReport) logTo(t *testing.T) {
 			if relObjs == 1 {
 				t.Logf("  Relationship objects:")
 			}
-			personA := e.Props["person_a"]
-			personB := e.Props["person_b"]
-			kind := e.Props["relationship_kind"]
+			// Try common property name variants for the two parties.
+			personA := firstNonEmpty(e.Props, "person_a", "from_character", "character_a", "source", "character1", "name_a", "entity_a")
+			personB := firstNonEmpty(e.Props, "person_b", "to_character", "character_b", "target", "character2", "name_b", "entity_b")
+			kind := firstNonEmpty(e.Props, "relationship_kind", "relationship_type", "type", "kind", "bond_type", "rel_type")
 			desc := e.Props["description"]
 			if len(desc) > 80 {
 				desc = desc[:80] + "…"
 			}
-			t.Logf("    [%s] %s ↔ %s  kind=%s  desc=%s", e.Type, personA, personB, kind, desc)
+			// Also dump all non-empty props so we can see what names the LLM used.
+			var allProps []string
+			for k, v := range e.Props {
+				if k != "description" && k != "_extraction_job_id" && k != "_source_id" && k != "_extraction_source" {
+					allProps = append(allProps, k+"="+v)
+				}
+			}
+			t.Logf("    %s ↔ %s  kind=%s  desc=%s  {%s}", personA, personB, kind, desc, strings.Join(allProps, ", "))
 		}
 	}
 

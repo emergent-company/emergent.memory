@@ -276,7 +276,9 @@ func (s *Service) executeSync(
 		return s.buildClientToolCallResult(req.Model, result.RunID, pause), nil
 	}
 
-	return &Result{Response: s.buildResponse(req.Model, textBuf.String(), result)}, nil
+	resp := s.buildResponse(req.Model, textBuf.String(), result)
+	resp.Usage = s.fetchUsage(ctx, result.RunID)
+	return &Result{Response: resp}, nil
 }
 
 func (s *Service) resumeSync(
@@ -303,7 +305,9 @@ func (s *Service) resumeSync(
 		return s.buildClientToolCallResult(req.Model, result.RunID, pause), nil
 	}
 
-	return &Result{Response: s.buildResponse(req.Model, textBuf.String(), result)}, nil
+	resp := s.buildResponse(req.Model, textBuf.String(), result)
+	resp.Usage = s.fetchUsage(ctx, result.RunID)
+	return &Result{Response: resp}, nil
 }
 
 // ─── Streaming execution ──────────────────────────────────────────────────
@@ -328,13 +332,14 @@ func (s *Service) executeStreaming(
 			ch <- StreamEvent{Done: true, ErrorMsg: err.Error()}
 			return
 		}
+		usage := s.fetchUsage(ctx, result.RunID)
 		// Final event: either done or paused-for-client-tool.
 		if result.Status == agents.RunStatusPaused && pause.hasPendingCall() {
 			// Carry the run ID so writeStream can emit system_fingerprint in the
 			// terminal chunk, enabling streaming clients to resume the paused run.
-			ch <- StreamEvent{Done: true, ResumeRunID: result.RunID}
+			ch <- StreamEvent{Done: true, Usage: usage, ResumeRunID: result.RunID}
 		} else {
-			ch <- StreamEvent{Done: true}
+			ch <- StreamEvent{Done: true, Usage: usage}
 		}
 	}()
 
@@ -360,10 +365,11 @@ func (s *Service) resumeStreaming(
 			ch <- StreamEvent{Done: true, ErrorMsg: err.Error()}
 			return
 		}
+		usage := s.fetchUsage(ctx, result.RunID)
 		if result.Status == agents.RunStatusPaused && pause.hasPendingCall() {
-			ch <- StreamEvent{Done: true, ResumeRunID: result.RunID}
+			ch <- StreamEvent{Done: true, Usage: usage, ResumeRunID: result.RunID}
 		} else {
-			ch <- StreamEvent{Done: true}
+			ch <- StreamEvent{Done: true, Usage: usage}
 		}
 	}()
 
@@ -387,18 +393,11 @@ func buildStreamCallback(ch chan<- StreamEvent, clientTools []ClientToolDef, pau
 			// StreamEventToolCallEnd fires) so we have the full args.
 
 		case agents.StreamEventToolCallEnd:
-			// Check whether the pause state has been set for a client tool.
+			// Stream all pending client tool calls accumulated so far.
+			// Parallel tool calls produce multiple entries; we emit them
+			// all in one StreamEvent so the handler can send them together.
 			if pause.hasPendingCall() {
-				argsJSON, _ := json.Marshal(pause.args())
-				calls := []ToolCall{{
-					ID:   pause.callID(),
-					Type: "function",
-					Function: FunctionCall{
-						Name:      pause.toolName(),
-						Arguments: string(argsJSON),
-					},
-				}}
-				ch <- StreamEvent{ClientToolCalls: calls}
+				ch <- StreamEvent{ClientToolCalls: pause.allCalls()}
 			}
 		}
 	}
@@ -409,45 +408,60 @@ func buildStreamCallback(ch chan<- StreamEvent, clientTools []ClientToolDef, pau
 // clientPauseState is shared between the client tool closure and the stream
 // callback.  When the LLM calls a client-supplied tool, the closure sets the
 // fields here and the executor pauses via AskPauseState.
-type clientPauseState struct {
-	mu      sync.Mutex
-	pending bool
-	id      string
-	name    string
-	rawArgs map[string]any
+// pendingToolCall holds a single client tool invocation captured during execution.
+type pendingToolCall struct {
+	id   string
+	name string
+	args map[string]any
 }
 
-func (s *clientPauseState) set(id, name string, args map[string]any) {
+// clientPauseState collects all client tool calls that fired in a single LLM
+// turn. OpenAI parallel_tool_calls can produce multiple calls simultaneously;
+// previously only the last-write was retained. Now all are collected in order.
+type clientPauseState struct {
+	mu    sync.Mutex
+	calls []pendingToolCall
+}
+
+func (s *clientPauseState) add(id, name string, args map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pending = true
-	s.id = id
-	s.name = name
-	s.rawArgs = args
+	s.calls = append(s.calls, pendingToolCall{id: id, name: name, args: args})
 }
 
 func (s *clientPauseState) hasPendingCall() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.pending
+	return len(s.calls) > 0
 }
 
-func (s *clientPauseState) callID() string {
+// allCalls returns all pending tool calls as OpenAI ToolCall objects.
+func (s *clientPauseState) allCalls() []ToolCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.id
+	out := make([]ToolCall, 0, len(s.calls))
+	for _, c := range s.calls {
+		argsJSON, _ := json.Marshal(c.args)
+		out = append(out, ToolCall{
+			ID:   c.id,
+			Type: "function",
+			Function: FunctionCall{
+				Name:      c.name,
+				Arguments: string(argsJSON),
+			},
+		})
+	}
+	return out
 }
 
-func (s *clientPauseState) toolName() string {
+// firstCall returns the first pending tool call (for legacy single-tool paths).
+func (s *clientPauseState) firstCall() pendingToolCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.name
-}
-
-func (s *clientPauseState) args() map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.rawArgs
+	if len(s.calls) == 0 {
+		return pendingToolCall{}
+	}
+	return s.calls[0]
 }
 
 // buildClientTools converts each ClientToolDef into an ADK tool.Tool whose
@@ -469,9 +483,9 @@ func buildClientTools(defs []ClientToolDef, pause *clientPauseState) ([]tool.Too
 				InputSchema: schema,
 			},
 			func(ctx tool.Context, args map[string]any) (map[string]any, error) {
-				// Generate a tool call ID (OpenAI format: "call_<name>_<ts>").
-				callID := fmt.Sprintf("call_%s_%d", sanitizeName(d.Function.Name), time.Now().UnixMilli()%1_000_000)
-				pause.set(callID, d.Function.Name, args)
+				// Generate a collision-resistant tool call ID.
+				callID := fmt.Sprintf("call_%s_%s", sanitizeName(d.Function.Name), shortID())
+				pause.add(callID, d.Function.Name, args)
 				// Return a sentinel that will be overwritten once the client
 				// sends the real result on resume.
 				return map[string]any{
@@ -532,16 +546,28 @@ func (s *Service) buildResponse(model, text string, result *agents.ExecuteResult
 	}
 }
 
+// fetchUsage queries token counts for a run from kb.llm_usage_events.
+// Returns nil when no usage data is available (e.g. no LLM calls occurred,
+// or usage tracking is disabled). Never errors — usage is best-effort.
+func (s *Service) fetchUsage(ctx context.Context, runID string) *Usage {
+	if runID == "" {
+		return nil
+	}
+	tu, err := s.agentRepo.GetRunTokenUsage(ctx, runID)
+	if err != nil || tu == nil {
+		return nil
+	}
+	return &Usage{
+		PromptTokens:     int(tu.TotalInputTokens),
+		CompletionTokens: int(tu.TotalOutputTokens),
+		TotalTokens:      int(tu.TotalInputTokens + tu.TotalOutputTokens),
+	}
+}
+
 func (s *Service) buildClientToolCallResult(model, runID string, pause *clientPauseState) *Result {
-	argsJSON, _ := json.Marshal(pause.args())
-	calls := []ToolCall{{
-		ID:   pause.callID(),
-		Type: "function",
-		Function: FunctionCall{
-			Name:      pause.toolName(),
-			Arguments: string(argsJSON),
-		},
-	}}
+	// Collect all pending tool calls — supports parallel_tool_calls where
+	// the LLM invokes multiple client tools in the same turn.
+	calls := pause.allCalls()
 
 	finishReason := "tool_calls"
 	resp := &ChatCompletionResponse{
