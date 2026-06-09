@@ -173,15 +173,39 @@ func (h *Handler) writeStream(c echo.Context, result *Result, model string, opts
 
 			if ev.Done {
 				usage = ev.Usage
+
+				// If the run errored, emit an SSE error chunk before [DONE] so the
+				// client can detect the failure instead of seeing a silent empty stream.
+				if ev.ErrorMsg != "" {
+					errFinish := "error"
+					_ = writeChunk(ChatCompletionChunk{
+						ID:      chunkID,
+						Object:  "chat.completion.chunk",
+						Created: created,
+						Model:   model,
+						Choices: []ChunkChoice{{
+							Index:        0,
+							Delta:        Delta{Content: &ev.ErrorMsg},
+							FinishReason: &errFinish,
+						}},
+					})
+					_, _ = fmt.Fprint(rw, sseDone)
+					if canFlush {
+						flusher.Flush()
+					}
+					return nil
+				}
+
 				// Write final chunk with finish_reason.
 				finishReason := "stop"
 				if toolCallsStreamed {
 					finishReason = "tool_calls"
 				}
-				// Resume token if paused for a client tool (result.Response may be set).
+				// Carry the resume token from the Done event so streaming clients
+				// can resume a paused run (fix: result.Response is nil in streaming path).
 				var resumeFingerprint string
-				if result.Response != nil {
-					resumeFingerprint = result.Response.SystemFingerprint
+				if ev.ResumeRunID != "" {
+					resumeFingerprint = resumeToken(ev.ResumeRunID)
 				}
 				_ = writeChunk(ChatCompletionChunk{
 					ID:      chunkID,

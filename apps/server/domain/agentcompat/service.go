@@ -56,8 +56,17 @@ type StreamEvent struct {
 	// Exactly one of the following is set per event.
 	TextDelta       string     // incremental LLM text token
 	ClientToolCalls []ToolCall // agent wants the client to execute these tools
-	Done            bool       // stream finished (last event, check Usage)
+	Done            bool       // stream finished (last event, check Usage/ResumeRunID/ErrorMsg)
 	Usage           *Usage
+
+	// ResumeRunID is set on the Done event when the run was paused for a client
+	// tool call. The handler emits this as system_fingerprint so the client can resume.
+	ResumeRunID string
+
+	// ErrorMsg is set on the Done event when the run failed. The handler emits
+	// an SSE error chunk so the client can detect the failure instead of seeing
+	// a silent [DONE].
+	ErrorMsg string
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────
@@ -211,24 +220,24 @@ func (s *Service) handleResume(
 		return nil, fmt.Errorf("tool result missing: %w", err)
 	}
 
-	// Encode result as JSON so injectToolResponse can use it via UserMessage.
-	resultJSON, err := json.Marshal(toolResult)
-	if err != nil {
-		return nil, fmt.Errorf("encoding tool result: %w", err)
-	}
-
 	var clientPause clientPauseState
 	extraTools, err := buildClientTools(req.Tools, &clientPause)
 	if err != nil {
 		return nil, fmt.Errorf("building client tools: %w", err)
 	}
 
+	// Fetch project_info so the resumed run also has KB context in its system prompt.
+	projectInfo, _ := s.agentRepo.GetProjectInfo(ctx, projectID)
+
 	resumeReq := agents.ExecuteRequest{
-		AgentDefinition:      agentDef,
-		ProjectID:            projectID,
-		OrgID:                user.OrgID,
-		UserMessage:          string(resultJSON),
-		SystemPromptAppendix: SystemPromptAppendix(len(req.Tools) > 0),
+		AgentDefinition: agentDef,
+		ProjectID:       projectID,
+		OrgID:           user.OrgID,
+		// Pass only the raw tool result Content — not the wrapper struct.
+		// injectToolResponse injects this as responseBody["result"] so the LLM
+		// sees the actual tool output, not Go struct field names.
+		UserMessage:          toolResult.Content,
+		SystemPromptAppendix: buildSystemAppendix(req.Messages, len(req.Tools) > 0, projectInfo),
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
 	}
@@ -262,7 +271,7 @@ func (s *Service) executeSync(
 
 	// If run paused for client tool — build a tool_calls response.
 	if result.Status == agents.RunStatusPaused && pause.hasPendingCall() {
-		return s.buildClientToolCallResult(result.RunID, pause), nil
+		return s.buildClientToolCallResult(req.Model, result.RunID, pause), nil
 	}
 
 	return &Result{Response: s.buildResponse(req.Model, textBuf.String(), result)}, nil
@@ -289,7 +298,7 @@ func (s *Service) resumeSync(
 	}
 
 	if result.Status == agents.RunStatusPaused && pause.hasPendingCall() {
-		return s.buildClientToolCallResult(result.RunID, pause), nil
+		return s.buildClientToolCallResult(req.Model, result.RunID, pause), nil
 	}
 
 	return &Result{Response: s.buildResponse(req.Model, textBuf.String(), result)}, nil
@@ -312,12 +321,16 @@ func (s *Service) executeStreaming(
 		result, err := s.executor.Execute(ctx, execReq)
 		if err != nil {
 			s.log.Warn("agentcompat: streaming execute error", slog.String("error", err.Error()))
+			// Emit an error Done event so the handler can write an SSE error chunk
+			// instead of silently closing the stream with [DONE].
+			ch <- StreamEvent{Done: true, ErrorMsg: err.Error()}
 			return
 		}
 		// Final event: either done or paused-for-client-tool.
 		if result.Status == agents.RunStatusPaused && pause.hasPendingCall() {
-			// tool_calls are already streamed by buildStreamCallback
-			ch <- StreamEvent{Done: true, Usage: nil}
+			// Carry the run ID so writeStream can emit system_fingerprint in the
+			// terminal chunk, enabling streaming clients to resume the paused run.
+			ch <- StreamEvent{Done: true, ResumeRunID: result.RunID}
 		} else {
 			ch <- StreamEvent{Done: true}
 		}
@@ -342,10 +355,11 @@ func (s *Service) resumeStreaming(
 		result, err := s.executor.Resume(ctx, priorRun, resumeReq)
 		if err != nil {
 			s.log.Warn("agentcompat: streaming resume error", slog.String("error", err.Error()))
+			ch <- StreamEvent{Done: true, ErrorMsg: err.Error()}
 			return
 		}
 		if result.Status == agents.RunStatusPaused && pause.hasPendingCall() {
-			ch <- StreamEvent{Done: true}
+			ch <- StreamEvent{Done: true, ResumeRunID: result.RunID}
 		} else {
 			ch <- StreamEvent{Done: true}
 		}
@@ -516,7 +530,7 @@ func (s *Service) buildResponse(model, text string, result *agents.ExecuteResult
 	}
 }
 
-func (s *Service) buildClientToolCallResult(runID string, pause *clientPauseState) *Result {
+func (s *Service) buildClientToolCallResult(model, runID string, pause *clientPauseState) *Result {
 	argsJSON, _ := json.Marshal(pause.args())
 	calls := []ToolCall{{
 		ID:   pause.callID(),
@@ -532,7 +546,7 @@ func (s *Service) buildClientToolCallResult(runID string, pause *clientPauseStat
 		ID:      "chatcmpl-" + shortID(),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
-		Model:   "agent",
+		Model:   model,
 		Choices: []Choice{{
 			Index: 0,
 			Message: ChatMessage{

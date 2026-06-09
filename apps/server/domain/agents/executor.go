@@ -928,20 +928,24 @@ func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, proj
 			responseBody["output"] = req.UserMessage
 		}
 	case SuspendReasonAwaitingClientTool:
-		// The agentcompat layer POSTed the client tool result as a JSON string in UserMessage.
-		// Decode it back into the response body so the LLM sees a proper tool result.
-		if req.UserMessage != "" {
-			var decoded map[string]any
-			if jsonErr := json.Unmarshal([]byte(req.UserMessage), &decoded); jsonErr == nil {
-				for k, v := range decoded {
-					responseBody[k] = v
-				}
-			} else {
-				// Fall back to raw string if it's not JSON.
-				responseBody["result"] = req.UserMessage
-			}
+		// The agentcompat layer POSTed the client tool result content string in UserMessage.
+		// UserMessage is the raw tool result content (already extracted from the messages[]
+		// tool-role entry by extractToolResult → only the Content field, not the wrapper struct).
+		// Inject it as "result" so the LLM sees a clean tool response.
+		result := req.UserMessage
+		if result == "" {
+			result = ""
 		}
-		if len(responseBody) == 0 {
+		// If the content is JSON, surface it as the result directly so the LLM gets
+		// structured data rather than an escaped string.
+		var decoded any
+		if result != "" {
+			if jsonErr := json.Unmarshal([]byte(result), &decoded); jsonErr == nil {
+				responseBody["result"] = decoded
+			} else {
+				responseBody["result"] = result
+			}
+		} else {
 			responseBody["result"] = ""
 		}
 	case SuspendReasonAwaitingToolConfirm:

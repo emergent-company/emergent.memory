@@ -83,7 +83,7 @@ Return ONLY a JSON object where keys are type names:
   }
 }`, kbPurpose, excerpt, typeList.String())
 
-	respText, err := callLLM(ctx, llm, prompt)
+	respText, err := callLLMJSON(ctx, llm, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("EnrichSchemaProperties LLM call: %w", err)
 	}
@@ -158,22 +158,38 @@ Return ONLY JSON:
   ]
 }`, kbPurpose, excerpt)
 
-	respText, err := callLLM(ctx, llm, prompt)
+	respText, err := callLLMJSON(ctx, llm, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("GenerateSchemaFromDocument LLM call: %w", err)
 	}
 
-	clean := extractJSONObject(respText)
-	var result struct {
+	type typesResult struct {
 		Types []struct {
-			Name        string            `json:"name"`
-			Description string            `json:"description"`
-			Properties  map[string]any    `json:"properties"`
-			Required    []string          `json:"required"`
+			Name        string         `json:"name"`
+			Description string         `json:"description"`
+			Properties  map[string]any `json:"properties"`
+			Required    []string       `json:"required"`
 		} `json:"types"`
 	}
-	if err := json.Unmarshal([]byte(clean), &result); err != nil {
-		return nil, fmt.Errorf("GenerateSchemaFromDocument parse: %w (raw: %s)", err, truncate(respText, 200))
+
+	clean := extractJSONObject(respText)
+	var result typesResult
+	if parseErr := json.Unmarshal([]byte(clean), &result); parseErr != nil || len(result.Types) == 0 {
+		// Retry with a minimal prompt focused purely on JSON output.
+		retryPrompt := fmt.Sprintf(
+			`Project: %s. Return ONLY this JSON structure with 3-5 entity types for this document type:\n{"types":[{"name":"TypeName","description":"one sentence","properties":{"field":{"type":"string","description":"what to extract"}},"required":["field"]}]}`,
+			kbPurpose)
+		retryText, retryErr := callLLMJSON(ctx, llm, retryPrompt)
+		if retryErr == nil {
+			retryClean := extractJSONObject(retryText)
+			var retryResult typesResult
+			if json.Unmarshal([]byte(retryClean), &retryResult) == nil && len(retryResult.Types) > 0 {
+				result = retryResult
+			}
+		}
+		if len(result.Types) == 0 {
+			return nil, fmt.Errorf("GenerateSchemaFromDocument parse: %w (raw: %s)", parseErr, truncate(respText, 200))
+		}
 	}
 
 	out := make(map[string]any, len(result.Types))
@@ -268,7 +284,7 @@ Return ONLY JSON:
   ]
 }`, kbPurpose, excerpt)
 
-	respText, err := callLLM(ctx, llm, prompt)
+	respText, err := callLLMJSON(ctx, llm, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("GenerateSchemaWithRelationships LLM call: %w", err)
 	}
@@ -395,13 +411,12 @@ Return ONLY JSON:
   ]
 }`, kbPurpose, typeList, excerpt)
 
-	respText, err := callLLM(ctx, llm, prompt)
+	respText, err := callLLMJSON(ctx, llm, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("GenerateRelationshipsFromSchema LLM call: %w", err)
 	}
 
-	clean := extractJSONObject(respText)
-	var raw struct {
+	type relRaw struct {
 		Relationships []struct {
 			Name         string         `json:"name"`
 			SourceType   string         `json:"sourceType"`
@@ -413,8 +428,30 @@ Return ONLY JSON:
 			InverseLabel string         `json:"inverseLabel"`
 		} `json:"relationships"`
 	}
-	if err := json.Unmarshal([]byte(clean), &raw); err != nil {
-		return nil, fmt.Errorf("GenerateRelationshipsFromSchema parse: %w (raw: %s)", err, truncate(respText, 200))
+
+	clean := extractJSONObject(respText)
+	var raw relRaw
+	if parseErr := json.Unmarshal([]byte(clean), &raw); parseErr != nil || len(raw.Relationships) == 0 {
+		// Retry with a minimal, ultra-constrained prompt.
+		retryPrompt := fmt.Sprintf(
+			`Entity types: %s. Return ONLY this JSON, no explanation: {"relationships":[{"name":"KNOWS","sourceType":"%s","targetType":"%s","cardinality":"many-to-many","description":"entities that know each other","inverseType":"KNOWN_BY","inverseLabel":"known by"}]}`,
+			typeList, objectTypeNames[0], objectTypeNames[0])
+		if len(objectTypeNames) > 1 {
+			retryPrompt = fmt.Sprintf(
+				`Entity types: %s.\nGenerate 3-5 UPPER_SNAKE_CASE relationship types between them.\nReturn ONLY JSON: {"relationships":[{"name":"REL","sourceType":"A","targetType":"B","cardinality":"many-to-many","description":"...","inverseType":"INV","inverseLabel":"inv label"}]}`,
+				typeList)
+		}
+		retryText, retryErr := callLLMJSON(ctx, llm, retryPrompt)
+		if retryErr == nil {
+			retryClean := extractJSONObject(retryText)
+			var retryRaw relRaw
+			if json.Unmarshal([]byte(retryClean), &retryRaw) == nil {
+				raw = retryRaw
+			}
+		}
+		if len(raw.Relationships) == 0 {
+			return nil, fmt.Errorf("GenerateRelationshipsFromSchema parse: %w (raw: %s)", parseErr, truncate(respText, 200))
+		}
 	}
 
 	out := make(map[string]any, len(raw.Relationships))
@@ -444,12 +481,23 @@ Return ONLY JSON:
 
 // callLLM makes a single non-streaming LLM call and returns the full text response.
 func callLLM(ctx context.Context, llm model.LLM, prompt string) (string, error) {
+	return callLLMWithConfig(ctx, llm, prompt, 2048)
+}
+
+// callLLMJSON is like callLLM but uses a larger token budget for JSON generation.
+// The improved extractJSONObject handles deepseek-style prose preambles, so no
+// special system injection is needed.
+func callLLMJSON(ctx context.Context, llm model.LLM, prompt string) (string, error) {
+	return callLLMWithConfig(ctx, llm, prompt, 4096)
+}
+
+func callLLMWithConfig(ctx context.Context, llm model.LLM, prompt string, maxTokens int32) (string, error) {
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{
 			{Role: "user", Parts: []*genai.Part{{Text: prompt}}},
 		},
 		Config: &genai.GenerateContentConfig{
-			MaxOutputTokens: 2048,
+			MaxOutputTokens: maxTokens,
 		},
 	}
 	var sb strings.Builder
@@ -470,7 +518,9 @@ func callLLM(ctx context.Context, llm model.LLM, prompt string) (string, error) 
 	return sb.String(), nil
 }
 
-// extractJSONObject strips markdown fences and returns the first JSON object found.
+// extractJSONObject strips markdown fences and prose preamble, returning the first
+// complete JSON object found in s. Handles deepseek-style "We need to..." reasoning
+// prefixes by scanning for the first '{' that begins a valid JSON object.
 func extractJSONObject(s string) string {
 	s = strings.TrimSpace(s)
 	// Strip ```json ... ``` fences.
@@ -483,9 +533,49 @@ func extractJSONObject(s string) string {
 			s = strings.TrimSpace(after[:idx])
 		}
 	}
-	// Find first '{'.
-	if idx := strings.Index(s, "{"); idx > 0 {
-		s = s[idx:]
+	s = strings.TrimSpace(s)
+
+	// Scan for the first '{' that starts a valid JSON object.
+	// This handles prose preambles like "We need to generate...\n{...}".
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' {
+			continue
+		}
+		candidate := s[i:]
+		// Quick check: find matching closing brace by counting depth.
+		depth := 0
+		inStr := false
+		escape := false
+		end := -1
+		for j, ch := range candidate {
+			if escape {
+				escape = false
+				continue
+			}
+			if ch == '\\' && inStr {
+				escape = true
+				continue
+			}
+			if ch == '"' {
+				inStr = !inStr
+				continue
+			}
+			if inStr {
+				continue
+			}
+			if ch == '{' {
+				depth++
+			} else if ch == '}' {
+				depth--
+				if depth == 0 {
+					end = j + 1
+					break
+				}
+			}
+		}
+		if end > 0 {
+			return candidate[:end]
+		}
 	}
 	return s
 }

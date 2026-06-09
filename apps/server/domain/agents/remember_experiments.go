@@ -386,11 +386,11 @@ If classified_stage is "heuristic" or "llm" (confidence >= 0.7):
   Extraction is queued automatically. Report: enriched schema name + "enriched and extraction queued". Done.
 
 If classified_stage is "new_domain":
-  No existing schema. The server will generate one with full property descriptions from the document.
+  No existing schema. The server will generate one with full property AND relationship type descriptions.
   1. Choose pack_name from classified_pack_name or derive from document type.
      FORBIDDEN: "new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc".
   2. Call finalize-discovery:
-       mode="create_rich"
+       mode="create_rich_combined"
        document_id=<document_id>
        pack_name=<chosen name>
        included_types=[]
