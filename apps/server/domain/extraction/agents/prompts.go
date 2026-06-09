@@ -451,6 +451,31 @@ Example:
 
 Find ALL relationships between the entities now. Ensure no entity is left without at least one connection.`
 
+// BuildTypeHintsSection builds an optional section injected into the entity extraction
+// prompt that carries per-type hints and negative examples from SchemaExtractionPrompts.
+// When set, these appear immediately after the type definitions so the LLM reads them
+// before seeing the document — higher attention weight than the appended DomainSection.
+// Returns empty string when both args are empty (no-op).
+func BuildTypeHintsSection(typeHints map[string]string, negativeExamples []string) string {
+	if len(typeHints) == 0 && len(negativeExamples) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	if len(typeHints) > 0 {
+		sb.WriteString("\n## Extraction Hints (per type)\n\n")
+		for typeName, hint := range typeHints {
+			sb.WriteString(fmt.Sprintf("**%s**: %s\n", typeName, hint))
+		}
+	}
+	if len(negativeExamples) > 0 {
+		sb.WriteString("\n## Do NOT Extract\n\n")
+		for _, ex := range negativeExamples {
+			sb.WriteString("- " + ex + "\n")
+		}
+	}
+	return sb.String()
+}
+
 // BuildDomainSection builds an optional domain-guidance section for injection
 // into entity/relationship extractor system prompts.
 // Returns empty string when both args are empty (no-op for existing callers).

@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,9 +9,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/agentcompat"
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
@@ -635,4 +637,343 @@ func (s *AgentCompatTestSuite) TestChatCompletion_StreamingWithContent() {
 	}
 	s.T().Logf("full streamed content: %q", content.String())
 	s.NotEmpty(content.String(), "LLM should produce at least some text content")
+}
+
+// ---------------------------------------------------------------------------
+// Test 13 (LLM) — Multi-turn conversation: context carries across turns
+// ---------------------------------------------------------------------------
+
+// TestChatCompletion_MultiTurnConversation sends a sequence of messages that
+// require the agent to remember earlier turns in the same conversation.
+//
+//  Turn 1: "My favourite colour is ultraviolet. Acknowledge this."
+//          → agent should say it noted the colour.
+//  Turn 2: "What is my favourite colour?"
+//          → agent must recall "ultraviolet" from turn 1.
+//
+// This exercises that the messages[] history is correctly threaded through
+// to the agent so context is preserved across stateless HTTP requests.
+func (s *AgentCompatTestSuite) TestChatCompletion_MultiTurnConversation() {
+	s.requireLLM()
+
+	const secretColour = "ultraviolet"
+
+	// Turn 1 — plant a fact.
+	turn1Resp := s.postChat(map[string]any{
+		"model": s.agentName,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": fmt.Sprintf("My favourite colour is %s. Please acknowledge you have noted this.", secretColour),
+			},
+		},
+	})
+	s.Require().Equal(http.StatusOK, turn1Resp.StatusCode, "turn1 body: %s", turn1Resp.Body)
+
+	cr1 := parseChatResponse(s.T(), turn1Resp.Body)
+	s.T().Logf("turn1 reply: %s", cr1.Choices[0].Message.Content)
+	s.NotEmpty(cr1.Choices[0].Message.Content, "turn1: agent must reply with something")
+
+	// Turn 2 — ask about the fact planted in turn 1.
+	// Build the full message history including the assistant's turn-1 reply
+	// so the agent can refer back to it.
+	turn2Resp := s.postChat(map[string]any{
+		"model": s.agentName,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": fmt.Sprintf("My favourite colour is %s. Please acknowledge you have noted this.", secretColour),
+			},
+			{
+				"role":    "assistant",
+				"content": cr1.Choices[0].Message.Content,
+			},
+			{
+				"role":    "user",
+				"content": "What is my favourite colour? Reply with just the colour name.",
+			},
+		},
+	})
+	s.Require().Equal(http.StatusOK, turn2Resp.StatusCode, "turn2 body: %s", turn2Resp.Body)
+
+	cr2 := parseChatResponse(s.T(), turn2Resp.Body)
+	reply := strings.ToLower(cr2.Choices[0].Message.Content)
+	s.T().Logf("turn2 reply: %q", reply)
+
+	// The agent must echo back the colour planted in turn 1.
+	s.Contains(reply, secretColour,
+		"agent must recall the favourite colour from the conversation history")
+}
+
+// ---------------------------------------------------------------------------
+// Test 14 (LLM) — Multi-step tool chain: two sequential client tool calls
+// ---------------------------------------------------------------------------
+
+// TestChatCompletion_MultiStepToolChain exercises two back-to-back suspend/resume
+// cycles in a single conversation:
+//
+//  Step 1: agent calls tool_a ("get_user_name")  → paused, client returns "Alice"
+//  Step 2: agent calls tool_b ("get_user_score") → paused, client returns 42
+//  Step 3: agent produces a final summary using both results → finish_reason:stop
+//
+// This verifies that the suspend context is correctly updated between successive
+// client-tool calls and that the executor resumes cleanly multiple times.
+func (s *AgentCompatTestSuite) TestChatCompletion_MultiStepToolChain() {
+	s.requireLLM()
+
+	toolA := "get_user_name"
+	toolB := "get_user_score"
+	toolDefs := []map[string]any{
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        toolA,
+				"description": "Returns the current user's name.",
+				"parameters":  map[string]any{"type": "object", "properties": map[string]any{}},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        toolB,
+				"description": "Returns the current user's score as an integer.",
+				"parameters":  map[string]any{"type": "object", "properties": map[string]any{}},
+			},
+		},
+	}
+
+	userMsg := fmt.Sprintf(
+		"Call %s to get the user name, then call %s to get the score, "+
+			"then reply: '<name> has a score of <score>'.",
+		toolA, toolB)
+
+	// History accumulates across steps so we can send the full context on resume.
+	messages := []map[string]any{
+		{"role": "user", "content": userMsg},
+	}
+
+	// We allow up to maxSteps tool-call suspensions before declaring success or
+	// giving up. In practice we expect exactly 2 (one per tool).
+	const maxSteps = 5
+	var fingerprint string
+	toolResults := map[string]string{
+		toolA: `{"name":"Alice"}`,
+		toolB: `{"score":42}`,
+	}
+
+	for step := 0; step < maxSteps; step++ {
+		body := map[string]any{
+			"model":    s.agentName,
+			"messages": messages,
+			"tools":    toolDefs,
+		}
+		if fingerprint != "" {
+			body["system_fingerprint"] = fingerprint
+		}
+
+		resp := s.postChat(body)
+		s.Require().Equal(http.StatusOK, resp.StatusCode,
+			"step %d body: %s", step+1, resp.Body)
+
+		cr := parseChatResponse(s.T(), resp.Body)
+		fr := cr.Choices[0].FinishReason
+		s.T().Logf("step %d finish_reason=%s fingerprint=%s",
+			step+1, fr, cr.SystemFingerprint)
+
+		if fr != "tool_calls" {
+			// Agent produced a final answer — check it mentions both facts.
+			reply := strings.ToLower(cr.Choices[0].Message.Content)
+			s.T().Logf("final reply: %q", reply)
+			s.Contains(reply, "alice", "final reply must contain the user name")
+			s.Contains(reply, "42", "final reply must contain the score")
+			return
+		}
+
+		// Paused for a tool call — inject result and continue.
+		s.Require().NotEmpty(cr.SystemFingerprint,
+			"paused response must carry system_fingerprint")
+		s.Require().NotEmpty(cr.Choices[0].Message.ToolCalls,
+			"paused response must include tool_calls")
+
+		fingerprint = cr.SystemFingerprint
+
+		// Append the assistant tool-call turn.
+		messages = append(messages, map[string]any{
+			"role":       "assistant",
+			"tool_calls": cr.Choices[0].Message.ToolCalls,
+		})
+
+		// Append each tool result.
+		for _, tc := range cr.Choices[0].Message.ToolCalls {
+			result, ok := toolResults[tc.Function.Name]
+			if !ok {
+				result = `{"result":"ok"}`
+			}
+			s.T().Logf("  → executing tool %q → %s", tc.Function.Name, result)
+			messages = append(messages, map[string]any{
+				"role":         "tool",
+				"tool_call_id": tc.ID,
+				"content":      result,
+			})
+		}
+	}
+
+	s.Fail("agent did not produce a final answer within the allowed steps")
+}
+
+// ---------------------------------------------------------------------------
+// Test 15 (LLM) — Performance: Memory agent vs direct LLM for 3-step convo
+// ---------------------------------------------------------------------------
+
+// TestPerformance_AgentVsDirectLLM benchmarks a 3-step stateless conversation
+// through two paths and logs the latency breakdown:
+//
+//  Path A — Memory agent via /v1/chat/completions (agentcompat layer):
+//            Each turn rebuilds the full messages[] array and re-executes a
+//            fresh agent run with history injected via system prompt appendix.
+//
+//  Path B — Direct LLM calls to the provider (LiteLLM/OpenAI API):
+//            Each turn calls the provider directly with the accumulated
+//            messages[] array, bypassing Memory entirely.
+//
+// The 3 steps:
+//  1. "My secret number is 7. Acknowledge."
+//  2. "Double my secret number and tell me the result."
+//  3. "Add 1 to the result from step 2 and give me the final number."
+//
+// This does NOT assert that Memory is faster — it measures and logs the
+// overhead introduced by the agentcompat / executor layers so we can
+// track regressions over time.
+func (s *AgentCompatTestSuite) TestPerformance_AgentVsDirectLLM() {
+	s.requireLLM()
+
+	steps := []string{
+		"My secret number is 7. Acknowledge in one short sentence.",
+		"Double my secret number and tell me the result as a single number.",
+		"Add 1 to the result you just gave me and reply with only the final number.",
+	}
+
+	// ── Path A: Memory agent ──────────────────────────────────────────────
+	s.T().Log("=== Path A: Memory agent (agentcompat) ===")
+	var agentTurns []struct{ latency time.Duration; reply string }
+	agentMessages := []map[string]any{}
+	agentTotal := time.Duration(0)
+
+	for i, step := range steps {
+		agentMessages = append(agentMessages, map[string]any{
+			"role":    "user",
+			"content": step,
+		})
+
+		t0 := time.Now()
+		resp := s.postChat(map[string]any{
+			"model":    s.agentName,
+			"messages": agentMessages,
+		})
+		elapsed := time.Since(t0)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode,
+			"agent turn %d body: %s", i+1, resp.Body)
+
+		cr := parseChatResponse(s.T(), resp.Body)
+		reply := cr.Choices[0].Message.Content
+		agentMessages = append(agentMessages, map[string]any{
+			"role":    "assistant",
+			"content": reply,
+		})
+		agentTurns = append(agentTurns, struct {
+			latency time.Duration
+			reply   string
+		}{elapsed, reply})
+		agentTotal += elapsed
+		s.T().Logf("  turn %d (%s): %q", i+1, elapsed.Round(time.Millisecond), reply)
+	}
+	s.T().Logf("  TOTAL agent: %s", agentTotal.Round(time.Millisecond))
+
+	// ── Path B: Direct LLM ────────────────────────────────────────────────
+	baseURL := os.Getenv("OPENAI_BASE_URL")
+	model := os.Getenv("OPENAI_MODEL")
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if baseURL == "" || model == "" {
+		s.T().Skip("OPENAI_BASE_URL / OPENAI_MODEL not set — skipping direct LLM path")
+	}
+	// LiteLLM keys are often restricted to the bare model name (without the
+	// provider prefix). Strip a leading "openai/" or similar prefix when calling
+	// the provider directly via its API, since the proxy resolves prefixes itself
+	// but the direct key check rejects them.
+	if idx := strings.Index(model, "/"); idx >= 0 {
+		model = model[idx+1:]
+	}
+
+	s.T().Log("=== Path B: Direct LLM ===")
+	var llmTurns []struct{ latency time.Duration; reply string }
+	llmMessages := []map[string]any{}
+	llmTotal := time.Duration(0)
+
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+	completionsURL := strings.TrimRight(baseURL, "/") + "/chat/completions"
+
+	for i, step := range steps {
+		llmMessages = append(llmMessages, map[string]any{
+			"role":    "user",
+			"content": step,
+		})
+
+		payload, _ := json.Marshal(map[string]any{
+			"model":    model,
+			"messages": llmMessages,
+		})
+
+		req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, completionsURL,
+			bytes.NewReader(payload))
+		s.Require().NoError(err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+
+		t0 := time.Now()
+		httpResp, err := httpClient.Do(req)
+		elapsed := time.Since(t0)
+		s.Require().NoError(err)
+
+		var body map[string]any
+		s.Require().NoError(json.NewDecoder(httpResp.Body).Decode(&body))
+		_ = httpResp.Body.Close()
+		s.Require().Equal(http.StatusOK, httpResp.StatusCode,
+			"direct LLM turn %d: %v", i+1, body)
+
+		choices, _ := body["choices"].([]any)
+		s.Require().NotEmpty(choices, "direct LLM must return choices")
+		msg, _ := choices[0].(map[string]any)["message"].(map[string]any)
+		reply, _ := msg["content"].(string)
+
+		llmMessages = append(llmMessages, map[string]any{
+			"role":    "assistant",
+			"content": reply,
+		})
+		llmTurns = append(llmTurns, struct {
+			latency time.Duration
+			reply   string
+		}{elapsed, reply})
+		llmTotal += elapsed
+		s.T().Logf("  turn %d (%s): %q", i+1, elapsed.Round(time.Millisecond), reply)
+	}
+	s.T().Logf("  TOTAL direct: %s", llmTotal.Round(time.Millisecond))
+
+	// ── Summary ───────────────────────────────────────────────────────────
+	overhead := agentTotal - llmTotal
+	overheadPct := float64(overhead) / float64(llmTotal) * 100
+	s.T().Logf("=== Performance summary (3 turns) ===")
+	s.T().Logf("  Agent total:  %s", agentTotal.Round(time.Millisecond))
+	s.T().Logf("  Direct total: %s", llmTotal.Round(time.Millisecond))
+	s.T().Logf("  Overhead:     %s  (%.1f%%)", overhead.Round(time.Millisecond), overheadPct)
+	s.T().Logf("  Per-turn breakdown:")
+	for i := range steps {
+		diff := agentTurns[i].latency - llmTurns[i].latency
+		s.T().Logf("    turn %d  agent=%s  direct=%s  diff=%s",
+			i+1,
+			agentTurns[i].latency.Round(time.Millisecond),
+			llmTurns[i].latency.Round(time.Millisecond),
+			diff.Round(time.Millisecond),
+		)
+	}
 }

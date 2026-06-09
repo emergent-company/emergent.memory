@@ -54,6 +54,12 @@ func DefaultObjectExtractionWorkerConfig() *ObjectExtractionWorkerConfig {
 	}
 }
 
+// PipelineInputModifier is an optional hook called just before each batch is
+// passed to the extraction pipeline. It receives the input and returns a
+// (possibly modified) copy. Used in tests to inject TypeHints or NegativeExamples
+// without changing production code paths.
+type PipelineInputModifier func(agents.ExtractionPipelineInput) agents.ExtractionPipelineInput
+
 // SchemaProvider provides object and relationship schemas for extraction.
 // This interface allows different implementations (e.g., from database, config, etc.).
 type SchemaProvider interface {
@@ -72,17 +78,18 @@ type ExtractionSchemas struct {
 
 // ObjectExtractionWorker processes object extraction jobs.
 type ObjectExtractionWorker struct {
-	jobsService    *ObjectExtractionJobsService
-	graphService   *graph.Service
-	branchService  *branches.Service
-	docService     *documents.Service
-	schemaProvider SchemaProvider
-	modelFactory   *adk.ModelFactory
-	classifier     *DocumentClassifier
-	limitResolver  adk.ModelLimitResolver // optional; nil → no truncation
-	config         *ObjectExtractionWorkerConfig
-	log            *slog.Logger
-	scaler         *syshealth.ConcurrencyScaler
+	jobsService         *ObjectExtractionJobsService
+	graphService        *graph.Service
+	branchService       *branches.Service
+	docService          *documents.Service
+	schemaProvider      SchemaProvider
+	modelFactory        *adk.ModelFactory
+	classifier          *DocumentClassifier
+	limitResolver       adk.ModelLimitResolver // optional; nil → no truncation
+	pipelineInputModifier PipelineInputModifier  // optional; nil → no modification
+	config              *ObjectExtractionWorkerConfig
+	log                 *slog.Logger
+	scaler              *syshealth.ConcurrencyScaler
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -125,6 +132,13 @@ func NewObjectExtractionWorker(
 func (w *ObjectExtractionWorker) WithLimitResolver(r adk.ModelLimitResolver) *ObjectExtractionWorker {
 	w.limitResolver = r
 	return w
+}
+
+// SetPipelineInputModifier sets an optional hook that mutates ExtractionPipelineInput
+// just before each batch is processed. Intended for testing only — allows injecting
+// TypeHints, NegativeExamples, or other fields without wiring the full classifier.
+func (w *ObjectExtractionWorker) SetPipelineInputModifier(m PipelineInputModifier) {
+	w.pipelineInputModifier = m
 }
 
 // Start begins processing jobs in the background.
@@ -398,13 +412,17 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 			)
 		}
 
-		pipelineOutput, err := pipeline.Run(ctx, agents.ExtractionPipelineInput{
+		pipelineInput := agents.ExtractionPipelineInput{
 			DocumentText:        batch,
 			ObjectSchemas:       schemas.ObjectSchemas,
 			RelationshipSchemas: schemas.RelationshipSchemas,
 			AllowedTypes:        job.EnabledTypes,
 			DomainGuidance:      classificationResult.DomainGuidance,
-		})
+		}
+		if w.pipelineInputModifier != nil {
+			pipelineInput = w.pipelineInputModifier(pipelineInput)
+		}
+		pipelineOutput, err := pipeline.Run(ctx, pipelineInput)
 		if err != nil {
 			w.deleteStagingBranch(ctx, job, stagingBranchID)
 			return nil, fmt.Errorf("run pipeline (batch %d/%d): %w", i+1, len(batches), err)

@@ -1668,6 +1668,276 @@ func (s *ExtractionFixedSchemaTestSuite) TestCompare_QualityAssessment() {
 	s.GreaterOrEqual(len(fixedReport.FoundMainCast), 3, "fixed should find at least 3 main cast")
 }
 
+// extractionHintsOverride carries optional TypeHints and NegativeExamples that
+// are injected directly into ExtractionPipelineInput, bypassing the classifier.
+// Pass nil to use default behaviour (no per-type hints, no negative examples).
+type extractionHintsOverride struct {
+	TypeHints        map[string]string
+	NegativeExamples []string
+}
+
+// runExtractionOnProject is a generalised version of runExtraction that targets
+// an arbitrary projectID and accepts an optional hints override.
+// When hints is non-nil, TypeHints and NegativeExamples are injected into the
+// extraction pipeline input — isolating their contribution from schema structure.
+func (s *ExtractionFixedSchemaTestSuite) runExtractionOnProject(
+	projectID, documentID string,
+	enabledTypes []string,
+	hints *extractionHintsOverride,
+) *extraction.ObjectExtractionJob {
+	s.T().Helper()
+	db := s.testDB.DB
+	log := s.quietLogger()
+
+	docsRepo := documents.NewRepository(db, log)
+	docsSvc := documents.NewService(docsRepo, log)
+
+	graphCfg := s.testGraphConfig()
+	graphRepo := graph.NewRepository(db, log, graphCfg)
+	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
+	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider,
+		graph.ProvideInverseTypeProvider(db, log), nil, nil, nil, nil, nil, nil)
+
+	extractionSchemaProvider := extraction.NewMemorySchemaProvider(db, log)
+	jobsCfg := &extraction.ObjectExtractionConfig{}
+	jobsSvc := extraction.NewObjectExtractionJobsService(db, log, jobsCfg)
+
+	modelFactory := s.modelFactory()
+	if modelFactory == nil {
+		s.T().Skip("no LLM credentials — cannot run extraction")
+	}
+
+	job, err := jobsSvc.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID:    projectID,
+		DocumentID:   &documentID,
+		EnabledTypes: enabledTypes,
+	})
+	s.Require().NoError(err, "create extraction job")
+	s.T().Logf("  extraction job: id=%s project=%s", job.ID, projectID)
+
+	// Build a pipeline input modifier when hints are provided.
+	// We wrap the model factory with a custom pipeline input builder that injects
+	// TypeHints and NegativeExamples before the pipeline runs.
+	var inputModifier extraction.PipelineInputModifier
+	if hints != nil {
+		inputModifier = func(input extractionagents.ExtractionPipelineInput) extractionagents.ExtractionPipelineInput {
+			if len(hints.TypeHints) > 0 {
+				input.TypeHints = hints.TypeHints
+			}
+			if len(hints.NegativeExamples) > 0 {
+				input.NegativeExamples = hints.NegativeExamples
+			}
+			return input
+		}
+	}
+
+	worker := extraction.NewObjectExtractionWorker(
+		jobsSvc,
+		graphSvc,
+		nil, // branchService — nil → objects go to main graph directly
+		docsSvc,
+		extractionSchemaProvider,
+		modelFactory,
+		nil, // embeddingService
+		extraction.DefaultObjectExtractionWorkerConfig(),
+		log,
+		nil, // concurrency scaler
+	)
+	if inputModifier != nil {
+		worker.SetPipelineInputModifier(inputModifier)
+	}
+
+	results, runErr := worker.ProcessJobSync(s.ctx, job)
+	if runErr != nil {
+		s.T().Logf("  extraction error (may be partial): %v", runErr)
+	}
+	if results != nil {
+		s.T().Logf("  extraction results: objects_created=%d merged=%d relationships=%d",
+			results.ObjectsCreated, results.ObjectsMerged, results.RelationshipsCreated)
+	}
+	return job
+}
+
+// loadDiscoveredHints queries the extraction_prompts of the schema installed on
+// projectID and returns the TypeHints and NegativeExamples from it.
+// Returns nil if no schema with extraction_prompts is found.
+func (s *ExtractionFixedSchemaTestSuite) loadDiscoveredHints(projectID string) *extractionHintsOverride {
+	s.T().Helper()
+	var raw []byte
+	err := s.testDB.DB.NewRaw(`
+		SELECT gs.extraction_prompts
+		FROM kb.graph_schemas gs
+		JOIN kb.project_schemas ps ON ps.schema_id = gs.id
+		WHERE ps.project_id = ? AND ps.removed_at IS NULL
+		  AND gs.extraction_prompts IS NOT NULL
+		  AND gs.extraction_prompts != '{}'
+		ORDER BY ps.installed_at DESC LIMIT 1`,
+		projectID,
+	).Scan(s.ctx, &raw)
+	if err != nil || len(raw) == 0 {
+		s.T().Logf("  no extraction_prompts found for project %s", projectID)
+		return nil
+	}
+	var ep extraction.SchemaExtractionPrompts
+	if err := json.Unmarshal(raw, &ep); err != nil {
+		s.T().Logf("  failed to parse extraction_prompts: %v", err)
+		return nil
+	}
+	if len(ep.TypeHints) == 0 && len(ep.NegativeExamples) == 0 {
+		s.T().Logf("  extraction_prompts present but empty (no TypeHints/NegativeExamples)")
+		return nil
+	}
+	s.T().Logf("  loaded hints: %d TypeHints, %d NegativeExamples", len(ep.TypeHints), len(ep.NegativeExamples))
+	for typeName, hint := range ep.TypeHints {
+		s.T().Logf("    TypeHint[%s]: %s", typeName, hint)
+	}
+	for _, ex := range ep.NegativeExamples {
+		s.T().Logf("    NegativeExample: %s", ex)
+	}
+	return &extractionHintsOverride{
+		TypeHints:        ep.TypeHints,
+		NegativeExamples: ep.NegativeExamples,
+	}
+}
+
+// createDocumentOnProject creates a document in an arbitrary project (not the
+// suite's fixed-schema project). Used to set up extraction on a discovery project.
+func (s *ExtractionFixedSchemaTestSuite) createDocumentOnProject(projectID, text string) string {
+	s.T().Helper()
+	db := s.testDB.DB
+	log := s.quietLogger()
+	docsRepo := documents.NewRepository(db, log)
+	docsSvc := documents.NewService(docsRepo, log)
+	filename := "friends-transcript.txt"
+	sourceType := "manual"
+	doc, _, err := docsSvc.Create(s.ctx, documents.CreateParams{
+		ProjectID:  projectID,
+		Filename:   &filename,
+		Content:    &text,
+		SourceType: &sourceType,
+	})
+	s.Require().NoError(err, "create document on project %s", projectID)
+	return doc.ID
+}
+
+// TestCompare_TypeHintsContribution isolates the quality impact of wiring
+// TypeHints and NegativeExamples from SchemaExtractionPrompts into the
+// single-phase ExtractionPipeline.
+//
+// Flow:
+//  1. Run discovery (guided) → get a project with a discovered schema that has
+//     extraction_prompts populated (TypeHints, NegativeExamples)
+//  2. Load those hints from DB
+//  3. Re-run extraction on the same transcript twice on fresh projects:
+//     - Path A (baseline): discovered schema, no TypeHints injected
+//     - Path B (hinted):   discovered schema, TypeHints+NegativeExamples injected
+//  4. Compare quality — difference isolates the hint contribution
+//
+// If Path B is clearly better than Path A, that proves TypeHints/NegativeExamples
+// have real impact and should be wired permanently into ObjectExtractionWorker.
+func (s *ExtractionFixedSchemaTestSuite) TestCompare_TypeHintsContribution() {
+	s.skipIfNoLLM()
+
+	transcript, err := friendsTranscript(0, 50)
+	if err != nil {
+		s.T().Skipf("could not fetch Friends transcript: %v", err)
+	}
+	s.T().Logf("fixture: %d chars, %d lines", len(transcript), strings.Count(transcript, "\n"))
+
+	// ── Step 1: run discovery to obtain a schema with extraction_prompts ────
+	s.T().Log("══ STEP 1: GUIDED DISCOVERY (schema + extraction_prompts) ══")
+	discProjectID, discTypeNames, discWall := s.runDiscovery(transcript, friendsTranscriptGuide)
+	s.T().Logf("  discovery wall=%dms  schema types=%v", discWall, discTypeNames)
+
+	// ── Step 2: load TypeHints + NegativeExamples from discovered schema ────
+	s.T().Log("══ STEP 2: LOAD DISCOVERED HINTS ════════════════════════════")
+	hints := s.loadDiscoveredHints(discProjectID)
+	if hints == nil {
+		s.T().Skip("discovered schema has no TypeHints/NegativeExamples — cannot isolate contribution")
+	}
+
+	// ── Step 3a: baseline extraction — no hints injected ────────────────────
+	s.T().Log("══ PATH A: BASELINE (no TypeHints) ══════════════════════════")
+	baselineStart := time.Now()
+	baseDocID := s.createDocumentOnProject(discProjectID, transcript)
+	s.runExtractionOnProject(discProjectID, baseDocID, discTypeNames, nil)
+	baselineWall := time.Since(baselineStart).Milliseconds()
+	baselineReport := s.buildQualityReport("baseline-no-hints", discProjectID)
+	baselineReport.TotalRelEdges = len(s.extractRelationshipsFromProject(discProjectID))
+	baselineReport.logTo(s.T())
+	s.T().Logf("  wall=%dms", baselineWall)
+
+	// ── Step 3b: hinted extraction — same schema + TypeHints injected ───────
+	// Fresh project, same schema re-installed so there's no bleed from baseline.
+	s.T().Log("══ PATH B: HINTED (TypeHints + NegativeExamples injected) ═══")
+	hintedOrgID := uuid.New().String()
+	hintedProjectID := uuid.New().String()
+	s.Require().NoError(testutil.SetupFullTestProject(s.ctx, s.testDB.DB, hintedOrgID, hintedProjectID))
+
+	// Copy the discovered schema installation to the hinted project.
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.project_schemas (id, project_id, schema_id, installed_at, active)
+		SELECT gen_random_uuid(), ?, schema_id, now(), true
+		FROM kb.project_schemas
+		WHERE project_id = ? AND removed_at IS NULL
+		LIMIT 1`,
+		hintedProjectID, discProjectID,
+	).Exec(s.ctx)
+	s.Require().NoError(err, "copy schema to hinted project")
+
+	hintedStart := time.Now()
+	hintedDocID := s.createDocumentOnProject(hintedProjectID, transcript)
+	s.runExtractionOnProject(hintedProjectID, hintedDocID, discTypeNames, hints)
+	hintedWall := time.Since(hintedStart).Milliseconds()
+	hintedReport := s.buildQualityReport("hinted", hintedProjectID)
+	hintedReport.TotalRelEdges = len(s.extractRelationshipsFromProject(hintedProjectID))
+	hintedReport.logTo(s.T())
+	s.T().Logf("  wall=%dms", hintedWall)
+
+	// ── Fixed-schema reference point ─────────────────────────────────────────
+	s.T().Log("══ PATH C: FIXED SCHEMA (reference) ════════════════════════")
+	fixedStart := time.Now()
+	docID := s.createDocument(transcript)
+	s.runExtraction(docID)
+	fixedWall := time.Since(fixedStart).Milliseconds()
+	fixedReport := s.buildQualityReport("fixed-schema", s.projectID)
+	fixedReport.TotalRelEdges = len(s.extractRelationshipsFromProject(s.projectID))
+	fixedReport.logTo(s.T())
+	s.T().Logf("  wall=%dms", fixedWall)
+
+	// ── Quality comparison ────────────────────────────────────────────────────
+	s.T().Log("══ QUALITY COMPARISON (A=baseline vs B=hinted vs C=fixed) ══")
+	s.T().Logf("  %-30s  %-14s  %-14s  %-14s", "metric", "A:no-hints", "B:hinted", "C:fixed")
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "total characters",
+		baselineReport.TotalCharacters, hintedReport.TotalCharacters, fixedReport.TotalCharacters)
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "distinct characters",
+		baselineReport.DistinctCharacters, hintedReport.DistinctCharacters, fixedReport.DistinctCharacters)
+	s.T().Logf("  %-30s  %-13.0f%%  %-13.0f%%  %-13.0f%%", "duplication rate",
+		baselineReport.DuplicateRate*100, hintedReport.DuplicateRate*100, fixedReport.DuplicateRate*100)
+	s.T().Logf("  %-30s  %d/6%-11s  %d/6%-11s  %d/6",
+		"main cast recall",
+		len(baselineReport.FoundMainCast), "",
+		len(hintedReport.FoundMainCast), "",
+		len(fixedReport.FoundMainCast))
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "known rels found",
+		len(baselineReport.KnownRelsFound), len(hintedReport.KnownRelsFound), len(fixedReport.KnownRelsFound))
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "relationship objects",
+		baselineReport.TotalRelObjects, hintedReport.TotalRelObjects, fixedReport.TotalRelObjects)
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "graph edges",
+		baselineReport.TotalRelEdges, hintedReport.TotalRelEdges, fixedReport.TotalRelEdges)
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "events",
+		baselineReport.TotalEvents, hintedReport.TotalEvents, fixedReport.TotalEvents)
+	s.T().Logf("  %-30s  %-14.1f  %-14.1f  %-14.1f", "avg props/character",
+		baselineReport.AvgPropsPerChar, hintedReport.AvgPropsPerChar, fixedReport.AvgPropsPerChar)
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "wall ms",
+		baselineWall, hintedWall, fixedWall)
+
+	// Soft assertions — both extraction runs must produce at least something.
+	s.Greater(baselineReport.TotalCharacters+hintedReport.TotalCharacters, 0,
+		"both baseline and hinted produced zero characters — LLM failure")
+	s.GreaterOrEqual(len(fixedReport.FoundMainCast), 3, "fixed-schema should find at least 3 main cast")
+}
+
 // generateGuide calls the same LLM used by extraction to classify the document
 // against the project's domain description and returns a natural-language guide
 // string suitable for passing as the guide field of /remember.

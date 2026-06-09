@@ -77,6 +77,15 @@ type ExtractionPipelineInput struct {
 	// DomainGuidance contains schema-pack-specific extraction hints.
 	// Sourced from SchemaExtractionPrompts.DomainContext if set.
 	DomainGuidance string
+
+	// TypeHints are per-type extraction hints from SchemaExtractionPrompts.TypeHints.
+	// When set, each hint is appended to the entity extractor prompt under the
+	// corresponding type section, giving the LLM precise per-type guidance.
+	TypeHints map[string]string
+
+	// NegativeExamples lists what NOT to extract, from SchemaExtractionPrompts.NegativeExamples.
+	// When set, appended as a "Do NOT extract" section in the entity extractor prompt.
+	NegativeExamples []string
 }
 
 // ExtractionPipelineOutput is the result of running the extraction pipeline.
@@ -181,6 +190,12 @@ func (p *ExtractionPipeline) Run(ctx context.Context, input ExtractionPipelineIn
 	}
 	if input.DomainGuidance != "" {
 		initialState["domain_guidance"] = input.DomainGuidance
+	}
+	if len(input.TypeHints) > 0 {
+		initialState["type_hints"] = input.TypeHints
+	}
+	if len(input.NegativeExamples) > 0 {
+		initialState["negative_examples"] = input.NegativeExamples
 	}
 
 	// Create a session with initial state

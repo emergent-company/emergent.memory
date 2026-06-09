@@ -163,13 +163,18 @@ func (s *Service) handleNewRun(
 		return nil, fmt.Errorf("building client tools: %w", err)
 	}
 
+	// Inject prior conversation turns into the system prompt appendix so the
+	// agent has full context. The executor starts a fresh ADK session per run,
+	// so there is no native session continuity — we replay history as text.
+	appendix := buildSystemAppendix(req.Messages, len(req.Tools) > 0)
+
 	execReq := agents.ExecuteRequest{
 		Agent:                agent,
 		AgentDefinition:      agentDef,
 		ProjectID:            projectID,
 		OrgID:                user.OrgID,
 		UserMessage:          userMsg,
-		SystemPromptAppendix: SystemPromptAppendix(len(req.Tools) > 0),
+		SystemPromptAppendix: appendix,
 		UserID:               user.ID,
 		ExtraTools:           extraTools,
 	}
@@ -549,8 +554,6 @@ func (s *Service) buildClientToolCallResult(runID string, pause *clientPauseStat
 // ─── Message parsing helpers ───────────────────────────────────────────────
 
 // buildUserMessage extracts the last user-role message from the conversation.
-// Preceding messages (system, assistant, tool) are concatenated into the
-// system prompt appendix so the agent has full context.
 func buildUserMessage(messages []ChatMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
@@ -558,6 +561,74 @@ func buildUserMessage(messages []ChatMessage) string {
 		}
 	}
 	return ""
+}
+
+// buildSystemAppendix combines the tool-naming convention block and a
+// conversation history block (all turns preceding the final user message)
+// into the string that gets appended to the agent's system instruction.
+// This gives the agent full context when the caller sends a multi-turn
+// messages[] array, because the executor starts a fresh ADK session per run
+// and has no native session continuity.
+func buildSystemAppendix(messages []ChatMessage, hasClientTools bool) string {
+	var sb strings.Builder
+
+	if history := buildConversationHistory(messages); history != "" {
+		sb.WriteString("## Conversation history\n\n")
+		sb.WriteString("The following is the conversation so far. Use it to answer the user's latest message.\n\n")
+		sb.WriteString(history)
+	}
+
+	if tool := SystemPromptAppendix(hasClientTools); tool != "" {
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(tool)
+	}
+
+	return sb.String()
+}
+
+// buildConversationHistory serialises all messages except the final user message
+// into a readable transcript. Returns "" when there is only one message.
+func buildConversationHistory(messages []ChatMessage) string {
+	// Find the index of the last user message — that becomes the live UserMessage
+	// sent to the executor, so we exclude it from the history block.
+	lastUser := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			lastUser = i
+			break
+		}
+	}
+	// Nothing to replay if the conversation is just one user message.
+	if lastUser <= 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	for i := 0; i < lastUser; i++ {
+		m := messages[i]
+		switch m.Role {
+		case "system":
+			// system messages are already injected via the agent definition —
+			// skip to avoid duplication.
+			continue
+		case "user":
+			sb.WriteString(fmt.Sprintf("User: %s\n", m.Content))
+		case "assistant":
+			if len(m.ToolCalls) > 0 {
+				for _, tc := range m.ToolCalls {
+					sb.WriteString(fmt.Sprintf("Assistant called tool %q with args: %s\n",
+						tc.Function.Name, tc.Function.Arguments))
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("Assistant: %s\n", m.Content))
+			}
+		case "tool":
+			sb.WriteString(fmt.Sprintf("Tool result (id=%s): %s\n", m.ToolCallID, m.Content))
+		}
+	}
+	return sb.String()
 }
 
 // toolResult is the decoded result of a client tool call from the messages array.

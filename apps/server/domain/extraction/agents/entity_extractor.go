@@ -110,6 +110,35 @@ func NewEntityExtractorAgent(cfg EntityExtractorConfig) (agent.Agent, error) {
 				existingEntities,
 			)
 
+			// Inject per-type hints and negative examples before the document section.
+			// These come from SchemaExtractionPrompts.TypeHints / NegativeExamples and
+			// give the LLM precise per-type guidance in the high-attention middle zone.
+			typeHints, _ := func() (map[string]string, bool) {
+				if v, err := state.Get("type_hints"); err == nil {
+					if m, ok := v.(map[string]string); ok {
+						return m, true
+					}
+				}
+				return nil, false
+			}()
+			negativeExamples, _ := func() ([]string, bool) {
+				if v, err := state.Get("negative_examples"); err == nil {
+					if s, ok := v.([]string); ok {
+						return s, true
+					}
+				}
+				return nil, false
+			}()
+			if section := BuildTypeHintsSection(typeHints, negativeExamples); section != "" {
+				// Insert before "## Document" so hints appear before the raw text.
+				const docMarker = "\n## Document\n"
+				if idx := strings.Index(prompt, docMarker); idx >= 0 {
+					prompt = prompt[:idx] + section + prompt[idx:]
+				} else {
+					prompt = prompt + section
+				}
+			}
+
 			// Append domain guidance if available
 			projectContext, _ := func() (string, bool) {
 				if v, err := state.Get("project_context"); err == nil {
