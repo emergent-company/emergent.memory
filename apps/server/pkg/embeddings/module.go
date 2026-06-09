@@ -22,6 +22,20 @@ func NewNoopService(log *slog.Logger) *Service {
 	}
 }
 
+// NewTestEmbeddingsService creates a real embeddings service backed by a
+// per-project resolver, without requiring an fx lifecycle. Used in integration
+// tests that need semantic search (search-hybrid) to work with actual vectors.
+// The static client is a noop — all actual embedding calls go through the
+// resolver which fetches credentials from the project's provider config.
+func NewTestEmbeddingsService(resolver EmbeddingResolver, log *slog.Logger) *Service {
+	return &Service{
+		client:   NewNoopClient(), // fallback; resolver takes priority per-request
+		resolver: resolver,
+		log:      log,
+		enabled:  true,
+	}
+}
+
 // Module provides the embeddings fx.Module
 var Module = fx.Module("embeddings",
 	fx.Provide(NewService),

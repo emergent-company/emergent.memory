@@ -79,6 +79,13 @@ func provideEmbeddingEnqueuer(svc *GraphEmbeddingJobsService) graph.EmbeddingEnq
 	return &embeddingEnqueuerAdapter{svc: svc}
 }
 
+// NewEmbeddingEnqueuerAdapter wraps a GraphEmbeddingJobsService as a
+// graph.EmbeddingEnqueuer. Used by test servers that build the graph service
+// outside the fx container.
+func NewEmbeddingEnqueuerAdapter(svc *GraphEmbeddingJobsService) graph.EmbeddingEnqueuer {
+	return &embeddingEnqueuerAdapter{svc: svc}
+}
+
 // relEmbeddingEnqueuerAdapter adapts GraphRelationshipEmbeddingJobsService to graph.RelationshipEmbeddingEnqueuer.
 type relEmbeddingEnqueuerAdapter struct {
 	svc *GraphRelationshipEmbeddingJobsService

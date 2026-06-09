@@ -743,6 +743,7 @@ func (w *ObjectExtractionWorker) persistResults(
 	successfulItems := objectsCreated + objectsMerged
 	return &ObjectExtractionResults{
 		ObjectsCreated:       objectsCreated,
+		ObjectsMerged:        objectsMerged,
 		RelationshipsCreated: relationshipsCreated,
 		TotalItems:           len(output.Entities),
 		ProcessedItems:       len(output.Entities),

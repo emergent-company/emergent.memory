@@ -23,6 +23,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agentcompat"
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/authinfo"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chat"
@@ -141,13 +142,22 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 	encryptionSvc := encryption.NewService(testDB.DB, log)
 	agentRepo := agents.NewRepository(db)
 	skillsRepo := skills.NewRepository(db, log)
-	embeddingsSvc := embeddings.NewNoopService(log)
 	providerRepo := provider.NewRepository(db, log)
 	eventsSvc := events.NewService(log)
 	apitokenRepo := apitoken.NewRepository(db, log)
 	apitokenSvc := apitoken.NewService(db, apitokenRepo, encryptionSvc, log)
 
 	sessionSvc := session.Service(bunsession.NewService(testDB.DB))
+
+	// Build real per-project embedding service so search-hybrid returns semantic
+	// results in tests. Uses the provider credentials seeded by SetupFullTestProject.
+	providerRegistry := provider.NewRegistry()
+	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
+	credSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, cfg, log)
+	modelconfigStore := modelconfig.NewStore(db, log)
+	modelconfigSvc := modelconfig.NewService(modelconfigStore, log)
+	embeddingResolver := modelconfig.NewEmbeddingResolverAdapter(modelconfigSvc, credSvc)
+	embeddingsSvc := embeddings.NewTestEmbeddingsService(embeddingResolver, log)
 
 	testGraphCfg := &config.Config{}
 	testGraphCfg.Graph.MaxBatchObjects = 500
@@ -156,7 +166,11 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 	testGraphCfg.Graph.DefaultListLimit = 100
 	graphRepo := graph.NewRepository(db, log, testGraphCfg)
 	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
-	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, nil, nil, nil, nil, nil)
+
+	// Wire embedding enqueuer so entity-create triggers async embedding jobs.
+	graphEmbJobsSvc := extraction.NewGraphEmbeddingJobsService(db, log, extraction.DefaultGraphEmbeddingConfig())
+	graphEmbEnqueuer := extraction.NewEmbeddingEnqueuerAdapter(graphEmbJobsSvc)
+	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider, graph.ProvideInverseTypeProvider(db, log), embeddingsSvc, graphEmbEnqueuer, nil, nil, nil, nil)
 
 	docsRepo := documents.NewRepository(db, log)
 	docsSvc := documents.NewService(docsRepo, log)
@@ -235,20 +249,37 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	worker.Start(workerCtx)
 
+	// Start graph embedding worker so entity-create triggers real embeddings.
+	// Uses a fast poll interval (2s) matching the extraction worker.
+	graphEmbWorkerCfg := extraction.DefaultGraphEmbeddingConfig()
+	graphEmbWorkerCfg.WorkerIntervalMs = 2000
+	graphEmbWorker := extraction.NewGraphEmbeddingWorker(
+		graphEmbJobsSvc,
+		embeddingsSvc,
+		db,
+		graphEmbWorkerCfg,
+		log,
+		nil, // concurrency scaler
+		nil, // usage recorder
+		nil, // budget checker
+		false,
+	)
+	graphEmbWorkerCtx, graphEmbWorkerCancel := context.WithCancel(context.Background())
+	_ = graphEmbWorker.Start(graphEmbWorkerCtx)
+
 	// Build the base server (registers all routes with nil LLM).
 	ts := newTestServerWithDB(testDB, db)
 	ts.StopFn = func() {
 		workerCancel()
 		worker.Stop()
+		graphEmbWorkerCancel()
+		_ = graphEmbWorker.Stop(context.Background())
 	}
 
 	// Re-register chat routes with the live executor + modelFactory, overriding
 	// the nil-LLM registration from newTestServerWithDB.
 	chatRepo := chat.NewRepository(db, log)
 	chatSvc := chat.NewService(chatRepo, log)
-	providerRegistry := provider.NewRegistry()
-	providerCatalogSvc := provider.NewModelCatalogService(providerRepo, log)
-	credSvc := provider.NewCredentialService(providerRepo, providerRegistry, providerCatalogSvc, cfg, log)
 
 	chatHandler := chat.NewHandler(
 		chatSvc,

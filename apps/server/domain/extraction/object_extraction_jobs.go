@@ -258,6 +258,7 @@ func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID s
 // ObjectExtractionResults contains the results of an object extraction job
 type ObjectExtractionResults struct {
 	ObjectsCreated       int
+	ObjectsMerged        int // entities merged into existing objects (CreateOrUpdate, not new rows)
 	RelationshipsCreated int
 	SuggestionsCreated   int
 	TotalItems           int

@@ -402,6 +402,77 @@ func (c *HTTPClient) ListChunks(projectID, orgID, authToken string, queryParams 
 	return &result, nil
 }
 
+// PatchProject updates project fields via PATCH /api/projects/{id}.
+// fields may contain any subset of updatable project fields (name, project_info, etc.).
+func (c *HTTPClient) PatchProject(projectID, token string, fields map[string]any) error {
+	resp := c.PATCH(fmt.Sprintf("/api/projects/%s", projectID),
+		WithAuth(token),
+		WithJSONBody(fields),
+	)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("PatchProject: status %d body: %s", resp.StatusCode, resp.String())
+	}
+	return nil
+}
+
+// CreateGraphObject creates a graph object via POST /api/graph/objects.
+// Returns the canonical_id (entity_id) of the created object.
+func (c *HTTPClient) CreateGraphObject(projectID, orgID, token string, body map[string]any) (string, error) {
+	resp := c.POST("/api/graph/objects",
+		WithAuth(token),
+		WithProjectID(projectID),
+		WithOrgID(orgID),
+		WithJSONBody(body),
+	)
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("CreateGraphObject: status %d body: %s", resp.StatusCode, resp.String())
+	}
+	var result map[string]any
+	if err := resp.JSON(&result); err != nil {
+		return "", fmt.Errorf("CreateGraphObject: parse response: %w", err)
+	}
+	// canonical_id may be in "canonical_id" or "entity_id" field
+	for _, key := range []string{"canonical_id", "entity_id", "id"} {
+		if v, ok := result[key].(string); ok && v != "" {
+			return v, nil
+		}
+	}
+	return "", fmt.Errorf("CreateGraphObject: id not found in response: %v", result)
+}
+
+// SearchGraphObjects queries GET /api/graph/objects/search with the given params.
+// Returns the items array from the response.
+func (c *HTTPClient) SearchGraphObjects(projectID, orgID, token string, params map[string]string) ([]map[string]any, error) {
+	path := "/api/graph/objects/search"
+	if len(params) > 0 {
+		parts := make([]string, 0, len(params))
+		for k, v := range params {
+			parts = append(parts, k+"="+v)
+		}
+		path += "?" + strings.Join(parts, "&")
+	}
+	resp := c.GET(path,
+		WithAuth(token),
+		WithProjectID(projectID),
+		WithOrgID(orgID),
+	)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("SearchGraphObjects: status %d body: %s", resp.StatusCode, resp.String())
+	}
+	var result map[string]any
+	if err := resp.JSON(&result); err != nil {
+		return nil, fmt.Errorf("SearchGraphObjects: parse response: %w", err)
+	}
+	items, _ := result["items"].([]any)
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
 // ============================================================================
 // Response Types
 // ============================================================================
