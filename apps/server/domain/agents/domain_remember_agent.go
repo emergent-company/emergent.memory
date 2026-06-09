@@ -176,6 +176,55 @@ func buildDomainRememberToolPolicies(schemaPolicy string) map[string]ToolPolicy 
 	}
 }
 
+// EnrichRememberAgentName is the fixed name of the enrich-policy remember agent.
+const EnrichRememberAgentName = "domain-remember-agent-v8-enrich"
+
+// EnsureEnrichRememberAgent returns the V8 enrich remember agent for the project,
+// creating it if it does not exist. This agent uses RememberPromptV8Enrich which
+// delegates property generation to the server via mode="enrich" / mode="create_rich".
+func (r *Repository) EnsureEnrichRememberAgent(ctx context.Context, projectID string) (*AgentDefinition, error) {
+	existing, err := r.FindDefinitionByName(ctx, projectID, EnrichRememberAgentName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up enrich-remember-agent: %w", err)
+	}
+	if existing != nil {
+		// Sync system prompt so improvements take effect on existing agents.
+		if existing.SystemPrompt == nil || *existing.SystemPrompt != RememberPromptV8Enrich {
+			sp := RememberPromptV8Enrich
+			existing.SystemPrompt = &sp
+			if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+				slog.Warn("enrich-remember-agent: failed to sync prompt", "error", updateErr)
+			}
+		}
+		return existing, nil
+	}
+
+	temperature := float32(0.1)
+	maxSteps := 10
+	systemPrompt := RememberPromptV8Enrich
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         EnrichRememberAgentName,
+		Description:  strPtr("Enrich-policy remember agent — enriches schema properties from document, then queues extraction"),
+		SystemPrompt: &systemPrompt,
+		Model:        &ModelConfig{Temperature: &temperature},
+		Tools:        []string{"finalize-discovery"},
+		Skills:       []string{},
+		FlowType:     FlowTypeSingle,
+		MaxSteps:     &maxSteps,
+		Visibility:   VisibilityProject,
+		Config:       map[string]any{},
+		ToolPolicies: map[string]ToolPolicy{}, // no gate
+	}
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, EnrichRememberAgentName); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create enrich-remember-agent: %w", err)
+	}
+	return def, nil
+}
+
 // sliceEq returns true if two string slices have the same length and elements in the same order.
 func sliceEq(a, b []string) bool {
 	if len(a) != len(b) {

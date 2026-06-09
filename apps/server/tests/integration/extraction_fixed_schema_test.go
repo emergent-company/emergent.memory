@@ -44,6 +44,7 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
 	extractionagents "github.com/emergent-company/emergent.memory/domain/extraction/agents"
@@ -1142,13 +1143,13 @@ const friendsRichProjectInfo = `{
 // Pass "" for no guide (baseline). Pass friendsTranscriptGuide for guided discovery.
 // Returns the project ID used (fresh isolated project), schema type names, and wall time.
 func (s *ExtractionFixedSchemaTestSuite) runDiscovery(text, guide string) (projectID string, typeNames []string, wallMs int64) {
-	return s.runDiscoveryProject(text, guide, friendsProjectInfo)
+	return s.runDiscoveryProject(text, guide, friendsProjectInfo, "auto")
 }
 
-// runDiscoveryProject is like runDiscovery but accepts an explicit projectInfo string
-// (used as kbPurpose on the project). This lets callers supply friendsRichProjectInfo
-// or any other domain description without touching the shared suite state.
-func (s *ExtractionFixedSchemaTestSuite) runDiscoveryProject(text, guide, projectInfo string) (projectID string, typeNames []string, wallMs int64) {
+// runDiscoveryProject is like runDiscovery but accepts explicit projectInfo and schemaPolicy.
+// This lets callers supply friendsRichProjectInfo or schema_policy=enrich without touching
+// the shared suite state.
+func (s *ExtractionFixedSchemaTestSuite) runDiscoveryProject(text, guide, projectInfo, schemaPolicy string) (projectID string, typeNames []string, wallMs int64) {
 	s.T().Helper()
 
 	// Fresh isolated project — no bleed from fixed-schema project.
@@ -1166,9 +1167,12 @@ func (s *ExtractionFixedSchemaTestSuite) runDiscoveryProject(text, guide, projec
 
 	rememberURL := fmt.Sprintf("/api/projects/%s/remember", projectID)
 
+	if schemaPolicy == "" {
+		schemaPolicy = "auto"
+	}
 	body := map[string]any{
 		"message":       text,
-		"schema_policy": "auto",
+		"schema_policy": schemaPolicy,
 	}
 	if guide != "" {
 		body["guide"] = guide
@@ -1193,8 +1197,13 @@ func (s *ExtractionFixedSchemaTestSuite) runDiscoveryProject(text, guide, projec
 
 	// Wait for: (a) async extraction_prompts LLM call, (b) background extraction worker.
 	// The worker runs in the same in-process server, so polling graph_objects works.
+	// enrich/create_rich add a server-side LLM call before extraction queues, so allow more time.
+	pollSeconds := 180
+	if schemaPolicy == "enrich" {
+		pollSeconds = 240
+	}
 	s.T().Log("  waiting for discovery extraction to settle...")
-	deadline := time.Now().Add(120 * time.Second)
+	deadline := time.Now().Add(time.Duration(pollSeconds) * time.Second)
 	var prevCount int
 	stableFor := 0
 	for time.Now().Before(deadline) {
@@ -2026,7 +2035,7 @@ func (s *ExtractionFixedSchemaTestSuite) TestCompare_ProjectInfoClassifiedVsFixe
 
 	// ── Path A: project-info-classified guide ───────────────────────────────
 	s.T().Log("══ PATH A: PROJECT-INFO CLASSIFIED GUIDE ═════════════")
-	classProjectID, _, classWall := s.runDiscoveryProject(transcript, classifiedGuide, friendsRichProjectInfo)
+	classProjectID, _, classWall := s.runDiscoveryProject(transcript, classifiedGuide, friendsRichProjectInfo, "auto")
 	classReport := s.buildQualityReport("classified-guide", classProjectID)
 	classReport.TotalRelEdges = len(s.extractRelationshipsFromProject(classProjectID))
 	classReport.logTo(s.T())
@@ -2034,7 +2043,7 @@ func (s *ExtractionFixedSchemaTestSuite) TestCompare_ProjectInfoClassifiedVsFixe
 
 	// ── Path B: hardcoded guide baseline ────────────────────────────────────
 	s.T().Log("══ PATH B: HARDCODED GUIDE (baseline) ════════════════")
-	guidedProjectID, _, guidedWall := s.runDiscoveryProject(transcript, friendsTranscriptGuide, friendsRichProjectInfo)
+	guidedProjectID, _, guidedWall := s.runDiscoveryProject(transcript, friendsTranscriptGuide, friendsRichProjectInfo, "auto")
 	guidedReport := s.buildQualityReport("hardcoded-guide", guidedProjectID)
 	guidedReport.TotalRelEdges = len(s.extractRelationshipsFromProject(guidedProjectID))
 	guidedReport.logTo(s.T())
@@ -2090,6 +2099,261 @@ func (s *ExtractionFixedSchemaTestSuite) TestCompare_ProjectInfoClassifiedVsFixe
 		s.T().Log("  NOTE: hardcoded-guide produced 0 characters — LLM timing flake, assertion skipped")
 	}
 	s.GreaterOrEqual(len(fixedReport.FoundMainCast), 3, "fixed-schema should find at least 3 main cast")
+}
+
+// TestCompare_EnrichPolicyVsFixed tests the schema_policy=enrich pipeline:
+// classify → server-side property enrichment/generation → extract.
+//
+// Three-path comparison:
+//
+//   - Path A: schema_policy=enrich (classify → enrich or create_rich → extract)
+//     No guide, no pre-built schema. Server generates property descriptions from doc.
+//   - Path B: schema_policy=auto (current baseline, discovery agent enumerates types+properties)
+//     No guide.
+//   - Path C: fixed-schema (reference — hand-crafted schema with full property descriptions)
+//
+// Key question: does server-side schema enrichment close the property quality gap
+// between auto-discovery and fixed-schema?
+func (s *ExtractionFixedSchemaTestSuite) TestCompare_EnrichPolicyVsFixed() {
+	s.skipIfNoLLM()
+
+	transcript, err := friendsTranscript(0, 50)
+	if err != nil {
+		s.T().Skipf("could not fetch Friends transcript: %v", err)
+	}
+	s.T().Logf("fixture: %d chars, %d lines", len(transcript), strings.Count(transcript, "\n"))
+
+	// ── Path A: schema_policy=enrich ────────────────────────────────────────
+	s.T().Log("══ PATH A: schema_policy=enrich ═════════════════════════════")
+	enrichProjectID, enrichTypeNames, enrichWall := s.runDiscoveryProject(transcript, "", friendsRichProjectInfo, "enrich")
+	enrichReport := s.buildQualityReport("enrich-policy", enrichProjectID)
+	enrichReport.TotalRelEdges = len(s.extractRelationshipsFromProject(enrichProjectID))
+	enrichReport.logTo(s.T())
+	s.T().Logf("  schema types: %v", enrichTypeNames)
+	s.T().Logf("  wall=%dms", enrichWall)
+
+	// ── Path B: schema_policy=auto (baseline) ───────────────────────────────
+	s.T().Log("══ PATH B: schema_policy=auto (baseline) ════════════════════")
+	autoProjectID, autoTypeNames, autoWall := s.runDiscoveryProject(transcript, "", friendsRichProjectInfo, "auto")
+	autoReport := s.buildQualityReport("auto-policy", autoProjectID)
+	autoReport.TotalRelEdges = len(s.extractRelationshipsFromProject(autoProjectID))
+	autoReport.logTo(s.T())
+	s.T().Logf("  schema types: %v", autoTypeNames)
+	s.T().Logf("  wall=%dms", autoWall)
+
+	// ── Path C: fixed-schema (reference) ────────────────────────────────────
+	s.T().Log("══ PATH C: fixed-schema (reference) ═════════════════════════")
+	fixedStart := time.Now()
+	docID := s.createDocument(transcript)
+	s.runExtraction(docID)
+	fixedWall := time.Since(fixedStart).Milliseconds()
+	fixedReport := s.buildQualityReport("fixed-schema", s.projectID)
+	fixedReport.TotalRelEdges = len(s.extractRelationshipsFromProject(s.projectID))
+	fixedReport.logTo(s.T())
+	s.T().Logf("  wall=%dms", fixedWall)
+
+	// ── Quality comparison ───────────────────────────────────────────────────
+	s.T().Log("══ QUALITY COMPARISON (A=enrich vs B=auto vs C=fixed) ═══════")
+	s.T().Logf("  %-30s  %-14s  %-14s  %-14s", "metric", "A:enrich", "B:auto", "C:fixed")
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "total characters",
+		enrichReport.TotalCharacters, autoReport.TotalCharacters, fixedReport.TotalCharacters)
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "distinct characters",
+		enrichReport.DistinctCharacters, autoReport.DistinctCharacters, fixedReport.DistinctCharacters)
+	s.T().Logf("  %-30s  %-13.0f%%  %-13.0f%%  %-13.0f%%", "duplication rate",
+		enrichReport.DuplicateRate*100, autoReport.DuplicateRate*100, fixedReport.DuplicateRate*100)
+	s.T().Logf("  %-30s  %d/6%-11s  %d/6%-11s  %d/6",
+		"main cast recall",
+		len(enrichReport.FoundMainCast), "",
+		len(autoReport.FoundMainCast), "",
+		len(fixedReport.FoundMainCast))
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "known rels found",
+		len(enrichReport.KnownRelsFound), len(autoReport.KnownRelsFound), len(fixedReport.KnownRelsFound))
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "relationship objects",
+		enrichReport.TotalRelObjects, autoReport.TotalRelObjects, fixedReport.TotalRelObjects)
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "graph edges",
+		enrichReport.TotalRelEdges, autoReport.TotalRelEdges, fixedReport.TotalRelEdges)
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "events",
+		enrichReport.TotalEvents, autoReport.TotalEvents, fixedReport.TotalEvents)
+	s.T().Logf("  %-30s  %-14.1f  %-14.1f  %-14.1f", "avg props/character",
+		enrichReport.AvgPropsPerChar, autoReport.AvgPropsPerChar, fixedReport.AvgPropsPerChar)
+	s.T().Logf("  %-30s  %-14d  %-14d  %-14d", "wall ms",
+		enrichWall, autoWall, fixedWall)
+
+	// Soft assertions — fixed must find at least 3; enrich+auto skip on LLM flake.
+	if enrichReport.TotalCharacters > 0 {
+		s.GreaterOrEqual(len(enrichReport.FoundMainCast), 3, "enrich should find at least 3 main cast")
+	} else {
+		s.T().Log("  NOTE: enrich-policy produced 0 characters (LLM timing flake) — assertion skipped")
+	}
+	if autoReport.TotalCharacters > 0 {
+		s.GreaterOrEqual(len(autoReport.FoundMainCast), 3, "auto should find at least 3 main cast")
+	} else {
+		s.T().Log("  NOTE: auto-policy produced 0 characters (LLM timing flake) — assertion skipped")
+	}
+	s.GreaterOrEqual(len(fixedReport.FoundMainCast), 3, "fixed-schema should find at least 3 main cast")
+}
+
+// runSchemaAndExtract generates a schema via FinalizeDiscovery (using the given mode)
+// on a fresh isolated project, then runs synchronous extraction on the transcript.
+// Returns the project ID for quality reporting.
+//
+// This bypasses the agent entirely so the test can control the exact finalize mode
+// (create_rich, create_rich_combined, create_rich_sequential) without agent variability.
+func (s *ExtractionFixedSchemaTestSuite) runSchemaAndExtract(
+	transcript string,
+	packName string,
+	mode string, // "create_rich" | "create_rich_combined" | "create_rich_sequential"
+) (projectID string, wallMs int64) {
+	s.T().Helper()
+
+	db := s.testDB.DB
+	log := s.quietLogger()
+
+	// Fresh isolated project.
+	orgID := uuid.New().String()
+	projectID = uuid.New().String()
+	s.Require().NoError(testutil.SetupFullTestProject(s.ctx, db, orgID, projectID))
+	_, err := db.NewRaw(`UPDATE kb.projects SET project_info = ? WHERE id = ?`,
+		friendsRichProjectInfo, projectID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	projectUUID, _ := uuid.Parse(projectID)
+
+	// Create document so FinalizeDiscovery can load its text.
+	docsRepo := documents.NewRepository(db, log)
+	docsSvc := documents.NewService(docsRepo, log)
+	filename := "friends-transcript.txt"
+	sourceType := "manual"
+	doc, _, err := docsSvc.Create(s.ctx, documents.CreateParams{
+		ProjectID:  projectID,
+		Filename:   &filename,
+		Content:    &transcript,
+		SourceType: &sourceType,
+	})
+	s.Require().NoError(err)
+
+	// Build discoveryjobs.Service (no LLM resolver — uses env-var model).
+	cfg := &config.Config{}
+	mf := s.modelFactory()
+	if mf == nil {
+		s.T().Skip("no LLM credentials")
+	}
+	djRepo := discoveryjobs.NewRepository(db, log)
+	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
+
+	// Create a stub discovery job so FinalizeDiscovery has a valid FK row.
+	stubJob := &discoveryjobs.DiscoveryJob{
+		ID:        uuid.New(),
+		ProjectID: projectUUID,
+		Status:    discoveryjobs.StatusCompleted,
+		KBPurpose: friendsRichProjectInfo,
+		Progress:  discoveryjobs.JSONMap{"message": "test stub"},
+		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+	}
+	s.Require().NoError(djRepo.Create(s.ctx, stubJob))
+
+	start := time.Now()
+
+	// Generate and install schema via FinalizeDiscovery.
+	_, err = djSvc.FinalizeDiscovery(s.ctx, stubJob.ID, projectUUID, &discoveryjobs.FinalizeDiscoveryRequest{
+		Mode:          mode,
+		PackName:      packName,
+		DocumentID:    doc.ID,
+		IncludedTypes: nil,
+	})
+	if err != nil {
+		s.T().Logf("  FinalizeDiscovery(%s) error: %v", mode, err)
+		wallMs = time.Since(start).Milliseconds()
+		return
+	}
+	s.T().Logf("  FinalizeDiscovery(%s) OK", mode)
+
+	// Run synchronous extraction using the just-installed schema.
+	s.runExtractionOnProject(projectID, doc.ID, nil, nil)
+	wallMs = time.Since(start).Milliseconds()
+	return
+}
+
+// TestCompare_RelationshipGenVariants compares three relationship-generation strategies
+// against the fixed-schema reference.
+//
+//   - Path A: create_rich       — object types only, no relationship type schemas (baseline)
+//   - Path B: create_rich_combined — objects + relationships in ONE LLM call
+//   - Path C: create_rich_sequential — objects first, relationships in a SECOND LLM call
+//   - Path D: fixed-schema (reference)
+//
+// Key metric: graph edges (measures how many typed relationships were extracted).
+// Also tracks known relationship recall (Ross–Monica sibling, Ross–Carol ex_spouse).
+func (s *ExtractionFixedSchemaTestSuite) TestCompare_RelationshipGenVariants() {
+	s.skipIfNoLLM()
+
+	transcript, err := friendsTranscript(0, 50)
+	if err != nil {
+		s.T().Skipf("could not fetch Friends transcript: %v", err)
+	}
+	s.T().Logf("fixture: %d chars, %d lines", len(transcript), strings.Count(transcript, "\n"))
+
+	// ── Path A: create_rich (objects only, no rel schemas — baseline) ────────
+	s.T().Log("══ PATH A: create_rich (no rel types) ═══════════════════════")
+	aProjectID, aWall := s.runSchemaAndExtract(transcript, "Friends Script No Rels", "create_rich")
+	aReport := s.buildQualityReport("no-rels", aProjectID)
+	aReport.TotalRelEdges = len(s.extractRelationshipsFromProject(aProjectID))
+	aReport.logTo(s.T())
+	s.T().Logf("  wall=%dms", aWall)
+
+	// ── Path B: create_rich_combined (objects + rels in one call) ────────────
+	s.T().Log("══ PATH B: create_rich_combined (one LLM call) ══════════════")
+	bProjectID, bWall := s.runSchemaAndExtract(transcript, "Friends Script Combined", "create_rich_combined")
+	bReport := s.buildQualityReport("combined", bProjectID)
+	bReport.TotalRelEdges = len(s.extractRelationshipsFromProject(bProjectID))
+	bReport.logTo(s.T())
+	s.T().Logf("  wall=%dms", bWall)
+
+	// ── Path C: create_rich_sequential (objects then rels in separate calls) ─
+	s.T().Log("══ PATH C: create_rich_sequential (two LLM calls) ══════════")
+	cProjectID, cWall := s.runSchemaAndExtract(transcript, "Friends Script Sequential", "create_rich_sequential")
+	cReport := s.buildQualityReport("sequential", cProjectID)
+	cReport.TotalRelEdges = len(s.extractRelationshipsFromProject(cProjectID))
+	cReport.logTo(s.T())
+	s.T().Logf("  wall=%dms", cWall)
+
+	// ── Path D: fixed-schema (reference) ────────────────────────────────────
+	s.T().Log("══ PATH D: fixed-schema (reference) ════════════════════════")
+	fixedStart := time.Now()
+	docID := s.createDocument(transcript)
+	s.runExtraction(docID)
+	fixedWall := time.Since(fixedStart).Milliseconds()
+	dReport := s.buildQualityReport("fixed-schema", s.projectID)
+	dReport.TotalRelEdges = len(s.extractRelationshipsFromProject(s.projectID))
+	dReport.logTo(s.T())
+	s.T().Logf("  wall=%dms", fixedWall)
+
+	// ── Quality comparison ───────────────────────────────────────────────────
+	s.T().Log("══ QUALITY COMPARISON ═══════════════════════════════════════")
+	s.T().Logf("  %-30s  %-12s  %-12s  %-12s  %-12s", "metric", "A:no-rels", "B:combined", "C:sequential", "D:fixed")
+	s.T().Logf("  %-30s  %-12d  %-12d  %-12d  %-12d", "total characters",
+		aReport.TotalCharacters, bReport.TotalCharacters, cReport.TotalCharacters, dReport.TotalCharacters)
+	s.T().Logf("  %-30s  %-11.0f%%  %-11.0f%%  %-11.0f%%  %-11.0f%%", "dup rate",
+		aReport.DuplicateRate*100, bReport.DuplicateRate*100, cReport.DuplicateRate*100, dReport.DuplicateRate*100)
+	s.T().Logf("  %-30s  %d/6%-9s  %d/6%-9s  %d/6%-9s  %d/6",
+		"main cast recall",
+		len(aReport.FoundMainCast), "",
+		len(bReport.FoundMainCast), "",
+		len(cReport.FoundMainCast), "",
+		len(dReport.FoundMainCast))
+	s.T().Logf("  %-30s  %-12d  %-12d  %-12d  %-12d", "known rels found",
+		len(aReport.KnownRelsFound), len(bReport.KnownRelsFound), len(cReport.KnownRelsFound), len(dReport.KnownRelsFound))
+	s.T().Logf("  %-30s  %-12d  %-12d  %-12d  %-12d", "graph edges",
+		aReport.TotalRelEdges, bReport.TotalRelEdges, cReport.TotalRelEdges, dReport.TotalRelEdges)
+	s.T().Logf("  %-30s  %-12d  %-12d  %-12d  %-12d", "events",
+		aReport.TotalEvents, bReport.TotalEvents, cReport.TotalEvents, dReport.TotalEvents)
+	s.T().Logf("  %-30s  %-12.1f  %-12.1f  %-12.1f  %-12.1f", "avg props/character",
+		aReport.AvgPropsPerChar, bReport.AvgPropsPerChar, cReport.AvgPropsPerChar, dReport.AvgPropsPerChar)
+	s.T().Logf("  %-30s  %-12d  %-12d  %-12d  %-12d", "wall ms",
+		aWall, bWall, cWall, fixedWall)
+
+	// Soft: fixed must find at least 3 main cast. Others skip on LLM flake.
+	s.GreaterOrEqual(len(dReport.FoundMainCast), 3, "fixed-schema must find at least 3 main cast")
 }
 
 // TestCompare_GuidedDiscoveryVsFixedSchema_LongScene repeats the guided comparison

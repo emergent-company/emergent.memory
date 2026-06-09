@@ -330,10 +330,10 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 
 	out, _ := json.Marshal(resp)
 
-	// Auto-queue reextraction when a new schema was created for a specific document.
+	// Auto-queue reextraction when a schema was created or enriched for a specific document.
 	// This removes the requirement for the agent to call queue-reextraction separately —
 	// DeepSeek consistently skips that step after tool-policy confirm resume.
-	if mode == "create" && documentIDStr != "" && s.reextractionQueuer != nil {
+	if (mode == "create" || mode == "enrich" || mode == "create_rich" || mode == "create_rich_combined" || mode == "create_rich_sequential") && documentIDStr != "" && s.reextractionQueuer != nil {
 		// Extract schema_id from the JSON response (resp is interface{}).
 		var respMap map[string]any
 		schemaID := ""

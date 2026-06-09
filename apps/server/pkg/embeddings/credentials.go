@@ -13,6 +13,9 @@ type ResolvedEmbeddingCredential struct {
 	Location           string
 	ServiceAccountJSON string // set for Vertex AI; SA key JSON
 	EmbeddingModel     string
+	// BaseURL is the HTTP endpoint override for OpenAI-compatible providers (LiteLLM, etc.).
+	// When set alongside APIKey, the OpenAI-compatible client is used instead of Google AI.
+	BaseURL string
 	// Source describes where the credential was resolved from (project/organization/environment).
 	// Informational only; used for logging and tracing.
 	Source string

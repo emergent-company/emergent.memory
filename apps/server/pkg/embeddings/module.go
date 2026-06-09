@@ -10,6 +10,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	embgenai "github.com/emergent-company/emergent.memory/pkg/embeddings/genai"
+	embopenai "github.com/emergent-company/emergent.memory/pkg/embeddings/openai"
 	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 )
 
@@ -268,6 +269,21 @@ func (s *Service) resolveClientWithMeta(ctx context.Context) (Client, string, st
 			return nil, "", "", err
 		}
 		return client, model, "googleai", nil
+	}
+
+	// OpenAI-compatible provider (includes LiteLLM proxies).
+	// APIKey + BaseURL are set for openai/deepseek providers.
+	if cred.APIKey != "" && cred.BaseURL != "" {
+		client, err := embopenai.NewClient(embopenai.Config{
+			APIKey:     cred.APIKey,
+			BaseURL:    cred.BaseURL,
+			Model:      model,
+			Dimensions: EmbeddingDimension, // request 768-dim vectors to match DB vector(768)
+		}, embopenai.WithLogger(s.log))
+		if err != nil {
+			return nil, "", "", err
+		}
+		return client, model, "openai", nil
 	}
 
 	// Resolved credential doesn't have usable fields — fall back to static client

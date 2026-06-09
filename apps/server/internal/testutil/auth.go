@@ -563,13 +563,14 @@ func SetupFullTestProject(ctx context.Context, db bun.IDB, orgID, projectID stri
 	credSvc := provider.NewCredentialService(repo, provider.NewRegistry(), nil, cfg, slog.Default())
 
 	type providerSeed struct {
-		name   provider.ProviderType
-		apiKey string
+		name    provider.ProviderType
+		apiKey  string
+		baseURL string
 	}
 	seeds := []providerSeed{
-		{provider.ProviderDeepSeek, cfg.LLM.DeepSeekAPIKey},
-		{provider.ProviderGoogleAI, cfg.LLM.GoogleAPIKey},
-		{provider.ProviderOpenAI, cfg.LLM.OpenAIAPIKey},
+		{provider.ProviderDeepSeek, cfg.LLM.DeepSeekAPIKey, ""},
+		{provider.ProviderGoogleAI, cfg.LLM.GoogleAPIKey, ""},
+		{provider.ProviderOpenAI, cfg.LLM.OpenAIAPIKey, cfg.LLM.OpenAIBaseURL},
 	}
 	for _, s := range seeds {
 		if s.apiKey == "" {
@@ -578,12 +579,25 @@ func SetupFullTestProject(ctx context.Context, db bun.IDB, orgID, projectID stri
 		if err := SeedTestProjectProviderConfig(ctx, db, credSvc, projectID, s.name, s.apiKey, "", ""); err != nil {
 			return fmt.Errorf("SetupFullTestProject: seed provider %s: %w", s.name, err)
 		}
+		// Persist base_url override (e.g. LiteLLM proxy URL for OpenAI-compatible providers).
+		if s.baseURL != "" {
+			if _, err := db.NewRaw(
+				`UPDATE kb.project_provider_configs SET base_url = ? WHERE project_id = ? AND provider = ?`,
+				s.baseURL, projectID, string(s.name),
+			).Exec(ctx); err != nil {
+				return fmt.Errorf("SetupFullTestProject: set base_url for %s: %w", s.name, err)
+			}
+		}
 	}
 
 	// 3. Seed model config.
+	// Embedding model: openai/gemini/gemini-embedding-001
+	//   - prefix "openai" → resolver picks up the OpenAI provider config (LiteLLM)
+	//   - model name sent to the API: "gemini/gemini-embedding-001"
+	//   - LiteLLM proxy serves this model via its /embeddings endpoint
 	genModel := BareGenerativeModelFromEnv()
 	if genModel == "" {
 		return nil
 	}
-	return SeedTestProjectModelConfig(ctx, db, projectID, genModel, "google/gemini-embedding-2-preview")
+	return SeedTestProjectModelConfig(ctx, db, projectID, genModel, "openai/gemini/gemini-embedding-001")
 }

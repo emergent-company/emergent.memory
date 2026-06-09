@@ -3706,6 +3706,10 @@ CREATE INDEX "IDX_d841de45a719fe1f35213d7920" ON kb.chunks USING btree (document
 
 CREATE INDEX "IDX_df895a2e1799c53ef660d0aae6" ON kb.graph_embedding_jobs USING btree (object_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_graph_embedding_jobs_active
+    ON kb.graph_embedding_jobs (object_id)
+    WHERE status IN ('pending', 'processing');
+
 
 --
 -- Name: IDX_e156b298c20873e14c362e789b; Type: INDEX; Schema: kb; Owner: -
@@ -4154,6 +4158,10 @@ CREATE INDEX idx_chat_messages_conversation_history ON kb.chat_messages USING bt
 
 CREATE INDEX idx_chunk_embedding_jobs_chunk_id ON kb.chunk_embedding_jobs USING btree (chunk_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_chunk_embedding_jobs_active
+    ON kb.chunk_embedding_jobs (chunk_id)
+    WHERE status IN ('pending', 'processing');
+
 
 --
 -- Name: idx_chunk_embedding_jobs_dequeue; Type: INDEX; Schema: kb; Owner: -
@@ -4475,6 +4483,10 @@ CREATE UNIQUE INDEX idx_graph_objects_upsert_namespace ON kb.graph_objects USING
 --
 
 CREATE INDEX idx_graph_rel_emb_jobs_relationship_id ON kb.graph_relationship_embedding_jobs USING btree (relationship_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_graph_rel_embedding_jobs_active
+    ON kb.graph_relationship_embedding_jobs (relationship_id)
+    WHERE status IN ('pending', 'processing');
 
 
 --

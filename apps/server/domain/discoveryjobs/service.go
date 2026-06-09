@@ -14,6 +14,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/extraction"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -352,8 +353,8 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 				s.log.Warn("failed to update extraction prompts", slog.Any("err", updateErr))
 			}
 		}
-	} else {
-		// Extend existing pack
+	} else if req.Mode == "extend" {
+		// Extend existing pack with new types (agent-supplied, may still have null properties).
 		if req.ExistingPackID == nil {
 			return nil, apperror.ErrBadRequest.WithMessage("existingPackId is required for extend mode")
 		}
@@ -363,17 +364,15 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 			return nil, err
 		}
 
-		// Merge schemas
+		// Merge schemas — new type wins over existing when keys collide.
 		mergedObjectSchemas := existingPack.ObjectTypeSchemas
 		for k, v := range objectTypeSchemas {
 			mergedObjectSchemas[k] = v
 		}
-
 		mergedRelSchemas := existingPack.RelationshipTypeSchemas
 		for k, v := range relationshipTypeSchemas {
 			mergedRelSchemas[k] = v
 		}
-
 		mergedUIConfigs := existingPack.UIConfigs
 		for k, v := range uiConfigs {
 			mergedUIConfigs[k] = v
@@ -386,6 +385,333 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 		schemaID = *req.ExistingPackID
 		message = fmt.Sprintf("Extended memory schema with %d additional types", len(req.IncludedTypes))
 		s.log.Info("extended memory schema", slog.String("pack_id", schemaID.String()))
+
+		// Re-run extraction prompts so TypeHints reflect the updated type set.
+		discoveredTypes := make([]DiscoveredType, len(req.IncludedTypes))
+		for i, t := range req.IncludedTypes {
+			discoveredTypes[i] = DiscoveredType{TypeName: t.TypeName, Description: t.Description}
+		}
+		// Add existing types not already covered.
+		coveredNames := make(map[string]bool, len(req.IncludedTypes))
+		for _, t := range req.IncludedTypes {
+			coveredNames[t.TypeName] = true
+		}
+		for typeName := range mergedObjectSchemas {
+			if !coveredNames[typeName] {
+				discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName})
+			}
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		kbPurpose, _ := s.repo.GetProjectInfo(promptCtx, projectID)
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurpose); promptErr != nil {
+			s.log.Warn("failed to generate extraction prompts for extend", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, schemaID, raw); updateErr != nil {
+				s.log.Warn("failed to update extraction prompts for extend", slog.Any("err", updateErr))
+			}
+		}
+
+	} else if req.Mode == "enrich" {
+		// Enrich existing schema: fill null property maps using the document as source.
+		// The agent passes empty included_types — server loads existing types and enriches them.
+		if req.ExistingPackID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage("existingPackId is required for enrich mode")
+		}
+
+		existingPack, err := s.repo.GetMemorySchema(ctx, *req.ExistingPackID)
+		if err != nil {
+			return nil, err
+		}
+
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectID)
+		docText := s.loadDocumentText(ctx, req.DocumentID)
+
+		llm, llmErr := s.modelFactory.CreateModel(auth.ContextWithProjectID(ctx, projectID.String()))
+		if llmErr != nil {
+			s.log.Warn("enrich: could not create LLM model, skipping property enrichment", slog.Any("err", llmErr))
+		} else {
+			enriched, enrichErr := extraction.EnrichSchemaProperties(ctx, docText, kbPurpose, existingPack.ObjectTypeSchemas, llm)
+			if enrichErr != nil {
+				s.log.Warn("enrich: property enrichment failed, using existing schema", slog.Any("err", enrichErr))
+			} else {
+				existingPack.ObjectTypeSchemas = enriched
+			}
+		}
+
+		// Also merge any additional types the agent may have supplied.
+		for k, v := range objectTypeSchemas {
+			existingPack.ObjectTypeSchemas[k] = v
+		}
+
+		// Also generate relationship types if the existing schema has none.
+		if len(existingPack.RelationshipTypeSchemas) == 0 && llmErr == nil {
+			typeNames := make([]string, 0, len(existingPack.ObjectTypeSchemas))
+			for k := range existingPack.ObjectTypeSchemas {
+				typeNames = append(typeNames, k)
+			}
+			if relSchemas, relErr := extraction.GenerateRelationshipsFromSchema(ctx, docText, kbPurpose, typeNames, llm); relErr != nil {
+				s.log.Warn("enrich: relationship generation failed, continuing without rels", slog.Any("err", relErr))
+			} else {
+				existingPack.RelationshipTypeSchemas = relSchemas
+			}
+		}
+
+		if err := s.repo.UpdateMemorySchema(ctx, *req.ExistingPackID, existingPack.ObjectTypeSchemas,
+			existingPack.RelationshipTypeSchemas, existingPack.UIConfigs); err != nil {
+			return nil, err
+		}
+		schemaID = *req.ExistingPackID
+		message = fmt.Sprintf("Enriched memory schema with property descriptions for %d types", len(existingPack.ObjectTypeSchemas))
+		s.log.Info("enriched memory schema", slog.String("pack_id", schemaID.String()))
+
+		// Re-run extraction prompts with full type context.
+		discoveredTypes := make([]DiscoveredType, 0, len(existingPack.ObjectTypeSchemas))
+		for typeName, raw := range existingPack.ObjectTypeSchemas {
+			desc := ""
+			if m, ok := raw.(map[string]any); ok {
+				desc, _ = m["description"].(string)
+			}
+			discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName, Description: desc})
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		kbPurposePrompt, _ := s.repo.GetProjectInfo(promptCtx, projectID)
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurposePrompt); promptErr != nil {
+			s.log.Warn("enrich: failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, schemaID, raw); updateErr != nil {
+				s.log.Warn("enrich: failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+
+	} else if req.Mode == "create_rich" {
+		// Generate a fresh schema with full property descriptions from document content.
+		// The agent passes empty included_types — server generates types+properties via LLM.
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectID)
+		docText := s.loadDocumentText(ctx, req.DocumentID)
+
+		llm, llmErr := s.modelFactory.CreateModel(auth.ContextWithProjectID(ctx, projectID.String()))
+		if llmErr != nil {
+			return nil, fmt.Errorf("create_rich: could not create LLM model: %w", llmErr)
+		}
+		generated, genErr := extraction.GenerateSchemaFromDocument(ctx, docText, kbPurpose, llm)
+		if genErr != nil {
+			return nil, fmt.Errorf("create_rich: schema generation failed: %w", genErr)
+		}
+		// Also merge any types the agent explicitly supplied (optional).
+		for k, v := range objectTypeSchemas {
+			generated[k] = v
+		}
+
+		packID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+			Name:                    req.PackName,
+			Version:                 "1.0.0",
+			Description:             fmt.Sprintf("Enriched discovery pack with %d types", len(generated)),
+			Author:                  "Auto-Discovery System",
+			ObjectTypeSchemas:       generated,
+			RelationshipTypeSchemas: relationshipTypeSchemas,
+			UIConfigs:               uiConfigs,
+			Source:                  "discovered",
+			DiscoveryJobID:          &jobID,
+			PendingReview:           false,
+			ProjectID:               &projectID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		schemaID = packID
+		message = fmt.Sprintf("Created enriched schema \"%s\" with %d types", req.PackName, len(generated))
+		s.log.Info("created enriched memory schema", slog.String("pack_id", packID.String()))
+
+		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
+			s.log.Warn("create_rich: failed to install schema", slog.Any("err", installErr))
+		}
+
+		// Generate extraction prompts from the generated types.
+		discoveredTypes := make([]DiscoveredType, 0, len(generated))
+		for typeName, raw := range generated {
+			desc := ""
+			if m, ok := raw.(map[string]any); ok {
+				desc, _ = m["description"].(string)
+			}
+			discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName, Description: desc})
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurpose); promptErr != nil {
+			s.log.Warn("create_rich: failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, packID, raw); updateErr != nil {
+				s.log.Warn("create_rich: failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+
+	} else if req.Mode == "create_rich_combined" {
+		// Variant A: generate object types AND relationship types in ONE LLM call.
+		// More efficient (single round-trip); LLM has full context to coherently design
+		// both entity properties and edge types together.
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectID)
+		docText := s.loadDocumentText(ctx, req.DocumentID)
+
+		llm, llmErr := s.modelFactory.CreateModel(auth.ContextWithProjectID(ctx, projectID.String()))
+		if llmErr != nil {
+			return nil, fmt.Errorf("create_rich_combined: could not create LLM model: %w", llmErr)
+		}
+		generated, genErr := extraction.GenerateSchemaWithRelationships(ctx, docText, kbPurpose, llm)
+		if genErr != nil {
+			return nil, fmt.Errorf("create_rich_combined: schema generation failed: %w", genErr)
+		}
+		// Merge any explicitly supplied types from the agent.
+		for k, v := range objectTypeSchemas {
+			generated.ObjectTypes[k] = v
+		}
+		for k, v := range relationshipTypeSchemas {
+			generated.RelationshipTypes[k] = v
+		}
+
+		packID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+			Name:                    req.PackName,
+			Version:                 "1.0.0",
+			Description:             fmt.Sprintf("Combined-enriched schema with %d types, %d rel types", len(generated.ObjectTypes), len(generated.RelationshipTypes)),
+			Author:                  "Auto-Discovery System",
+			ObjectTypeSchemas:       generated.ObjectTypes,
+			RelationshipTypeSchemas: generated.RelationshipTypes,
+			UIConfigs:               uiConfigs,
+			Source:                  "discovered",
+			DiscoveryJobID:          &jobID,
+			PendingReview:           false,
+			ProjectID:               &projectID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		schemaID = packID
+		message = fmt.Sprintf("Created combined-enriched schema \"%s\" with %d types, %d rel types",
+			req.PackName, len(generated.ObjectTypes), len(generated.RelationshipTypes))
+		s.log.Info("created combined-enriched memory schema", slog.String("pack_id", packID.String()))
+
+		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
+			s.log.Warn("create_rich_combined: failed to install schema", slog.Any("err", installErr))
+		}
+
+		discoveredTypes := make([]DiscoveredType, 0, len(generated.ObjectTypes))
+		for typeName, raw := range generated.ObjectTypes {
+			desc := ""
+			if m, ok := raw.(map[string]any); ok {
+				desc, _ = m["description"].(string)
+			}
+			discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName, Description: desc})
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurpose); promptErr != nil {
+			s.log.Warn("create_rich_combined: failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, packID, raw); updateErr != nil {
+				s.log.Warn("create_rich_combined: failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+
+	} else if req.Mode == "create_rich_sequential" {
+		// Variant B: generate object types first, THEN relationship types in a second LLM call.
+		// Second call uses actual type names so edges reference concrete types, not hypothetical ones.
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectID)
+		docText := s.loadDocumentText(ctx, req.DocumentID)
+
+		llm, llmErr := s.modelFactory.CreateModel(auth.ContextWithProjectID(ctx, projectID.String()))
+		if llmErr != nil {
+			return nil, fmt.Errorf("create_rich_sequential: could not create LLM model: %w", llmErr)
+		}
+
+		// Call 1: object types with properties.
+		generatedObjects, genErr := extraction.GenerateSchemaFromDocument(ctx, docText, kbPurpose, llm)
+		if genErr != nil {
+			return nil, fmt.Errorf("create_rich_sequential: object schema generation failed: %w", genErr)
+		}
+		for k, v := range objectTypeSchemas {
+			generatedObjects[k] = v
+		}
+
+		// Call 2: relationship types using the actual object type names as anchors.
+		typeNames := make([]string, 0, len(generatedObjects))
+		for k := range generatedObjects {
+			typeNames = append(typeNames, k)
+		}
+		generatedRels, relErr := extraction.GenerateRelationshipsFromSchema(ctx, docText, kbPurpose, typeNames, llm)
+		if relErr != nil {
+			s.log.Warn("create_rich_sequential: relationship generation failed, continuing without rels", slog.Any("err", relErr))
+			generatedRels = make(JSONMap)
+		}
+		for k, v := range relationshipTypeSchemas {
+			generatedRels[k] = v
+		}
+
+		packID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+			Name:                    req.PackName,
+			Version:                 "1.0.0",
+			Description:             fmt.Sprintf("Sequential-enriched schema with %d types, %d rel types", len(generatedObjects), len(generatedRels)),
+			Author:                  "Auto-Discovery System",
+			ObjectTypeSchemas:       generatedObjects,
+			RelationshipTypeSchemas: generatedRels,
+			UIConfigs:               uiConfigs,
+			Source:                  "discovered",
+			DiscoveryJobID:          &jobID,
+			PendingReview:           false,
+			ProjectID:               &projectID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		schemaID = packID
+		message = fmt.Sprintf("Created sequential-enriched schema \"%s\" with %d types, %d rel types",
+			req.PackName, len(generatedObjects), len(generatedRels))
+		s.log.Info("created sequential-enriched memory schema", slog.String("pack_id", packID.String()))
+
+		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
+			s.log.Warn("create_rich_sequential: failed to install schema", slog.Any("err", installErr))
+		}
+
+		discoveredTypes := make([]DiscoveredType, 0, len(generatedObjects))
+		for typeName, raw := range generatedObjects {
+			desc := ""
+			if m, ok := raw.(map[string]any); ok {
+				desc, _ = m["description"].(string)
+			}
+			discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName, Description: desc})
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurpose); promptErr != nil {
+			s.log.Warn("create_rich_sequential: failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, packID, raw); updateErr != nil {
+				s.log.Warn("create_rich_sequential: failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+
+	} else {
+		return nil, apperror.ErrBadRequest.WithMessage("mode must be one of: create, extend, enrich, create_rich, create_rich_combined, create_rich_sequential")
 	}
 
 	// Update discovery job
@@ -1332,8 +1658,9 @@ func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{})
 	}
 
 	inReq := &FinalizeDiscoveryRequest{
-		Mode:     r.Mode,
-		PackName: r.PackName,
+		Mode:       r.Mode,
+		PackName:   r.PackName,
+		DocumentID: r.DocumentID,
 	}
 	if r.ExistingPackID != "" {
 		ep, err := uuid.Parse(r.ExistingPackID)
@@ -1513,3 +1840,24 @@ Return ONLY valid JSON with this exact structure:
 
 // strPtr returns a pointer to the given string value.
 func strPtr(s string) *string { return &s }
+
+// loadDocumentText fetches the raw text content of a document by ID.
+// Returns empty string on any error (enrichment is best-effort).
+func (s *Service) loadDocumentText(ctx context.Context, documentID string) string {
+	if documentID == "" || s.docSvc == nil {
+		return ""
+	}
+	// GetContentByID requires a projectID; extract it from context (set by MCP/handler layer).
+	projectID := auth.ProjectIDFromContext(ctx)
+	doc, err := s.docSvc.GetContentByID(ctx, projectID, documentID)
+	if err != nil {
+		s.log.Warn("loadDocumentText: could not load document",
+			slog.String("document_id", documentID),
+			slog.Any("err", err))
+		return ""
+	}
+	if doc == nil || doc.Content == nil {
+		return ""
+	}
+	return *doc.Content
+}

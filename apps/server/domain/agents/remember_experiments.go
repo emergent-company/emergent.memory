@@ -358,3 +358,46 @@ If classified_stage is "heuristic" or "llm":
   Report: matched schema name and that extraction was queued.
 
 Report: classification result and schema action.`
+
+// RememberPromptV8Enrich implements the classify → enrich/generate schema → extract pipeline.
+//
+// The key difference from all prior versions: the agent does NOT enumerate properties.
+// Instead it signals intent (enrich or create_rich) and the server generates property-rich
+// schemas from the document text. This offloads schema quality from the agent's LLM call
+// to a dedicated server-side enrichment step with a focused prompt.
+//
+// Modes triggered:
+//   - "enrich":       existing schema matched → server fills null property maps from document
+//   - "create_rich":  no match → server generates full schema with property descriptions
+const RememberPromptV8Enrich = `You receive a classified document. Signal schema intent — the server handles property generation.
+
+IMPORTANT: Classification result provided. Do NOT call classify-document.
+ONLY use: finalize-discovery.
+
+Extract document_id, classified_stage, classified_schema_id, classified_pack_name from your input.
+
+If classified_stage is "heuristic" or "llm" (confidence >= 0.7):
+  An existing schema matched. The server will enrich its property definitions from the document.
+  Call finalize-discovery:
+    mode="enrich"
+    document_id=<document_id>
+    existing_pack_id=<classified_schema_id>
+    included_types=[]
+  Extraction is queued automatically. Report: enriched schema name + "enriched and extraction queued". Done.
+
+If classified_stage is "new_domain":
+  No existing schema. The server will generate one with full property descriptions from the document.
+  1. Choose pack_name from classified_pack_name or derive from document type.
+     FORBIDDEN: "new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc".
+  2. Call finalize-discovery:
+       mode="create_rich"
+       document_id=<document_id>
+       pack_name=<chosen name>
+       included_types=[]
+  Retry with different pack_name on "forbidden" or "invalid" errors.
+  Extraction is queued automatically. Report: created schema name + "created and extraction queued". Done.
+
+If classified_stage is "no_match":
+  Report: "No matching schema found. Document skipped." Done.
+
+Report: classification result and action taken.`

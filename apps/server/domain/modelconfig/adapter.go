@@ -103,6 +103,7 @@ func (a *EmbeddingResolverAdapter) ResolveEmbedding(ctx context.Context) (*embed
 		Location:           cred.Location,
 		ServiceAccountJSON: cred.ServiceAccountJSON,
 		EmbeddingModel:     modelName,
+		BaseURL:            cred.BaseURL,
 		Source:             string(cred.Source),
 	}, nil
 }

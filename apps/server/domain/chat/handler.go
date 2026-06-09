@@ -1539,8 +1539,8 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	if schemaPolicy == "" {
 		schemaPolicy = "reuse_only"
 	}
-	if schemaPolicy != "auto" && schemaPolicy != "reuse_only" && schemaPolicy != "ask" {
-		return apperror.ErrBadRequest.WithMessage("schema_policy must be one of: auto, reuse_only, ask")
+	if schemaPolicy != "auto" && schemaPolicy != "reuse_only" && schemaPolicy != "ask" && schemaPolicy != "enrich" {
+		return apperror.ErrBadRequest.WithMessage("schema_policy must be one of: auto, reuse_only, ask, enrich")
 	}
 
 	// Normalise mode — accept header fallback.
@@ -1656,7 +1656,11 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	}
 	if agentDef == nil {
 		var ensureErr error
-		agentDef, ensureErr = h.agentRepo.EnsureDomainRememberAgent(ctx, projectID, schemaPolicy)
+		if schemaPolicy == "enrich" {
+			agentDef, ensureErr = h.agentRepo.EnsureEnrichRememberAgent(ctx, projectID)
+		} else {
+			agentDef, ensureErr = h.agentRepo.EnsureDomainRememberAgent(ctx, projectID, schemaPolicy)
+		}
 		if ensureErr != nil {
 			return apperror.NewInternal("failed to ensure domain-remember-agent", ensureErr)
 		}

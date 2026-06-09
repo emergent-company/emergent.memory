@@ -293,29 +293,30 @@ func (s *PersonalKBAgentTestSuite) waitForObjects(typ string, minCount int, time
 	return found
 }
 
-// waitForEmbedding polls until the given object has an embedding_status set,
-// indicating the graph embedding worker has processed it.
+// waitForEmbedding waits for the graph embedding worker to process the given object.
+// embedding_updated_at is excluded from the API response (json:"-"), so we poll
+// the graph_embedding_jobs table directly via the test DB.
+// Falls back to a fixed sleep when testDB is nil (external mode).
 func (s *PersonalKBAgentTestSuite) waitForEmbedding(objectID string, timeout time.Duration) {
 	s.T().Helper()
+	if s.testDB == nil {
+		time.Sleep(timeout / 2)
+		return
+	}
 	s.Assert().Eventually(func() bool {
-		resp := s.client.GET(
-			fmt.Sprintf("/api/graph/objects/%s", objectID),
-			testutil.WithAuth(s.authToken),
-			testutil.WithProjectID(s.projectID),
-			testutil.WithOrgID(s.orgID),
-		)
-		if resp.StatusCode != http.StatusOK {
+		var count int
+		err := s.testDB.DB.NewRaw(`
+			SELECT COUNT(*) FROM kb.graph_embedding_jobs
+			WHERE object_id = ? AND status IN ('pending','processing')`, objectID).
+			Scan(s.ctx, &count)
+		if err != nil {
 			return false
 		}
-		var obj map[string]any
-		if err := json.Unmarshal(resp.Body, &obj); err != nil {
-			return false
-		}
-		// embedding_status field is set once the worker processes the job.
-		status, _ := obj["embedding_status"].(string)
-		return status != "" && status != "pending"
+		return count == 0
 	}, timeout, 1*time.Second,
-		"embedding for object %s should complete within %s", objectID, timeout)
+		"embedding job for object %s should complete within %s", objectID, timeout)
+	// Give the DB update (embedding_v2) a moment to commit after job completion.
+	time.Sleep(200 * time.Millisecond)
 }
 
 // ---------------------------------------------------------------------------
@@ -477,10 +478,6 @@ func (s *PersonalKBAgentTestSuite) TestProjectGet() {
 // Requires real embeddings (skipped without Google AI key).
 func (s *PersonalKBAgentTestSuite) TestSemanticSearch() {
 	s.requireLLM()
-	testutil.LoadEnvFiles()
-	if os.Getenv("GOOGLE_API_KEY") == "" {
-		s.T().Skip("GOOGLE_API_KEY not set — semantic embeddings require Google AI")
-	}
 
 	// Save via agent (uses entity-create → enqueues embedding job).
 	saveReply := s.agentReply(
