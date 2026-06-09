@@ -3295,11 +3295,25 @@ func (r *Repository) GetRunStatsOverview(ctx context.Context, projectID string, 
 	return rows, nil
 }
 
-// RunStatsErrorRow is an intermediate struct for scanning top error messages.
-type RunStatsErrorRow struct {
-	Message string `bun:"message"`
-	Count   int64  `bun:"cnt"`
+// GetProjectInfo returns the project_info markdown string for a project,
+// or "" if none is set. Used by the agentcompat layer to inject KB context
+// into the agent's system prompt without requiring a tool call.
+func (r *Repository) GetProjectInfo(ctx context.Context, projectID string) (string, error) {
+	var info *string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("project_info").
+		Where("id = ?", projectID).
+		Scan(ctx, &info)
+	if err != nil {
+		return "", fmt.Errorf("GetProjectInfo: %w", err)
+	}
+	if info == nil {
+		return "", nil
+	}
+	return *info, nil
 }
+
 
 // GetRunStatsTopErrors returns the most frequent error messages within the window.
 func (r *Repository) GetRunStatsTopErrors(ctx context.Context, projectID string, agentID *string, since, until time.Time, limit int) ([]RunStatsErrorRow, error) {
@@ -3344,6 +3358,12 @@ func (r *Repository) GetRunStatsTopErrors(ctx context.Context, projectID string,
 		return nil, fmt.Errorf("GetRunStatsTopErrors: %w", err)
 	}
 	return rows, nil
+}
+
+// RunStatsErrorRow holds an error message and its frequency count.
+type RunStatsErrorRow struct {
+	Message string `bun:"message"`
+	Count   int64  `bun:"cnt"`
 }
 
 // RunStatsToolRow is an intermediate struct for scanning per-tool aggregates.

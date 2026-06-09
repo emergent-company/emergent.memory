@@ -1843,21 +1843,19 @@ func strPtr(s string) *string { return &s }
 
 // loadDocumentText fetches the raw text content of a document by ID.
 // Returns empty string on any error (enrichment is best-effort).
+// Tries context project ID first (MCP/handler path), then falls back to
+// an unscoped query by document ID alone (direct service call path).
 func (s *Service) loadDocumentText(ctx context.Context, documentID string) string {
 	if documentID == "" || s.docSvc == nil {
 		return ""
 	}
-	// GetContentByID requires a projectID; extract it from context (set by MCP/handler layer).
 	projectID := auth.ProjectIDFromContext(ctx)
-	doc, err := s.docSvc.GetContentByID(ctx, projectID, documentID)
-	if err != nil {
-		s.log.Warn("loadDocumentText: could not load document",
-			slog.String("document_id", documentID),
-			slog.Any("err", err))
-		return ""
+	if projectID != "" {
+		doc, err := s.docSvc.GetContentByID(ctx, projectID, documentID)
+		if err == nil && doc != nil && doc.Content != nil {
+			return *doc.Content
+		}
 	}
-	if doc == nil || doc.Content == nil {
-		return ""
-	}
-	return *doc.Content
+	// Fallback: load directly from DB without project scope (direct service call path).
+	return s.repo.GetDocumentContent(ctx, documentID)
 }

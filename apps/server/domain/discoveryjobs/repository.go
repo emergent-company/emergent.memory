@@ -455,3 +455,14 @@ func (r *Repository) UpdateSchemaExtractionPrompts(ctx context.Context, schemaID
 	}
 	return nil
 }
+
+// GetDocumentContent fetches raw document text by ID without project-scope check.
+// Used by schema enrichment to load document text when no project context is available.
+func (r *Repository) GetDocumentContent(ctx context.Context, documentID string) string {
+	var content string
+	_ = r.db.NewRaw(
+		`SELECT COALESCE(content, '') FROM kb.documents WHERE id = ? LIMIT 1`,
+		documentID,
+	).Scan(ctx, &content)
+	return content
+}

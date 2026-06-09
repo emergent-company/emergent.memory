@@ -163,10 +163,12 @@ func (s *Service) handleNewRun(
 		return nil, fmt.Errorf("building client tools: %w", err)
 	}
 
-	// Inject prior conversation turns into the system prompt appendix so the
-	// agent has full context. The executor starts a fresh ADK session per run,
-	// so there is no native session continuity — we replay history as text.
-	appendix := buildSystemAppendix(req.Messages, len(req.Tools) > 0)
+	// Fetch project_info and inject it into the system prompt so the agent
+	// understands the KB context without needing to call project-get as a tool.
+	projectInfo, _ := s.agentRepo.GetProjectInfo(ctx, projectID)
+
+	// Inject prior conversation turns + project info into the system prompt appendix.
+	appendix := buildSystemAppendix(req.Messages, len(req.Tools) > 0, projectInfo)
 
 	execReq := agents.ExecuteRequest{
 		Agent:                agent,
@@ -563,16 +565,26 @@ func buildUserMessage(messages []ChatMessage) string {
 	return ""
 }
 
-// buildSystemAppendix combines the tool-naming convention block and a
-// conversation history block (all turns preceding the final user message)
-// into the string that gets appended to the agent's system instruction.
-// This gives the agent full context when the caller sends a multi-turn
-// messages[] array, because the executor starts a fresh ADK session per run
-// and has no native session continuity.
-func buildSystemAppendix(messages []ChatMessage, hasClientTools bool) string {
+// buildSystemAppendix combines:
+//   - project_info context (injected so the agent knows the KB purpose without a tool call)
+//   - conversation history (prior turns from the messages[] array)
+//   - tool-naming convention block (when client tools are present)
+//
+// All three are appended to the agent's system instruction so the executor
+// starts with full context on every fresh ADK session.
+func buildSystemAppendix(messages []ChatMessage, hasClientTools bool, projectInfo string) string {
 	var sb strings.Builder
 
+	if projectInfo != "" {
+		sb.WriteString("## Knowledge base context\n\n")
+		sb.WriteString(projectInfo)
+		sb.WriteString("\n")
+	}
+
 	if history := buildConversationHistory(messages); history != "" {
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
 		sb.WriteString("## Conversation history\n\n")
 		sb.WriteString("The following is the conversation so far. Use it to answer the user's latest message.\n\n")
 		sb.WriteString(history)
