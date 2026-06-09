@@ -1,15 +1,16 @@
 package autoupdate
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
 
-const githubReleasesLatestURL = "https://api.github.com/repos/emergent-company/emergent.memory/releases/latest"
+const githubReleasesLatestURL = "https://github.com/emergent-company/emergent.memory/releases/latest"
+const githubRepoBase = "https://github.com/emergent-company/emergent.memory"
 
 // Release mirrors the GitHub release payload fields that the auto-update
 // logic needs.  It is kept intentionally minimal.
@@ -38,29 +39,68 @@ type CheckResult struct {
 	Error          error
 }
 
-// FetchLatestRelease calls the GitHub API and returns the latest non-draft,
-// non-prerelease release.  It uses the provided httpClient so callers (and
-// tests) can inject a mock transport.
+// constructAssets builds a synthetic []Asset for the given tag so that
+// FindAsset/DownloadAndInstall can work without the GitHub REST API.
+func constructAssets(tag string) []Asset {
+	osName := runtime.GOOS
+	archName := runtime.GOARCH
+	name := fmt.Sprintf("memory-cli-%s-%s", osName, archName)
+	if osName == "windows" {
+		name += ".zip"
+	} else {
+		name += ".tar.gz"
+	}
+	url := fmt.Sprintf("%s/releases/download/%s/%s", githubRepoBase, tag, name)
+	return []Asset{{Name: name, BrowserDownloadURL: url}}
+}
+
+// FetchLatestRelease resolves the latest release tag by following the
+// github.com/releases/latest redirect — no GitHub REST API, no rate limit,
+// no token required.  The provided httpClient is used so callers (and tests)
+// can inject a mock transport.
 func FetchLatestRelease(httpClient *http.Client) (*Release, error) {
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+	noFollow := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	if httpClient != nil {
+		// Honour injected transport but still block redirects.
+		noFollow.Transport = httpClient.Transport
 	}
 
-	resp, err := httpClient.Get(githubReleasesLatestURL)
+	resp, err := noFollow.Get(githubReleasesLatestURL)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusMovedPermanently {
+		return nil, fmt.Errorf("unexpected status from releases/latest: %d", resp.StatusCode)
 	}
 
-	var r Release
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return nil, err
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return nil, fmt.Errorf("no Location header in redirect response")
 	}
-	return &r, nil
+
+	// Location: https://github.com/.../releases/tag/v0.35.50
+	parts := strings.Split(loc, "/")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("could not parse tag from redirect: %s", loc)
+	}
+	tag := parts[len(parts)-1]
+	if tag == "" {
+		return nil, fmt.Errorf("empty tag in redirect URL: %s", loc)
+	}
+
+	htmlURL := fmt.Sprintf("%s/releases/tag/%s", githubRepoBase, tag)
+	return &Release{
+		TagName: tag,
+		HTMLURL: htmlURL,
+		Assets:  constructAssets(tag),
+	}, nil
 }
 
 // NormalizeVersion strips "v" and "cli-" prefixes from a version tag so

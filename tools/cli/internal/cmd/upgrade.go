@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/tools/cli/internal/installer"
 	"github.com/spf13/cobra"
@@ -289,34 +289,75 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+const githubRepoBase = "https://github.com/emergent-company/emergent.memory"
+
 func getLatestRelease() (*Release, error) {
-	resp, err := http.Get("https://api.github.com/repos/emergent-company/emergent.memory/releases/latest")
+	noFollow := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := noFollow.Get(githubRepoBase + "/releases/latest")
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusMovedPermanently {
+		return nil, fmt.Errorf("unexpected status from releases/latest: %d", resp.StatusCode)
 	}
 
-	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return nil, fmt.Errorf("no Location header in redirect response")
 	}
 
-	release.ImagesReady = checkImagesReady(release.Assets)
+	// Location: https://github.com/.../releases/tag/v0.35.50
+	parts := strings.Split(loc, "/")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("could not parse tag from redirect: %s", loc)
+	}
+	tag := parts[len(parts)-1]
+	if tag == "" {
+		return nil, fmt.Errorf("empty tag in redirect URL: %s", loc)
+	}
 
-	return &release, nil
+	release := &Release{
+		TagName:     tag,
+		ImagesReady: checkImagesReady(tag),
+	}
+	release.Assets = constructAssets(tag)
+	return release, nil
 }
 
-func checkImagesReady(assets []Asset) bool {
-	for _, asset := range assets {
-		if asset.Name == "images-ready.txt" {
-			return true
-		}
+// constructAssets builds a synthetic []Asset for the given tag using the
+// predictable GitHub release download URL pattern — no API call needed.
+func constructAssets(tag string) []Asset {
+	osName := runtime.GOOS
+	archName := runtime.GOARCH
+	name := fmt.Sprintf("memory-cli-%s-%s", osName, archName)
+	if osName == "windows" {
+		name += ".zip"
+	} else {
+		name += ".tar.gz"
 	}
-	return false
+	url := fmt.Sprintf("%s/releases/download/%s/%s", githubRepoBase, tag, name)
+	return []Asset{{Name: name, BrowserDownloadURL: url}}
+}
+
+// checkImagesReady probes the images-ready.txt sentinel file via a HEAD
+// request to the release download URL — no GitHub API, no rate limit.
+func checkImagesReady(tag string) bool {
+	client := &http.Client{Timeout: 5 * time.Second}
+	sentinelURL := fmt.Sprintf("%s/releases/download/%s/images-ready.txt", githubRepoBase, tag)
+	resp, err := client.Head(sentinelURL)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 func findAsset(assets []Asset) (string, string, error) {

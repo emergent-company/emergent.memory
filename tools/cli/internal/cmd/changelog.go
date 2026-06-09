@@ -1,18 +1,14 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 )
 
 const (
-	releasesURL        = "https://api.github.com/repos/emergent-company/emergent.memory/releases?per_page=30"
 	releasesPageURL    = "https://github.com/emergent-company/emergent.memory/releases"
 	maxDisplayReleases = 10
-	maxPages           = 2
 )
 
 // compareVersions compares two semver-style version strings (e.g. "0.35.50").
@@ -48,54 +44,13 @@ func compareVersions(a, b string) int {
 	return 0
 }
 
-// fetchReleasesBetween fetches GitHub releases whose version falls in the
-// range (currentVersion, targetVersion]. Drafts and prereleases are excluded.
-// Returns releases sorted newest-first (as returned by the API).
-// On any error, returns nil and the error — callers should treat this as best-effort.
-func fetchReleasesBetween(currentVersion, targetVersion string) ([]Release, error) {
-	currentVersion = normalizeVersion(currentVersion)
-	targetVersion = normalizeVersion(targetVersion)
-
-	// If current version is unparseable, just return the target release info
-	if currentVersion == "" || currentVersion == "dev" || currentVersion == "unknown" {
-		currentVersion = "0.0.0"
-	}
-
-	var allReleases []Release
-
-	for page := 1; page <= maxPages; page++ {
-		url := fmt.Sprintf("%s&page=%d", releasesURL, page)
-		resp, err := http.Get(url)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch releases: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
-		}
-
-		var releases []Release
-		if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-			return nil, fmt.Errorf("failed to decode releases: %w", err)
-		}
-
-		if len(releases) == 0 {
-			break
-		}
-
-		allReleases = append(allReleases, releases...)
-
-		// If the oldest release on this page is already older than currentVersion,
-		// no need to fetch more pages
-		oldest := releases[len(releases)-1]
-		oldestVersion := normalizeVersion(oldest.TagName)
-		if compareVersions(oldestVersion, currentVersion) <= 0 {
-			break
-		}
-	}
-
-	return filterReleasesBetween(allReleases, currentVersion, targetVersion), nil
+// fetchReleasesBetween previously fetched GitHub API release pages to build a
+// changelog between two versions.  The GitHub REST API has tight unauthenticated
+// rate limits (60 req/hr/IP) so this function now returns an empty slice
+// without making any network call.  Changelog display is intentionally omitted
+// in favour of never hitting the API rate limit.
+func fetchReleasesBetween(_, _ string) ([]Release, error) {
+	return nil, nil
 }
 
 // filterReleasesBetween filters releases to those in range (currentVersion, targetVersion].
