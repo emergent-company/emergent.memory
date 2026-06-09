@@ -1423,12 +1423,14 @@ type qualityReport struct {
 	TotalRelEdges   int // graph_relationships rows
 	KnownRelsFound  []string // which ground-truth relationships were found
 	// Events
-	TotalEvents      int
+	TotalEvents       int
 	EventsWithKeyword []string // which ground-truth keywords appear
 	// Properties
 	AvgPropsPerChar float64
 	// Raw entities for logging
 	Entities []EntityRecord
+	// Raw edges for logging (populated by buildQualityReport)
+	Edges []struct{ Src, RelType, Dst string }
 }
 
 func (r *qualityReport) logTo(t *testing.T) {
@@ -1468,6 +1470,37 @@ func (r *qualityReport) logTo(t *testing.T) {
 				n, occ, e.Props["home"], e.Props["current_situation"], marker)
 		}
 	}
+
+	// List Relationship objects (schema entities, not graph edges).
+	relObjs := 0
+	for _, e := range r.Entities {
+		if strings.ToLower(e.Type) == "relationship" {
+			relObjs++
+			if relObjs == 1 {
+				t.Logf("  Relationship objects:")
+			}
+			personA := e.Props["person_a"]
+			personB := e.Props["person_b"]
+			kind := e.Props["relationship_kind"]
+			desc := e.Props["description"]
+			if len(desc) > 80 {
+				desc = desc[:80] + "…"
+			}
+			t.Logf("    [%s] %s ↔ %s  kind=%s  desc=%s", e.Type, personA, personB, kind, desc)
+		}
+	}
+
+	// Print up to 15 graph edges (src → rel_type → dst).
+	if len(r.Edges) > 0 {
+		limit := len(r.Edges)
+		if limit > 15 {
+			limit = 15
+		}
+		t.Logf("  Graph edges (showing %d/%d):", limit, len(r.Edges))
+		for _, edge := range r.Edges[:limit] {
+			t.Logf("    %-25s  –[%-20s]→  %s", edge.Src, edge.RelType, edge.Dst)
+		}
+	}
 }
 
 // buildQualityReport computes quality metrics for a given project's extraction.
@@ -1477,7 +1510,7 @@ func (s *ExtractionFixedSchemaTestSuite) buildQualityReport(label, projectID str
 	entities := s.extractEntitiesFromProject(projectID)
 	edges := s.extractRelationshipsFromProject(projectID)
 
-	r := &qualityReport{Label: label, Entities: entities}
+	r := &qualityReport{Label: label, Entities: entities, Edges: edges}
 
 	// Character analysis.
 	nameCount := map[string]int{}

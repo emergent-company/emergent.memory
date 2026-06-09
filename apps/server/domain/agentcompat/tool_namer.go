@@ -8,52 +8,163 @@ import "strings"
 const InternalToolPrefix = "memory_"
 
 // internalToolNames is the canonical set of built-in Memory MCP tool names.
-// When a request contains tools[], any name that collides with the exposed
-// (prefixed) form is rejected as a conflict.
+// Keep in sync with the case statements in domain/mcp/service.go ExecuteTool.
+// When a request contains tools[], any name that collides with the
+// "memory_<name>" form is rejected as a conflict.
 var internalToolNames = map[string]struct{}{
-	"search-knowledge":       {},
-	"entity-create":          {},
-	"entity-get":             {},
+	// ── Graph / entity ─────────────────────────────────────────────────────
+	"project-get":            {},
+	"project-create":         {},
+	"entity-type-list":       {},
 	"entity-query":           {},
+	"entity-history":         {},
 	"entity-search":          {},
+	"entity-edges-get":       {},
+	"entity-create":          {},
 	"entity-update":          {},
 	"entity-delete":          {},
-	"entity-edges-get":       {},
-	"entity-type-list":       {},
+	"entity-restore":         {},
+	"session-get-messages":   {},
 	"relationship-create":    {},
-	"relationship-delete":    {},
-	"relationship-get":       {},
-	"relationship-query":     {},
+	"relationship-list":      {},
 	"relationship-update":    {},
-	"search-hybrid":          {},
-	"vector-search":          {},
-	"fts-search":             {},
-	"document-get":           {},
-	"document-list":          {},
-	"document-upload":        {},
-	"branch-list":            {},
-	"branch-create":          {},
-	"spawn_agents":           {},
-	"list_available_agents":  {},
-	"trigger-agent":          {},
-	"agent-run-get":          {},
-	"list-agent-definitions": {},
-	"get-agent-definition":   {},
-	"list-agents":            {},
-	"set_session_title":      {},
-	"mcp-server-list":        {},
-	"mcp-server-get":         {},
+	"relationship-delete":    {},
+	"tag-list":               {},
+
+	// ── Search ──────────────────────────────────────────────────────────────
+	"search-hybrid":    {},
+	"search-semantic":  {},
+	"search-similar":   {},
+	"search-knowledge": {},
+
+	// ── Graph traversal ─────────────────────────────────────────────────────
+	"graph-traverse": {},
+
+	// ── Branches ────────────────────────────────────────────────────────────
+	"graph-branch-list":   {},
+	"graph-branch-create": {},
+	"graph-branch-merge":  {},
+	"graph-branch-delete": {},
+
+	// ── Schema ──────────────────────────────────────────────────────────────
+	"schema-version":             {},
+	"schema-list":                {},
+	"schema-get":                 {},
+	"schema-list-available":      {},
+	"schema-list-installed":      {},
+	"schema-assign":              {},
+	"schema-assignment-update":   {},
+	"schema-uninstall":           {},
+	"schema-create":              {},
+	"schema-delete":              {},
+	"schema-history":             {},
+	"schema-compiled-types":      {},
+	"schema-migration-preview":   {},
+	"schema-migrate-preview":     {},
+	"schema-migrate-execute":     {},
+	"schema-migrate-rollback":    {},
+	"schema-migrate-commit":      {},
+	"schema-migration-job-status": {},
+	"migration-archive-list":     {},
+	"migration-archive-get":      {},
+
+	// ── Journal ─────────────────────────────────────────────────────────────
+	"journal-list":     {},
+	"journal-add-note": {},
+
+	// ── Documents ───────────────────────────────────────────────────────────
+	"document-list":   {},
+	"document-get":    {},
+	"document-upload": {},
+	"document-delete": {},
+
+	// ── Skills ──────────────────────────────────────────────────────────────
+	"skill-list":   {},
+	"skill-get":    {},
+	"skill-create": {},
+	"skill-update": {},
+	"skill-delete": {},
+
+	// ── Agents ──────────────────────────────────────────────────────────────
+	"agent-def-list":          {},
+	"agent-def-get":           {},
+	"agent-def-create":        {},
+	"update_agent_definition": {},
+	"agent-def-delete":        {},
+	"agent-list":              {},
+	"agent-get":               {},
+	"agent-create":            {},
+	"update_agent":            {},
+	"agent-delete":            {},
+	"trigger_agent":           {},
+	"agent-run-list":          {},
+	"agent-run-get":           {},
+	"agent-run-messages":      {},
+	"agent-run-tool-calls":    {},
+	"agent-run-status":        {},
+	"agent-list-available":    {},
+	"agent-question-list":         {},
+	"agent-question-list-project": {},
+	"agent-question-respond":      {},
+	"adk-session-list": {},
+	"adk-session-get":  {},
+	"acp-list-agents":     {},
+	"acp-trigger-run":     {},
+	"acp-get-run-status":  {},
+	"acp-get-run-events":  {},
+	"set_session_title":   {},
+
+	// ── MCP registry ────────────────────────────────────────────────────────
+	"mcp-server-list":    {},
+	"mcp-server-get":     {},
+	"mcp-server-create":  {},
+	"update_mcp_server":  {},
+	"mcp-server-delete":  {},
+	"toggle_mcp_server_tool": {},
+	"sync_mcp_server_tools":  {},
 	"search_mcp_registry":    {},
-	"schema-list":            {},
-	"schema-get":             {},
-	"schema-create":          {},
-	"schema-update":          {},
-	"schema-delete":          {},
-	"journal-list":           {},
-	"skill-list":             {},
-	"skill-get":              {},
-	"provider-list":          {},
-	"traces-list":            {},
+	"mcp-registry-get":       {},
+	"mcp-registry-install":   {},
+	"mcp-server-inspect":     {},
+
+	// ── Provider ────────────────────────────────────────────────────────────
+	"provider-list-org":          {},
+	"provider-configure-org":     {},
+	"provider-configure-project": {},
+	"provider-models-list":       {},
+	"provider-usage-get":         {},
+	"provider-test":              {},
+
+	// ── Embeddings ──────────────────────────────────────────────────────────
+	"embedding-status":        {},
+	"embedding-pause":         {},
+	"embedding-resume":        {},
+	"embedding-config-update": {},
+
+	// ── Tokens ──────────────────────────────────────────────────────────────
+	"token-list":   {},
+	"token-create": {},
+	"token-get":    {},
+	"token-revoke": {},
+
+	// ── Tracing ─────────────────────────────────────────────────────────────
+	"trace-list": {},
+	"trace-get":  {},
+
+	// ── Domain / discovery ──────────────────────────────────────────────────
+	"classify-document":    {},
+	"list-installed-schemas": {},
+	"finalize-discovery":   {},
+	"queue-reextraction":   {},
+
+	// ── Web ─────────────────────────────────────────────────────────────────
+	"web-search-brave":  {},
+	"web-fetch":         {},
+	"web-search-reddit": {},
+
+	// ── Session todos ───────────────────────────────────────────────────────
+	"session-todo-list":   {},
+	"session-todo-update": {},
 }
 
 // ExposedName returns the external name used in the OpenAI API for an internal

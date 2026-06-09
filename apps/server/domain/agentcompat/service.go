@@ -2,6 +2,8 @@ package agentcompat
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -636,19 +638,24 @@ func buildConversationHistory(messages []ChatMessage) string {
 		m := messages[i]
 		switch m.Role {
 		case "system":
-			// system messages are already injected via the agent definition —
-			// skip to avoid duplication.
-			continue
+			// Mid-conversation system messages (e.g. context injections from the
+			// client) are preserved — they may carry important runtime context.
+			// The agent's own system prompt is injected separately; duplication
+			// risk is low because the agent definition prompt is not in messages[].
+			if m.Content != "" {
+				sb.WriteString(fmt.Sprintf("[System]: %s\n", m.Content))
+			}
 		case "user":
 			sb.WriteString(fmt.Sprintf("User: %s\n", m.Content))
 		case "assistant":
-			if len(m.ToolCalls) > 0 {
-				for _, tc := range m.ToolCalls {
-					sb.WriteString(fmt.Sprintf("Assistant called tool %q with args: %s\n",
-						tc.Function.Name, tc.Function.Arguments))
-				}
-			} else {
+			// Preserve content even when tool_calls are also present — the OpenAI
+			// spec allows both (e.g. chain-of-thought before a tool call).
+			if m.Content != "" {
 				sb.WriteString(fmt.Sprintf("Assistant: %s\n", m.Content))
+			}
+			for _, tc := range m.ToolCalls {
+				sb.WriteString(fmt.Sprintf("Assistant called tool %q with args: %s\n",
+					tc.Function.Name, tc.Function.Arguments))
 			}
 		case "tool":
 			sb.WriteString(fmt.Sprintf("Tool result (id=%s): %s\n", m.ToolCallID, m.Content))
@@ -720,6 +727,13 @@ func sanitizeName(name string) string {
 	return b.String()
 }
 
+// shortID returns a cryptographically random 8-byte hex string (16 chars).
+// Used as the suffix for chat completion IDs and tool call IDs.
 func shortID() string {
-	return fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFF_FFFF)
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: time-based (avoids panic if rand unavailable, which is rare)
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
