@@ -24,6 +24,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
+	"github.com/emergent-company/emergent.memory/domain/agentcompat"
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/authinfo"
@@ -202,6 +203,7 @@ func featureFxOptions(f config.FeatureSet) []fx.Option {
 
 	if f.Agents {
 		opts = append(opts, agents.Module)
+		opts = append(opts, agentcompat.Module)
 	}
 	if f.MCP {
 		opts = append(opts, mcp.Module)

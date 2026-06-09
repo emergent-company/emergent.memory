@@ -22,8 +22,15 @@ type ProjectSetting struct {
 
 // Category constants for project settings
 const (
-	SettingsCategoryAgentOverride = "agent_override"
+	SettingsCategoryAgentOverride  = "agent_override"
+	SettingsCategoryRememberConfig = "remember_config"
 )
+
+// SettingsKeyRememberAgentName is the project setting key that overrides which
+// agent definition powers POST /remember. When set, the handler looks up the
+// named definition instead of the canonical "domain-remember-agent". Value is
+// stored as {"name":"<agent-definition-name>"} in the JSONB value column.
+const SettingsKeyRememberAgentName = "agent_name"
 
 // AgentOverride represents a partial agent definition override.
 // Fields that are nil/empty are not overridden — they inherit the canonical defaults.

@@ -7,50 +7,50 @@ import (
 )
 
 // EntityExtractorSystemPrompt is the base system prompt for entity extraction.
-const EntityExtractorSystemPrompt = `You are an expert knowledge graph builder. Extract entities from the document. Respond with valid JSON.
+const EntityExtractorSystemPrompt = `You are a knowledge graph builder. Extract real-world objects from the document — the actual things the text is about, not the lines or messages themselves.
 
-For EACH entity, you MUST provide these four fields:
-1. name: Clear, descriptive name of the entity (REQUIRED, top-level field)
-2. type: Entity type from the allowed list (REQUIRED, top-level field)
-3. description: Brief description of what this entity represents (top-level field)
-4. properties: An object containing type-specific attributes (CRITICAL - see below)
+## The right level of abstraction
 
-CRITICAL INSTRUCTIONS FOR PROPERTIES:
-- The "properties" field is an object that MUST contain type-specific attributes extracted from the document
-- For Person entities: include role, occupation, title, father, mother, tribe, age, significance, etc.
-- For Location entities: include region, country, location_type, significance, etc.
-- For Event entities: include date, location, participants, outcome, etc.
-- For Organization entities: include type, purpose, members, location, etc.
-- NEVER return an empty properties object {} if there is ANY relevant information in the document
-- Extract ALL attributes mentioned or implied in the text for each entity
-- The properties object should NOT contain name, type, or description - those are top-level fields
+Extract SEMANTIC OBJECTS — the things that exist in the world the document describes:
+  - People, characters, persons — who they are, what they do, what is known about them
+  - Places, locations — where things happen, where people are from, where they work
+  - Events, situations, occurrences — things that happened or are happening
+  - Objects, artefacts, products — things referenced that have identity
+  - Organisations, groups, institutions
+  - Relationships between people — bonds, roles, histories
 
-RULES:
-- Extract ALL entities that match the allowed types
-- Be thorough - don't miss important entities
-- Use consistent naming
-- Keep descriptions concise but informative
-- Only include properties that are explicitly mentioned or clearly implied in the document
-- Do NOT guess or fabricate property values
+Do NOT extract the form of the document:
+  - NOT individual messages, lines, utterances, or paragraphs as separate entities
+  - NOT timestamps or dates as entities (attach them as properties)
+  - NOT headers, labels, or structural elements
 
-TEMPORAL RULES:
-- NEVER create a separate entity for a date, month, or time
-- Instead, attach temporal info as properties on the entity it describes:
-  - "date": ISO date string (e.g. "2026-06-01") when a specific date is known
-  - "date_raw": original text (e.g. "June", "last year", "a few months back") when date is relative
-  - Resolve relative dates using any SESSION_DATE context provided (e.g. "last year" → prior year, "a few months back" → 3-4 months before session date)
-- Example: "the wedding was in June" → wedding Event entity gets properties.date_raw = "June"
-- Example: "went to Kenya a few months back" → kenya-trip Event entity gets properties.date_raw = "a few months back"
+## Example
 
-CONVERSATION / AGENT LOG HINTS:
-- If the document is a chat or AI agent log, also extract:
-  - Tasks requested by the user (as Event entities with type="task" or relevant type)
-  - Actions completed by the agent (bookings confirmed, emails sent, reminders set) — as Event or Object entities
-  - Confirmation numbers, reference codes, booking IDs — as properties on the relevant entity (NOT separate entities)
-  - File paths or document names referenced — as Object entities
-  - Stated preferences or interests of a person — as properties on that Person entity (e.g. properties.interests, properties.preferences)
-- Pets and animals: type=Object with properties.species
-- If a user asks an agent to contact someone (email, message), extract the communication as an Event entity and note the implied social relationship`
+Text: "Monica: I've been working at Javu restaurant for three years. Ross: Carol moved out yesterday."
+
+WRONG — extracting document lines:
+  {"name": "Monica's utterance", "type": "Message"}
+  {"name": "Ross's utterance", "type": "Message"}
+
+RIGHT — extracting real objects:
+  {"name": "Monica Geller", "type": "Character", "properties": {"occupation": "chef", "workplace": "Javu restaurant", "tenure": "three years"}}
+  {"name": "Carol", "type": "Character", "properties": {"relationship_to_ross": "ex-wife"}}
+  {"name": "Carol moving out", "type": "Event", "properties": {"description": "Carol moved out", "timing": "yesterday", "affected_person": "Ross"}}
+
+## Rules
+
+- Extract ALL distinct real-world objects the document reveals
+- Consolidate: if the same person is mentioned 10 times, create ONE entity with all their facts as properties
+- Fill properties exhaustively — everything the document says about this entity goes into properties
+- Properties object must NOT contain name, type, or description (those are top-level fields)
+- Use the exact property field names defined in the schema
+- Do NOT fabricate or infer beyond what the text says
+
+## Temporal facts
+
+Attach times/dates as properties on the entity they describe — never create a separate entity for a date:
+  - "date": ISO date when exact (e.g. "1994-09-22")
+  - "date_raw": original text when approximate (e.g. "yesterday", "three years ago")`
 
 // RelationshipBuilderSystemPrompt is the base system prompt for relationship extraction.
 const RelationshipBuilderSystemPrompt = `You are an expert at finding connections in knowledge graphs. Your job is to identify ALL meaningful relationships between entities. Respond with valid JSON.
@@ -470,5 +470,124 @@ func BuildDomainSection(projectContext, domainGuidance string) string {
 		sb.WriteString(domainGuidance)
 		sb.WriteString("\n")
 	}
+	return sb.String()
+}
+
+// BuildEntityUnpackingPrompt builds the phase-1 (unpack) prompt.
+// No schema, no type constraints — exhaustive reading of the document.
+func BuildEntityUnpackingPrompt(documentText string) string {
+	var sb strings.Builder
+	sb.WriteString(EntityUnpackerSystemPrompt)
+	sb.WriteString("\n\n## Document\n\n")
+	sb.WriteString(documentText)
+	sb.WriteString("\n\nExtract all entities and their facts now.")
+	return sb.String()
+}
+
+// BuildEntityNormalizationPrompt builds the phase-2 (normalize) prompt.
+// Maps unpacked free-form items onto strict schema types and property slots.
+// typeHints maps typeName → extraction hint (from SchemaExtractionPrompts.TypeHints).
+// negativeExamples lists things NOT to extract.
+func BuildEntityNormalizationPrompt(
+	unpackedItems []UnpackedItem,
+	objectSchemas map[string]ObjectSchema,
+	allowedTypes []string,
+	typeHints map[string]string,
+	negativeExamples []string,
+) string {
+	typesToNorm := allowedTypes
+	if len(typesToNorm) == 0 {
+		typesToNorm = make([]string, 0, len(objectSchemas))
+		for t := range objectSchemas {
+			typesToNorm = append(typesToNorm, t)
+		}
+	}
+
+	var sb strings.Builder
+
+	sb.WriteString(`You are a schema normalizer. You have a list of raw entities and their facts extracted from a document.
+Your job: map each raw entity to one of the schema types below and fill the schema property slots from the entity's facts.
+
+Rules:
+- Choose the BEST matching schema type for each raw entity.
+- If no schema type fits, skip that entity — do not force a match.
+- Fill every property slot you can from the entity's facts. Do NOT invent values.
+- Facts may contain more information than the schema has slots for — fill what fits, ignore the rest.
+- Multiple raw entities may map to the same schema type.
+- Preserve exact names from the raw entities.
+
+`)
+
+	if len(negativeExamples) > 0 {
+		sb.WriteString("## Do NOT extract these\n")
+		for _, ex := range negativeExamples {
+			sb.WriteString(fmt.Sprintf("- %s\n", ex))
+		}
+		sb.WriteString("\n")
+	}
+
+	topLevelFields := map[string]bool{"name": true, "description": true, "type": true}
+
+	sb.WriteString("## Schema Types\n\n")
+	sb.WriteString(fmt.Sprintf("Normalise into ONLY these types: %s\n\n", strings.Join(typesToNorm, ", ")))
+
+	for _, typeName := range typesToNorm {
+		schema, ok := objectSchemas[typeName]
+		sb.WriteString(fmt.Sprintf("### %s\n", typeName))
+		if ok && schema.Description != "" {
+			sb.WriteString(schema.Description + "\n")
+		}
+		if hint, ok := typeHints[typeName]; ok && hint != "" {
+			sb.WriteString(fmt.Sprintf("**Hint:** %s\n", hint))
+		}
+		if ok && len(schema.Properties) > 0 {
+			sb.WriteString("**Properties** (in `properties` object):\n")
+			for propName, propDef := range schema.Properties {
+				if topLevelFields[propName] || strings.HasPrefix(propName, "_") {
+					continue
+				}
+				propType := propDef.Type
+				if propType == "" {
+					propType = "string"
+				}
+				required := ""
+				for _, req := range schema.Required {
+					if req == propName {
+						required = " (required)"
+						break
+					}
+				}
+				sb.WriteString(fmt.Sprintf("- `%s` (%s)%s: %s\n", propName, propType, required, propDef.Description))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("## Raw Extracted Items\n\nMap each onto a schema type:\n\n")
+	for i, item := range unpackedItems {
+		sb.WriteString(fmt.Sprintf("### Item %d: %s\n", i+1, item.Name))
+		sb.WriteString(fmt.Sprintf("Kind: %s\n", item.Kind))
+		if len(item.Facts) > 0 {
+			sb.WriteString("Facts:\n")
+			for _, fact := range item.Facts {
+				sb.WriteString(fmt.Sprintf("- %s\n", fact))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(`## Output Format
+
+Return JSON with an "entities" key. Each entity:
+- name (string): exact name from raw item
+- type (string): one of the schema types above
+- description (string, optional): brief description
+- properties (object): schema property slots filled from facts
+
+Example:
+{"entities": [{"name": "Monica Geller", "type": "Character", "description": "Chef", "properties": {"occupation": "chef", "apartment": "apartment 20"}}]}
+
+Normalise all matching items now.`)
+
 	return sb.String()
 }

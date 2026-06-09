@@ -150,6 +150,48 @@ tasks:
         echo ""
         echo "=== full log: $LOG_FILE ==="
 
+  test:experiments:
+    desc: Run remember-agent experiment tests and save output to logs/tests/experiments/
+    cmds:
+      - |
+        LOG_DIR="../../logs/tests/experiments"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/run-$(date +%Y%m%d-%H%M%S).log"
+        echo "=== remember experiments run $(date) ===" | tee "$LOG_FILE"
+        go test ./tests/integration/... -v -count=1 -timeout 30m \
+          -run TestRememberExperiments \
+          {{.CLI_ARGS}} 2>&1 | tee -a "$LOG_FILE"
+        echo ""
+        echo "=== full log: $LOG_FILE ==="
+
+  test:extraction:fixed:
+    desc: Run fixed-schema extraction tests (pre-installed Friends schema)
+    cmds:
+      - |
+        LOG_DIR="../../logs/tests/experiments"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/fixed-$(date +%Y%m%d-%H%M%S).log"
+        echo "=== fixed-schema extraction run $(date) ===" | tee "$LOG_FILE"
+        go test ./tests/integration/... -v -count=1 -timeout 30m \
+          -run TestExtractionFixedSchema \
+          {{.CLI_ARGS}} 2>&1 | tee -a "$LOG_FILE"
+        echo ""
+        echo "=== full log: $LOG_FILE ==="
+
+  test:extraction:compare:
+    desc: Run discovery vs fixed-schema side-by-side comparison tests
+    cmds:
+      - |
+        LOG_DIR="../../logs/tests/experiments"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/compare-$(date +%Y%m%d-%H%M%S).log"
+        echo "=== discovery vs fixed-schema comparison run $(date) ===" | tee "$LOG_FILE"
+        go test ./tests/integration/... -v -count=1 -timeout 45m \
+          -run "TestExtractionFixedSchema/TestCompare_" \
+          {{.CLI_ARGS}} 2>&1 | tee -a "$LOG_FILE"
+        echo ""
+        echo "=== full log: $LOG_FILE ==="
+
   test:coverage:
     desc: Run tests with coverage report
     cmds:

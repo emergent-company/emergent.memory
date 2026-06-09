@@ -11,6 +11,9 @@ const (
 	// SuspendReasonAwaitingToolConfirm means the run is paused waiting for the user to
 	// approve or reject a tool call governed by a tool policy.
 	SuspendReasonAwaitingToolConfirm SuspendReason = "awaiting_tool_confirm"
+	// SuspendReasonAwaitingClientTool means the run is paused waiting for the OpenAI-compat
+	// client to execute a caller-supplied tool and POST the result back.
+	SuspendReasonAwaitingClientTool SuspendReason = "awaiting_client_tool"
 )
 
 // SuspendSignal is set by a tool (or spawn handler) to indicate that the current
@@ -37,6 +40,11 @@ type SuspendSignal struct {
 	// On confirm-resume, the executor injects a synthetic "approved" FunctionResponse.
 	// On reject-resume, the executor injects an error FunctionResponse.
 	PendingToolConfirmArgs map[string]any
+
+	// PendingClientToolArgs holds the args for SuspendReasonAwaitingClientTool.
+	// The agentcompat layer serialises these into an OpenAI tool_calls response so
+	// the caller can execute the function and POST results back.
+	PendingClientToolArgs map[string]any
 }
 
 // ToMap serialises the SuspendSignal for storage as JSONB suspend_context.
@@ -54,6 +62,9 @@ func (s SuspendSignal) ToMap() map[string]any {
 	}
 	if s.PendingToolConfirmArgs != nil {
 		m["pending_tool_confirm_args"] = s.PendingToolConfirmArgs
+	}
+	if s.PendingClientToolArgs != nil {
+		m["pending_client_tool_args"] = s.PendingClientToolArgs
 	}
 	return m
 }
@@ -77,6 +88,9 @@ func SuspendSignalFromMap(m map[string]any) *SuspendSignal {
 	s.PendingToolName, _ = m["pending_tool_name"].(string)
 	if args, ok := m["pending_tool_confirm_args"].(map[string]any); ok {
 		s.PendingToolConfirmArgs = args
+	}
+	if args, ok := m["pending_client_tool_args"].(map[string]any); ok {
+		s.PendingClientToolArgs = args
 	}
 	return s
 }

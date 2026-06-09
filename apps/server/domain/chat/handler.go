@@ -1633,10 +1633,33 @@ func (h *Handler) RememberStream(c echo.Context) error {
 		span.SetAttributes(attribute.String("memory.remember.document_id", documentID))
 	}
 
-	// Ensure the domain-remember-agent exists (idempotent, user-editable after first creation).
-	agentDef, err := h.agentRepo.EnsureDomainRememberAgent(ctx, projectID, schemaPolicy)
-	if err != nil {
-		return apperror.NewInternal("failed to ensure domain-remember-agent", err)
+	// Resolve which agent definition powers this /remember call.
+	// Default: the canonical "domain-remember-agent" (idempotent, auto-created).
+	// Override: a project setting (category=remember_config, key=agent_name,
+	// value={"name":"<custom-agent-definition-name>"}) redirects to a different
+	// definition — used for experiments without touching the baseline agent.
+	var agentDef *agents.AgentDefinition
+	if setting, settingErr := h.agentRepo.GetProjectSetting(ctx, projectID,
+		agents.SettingsCategoryRememberConfig, agents.SettingsKeyRememberAgentName); settingErr == nil &&
+		setting != nil {
+		if customName, ok := setting.Value["name"].(string); ok && customName != "" && customName != agents.CanonicalRememberAgentName {
+			var lookupErr error
+			agentDef, lookupErr = h.agentRepo.FindDefinitionByName(ctx, projectID, customName)
+			if lookupErr != nil || agentDef == nil {
+				h.log.Warn("remember: custom agent not found, falling back to canonical",
+					slog.String("custom_name", customName),
+					slog.String("project_id", projectID),
+				)
+				agentDef = nil
+			}
+		}
+	}
+	if agentDef == nil {
+		var ensureErr error
+		agentDef, ensureErr = h.agentRepo.EnsureDomainRememberAgent(ctx, projectID, schemaPolicy)
+		if ensureErr != nil {
+			return apperror.NewInternal("failed to ensure domain-remember-agent", ensureErr)
+		}
 	}
 
 	agentDefUUID, err := uuid.Parse(agentDef.ID)
@@ -1648,11 +1671,19 @@ func (h *Handler) RememberStream(c echo.Context) error {
 	// goes directly to finalize-discovery (LLM can't skip the classification step).
 	var agentMessage string
 	if documentID != "" {
-		var classifiedStage, classifiedPackName, classifiedSchemaID string
+		// Default: when no classifier is wired (tests, minimal server) treat every
+		// document as a new domain so the agent always has an actionable stage.
+		classifiedStage := demoteStageForPolicy("new_domain", schemaPolicy)
+		var classifiedPackName, classifiedSchemaID, classifiedReason string
 		if h.domainClassifier != nil {
 			snap, classErr := h.domainClassifier.ClassifyDocument(ctx, projectID, documentID)
 			if classErr == nil {
-				classifiedStage = demoteStageForPolicy(snap.Stage, schemaPolicy)
+				stage := snap.Stage
+				// Empty stage means no schema packs are installed — treat as new_domain.
+				if stage == "" {
+					stage = "new_domain"
+				}
+				classifiedStage = demoteStageForPolicy(stage, schemaPolicy)
 				classifiedPackName = snap.SuggestedPackName
 				if classifiedPackName == "" {
 					classifiedPackName = snap.Label
@@ -1660,15 +1691,16 @@ func (h *Handler) RememberStream(c echo.Context) error {
 				if snap.SchemaID != nil {
 					classifiedSchemaID = *snap.SchemaID
 				}
+				classifiedReason = snap.LLMReason
 			} else {
-				h.log.Warn("pre-classify failed, agent will classify",
+				h.log.Warn("pre-classify failed, using new_domain fallback",
 					slog.String("document_id", documentID),
 					slog.String("error", classErr.Error()),
 				)
 			}
 		}
-		agentMessage = fmt.Sprintf("document_id: %s\nschema_policy: %s\ndry_run: %v\nclassified_stage: %s\nclassified_pack_name: %s\nclassified_schema_id: %s\n\n%s",
-			documentID, schemaPolicy, req.DryRun, classifiedStage, classifiedPackName, classifiedSchemaID, message)
+		agentMessage = fmt.Sprintf("document_id: %s\nschema_policy: %s\ndry_run: %v\nclassified_stage: %s\nclassified_pack_name: %s\nclassified_schema_id: %s\nclassified_reason: %s\n\n%s",
+			documentID, schemaPolicy, req.DryRun, classifiedStage, classifiedPackName, classifiedSchemaID, classifiedReason, message)
 	} else {
 		// Fallback (no docSvc injected): pass message directly so agent still runs.
 		agentMessage = fmt.Sprintf("schema_policy: %s\ndry_run: %v\n\n%s",
@@ -2064,9 +2096,28 @@ func (h *Handler) RememberFile(c echo.Context) error {
 	)
 	defer span.End()
 
-	agentDef, err := h.agentRepo.EnsureDomainRememberAgent(ctx, projectID, req.SchemaPolicy)
-	if err != nil {
-		return apperror.NewInternal("failed to ensure domain-remember-agent", err)
+	var agentDef *agents.AgentDefinition
+	if setting, settingErr := h.agentRepo.GetProjectSetting(ctx, projectID,
+		agents.SettingsCategoryRememberConfig, agents.SettingsKeyRememberAgentName); settingErr == nil &&
+		setting != nil {
+		if customName, ok := setting.Value["name"].(string); ok && customName != "" && customName != agents.CanonicalRememberAgentName {
+			var lookupErr error
+			agentDef, lookupErr = h.agentRepo.FindDefinitionByName(ctx, projectID, customName)
+			if lookupErr != nil || agentDef == nil {
+				h.log.Warn("remember/file: custom agent not found, falling back to canonical",
+					slog.String("custom_name", customName),
+					slog.String("project_id", projectID),
+				)
+				agentDef = nil
+			}
+		}
+	}
+	if agentDef == nil {
+		var ensureErr error
+		agentDef, ensureErr = h.agentRepo.EnsureDomainRememberAgent(ctx, projectID, req.SchemaPolicy)
+		if ensureErr != nil {
+			return apperror.NewInternal("failed to ensure domain-remember-agent", ensureErr)
+		}
 	}
 
 	agentDefUUID, err := uuid.Parse(agentDef.ID)

@@ -1714,7 +1714,10 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 		s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
-		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+		if newHead == nil {
+			return newVersion.ToResponse(), nil
+		}
 		return newHead.ToResponse(), nil
 	}
 
@@ -1743,7 +1746,10 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 
 	s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
 
-	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID)
+	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+	if newHead == nil {
+		return newVersion.ToResponse(), nil
+	}
 	return newHead.ToResponse(), nil
 }
 

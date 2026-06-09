@@ -197,6 +197,12 @@ func (w *ObjectExtractionWorker) run(ctx context.Context) {
 }
 
 // processSingleJob processes a single job after it's dequeued
+// ProcessJobSync processes a single extraction job synchronously.
+// Used by tests to run extraction in-process without the background poll loop.
+func (w *ObjectExtractionWorker) ProcessJobSync(ctx context.Context, job *ObjectExtractionJob) (*ObjectExtractionResults, error) {
+	return w.processJob(ctx, job)
+}
+
 func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *ObjectExtractionJob) error {
 	docID := ""
 	if job.DocumentID != nil {
@@ -601,8 +607,13 @@ func (w *ObjectExtractionWorker) persistResults(
 	tempIDToObjectID := make(map[string]uuid.UUID)
 	createdObjectIDs := make([]string, 0)
 
-	// Create graph objects
+	// Create graph objects, deduplicating by (project_id, type, name).
+	// CreateOrUpdate upserts by key so that duplicate entities extracted from
+	// overlapping batches (or repeated extraction jobs on the same document)
+	// merge into a single graph object instead of creating duplicate rows.
+	// objectsCreated counts only genuinely new graph rows (created=true).
 	objectsCreated := 0
+	objectsMerged := 0
 	for _, entity := range output.Entities {
 		properties := map[string]any{
 			"name":        entity.Name,
@@ -621,23 +632,48 @@ func (w *ObjectExtractionWorker) persistResults(
 			properties["_extraction_source"] = *job.SourceType
 		}
 
-		graphObj, err := w.graphService.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
-			Type:       entity.Type,
-			Properties: properties,
-			Status:     stringPtr("suggested"),
-			BranchID:   stagingBranchID,
-		}, nil)
-		if err != nil {
-			w.log.Warn("failed to create graph object",
-				slog.String("name", entity.Name),
-				slog.String("type", entity.Type),
-				logger.Error(err))
-			continue
+		key := strings.TrimSpace(entity.Name)
+		if key != "" {
+			// Upsert: merge into existing object when (project_id, type, key) matches.
+			graphObj, created, err := w.graphService.CreateOrUpdate(ctx, projectID, &graph.CreateGraphObjectRequest{
+				Type:       entity.Type,
+				Key:        &key,
+				Properties: properties,
+				Status:     stringPtr("suggested"),
+				BranchID:   stagingBranchID,
+			}, nil)
+			if err != nil {
+				w.log.Warn("failed to persist graph object",
+					slog.String("name", entity.Name),
+					slog.String("type", entity.Type),
+					logger.Error(err))
+				continue
+			}
+			tempIDToObjectID[entity.TempID] = graphObj.ID
+			createdObjectIDs = append(createdObjectIDs, graphObj.ID.String())
+			if created {
+				objectsCreated++
+			} else {
+				objectsMerged++
+			}
+		} else {
+			// No name → cannot key for dedup, fall back to plain Create.
+			graphObj, err := w.graphService.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
+				Type:       entity.Type,
+				Properties: properties,
+				Status:     stringPtr("suggested"),
+				BranchID:   stagingBranchID,
+			}, nil)
+			if err != nil {
+				w.log.Warn("failed to create graph object (no name)",
+					slog.String("type", entity.Type),
+					logger.Error(err))
+				continue
+			}
+			tempIDToObjectID[entity.TempID] = graphObj.ID
+			createdObjectIDs = append(createdObjectIDs, graphObj.ID.String())
+			objectsCreated++
 		}
-
-		tempIDToObjectID[entity.TempID] = graphObj.ID
-		createdObjectIDs = append(createdObjectIDs, graphObj.ID.String())
-		objectsCreated++
 	}
 
 	// Create relationships
@@ -686,17 +722,20 @@ func (w *ObjectExtractionWorker) persistResults(
 		}
 	}
 
+	successfulItems := objectsCreated + objectsMerged
 	return &ObjectExtractionResults{
 		ObjectsCreated:       objectsCreated,
 		RelationshipsCreated: relationshipsCreated,
 		TotalItems:           len(output.Entities),
 		ProcessedItems:       len(output.Entities),
-		SuccessfulItems:      objectsCreated,
-		FailedItems:          len(output.Entities) - objectsCreated,
+		SuccessfulItems:      successfulItems,
+		FailedItems:          len(output.Entities) - successfulItems,
 		DiscoveredTypes:      discoveredTypes,
 		CreatedObjectIDs:     createdObjectIDs,
 		DebugInfo: JSON{
 			"entity_count":       len(output.Entities),
+			"objects_created":    objectsCreated,
+			"objects_merged":     objectsMerged,
 			"relationship_count": len(output.Relationships),
 			"orphan_rate":        agents.CalculateOrphanRate(output.Entities, output.Relationships),
 		},

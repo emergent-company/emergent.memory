@@ -6,6 +6,10 @@ import (
 	"log/slog"
 )
 
+// CanonicalRememberAgentName is the fixed name of the built-in remember agent.
+// Experiments use a different name and register it via the remember_config project setting.
+const CanonicalRememberAgentName = "domain-remember-agent"
+
 // domainRememberAgentSystemPrompt is the default system prompt for the domain-remember-agent.
 // The agent receives a document_id (UUID) and schema_policy. It classifies the document,
 // optionally creates a new schema pack (subject to schema_policy), and extraction is
@@ -59,7 +63,7 @@ Report: classification result and schema action.`
 // Safe to call concurrently — a race between two callers results in one insert and one
 // subsequent read (FindDefinitionByName will find the winner's row).
 func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID string, schemaPolicy string) (*AgentDefinition, error) {
-	existing, err := r.FindDefinitionByName(ctx, projectID, "domain-remember-agent")
+	existing, err := r.FindDefinitionByName(ctx, projectID, CanonicalRememberAgentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to look up domain-remember-agent: %w", err)
 	}
@@ -121,7 +125,7 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 
 	def := &AgentDefinition{
 		ProjectID:    projectID,
-		Name:         "domain-remember-agent",
+		Name:         CanonicalRememberAgentName,
 		Description:  strPtr("Domain-aware memory agent — classifies documents, discovers/reuses schemas, and queues structured extraction"),
 		SystemPrompt: &systemPrompt,
 		Model: &ModelConfig{
@@ -139,7 +143,7 @@ func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID st
 
 	if err := r.CreateDefinition(ctx, def); err != nil {
 		// Race: another caller inserted first — return that row.
-		if existing, err2 := r.FindDefinitionByName(ctx, projectID, "domain-remember-agent"); err2 == nil && existing != nil {
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, CanonicalRememberAgentName); err2 == nil && existing != nil {
 			return existing, nil
 		}
 		return nil, fmt.Errorf("failed to create domain-remember-agent: %w", err)

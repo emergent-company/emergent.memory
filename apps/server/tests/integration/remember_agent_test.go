@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +163,251 @@ func traceBodyKeys(body map[string]any) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// ── Trace dump ────────────────────────────────────────────────────────────────
+
+type traceSpan struct {
+	SpanID    string
+	ParentID  string
+	Name      string
+	Scope     string
+	StartNano uint64
+	EndNano   uint64
+	Attrs     map[string]any
+}
+
+func (s traceSpan) durationMs() float64 {
+	if s.EndNano <= s.StartNano {
+		return 0
+	}
+	return float64(s.EndNano-s.StartNano) / 1e6
+}
+
+func parseTraceSpans(body map[string]any) []traceSpan {
+	var spans []traceSpan
+	batches, _ := body["batches"].([]any)
+	for _, b := range batches {
+		batch, _ := b.(map[string]any)
+		for _, ss := range castSlice(batch["scopeSpans"]) {
+			ssBatch, _ := ss.(map[string]any)
+			scope := ""
+			if sc, ok := ssBatch["scope"].(map[string]any); ok {
+				scope, _ = sc["name"].(string)
+			}
+			for _, rs := range castSlice(ssBatch["spans"]) {
+				sp, _ := rs.(map[string]any)
+				ts := traceSpan{
+					Scope:    scope,
+					Name:     strField(sp, "name"),
+					SpanID:   strField(sp, "spanId"),
+					ParentID: strField(sp, "parentSpanId"),
+					Attrs:    make(map[string]any),
+				}
+				if v, err := strconv.ParseUint(strField(sp, "startTimeUnixNano"), 10, 64); err == nil {
+					ts.StartNano = v
+				}
+				if v, err := strconv.ParseUint(strField(sp, "endTimeUnixNano"), 10, 64); err == nil {
+					ts.EndNano = v
+				}
+				for _, a := range castSlice(sp["attributes"]) {
+					attr, _ := a.(map[string]any)
+					k, _ := attr["key"].(string)
+					if val, ok := attr["value"].(map[string]any); ok {
+						ts.Attrs[k] = flattenOTelValue(val)
+					}
+				}
+				spans = append(spans, ts)
+			}
+		}
+	}
+	return spans
+}
+
+func castSlice(v any) []any {
+	s, _ := v.([]any)
+	return s
+}
+
+func strField(m map[string]any, k string) string {
+	v, _ := m[k].(string)
+	return v
+}
+
+func flattenOTelValue(v map[string]any) any {
+	for kind, raw := range v {
+		switch kind {
+		case "stringValue":
+			return raw
+		case "intValue":
+			if s, ok := raw.(string); ok {
+				if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+					return n
+				}
+			}
+			return raw
+		case "boolValue", "doubleValue":
+			return raw
+		case "arrayValue":
+			arr, _ := raw.(map[string]any)
+			vals, _ := arr["values"].([]any)
+			out := make([]any, 0, len(vals))
+			for _, item := range vals {
+				if m, ok := item.(map[string]any); ok {
+					out = append(out, flattenOTelValue(m))
+				}
+			}
+			return out
+		}
+	}
+	return v
+}
+
+func formatAttrVal(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64)
+	case []any:
+		parts := make([]string, 0, len(val))
+		for _, item := range val {
+			parts = append(parts, fmt.Sprintf("%v", item))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// dumpTrace logs the full span tree of a Tempo trace response with durations,
+// prioritised attributes, and a token-usage summary.
+func dumpTrace(t *testing.T, traceID string, body map[string]any) {
+	t.Helper()
+	spans := parseTraceSpans(body)
+	if len(spans) == 0 {
+		t.Logf("── trace %s: no spans ──", traceID)
+		return
+	}
+
+	byID := map[string]*traceSpan{}
+	for i := range spans {
+		byID[spans[i].SpanID] = &spans[i]
+	}
+	children := map[string][]string{}
+	var roots []string
+	for i := range spans {
+		sp := &spans[i]
+		if sp.ParentID == "" || byID[sp.ParentID] == nil {
+			roots = append(roots, sp.SpanID)
+		} else {
+			children[sp.ParentID] = append(children[sp.ParentID], sp.SpanID)
+		}
+	}
+	sortByStart := func(ids []string) {
+		sort.Slice(ids, func(i, j int) bool {
+			si, sj := byID[ids[i]], byID[ids[j]]
+			if si == nil || sj == nil {
+				return false
+			}
+			return si.StartNano < sj.StartNano
+		})
+	}
+	sortByStart(roots)
+	for k := range children {
+		sortByStart(children[k])
+	}
+
+	t.Logf("── trace %s ─ %d spans ────────────────────────────────────", traceID, len(spans))
+
+	// Attributes to print first (untruncated).
+	priority := []string{
+		"memory.llm.operation",
+		"memory.llm.request.model",
+		"memory.llm.agent.name",
+		"memory.llm.tool.name",
+		"memory.llm.usage.input_tokens",
+		"memory.llm.usage.output_tokens",
+		"memory.llm.usage.cache_read_tokens",
+		"memory.llm.usage.reasoning_tokens",
+		"memory.llm.response.finish_reasons",
+		"memory.agent.run_id",
+		"memory.agent.run_status",
+		"memory.agent.step_count",
+		"memory.agent.model",
+		"memory.project.id",
+		"memory.remember.schema_policy",
+		"memory.remember.message_preview",
+		"http.request.method",
+		"http.route",
+		"http.response.status_code",
+	}
+	prioritySet := map[string]bool{}
+	for _, k := range priority {
+		prioritySet[k] = true
+	}
+
+	var printSpan func(id, indent string)
+	printSpan = func(id, indent string) {
+		sp := byID[id]
+		if sp == nil {
+			return
+		}
+		scope := sp.Scope
+		if idx := strings.LastIndex(scope, "/"); idx >= 0 {
+			scope = scope[idx+1:]
+		}
+		t.Logf("%s[%s] %s  (%.1fms)", indent, scope, sp.Name, sp.durationMs())
+		ai := indent + "    "
+		for _, k := range priority {
+			if v, ok := sp.Attrs[k]; ok {
+				t.Logf("%s%-45s = %s", ai, k, formatAttrVal(v))
+			}
+		}
+		rem := make([]string, 0, len(sp.Attrs))
+		for k := range sp.Attrs {
+			if !prioritySet[k] {
+				rem = append(rem, k)
+			}
+		}
+		sort.Strings(rem)
+		for _, k := range rem {
+			s := formatAttrVal(sp.Attrs[k])
+			const max = 120
+			if len(s) > max {
+				s = s[:max] + "…"
+			}
+			t.Logf("%s%-45s = %s", ai, k, s)
+		}
+		for _, child := range children[id] {
+			printSpan(child, indent+"  ")
+		}
+	}
+	for _, id := range roots {
+		printSpan(id, "  ")
+	}
+
+	var totalIn, totalOut int64
+	for _, sp := range spans {
+		if op, _ := sp.Attrs["memory.llm.operation"].(string); op == "generate_content" {
+			if v, ok := sp.Attrs["memory.llm.usage.input_tokens"].(int64); ok {
+				totalIn += v
+			}
+			if v, ok := sp.Attrs["memory.llm.usage.output_tokens"].(int64); ok {
+				totalOut += v
+			}
+		}
+	}
+	if totalIn > 0 || totalOut > 0 {
+		t.Logf("  ── token totals: input=%d  output=%d ────────────────────", totalIn, totalOut)
+	}
 }
 
 // toolsUsed extracts tool names from mcp_tool SSE events (status=started).
@@ -989,7 +1236,7 @@ func (s *RememberAgentTestSuite) TestRemember_VerifiesRunPersistsMessagesAndTool
 		s.T().Skip("tracing proxy disabled on this server — skipping trace assertion")
 	}
 	s.True(traceFound, "expected trace data from /api/traces/%s", *run.TraceID)
-	s.T().Logf("  trace keys: %v", traceBodyKeys(traceBody))
+	dumpTrace(s.T(), *run.TraceID, traceBody)
 
 	terminalStatuses := []agents.AgentRunStatus{
 		agents.RunStatusSuccess,
@@ -1036,12 +1283,17 @@ func (s *RememberAgentTestSuite) TestRemember_TracesArePropagated() {
 	}
 	s.T().Logf("traceId from done event: %s", traceID)
 
-	// Poll GET /api/traces/:id — spans flush to Tempo asynchronously.
-	// 503 → tracing proxy disabled → skip.
+	// Poll GET /api/traces/:id until span count stabilises — spans are exported
+	// asynchronously in batches so later spans (tool, second LLM call) arrive
+	// after the first batch. We stop when ≥5 spans are present and stable for
+	// 3 consecutive polls (~1.5s), giving all batches time to flush.
+	// 503 → tracing proxy disabled on this server → skip.
 	traceURL := fmt.Sprintf("/api/traces/%s", traceID)
 	var traceBody map[string]any
 	traceFound := false
 	tracingDisabled := false
+	prevCount := -1
+	stableRounds := 0
 	s.Assert().Eventually(func() bool {
 		resp := s.client.GET(traceURL, testutil.WithAuth(s.authToken))
 		if resp.StatusCode == http.StatusServiceUnavailable {
@@ -1051,16 +1303,27 @@ func (s *RememberAgentTestSuite) TestRemember_TracesArePropagated() {
 		if resp.StatusCode != http.StatusOK {
 			return false
 		}
-		if err := json.Unmarshal(resp.Body, &traceBody); err != nil {
+		var body map[string]any
+		if err := json.Unmarshal(resp.Body, &body); err != nil {
 			return false
 		}
-		traceFound = true
-		return true
-	}, 15*time.Second, 500*time.Millisecond, "trace %s should appear in Tempo within 15s", traceID)
+		count := len(parseTraceSpans(body))
+		if count > 0 {
+			traceFound = true
+			traceBody = body
+		}
+		if count == prevCount && count >= 5 {
+			stableRounds++
+		} else {
+			stableRounds = 0
+		}
+		prevCount = count
+		return stableRounds >= 3
+	}, 30*time.Second, 500*time.Millisecond, "trace %s should stabilise in Tempo within 30s", traceID)
 
 	if tracingDisabled {
 		s.T().Skip("tracing proxy disabled on this server — skipping trace assertion")
 	}
 	s.Require().True(traceFound, "trace data not returned from /api/traces/%s", traceID)
-	s.T().Logf("trace response keys: %v", traceBodyKeys(traceBody))
+	dumpTrace(s.T(), traceID, traceBody)
 }

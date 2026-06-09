@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -71,6 +73,9 @@ type TestServer struct {
 	Config         *config.Config
 	Log            *slog.Logger
 	AuthMiddleware *auth.Middleware
+	// StopFn cancels background goroutines started by the server (e.g. extraction worker).
+	// Call in TearDownTest / TearDownSuite to avoid goroutine leaks.
+	StopFn func()
 }
 
 // NewTestServer creates a test server with all routes registered.
@@ -195,8 +200,46 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 		log,
 	)
 
+	// Build domain classifier so pre-classification works in-process tests.
+	extractionSchemaProvider := extraction.NewMemorySchemaProvider(db, log)
+	domainClassifier := extraction.NewDomainClassifierMCPAdapter(modelFactory, extractionSchemaProvider, docsSvc, log)
+
+	// Wire all domain MCP adapters — mirrors registerDomainToolsWithMCP in module.go.
+	jobsCfg := extraction.DefaultObjectExtractionConfig()
+	objJobsSvc := extraction.NewObjectExtractionJobsService(db, log, jobsCfg)
+	reextractionQueuer := extraction.NewReextractionQueuerMCPAdapter(objJobsSvc)
+	schemaIndex := extraction.NewSchemaIndexMCPAdapter(extractionSchemaProvider)
+	mcpSvc.SetDomainClassifier(domainClassifier)
+	mcpSvc.SetSchemaIndex(schemaIndex)
+	mcpSvc.SetReextractionQueuer(reextractionQueuer)
+	mcpSvc.SetDocumentSignalsReader(docsSvc)
+
+	// Start background extraction worker so queued jobs actually run.
+	// Uses a fast poll interval (2s) so tests don't wait long.
+	workerCfg := extraction.DefaultObjectExtractionWorkerConfig()
+	workerCfg.PollInterval = 2 * time.Second
+	workerCfg.Concurrency = 2
+	worker := extraction.NewObjectExtractionWorker(
+		objJobsSvc,
+		graphSvc,
+		nil, // branchService — objects go to main graph
+		docsSvc,
+		extractionSchemaProvider,
+		modelFactory,
+		embeddingsSvc,
+		workerCfg,
+		log,
+		nil, // concurrency scaler
+	)
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	worker.Start(workerCtx)
+
 	// Build the base server (registers all routes with nil LLM).
 	ts := newTestServerWithDB(testDB, db)
+	ts.StopFn = func() {
+		workerCancel()
+		worker.Stop()
+	}
 
 	// Re-register chat routes with the live executor + modelFactory, overriding
 	// the nil-LLM registration from newTestServerWithDB.
@@ -216,8 +259,8 @@ func NewTestServerWithLLM(testDB *TestDB) *TestServer {
 		modelFactory,
 		apitokenSvc,
 		docsSvc,
-		nil, // uploadHandler — file upload not needed in tests
-		nil, // domainClassifier — classifier uses LLM directly, not needed here
+		nil,              // uploadHandler — file upload not needed in tests
+		domainClassifier, // pre-classify documents before agent runs
 		cfg,
 		log,
 	)

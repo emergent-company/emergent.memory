@@ -39,10 +39,11 @@ type Service struct {
 // completeWithLLM sends a text prompt and returns the text response.
 // Uses the configured modelFactory to create a model per call.
 func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, error) {
-	_, span := tracing.Start(ctx, "discovery.llm_complete",
-		attribute.Int("prompt_length", len(prompt)),
+	ctx, span := tracing.Start(ctx, "discovery.llm_complete",
+		attribute.Int("memory.discovery.prompt_length", len(prompt)),
 	)
 	defer span.End()
+	_ = ctx // ctx carries the span for any downstream instrumentation
 
 	if s.modelFactory == nil {
 		span.SetAttributes(attribute.String("error", "modelFactory is nil"))
@@ -78,16 +79,16 @@ func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, e
 		}
 	}
 	result := sb.String()
-	span.SetAttributes(attribute.Int("response_length", len(result)))
+	span.SetAttributes(attribute.Int("memory.discovery.response_length", len(result)))
 	preview := result
 	if len(preview) > 2000 {
 		preview = preview[:2000]
 	}
-	span.SetAttributes(attribute.String("response_preview", preview))
+	span.SetAttributes(attribute.String("memory.discovery.response_preview", preview))
 	// Also store the tail for debugging truncated responses
 	if len(result) > 2000 {
 		tail := result[len(result)-500:]
-		span.SetAttributes(attribute.String("response_tail", tail))
+		span.SetAttributes(attribute.String("memory.discovery.response_tail", tail))
 	}
 	s.log.Debug("LLM raw response", slog.String("preview", preview), slog.Int("length", len(result)))
 	return result, nil
@@ -338,7 +339,12 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 			3*time.Minute,
 		)
 		defer promptCancel()
-		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, discoveredRels, req.PackName); promptErr != nil {
+		// Use real project description as kbPurpose so extraction hints are grounded
+		// in the KB's actual domain. Falls back to the generic string when project_info
+		// is NULL (see GetProjectInfo). Previously this passed req.PackName which is
+		// just a short schema name like "Friends Transcript" — not useful context.
+		kbPurpose, _ := s.repo.GetProjectInfo(promptCtx, projectID)
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, discoveredRels, kbPurpose); promptErr != nil {
 			s.log.Warn("failed to generate extraction prompts", slog.Any("err", promptErr))
 		} else if prompts != nil {
 			raw, _ := json.Marshal(prompts)
@@ -1434,9 +1440,9 @@ func (s *Service) generateExtractionPrompts(
 	relationships []DiscoveredRelationship,
 	kbPurpose string,
 ) (*extractionPrompts, error) {
-	_, span := tracing.Start(ctx, "discovery.generate_prompts",
-		attribute.Int("type_count", len(types)),
-		attribute.Int("relationship_count", len(relationships)),
+	ctx, span := tracing.Start(ctx, "discovery.generate_prompts",
+		attribute.Int("memory.discovery.type_count", len(types)),
+		attribute.Int("memory.discovery.relationship_count", len(relationships)),
 	)
 	defer span.End()
 
@@ -1479,14 +1485,15 @@ Return ONLY valid JSON with this exact structure:
   ]
 }`, sb.String())
 
+	// Pass span ctx so discovery.llm_complete is a child of discovery.generate_prompts.
 	response, err := s.completeWithLLM(ctx, prompt)
 	if err != nil {
 		span.SetAttributes(attribute.String("error", err.Error()))
 		return nil, fmt.Errorf("generateExtractionPrompts LLM call: %w", err)
 	}
 	span.SetAttributes(
-		attribute.Int("raw_response_length", len(response)),
-		attribute.Int("prompt_length", len(prompt)),
+		attribute.Int("memory.discovery.raw_response_length", len(response)),
+		attribute.Int("memory.discovery.prompt_length", len(prompt)),
 	)
 
 	clean := extractJSON(response, "domainContext")
@@ -1496,10 +1503,10 @@ Return ONLY valid JSON with this exact structure:
 		return nil, fmt.Errorf("generateExtractionPrompts parse response: %w", err)
 	}
 	span.SetAttributes(
-		attribute.Int("domain_context_length", len(prompts.DomainContext)),
-		attribute.Int("type_hints_count", len(prompts.TypeHints)),
-		attribute.Int("relationship_hints_count", len(prompts.RelationshipHints)),
-		attribute.Int("negative_examples_count", len(prompts.NegativeExamples)),
+		attribute.Int("memory.discovery.domain_context_length", len(prompts.DomainContext)),
+		attribute.Int("memory.discovery.type_hints_count", len(prompts.TypeHints)),
+		attribute.Int("memory.discovery.relationship_hints_count", len(prompts.RelationshipHints)),
+		attribute.Int("memory.discovery.negative_examples_count", len(prompts.NegativeExamples)),
 	)
 	return &prompts, nil
 }

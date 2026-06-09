@@ -179,6 +179,11 @@ type ExecuteRequest struct {
 	// PreApprovedToolName is set by Resume when the user approved a tool-policy confirmation.
 	// beforeToolCb will skip the policy gate for the first call to this tool name.
 	PreApprovedToolName string
+
+	// ExtraTools are additional ADK tool.Tool values injected per-request.
+	// They are appended to the resolved tool set after all standard tools.
+	// Used by the agentcompat layer to inject caller-supplied (client) tools.
+	ExtraTools []tool.Tool
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -922,6 +927,23 @@ func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, proj
 		if req.UserMessage != "" {
 			responseBody["output"] = req.UserMessage
 		}
+	case SuspendReasonAwaitingClientTool:
+		// The agentcompat layer POSTed the client tool result as a JSON string in UserMessage.
+		// Decode it back into the response body so the LLM sees a proper tool result.
+		if req.UserMessage != "" {
+			var decoded map[string]any
+			if jsonErr := json.Unmarshal([]byte(req.UserMessage), &decoded); jsonErr == nil {
+				for k, v := range decoded {
+					responseBody[k] = v
+				}
+			} else {
+				// Fall back to raw string if it's not JSON.
+				responseBody["result"] = req.UserMessage
+			}
+		}
+		if len(responseBody) == 0 {
+			responseBody["result"] = ""
+		}
 	case SuspendReasonAwaitingToolConfirm:
 		// User responded to a tool-policy confirmation question.
 		// "approve" (case-insensitive) → execute the tool directly using the saved args,
@@ -1315,6 +1337,11 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("error", err.Error()),
 			)
 		}
+		// Update the agent.run span attribute now that the resolved model name is
+		// known. At span-start time only the pre-resolution name was available.
+		trace.SpanFromContext(ctx).SetAttributes(
+			attribute.String("memory.agent.model", resolvedModelName),
+		)
 	}
 
 	// Resolve tools from the tool pool
@@ -1395,6 +1422,15 @@ func (ae *AgentExecutor) runPipeline(
 		resolvedTools = append(resolvedTools, skillTool)
 		ae.log.Info("skill tool added to agent pipeline",
 			slog.String("run_id", run.ID),
+		)
+	}
+
+	// Add caller-injected extra tools (e.g. client tools from the agentcompat layer).
+	if len(req.ExtraTools) > 0 {
+		resolvedTools = append(resolvedTools, req.ExtraTools...)
+		ae.log.Info("extra tools added to agent pipeline",
+			slog.String("run_id", run.ID),
+			slog.Int("count", len(req.ExtraTools)),
 		)
 	}
 
@@ -1679,6 +1715,34 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("tool", toolName),
 				slog.String("error", persistErr.Error()),
 			)
+		}
+
+		// If a client tool (injected via ExtraTools) returned the sentinel value,
+		// pause the run so the agentcompat layer can return tool_calls to the caller.
+		if isClientToolSentinel(result) {
+			functionCallID := tCtx.FunctionCallID()
+			callID, _ := result["call_id"].(string)
+			sig := SuspendSignal{
+				Reason:                SuspendReasonAwaitingClientTool,
+				PendingToolCallID:     functionCallID,
+				PendingToolName:       toolName,
+				PendingClientToolArgs: args,
+			}
+			if callID != "" {
+				sig.QuestionID = callID // reuse QuestionID as the OpenAI call_id
+			}
+			ae.log.Info("client tool afterToolCb: pausing run awaiting client tool result",
+				slog.String("run_id", run.ID),
+				slog.String("tool", toolName),
+				slog.String("pending_tool_call_id", functionCallID),
+			)
+			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
+				ae.log.Warn("failed to persist suspend_context for client tool",
+					slog.String("run_id", run.ID),
+					slog.String("error", scErr.Error()),
+				)
+			}
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
 		}
 
 		// If ask_user was just called, pause the run immediately so the LLM
@@ -3135,4 +3199,17 @@ func (d *doomLoopDetector) recordCall(toolName string, args map[string]any) doom
 		return doomActionWarn
 	}
 	return doomActionNone
+}
+
+// isClientToolSentinel reports whether a tool result map is the sentinel value
+// returned by a client-supplied tool injected via ExecuteRequest.ExtraTools.
+// These tools cannot be executed server-side; instead they signal the executor
+// to pause so the caller can execute the tool and POST the result back.
+func isClientToolSentinel(result map[string]any) bool {
+	v, ok := result["_client_tool"]
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
 }
