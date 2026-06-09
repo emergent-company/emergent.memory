@@ -1,3 +1,4 @@
+-- +goose NO TRANSACTION
 -- +goose Up
 -- Add partial unique indexes to prevent duplicate active embedding jobs.
 -- These work in tandem with the application-level SELECT-before-INSERT dedup
