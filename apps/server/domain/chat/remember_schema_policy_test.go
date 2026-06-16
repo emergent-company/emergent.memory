@@ -59,12 +59,13 @@ func TestDemoteStageForPolicy_NewDomain_EmptyPolicy(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // normaliseSchemaPolicy mirrors the handler's normalisation logic.
+// enrich is accepted (routes to V8 enrich remember agent).
 func normaliseSchemaPolicy(raw string) (string, bool) {
 	if raw == "" {
 		return "reuse_only", true
 	}
 	switch raw {
-	case "auto", "reuse_only", "ask":
+	case "auto", "reuse_only", "ask", "enrich":
 		return raw, true
 	default:
 		return "", false
@@ -135,4 +136,47 @@ func TestFullPolicyFlow_ReuseOnly_LLMMatch_Unchanged(t *testing.T) {
 	stage := demoteStageForPolicy("llm", policy)
 	assert.Equal(t, "llm", stage,
 		"reuse_only must not affect stages where a schema was matched")
+}
+
+// ---------------------------------------------------------------------------
+// enrich policy — accepted and passes through like auto
+// ---------------------------------------------------------------------------
+
+func TestNormaliseSchemaPolicy_Enrich_Valid(t *testing.T) {
+	policy, ok := normaliseSchemaPolicy("enrich")
+	assert.True(t, ok)
+	assert.Equal(t, "enrich", policy)
+}
+
+func TestDemoteStageForPolicy_NewDomain_Enrich(t *testing.T) {
+	result := demoteStageForPolicy("new_domain", "enrich")
+	assert.Equal(t, "new_domain", result,
+		"enrich must pass new_domain through unchanged (server handles schema gen)")
+}
+
+func TestDemoteStageForPolicy_NewDomain_Enrich_Combined(t *testing.T) {
+	// create_rich modes are MCP-level, not handler-level — enrich is the
+	// handler-level policy that maps to create_rich_combined in the agent.
+	policy, ok := normaliseSchemaPolicy("enrich")
+	assert.True(t, ok)
+	stage := demoteStageForPolicy("new_domain", policy)
+	assert.Equal(t, "new_domain", stage)
+}
+
+func TestFullPolicyFlow_Enrich_NewDomain_Unchanged(t *testing.T) {
+	policy, ok := normaliseSchemaPolicy("enrich")
+	assert.True(t, ok)
+
+	stage := demoteStageForPolicy("new_domain", policy)
+	assert.Equal(t, "new_domain", stage,
+		"full flow: enrich + new_domain must pass through to agent")
+}
+
+func TestFullPolicyFlow_Enrich_LLMMatch_Unchanged(t *testing.T) {
+	policy, ok := normaliseSchemaPolicy("enrich")
+	assert.True(t, ok)
+
+	stage := demoteStageForPolicy("llm", policy)
+	assert.Equal(t, "llm", stage,
+		"enrich + existing match must not demote")
 }

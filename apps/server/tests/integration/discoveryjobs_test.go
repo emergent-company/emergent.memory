@@ -1,8 +1,10 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -10,9 +12,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
+	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 )
 
 // orgChartDoc is a short org-chart text used to seed discovery tests.
@@ -577,6 +584,203 @@ func TestDiscovery_RelationshipGating_D7(t *testing.T) {
 			t.Log("D7 PASS (with-rels branch): discovered_relationships field present when flag=true")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// FinalizeDiscovery enrich / create_rich mode tests
+// These run in-process with a real LLM when credentials are available.
+// ---------------------------------------------------------------------------
+
+// skipDiscoveryEnrich skips the test when the LLM credential checks fail.
+func skipDiscoveryEnrich(t *testing.T) {
+	testutil.LoadEnvFiles()
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	cfg, err := config.NewConfig(log)
+	if err != nil || !cfg.LLM.IsEnabled() {
+		t.Skip("no LLM credentials configured — skipping discovery enrich test")
+	}
+}
+
+// discoveryEnrichFactory builds an adk.ModelFactory from env credentials.
+func discoveryEnrichFactory() *adk.ModelFactory {
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	cfg, _ := config.NewConfig(log)
+	if cfg == nil || !cfg.LLM.IsEnabled() {
+		return nil
+	}
+	return adk.NewModelFactory(&cfg.LLM, log, nil, nil, nil)
+}
+
+// TestFinalizeDiscovery_EnrichMode verifies that mode=enrich fills null
+// properties in an existing schema pack using LLM-generated property definitions.
+func TestFinalizeDiscovery_EnrichMode(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "discenrich")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	require.NoError(t, testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID))
+
+	projectUUID := uuid.MustParse(projectID)
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	cfg := &config.Config{}
+
+	// Create a document so loadDocumentText has text to work with.
+	content := `Alice Johnson is the CEO of Acme Corp. Bob Smith is VP of Engineering.
+Carol Davis is Director of Product. Dave Lee is a Senior Engineer reporting to Bob.`
+	filename := "org.txt"
+	sourceType := "manual"
+	docsRepo := documents.NewRepository(testDB.DB, log)
+	docsSvc := documents.NewService(docsRepo, log)
+	doc, _, err := docsSvc.Create(ctx, documents.CreateParams{
+		ProjectID:  projectID,
+		Filename:   &filename,
+		Content:    &content,
+		SourceType: &sourceType,
+	})
+	require.NoError(t, err)
+
+	// Build discovery service with real LLM.
+	mf := discoveryEnrichFactory()
+	require.NotNil(t, mf)
+	djRepo := discoveryjobs.NewRepository(testDB.DB, log)
+	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
+
+	// Create a stub discovery job.
+	stubJob := &discoveryjobs.DiscoveryJob{
+		ID:        uuid.New(),
+		ProjectID: projectUUID,
+		Status:    discoveryjobs.StatusCompleted,
+		KBPurpose: "HR org-chart system",
+		Progress:  discoveryjobs.JSONMap{"message": "stub"},
+		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+	}
+	require.NoError(t, djRepo.Create(ctx, stubJob))
+
+	// Step 1: Finalize in "create" mode to install a schema with sparse properties.
+	createResp, err := djSvc.FinalizeDiscovery(ctx, stubJob.ID, projectUUID, &discoveryjobs.FinalizeDiscoveryRequest{
+		Mode:     "create",
+		PackName: "OrgChart",
+		IncludedTypes: []discoveryjobs.IncludedType{
+			{TypeName: "Person", Description: "An employee", Properties: nil, RequiredProperties: nil},
+			{TypeName: "Department", Description: "A business unit", Properties: nil, RequiredProperties: nil},
+		},
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, createResp.SchemaID, "create should return a valid schema_id")
+
+	schemaUUID := createResp.SchemaID
+
+	// Step 2: Finalize in "enrich" mode to fill null properties.
+	_, err = djSvc.FinalizeDiscovery(ctx, stubJob.ID, projectUUID, &discoveryjobs.FinalizeDiscoveryRequest{
+		Mode:           "enrich",
+		PackName:       "OrgChart",
+		DocumentID:     doc.ID,
+		ExistingPackID: &schemaUUID,
+		IncludedTypes:  []discoveryjobs.IncludedType{},
+	})
+	require.NoError(t, err)
+
+	// Step 3: Verify the schema now has properties filled.
+	updatedPack, err := djRepo.GetMemorySchema(ctx, schemaUUID)
+	require.NoError(t, err)
+	require.NotNil(t, updatedPack.ObjectTypeSchemas)
+
+	personRaw, ok := updatedPack.ObjectTypeSchemas["Person"]
+	require.True(t, ok, "Person type should exist after enrich")
+	person := personRaw.(map[string]any)
+	props, ok := person["properties"].(map[string]any)
+	require.True(t, ok, "Person should have a properties map after enrich")
+	require.Greater(t, len(props), 0, "Person should have at least one property after enrich")
+
+	propKeys := make([]string, 0, len(props))
+	for k := range props {
+		propKeys = append(propKeys, k)
+	}
+	t.Logf("enrich result: Person has %d properties: %v", len(props), propKeys)
+}
+
+// TestFinalizeDiscovery_CreateRichMode verifies that mode=create_rich
+// generates a full schema with populated properties from scratch.
+func TestFinalizeDiscovery_CreateRichMode(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "disccreaterich")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	require.NoError(t, testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID))
+
+	projectUUID := uuid.MustParse(projectID)
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	cfg := &config.Config{}
+
+	content := `Klarnak ball is played by two teams of 7 on a triangular court.
+Each player wields a vibro-racquet to volley the incandescent solk. Points are scored
+when the solk touches the gravity-well. A match lasts 5 phases of 8 zorns each.`
+	docsRepo := documents.NewRepository(testDB.DB, log)
+	docsSvc := documents.NewService(docsRepo, log)
+	filename := "klarnak.txt"
+	sourceType := "manual"
+	doc, _, err := docsSvc.Create(ctx, documents.CreateParams{
+		ProjectID:  projectID,
+		Filename:   &filename,
+		Content:    &content,
+		SourceType: &sourceType,
+	})
+	require.NoError(t, err)
+
+	mf := discoveryEnrichFactory()
+	require.NotNil(t, mf)
+	djRepo := discoveryjobs.NewRepository(testDB.DB, log)
+	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
+
+	stubJob := &discoveryjobs.DiscoveryJob{
+		ID:        uuid.New(),
+		ProjectID: projectUUID,
+		Status:    discoveryjobs.StatusCompleted,
+		KBPurpose: "Fictional sports tracking",
+		Progress:  discoveryjobs.JSONMap{"message": "stub"},
+		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+	}
+	require.NoError(t, djRepo.Create(ctx, stubJob))
+
+	// Finalize with create_rich — generates types + properties from document.
+	resp, err := djSvc.FinalizeDiscovery(ctx, stubJob.ID, projectUUID, &discoveryjobs.FinalizeDiscoveryRequest{
+		Mode:          "create_rich",
+		PackName:      "KlarnakBall",
+		DocumentID:    doc.ID,
+		IncludedTypes: []discoveryjobs.IncludedType{},
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, resp.SchemaID, "create_rich should return a valid schema_id")
+
+	// Verify the generated schema has populated types.
+	pack, err := djRepo.GetMemorySchema(ctx, resp.SchemaID)
+	require.NoError(t, err)
+	require.Greater(t, len(pack.ObjectTypeSchemas), 0,
+		"create_rich should generate at least one type")
+	var hasProps bool
+	for typeName, raw := range pack.ObjectTypeSchemas {
+		if m, ok := raw.(map[string]any); ok {
+			if props, ok := m["properties"].(map[string]any); ok && len(props) > 0 {
+				hasProps = true
+				t.Logf("  type %q has %d properties", typeName, len(props))
+			}
+		}
+	}
+	require.True(t, hasProps, "at least one generated type should have non-empty properties")
 }
 
 // ---------------------------------------------------------------------------
