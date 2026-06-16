@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/joho/godotenv"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
@@ -100,6 +102,19 @@ func (t *TestDB) HasTx() bool {
 // The test database is automatically dropped when Close() is called.
 func SetupTestDB(ctx context.Context, suffix string) (*TestDB, error) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	// Load .env files if present (for local development), matching server startup.
+	// Walk up from CWD looking for .env.local (works from any test package directory).
+	if wd, err := os.Getwd(); err == nil {
+		for dir := wd; dir != "/"; dir = filepath.Dir(dir) {
+			envLocal := filepath.Join(dir, ".env.local")
+			if _, statErr := os.Stat(envLocal); statErr == nil {
+				_ = godotenv.Load(filepath.Join(dir, ".env"))
+				_ = godotenv.Overload(envLocal)
+				break
+			}
+		}
+	}
 
 	// Load base config from environment
 	baseCfg, err := config.NewConfig(log)
