@@ -1865,6 +1865,47 @@ func (h *Handler) MergeBranch(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+// MergeReadiness returns whether a source branch is ready for similarity-aware merge.
+// It checks that all objects in the branch have embeddings generated.
+// @Summary      Check merge readiness
+// @Description  Returns the count of source branch objects that have not yet been embedded.
+//
+//	When pending_embeddings > 0 the branch is not ready for a similarity-aware merge.
+//
+// @Tags         graph
+// @Produce      json
+// @Param        project_id path string true "Project ID"
+// @Param        branchId path string true "Source branch ID"
+// @Success      200 {object} MergeReadinessResponse
+// @Router       /api/graph/branches/{branchId}/merge-readiness [get]
+func (h *Handler) MergeReadiness(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	projectID, err := getProjectID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	branchID, err := uuid.Parse(c.Param("branchId"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+	}
+
+	total, pending, err := h.svc.BranchMergeReadiness(c.Request().Context(), projectID, branchID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, MergeReadinessResponse{
+		Ready:             pending == 0,
+		TotalObjects:      total,
+		PendingEmbeddings: pending,
+	})
+}
+
 // =============================================================================
 // Analytics Handlers
 // =============================================================================

@@ -31,7 +31,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
+	"math"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -44,6 +47,7 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
@@ -67,26 +71,25 @@ func prop(typ, description string) map[string]any {
 //
 // Design decisions:
 //   - No Utterance type — individual dialogue lines are data artefacts, not semantic objects.
-//     What dialogue reveals should surface as Character properties and Event entities.
-//   - Relationship uses relationship_kind (not type) to avoid collision with the reserved
-//     "type" top-level field in the extraction protocol.
-//   - Character captures what is learned about a character: occupation, home, current situation,
-//     personality, and feelings — not just static facts.
-//   - Event captures plot occurrences: things that happened or are currently happening.
+//   - No Relationship object type — bonds between characters are modelled as typed graph
+//     edges (friendsRelationshipSchema) with properties on the edge itself. This avoids
+//     the redundant intermediate node pattern and makes traversal a single hop.
+//   - Character captures what is learned: occupation, home, current situation, personality, feelings.
+//   - Event captures plot occurrences.
 //   - Object captures plot-significant physical items.
 var friendsSchema = map[string]any{
 	"Character": map[string]any{
 		"type":     "object",
 		"required": []string{"name"},
 		"properties": map[string]any{
-			"name":               prop("string", "Full name of the character (e.g. Monica Geller, Ross Geller)"),
-			"occupation":         prop("string", "Job or profession (e.g. chef, paleontologist, actor, masseuse, data analyst)"),
-			"workplace":          prop("string", "Place of work (e.g. Javu restaurant, the museum, Days of Our Lives set)"),
-			"home":               prop("string", "Where they live (e.g. apartment 20, across the hall from Monica)"),
+			"name":                prop("string", "Full name of the character (e.g. Monica Geller, Ross Geller)"),
+			"occupation":          prop("string", "Job or profession (e.g. chef, paleontologist, actor, masseuse, data analyst)"),
+			"workplace":           prop("string", "Place of work (e.g. Javu restaurant, the museum, Days of Our Lives set)"),
+			"home":                prop("string", "Where they live (e.g. apartment 20, across the hall from Monica)"),
 			"relationship_status": prop("string", "Romantic situation (e.g. recently separated, single, dating, engaged)"),
-			"current_situation":  prop("string", "What is happening in their life right now, based on the text"),
-			"personality":        prop("string", "Key personality traits or behavioural patterns revealed in the scene"),
-			"stated_feelings":    prop("string", "Emotions or feelings the character expresses or reveals through dialogue"),
+			"current_situation":   prop("string", "What is happening in their life right now, based on the text"),
+			"personality":         prop("string", "Key personality traits or behavioural patterns revealed in the scene"),
+			"stated_feelings":     prop("string", "Emotions or feelings the character expresses or reveals through dialogue"),
 		},
 	},
 	"Location": map[string]any{
@@ -97,17 +100,6 @@ var friendsSchema = map[string]any{
 			"location_type": prop("string", "Category: cafe / apartment / workplace / street / other"),
 			"address":       prop("string", "Street address, neighbourhood, or city if mentioned"),
 			"significance":  prop("string", "Why this place matters to the characters or story"),
-		},
-	},
-	"Relationship": map[string]any{
-		"type":     "object",
-		"required": []string{"person_a", "person_b", "relationship_kind"},
-		"properties": map[string]any{
-			"person_a":          prop("string", "First character in the relationship (e.g. Ross Geller)"),
-			"person_b":          prop("string", "Second character in the relationship (e.g. Monica Geller)"),
-			"relationship_kind": prop("string", "Nature of relationship: friend / sibling / ex_spouse / romantic / roommate / colleague / parent"),
-			"history":           prop("string", "Background or shared history of this relationship if mentioned"),
-			"current_state":     prop("string", "Current quality or status of the relationship (e.g. strained, close, newly formed, on a break)"),
 		},
 	},
 	"Event": map[string]any{
@@ -134,37 +126,116 @@ var friendsSchema = map[string]any{
 	},
 }
 
-// friendsRelationshipSchema defines graph-level edges between entity nodes.
+// friendsRelationshipSchema defines typed graph edges between entity nodes.
+// Bond types (SIBLING_OF, EX_SPOUSE_OF, FRIEND_OF, etc.) replace the former
+// Relationship object type — properties live on the edge itself.
 var friendsRelationshipSchema = map[string]any{
-	"KNOWS": map[string]any{
+	// ── Bond edges (Character ↔ Character) ──────────────────────────────────
+	"SIBLING_OF": map[string]any{
+		"sourceTypes": []string{"Character"},
+		"targetTypes": []string{"Character"},
+		"cardinality": "one-to-one",
+		"description": "Characters who are brothers or sisters",
+		"properties": map[string]any{
+			"current_state": prop("string", "Quality of the sibling relationship right now (e.g. close, estranged)"),
+		},
+		"inverseType":  "SIBLING_OF",
+		"inverseLabel": "sibling of",
+	},
+	"FRIEND_OF": map[string]any{
 		"sourceTypes": []string{"Character"},
 		"targetTypes": []string{"Character"},
 		"cardinality": "many-to-many",
-		"description": "Characters who know each other",
+		"description": "Characters who are friends",
+		"properties": map[string]any{
+			"since":         prop("string", "When or how they became friends (e.g. high school, college)"),
+			"current_state": prop("string", "Current closeness (e.g. close, drifted apart, rekindling)"),
+		},
+		"inverseType":  "FRIEND_OF",
+		"inverseLabel": "friend of",
+	},
+	"EX_SPOUSE_OF": map[string]any{
+		"sourceTypes": []string{"Character"},
+		"targetTypes": []string{"Character"},
+		"cardinality": "one-to-one",
+		"description": "Characters who were married and are now separated or divorced",
+		"properties": map[string]any{
+			"current_state": prop("string", "Current relationship status after separation (e.g. amicable, hostile)"),
+			"history":       prop("string", "Key facts about the marriage and its end"),
+		},
+		"inverseType":  "EX_SPOUSE_OF",
+		"inverseLabel": "ex-spouse of",
+	},
+	"EX_PARTNER_OF": map[string]any{
+		"sourceTypes": []string{"Character"},
+		"targetTypes": []string{"Character"},
+		"cardinality": "many-to-many",
+		"description": "Characters who were in a romantic relationship (not married) that has ended",
+		"properties": map[string]any{
+			"current_state": prop("string", "Tone of the relationship now (e.g. awkward, friendly, hostile)"),
+		},
+		"inverseType":  "EX_PARTNER_OF",
+		"inverseLabel": "ex-partner of",
+	},
+	"ROMANTICALLY_INVOLVED_WITH": map[string]any{
+		"sourceTypes": []string{"Character"},
+		"targetTypes": []string{"Character"},
+		"cardinality": "many-to-many",
+		"description": "Characters currently in a romantic relationship or engaged",
+		"properties": map[string]any{
+			"status": prop("string", "Stage of the relationship (e.g. dating, engaged, on a break)"),
+		},
+		"inverseType":  "ROMANTICALLY_INVOLVED_WITH",
+		"inverseLabel": "romantically involved with",
+	},
+	"ROOMMATE_OF": map[string]any{
+		"sourceTypes":  []string{"Character"},
+		"targetTypes":  []string{"Character"},
+		"cardinality":  "many-to-many",
+		"description":  "Characters who share an apartment",
+		"inverseType":  "ROOMMATE_OF",
+		"inverseLabel": "roommate of",
+	},
+	// ── Structural edges ────────────────────────────────────────────────────
+	"KNOWS": map[string]any{
+		"sourceTypes":  []string{"Character"},
+		"targetTypes":  []string{"Character"},
+		"cardinality":  "many-to-many",
+		"description":  "Characters who know each other (generic acquaintance when no specific bond type fits)",
+		"inverseType":  "KNOWS",
+		"inverseLabel": "known by",
 	},
 	"LIVES_AT": map[string]any{
-		"sourceTypes": []string{"Character"},
-		"targetTypes": []string{"Location"},
-		"cardinality": "many-to-one",
-		"description": "Character lives at or regularly frequents this location",
+		"sourceTypes":  []string{"Character"},
+		"targetTypes":  []string{"Location"},
+		"cardinality":  "many-to-one",
+		"description":  "Character lives at or regularly frequents this location",
+		"inverseType":  "HOME_OF",
+		"inverseLabel": "home of",
 	},
 	"INVOLVED_IN": map[string]any{
-		"sourceTypes": []string{"Character"},
-		"targetTypes": []string{"Event"},
-		"cardinality": "many-to-many",
-		"description": "Character is a participant in this event",
+		"sourceTypes":  []string{"Character"},
+		"targetTypes":  []string{"Event"},
+		"cardinality":  "many-to-many",
+		"description":  "Character is a participant in this event",
+		"inverseType":  "INVOLVES",
+		"inverseLabel": "involves",
 	},
 	"LOCATED_AT": map[string]any{
-		"sourceTypes": []string{"Event"},
-		"targetTypes": []string{"Location"},
-		"cardinality": "many-to-one",
-		"description": "Event takes place at this location",
+		"sourceTypes":  []string{"Event"},
+		"targetTypes":  []string{"Location"},
+		"cardinality":  "many-to-one",
+		"description":  "Event takes place at this location",
+		"inverseType":  "HOSTS_EVENT",
+		"inverseLabel": "hosts event",
 	},
 	"OWNS": map[string]any{
-		"sourceTypes": []string{"Character"},
-		"targetTypes": []string{"Object"},
-		"cardinality": "many-to-many",
-		"description": "Character owns or is strongly associated with this object",
+		"sourceTypes":  []string{"Character"},
+		"targetTypes":  []string{"Object"},
+		"cardinality":  "many-to-many",
+		"description":  "Character owns or is strongly associated with this object",
+		"inverseType":  "OWNED_BY",
+		"inverseLabel": "owned by",
 	},
 }
 
@@ -443,7 +514,7 @@ func (s *ExtractionFixedSchemaTestSuite) runExtraction(documentID string) *extra
 	}
 
 	// Create extraction job — schema linked via project installation.
-	enabledTypes := []string{"Character", "Location", "Relationship", "Event", "Object"}
+	enabledTypes := []string{"Character", "Location", "Event", "Object"}
 	job, err := jobsSvc.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
 		ProjectID:    s.projectID,
 		DocumentID:   &documentID,
@@ -541,7 +612,7 @@ func (s *ExtractionFixedSchemaTestSuite) extractedObjectsOfType(typeName string)
 }
 
 // schemaTypes is the canonical type list for the Friends schema.
-var schemaTypes = []string{"Character", "Location", "Relationship", "Event", "Object"}
+var schemaTypes = []string{"Character", "Location", "Event", "Object"}
 
 // logExtractionSummary logs a table of extracted object counts per type.
 func (s *ExtractionFixedSchemaTestSuite) logExtractionSummary() {
@@ -627,10 +698,9 @@ func (s *ExtractionFixedSchemaTestSuite) TestExtract_FriendsS01E01_LongScene() {
 
 	total := s.countExtractedObjects("")
 	characters := s.countExtractedObjects("Character")
-	relationships := s.countExtractedObjects("Relationship")
 	events := s.countExtractedObjects("Event")
 
-	s.T().Logf("total=%d characters=%d relationships=%d events=%d", total, characters, relationships, events)
+	s.T().Logf("total=%d characters=%d events=%d", total, characters, events)
 	s.Greater(total, 2, "expected more than 2 extracted objects from 50-line transcript")
 	s.GreaterOrEqual(characters, 2, "expected at least 2 Character entities from 50-line transcript")
 }
@@ -669,7 +739,7 @@ func (s *ExtractionFixedSchemaTestSuite) TestExtract_SchemaTypes() {
 	var typeMap map[string]any
 	s.Require().NoError(json.Unmarshal([]byte(rawTypes), &typeMap))
 
-	expectedTypes := []string{"Character", "Location", "Relationship", "Event", "Object"}
+	expectedTypes := []string{"Character", "Location", "Event", "Object"}
 	for _, typeName := range expectedTypes {
 		s.Contains(typeMap, typeName, "schema missing type %s", typeName)
 		if schema, ok := typeMap[typeName].(map[string]any); ok {
@@ -711,19 +781,17 @@ func (s *ExtractionFixedSchemaTestSuite) TestExtract_CompareExtractionQuality() 
 	s.runExtraction(docID1)
 	run1Total := s.countExtractedObjects("")
 	run1Chars := s.countExtractedObjects("Character")
-	run1Rels := s.countExtractedObjects("Relationship")
 
 	// Wait briefly then run again with same text.
 	time.Sleep(2 * time.Second)
 	s.runExtraction(docID1)
 	run2Total := s.countExtractedObjects("")
 	run2Chars := s.countExtractedObjects("Character")
-	run2Rels := s.countExtractedObjects("Relationship")
 
-	s.T().Logf("run1: total=%d chars=%d relationships=%d", run1Total, run1Chars, run1Rels)
-	s.T().Logf("run2: total=%d chars=%d relationships=%d", run2Total, run2Chars, run2Rels)
-	s.T().Logf("consistency: total_delta=%d char_delta=%d rel_delta=%d",
-		run2Total-run1Total, run2Chars-run1Chars, run2Rels-run1Rels)
+	s.T().Logf("run1: total=%d chars=%d", run1Total, run1Chars)
+	s.T().Logf("run2: total=%d chars=%d", run2Total, run2Chars)
+	s.T().Logf("consistency: total_delta=%d char_delta=%d",
+		run2Total-run1Total, run2Chars-run1Chars)
 }
 
 // ---------------------------------------------------------------------------
@@ -1367,9 +1435,9 @@ func (s *ExtractionFixedSchemaTestSuite) extractEntitiesFromProject(projectID st
 func (s *ExtractionFixedSchemaTestSuite) extractRelationshipsFromProject(projectID string) []struct{ Src, RelType, Dst string } {
 	s.T().Helper()
 	var rows []struct {
-		RelType   string `bun:"rel_type"`
-		SrcProps  []byte `bun:"src_props"`
-		DstProps  []byte `bun:"dst_props"`
+		RelType  string `bun:"rel_type"`
+		SrcProps []byte `bun:"src_props"`
+		DstProps []byte `bun:"dst_props"`
 	}
 	_ = s.testDB.DB.NewRaw(`
 		SELECT
@@ -1429,8 +1497,8 @@ type qualityReport struct {
 	FoundMainCast      []string // which of the 6 main cast were found
 	MissingMainCast    []string
 	// Relationships
-	TotalRelObjects int // Relationship entities (schema objects)
-	TotalRelEdges   int // graph_relationships rows
+	TotalRelObjects int      // Relationship entities (schema objects)
+	TotalRelEdges   int      // graph_relationships rows
 	KnownRelsFound  []string // which ground-truth relationships were found
 	// Events
 	TotalEvents       int
@@ -2495,4 +2563,871 @@ func (s *ExtractionFixedSchemaTestSuite) TestCompare_DiscoveryVsFixedSchema_Long
 	}
 
 	s.Greater(fixedMetrics.Total, 0, "fixed-schema extraction produced no objects")
+}
+
+// ---------------------------------------------------------------------------
+// Second-run enrichment analysis
+// ---------------------------------------------------------------------------
+
+// entitySnapshot captures the state of a single entity at a point in time.
+type entitySnapshot struct {
+	ID    string
+	Type  string
+	Props map[string]string
+}
+
+// snapshotKey is the dedup key: lower(type) + ":" + lower(name).
+func snapshotKey(e entitySnapshot) string {
+	return strings.ToLower(e.Type) + ":" + strings.ToLower(e.Props["name"])
+}
+
+// extractEntitySnapshots queries all live entity snapshots for a project.
+func (s *ExtractionFixedSchemaTestSuite) extractEntitySnapshots(projectID string) []entitySnapshot {
+	s.T().Helper()
+	var rows []struct {
+		ID         string `bun:"id"`
+		Type       string `bun:"type"`
+		Properties []byte `bun:"properties"`
+	}
+	_ = s.testDB.DB.NewRaw(`
+		SELECT id::text, type, properties
+		FROM kb.graph_objects
+		WHERE project_id = ? AND supersedes_id IS NULL AND deleted_at IS NULL
+		ORDER BY type, created_at`, projectID,
+	).Scan(s.ctx, &rows)
+	out := make([]entitySnapshot, 0, len(rows))
+	for _, r := range rows {
+		snap := entitySnapshot{ID: r.ID, Type: r.Type, Props: make(map[string]string)}
+		var raw map[string]any
+		if json.Unmarshal(r.Properties, &raw) == nil {
+			for k, v := range raw {
+				if sv, ok := v.(string); ok && sv != "" {
+					snap.Props[k] = sv
+				}
+			}
+		}
+		out = append(out, snap)
+	}
+	return out
+}
+
+// extractEdgeTypeSet returns distinct edge types and their counts for a project.
+func (s *ExtractionFixedSchemaTestSuite) extractEdgeTypeSet(projectID string) map[string]int {
+	s.T().Helper()
+	var rows []struct {
+		RelType string `bun:"rel_type"`
+		Cnt     int    `bun:"cnt"`
+	}
+	_ = s.testDB.DB.NewRaw(`
+		SELECT type AS rel_type, COUNT(*) AS cnt
+		FROM kb.graph_relationships
+		WHERE project_id = ? AND supersedes_id IS NULL AND deleted_at IS NULL
+		GROUP BY type`, projectID,
+	).Scan(s.ctx, &rows)
+	out := make(map[string]int, len(rows))
+	for _, r := range rows {
+		out[r.RelType] = r.Cnt
+	}
+	return out
+}
+
+// diffEntitySnapshots computes the delta between two snapshot lists of the same project.
+// Returns: added (not in before), enriched (more filled props than before), stable (unchanged).
+func diffEntitySnapshots(before, after []entitySnapshot) (added, enriched, stable []entitySnapshot) {
+	byKey := make(map[string]entitySnapshot, len(before))
+	for _, e := range before {
+		byKey[snapshotKey(e)] = e
+	}
+	for _, e := range after {
+		prev, existed := byKey[snapshotKey(e)]
+		if !existed {
+			added = append(added, e)
+			continue
+		}
+		if countFilled(e.Props) > countFilled(prev.Props) {
+			enriched = append(enriched, e)
+		} else {
+			stable = append(stable, e)
+		}
+	}
+	return
+}
+
+func countFilled(props map[string]string) int {
+	n := 0
+	for k, v := range props {
+		if !strings.HasPrefix(k, "_") && v != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// TestExtract_SecondRunEnrichment runs two extraction passes on the same document
+// and analyses what changed between them.
+//
+// Questions answered:
+//  1. Did run 2 add new entities the LLM missed first time?
+//  2. Did run 2 enrich existing entities (fill previously empty properties)?
+//  3. Were most entities already fully stable after run 1?
+//  4. Did new edge types appear in run 2?
+//  5. Did run 2 extract entity types outside the installed schema?
+//     → Demonstrates that mode="extend" / schema_policy=enrich can incorporate them.
+//
+// Uses the fixed-schema project (Character, Location, Event, Object + bond edge types).
+func (s *ExtractionFixedSchemaTestSuite) TestExtract_SecondRunEnrichment() {
+	s.skipIfNoLLM()
+
+	transcript, err := friendsTranscript(0, 50)
+	if err != nil {
+		s.T().Skipf("could not fetch Friends transcript: %v", err)
+	}
+	s.T().Logf("fixture: %d chars, %d lines", len(transcript), strings.Count(transcript, "\n"))
+
+	// ── Run 1 ─────────────────────────────────────────────────────────────
+	s.T().Log("══ RUN 1 ════════════════════════════════════════════")
+	docID := s.createDocument(transcript)
+	r1Start := time.Now()
+	s.runExtraction(docID)
+	r1Wall := time.Since(r1Start).Milliseconds()
+
+	snap1 := s.extractEntitySnapshots(s.projectID)
+	edges1 := s.extractEdgeTypeSet(s.projectID)
+	r1report := s.buildQualityReport("run-1", s.projectID)
+	r1report.TotalRelEdges = len(s.extractRelationshipsFromProject(s.projectID))
+	r1report.logTo(s.T())
+	s.T().Logf("  wall=%dms  entities=%d  edge_types=%d", r1Wall, len(snap1), len(edges1))
+
+	// ── Run 2 (same document, same schema) ────────────────────────────────
+	s.T().Log("══ RUN 2 (same document) ════════════════════════════")
+	r2Start := time.Now()
+	s.runExtraction(docID)
+	r2Wall := time.Since(r2Start).Milliseconds()
+
+	snap2 := s.extractEntitySnapshots(s.projectID)
+	edges2 := s.extractEdgeTypeSet(s.projectID)
+	r2report := s.buildQualityReport("run-2", s.projectID)
+	r2report.TotalRelEdges = len(s.extractRelationshipsFromProject(s.projectID))
+	r2report.logTo(s.T())
+	s.T().Logf("  wall=%dms  entities=%d  edge_types=%d", r2Wall, len(snap2), len(edges2))
+
+	// ── Entity delta ───────────────────────────────────────────────────────
+	s.T().Log("══ ENTITY DELTA (run 1 → run 2) ═════════════════════")
+	added, enriched, stable := diffEntitySnapshots(snap1, snap2)
+
+	s.T().Logf("  added    (new entities):  %d", len(added))
+	for _, e := range added {
+		s.T().Logf("    + [%-12s] %-30s  props=%d", e.Type, e.Props["name"], countFilled(e.Props))
+	}
+
+	byKeyBefore := make(map[string]entitySnapshot, len(snap1))
+	for _, e := range snap1 {
+		byKeyBefore[snapshotKey(e)] = e
+	}
+	s.T().Logf("  enriched (more props):    %d", len(enriched))
+	for _, e := range enriched {
+		prev := byKeyBefore[snapshotKey(e)]
+		s.T().Logf("    ~ [%-12s] %-30s  props: %d → %d (+%d)",
+			e.Type, e.Props["name"],
+			countFilled(prev.Props), countFilled(e.Props),
+			countFilled(e.Props)-countFilled(prev.Props))
+		for k, v := range e.Props {
+			if !strings.HasPrefix(k, "_") && prev.Props[k] == "" && v != "" {
+				short := v
+				if len(short) > 60 {
+					short = short[:60] + "…"
+				}
+				s.T().Logf("        + %s = %q", k, short)
+			}
+		}
+	}
+
+	s.T().Logf("  stable   (no change):     %d", len(stable))
+	for _, e := range stable {
+		s.T().Logf("    = [%-12s] %-30s  props=%d", e.Type, e.Props["name"], countFilled(e.Props))
+	}
+
+	// ── Edge type delta ────────────────────────────────────────────────────
+	s.T().Log("══ EDGE TYPE DELTA ═══════════════════════════════════")
+	newEdges := false
+	for et, cnt2 := range edges2 {
+		if _, had := edges1[et]; !had {
+			s.T().Logf("  new: %s (×%d)", et, cnt2)
+			newEdges = true
+		}
+	}
+	for et, cnt1 := range edges1 {
+		if cnt2 := edges2[et]; cnt2 > cnt1 {
+			s.T().Logf("  grown: %s  %d → %d (+%d)", et, cnt1, cnt2, cnt2-cnt1)
+			newEdges = true
+		}
+	}
+	if !newEdges {
+		s.T().Log("  no new or grown edge types — edge schema fully covered in run 1")
+	}
+	s.T().Logf("  total edges: %d → %d  (Δ%+d)",
+		r1report.TotalRelEdges, r2report.TotalRelEdges,
+		r2report.TotalRelEdges-r1report.TotalRelEdges)
+
+	// ── Side-by-side quality table ─────────────────────────────────────────
+	s.T().Log("══ QUALITY COMPARISON (run 1 vs run 2) ══════════════")
+	s.T().Logf("  %-30s  %-14s  %-14s  %s", "metric", "run-1", "run-2", "Δ")
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "total entities",
+		len(snap1), len(snap2), len(snap2)-len(snap1))
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "characters",
+		r1report.TotalCharacters, r2report.TotalCharacters,
+		r2report.TotalCharacters-r1report.TotalCharacters)
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "events",
+		r1report.TotalEvents, r2report.TotalEvents,
+		r2report.TotalEvents-r1report.TotalEvents)
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "graph edges",
+		r1report.TotalRelEdges, r2report.TotalRelEdges,
+		r2report.TotalRelEdges-r1report.TotalRelEdges)
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "known rels",
+		len(r1report.KnownRelsFound), len(r2report.KnownRelsFound),
+		len(r2report.KnownRelsFound)-len(r1report.KnownRelsFound))
+	s.T().Logf("  %-30s  %-14.1f  %-14.1f  %+.1f", "avg props/char",
+		r1report.AvgPropsPerChar, r2report.AvgPropsPerChar,
+		r2report.AvgPropsPerChar-r1report.AvgPropsPerChar)
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "edge types",
+		len(edges1), len(edges2), len(edges2)-len(edges1))
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "wall ms", r1Wall, r2Wall, r2Wall-r1Wall)
+	s.T().Logf("  entity breakdown: added=%d  enriched=%d  stable=%d  (run-1 total=%d)",
+		len(added), len(enriched), len(stable), len(snap1))
+
+	// ── Interpretation ─────────────────────────────────────────────────────
+	s.T().Log("══ INTERPRETATION ════════════════════════════════════")
+	if len(snap1) > 0 {
+		pctAdded := float64(len(added)) * 100 / float64(len(snap1))
+		pctEnriched := float64(len(enriched)) * 100 / float64(len(snap1))
+		pctStable := float64(len(stable)) * 100 / float64(len(snap1))
+		s.T().Logf("  %.0f%% new  |  %.0f%% enriched  |  %.0f%% stable", pctAdded, pctEnriched, pctStable)
+		switch {
+		case pctStable >= 80:
+			s.T().Log("  verdict: STABLE — document fully covered after one extraction run")
+		case pctEnriched >= 40:
+			s.T().Log("  verdict: ENRICHMENT — repeated runs add property depth")
+		case pctAdded >= 20:
+			s.T().Log("  verdict: INCREMENTAL — document not fully covered in a single run")
+		default:
+			s.T().Log("  verdict: MOSTLY STABLE — modest gains from repeated extraction")
+		}
+	}
+
+	// ── Schema gap check ───────────────────────────────────────────────────
+	// Were any entity types extracted that aren't in the installed schema?
+	// These would benefit from mode="extend" or schema_policy=enrich.
+	s.T().Log("══ SCHEMA GAP CHECK ══════════════════════════════════")
+	knownTypes := map[string]bool{"character": true, "location": true, "event": true, "object": true}
+	outOfSchema := map[string]int{}
+	for _, e := range snap2 {
+		if !knownTypes[strings.ToLower(e.Type)] {
+			outOfSchema[e.Type]++
+		}
+	}
+	if len(outOfSchema) == 0 {
+		s.T().Log("  no out-of-schema entity types — schema fully covers extraction output")
+		s.T().Log("  → mode='extend' not needed for this document")
+	} else {
+		s.T().Logf("  out-of-schema types found: %v", outOfSchema)
+		s.T().Log("  → add via FinalizeDiscovery(mode='extend', existing_pack_id=schemaID, included_types=[...])")
+		s.T().Log("  → or use schema_policy=enrich which auto-extends on repeated ingestion")
+	}
+
+	// Assertions.
+	s.Greater(len(snap1), 0, "run-1 must produce at least one entity")
+	s.Greater(len(snap2), 0, "run-2 must produce at least one entity")
+	// CreateOrUpdate is additive — run 2 can only add or enrich, never remove.
+	s.GreaterOrEqual(len(snap2), len(snap1),
+		"run-2 must have ≥ run-1 entities (CreateOrUpdate is additive)")
+}
+
+// TestExtract_SecondRunEnrichment_Sequential mirrors TestExtract_SecondRunEnrichment
+// but uses the create_rich_sequential pipeline (server-generated schema, two LLM calls)
+// instead of the hand-crafted fixed schema.
+//
+// This test answers:
+//   - How does a generated schema + second pass compare to the fixed-schema second-pass test?
+//   - Does the sequential schema miss entity types that appear on re-extraction?
+//   - Do repeated runs on a generated schema converge or keep surfacing new entities?
+//   - If the second pass finds types outside the generated schema, what happens?
+//
+// The generated schema is installed once (run 1), then re-used for run 2 without change.
+func (s *ExtractionFixedSchemaTestSuite) TestExtract_SecondRunEnrichment_Sequential() {
+	s.skipIfNoLLM()
+
+	transcript, err := friendsTranscript(0, 50)
+	if err != nil {
+		s.T().Skipf("could not fetch Friends transcript: %v", err)
+	}
+	s.T().Logf("fixture: %d chars, %d lines", len(transcript), strings.Count(transcript, "\n"))
+
+	db := s.testDB.DB
+	log := s.quietLogger()
+
+	// ── Setup: fresh isolated project ────────────────────────────────────
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	s.Require().NoError(testutil.SetupFullTestProject(s.ctx, db, orgID, projectID))
+	_, err = db.NewRaw(`UPDATE kb.projects SET project_info = ? WHERE id = ?`,
+		friendsRichProjectInfo, projectID).Exec(s.ctx)
+	s.Require().NoError(err)
+	projectUUID, _ := uuid.Parse(projectID)
+
+	docsRepo := documents.NewRepository(db, log)
+	docsSvc := documents.NewService(docsRepo, log)
+	filename := "friends-transcript.txt"
+	sourceType := "manual"
+	doc, _, err := docsSvc.Create(s.ctx, documents.CreateParams{
+		ProjectID:  projectID,
+		Filename:   &filename,
+		Content:    &transcript,
+		SourceType: &sourceType,
+	})
+	s.Require().NoError(err)
+
+	cfg := &config.Config{}
+	mf := s.modelFactory()
+	if mf == nil {
+		s.T().Skip("no LLM credentials")
+	}
+	djRepo := discoveryjobs.NewRepository(db, log)
+	djSvc := discoveryjobs.NewService(djRepo, docsSvc, cfg, mf, log)
+
+	stubJob := &discoveryjobs.DiscoveryJob{
+		ID:        uuid.New(),
+		ProjectID: projectUUID,
+		Status:    discoveryjobs.StatusCompleted,
+		KBPurpose: friendsRichProjectInfo,
+		Progress:  discoveryjobs.JSONMap{"message": "test stub"},
+		Config:    discoveryjobs.JSONMap{"document_ids": []string{doc.ID}},
+	}
+	s.Require().NoError(djRepo.Create(s.ctx, stubJob))
+
+	// ── Run 1: generate schema + first extraction ─────────────────────────
+	s.T().Log("══ RUN 1 (create_rich_sequential: generate schema + extract) ══")
+	r1Start := time.Now()
+
+	resp, finErr := djSvc.FinalizeDiscovery(s.ctx, stubJob.ID, projectUUID, &discoveryjobs.FinalizeDiscoveryRequest{
+		Mode:          "create_rich_sequential",
+		PackName:      "Friends Transcript Sequential",
+		DocumentID:    doc.ID,
+		IncludedTypes: nil,
+	})
+	if finErr != nil {
+		s.T().Logf("  FinalizeDiscovery error: %v — skipping", finErr)
+		s.T().Skip("FinalizeDiscovery failed (LLM flake), skipping test")
+		return
+	}
+	s.T().Logf("  schema created: %s", resp.SchemaID)
+
+	// Log the generated schema types and edge types.
+	var genObjTypes, genRelTypes string
+	_ = db.NewRaw(`SELECT object_type_schemas::text FROM kb.graph_schemas WHERE id = ?`,
+		resp.SchemaID).Scan(s.ctx, &genObjTypes)
+	_ = db.NewRaw(`SELECT relationship_type_schemas::text FROM kb.graph_schemas WHERE id = ?`,
+		resp.SchemaID).Scan(s.ctx, &genRelTypes)
+	s.T().Logf("  generated object_type_schemas: %s", genObjTypes)
+	s.T().Logf("  generated relationship_type_schemas: %s", genRelTypes)
+
+	// Determine enabled types from the generated schema.
+	var objSchemaMap map[string]any
+	enabledTypes := []string{}
+	if err := json.Unmarshal([]byte(genObjTypes), &objSchemaMap); err == nil {
+		for typeName := range objSchemaMap {
+			enabledTypes = append(enabledTypes, typeName)
+		}
+	}
+	s.T().Logf("  enabled types for extraction: %v", enabledTypes)
+
+	// FinalizeDiscovery already queued a reextraction job (via auto-queue).
+	// For the test we run a second explicit synchronous extraction to have
+	// fine-grained control over timing. The auto-queued job may also complete
+	// in the background — CreateOrUpdate handles any races correctly.
+	s.runExtractionOnProject(projectID, doc.ID, enabledTypes, nil)
+	r1Wall := time.Since(r1Start).Milliseconds()
+
+	snap1 := s.extractEntitySnapshots(projectID)
+	edges1 := s.extractEdgeTypeSet(projectID)
+	r1report := s.buildQualityReport("run-1-sequential", projectID)
+	r1report.TotalRelEdges = len(s.extractRelationshipsFromProject(projectID))
+	r1report.logTo(s.T())
+	s.T().Logf("  wall=%dms  entities=%d  edge_types=%d", r1Wall, len(snap1), len(edges1))
+
+	// ── Run 2: same doc, same generated schema ────────────────────────────
+	s.T().Log("══ RUN 2 (same doc, same generated schema) ══════════════════")
+	r2Start := time.Now()
+	s.runExtractionOnProject(projectID, doc.ID, enabledTypes, nil)
+	r2Wall := time.Since(r2Start).Milliseconds()
+
+	snap2 := s.extractEntitySnapshots(projectID)
+	edges2 := s.extractEdgeTypeSet(projectID)
+	r2report := s.buildQualityReport("run-2-sequential", projectID)
+	r2report.TotalRelEdges = len(s.extractRelationshipsFromProject(projectID))
+	r2report.logTo(s.T())
+	s.T().Logf("  wall=%dms  entities=%d  edge_types=%d", r2Wall, len(snap2), len(edges2))
+
+	// ── Entity delta ───────────────────────────────────────────────────────
+	s.T().Log("══ ENTITY DELTA (run 1 → run 2) ═════════════════════")
+	added, enriched, stable := diffEntitySnapshots(snap1, snap2)
+
+	s.T().Logf("  added    (new entities):  %d", len(added))
+	for _, e := range added {
+		s.T().Logf("    + [%-14s] %-30s  props=%d", e.Type, e.Props["name"], countFilled(e.Props))
+	}
+
+	byKeyBefore := make(map[string]entitySnapshot, len(snap1))
+	for _, e := range snap1 {
+		byKeyBefore[snapshotKey(e)] = e
+	}
+	s.T().Logf("  enriched (more props):    %d", len(enriched))
+	for _, e := range enriched {
+		prev := byKeyBefore[snapshotKey(e)]
+		s.T().Logf("    ~ [%-14s] %-30s  props: %d → %d (+%d)",
+			e.Type, e.Props["name"],
+			countFilled(prev.Props), countFilled(e.Props),
+			countFilled(e.Props)-countFilled(prev.Props))
+		for k, v := range e.Props {
+			if !strings.HasPrefix(k, "_") && prev.Props[k] == "" && v != "" {
+				short := v
+				if len(short) > 60 {
+					short = short[:60] + "…"
+				}
+				s.T().Logf("        + %s = %q", k, short)
+			}
+		}
+	}
+
+	s.T().Logf("  stable   (no change):     %d", len(stable))
+	for _, e := range stable {
+		s.T().Logf("    = [%-14s] %-30s  props=%d", e.Type, e.Props["name"], countFilled(e.Props))
+	}
+
+	// ── Edge type delta ────────────────────────────────────────────────────
+	s.T().Log("══ EDGE TYPE DELTA ═══════════════════════════════════")
+	newEdges := false
+	for et, cnt2 := range edges2 {
+		if _, had := edges1[et]; !had {
+			s.T().Logf("  new: %s (×%d)", et, cnt2)
+			newEdges = true
+		}
+	}
+	for et, cnt1 := range edges1 {
+		if cnt2 := edges2[et]; cnt2 > cnt1 {
+			s.T().Logf("  grown: %s  %d → %d (+%d)", et, cnt1, cnt2, cnt2-cnt1)
+			newEdges = true
+		}
+	}
+	if !newEdges {
+		s.T().Log("  no new or grown edge types")
+	}
+	s.T().Logf("  total edges: %d → %d  (Δ%+d)",
+		r1report.TotalRelEdges, r2report.TotalRelEdges,
+		r2report.TotalRelEdges-r1report.TotalRelEdges)
+
+	// ── Quality comparison table ───────────────────────────────────────────
+	s.T().Log("══ QUALITY COMPARISON (run 1 vs run 2, sequential) ══")
+	s.T().Logf("  %-30s  %-14s  %-14s  %s", "metric", "run-1", "run-2", "Δ")
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "total entities",
+		len(snap1), len(snap2), len(snap2)-len(snap1))
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "characters",
+		r1report.TotalCharacters, r2report.TotalCharacters, r2report.TotalCharacters-r1report.TotalCharacters)
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "events",
+		r1report.TotalEvents, r2report.TotalEvents, r2report.TotalEvents-r1report.TotalEvents)
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "graph edges",
+		r1report.TotalRelEdges, r2report.TotalRelEdges, r2report.TotalRelEdges-r1report.TotalRelEdges)
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "known rels",
+		len(r1report.KnownRelsFound), len(r2report.KnownRelsFound),
+		len(r2report.KnownRelsFound)-len(r1report.KnownRelsFound))
+	s.T().Logf("  %-30s  %-14.1f  %-14.1f  %+.1f", "avg props/char",
+		r1report.AvgPropsPerChar, r2report.AvgPropsPerChar,
+		r2report.AvgPropsPerChar-r1report.AvgPropsPerChar)
+	s.T().Logf("  %-30s  %-14d  %-14d  %+d", "edge types",
+		len(edges1), len(edges2), len(edges2)-len(edges1))
+	s.T().Logf("  entity breakdown: added=%d  enriched=%d  stable=%d  (run-1 total=%d)",
+		len(added), len(enriched), len(stable), len(snap1))
+
+	// ── Interpretation ─────────────────────────────────────────────────────
+	s.T().Log("══ INTERPRETATION ════════════════════════════════════")
+	if len(snap1) > 0 {
+		pctAdded := float64(len(added)) * 100 / float64(len(snap1))
+		pctEnriched := float64(len(enriched)) * 100 / float64(len(snap1))
+		pctStable := float64(len(stable)) * 100 / float64(len(snap1))
+		s.T().Logf("  %.0f%% new  |  %.0f%% enriched  |  %.0f%% stable", pctAdded, pctEnriched, pctStable)
+		switch {
+		case pctStable >= 80:
+			s.T().Log("  verdict: STABLE — generated schema covers document well after one run")
+		case pctEnriched >= 40:
+			s.T().Log("  verdict: ENRICHMENT — second run fills gaps in generated property descriptions")
+		case pctAdded >= 20:
+			s.T().Log("  verdict: INCREMENTAL — generated schema misses some entities on first pass")
+		default:
+			s.T().Log("  verdict: MOSTLY STABLE")
+		}
+	}
+
+	// ── Schema gap check ───────────────────────────────────────────────────
+	// Were any entity types extracted that aren't in the generated schema?
+	s.T().Log("══ SCHEMA GAP CHECK ══════════════════════════════════")
+	schemaTypes := make(map[string]bool, len(enabledTypes))
+	for _, t := range enabledTypes {
+		schemaTypes[strings.ToLower(t)] = true
+	}
+	outOfSchema := map[string]int{}
+	for _, e := range snap2 {
+		if !schemaTypes[strings.ToLower(e.Type)] {
+			outOfSchema[e.Type]++
+		}
+	}
+	if len(outOfSchema) == 0 {
+		s.T().Log("  no out-of-schema types — generated schema covers all extracted entities")
+	} else {
+		s.T().Logf("  out-of-schema types: %v", outOfSchema)
+		s.T().Log("  → add via FinalizeDiscovery(mode='extend', existing_pack_id=schemaID)")
+		s.T().Log("  → or regenerate with create_rich_sequential on a longer document excerpt")
+	}
+
+	// ── vs fixed-schema comparison hint ───────────────────────────────────
+	s.T().Log("══ vs FIXED SCHEMA (context) ═════════════════════════")
+	s.T().Log("  fixed-schema run-1→run-2: added=15 enriched=3 stable=22 (88% stable)")
+	s.T().Logf("  sequential   run-1→run-2: added=%-2d enriched=%-2d stable=%-2d (%.0f%% stable)",
+		len(added), len(enriched), len(stable),
+		func() float64 {
+			if len(snap1) == 0 {
+				return 0
+			}
+			return float64(len(stable)) * 100 / float64(len(snap1))
+		}())
+	s.T().Log("  differences reflect: generated vs hand-crafted schema property depth,")
+	s.T().Log("  and whether the LLM is anchored to specific property names")
+
+	// Assertions.
+	s.Greater(len(snap1), 0, "run-1 must produce at least one entity")
+	s.Greater(len(snap2), 0, "run-2 must produce at least one entity")
+	s.GreaterOrEqual(len(snap2), len(snap1), "run-2 must have ≥ run-1 entities (additive)")
+}
+
+// ---------------------------------------------------------------------------
+// Merge-policy enrichment tests (Variant A — deterministic injected embeddings)
+// ---------------------------------------------------------------------------
+
+// hashNameToVector produces a deterministic 768-dim unit vector from a string key.
+// Identical keys → identical vectors (cosine similarity = 1.0).
+// Different keys → statistically near-orthogonal vectors.
+// Used to inject embeddings without a real embedding service.
+func hashNameToVector(key string) []float32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	seed := int64(h.Sum32())
+	rng := rand.New(rand.NewSource(seed)) //nolint:gosec
+	v := make([]float32, 768)
+	var sumSq float64
+	for i := range v {
+		v[i] = float32(rng.NormFloat64())
+		sumSq += float64(v[i]) * float64(v[i])
+	}
+	norm := float32(math.Sqrt(sumSq))
+	if norm > 0 {
+		for i := range v {
+			v[i] /= norm
+		}
+	}
+	return v
+}
+
+// formatVector formats a float32 slice as a PostgreSQL vector literal '[f,f,...]'.
+func formatVector(v []float32) string {
+	parts := make([]string, len(v))
+	for i, x := range v {
+		parts[i] = fmt.Sprintf("%f", x)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// runExtractionToBranch is like runExtraction but wires a real branchService so the
+// worker creates a staging branch instead of writing directly to the main graph.
+// Returns the job and the UUID of the staging branch created.
+func (s *ExtractionFixedSchemaTestSuite) runExtractionToBranch(documentID string) (
+	*extraction.ObjectExtractionJob, uuid.UUID,
+) {
+	s.T().Helper()
+	db := s.testDB.DB
+	log := s.quietLogger()
+
+	docsRepo := documents.NewRepository(db, log)
+	docsSvc := documents.NewService(docsRepo, log)
+
+	graphCfg := s.testGraphConfig()
+	graphRepo := graph.NewRepository(db, log, graphCfg)
+	graphSchemaProvider := graph.ProvideSchemaProvider(db, log)
+	graphSvc := graph.NewService(graphRepo, log, graphSchemaProvider,
+		graph.ProvideInverseTypeProvider(db, log), nil, nil, nil, nil, nil, nil)
+
+	branchSvc := branches.NewService(branches.NewStore(db))
+	extractionSchemaProvider := extraction.NewMemorySchemaProvider(db, log)
+	jobsCfg := &extraction.ObjectExtractionConfig{}
+	jobsSvc := extraction.NewObjectExtractionJobsService(db, log, jobsCfg)
+
+	modelFactory := s.modelFactory()
+	if modelFactory == nil {
+		s.T().Skip("no LLM credentials — cannot run extraction")
+	}
+
+	enabledTypes := []string{"Character", "Location", "Event", "Object"}
+	job, err := jobsSvc.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID:    s.projectID,
+		DocumentID:   &documentID,
+		EnabledTypes: enabledTypes,
+	})
+	s.Require().NoError(err, "create extraction job")
+	s.T().Logf("  extraction job (to branch): id=%s", job.ID)
+
+	worker := extraction.NewObjectExtractionWorker(
+		jobsSvc,
+		graphSvc,
+		branchSvc, // wired → creates staging branch
+		docsSvc,
+		extractionSchemaProvider,
+		modelFactory,
+		nil,
+		extraction.DefaultObjectExtractionWorkerConfig(),
+		log,
+		nil,
+	)
+
+	results, runErr := worker.ProcessJobSync(s.ctx, job)
+	if runErr != nil {
+		s.T().Logf("  extraction error (may be partial): %v", runErr)
+	}
+	if results != nil {
+		s.T().Logf("  extraction results: objects_created=%d merged=%d relationships=%d",
+			results.ObjectsCreated, results.ObjectsMerged, results.RelationshipsCreated)
+	}
+
+	// Re-load job to get the staging_branch_id written by the worker.
+	var stagingBranchIDStr string
+	_ = db.NewRaw(`SELECT COALESCE(staging_branch_id::text,'') FROM kb.object_extraction_jobs WHERE id = ?`,
+		job.ID).Scan(s.ctx, &stagingBranchIDStr)
+	if stagingBranchIDStr == "" {
+		s.T().Log("  warning: no staging_branch_id on job — worker may have fallen back to main graph")
+		return job, uuid.Nil
+	}
+	stagingBranchID, err := uuid.Parse(stagingBranchIDStr)
+	s.Require().NoError(err, "parse staging_branch_id")
+	s.T().Logf("  staging branch: %s", stagingBranchID)
+	return job, stagingBranchID
+}
+
+// injectDeterministicEmbeddings writes embedding_v2 on all live objects in a branch
+// (nil = main graph) using hashNameToVector(type+":"+name). Identical (type,name) pairs
+// always produce the same vector so the similarity probe correctly detects same-entity
+// duplicates across extraction runs without a real embedding service.
+func (s *ExtractionFixedSchemaTestSuite) injectDeterministicEmbeddings(projectID string, branchID *uuid.UUID) int {
+	s.T().Helper()
+	var rows []struct {
+		ID         string `bun:"id"`
+		Type       string `bun:"type"`
+		Properties []byte `bun:"properties"`
+	}
+	q := `SELECT id::text, type, properties FROM kb.graph_objects
+	      WHERE project_id = ? AND supersedes_id IS NULL AND deleted_at IS NULL`
+	args := []any{projectID}
+	if branchID != nil {
+		q += " AND branch_id = ?"
+		args = append(args, *branchID)
+	} else {
+		q += " AND branch_id IS NULL"
+	}
+	_ = s.testDB.DB.NewRaw(q, args...).Scan(s.ctx, &rows)
+
+	for _, r := range rows {
+		var props map[string]any
+		name := ""
+		if err := json.Unmarshal(r.Properties, &props); err == nil {
+			if n, ok := props["name"].(string); ok {
+				name = n
+			}
+		}
+		key := r.Type + ":" + name
+		vec := hashNameToVector(key)
+		vecStr := formatVector(vec)
+		_, err := s.testDB.DB.NewRaw(
+			fmt.Sprintf(`UPDATE kb.graph_objects SET embedding_v2 = '%s'::vector, embedding_updated_at = now() WHERE id = ?`, vecStr),
+			r.ID,
+		).Exec(s.ctx)
+		if err != nil {
+			s.T().Logf("  warning: could not inject embedding on %s: %v", r.ID, err)
+		}
+	}
+	return len(rows)
+}
+
+// mergeStagingBranch merges a staging branch into the main graph using the given policy.
+// Returns the merge response summary.
+func (s *ExtractionFixedSchemaTestSuite) mergeStagingBranch(stagingBranchID uuid.UUID, policy string) *graph.BranchMergeResponse {
+	s.T().Helper()
+	graphCfg := s.testGraphConfig()
+	graphRepo := graph.NewRepository(s.testDB.DB, s.quietLogger(), graphCfg)
+	graphSvc := graph.NewService(graphRepo, s.quietLogger(),
+		graph.ProvideSchemaProvider(s.testDB.DB, s.quietLogger()),
+		graph.ProvideInverseTypeProvider(s.testDB.DB, s.quietLogger()),
+		nil, nil, nil, nil, nil, nil)
+
+	pid, _ := uuid.Parse(s.projectID)
+	resp, err := graphSvc.MergeBranch(s.ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID:      stagingBranchID,
+		Execute:             true,
+		Policy:              policy,
+		SimilarityThreshold: 0.99, // hash vectors for same entity are identical → score=1.0
+	})
+	s.Require().NoError(err, "MergeBranch(%s, policy=%s)", stagingBranchID, policy)
+	s.T().Logf("  merge(%s): added=%d similar=%d ff=%d unchanged=%d",
+		policy, resp.AddedCount, resp.SimilarCount, resp.FastForwardCount, resp.UnchangedCount)
+	for _, o := range resp.Objects {
+		if o.Status == "similar" {
+			s.T().Logf("    similar: score=%.3f target=%s enriched=%v",
+				o.SimilarityScore, o.SimilarTargetName, o.EnrichedKeys)
+		}
+	}
+	return resp
+}
+
+// resetProject truncates all data and re-creates the test project + Friends schema.
+func (s *ExtractionFixedSchemaTestSuite) resetProject() {
+	s.T().Helper()
+	s.Require().NoError(testutil.TruncateTables(s.ctx, s.testDB.DB))
+	s.Require().NoError(testutil.SetupTestFixtures(s.ctx, s.testDB.DB))
+	s.orgID = uuid.New().String()
+	s.projectID = uuid.New().String()
+	s.Require().NoError(testutil.SetupFullTestProject(s.ctx, s.testDB.DB, s.orgID, s.projectID))
+	_, err := s.testDB.DB.NewRaw(
+		`UPDATE kb.projects SET project_info = ? WHERE id = ?`,
+		friendsProjectInfo, s.projectID,
+	).Exec(s.ctx)
+	s.Require().NoError(err)
+	s.schemaID = s.installFriendsSchema()
+	// Re-create the in-process server for the fresh project.
+	if s.inProcess != nil && s.inProcess.StopFn != nil {
+		s.inProcess.StopFn()
+	}
+	s.inProcess = testutil.NewTestServerWithLLM(s.testDB)
+	s.client = testutil.NewHTTPClient(s.inProcess.Echo)
+}
+
+// TestExtract_SecondRunEnrichment_WithMergePolicy compares two merge strategies on
+// the same two-run extraction experiment:
+//
+//   - Column A (enrich_no_sim): no similarity probe — baseline, current behaviour
+//   - Column B (enrich):        similarity at threshold 0.99 using deterministic injected
+//     embeddings — same (type,name) → same vector → cosine 1.0 → absorbed
+//
+// Injected embeddings are deterministic (hash of type+name) — no real embedding
+// service needed. This lets us isolate the effect of similarity-aware merging on
+// entity deduplication quality.
+//
+// Expected outcome:
+//   - Column A: more "added" entities in run 2 (minor characters extracted with slightly
+//     different names re-create as duplicates)
+//   - Column B: most run-2 entities are "similar" and absorbed → fewer new entities,
+//     more enriched (existing entities gain new properties from run 2)
+func (s *ExtractionFixedSchemaTestSuite) TestExtract_SecondRunEnrichment_WithMergePolicy() {
+	s.skipIfNoLLM()
+
+	transcript, err := friendsTranscript(0, 50)
+	if err != nil {
+		s.T().Skipf("could not fetch Friends transcript: %v", err)
+	}
+	s.T().Logf("fixture: %d chars, %d lines", len(transcript), strings.Count(transcript, "\n"))
+
+	runTimeline := func(policy string) (snap1, snap2 []entitySnapshot, mergeResp1, mergeResp2 *graph.BranchMergeResponse) {
+		s.T().Logf("━━ TIMELINE policy=%s ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", policy)
+
+		// Run 1 → staging branch.
+		s.T().Logf("  ── run 1 ──")
+		docID := s.createDocument(transcript)
+		_, b1 := s.runExtractionToBranch(docID)
+		if b1 == uuid.Nil {
+			s.T().Skip("no staging branch created — branchService may not be wired")
+		}
+
+		// Inject deterministic embeddings on staging branch.
+		n := s.injectDeterministicEmbeddings(s.projectID, &b1)
+		s.T().Logf("  injected embeddings on %d staging objects", n)
+
+		// Merge staging → main.
+		mergeResp1 = s.mergeStagingBranch(b1, policy)
+
+		snap1 = s.extractEntitySnapshots(s.projectID)
+		r1report := s.buildQualityReport(fmt.Sprintf("run-1-%s", policy), s.projectID)
+		r1report.TotalRelEdges = len(s.extractRelationshipsFromProject(s.projectID))
+		r1report.logTo(s.T())
+
+		// Run 2 → new staging branch.
+		s.T().Logf("  ── run 2 ──")
+		_, b2 := s.runExtractionToBranch(docID)
+		if b2 == uuid.Nil {
+			s.T().Skip("no staging branch created for run 2")
+		}
+
+		// Inject deterministic embeddings on staging branch 2.
+		n2 := s.injectDeterministicEmbeddings(s.projectID, &b2)
+		s.T().Logf("  injected embeddings on %d staging objects", n2)
+
+		// Merge staging 2 → main.
+		mergeResp2 = s.mergeStagingBranch(b2, policy)
+
+		snap2 = s.extractEntitySnapshots(s.projectID)
+		r2report := s.buildQualityReport(fmt.Sprintf("run-2-%s", policy), s.projectID)
+		r2report.TotalRelEdges = len(s.extractRelationshipsFromProject(s.projectID))
+		r2report.logTo(s.T())
+
+		return snap1, snap2, mergeResp1, mergeResp2
+	}
+
+	// ── Timeline A: enrich_no_sim (no similarity probe — baseline) ───────────
+	snap1A, snap2A, _, merge2A := runTimeline("enrich_no_sim")
+	addedA, enrichedA, stableA := diffEntitySnapshots(snap1A, snap2A)
+
+	// Reset project and schema for Timeline B.
+	s.resetProject()
+
+	// ── Timeline B: enrich (similarity enabled at threshold 0.99) ────────────
+	snap1B, snap2B, _, merge2B := runTimeline("enrich")
+	addedB, enrichedB, stableB := diffEntitySnapshots(snap1B, snap2B)
+
+	// ── Comparison table ──────────────────────────────────────────────────────
+	s.T().Log("══ COMPARISON: no-sim vs similarity-aware merge ══════")
+	s.T().Logf("  %-35s  %-14s  %-14s", "metric", "A:enrich_no_sim", "B:enrich(sim)")
+	s.T().Logf("  %-35s  %-14d  %-14d", "entities after run 1",
+		len(snap1A), len(snap1B))
+	s.T().Logf("  %-35s  %-14d  %-14d", "entities after run 2",
+		len(snap2A), len(snap2B))
+	s.T().Logf("  %-35s  %-14d  %-14d", "run-2 delta: added (new)",
+		len(addedA), len(addedB))
+	s.T().Logf("  %-35s  %-14d  %-14d", "run-2 delta: enriched (more props)",
+		len(enrichedA), len(enrichedB))
+	s.T().Logf("  %-35s  %-14d  %-14d", "run-2 delta: stable (unchanged)",
+		len(stableA), len(stableB))
+	s.T().Logf("  %-35s  %-14d  %-14d", "run-2 merge: similar detected",
+		0, merge2B.SimilarCount)
+	s.T().Logf("  %-35s  %-14d  %-14d", "run-2 merge: added to main",
+		merge2A.AddedCount, merge2B.AddedCount)
+
+	// Note on what this test demonstrates:
+	// - Hash-based embeddings make identical (type,name) pairs have cosine=1.0 → absorbed.
+	// - Name VARIANTS ("Mom (Geller)" vs "Monica and Ross's mother") get different hashes
+	//   → orthogonal vectors → NOT detected as similar here. That requires real embeddings
+	//   (see TestMergeEnrichmentE2E in merge_enrichment_e2e_test.go, build tag: embeddings).
+	// - What this does demonstrate: enrich policy has better canonicalID-match conflict
+	//   resolution than enrich_no_sim (both handle canonical matches the same way here,
+	//   but enrich also has similarity enabled for any truly added objects).
+	s.T().Logf("  note: with hash embeddings, similar_count=%d (same-name entities deduped via CreateOrUpdate key match,", merge2B.SimilarCount)
+	s.T().Log("        not via similarity probe — similarity probe fires for name VARIANTS with REAL embeddings)")
+
+	// The enrich policy should add fewer or equal new entities vs no-sim.
+	s.LessOrEqual(merge2B.AddedCount, merge2A.AddedCount,
+		"enrich policy should add fewer or equal new entities than no-sim baseline")
+
+	// See TestMergePolicySuite/TestMergePolicy_NameVariants_* for targeted
+	// demonstration that similarity correctly absorbs name variants with near-identical embeddings.
 }

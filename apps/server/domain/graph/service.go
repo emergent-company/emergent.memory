@@ -1850,11 +1850,12 @@ func (s *Service) maybeCreateInverse(
 		return newVersion.ToResponse(), newVersion.ID.String()
 	}
 
-	// Create brand new inverse relationship (store canonical IDs)
+	// Create brand new inverse relationship (store canonical IDs).
+	// Normalize inverseType to lower_snake_case — same contract as CreateRelationship.
 	inverseRel := &GraphRelationship{
 		ProjectID:  projectID,
 		BranchID:   branchID,
-		Type:       inverseType,
+		Type:       normalizeRelationType(inverseType),
 		SrcID:      dstObj.CanonicalID, // swapped
 		DstID:      srcObj.CanonicalID, // swapped
 		Properties: properties,
@@ -3347,6 +3348,22 @@ func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *T
 // Branch Merge
 // =============================================================================
 
+// BranchMergeReadiness returns how many objects in the branch are missing embeddings.
+// A count of 0 means the branch is fully embedded and ready for similarity-aware merge.
+func (s *Service) BranchMergeReadiness(ctx context.Context, projectID, branchID uuid.UUID) (total int, pending int, err error) {
+	pending, err = s.repo.CountUnembeddedObjectsInBranch(ctx, projectID, branchID)
+	if err != nil {
+		return 0, 0, err
+	}
+	_ = s.repo.DB().NewRaw(`
+		SELECT COUNT(*) FROM kb.graph_objects
+		WHERE project_id = ? AND branch_id = ?
+		  AND supersedes_id IS NULL AND deleted_at IS NULL`,
+		projectID, branchID,
+	).Scan(ctx, &total)
+	return total, pending, nil
+}
+
 // MergeBranch performs dry-run or actual merge of a source branch into target branch.
 func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBranchID *uuid.UUID, req *BranchMergeRequest) (*BranchMergeResponse, error) {
 	// Validate target branch exists (skip for main — it has no branch row)
@@ -3535,17 +3552,74 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		truncated = true
 	}
 
-	// Normalize conflict strategy — default is "enrich".
-	strategy := req.ConflictStrategy
-	if strategy == "" {
-		strategy = "enrich"
+	// Resolve the effective merge policy and settings.
+	settings := resolveMergePolicy(req.Policy, req.ConflictStrategy, req.SimilarityThreshold)
+	strategy := settings.CanonicalConflictAction
+
+	// ── Embedding readiness gate ───────────────────────────────────────────
+	embeddingsPending := 0
+	if settings.SimilarityEnabled || req.WaitForEmbeddings {
+		pending, err := s.repo.CountUnembeddedObjectsInBranch(ctx, projectID, req.SourceBranchID)
+		if err != nil {
+			s.log.Warn("failed to count unembedded objects, skipping gate", logger.Error(err))
+		} else {
+			embeddingsPending = pending
+			if pending > 0 && req.WaitForEmbeddings {
+				return nil, apperror.ErrBadRequest.WithMessage(
+					fmt.Sprintf("source branch has %d objects without embeddings; retry after embeddings settle", pending))
+			}
+		}
 	}
 
-	// Pre-compute resolution for conflict summaries so dry-run shows intent.
+	// ── Similarity probe for "added" objects ───────────────────────────────
+	similarCount := 0
+	if settings.SimilarityEnabled && settings.SimilarityThreshold > 0 {
+		maxDist := float32(1.0) - settings.SimilarityThreshold
+		for _, sum := range objectSummaries {
+			if sum.Status != "added" {
+				continue
+			}
+			src := sourceObjects[sum.CanonicalID]
+			if src == nil {
+				continue
+			}
+			vec, err := s.repo.GetBranchObjectEmbedding(ctx, src.ID)
+			if err != nil || len(vec) == 0 {
+				continue // no embedding yet — stays "added"
+			}
+			similar, dist, err := s.repo.FindSimilarObjectInBranch(
+				ctx, projectID, targetBranchID, src.Type, vec,
+				[]uuid.UUID{sum.CanonicalID}, maxDist)
+			if err != nil {
+				s.log.Warn("similarity probe error, skipping", slog.String("canonical_id", sum.CanonicalID.String()), logger.Error(err))
+				continue
+			}
+			if similar == nil {
+				continue
+			}
+			sum.Status = "similar"
+			sum.SimilarityScore = 1.0 - dist
+			cid := similar.CanonicalID
+			sum.SimilarTargetID = &cid
+			if name, ok := similar.Properties["name"].(string); ok {
+				sum.SimilarTargetName = name
+			}
+			addedCount--
+			similarCount++
+		}
+
+		// Relationship similarity probe — after entity remapping is known at apply time.
+		// For the classification pass we just mark "added" rels for potential probing;
+		// actual similarity detection happens in applyMerge where canonicalIDMap is live.
+		// (Rels with remapped endpoints are checked there.)
+	}
+
+	// Pre-compute resolution labels for dry-run display.
 	resolvedCount := 0
 	skippedCount := 0
 	for _, s := range responseObjectSummaries {
-		if s.Status == "conflict" {
+		switch s.Status {
+		case "conflict":
 			switch strategy {
 			case "enrich":
 				s.Resolution = "enriched"
@@ -3557,14 +3631,31 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 				s.Resolution = "skipped"
 				skippedCount++
 			}
+		case "similar":
+			switch settings.SimilarityAction {
+			case "enrich", "theirs":
+				s.Resolution = "absorbed-enrich"
+				resolvedCount++
+			case "mine":
+				s.Resolution = "absorbed-mine"
+				resolvedCount++
+			case "suggest":
+				s.Resolution = "suggested"
+			}
 		}
 	}
 
+	relSimilarCount := 0
+
 	response := &BranchMergeResponse{
-		TargetBranchID:                targetBranchID, // nil = main graph
+		TargetBranchID:                targetBranchID,
 		SourceBranchID:                req.SourceBranchID,
 		DryRun:                        !req.Execute,
+		Policy:                        req.Policy,
 		ConflictStrategy:              strategy,
+		SimilarityEnabled:             settings.SimilarityEnabled,
+		SimilarityThreshold:           settings.SimilarityThreshold,
+		EmbeddingsPending:             embeddingsPending,
 		TotalObjects:                  len(allCanonicalIDs),
 		UnchangedCount:                unchangedCount,
 		AddedCount:                    addedCount,
@@ -3573,6 +3664,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		ConflictCount:                 conflictCount,
 		ResolvedCount:                 resolvedCount,
 		SkippedCount:                  skippedCount,
+		SimilarCount:                  similarCount,
 		Objects:                       responseObjectSummaries,
 		Truncated:                     truncated,
 		HardLimit:                     &hardLimit,
@@ -3581,13 +3673,13 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		RelationshipsAddedCount:       &relAdded,
 		RelationshipsFastForwardCount: &relFF,
 		RelationshipsConflictCount:    &relConflict,
+		RelationshipsSimilarCount:     &relSimilarCount,
 		Relationships:                 responseRelSummaries,
 	}
 
 	// If execute is requested, apply merge transactionally.
-	// With strategy != "block", conflicts are handled by the strategy (enrich/overwrite/preserve_target).
 	if req.Execute && (conflictCount == 0 && relConflict == 0 || strategy != "block") {
-		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, strategy, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels) //nolint:staticcheck
+		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, settings, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels) //nolint:staticcheck
 		if err != nil {
 			return nil, fmt.Errorf("apply merge: %w", err)
 		}
@@ -3625,14 +3717,15 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 }
 
 // applyMerge executes the merge inside a single database transaction.
-// It clones "added" objects/relationships onto the target branch and creates
-// new versions for "fast_forward" objects/relationships.
+// It clones "added" objects/relationships onto the target branch, creates
+// new versions for "fast_forward" objects, and absorbs "similar" objects
+// into existing target entities per the similarity action in settings.
 // Returns the total number of objects+relationships written.
 func (s *Service) applyMerge(
 	ctx context.Context,
 	projectID uuid.UUID,
 	targetBranchID *uuid.UUID,
-	strategy string,
+	settings mergeSettings,
 	objectSummaries []*BranchMergeObjectSummary,
 	relSummaries []*BranchMergeRelationshipSummary,
 	sourceObjects map[uuid.UUID]*BranchObjectHead,
@@ -3640,6 +3733,7 @@ func (s *Service) applyMerge(
 	sourceRels map[uuid.UUID]*BranchRelationshipHead,
 	targetRels map[uuid.UUID]*BranchRelationshipHead,
 ) (int, error) {
+	strategy := settings.CanonicalConflictAction
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
@@ -3835,6 +3929,66 @@ func (s *Service) applyMerge(
 				return 0, fmt.Errorf("delete object %s: %w", summary.CanonicalID, err)
 			}
 			appliedCount++
+
+		case "similar":
+			// A semantically similar target object was found. "suggest" policy leaves
+			// the object on the staging branch (no write to target); all other policies
+			// absorb the source object into the existing target entity.
+			if settings.SimilarityAction == "suggest" || settings.SimilarityAction == "" {
+				// Flag for human review — no structural change.
+				continue
+			}
+			if summary.SimilarTargetID == nil {
+				continue // safety: no target ID recorded
+			}
+			src := sourceObjects[cid]
+			if src == nil {
+				continue
+			}
+			// Load the live target HEAD by canonical_id.
+			existingTarget, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, *summary.SimilarTargetID, targetBranchID)
+			if err != nil {
+				s.log.Warn("similar: cannot load target head, falling back to add",
+					slog.String("target_canonical_id", summary.SimilarTargetID.String()),
+					logger.Error(err))
+				// Fall through to treat as added.
+				continue
+			}
+
+			// Merge properties per policy.
+			mergedProps, changedKeys := applyPropsPolicy(src.Properties, existingTarget.Properties, settings.SimilarityAction)
+			summary.EnrichedKeys = changedKeys
+			summary.Resolution = "absorbed-" + settings.SimilarityAction
+
+			// Only write a new version if something actually changed.
+			if len(changedKeys) > 0 {
+				changeSummary := map[string]any{
+					"source":           "similarity-merge",
+					"similarity_score": summary.SimilarityScore,
+					"action":           settings.SimilarityAction,
+					"enriched_keys":    changedKeys,
+				}
+				newVersion := &GraphObject{
+					Type:          existingTarget.Type,
+					Key:           existingTarget.Key,
+					Status:        existingTarget.Status,
+					Namespace:     existingTarget.Namespace,
+					Labels:        existingTarget.Labels,
+					Properties:    mergedProps,
+					ProjectID:     projectID,
+					BranchID:      targetBranchID,
+					ChangeSummary: changeSummary,
+				}
+				if err := s.repo.CreateVersion(ctx, tx.Tx, existingTarget, newVersion); err != nil {
+					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
+				}
+				appliedCount++
+				embeddingIDs = append(embeddingIDs, newVersion.ID.String())
+			}
+
+			// Map source canonical_id → existing target canonical_id so relationships
+			// referencing the source entity are remapped to the merged target.
+			canonicalIDMap[cid] = *summary.SimilarTargetID
 		}
 	}
 
@@ -3853,7 +4007,7 @@ func (s *Service) applyMerge(
 			if props == nil {
 				props = map[string]any{}
 			}
-			// Remap src/dst canonical IDs if they were added in this merge
+			// Remap src/dst canonical IDs if they were added or absorbed in this merge.
 			srcID := src.SrcID
 			if mapped, ok := canonicalIDMap[srcID]; ok {
 				srcID = mapped
@@ -3862,6 +4016,43 @@ func (s *Service) applyMerge(
 			if mapped, ok := canonicalIDMap[dstID]; ok {
 				dstID = mapped
 			}
+
+			// Similarity probe for relationships (when similarity is enabled).
+			// After endpoint remapping, check if an equivalent relationship already
+			// exists in the target with the same src/dst (possibly absorbed from source entities).
+			if settings.SimilarityEnabled && settings.SimilarityAction != "suggest" {
+				vec, vecErr := s.repo.GetBranchRelationshipEmbedding(ctx, src.ID)
+				if vecErr == nil && len(vec) > 0 {
+					maxDist := float32(1.0) - settings.SimilarityThreshold
+					similarRel, dist, simErr := s.repo.FindSimilarRelationshipInBranch(
+						ctx, projectID, targetBranchID, srcID, dstID, vec, nil, maxDist)
+					if simErr == nil && similarRel != nil {
+						// Similar rel exists — merge properties into it instead of creating new.
+						mergedRelProps, relChangedKeys := applyPropsPolicy(props, similarRel.Properties, settings.SimilarityAction)
+						if len(relChangedKeys) > 0 {
+							newRelVersion := &GraphRelationship{
+								Properties: mergedRelProps,
+								BranchID:   targetBranchID,
+								ProjectID:  projectID,
+								ChangeSummary: map[string]any{
+									"source":           "similarity-merge",
+									"similarity_score": 1.0 - dist,
+								},
+							}
+							if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, similarRel, newRelVersion); err != nil {
+								s.log.Warn("similar rel: failed to merge, will create new", logger.Error(err))
+							} else {
+								appliedCount++
+								relEmbeddingIDs = append(relEmbeddingIDs, newRelVersion.ID.String())
+								continue // absorbed — skip create below
+							}
+						} else {
+							continue // identical — no-op
+						}
+					}
+				}
+			}
+
 			rel := &GraphRelationship{
 				ID:          uuid.New(),
 				CanonicalID: uuid.New(),
@@ -3944,6 +4135,101 @@ func mergeProps(base, overlay map[string]any) map[string]any {
 		merged[k] = v
 	}
 	return merged
+}
+
+// mergeSettings is the resolved configuration for a merge operation.
+type mergeSettings struct {
+	// SimilarityEnabled controls whether the similarity probe runs for "added" objects.
+	SimilarityEnabled bool
+	// SimilarityThreshold is the minimum cosine similarity (0–1) to classify two
+	// objects as "the same entity". Objects below this are treated as new additions.
+	SimilarityThreshold float32
+	// SimilarityAction controls what happens when a similar object is found:
+	// "enrich"  – fill empty target fields from source, target wins conflicts
+	// "theirs"  – target wins all conflicts
+	// "mine"    – source wins all conflicts
+	// "suggest" – flag only, no auto-action (dry-run output for human review)
+	SimilarityAction string
+	// CanonicalConflictAction is the strategy for canonical-id-matched conflicting objects.
+	// Mirrors the legacy ConflictStrategy: "enrich", "overwrite", "preserve_target", "block".
+	CanonicalConflictAction string
+}
+
+// resolveMergePolicy translates a named Policy (or legacy ConflictStrategy) into
+// the internal mergeSettings struct. Policy takes precedence over ConflictStrategy.
+// If both are empty, defaults to Policy="enrich".
+func resolveMergePolicy(policy, legacyConflictStrategy string, thresholdOverride float32) mergeSettings {
+	const defaultThreshold float32 = 0.92
+
+	presets := map[string]mergeSettings{
+		"manual":        {false, 0, "", ""},
+		"enrich":        {true, defaultThreshold, "enrich", "enrich"},
+		"enrich_no_sim": {false, 0, "", "enrich"},
+		"theirs":        {true, defaultThreshold, "theirs", "preserve_target"},
+		"mine":          {true, defaultThreshold, "mine", "overwrite"},
+		"mine_no_sim":   {false, 0, "", "overwrite"},
+		"suggest":       {true, defaultThreshold, "suggest", "block"},
+	}
+
+	if policy == "" && legacyConflictStrategy == "" {
+		policy = "enrich"
+	}
+
+	s, ok := presets[policy]
+	if !ok {
+		// Unknown or empty policy — fall back to legacy ConflictStrategy.
+		s = mergeSettings{
+			SimilarityEnabled:       false,
+			CanonicalConflictAction: legacyConflictStrategy,
+		}
+		if s.CanonicalConflictAction == "" {
+			s.CanonicalConflictAction = "enrich"
+		}
+	}
+
+	// Caller can override the threshold regardless of policy.
+	if thresholdOverride > 0 && thresholdOverride <= 1 {
+		s.SimilarityThreshold = thresholdOverride
+	}
+
+	return s
+}
+
+// applyPropsPolicy merges srcProps into tgtProps according to the similarity action.
+// Returns the merged property map and the list of keys that changed.
+//
+//   - "enrich": fill empty target fields from source; target wins on conflicts
+//   - "theirs": same as enrich (target wins)
+//   - "mine":   source wins all keys
+func applyPropsPolicy(srcProps, tgtProps map[string]any, action string) (merged map[string]any, changedKeys []string) {
+	merged = make(map[string]any, len(tgtProps)+len(srcProps))
+	// Start from target.
+	for k, v := range tgtProps {
+		merged[k] = v
+	}
+
+	for k, sv := range srcProps {
+		if k == "" {
+			continue
+		}
+		tv, tgtHas := tgtProps[k]
+		switch action {
+		case "mine":
+			// Source always wins.
+			if !tgtHas || fmt.Sprint(tv) != fmt.Sprint(sv) {
+				merged[k] = sv
+				changedKeys = append(changedKeys, k)
+			}
+		default: // "enrich", "theirs"
+			// Only fill when target has no value (nil, empty string, or missing).
+			tgtEmpty := !tgtHas || tv == nil || tv == ""
+			if tgtEmpty && sv != nil && sv != "" {
+				merged[k] = sv
+				changedKeys = append(changedKeys, k)
+			}
+		}
+	}
+	return merged, changedKeys
 }
 
 func bytesEqual(a, b []byte) bool {

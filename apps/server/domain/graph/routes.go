@@ -54,6 +54,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Branch routes
 	branches := g.Group("/branches")
 	branches.POST("/:targetBranchId/merge", h.MergeBranch)
+	branches.GET("/:branchId/merge-readiness", h.MergeReadiness)
 	branches.POST("/:id/fork", h.ForkBranch)
 
 	// Analytics routes

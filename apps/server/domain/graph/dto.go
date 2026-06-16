@@ -779,58 +779,108 @@ type TraverseEdge struct {
 // =============================================================================
 
 // BranchMergeRequest is the request for branch merge endpoint.
+//
+// Policy controls the overall merge behaviour. When set it overrides ConflictStrategy.
+// Valid values:
+//
+//	"manual"        – classify only, no auto-action, no similarity probe
+//	"enrich"        – (default) similarity on (threshold 0.92), fill empty fields, target wins conflicts
+//	"enrich_no_sim" – same as enrich but similarity probe disabled
+//	"theirs"        – similarity on, target always wins on conflicts
+//	"mine"          – similarity on, source always wins on conflicts
+//	"mine_no_sim"   – source wins, no similarity probe
+//	"suggest"       – similarity on, flag similar pairs for human review; block on conflicts
 type BranchMergeRequest struct {
-	SourceBranchID   uuid.UUID `json:"source_branch_id" validate:"required"`
-	Execute          bool      `json:"execute,omitempty"`
-	Limit            *int      `json:"limit,omitempty"`             // Override enumeration limit (testing)
-	ConflictStrategy string    `json:"conflict_strategy,omitempty"` // "enrich" (default), "overwrite", "preserve_target", "block"
+	SourceBranchID uuid.UUID `json:"source_branch_id" validate:"required"`
+	Execute        bool      `json:"execute,omitempty"`
+	Limit          *int      `json:"limit,omitempty"` // Override enumeration limit (testing)
+
+	// Policy is a named preset that bundles similarity + conflict resolution behaviour.
+	// Takes precedence over ConflictStrategy when non-empty.
+	Policy string `json:"policy,omitempty"`
+
+	// SimilarityThreshold overrides the policy default (0–1). Values closer to 1 are stricter.
+	// Only used when the resolved policy enables similarity.
+	SimilarityThreshold float32 `json:"similarity_threshold,omitempty"`
+
+	// WaitForEmbeddings returns an error instead of proceeding when the source branch
+	// has objects that have not yet been embedded. Useful when the caller wants to ensure
+	// full similarity coverage before merging.
+	WaitForEmbeddings bool `json:"wait_for_embeddings,omitempty"`
+
+	// ConflictStrategy is the legacy field, used when Policy is empty.
+	// "enrich" (default), "overwrite", "preserve_target", "block"
+	ConflictStrategy string `json:"conflict_strategy,omitempty"`
 }
 
 // BranchMergeResponse is the response for branch merge endpoint.
 type BranchMergeResponse struct {
-	TargetBranchID   *uuid.UUID                  `json:"target_branch_id,omitempty"` // nil = main graph
-	SourceBranchID   uuid.UUID                   `json:"source_branch_id"`
-	DryRun           bool                        `json:"dryRun"`
-	ConflictStrategy string                      `json:"conflict_strategy,omitempty"`
-	TotalObjects     int                         `json:"total_objects"`
-	UnchangedCount   int                         `json:"unchanged_count"`
-	AddedCount       int                         `json:"added_count"`
-	FastForwardCount int                         `json:"fast_forward_count"`
-	ConflictCount    int                         `json:"conflict_count"`
-	ResolvedCount    int                         `json:"resolved_count,omitempty"`
-	SkippedCount     int                         `json:"skipped_count,omitempty"`
-	DeletedCount     *int                        `json:"deleted_count,omitempty"`
-	Objects          []*BranchMergeObjectSummary `json:"objects"`
-	Truncated        bool                        `json:"truncated,omitempty"`
-	HardLimit        *int                        `json:"hard_limit,omitempty"`
-	Applied          bool                        `json:"applied,omitempty"`
-	AppliedObjects   *int                        `json:"applied_objects,omitempty"`
+	TargetBranchID   *uuid.UUID `json:"target_branch_id,omitempty"` // nil = main graph
+	SourceBranchID   uuid.UUID  `json:"source_branch_id"`
+	DryRun           bool       `json:"dryRun"`
+	Policy           string     `json:"policy,omitempty"`
+	ConflictStrategy string     `json:"conflict_strategy,omitempty"`
+	// Similarity settings used for this merge
+	SimilarityEnabled   bool                        `json:"similarity_enabled"`
+	SimilarityThreshold float32                     `json:"similarity_threshold,omitempty"`
+	EmbeddingsPending   int                         `json:"embeddings_pending,omitempty"` // source objects without embedding
+	TotalObjects        int                         `json:"total_objects"`
+	UnchangedCount      int                         `json:"unchanged_count"`
+	AddedCount          int                         `json:"added_count"`
+	FastForwardCount    int                         `json:"fast_forward_count"`
+	ConflictCount       int                         `json:"conflict_count"`
+	ResolvedCount       int                         `json:"resolved_count,omitempty"`
+	SkippedCount        int                         `json:"skipped_count,omitempty"`
+	SimilarCount        int                         `json:"similar_count,omitempty"` // objects matched by similarity
+	DeletedCount        *int                        `json:"deleted_count,omitempty"`
+	Objects             []*BranchMergeObjectSummary `json:"objects"`
+	Truncated           bool                        `json:"truncated,omitempty"`
+	HardLimit           *int                        `json:"hard_limit,omitempty"`
+	Applied             bool                        `json:"applied,omitempty"`
+	AppliedObjects      *int                        `json:"applied_objects,omitempty"`
 	// Relationship merge info
 	RelationshipsTotal            *int                              `json:"relationships_total,omitempty"`
 	RelationshipsUnchangedCount   *int                              `json:"relationships_unchanged_count,omitempty"`
 	RelationshipsAddedCount       *int                              `json:"relationships_added_count,omitempty"`
 	RelationshipsFastForwardCount *int                              `json:"relationships_fast_forward_count,omitempty"`
 	RelationshipsConflictCount    *int                              `json:"relationships_conflict_count,omitempty"`
+	RelationshipsSimilarCount     *int                              `json:"relationships_similar_count,omitempty"`
 	Relationships                 []*BranchMergeRelationshipSummary `json:"relationships,omitempty"`
+}
+
+// MergeReadinessResponse is the response for the merge-readiness endpoint.
+type MergeReadinessResponse struct {
+	Ready             bool `json:"ready"`
+	TotalObjects      int  `json:"total_objects"`
+	PendingEmbeddings int  `json:"pending_embeddings"`
 }
 
 // BranchMergeObjectSummary represents merge status for a single object.
 type BranchMergeObjectSummary struct {
-	CanonicalID  uuid.UUID  `json:"canonical_id"`
-	Status       string     `json:"status"`               // "unchanged", "added", "fast_forward", "conflict", "deleted"
-	Resolution   string     `json:"resolution,omitempty"` // "enriched", "overwritten", "skipped" (set when conflict resolved)
+	CanonicalID uuid.UUID `json:"canonical_id"`
+	// Status values: "unchanged", "added", "fast_forward", "conflict", "deleted", "similar"
+	// "similar" means no canonical_id match was found but a semantically similar object
+	// exists in the target above the similarity threshold. The policy determines the action.
+	Status       string     `json:"status"`
+	Resolution   string     `json:"resolution,omitempty"` // "enriched", "overwritten", "skipped", "absorbed"
 	SourceHeadID *uuid.UUID `json:"source_head_id,omitempty"`
 	TargetHeadID *uuid.UUID `json:"target_head_id,omitempty"`
 	SourcePaths  []string   `json:"source_paths,omitempty"`
 	TargetPaths  []string   `json:"target_paths,omitempty"`
 	Conflicts    []string   `json:"conflicts,omitempty"`
-	EnrichedKeys []string   `json:"enriched_keys,omitempty"` // keys added/updated from source (enrich strategy)
+	EnrichedKeys []string   `json:"enriched_keys,omitempty"` // keys added/updated from source
+	// Similarity fields — populated when Status == "similar"
+	SimilarityScore   float32    `json:"similarity_score,omitempty"`    // 0–1, higher = more similar
+	SimilarTargetID   *uuid.UUID `json:"similar_target_id,omitempty"`   // canonical_id of matched target
+	SimilarTargetName string     `json:"similar_target_name,omitempty"` // display name of matched target
 }
 
 // BranchMergeRelationshipSummary represents merge status for a single relationship.
 type BranchMergeRelationshipSummary struct {
-	CanonicalID  uuid.UUID  `json:"canonical_id"`
-	Status       string     `json:"status"` // "unchanged", "added", "fast_forward", "conflict"
+	CanonicalID uuid.UUID `json:"canonical_id"`
+	// Status values: "unchanged", "added", "fast_forward", "conflict", "similar"
+	Status       string     `json:"status"`
+	Resolution   string     `json:"resolution,omitempty"`
 	SourceHeadID *uuid.UUID `json:"source_head_id,omitempty"`
 	TargetHeadID *uuid.UUID `json:"target_head_id,omitempty"`
 	SourceSrcID  *uuid.UUID `json:"source_src_id,omitempty"`
@@ -840,6 +890,10 @@ type BranchMergeRelationshipSummary struct {
 	SourcePaths  []string   `json:"source_paths,omitempty"`
 	TargetPaths  []string   `json:"target_paths,omitempty"`
 	Conflicts    []string   `json:"conflicts,omitempty"`
+	EnrichedKeys []string   `json:"enriched_keys,omitempty"`
+	// Similarity fields — populated when Status == "similar"
+	SimilarityScore float32    `json:"similarity_score,omitempty"`
+	SimilarTargetID *uuid.UUID `json:"similar_target_id,omitempty"`
 }
 
 // =============================================================================

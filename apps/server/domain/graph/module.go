@@ -409,16 +409,19 @@ func (p *inverseTypeProviderAdapter) getOrLoadInverseMap(ctx context.Context, pr
 		}
 
 		for relType, schema := range schemas {
+			// Normalize the forward type key so it matches the stored type
+			// (CreateRelationship always writes lower_snake_case via normalizeRelationType).
+			normalizedKey := labelToTypeKey(relType) // "EX_SPOUSE_OF" → "ex_spouse_of"
 			if schema.InverseType != "" {
-				inverseMap[relType] = schema.InverseType
+				inverseMap[normalizedKey] = labelToTypeKey(schema.InverseType)
 			} else if schema.InverseLabel != "" {
 				// Derive the inverse type key from the human-readable label when
 				// inverseType is not explicitly set. Converts "Has Employees" → "has_employees".
 				derived := labelToTypeKey(schema.InverseLabel)
 				if derived != "" {
-					inverseMap[relType] = derived
+					inverseMap[normalizedKey] = derived
 					p.log.Debug("derived inverse type from inverseLabel",
-						slog.String("rel_type", relType),
+						slog.String("rel_type", normalizedKey),
 						slog.String("inverse_label", schema.InverseLabel),
 						slog.String("derived_type", derived))
 				}

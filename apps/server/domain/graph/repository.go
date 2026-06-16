@@ -2958,3 +2958,207 @@ func (r *Repository) IncrementSessionCounters(ctx context.Context, tx bun.Tx, pr
 	`, tokenDelta, projectID, sessionCanonicalID).Exec(ctx)
 	return err
 }
+
+// ---------------------------------------------------------------------------
+// Similarity-aware merge helpers
+// ---------------------------------------------------------------------------
+
+// CountUnembeddedObjectsInBranch returns the number of live objects in a branch
+// that do not yet have an embedding (embedding_v2 IS NULL). Used to check
+// readiness before a similarity-aware merge.
+func (r *Repository) CountUnembeddedObjectsInBranch(ctx context.Context, projectID, branchID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.NewRaw(`
+		SELECT COUNT(*) FROM kb.graph_objects
+		WHERE project_id = ? AND branch_id = ?
+		  AND supersedes_id IS NULL AND deleted_at IS NULL
+		  AND embedding_v2 IS NULL`,
+		projectID, branchID,
+	).Scan(ctx, &count)
+	if err != nil {
+		return 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return count, nil
+}
+
+// GetBranchObjectEmbedding fetches the embedding_v2 vector for a single graph object
+// by its physical version ID. Returns nil when the object has no embedding yet.
+func (r *Repository) GetBranchObjectEmbedding(ctx context.Context, objectID uuid.UUID) ([]float32, error) {
+	var embStr string
+	err := r.db.NewRaw(`
+		SELECT COALESCE(embedding_v2::text, '')
+		FROM kb.graph_objects
+		WHERE id = ? LIMIT 1`, objectID,
+	).Scan(ctx, &embStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if embStr == "" {
+		return nil, nil
+	}
+	vec, err := pgutils.ParseVector(embStr)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return vec, nil
+}
+
+// FindSimilarObjectInBranch finds the nearest object of the same type in the
+// target branch (nil = main graph) by cosine distance. Returns nil when no
+// match within maxDistance is found or when no objects have embeddings.
+// excludeCanonicalIDs lists canonical_ids to skip (e.g. the source object itself).
+func (r *Repository) FindSimilarObjectInBranch(
+	ctx context.Context,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	objType string,
+	vector []float32,
+	excludeCanonicalIDs []uuid.UUID,
+	maxDistance float32,
+) (*GraphObject, float32, error) {
+	if len(vector) == 0 {
+		return nil, 0, nil
+	}
+	vectorStr := pgutils.FormatVector(vector)
+
+	// Build exclusion list.
+	excludeStr := "ARRAY[]::uuid[]"
+	if len(excludeCanonicalIDs) > 0 {
+		parts := make([]string, len(excludeCanonicalIDs))
+		for i, id := range excludeCanonicalIDs {
+			parts[i] = "'" + id.String() + "'"
+		}
+		excludeStr = "ARRAY[" + strings.Join(parts, ",") + "]::uuid[]"
+	}
+
+	branchCond := "branch_id IS NULL"
+	branchArg := []any{}
+	if branchID != nil {
+		branchCond = "branch_id = ?"
+		branchArg = []any{*branchID}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s, (embedding_v2 <=> ?::vector) AS _dist
+		FROM kb.graph_objects
+		WHERE project_id = ? AND type = ? AND %s
+		  AND supersedes_id IS NULL AND deleted_at IS NULL
+		  AND embedding_v2 IS NOT NULL
+		  AND NOT (canonical_id = ANY(%s))
+		  AND (embedding_v2 <=> ?::vector) <= ?
+		ORDER BY _dist ASC
+		LIMIT 1`,
+		graphObjectColumns, branchCond, excludeStr)
+
+	args := []any{vectorStr, projectID, objType}
+	args = append(args, branchArg...)
+	args = append(args, vectorStr, maxDistance)
+
+	type row struct {
+		GraphObject
+		Dist float32 `bun:"_dist"`
+	}
+	var r2 row
+	err := r.db.NewRaw(query, args...).Scan(ctx, &r2)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, 0, nil
+		}
+		return nil, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &r2.GraphObject, r2.Dist, nil
+}
+
+// GetBranchRelationshipEmbedding fetches the embedding for a relationship version.
+// Returns nil when not yet embedded.
+func (r *Repository) GetBranchRelationshipEmbedding(ctx context.Context, relID uuid.UUID) ([]float32, error) {
+	var embStr string
+	err := r.db.NewRaw(`
+		SELECT COALESCE(embedding_v2::text, '')
+		FROM kb.graph_relationships
+		WHERE id = ? LIMIT 1`, relID,
+	).Scan(ctx, &embStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	if embStr == "" {
+		return nil, nil
+	}
+	vec, err := pgutils.ParseVector(embStr)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return vec, nil
+}
+
+// FindSimilarRelationshipInBranch finds the nearest relationship in the target branch
+// that has the same (remapped) src and dst endpoints, by cosine distance on the
+// relationship embedding. Returns nil when no match within maxDistance.
+func (r *Repository) FindSimilarRelationshipInBranch(
+	ctx context.Context,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	srcCanonicalID, dstCanonicalID uuid.UUID,
+	vector []float32,
+	excludeIDs []uuid.UUID,
+	maxDistance float32,
+) (*GraphRelationship, float32, error) {
+	if len(vector) == 0 {
+		return nil, 0, nil
+	}
+	vectorStr := pgutils.FormatVector(vector)
+
+	excludeStr := "ARRAY[]::uuid[]"
+	if len(excludeIDs) > 0 {
+		parts := make([]string, len(excludeIDs))
+		for i, id := range excludeIDs {
+			parts[i] = "'" + id.String() + "'"
+		}
+		excludeStr = "ARRAY[" + strings.Join(parts, ",") + "]::uuid[]"
+	}
+
+	branchCond := "branch_id IS NULL"
+	branchArg := []any{}
+	if branchID != nil {
+		branchCond = "branch_id = ?"
+		branchArg = []any{*branchID}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, project_id, branch_id, canonical_id, supersedes_id, version,
+		       type, src_id, dst_id, label, properties, weight,
+		       change_summary, deleted_at, created_at, updated_at,
+		       (embedding_v2 <=> ?::vector) AS _dist
+		FROM kb.graph_relationships
+		WHERE project_id = ? AND src_id = ? AND dst_id = ? AND %s
+		  AND supersedes_id IS NULL AND deleted_at IS NULL
+		  AND embedding_v2 IS NOT NULL
+		  AND NOT (id = ANY(%s))
+		  AND (embedding_v2 <=> ?::vector) <= ?
+		ORDER BY _dist ASC LIMIT 1`,
+		branchCond, excludeStr)
+
+	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID}
+	args = append(args, branchArg...)
+	args = append(args, vectorStr, maxDistance)
+
+	type relRow struct {
+		GraphRelationship
+		Dist float32 `bun:"_dist"`
+	}
+	var r2 relRow
+	err := r.db.NewRaw(query, args...).Scan(ctx, &r2)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, 0, nil
+		}
+		return nil, 0, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &r2.GraphRelationship, r2.Dist, nil
+}

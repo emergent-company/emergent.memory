@@ -137,12 +137,17 @@ func GenerateSchemaFromDocument(
 Document excerpt:
 %s
 
-Identify 3-6 entity types that should be tracked for this project based on the document content.
+Identify 3-6 entity types (things with identity — people, places, events, objects) for this project.
+
+IMPORTANT: Do NOT create a "Relationship" type. Bonds between entities are modelled as
+typed graph edges (relationship_type_schemas), not as entity objects. Instead, model the
+entities themselves: Character, Place, Event, Organisation, etc.
+
 For each type provide:
-- name: PascalCase type name
-- description: one sentence describing the type
+- name: PascalCase, singular noun (e.g. Character, Event, Place)
+- description: one sentence
 - properties: 4-8 fields, each with "type" (string|number|boolean) and "description"
-- required: list of 1-3 essential field names
+- required: 1-3 essential field names
 
 Return ONLY JSON:
 {
@@ -194,8 +199,8 @@ Return ONLY JSON:
 
 	out := make(map[string]any, len(result.Types))
 	for _, t := range result.Types {
-		if t.Name == "" {
-			continue
+		if t.Name == "" || isRelationshipObjectType(t.Name) {
+			continue // bonds belong in relationship_type_schemas, not object_type_schemas
 		}
 		entry := map[string]any{
 			"type":       "object",
@@ -208,6 +213,14 @@ Return ONLY JSON:
 		out[t.Name] = entry
 	}
 	return out, nil
+}
+
+// isRelationshipObjectType returns true for type names that should be modelled
+// as graph edges rather than entity objects.
+func isRelationshipObjectType(name string) bool {
+	lower := strings.ToLower(name)
+	return lower == "relationship" || lower == "bond" || lower == "connection" ||
+		lower == "link" || lower == "association" || lower == "relation"
 }
 
 // GeneratedSchemaResult holds both object and relationship type schemas produced
@@ -243,22 +256,26 @@ Document excerpt:
 Define a complete schema for extracting knowledge from this document.
 
 PART 1 — Entity types (3-6 types):
+Model THINGS with identity — people, places, events, organisations, objects.
+Do NOT create a "Relationship" type — bonds between entities go in Part 2 as typed graph edges.
 For each type:
-- name: PascalCase
+- name: PascalCase singular noun (Character, Event, Place — not "Relationship")
 - description: one sentence
 - properties: 4-8 fields, each {"type": "string|number|boolean", "description": "what to extract"}
 - required: 1-3 essential field names
 
-PART 2 — Graph relationship types (3-6 types):
-For each relationship type between the entity types above:
-- name: UPPER_SNAKE_CASE (e.g. KNOWS, LIVES_AT, INVOLVED_IN)
-- sourceType: one of the entity types from Part 1
-- targetType: one of the entity types from Part 1
+PART 2 — Graph edge types (3-8 types):
+These are typed directed edges between entity nodes. They replace any "Relationship" object type.
+Include bond types (KNOWS, SIBLING_OF, EX_SPOUSE_OF, FRIEND_OF) AND structural edges (LIVES_AT, INVOLVED_IN, OWNS).
+For each edge type:
+- name: UPPER_SNAKE_CASE verb (KNOWS, SIBLING_OF, LIVES_AT, INVOLVED_IN)
+- sourceType: entity type from Part 1
+- targetType: entity type from Part 1
 - cardinality: "one-to-one" | "one-to-many" | "many-to-many"
-- description: one sentence
-- properties: 0-3 fields with type+description (only if the relationship itself has attributes)
-- inverseType: UPPER_SNAKE_CASE name for the reverse direction (e.g. LIVES_AT → HOSTS)
-- inverseLabel: human-readable label for the inverse (e.g. "home of", "hosted by")
+- description: one sentence — when to create this edge
+- properties: 0-3 edge-level attributes (e.g. since, current_state, how_met) with type+description
+- inverseType: UPPER_SNAKE_CASE reverse (e.g. SIBLING_OF → SIBLING_OF, LIVES_AT → HOME_OF)
+- inverseLabel: human-readable reverse label ("sibling of", "home of")
 
 Return ONLY JSON:
 {
@@ -318,8 +335,8 @@ Return ONLY JSON:
 	}
 
 	for _, t := range raw.Types {
-		if t.Name == "" {
-			continue
+		if t.Name == "" || isRelationshipObjectType(t.Name) {
+			continue // bonds belong in relationship_type_schemas, not object_type_schemas
 		}
 		entry := map[string]any{
 			"type":       "object",
@@ -382,18 +399,20 @@ Known entity types: %s
 Document excerpt:
 %s
 
-Generate 3-6 graph relationship types between the known entity types above.
-Focus on relationships the document actually reveals — not all theoretically possible edges.
+Generate 3-8 typed graph EDGE types between the known entity types.
+These are directed edges (not object nodes) — they replace any "Relationship" object type.
+Include both bond edges (KNOWS, SIBLING_OF, EX_SPOUSE_OF, FRIEND_OF) and structural edges (LIVES_AT, INVOLVED_IN).
+Focus on what the document actually reveals.
 
-For each relationship:
-- name: UPPER_SNAKE_CASE (e.g. KNOWS, LIVES_AT, INVOLVED_IN, OWNS, PART_OF)
+For each edge type:
+- name: UPPER_SNAKE_CASE verb (KNOWS, SIBLING_OF, LIVES_AT, INVOLVED_IN)
 - sourceType: one of the known entity types
 - targetType: one of the known entity types
 - cardinality: "one-to-one" | "one-to-many" | "many-to-many"
-- description: one sentence on when to extract this relationship
-- properties: 0-3 fields {"field": {"type": "string", "description": "..."}} — only if the edge itself has attributes
-- inverseType: UPPER_SNAKE_CASE name for the reverse direction (e.g. LIVES_AT → HOME_OF)
-- inverseLabel: short human-readable label for the reverse (e.g. "home of", "known by")
+- description: one sentence — when to create this edge
+- properties: 0-3 edge-level attributes with type+description (e.g. since: {"type":"string","description":"when they met"}, current_state: {"type":"string","description":"current status of the bond"})
+- inverseType: UPPER_SNAKE_CASE reverse name (SIBLING_OF stays SIBLING_OF; LIVES_AT → HOME_OF)
+- inverseLabel: short human-readable reverse label ("sibling of", "home of", "known by")
 
 Return ONLY JSON:
 {
