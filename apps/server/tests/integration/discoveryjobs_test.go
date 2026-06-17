@@ -1151,9 +1151,10 @@ func TestForgetAskStrategy_PausesForConfirmation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type extractionSnapshot struct {
-	SchemaPacks []schemaPackInfo
-	ObjectStats map[string]objTypeStats // type → stats
-	RelStats    map[string]relTypeStats // type → count
+	SchemaPacks       []schemaPackInfo
+	ObjectStats       map[string]objTypeStats // type → stats
+	RelStats          map[string]relTypeStats // type → count
+	ExtractionJobInfo string                  // status info about extraction jobs
 }
 
 type schemaPackInfo struct {
@@ -1184,6 +1185,31 @@ func snapshotExtraction(t *testing.T, ctx context.Context, projectID string, tes
 	s := extractionSnapshot{
 		ObjectStats: make(map[string]objTypeStats),
 		RelStats:    make(map[string]relTypeStats),
+	}
+
+	// 0. Extraction job status
+	type exJobRow struct {
+		ID     string
+		Status string
+		Error  *string
+	}
+	var exJobs []exJobRow
+	_ = testDB.DB.NewRaw(
+		`SELECT id::text, status, error_message FROM kb.object_extraction_jobs WHERE project_id = ?::uuid ORDER BY created_at DESC LIMIT 5`,
+		projectID,
+	).Scan(ctx, &exJobs)
+	if len(exJobs) > 0 {
+		parts := make([]string, len(exJobs))
+		for i, j := range exJobs {
+			errSuffix := ""
+			if j.Error != nil && *j.Error != "" {
+				errSuffix = fmt.Sprintf(" err=%q", truncateStr(*j.Error, 80))
+			}
+			parts[i] = fmt.Sprintf("  job %s status=%s%s", j.ID[:8], j.Status, errSuffix)
+		}
+		s.ExtractionJobInfo = "Extraction jobs (last 5):\n" + strings.Join(parts, "\n")
+	} else {
+		s.ExtractionJobInfo = "No extraction jobs found."
 	}
 
 	// 1. Schema packs
@@ -1285,6 +1311,13 @@ func snapshotExtraction(t *testing.T, ctx context.Context, projectID string, tes
 	return s
 }
 
+func truncateStr(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
+}
+
 func printExtractionSummary(t *testing.T, label string, snap extractionSnapshot) {
 	t.Logf("")
 	t.Logf("=== %s ===", label)
@@ -1335,6 +1368,11 @@ func printExtractionSummary(t *testing.T, label string, snap extractionSnapshot)
 		t.Logf("  Relationships %q: %d", rn, snap.RelStats[rn].Total)
 	}
 	t.Logf("  RELATIONSHIP TOTAL: %d", totalRel)
+
+	// Extraction jobs
+	if snap.ExtractionJobInfo != "" {
+		t.Logf("  %s", snap.ExtractionJobInfo)
+	}
 }
 
 func printDiffTable(t *testing.T, pass1, pass2 extractionSnapshot) {
@@ -1429,7 +1467,10 @@ func printDiffTable(t *testing.T, pass1, pass2 extractionSnapshot) {
 	t.Logf("  v2+ in pass2:        %d (objects updated vs original)", total2Vge2)
 	t.Logf("")
 	if total1 == 0 && total2 == 0 {
-		t.Logf("  ⚠ No objects found — extraction may not have completed.")
+		t.Logf("  ⚠ No objects found in either pass — extraction may not have completed.")
+	} else if total1 == 0 && total2 > 0 {
+		t.Logf("  ⚠ Pass 1 extraction hadn't completed yet (objects found only in pass 2).")
+		t.Logf("     Pass 2 found %d objects — dedup comparison incomplete.", total2)
 	} else if total2Vge2 == 0 && (total2-total1) == 0 {
 		t.Logf("  ✅ VERDICT: Second extraction produced IDENTICAL results — no new versions, no new objects.")
 		t.Logf("     The upsert-by-key dedup (project_id+type+key) correctly avoided duplicates.")
@@ -1438,6 +1479,7 @@ func printDiffTable(t *testing.T, pass1, pass2 extractionSnapshot) {
 		t.Logf("     Check diff table above to see which types changed.")
 	} else {
 		t.Logf("  ⚠ VERDICT: Object count decreased — possible deletion or tombstoning.")
+		t.Logf("     diff=%+d  v2+=%d", total2-total1, total2Vge2)
 	}
 
 	// Relationship comparison
@@ -1464,8 +1506,9 @@ func printDiffTable(t *testing.T, pass1, pass2 extractionSnapshot) {
 	t.Logf("  %-30s %8d %8d %+8d", "TOTAL", relTotal1, relTotal2, relTotal2-relTotal1)
 }
 
-// waitForObjects polls until at least one graph object exists for the project.
-func waitForObjects(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) {
+// waitForObjects polls until at least one graph object exists OR extraction job
+// moves from "processing" to "completed"/"failed". Returns true if objects found.
+func waitForObjects(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -1476,11 +1519,22 @@ func waitForObjects(t *testing.T, ctx context.Context, testDB *testutil.TestDB, 
 		).Scan(ctx, &count)
 		if err == nil && count > 0 {
 			t.Logf("  background extraction complete: %d objects found", count)
-			return
+			return true
+		}
+		// Check if extraction job finished (even if it produced 0 objects)
+		var jobStatus string
+		_ = testDB.DB.NewRaw(
+			`SELECT status FROM kb.object_extraction_jobs WHERE project_id = ?::uuid ORDER BY created_at DESC LIMIT 1`,
+			projectID,
+		).Scan(ctx, &jobStatus)
+		if jobStatus == "completed" || jobStatus == "failed" {
+			t.Logf("  extraction job reached terminal status: %s (objects: %d)", jobStatus, count)
+			return count > 0
 		}
 		time.Sleep(2 * time.Second)
 	}
 	t.Logf("  ⚠ no objects appeared after %v (extraction may be slow or failed)", timeout)
+	return false
 }
 
 // TestReExtractionComparison runs two remember extractions with the same document
@@ -1525,8 +1579,7 @@ func TestReExtractionComparison(t *testing.T) {
 	require.Equal(t, "completed", p1Status, "first extraction should complete")
 	t.Logf("PASS1 response: run_id=%s status=%s", body["run_id"], p1Status)
 
-	// Let background extraction workers finish (poll for objects up to 30s)
-	waitForObjects(t, ctx, testDB, projectID, 30*time.Second)
+	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
 
 	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
 	printExtractionSummary(t, "PASS 1 RESULTS", pass1)
@@ -1553,8 +1606,7 @@ func TestReExtractionComparison(t *testing.T) {
 	require.Equal(t, "completed", p2Status, "second extraction should complete")
 	t.Logf("PASS2 response: run_id=%s status=%s", body2["run_id"], p2Status)
 
-	// Let background workers finish
-	waitForObjects(t, ctx, testDB, projectID, 30*time.Second)
+	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
 
 	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
 	printExtractionSummary(t, "PASS 2 RESULTS", pass2)
@@ -1566,6 +1618,267 @@ func TestReExtractionComparison(t *testing.T) {
 	// The test always passes; the summary tells the story.
 	t.Logf("")
 	t.Logf("Done. See above for the re-extraction comparison summary.")
+}
+
+// friendsPilotDoc is a condensed transcript of Friends S01E01
+// "The One Where Monica Gets a Roommate" — rich with characters, locations, relationships.
+const friendsPilotDoc = `
+Friends — Season 1, Episode 1: "The One Where Monica Gets a Roommate"
+
+Central Perk coffeehouse, Greenwich Village, New York.
+
+MONICA GELLER (26, chef at a restaurant in Manhattan) is sitting with her brother
+ROSS GELLER (26, paleontologist, just divorced from Carol) and
+CHANDLER BING (26, data processor at a multinational corporation).
+PHOEBE BUFFAY (26, masseuse and musician) arrives and sits down.
+JOEY TRIBBIANI (26, struggling actor) walks in.
+
+They talk about Ross's ex-wife Carol, who left him for another woman named Susan.
+The gang has known each other for years. Monica and Ross are siblings.
+Chandler and Ross were college roommates at Columbia University.
+
+Monica has a date tonight with Paul the Wine Guy. Paul works at her restaurant
+and is described as a handsome man in his 40s who knows wine.
+
+At Monica's apartment (Greenwich Village), Monica is preparing for her date.
+
+RACHEL GREEN (24, just left her fiancé Barry at the altar) bursts in wearing
+a wedding dress. She was supposed to marry Barry Farber, a doctor, but realized
+she didn't love him. Rachel has never worked a day in her life — her father
+Dr. Leonard Green is a wealthy surgeon who bought her everything.
+
+Monica agrees to let Rachel stay with her. Rachel becomes Monica's new roommate.
+The previous roommate was Kandi, who moved out.
+
+Ross has been in love with Rachel since high school.
+Rachel remembers Ross as "the boy with the funny raft" from a childhood incident.
+
+Paul the Wine Guy comes for dinner at Monica's apartment.
+Monica cooks a multicourse meal. Paul says Monica is "incredible" and
+"the most beautiful woman he's ever served wine to."
+In Monica's bedroom, Paul starts crying. He says his wife left him
+three years ago and he hasn't been able to perform since.
+Monica comforts him. They end up having sex.
+Later, Paul tells his friends at the restaurant that Monica is easy,
+which devastates Monica when she overhears.
+
+Rachel gets her first job as a waitress at Central Perk coffeehouse.
+She makes $4.50 an hour plus tips. She hates it.
+
+Ross's pet monkey Marcel (a capuchin monkey) arrives at his apartment.
+Marcel was rescued from a research laboratory.
+
+At Central Perk, the gang discusses Rachel's new job.
+Rachel smokes a cigarette, even though nobody knew she smoked.
+Chandler makes a joke about taking up smoking now.
+
+Ross asks Rachel out on a date. She says yes.
+Later, Rachel returns Ross's jacket, which is full of spinach dip from their date.
+They share a kiss.
+`
+
+// TestReExtractionFriends runs two extractions on the Friends pilot episode
+// and prints a human-readable comparison summary of what changed.
+func TestReExtractionFriends(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "friendsrex")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   FRIENDS S01E01 — FIRST EXTRACTION (schema_policy=auto, sync)     ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	// ── Pass 1: First extraction of Friends pilot ──
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       friendsPilotDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec.StatusCode, "first extraction should return 200")
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	p1Status, _ := body["status"].(string)
+	require.Equal(t, "completed", p1Status, "first extraction should complete")
+	t.Logf("PASS1 response: run_id=%s status=%s", body["run_id"], p1Status)
+
+	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+
+	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "PASS 1 RESULTS", pass1)
+
+	// ── Pass 2: Second extraction with same Friends pilot ──
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   FRIENDS S01E01 — SECOND EXTRACTION (same doc, auto, sync)        ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	rec2 := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       friendsPilotDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec2.StatusCode, "second extraction should return 200")
+	var body2 map[string]any
+	require.NoError(t, json.Unmarshal(rec2.Body, &body2))
+	p2Status, _ := body2["status"].(string)
+	require.Equal(t, "completed", p2Status, "second extraction should complete")
+	t.Logf("PASS2 response: run_id=%s status=%s", body2["run_id"], p2Status)
+
+	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+
+	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "PASS 2 RESULTS", pass2)
+
+	// ── Print diff ──
+	printDiffTable(t, pass1, pass2)
+
+	t.Logf("")
+	t.Logf("Done. See above for Friends re-extraction comparison.")
+}
+
+// friendsE02Doc is a condensed transcript of Friends S01E02
+// "The One with the Sonogram at the End" — new characters, locations, and plot events.
+const friendsE02Doc = `
+Friends — Season 1, Episode 2: "The One with the Sonogram at the End"
+
+At Central Perk coffeehouse, Greenwich Village.
+
+ROSS GELLER (paleontologist, 26) tells his friends that his ex-wife CAROL
+is pregnant with his baby. Carol left Ross for another woman named SUSAN.
+Ross is nervous about becoming a father.
+
+RACHEL GREEN (24) has moved in with MONICA GELLER (26, chef)
+and is trying to adjust to being on her own for the first time.
+Rachel's father DR. LEONARD GREEN (wealthy surgeon) is furious that she
+left BARRY FARBER (doctor) at the altar. Dr. Green cuts off Rachel's credit cards.
+Rachel has her first panic attack about money and being independent.
+She decides to return her wedding dress to Bloomingdale's department store
+to get money back. She also pawns some of her father's gifts.
+
+Monica is supportive of Rachel's independence. She teaches Rachel
+how to do laundry and manage money.
+
+Carol and Susan invite Ross to the ultrasound appointment at the
+obstetrician's office. Ross is uncomfortable that Susan will be there too.
+CHANDLER BING (26, data processor), JOEY TRIBBIANI (26, struggling actor),
+and PHOEBE BUFFAY (26, masseuse) support Ross and go with him to the clinic.
+
+At the obstetrician's office, the doctor performs the ultrasound.
+Ross, Carol, and Susan see the baby on the sonogram screen.
+Ross gets emotional seeing his unborn child.
+The sonogram shows the baby is healthy and developing normally.
+The due date is in five months.
+
+Ross realizes that he will always be connected to Carol and Susan
+because of the baby, and they agree to co-parent together.
+
+Meanwhile, at Bloomingdale's, Rachel tries to return her wedding dress
+but has trouble because the store's return policy requires a receipt.
+She eventually returns it and gets $500 back.
+
+Back at Central Perk, Rachel shows everyone her new boots that she bought
+with her first paycheck from the waitressing job she started.
+She is proud of being financially independent for the first time.
+`
+
+// TestReExtractionFriendsE02 runs extraction on Friends S01E01 then S01E02
+// and prints a comparison showing new entities, updated entities, and relationships.
+func TestReExtractionFriendsE02(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "friendse02")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   S01E01 — FIRST EXTRACTION (schema_policy=auto, sync)            ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       friendsPilotDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec.StatusCode, "first extraction should return 200")
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	p1Status, _ := body["status"].(string)
+	require.Equal(t, "completed", p1Status, "first extraction should complete")
+	t.Logf("PASS1 (E01) response: run_id=%s status=%s", body["run_id"], p1Status)
+
+	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+
+	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "S01E01 RESULTS", pass1)
+
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   S01E02 — SECOND EXTRACTION (different episode, auto, sync)       ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	rec2 := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       friendsE02Doc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec2.StatusCode, "second extraction should return 200")
+	var body2 map[string]any
+	require.NoError(t, json.Unmarshal(rec2.Body, &body2))
+	p2Status, _ := body2["status"].(string)
+	require.Equal(t, "completed", p2Status, "second extraction should complete")
+	t.Logf("PASS2 (E02) response: run_id=%s status=%s", body2["run_id"], p2Status)
+
+	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+
+	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "S01E02 RESULTS", pass2)
+
+	printDiffTable(t, pass1, pass2)
+
+	t.Logf("")
+	t.Logf("Done. See above for E01→E02 re-extraction comparison.")
 }
 
 // mustUnmarshal decodes JSON bytes into dst or fatals the test.

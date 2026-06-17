@@ -199,7 +199,7 @@ Return ONLY JSON:
 
 	out := make(map[string]any, len(result.Types))
 	for _, t := range result.Types {
-		if t.Name == "" || isRelationshipObjectType(t.Name) {
+		if t.Name == "" || IsRelationshipObjectType(t.Name) {
 			continue // bonds belong in relationship_type_schemas, not object_type_schemas
 		}
 		entry := map[string]any{
@@ -217,10 +217,14 @@ Return ONLY JSON:
 
 // isRelationshipObjectType returns true for type names that should be modelled
 // as graph edges rather than entity objects.
-func isRelationshipObjectType(name string) bool {
+// Catches both simple names ("Relationship") and compound names
+// the LLM generates ("CharacterRelationship", "FamilyRelationship", etc.).
+func IsRelationshipObjectType(name string) bool {
 	lower := strings.ToLower(name)
 	return lower == "relationship" || lower == "bond" || lower == "connection" ||
-		lower == "link" || lower == "association" || lower == "relation"
+		lower == "link" || lower == "association" || lower == "relation" ||
+		lower == "friendship" || lower == "marriage" || lower == "partnership" ||
+		strings.HasSuffix(lower, "relationship")
 }
 
 // GeneratedSchemaResult holds both object and relationship type schemas produced
@@ -335,7 +339,7 @@ Return ONLY JSON:
 	}
 
 	for _, t := range raw.Types {
-		if t.Name == "" || isRelationshipObjectType(t.Name) {
+		if t.Name == "" || IsRelationshipObjectType(t.Name) {
 			continue // bonds belong in relationship_type_schemas, not object_type_schemas
 		}
 		entry := map[string]any{

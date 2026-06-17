@@ -140,7 +140,7 @@ func TestIsRelationshipObjectType_RejectsBondTypes(t *testing.T) {
 	cases := []string{"Relationship", "Bond", "Connection", "Link", "Association", "Relation",
 		"relationship", "RELATIONSHIP", "bond", "BOND", "connection", "link", "association", "relation"}
 	for _, name := range cases {
-		if !isRelationshipObjectType(name) {
+		if !IsRelationshipObjectType(name) {
 			t.Errorf("expected %q to be rejected as relationship type", name)
 		}
 	}
@@ -149,7 +149,7 @@ func TestIsRelationshipObjectType_RejectsBondTypes(t *testing.T) {
 func TestIsRelationshipObjectType_AllowsEntityTypes(t *testing.T) {
 	cases := []string{"Character", "Event", "Place", "Organization", "Episode", "RelationshipManager"}
 	for _, name := range cases {
-		if isRelationshipObjectType(name) {
+		if IsRelationshipObjectType(name) {
 			t.Errorf("expected %q to be allowed, but was rejected", name)
 		}
 	}

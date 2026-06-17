@@ -453,7 +453,7 @@ Respond with ONLY a JSON object (no markdown):
 		},
 		Config: &genai.GenerateContentConfig{
 			Temperature:     genai.Ptr[float32](0.0),
-			MaxOutputTokens: 256,
+			MaxOutputTokens: 512,
 		},
 	}
 
@@ -493,18 +493,14 @@ Respond with ONLY a JSON object (no markdown):
 	}
 	if err := json.Unmarshal([]byte(rawResp), &parsed); err != nil {
 		// Reasoning models (e.g. deepseek-v4-flash) may emit chain-of-thought prose
-		// before the JSON object. Try to extract the last {...} block.
-		if start := strings.LastIndex(rawResp, "{"); start >= 0 {
-			if end := strings.LastIndex(rawResp, "}"); end > start {
-				jsonCandidate := rawResp[start : end+1]
-				if jsonErr := json.Unmarshal([]byte(jsonCandidate), &parsed); jsonErr != nil {
-					return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", err, rawResp)
-				}
-			} else {
-				return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", err, rawResp)
+		// before the JSON object. Use extractJSONObject which scans for the first
+		// complete JSON object by brace-depth counting (handles prose preamble).
+		if jsonStr := extractJSONObject(rawResp); jsonStr != "" {
+			if jsonErr := json.Unmarshal([]byte(jsonStr), &parsed); jsonErr != nil {
+				return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", jsonErr, rawResp)
 			}
 		} else {
-			return ClassificationResult{}, fmt.Errorf("parse LLM response: %w (raw: %s)", err, rawResp)
+			return ClassificationResult{}, fmt.Errorf("parse LLM response: no JSON object found (raw: %s)", rawResp)
 		}
 	}
 

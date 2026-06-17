@@ -254,6 +254,13 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 	uiConfigs := make(JSONMap)
 
 	for _, t := range req.IncludedTypes {
+		// Skip types that should be graph edges, not entity objects
+		// (e.g. "Relationship", "CharacterRelationship", "Friendship").
+		if extraction.IsRelationshipObjectType(t.TypeName) {
+			s.log.Debug("filtering relationship-like type from object schemas",
+				slog.String("type_name", t.TypeName))
+			continue
+		}
 		objectTypeSchemas[t.TypeName] = map[string]any{
 			"type":       "object",
 			"required":   t.RequiredProperties,
