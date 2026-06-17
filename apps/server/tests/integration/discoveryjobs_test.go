@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1143,6 +1144,428 @@ func TestForgetAskStrategy_PausesForConfirmation(t *testing.T) {
 	if finalStatus == "failed" {
 		t.Logf("⚠ run failed — agent may not have found the target entity")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Re-extraction comparison: extract same doc twice, report diff
+// ---------------------------------------------------------------------------
+
+type extractionSnapshot struct {
+	SchemaPacks []schemaPackInfo
+	ObjectStats map[string]objTypeStats // type → stats
+	RelStats    map[string]relTypeStats // type → count
+}
+
+type schemaPackInfo struct {
+	SchemaID   string
+	ObjTypes   int
+	RelTypes   int
+	TypeNames  []string
+	Properties map[string]int // typeName → prop count
+}
+
+type objTypeStats struct {
+	TotalObjects int
+	OnBranch     int // on a staging branch (extraction branch)
+	OnMain       int // on main branch (branch_id IS NULL)
+	Version1     int // only version 1
+	VersionGe2   int // updated at least once
+	Deleted      int // soft-deleted
+	WithKey      int // has a name key (dedup-able)
+	WithoutKey   int // no name key (duplicate-prone)
+}
+
+type relTypeStats struct {
+	Total int
+}
+
+func snapshotExtraction(t *testing.T, ctx context.Context, projectID string, testDB *testutil.TestDB) extractionSnapshot {
+	t.Helper()
+	s := extractionSnapshot{
+		ObjectStats: make(map[string]objTypeStats),
+		RelStats:    make(map[string]relTypeStats),
+	}
+
+	// 1. Schema packs
+	djRepo := discoveryjobs.NewRepository(testDB.GetDB(), slog.Default())
+	var schemaIDs []string
+	_ = testDB.DB.NewRaw(
+		"SELECT schema_id::text FROM kb.project_schemas WHERE project_id = ? AND active = true",
+		projectID,
+	).Scan(ctx, &schemaIDs)
+	for _, sidStr := range schemaIDs {
+		schemaUUID := uuid.MustParse(sidStr)
+		pack, err := djRepo.GetMemorySchema(ctx, schemaUUID)
+		if err != nil {
+			continue
+		}
+		info := schemaPackInfo{
+			SchemaID:   sidStr[:8],
+			ObjTypes:   len(pack.ObjectTypeSchemas),
+			RelTypes:   len(pack.RelationshipTypeSchemas),
+			TypeNames:  make([]string, 0, len(pack.ObjectTypeSchemas)),
+			Properties: make(map[string]int),
+		}
+		for tn, raw := range pack.ObjectTypeSchemas {
+			info.TypeNames = append(info.TypeNames, tn)
+			m, ok := raw.(map[string]any)
+			if ok {
+				props, _ := m["properties"].(map[string]any)
+				info.Properties[tn] = len(props)
+			}
+		}
+		sort.Strings(info.TypeNames)
+		for _, rn := range pack.RelationshipTypeSchemas {
+			rnMap, ok := rn.(map[string]any)
+			if ok {
+				name, _ := rnMap["name"].(string)
+				if name != "" {
+					info.RelTypes++
+					_ = name
+				}
+			}
+		}
+		s.SchemaPacks = append(s.SchemaPacks, info)
+	}
+
+	// 2. Graph objects — all branches (HEAD per branch)
+	type objRow struct {
+		Type      string
+		Key       *string
+		DeletedAt *time.Time
+		Version   int
+		BranchID  *string
+	}
+	var rows []objRow
+	_ = testDB.DB.NewRaw(
+		`SELECT type, key, deleted_at, version, branch_id::text
+		 FROM kb.graph_objects
+		 WHERE project_id = ?::uuid AND supersedes_id IS NULL`,
+		projectID,
+	).Scan(ctx, &rows)
+	for _, r := range rows {
+		stats := s.ObjectStats[r.Type]
+		stats.TotalObjects++
+		if r.BranchID != nil && *r.BranchID != "" {
+			stats.OnBranch++
+		} else {
+			stats.OnMain++
+		}
+		if r.DeletedAt != nil {
+			stats.Deleted++
+		}
+		if r.Version == 1 {
+			stats.Version1++
+		} else {
+			stats.VersionGe2++
+		}
+		if r.Key != nil && *r.Key != "" {
+			stats.WithKey++
+		} else {
+			stats.WithoutKey++
+		}
+		s.ObjectStats[r.Type] = stats
+	}
+
+	// 3. Relationships
+	type relRow struct {
+		Type string
+	}
+	var relRows []relRow
+	_ = testDB.DB.NewRaw(
+		`SELECT type FROM kb.graph_relationships WHERE project_id = ?::uuid AND deleted_at IS NULL`,
+		projectID,
+	).Scan(ctx, &relRows)
+	for _, r := range relRows {
+		rs := s.RelStats[r.Type]
+		rs.Total++
+		s.RelStats[r.Type] = rs
+	}
+
+	return s
+}
+
+func printExtractionSummary(t *testing.T, label string, snap extractionSnapshot) {
+	t.Logf("")
+	t.Logf("=== %s ===", label)
+
+	// Schema packs
+	for _, p := range snap.SchemaPacks {
+		t.Logf("  Schema %s: %d object types, %d relationship types", p.SchemaID, p.ObjTypes, p.RelTypes)
+		for _, tn := range p.TypeNames {
+			t.Logf("    Object type %q: %d properties", tn, p.Properties[tn])
+		}
+	}
+	if len(snap.SchemaPacks) == 0 {
+		t.Logf("  (no schema packs installed)")
+	}
+
+	// Objects
+	var typeNames []string
+	for tn := range snap.ObjectStats {
+		typeNames = append(typeNames, tn)
+	}
+	sort.Strings(typeNames)
+	var totalObj, totalKey, totalNoKey, totalV1, totalVge2, totalDel, totalBranch, totalMain int
+	for _, tn := range typeNames {
+		os := snap.ObjectStats[tn]
+		totalObj += os.TotalObjects
+		totalKey += os.WithKey
+		totalNoKey += os.WithoutKey
+		totalV1 += os.Version1
+		totalVge2 += os.VersionGe2
+		totalDel += os.Deleted
+		totalBranch += os.OnBranch
+		totalMain += os.OnMain
+		t.Logf("  Objects %q: total=%d  branch=%d  main=%d  v1=%d  v2+=%d  del=%d  key=%d  nokey=%d",
+			tn, os.TotalObjects, os.OnBranch, os.OnMain, os.Version1, os.VersionGe2, os.Deleted, os.WithKey, os.WithoutKey)
+	}
+	t.Logf("  OBJECT TOTALS: %d objects  |  branch=%d  main=%d  |  key=%d  nokey=%d  |  v1=%d  v2+=%d  del=%d",
+		totalObj, totalBranch, totalMain, totalKey, totalNoKey, totalV1, totalVge2, totalDel)
+
+	// Relationships
+	var relTypeNames []string
+	for rn := range snap.RelStats {
+		relTypeNames = append(relTypeNames, rn)
+	}
+	sort.Strings(relTypeNames)
+	var totalRel int
+	for _, rn := range relTypeNames {
+		totalRel += snap.RelStats[rn].Total
+		t.Logf("  Relationships %q: %d", rn, snap.RelStats[rn].Total)
+	}
+	t.Logf("  RELATIONSHIP TOTAL: %d", totalRel)
+}
+
+func printDiffTable(t *testing.T, pass1, pass2 extractionSnapshot) {
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║              RE-EXTRACTION COMPARISON SUMMARY                      ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	// Schema comparison
+	type schemaDiff struct {
+		TypeName  string
+		PropsPass1 int
+		PropsPass2 int
+		Changed    string
+	}
+	var schemaDiffs []schemaDiff
+	propMap1 := map[string]int{}
+	propMap2 := map[string]int{}
+	for _, p := range pass1.SchemaPacks {
+		for tn, pc := range p.Properties {
+			propMap1[tn] = pc
+		}
+	}
+	for _, p := range pass2.SchemaPacks {
+		for tn, pc := range p.Properties {
+			propMap2[tn] = pc
+		}
+	}
+	allTypeNames := map[string]bool{}
+	for tn := range propMap1 { allTypeNames[tn] = true }
+	for tn := range propMap2 { allTypeNames[tn] = true }
+	var sortedTypes []string
+	for tn := range allTypeNames { sortedTypes = append(sortedTypes, tn) }
+	sort.Strings(sortedTypes)
+	for _, tn := range sortedTypes {
+		p1 := propMap1[tn]
+		p2 := propMap2[tn]
+		ch := "IDENTICAL"
+		if p2 > p1 {
+			ch = fmt.Sprintf("ENRICHED +%d props", p2-p1)
+		} else if p2 < p1 {
+			ch = fmt.Sprintf("SHRUNK -%d props", p1-p2)
+		}
+		schemaDiffs = append(schemaDiffs, schemaDiff{tn, p1, p2, ch})
+	}
+
+	t.Logf("")
+	t.Logf("── Schema Types ──")
+	if len(schemaDiffs) == 0 {
+		t.Logf("  No types discovered")
+	} else {
+		t.Logf("  %-30s %10s %10s   %s", "TYPE", "PASS1", "PASS2", "CHANGE")
+		t.Logf("  %-30s %10s %10s   %s", strings.Repeat("─", 30), strings.Repeat("─", 10), strings.Repeat("─", 10), strings.Repeat("─", 20))
+		for _, sd := range schemaDiffs {
+			t.Logf("  %-30s %10d %10d   %s", sd.TypeName, sd.PropsPass1, sd.PropsPass2, sd.Changed)
+		}
+	}
+
+	// Object comparison
+	allObjTypes := map[string]bool{}
+	for tn := range pass1.ObjectStats { allObjTypes[tn] = true }
+	for tn := range pass2.ObjectStats { allObjTypes[tn] = true }
+	var sortedObjTypes []string
+	for tn := range allObjTypes { sortedObjTypes = append(sortedObjTypes, tn) }
+	sort.Strings(sortedObjTypes)
+
+	t.Logf("")
+	t.Logf("── Graph Objects (HEAD versions, by type) ──")
+	t.Logf("  %-25s %6s %6s %+6s %+6s %6s %6s", "TYPE", "PASS1", "PASS2", "NEW", "DEL", "BRANCH1", "BRANCH2")
+	t.Logf("  %-25s %6s %6s %6s %6s %6s %6s", strings.Repeat("─", 25), strings.Repeat("─", 6), strings.Repeat("─", 6), strings.Repeat("─", 6), strings.Repeat("─", 6), strings.Repeat("─", 6), strings.Repeat("─", 6))
+	for _, tn := range sortedObjTypes {
+		o1 := pass1.ObjectStats[tn]
+		o2 := pass2.ObjectStats[tn]
+		diffCount := o2.TotalObjects - o1.TotalObjects
+		delCount := o2.Deleted - o1.Deleted
+		t.Logf("  %-25s %6d %6d %+6d %+6d %6d %6d",
+			tn, o1.TotalObjects, o2.TotalObjects, diffCount, delCount, o1.OnBranch, o2.OnBranch)
+	}
+
+	// Total summary
+	var total1, total2, total1Del, total2Del, total2Vge2, total1Branch, total2Branch int
+	for _, os := range pass1.ObjectStats { total1 += os.TotalObjects; total1Del += os.Deleted; total1Branch += os.OnBranch }
+	for _, os := range pass2.ObjectStats { total2 += os.TotalObjects; total2Del += os.Deleted; total2Vge2 += os.VersionGe2; total2Branch += os.OnBranch }
+
+	t.Logf("")
+	t.Logf("── Overall Summary ──")
+	t.Logf("  Objects on staging branches (pass1): %d", total1Branch)
+	t.Logf("  Objects on staging branches (pass2): %d", total2Branch)
+	t.Logf("  Total objects pass1: %d  |  pass2: %d", total1, total2)
+	t.Logf("  Net new objects:     %+d", total2-total1)
+	t.Logf("  Deleted (pass1):     %d  |  pass2: %d", total1Del, total2Del)
+	t.Logf("  v2+ in pass2:        %d (objects updated vs original)", total2Vge2)
+	t.Logf("")
+	if total1 == 0 && total2 == 0 {
+		t.Logf("  ⚠ No objects found — extraction may not have completed.")
+	} else if total2Vge2 == 0 && (total2-total1) == 0 {
+		t.Logf("  ✅ VERDICT: Second extraction produced IDENTICAL results — no new versions, no new objects.")
+		t.Logf("     The upsert-by-key dedup (project_id+type+key) correctly avoided duplicates.")
+	} else if total2Vge2 > 0 && (total2-total1) >= 0 {
+		t.Logf("  ⚠ VERDICT: Second extraction created new versions or objects.")
+		t.Logf("     Check diff table above to see which types changed.")
+	} else {
+		t.Logf("  ⚠ VERDICT: Object count decreased — possible deletion or tombstoning.")
+	}
+
+	// Relationship comparison
+	allRelTypes := map[string]bool{}
+	for rn := range pass1.RelStats { allRelTypes[rn] = true }
+	for rn := range pass2.RelStats { allRelTypes[rn] = true }
+	var sortedRelTypes []string
+	for rn := range allRelTypes { sortedRelTypes = append(sortedRelTypes, rn) }
+	sort.Strings(sortedRelTypes)
+
+	t.Logf("")
+	t.Logf("── Relationships (by type) ──")
+	t.Logf("  %-30s %8s %8s %8s", "TYPE", "PASS1", "PASS2", "DIFF")
+	t.Logf("  %-30s %8s %8s %8s", strings.Repeat("─", 30), strings.Repeat("─", 8), strings.Repeat("─", 8), strings.Repeat("─", 8))
+	var relTotal1, relTotal2 int
+	for _, rn := range sortedRelTypes {
+		r1 := pass1.RelStats[rn].Total
+		r2 := pass2.RelStats[rn].Total
+		relTotal1 += r1
+		relTotal2 += r2
+		t.Logf("  %-30s %8d %8d %+8d", rn, r1, r2, r2-r1)
+	}
+	t.Logf("  %-30s %8s %8s %8s", strings.Repeat("─", 30), strings.Repeat("─", 8), strings.Repeat("─", 8), strings.Repeat("─", 8))
+	t.Logf("  %-30s %8d %8d %+8d", "TOTAL", relTotal1, relTotal2, relTotal2-relTotal1)
+}
+
+// waitForObjects polls until at least one graph object exists for the project.
+func waitForObjects(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var count int
+		err := testDB.DB.NewRaw(
+			"SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ?::uuid AND supersedes_id IS NULL",
+			projectID,
+		).Scan(ctx, &count)
+		if err == nil && count > 0 {
+			t.Logf("  background extraction complete: %d objects found", count)
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Logf("  ⚠ no objects appeared after %v (extraction may be slow or failed)", timeout)
+}
+
+// TestReExtractionComparison runs two remember extractions with the same document
+// and prints a human-readable comparison summary of what changed.
+func TestReExtractionComparison(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "reextract")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║         FIRST EXTRACTION: schema_policy=auto, mode=sync            ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	// ── Pass 1: First extraction ──
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       orgChartDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec.StatusCode, "first extraction should return 200")
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	p1Status, _ := body["status"].(string)
+	require.Equal(t, "completed", p1Status, "first extraction should complete")
+	t.Logf("PASS1 response: run_id=%s status=%s", body["run_id"], p1Status)
+
+	// Let background extraction workers finish (poll for objects up to 30s)
+	waitForObjects(t, ctx, testDB, projectID, 30*time.Second)
+
+	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "PASS 1 RESULTS", pass1)
+
+	// ── Pass 2: Second extraction with same document ──
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║      SECOND EXTRACTION: same doc, schema_policy=auto, mode=sync    ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+	rec2 := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       orgChartDoc,
+			"schema_policy": "auto",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec2.StatusCode, "second extraction should return 200")
+	var body2 map[string]any
+	require.NoError(t, json.Unmarshal(rec2.Body, &body2))
+	p2Status, _ := body2["status"].(string)
+	require.Equal(t, "completed", p2Status, "second extraction should complete")
+	t.Logf("PASS2 response: run_id=%s status=%s", body2["run_id"], p2Status)
+
+	// Let background workers finish
+	waitForObjects(t, ctx, testDB, projectID, 30*time.Second)
+
+	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
+	printExtractionSummary(t, "PASS 2 RESULTS", pass2)
+
+	// ── Print diff ──
+	printDiffTable(t, pass1, pass2)
+
+	// No assert on pass2 equality — we're collecting data for human judgment.
+	// The test always passes; the summary tells the story.
+	t.Logf("")
+	t.Logf("Done. See above for the re-extraction comparison summary.")
 }
 
 // mustUnmarshal decodes JSON bytes into dst or fatals the test.
