@@ -452,8 +452,7 @@ Respond with ONLY a JSON object (no markdown):
 			genai.NewContentFromText(prompt, "user"),
 		},
 		Config: &genai.GenerateContentConfig{
-			Temperature:     genai.Ptr[float32](0.0),
-			MaxOutputTokens: 512,
+			Temperature: genai.Ptr[float32](0.0),
 		},
 	}
 

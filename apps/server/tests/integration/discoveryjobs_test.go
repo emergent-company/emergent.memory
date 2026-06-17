@@ -1506,8 +1506,46 @@ func printDiffTable(t *testing.T, pass1, pass2 extractionSnapshot) {
 	t.Logf("  %-30s %8d %8d %+8d", "TOTAL", relTotal1, relTotal2, relTotal2-relTotal1)
 }
 
-// waitForObjects polls until at least one graph object exists OR extraction job
-// moves from "processing" to "completed"/"failed". Returns true if objects found.
+// waitForExtraction polls until the extraction jobs have all completed for
+// the project, or timeout. Returns true if objects were found.
+func waitForExtraction(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) bool {
+	t.Helper()
+	var doneCount, totalCount int
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		doneCount = 0
+		totalCount = 0
+		_ = testDB.DB.NewRaw(
+			`SELECT COUNT(*) FILTER (WHERE status IN ('completed','failed')),
+			        COUNT(*)
+			 FROM kb.object_extraction_jobs WHERE project_id = ?::uuid`,
+			projectID,
+		).Scan(ctx, &doneCount, &totalCount)
+		if totalCount > 0 && totalCount == doneCount {
+			var objCount int
+			_ = testDB.DB.NewRaw(
+				"SELECT COUNT(*) FROM kb.graph_objects WHERE project_id = ?::uuid AND supersedes_id IS NULL",
+				projectID,
+			).Scan(ctx, &objCount)
+			t.Logf("  extraction complete: %d objects, %d/%d jobs done", objCount, doneCount, totalCount)
+			return objCount > 0
+		}
+		var jobStatus string
+		_ = testDB.DB.NewRaw(
+			`SELECT status FROM kb.object_extraction_jobs WHERE project_id = ?::uuid ORDER BY created_at DESC LIMIT 1`,
+			projectID,
+		).Scan(ctx, &jobStatus)
+		if totalCount > 0 {
+			t.Logf("  waiting: %d/%d jobs done, latest status=%s", doneCount, totalCount, jobStatus)
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Logf("  ⚠ timeout after %v (%d/%d jobs done)", timeout, doneCount, totalCount)
+	return false
+}
+
+// waitForObjects polls until at least one graph object exists for the project.
+// Deprecated: use waitForExtraction for more reliable job-level waiting.
 func waitForObjects(t *testing.T, ctx context.Context, testDB *testutil.TestDB, projectID string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -1579,7 +1617,7 @@ func TestReExtractionComparison(t *testing.T) {
 	require.Equal(t, "completed", p1Status, "first extraction should complete")
 	t.Logf("PASS1 response: run_id=%s status=%s", body["run_id"], p1Status)
 
-	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
 
 	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
 	printExtractionSummary(t, "PASS 1 RESULTS", pass1)
@@ -1606,7 +1644,7 @@ func TestReExtractionComparison(t *testing.T) {
 	require.Equal(t, "completed", p2Status, "second extraction should complete")
 	t.Logf("PASS2 response: run_id=%s status=%s", body2["run_id"], p2Status)
 
-	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
 
 	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
 	printExtractionSummary(t, "PASS 2 RESULTS", pass2)
@@ -1614,8 +1652,6 @@ func TestReExtractionComparison(t *testing.T) {
 	// ── Print diff ──
 	printDiffTable(t, pass1, pass2)
 
-	// No assert on pass2 equality — we're collecting data for human judgment.
-	// The test always passes; the summary tells the story.
 	t.Logf("")
 	t.Logf("Done. See above for the re-extraction comparison summary.")
 }
@@ -1719,7 +1755,7 @@ func TestReExtractionFriends(t *testing.T) {
 	require.Equal(t, "completed", p1Status, "first extraction should complete")
 	t.Logf("PASS1 response: run_id=%s status=%s", body["run_id"], p1Status)
 
-	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
 
 	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
 	printExtractionSummary(t, "PASS 1 RESULTS", pass1)
@@ -1746,7 +1782,7 @@ func TestReExtractionFriends(t *testing.T) {
 	require.Equal(t, "completed", p2Status, "second extraction should complete")
 	t.Logf("PASS2 response: run_id=%s status=%s", body2["run_id"], p2Status)
 
-	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
 
 	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
 	printExtractionSummary(t, "PASS 2 RESULTS", pass2)
@@ -1844,7 +1880,7 @@ func TestReExtractionFriendsE02(t *testing.T) {
 	require.Equal(t, "completed", p1Status, "first extraction should complete")
 	t.Logf("PASS1 (E01) response: run_id=%s status=%s", body["run_id"], p1Status)
 
-	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
 
 	pass1 := snapshotExtraction(t, ctx, projectID, testDB)
 	printExtractionSummary(t, "S01E01 RESULTS", pass1)
@@ -1870,7 +1906,7 @@ func TestReExtractionFriendsE02(t *testing.T) {
 	require.Equal(t, "completed", p2Status, "second extraction should complete")
 	t.Logf("PASS2 (E02) response: run_id=%s status=%s", body2["run_id"], p2Status)
 
-	waitForObjects(t, ctx, testDB, projectID, 120*time.Second)
+	waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
 
 	pass2 := snapshotExtraction(t, ctx, projectID, testDB)
 	printExtractionSummary(t, "S01E02 RESULTS", pass2)
@@ -1879,6 +1915,173 @@ func TestReExtractionFriendsE02(t *testing.T) {
 
 	t.Logf("")
 	t.Logf("Done. See above for E01→E02 re-extraction comparison.")
+}
+
+// friendsE03Doc is a condensed transcript of Friends S01E03
+// "The One with the Thumb" — smoking, money, ruined cookies.
+const friendsE03Doc = `
+Friends — Season 1, Episode 3: "The One with the Thumb"
+
+At Central Perk coffeehouse, Greenwich Village.
+
+PHOEBE BUFFAY (26, masseuse and musician) is excited because she found
+a human thumb in her soda can at the bank where she cashed her paycheck.
+She is horrified but also thinks it might bring good luck.
+
+Later, Phoebe receives a $7,000 compensation check from the soda company
+for the trauma of finding the thumb. She doesn't know what to do with the money.
+She considers giving it to a homeless woman named GLENDA who lives
+on the street near Central Perk.
+
+CHANDLER BING (26, data processor) has started smoking again,
+which frustrates MONICA GELLER (26, chef) who hates smoking.
+Chandler had quit smoking three years ago but relapsed due to stress
+from his job. His father also smokes.
+
+RACHEL GREEN (24, waitress at Central Perk) is getting used to her job.
+She spills coffee on customers and struggles with the espresso machine.
+MONICA GELLER teaches Rachel how to make cappuccino.
+
+JOEY TRIBBIANI (26, struggling actor) has an audition for a play
+called "Freud!" where he would play Sigmund Freud. He practices
+his lines at the coffeehouse. ROSS GELLER (paleontologist, 26)
+helps Joey rehearse.
+
+Monica prepares a massive Thanksgiving feast with all the traditional
+dishes. She has been planning it for weeks. She makes her famous
+chocolate truffles with a secret recipe from her grandmother.
+
+Phoebe decides to give her $7,000 to Glenda the homeless woman.
+Glenda is grateful and uses the money to buy a new cart for her belongings.
+
+Chandler tries to quit smoking again. Monica catches him smoking
+in the hallway outside her apartment. She threatens to tell his mother.
+Chandler eventually quits using nicotine patches.
+
+Monica's Thanksgiving turkey is perfect, but her chocolate truffles
+are accidentally destroyed when someone leaves the freezer door open.
+The chocolate truffles melt and are ruined. Monica is devastated
+but the gang cheers her up.
+
+ROSS GELLER tells Phoebe that giving the money away was the
+most generous thing he's ever seen. Phoebe feels good about her decision.
+`
+
+// TestReExtractionFriendsE03 runs extraction on E01, then E02, then E03
+// and prints the progressive comparison for all three episodes.
+func TestReExtractionFriendsE03(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "friendse03")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	episodes := []struct{
+		Label string
+		Doc   string
+	}{
+		{"S01E01 — Pilot", friendsPilotDoc},
+		{"S01E02 — Sonogram", friendsE02Doc},
+		{"S01E03 — The Thumb", friendsE03Doc},
+	}
+
+	var snaps []extractionSnapshot
+	for i, ep := range episodes {
+		t.Logf("")
+		t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+		t.Logf("║   %s (extraction %d/%d)                        ║", ep.Label, i+1, len(episodes))
+		t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+		rec := client.POST(
+			fmt.Sprintf("/api/projects/%s/remember", projectID),
+			testutil.WithAuth("e2e-test-user"),
+			testutil.WithJSONBody(map[string]any{
+				"message":       ep.Doc,
+				"schema_policy": "auto",
+				"mode":          "sync",
+			}),
+		)
+		require.Equal(t, http.StatusOK, rec.StatusCode, "extraction %d should return 200", i+1)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body, &body))
+		st, _ := body["status"].(string)
+		require.Equal(t, "completed", st, "extraction %d should complete", i+1)
+		t.Logf("  run_id=%s status=%s", body["run_id"], st)
+
+		waitForExtraction(t, ctx, testDB, projectID, 180*time.Second)
+		snap := snapshotExtraction(t, ctx, projectID, testDB)
+		snaps = append(snaps, snap)
+		printExtractionSummary(t, ep.Label, snap)
+	}
+
+	// Print progressive comparison
+	for i := 1; i < len(snaps); i++ {
+		t.Logf("")
+		t.Logf("──────────────────────────────────────────────────────────────────────")
+		t.Logf("  Δ BETWEEN %s AND %s", episodes[i-1].Label, episodes[i].Label)
+		t.Logf("──────────────────────────────────────────────────────────────────────")
+		progressDiff(t, snaps[i-1], snaps[i], episodes[i-1].Label, episodes[i].Label)
+	}
+
+	// Overall summary
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║   CUMULATIVE: %-3d → %-3d → %-3d objects across 3 episodes        ║",
+		snaps[0].TotalObjects(), snaps[1].TotalObjects(), snaps[2].TotalObjects())
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+}
+
+// TotalObjects returns the sum of all graph objects in the snapshot.
+func (s extractionSnapshot) TotalObjects() int {
+	n := 0
+	for _, os := range s.ObjectStats { n += os.TotalObjects }
+	return n
+}
+
+// progressDiff prints a compact diff between two extraction snapshots.
+func progressDiff(t *testing.T, before, after extractionSnapshot, labelA, labelB string) {
+	t.Helper()
+
+	allTypes := map[string]bool{}
+	for tn := range before.ObjectStats { allTypes[tn] = true }
+	for tn := range after.ObjectStats { allTypes[tn] = true }
+	var sorted []string
+	for tn := range allTypes { sorted = append(sorted, tn) }
+	sort.Strings(sorted)
+
+	t.Logf("  %-25s %10s %10s %8s %8s", "TYPE", labelA, labelB, "NEW", "UPDATED")
+	t.Logf("  %-25s %10s %10s %8s %8s", strings.Repeat("─", 25), strings.Repeat("─", 10), strings.Repeat("─", 10), strings.Repeat("─", 8), strings.Repeat("─", 8))
+	var totA, totB, totNew, totUpd int
+	for _, tn := range sorted {
+		a := before.ObjectStats[tn]
+		b := after.ObjectStats[tn]
+		newCount := b.TotalObjects - a.TotalObjects
+		updCount := b.VersionGe2 - a.VersionGe2
+		totA += a.TotalObjects
+		totB += b.TotalObjects
+		totNew += max(0, newCount)
+		totUpd += max(0, updCount)
+		if newCount != 0 || updCount != 0 {
+			t.Logf("  %-25s %10d %10d %+8d %+8d", tn, a.TotalObjects, b.TotalObjects, newCount, updCount)
+		}
+	}
+
+	relsA, relsB := 0, 0
+	for _, rs := range before.RelStats { relsA += rs.Total }
+	for _, rs := range after.RelStats { relsB += rs.Total }
+
+	t.Logf("  %-25s %10s %10s %8s %8s", strings.Repeat("─", 25), strings.Repeat("─", 10), strings.Repeat("─", 10), strings.Repeat("─", 8), strings.Repeat("─", 8))
+	t.Logf("  %-25s %10d %10d %+8d %+8d", "TOTAL", totA, totB, totB-totA, totUpd)
+	t.Logf("  relationships: %d → %d (+%d)", relsA, relsB, relsB-relsA)
 }
 
 // mustUnmarshal decodes JSON bytes into dst or fatals the test.

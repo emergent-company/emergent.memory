@@ -146,7 +146,7 @@ func domainToolDefinitions() []ToolDefinition {
 					},
 					"mode": {
 						Type:        "string",
-						Description: "How to finalize: 'create' to create a new schema pack, 'extend' to add types to an existing pack",
+						Description: "How to finalize: 'create' (sparse schema from agent-supplied types), 'extend' (add types), 'enrich' (LLM fills properties), 'create_rich' (LLM generates object schema from doc), 'create_rich_combined' (LLM generates object+rel schema in one call), 'create_rich_sequential' (LLM generates objects then rels)",
 					},
 					"pack_name": {
 						Type:        "string",
@@ -333,7 +333,7 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 	// Auto-queue reextraction when a schema was created or enriched for a specific document.
 	// This removes the requirement for the agent to call queue-reextraction separately —
 	// DeepSeek consistently skips that step after tool-policy confirm resume.
-	if (mode == "create" || mode == "enrich" || mode == "create_rich" || mode == "create_rich_combined" || mode == "create_rich_sequential") && documentIDStr != "" && s.reextractionQueuer != nil {
+	if (mode == "create" || mode == "extend" || mode == "enrich" || mode == "create_rich" || mode == "create_rich_combined" || mode == "create_rich_sequential") && documentIDStr != "" && s.reextractionQueuer != nil {
 		// Extract schema_id from the JSON response (resp is interface{}).
 		var respMap map[string]any
 		schemaID := ""
