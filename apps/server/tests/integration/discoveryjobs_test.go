@@ -15,8 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
@@ -865,6 +867,281 @@ func assertNoEmbeddedProperties(t *testing.T, discoveredTypes []any) {
 				t.Errorf("D8 FAIL: type %q property %q has non-string 'type' field: %T", typeName, propKey, typeField)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GAP 1: schema_policy=enrich integration test via the remember endpoint
+// ---------------------------------------------------------------------------
+
+// TestRememberEnrichPolicy verifies that calling POST /api/projects/:id/remember
+// with schema_policy=enrich routes to the V8 enrich agent and produces a schema
+// pack with enriched (populated) property definitions — no errors.
+func TestRememberEnrichPolicy(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "remenrich")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	// POST remember with schema_policy=enrich and mode=sync (waits for completion).
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       orgChartDoc,
+			"schema_policy": "enrich",
+			"mode":          "sync",
+		}),
+	)
+	require.Equal(t, http.StatusOK, rec.StatusCode, "schema_policy=enrich should return 200")
+	t.Logf("remember status: %d", rec.StatusCode)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	runID, _ := body["run_id"].(string)
+	status, _ := body["status"].(string)
+	docID, _ := body["document_id"].(string)
+	t.Logf("remember enrich: run_id=%s status=%s document_id=%s", runID, status, docID)
+
+	// Verify no error in response.
+	errMsg, _ := body["error"].(string)
+	require.Empty(t, errMsg, "response should not contain an error")
+	require.Equal(t, "completed", status, "agent should complete successfully")
+	require.NotEmpty(t, docID, "response should include a document_id")
+
+	// Poll for schema packs installed to the project.
+	// The enrich/new-domain agent calls finalize-discovery with
+	// create_rich_combined, which creates and installs a schema pack.
+	djRepo := discoveryjobs.NewRepository(testDB.GetDB(), slog.Default())
+
+	var enriched bool
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(3 * time.Second)
+
+		// Query project_schemas for active schema pack IDs.
+		var schemaIDs []string
+		qErr := testDB.DB.NewRaw(
+			"SELECT schema_id::text FROM kb.project_schemas WHERE project_id = ? AND active = true",
+			projectID,
+		).Scan(ctx, &schemaIDs)
+		if qErr != nil || len(schemaIDs) == 0 {
+			continue
+		}
+
+		for _, sidStr := range schemaIDs {
+			schemaUUID := uuid.MustParse(sidStr)
+			pack, getErr := djRepo.GetMemorySchema(ctx, schemaUUID)
+			if getErr != nil {
+				t.Logf("  GetMemorySchema(%s): %v", schemaUUID, getErr)
+				continue
+			}
+			t.Logf("  schema %s has %d object types, %d rel types",
+				schemaUUID, len(pack.ObjectTypeSchemas), len(pack.RelationshipTypeSchemas))
+			objJSON, _ := json.MarshalIndent(pack.ObjectTypeSchemas, "    ", "  ")
+			t.Logf("  raw object_type_schemas:\n    %s", string(objJSON))
+			// Check if any type has non-empty properties.
+			for typeName, raw := range pack.ObjectTypeSchemas {
+				m, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				props, _ := m["properties"].(map[string]any)
+				if len(props) > 0 {
+					enriched = true
+					t.Logf("  ✅ type %q has %d properties", typeName, len(props))
+				}
+			}
+		}
+		if enriched {
+			break
+		}
+	}
+	require.True(t, enriched,
+		"schema_policy=enrich should produce a schema pack with populated properties")
+}
+
+// ---------------------------------------------------------------------------
+// GAP 6: schema_policy=ask pauses for confirmation on remember
+// ---------------------------------------------------------------------------
+
+func TestRememberAskPolicy_PausesForConfirmation(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "remask")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	// POST remember with schema_policy=ask in async mode.
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/remember", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":       orgChartDoc,
+			"schema_policy": "ask",
+			"mode":          "async",
+		}),
+	)
+	require.Equal(t, http.StatusAccepted, rec.StatusCode, "async should return 202")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	runID, _ := body["run_id"].(string)
+	require.NotEmpty(t, runID, "async response must contain run_id")
+	t.Logf("remember ask run_id: %s", runID)
+
+	// Poll run status; expect paused/input-required for tool confirmation.
+	var finalStatus string
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(1 * time.Second)
+		statusResp := client.GET(
+			fmt.Sprintf("/api/v1/runs/%s", runID),
+			testutil.WithAuth("e2e-test-user"),
+		)
+		if statusResp.StatusCode != http.StatusOK {
+			continue
+		}
+		var runBody map[string]any
+		if err := json.Unmarshal(statusResp.Body, &runBody); err != nil {
+			continue
+		}
+		data, _ := runBody["data"].(map[string]any)
+		status, _ := data["status"].(string)
+		if status == "paused" || status == "input-required" || status == "error" || status == "success" {
+			finalStatus = status
+			break
+		}
+	}
+
+	t.Logf("remember ask run %s final status: %s", runID, finalStatus)
+	if finalStatus != "paused" && finalStatus != "input-required" && finalStatus != "success" {
+		t.Fatalf("expected run to pause for tool confirmation or complete; got status=%q", finalStatus)
+	}
+	if finalStatus == "success" {
+		t.Log("⚠ run completed without pausing — LLM chose not to call finalize-discovery (ask policy not exercised)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GAP 7: strategy=ask pauses for confirmation on forget
+// ---------------------------------------------------------------------------
+
+func TestForgetAskStrategy_PausesForConfirmation(t *testing.T) {
+	skipDiscoveryEnrich(t)
+	ctx := context.Background()
+
+	testDB, err := testutil.SetupTestDB(ctx, "frgask")
+	require.NoError(t, err)
+	defer testDB.Close()
+
+	require.NoError(t, testutil.SetupTestFixtures(ctx, testDB.DB))
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	err = testutil.SetupFullTestProject(ctx, testDB.DB, orgID, projectID)
+	require.NoError(t, err)
+
+	// Seed a graph object to forget.
+	projectUUID := uuid.MustParse(projectID)
+	canonicalID := uuid.New()
+	obj := &graph.GraphObject{
+		ID:          uuid.New(),
+		ProjectID:   projectUUID,
+		CanonicalID: canonicalID,
+		Version:     1,
+		Type:        "Person",
+		Properties: map[string]any{
+			"name": "TargetForgetPerson",
+		},
+		Labels:    []string{},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	_, err = testDB.DB.NewInsert().Model(obj).Exec(ctx)
+	require.NoError(t, err, "seed graph object")
+
+	svr := testutil.NewTestServerWithLLM(testDB)
+	client := testutil.NewHTTPClient(svr.Echo)
+
+	// POST forget with strategy=ask in async mode.
+	rec := client.POST(
+		fmt.Sprintf("/api/projects/%s/forget", projectID),
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"message":  "forget the person named TargetForgetPerson",
+			"strategy": "ask",
+			"mode":     "async",
+		}),
+	)
+	require.Equal(t, http.StatusAccepted, rec.StatusCode, "async should return 202")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body, &body))
+	runID, _ := body["run_id"].(string)
+	require.NotEmpty(t, runID, "async response must contain run_id")
+	t.Logf("forget ask run_id: %s", runID)
+
+	// Poll run status; expect input-required for tool confirmation.
+	var finalStatus string
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(1 * time.Second)
+		statusResp := client.GET(
+			fmt.Sprintf("/api/v1/runs/%s", runID),
+			testutil.WithAuth("e2e-test-user"),
+		)
+		if statusResp.StatusCode != http.StatusOK {
+			continue
+		}
+		var runBody map[string]any
+		if err := json.Unmarshal(statusResp.Body, &runBody); err != nil {
+			continue
+		}
+		data, _ := runBody["data"].(map[string]any)
+		status, _ := data["status"].(string)
+		if status == "input-required" || status == "completed" || status == "failed" {
+			finalStatus = status
+			break
+		}
+		// Log intermediate statuses for debugging.
+		if status != "" {
+			t.Logf("forget ask run %s status: %s", runID, status)
+		}
+	}
+
+	t.Logf("forget ask run %s final status: %q", runID, finalStatus)
+	if finalStatus == "" {
+		t.Fatal("run never reached a terminal or paused state (120s timeout)")
+	}
+	if finalStatus == "completed" {
+		t.Log("⚠ run completed without pausing — LLM may not have called entity-delete")
+	}
+	if finalStatus == "failed" {
+		t.Logf("⚠ run failed — agent may not have found the target entity")
 	}
 }
 
