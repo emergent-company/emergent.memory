@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 
 
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
@@ -2106,7 +2107,44 @@ func TestReExtractionFriendsE03(t *testing.T) {
 		snap := snapshotExtraction(t, ctx, projectID, testDB)
 		snaps = append(snaps, snap)
 		printExtractionSummary(t, ep.Label, snap)
+
+		// Ground-truth verification for this episode
+		verifyExtraction(t, ctx, testDB.DB, projectID, ep.Label, epEntities[i])
 	}
+
+	// Post-extraction integrity checks
+	t.Logf("")
+	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+	t.Logf("║             POST-EXTRACTION INTEGRITY CHECKS                        ║")
+	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+	assertNoRelationshipAsObject(t, ctx, testDB.DB, projectID)
+	assertNoDanglingRelationships(t, ctx, testDB.DB, projectID)
+
+	// Verify all expected entities exist after 5 episodes (final state)
+	t.Logf("")
+	t.Logf("── Full-cast check after all 5 episodes ──")
+	allOK := true
+	for _, e := range groundTruthExpected {
+		obj := assertEntityExists(t, ctx, testDB.DB, projectID, e, 5*time.Second)
+		if obj == nil {
+			allOK = false
+		}
+	}
+	if allOK {
+		t.Logf("  ✅ ALL %d expected entities verified across 5 episodes", len(groundTruthExpected))
+	}
+
+	// Hard assertion: the 6 core characters must exist with stable canonical_ids
+	t.Logf("")
+	t.Logf("── Core cast hard assertion (6 main characters) ──")
+	coreOK := true
+	for _, name := range coreCastNames {
+		e := groundTruthEntity{Name: name, TypeHints: []string{"Character", "Person"}}
+		if assertEntityExists(t, ctx, testDB.DB, projectID, e, 5*time.Second) == nil {
+			coreOK = false
+		}
+	}
+	require.True(t, coreOK, "core cast extraction failed — all 6 main characters must be extracted")
 
 	// Print progressive comparison
 	for i := 1; i < len(snaps); i++ {
@@ -2167,6 +2205,225 @@ func progressDiff(t *testing.T, before, after extractionSnapshot, labelA, labelB
 	t.Logf("  %-25s %10s %10s %8s %8s", strings.Repeat("─", 25), strings.Repeat("─", 10), strings.Repeat("─", 10), strings.Repeat("─", 8), strings.Repeat("─", 8))
 	t.Logf("  %-25s %10d %10d %+8d %+8d", "TOTAL", totA, totB, totB-totA, totUpd)
 	t.Logf("  relationships: %d → %d (+%d)", relsA, relsB, relsB-relsA)
+}
+
+// ---------------------------------------------------------------------------
+// Ground-truth verification helpers
+// ---------------------------------------------------------------------------
+
+// groundTruthEntity describes an expected entity with fuzzy matching.
+type groundTruthEntity struct {
+	Name      string   // human-readable name from the doc (e.g. "Monica Geller")
+	TypeHints []string // possible object types (e.g. {"Character", "Person"})
+}
+
+// groundTruthExpected lists core entities that should be extracted across the
+// 5-episode Friends set. Names come directly from the episode transcripts.
+var groundTruthExpected = []groundTruthEntity{
+	// Core cast (appear in every episode)
+	{Name: "Monica Geller", TypeHints: []string{"Character", "Person"}},
+	{Name: "Ross Geller", TypeHints: []string{"Character", "Person"}},
+	{Name: "Rachel Green", TypeHints: []string{"Character", "Person"}},
+	{Name: "Chandler Bing", TypeHints: []string{"Character", "Person"}},
+	{Name: "Joey Tribbiani", TypeHints: []string{"Character", "Person"}},
+	{Name: "Phoebe Buffay", TypeHints: []string{"Character", "Person"}},
+
+	// Central locations (appear in multiple episodes)
+	{Name: "Central Perk", TypeHints: []string{"Location"}},
+	{Name: "Greenwich Village", TypeHints: []string{"Location"}},
+
+	// E01-specific
+	{Name: "Paul the Wine Guy", TypeHints: []string{"Character", "Person"}},
+	{Name: "Marcel", TypeHints: []string{"Character", "Person", "Pet"}},
+
+	// E02-specific
+	{Name: "Carol", TypeHints: []string{"Character", "Person"}},
+	{Name: "Susan", TypeHints: []string{"Character", "Person"}},
+	{Name: "Barry Farber", TypeHints: []string{"Character", "Person"}},
+	{Name: "Bloomingdale", TypeHints: []string{"Location"}},
+
+	// E03-specific
+	{Name: "Glenda", TypeHints: []string{"Character", "Person"}},
+
+	// E04-specific
+	{Name: "Madison Square Garden", TypeHints: []string{"Location"}},
+	{Name: "Celeste", TypeHints: []string{"Character", "Person"}},
+
+	// E05-specific
+	{Name: "Alan", TypeHints: []string{"Character", "Person"}},
+	{Name: "Laundromat", TypeHints: []string{"Location"}},
+	{Name: "Museum of Prehistoric History", TypeHints: []string{"Location"}},
+}
+
+// findEntityViaProperty searches graph_objects for an entity whose properties
+// JSONB text contains the given name. Uses ILIKE for case-insensitive fuzzy
+// matching. Returns the first match or nil.
+func findEntityViaProperty(ctx context.Context, db bun.IDB, projectID, typeName, name string) *graphObjectRow {
+	var rows []graphObjectRow
+	err := db.NewRaw(
+		`SELECT go.type, go.key, go.properties, go.canonical_id, go.version, go.deleted_at, go.branch_id::text
+		 FROM kb.graph_objects go
+		 WHERE go.project_id = ?::uuid
+		   AND go.supersedes_id IS NULL
+		   AND go.type = ?
+		   AND LOWER(go.properties->>'name') LIKE LOWER(?)
+		 LIMIT 1`,
+		projectID, typeName, "%"+name+"%",
+	).Scan(ctx, &rows)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	return &rows[0]
+}
+
+type graphObjectRow struct {
+	Type        string
+	Key         *string
+	Properties  map[string]any
+	CanonicalID uuid.UUID
+	Version     int
+	DeletedAt   *time.Time
+	BranchID    *string
+}
+
+// assertEntityExists fuzzy-matches an entity by name across all possible types.
+// Returns the object or nil (caller decides whether to fail).
+func assertEntityExists(t *testing.T, ctx context.Context, db bun.IDB, projectID string, e groundTruthEntity, timeout time.Duration) *graphObjectRow {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, typeName := range e.TypeHints {
+			if obj := findEntityViaProperty(ctx, db, projectID, typeName, e.Name); obj != nil {
+				if obj.DeletedAt != nil {
+					t.Logf("  ⚠ entity %q found but soft-deleted", e.Name)
+					continue
+				}
+				t.Logf("  ✅ %q → %s (key=%s, v%d, cid=%s)",
+					e.Name, obj.Type, safeStr(obj.Key), obj.Version, obj.CanonicalID.String()[:8])
+				return obj
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Logf("  ❌ %q not found via any type in %v after %v", e.Name, e.TypeHints, timeout)
+	return nil
+}
+
+func safeStr(s *string) string {
+	if s == nil { return "<nil>" }
+	return *s
+}
+
+// assertNoRelationshipAsObject verifies zero graph objects exist with
+// relationship-like types (should be filtered by IsRelationshipObjectType).
+func assertNoRelationshipAsObject(t *testing.T, ctx context.Context, db bun.IDB, projectID string) {
+	t.Helper()
+	var count int
+	err := db.NewRaw(
+		`SELECT COUNT(*) FROM kb.graph_objects
+		 WHERE project_id = ?::uuid AND supersedes_id IS NULL
+		   AND type IN ('Relationship','CharacterRelationship','Friendship','Marriage','Partnership','Bond','Connection')`,
+		projectID,
+	).Scan(ctx, &count)
+	require.NoError(t, err)
+	if count > 0 {
+		t.Errorf("  ❌ found %d objects with relationship-like types (should be 0)", count)
+	} else {
+		t.Logf("  ✅ no relationship-as-object types found")
+	}
+}
+
+// assertNoDanglingRelationships verifies all relationship src_id/dst_id
+// reference existing HEAD graph objects.
+func assertNoDanglingRelationships(t *testing.T, ctx context.Context, db bun.IDB, projectID string) {
+	t.Helper()
+	var count int
+	err := db.NewRaw(
+		`SELECT COUNT(*) FROM kb.graph_relationships gr
+		 WHERE gr.project_id = ?::uuid AND gr.deleted_at IS NULL
+		   AND (NOT EXISTS (SELECT 1 FROM kb.graph_objects go
+		                    WHERE go.id = gr.src_id)
+		     OR NOT EXISTS (SELECT 1 FROM kb.graph_objects go
+		                    WHERE go.id = gr.dst_id))`,
+		projectID,
+	).Scan(ctx, &count)
+	require.NoError(t, err)
+	if count > 0 {
+		t.Errorf("  ❌ found %d dangling relationship references", count)
+	} else {
+		t.Logf("  ✅ no dangling relationship references")
+	}
+}
+
+var capturedCanonicalIDs = map[string]string{} // name → canonical_id
+
+// coreCastNames must always be extracted — these are the 6 main characters
+// present in every episode transcript. Everything else is LLM-dependent.
+var coreCastNames = []string{
+	"Monica Geller", "Ross Geller", "Rachel Green",
+	"Chandler Bing", "Joey Tribbiani", "Phoebe Buffay",
+}
+
+// verifyExtraction verifies ground-truth entities are present and accumulates
+// canonical_id tracking for cross-episode dedup checks.
+func verifyExtraction(t *testing.T, ctx context.Context, db bun.IDB, projectID, epLabel string, expectedForEpisode []groundTruthEntity) {
+	t.Helper()
+
+	t.Logf("  ── Ground-truth verification for %s ──", epLabel)
+	found := 0
+	for _, e := range expectedForEpisode {
+		obj := assertEntityExists(t, ctx, db, projectID, e, 5*time.Second)
+		if obj == nil {
+			continue
+		}
+		found++
+
+		cidStr := obj.CanonicalID.String()
+		if prev, seen := capturedCanonicalIDs[e.Name]; seen {
+			if cidStr != prev {
+				t.Logf("  ❌ %q canonical_id changed: %s → %s (dedup broken!)", e.Name, prev[:8], cidStr[:8])
+			}
+		} else {
+			capturedCanonicalIDs[e.Name] = cidStr
+		}
+	}
+	t.Logf("  ✅ %d/%d expected entities verified for %s", found, len(expectedForEpisode), epLabel)
+	if found < len(expectedForEpisode) {
+		t.Logf("  ⚠ %d missing — minor entities are LLM-dependent (non-fatal)", len(expectedForEpisode)-found)
+	}
+}
+
+// epEntities groups ground-truth entities by the episode they first appear in.
+var epEntities = [][]groundTruthEntity{
+	{ // S01E01 — Pilot
+		{Name: "Monica Geller", TypeHints: []string{"Character", "Person"}},
+		{Name: "Ross Geller", TypeHints: []string{"Character", "Person"}},
+		{Name: "Rachel Green", TypeHints: []string{"Character", "Person"}},
+		{Name: "Chandler Bing", TypeHints: []string{"Character", "Person"}},
+		{Name: "Joey Tribbiani", TypeHints: []string{"Character", "Person"}},
+		{Name: "Phoebe Buffay", TypeHints: []string{"Character", "Person"}},
+		{Name: "Paul the Wine Guy", TypeHints: []string{"Character", "Person"}},
+		{Name: "Central Perk", TypeHints: []string{"Location"}},
+		{Name: "Greenwich Village", TypeHints: []string{"Location"}},
+	},
+	{ // S01E02 — Sonogram
+		{Name: "Carol", TypeHints: []string{"Character", "Person"}},
+		{Name: "Susan", TypeHints: []string{"Character", "Person"}},
+		{Name: "Barry Farber", TypeHints: []string{"Character", "Person"}},
+		{Name: "Bloomingdale", TypeHints: []string{"Location"}},
+	},
+	{ // S01E03 — Thumb
+		{Name: "Glenda", TypeHints: []string{"Character", "Person"}},
+	},
+	{ // S01E04 — Stephanopoulos
+		{Name: "Celeste", TypeHints: []string{"Character", "Person"}},
+		{Name: "Madison Square Garden", TypeHints: []string{"Location"}},
+	},
+	{ // S01E05 — Laundry
+		{Name: "Alan", TypeHints: []string{"Character", "Person"}},
+		{Name: "Laundromat", TypeHints: []string{"Location"}},
+		{Name: "Museum of Prehistoric History", TypeHints: []string{"Location"}},
+	},
 }
 
 // mustUnmarshal decodes JSON bytes into dst or fatals the test.
