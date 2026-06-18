@@ -1967,13 +1967,96 @@ ROSS GELLER tells Phoebe that giving the money away was the
 most generous thing he's ever seen. Phoebe feels good about her decision.
 `
 
-// TestReExtractionFriendsE03 runs extraction on E01, then E02, then E03
-// and prints the progressive comparison for all three episodes.
+// friendsE04Doc is a condensed transcript of Friends S01E04
+// "The One with George Stephanopoulos" — spying, hockey, delivery guy.
+const friendsE04Doc = `
+Friends — Season 1, Episode 4: "The One with George Stephanopoulos"
+
+At Central Perk coffeehouse, Greenwich Village.
+
+MONICA GELLER (26, chef) is upset because her credit card was declined
+at the supermarket. She is struggling financially. Her parents are
+pressuring her to succeed.
+
+RACHEL GREEN (24, waitress) gets her first paycheck and is excited
+but realizes how little she makes. She and Monica bond over being broke.
+
+ROSS GELLER (paleontologist, 26) offers to take Rachel to a museum
+where he works as a tour guide. She declines.
+
+PHOEBE BUFFAY (26, masseuse) is dating a guy named Carl who
+works at a copy shop. Carl is nice but Phoebe isn't sure about him.
+
+CHANDLER BING (26, data processor) and JOEY TRIBBIANI (26, actor)
+go to a New York Rangers hockey game at Madison Square Garden.
+They pay $50 for standing-room tickets. Chandler loves hockey.
+Joey doesn't understand the rules but enjoys the fights.
+
+At Monica's apartment, the girls discover that a handsome man
+named DAN (a model) lives across the street in a penthouse.
+They use binoculars to spy on him. Monica is thrilled because
+Dan's apartment has a better view than theirs.
+
+Ross goes on a date with a woman named CELESTE from the museum.
+The date goes poorly. Celeste is boring.
+
+Dan the model orders $200 worth of food from the restaurant
+where Monica works. Monica delivers the food herself to Dan's
+penthouse. Dan tips her $50. Monica is thrilled.
+
+Ross and Rachel have a conversation on the balcony of Monica's
+apartment. Ross admits he had a crush on Rachel in high school.
+Rachel admits she wishes she had dated Ross instead of Barry.
+They almost kiss but are interrupted by a delivery.
+`
+
+// friendsE05Doc is a condensed transcript of Friends S01E05
+// "The One with the East German Laundry Detergent" — laundromat date, fake leg.
+const friendsE05Doc = `
+Friends — Season 1, Episode 5: "The One with the East German Laundry Detergent"
+
+At Central Perk coffeehouse, Greenwich Village.
+
+ROSS GELLER (paleontologist, 26) and RACHEL GREEN (24, waitress)
+go on their first official date at a coin-operated laundromat
+on 23rd Street in Manhattan. Ross brings East German laundry detergent
+that he bought because it was on sale. The detergent doesn't work well.
+Rachel accidentally turns Ross's laundry pink by mixing colors.
+Despite the laundry disaster, they have fun and bond over the
+shared misery of doing laundry. Ross asks Rachel out again.
+Rachel says yes.
+
+MONICA GELLER (26, chef) is dating a man named ALAN who is
+described as sweet, funny, and very handsome. The gang loves Alan.
+Monica is insecure because all her previous relationships failed.
+Alan breaks up with Monica, saying she is too controlling.
+The gang still likes Alan even after the breakup.
+
+CHANDLER BING (26, data processor) dates a woman named JOANNE
+who has a prosthetic leg. Chandler is uncomfortable about it
+at first but eventually gets over it. Joanne is a lawyer at
+a prestigious Manhattan law firm. She breaks up with Chandler
+after he makes an insensitive joke about her leg.
+
+PHOEBE BUFFAY (26, masseuse) finds a stray dog outside Central Perk.
+She names it "Maurice." She tries to find the owner but fails.
+She ends up giving the dog to a little boy named ETHAN.
+
+JOEY TRIBBIANI (26, actor) has a date with a woman named
+JENNIFER who works at a pretzel stand in Central Park.
+The date goes well and they plan a second date.
+
+Ross gets a new job at the Museum of Prehistoric History
+as a tour guide. He loves talking about dinosaurs.
+`
+
+// TestReExtractionFriendsE03 runs extraction on E01 through E05
+// and prints the progressive comparison across all five episodes.
 func TestReExtractionFriendsE03(t *testing.T) {
 	skipDiscoveryEnrich(t)
 	ctx := context.Background()
 
-	testDB, err := testutil.SetupTestDB(ctx, "friendse03")
+	testDB, err := testutil.SetupTestDB(ctx, "friendse05")
 	require.NoError(t, err)
 	defer testDB.Close()
 
@@ -1991,7 +2074,9 @@ func TestReExtractionFriendsE03(t *testing.T) {
 	}{
 		{"S01E01 — Pilot", friendsPilotDoc},
 		{"S01E02 — Sonogram", friendsE02Doc},
-		{"S01E03 — The Thumb", friendsE03Doc},
+		{"S01E03 — Thumb", friendsE03Doc},
+		{"S01E04 — Stephanopoulos", friendsE04Doc},
+		{"S01E05 — Laundry", friendsE05Doc},
 	}
 
 	var snaps []extractionSnapshot
@@ -2035,8 +2120,8 @@ func TestReExtractionFriendsE03(t *testing.T) {
 	// Overall summary
 	t.Logf("")
 	t.Logf("╔══════════════════════════════════════════════════════════════════════╗")
-	t.Logf("║   CUMULATIVE: %-3d → %-3d → %-3d objects across 3 episodes        ║",
-		snaps[0].TotalObjects(), snaps[1].TotalObjects(), snaps[2].TotalObjects())
+	t.Logf("║   CUMULATIVE: %-3d  → %-3d  → %-3d  → %-3d  → %-3d  objects across 5 episodes        ║",
+		snaps[0].TotalObjects(), snaps[1].TotalObjects(), snaps[2].TotalObjects(), snaps[3].TotalObjects(), snaps[4].TotalObjects())
 	t.Logf("╚══════════════════════════════════════════════════════════════════════╝")
 }
 
