@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -309,7 +310,13 @@ func (s *CredentialService) UpsertProjectConfig(ctx context.Context, projectID s
 	// Embedding-only configs (e.g. Google gemini-embedding-*) must not be forced
 	// through a generative test — the API key may have no generative scope.
 	if req.GenerativeModel != "" || req.EmbeddingModel == "" {
-		if _, _, err := s.catalog.TestGenerate(testCtx, provider, tempCred); err != nil {
+		// Strip provider prefix for test call (e.g. "openai/deepseek-v4-flash" → "deepseek-v4-flash")
+		// The prefix is needed for model routing but must NOT be sent to the API.
+		testCred := *tempCred
+		if _, bareModel, hasPrefix := strings.Cut(testCred.GenerativeModel, "/"); hasPrefix {
+			testCred.GenerativeModel = bareModel
+		}
+		if _, _, err := s.catalog.TestGenerate(testCtx, provider, &testCred); err != nil {
 			return nil, apperror.NewBadRequest(fmt.Sprintf("generative model test failed: %s", err.Error()))
 		}
 	}
