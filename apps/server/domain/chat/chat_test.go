@@ -344,7 +344,7 @@ func TestFormatSearchContext(t *testing.T) {
 		}
 	})
 
-	t.Run("relationship item formatted as triplet text", func(t *testing.T) {
+	t.Run("relationship items excluded from context", func(t *testing.T) {
 		items := []search.UnifiedSearchResultItem{
 			{
 				Type:        search.ItemTypeRelationship,
@@ -353,29 +353,43 @@ func TestFormatSearchContext(t *testing.T) {
 			},
 		}
 		result := h.formatSearchContext(items)
-		expected := "- Elon Musk founded Tesla"
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
+		if result != "" {
+			t.Errorf("expected empty string for relationship-only results, got %q", result)
 		}
 	})
 
-	t.Run("multiple relationships each on own line", func(t *testing.T) {
+	t.Run("graph items excluded from context", func(t *testing.T) {
 		items := []search.UnifiedSearchResultItem{
 			{
-				Type:        search.ItemTypeRelationship,
-				TripletText: "Elon Musk founded Tesla",
-			},
-			{
-				Type:        search.ItemTypeRelationship,
-				TripletText: "Tesla manufactures Model 3",
+				Type:       search.ItemTypeGraph,
+				ObjectType: "Person",
+				Key:        "Elon Musk",
+				Fields:     map[string]any{"role": "CEO"},
 			},
 		}
 		result := h.formatSearchContext(items)
-		if !strings.Contains(result, "- Elon Musk founded Tesla") {
-			t.Error("missing first relationship triplet text")
+		if result != "" {
+			t.Errorf("expected empty string for graph-only results, got %q", result)
 		}
-		if !strings.Contains(result, "- Tesla manufactures Model 3") {
-			t.Error("missing second relationship triplet text")
+	})
+
+	t.Run("text-only results formatted as context", func(t *testing.T) {
+		items := []search.UnifiedSearchResultItem{
+			{
+				Type:    search.ItemTypeText,
+				Snippet: "SpaceX was founded in 2002.",
+			},
+			{
+				Type:    search.ItemTypeText,
+				Snippet: "Tesla makes electric vehicles.",
+			},
+		}
+		result := h.formatSearchContext(items)
+		if !strings.Contains(result, "SpaceX was founded in 2002.") {
+			t.Error("missing first text snippet")
+		}
+		if !strings.Contains(result, "Tesla makes electric vehicles.") {
+			t.Error("missing second text snippet")
 		}
 		lines := strings.Split(result, "\n")
 		if len(lines) != 2 {
@@ -383,7 +397,7 @@ func TestFormatSearchContext(t *testing.T) {
 		}
 	})
 
-	t.Run("mixed results: graph, relationship, and text", func(t *testing.T) {
+	t.Run("mixed results: graph and relationship filtered, text only", func(t *testing.T) {
 		items := []search.UnifiedSearchResultItem{
 			{
 				Type:       search.ItemTypeGraph,
@@ -402,29 +416,19 @@ func TestFormatSearchContext(t *testing.T) {
 		}
 		result := h.formatSearchContext(items)
 		lines := strings.Split(result, "\n")
-		if len(lines) != 3 {
-			t.Errorf("expected 3 lines, got %d: %q", len(lines), result)
+		if len(lines) != 1 {
+			t.Errorf("expected 1 line (text-only), got %d: %q", len(lines), result)
 		}
 
-		// Graph line should have bold object type and key
-		if !strings.Contains(lines[0], "**Person**") {
-			t.Errorf("graph line missing bold ObjectType: %q", lines[0])
-		}
-		if !strings.Contains(lines[0], "Elon Musk") {
-			t.Errorf("graph line missing key: %q", lines[0])
-		}
-		if !strings.Contains(lines[0], "role=CEO") {
-			t.Errorf("graph line missing field: %q", lines[0])
+		if !strings.Contains(result, "SpaceX was founded in 2002.") {
+			t.Errorf("text line missing snippet: %q", result)
 		}
 
-		// Relationship line should be just the triplet text
-		if lines[1] != "- Elon Musk founded SpaceX" {
-			t.Errorf("relationship line = %q, want %q", lines[1], "- Elon Musk founded SpaceX")
+		if strings.Contains(result, "Person") {
+			t.Error("graph object should be excluded from context")
 		}
-
-		// Text line should contain snippet
-		if !strings.Contains(lines[2], "SpaceX was founded in 2002.") {
-			t.Errorf("text line missing snippet: %q", lines[2])
+		if strings.Contains(result, "Elon Musk founded SpaceX") {
+			t.Error("relationship should be excluded from context")
 		}
 	})
 
@@ -446,7 +450,7 @@ func TestFormatSearchContext(t *testing.T) {
 		}
 	})
 
-	t.Run("relationship with empty triplet text", func(t *testing.T) {
+	t.Run("relationship items produce empty context", func(t *testing.T) {
 		items := []search.UnifiedSearchResultItem{
 			{
 				Type:        search.ItemTypeRelationship,
@@ -454,8 +458,8 @@ func TestFormatSearchContext(t *testing.T) {
 			},
 		}
 		result := h.formatSearchContext(items)
-		if result != "- " {
-			t.Errorf("expected %q, got %q", "- ", result)
+		if result != "" {
+			t.Errorf("expected empty string, got %q", result)
 		}
 	})
 }

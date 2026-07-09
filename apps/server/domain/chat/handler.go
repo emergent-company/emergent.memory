@@ -790,42 +790,22 @@ func (h *Handler) formatSearchContext(results []search.UnifiedSearchResultItem) 
 	}
 
 	var b strings.Builder
-	for i, item := range results {
+	needNewline := false
+	for _, item := range results {
 		switch item.Type {
-		case search.ItemTypeGraph:
-			b.WriteString("- **")
-			b.WriteString(item.ObjectType)
-			b.WriteString("**: ")
-			b.WriteString(item.Key)
-			if len(item.Fields) > 0 {
-				b.WriteString(" — ")
-				fieldIdx := 0
-				for k, v := range item.Fields {
-					if fieldIdx > 0 {
-						b.WriteString(", ")
-					}
-					b.WriteString(k)
-					b.WriteString("=")
-					b.WriteString(formatFieldValue(v))
-					fieldIdx++
-					if fieldIdx >= 5 {
-						break
-					}
-				}
-			}
-		case search.ItemTypeRelationship:
-			b.WriteString("- ")
-			b.WriteString(item.TripletText)
+		case search.ItemTypeGraph, search.ItemTypeRelationship:
+			continue
 		case search.ItemTypeText:
 			snippet := item.Snippet
 			if len(snippet) > 300 {
 				snippet = snippet[:300] + "…"
 			}
+			if needNewline {
+				b.WriteString("\n")
+			}
 			b.WriteString("- ")
 			b.WriteString(snippet)
-		}
-		if i < len(results)-1 {
-			b.WriteString("\n")
+			needNewline = true
 		}
 	}
 	return b.String()
