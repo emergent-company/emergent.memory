@@ -3,7 +3,9 @@ package search
 import (
 	"context"
 	"log/slog"
+	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +24,7 @@ type Service struct {
 	graphService *graph.Service
 	embeddings   *embeddings.Service
 	log          *slog.Logger
+	defaultLimit int
 }
 
 // NewService creates a new search service
@@ -31,11 +34,18 @@ func NewService(
 	embeddingsSvc *embeddings.Service,
 	log *slog.Logger,
 ) *Service {
+	defaultLimit := 32
+	if v := os.Getenv("MEMORY_SEARCH_DEFAULT_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			defaultLimit = n
+		}
+	}
 	return &Service{
 		repo:         repo,
 		graphService: graphService,
 		embeddings:   embeddingsSvc,
 		log:          log.With(logger.Scope("search.svc")),
+		defaultLimit: defaultLimit,
 	}
 }
 
@@ -154,7 +164,7 @@ type relationshipOutcome struct {
 // clampLimit returns limit clamped to [1, 100]
 func (s *Service) clampLimit(limit int) int {
 	if limit <= 0 {
-		return 20
+		return s.defaultLimit
 	}
 	if limit > 100 {
 		return 100
@@ -600,8 +610,8 @@ func (s *Service) fuseResults(graphResults []*UnifiedSearchGraphResult, textResu
 
 // fuseWeighted combines results using weighted scores
 func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, weights *UnifiedSearchWeights, limit int) []UnifiedSearchResultItem {
-	graphWeight := float32(0.5)
-	textWeight := float32(0.5)
+	graphWeight := float32(0.25)
+	textWeight := float32(0.75)
 	relationshipWeight := float32(0)
 
 	if weights != nil {

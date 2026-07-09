@@ -23,7 +23,6 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agentcompat"
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
-	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/authinfo"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chat"
@@ -38,6 +37,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
@@ -388,7 +388,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register documents routes
 	docsRepo := documents.NewRepository(db, log)
 	docsSvc := documents.NewService(docsRepo, log)
-	docsHandler := documents.NewHandler(docsSvc, storageSvc, nil, log)
+	docsHandler := documents.NewHandler(docsSvc, storageSvc, nil, nil, nil, log)
 	uploadHandler := documents.NewUploadHandler(docsSvc, storageSvc, nil, nil, &config.Config{}, log)
 	documents.RegisterRoutes(e, docsHandler, uploadHandler, authMiddleware)
 

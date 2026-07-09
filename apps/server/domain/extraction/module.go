@@ -61,6 +61,20 @@ func provideExtractionJobCreator(svc *ObjectExtractionJobsService) documents.Ext
 	return svc
 }
 
+// chunkingServiceAdapter adapts chunking.Service to documents.ChunkingService.
+type chunkingServiceAdapter struct {
+	svc *chunking.Service
+}
+
+func (a *chunkingServiceAdapter) RecreateChunks(ctx context.Context, projectID, documentID string) error {
+	_, err := a.svc.RecreateChunks(ctx, projectID, documentID)
+	return err
+}
+
+func provideChunkingService(svc *chunking.Service) documents.ChunkingService {
+	return &chunkingServiceAdapter{svc: svc}
+}
+
 // embeddingEnqueuerAdapter adapts GraphEmbeddingJobsService to graph.EmbeddingEnqueuer.
 type embeddingEnqueuerAdapter struct {
 	svc *GraphEmbeddingJobsService
@@ -143,6 +157,7 @@ var Module = fx.Module("extraction",
 		NewProjectEmbeddingHandler,
 		provideParsingJobCreator,
 		provideExtractionJobCreator,
+		provideChunkingService,
 		provideEmbeddingEnqueuer,
 		provideRelEmbeddingEnqueuer,
 		provideEmbeddingSweepWorker,

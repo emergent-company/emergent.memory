@@ -2930,7 +2930,15 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 						}
 						objectNeighbors = append(objectNeighbors, vr.Object.ToResponse())
 					}
+				} else {
+					s.log.Warn("vector search failed for neighbor expansion",
+						slog.String("object_id", objectID.String()),
+						logger.Error(err))
 				}
+			} else if err != nil {
+				s.log.Warn("failed to get object embedding for neighbor expansion",
+					slog.String("object_id", objectID.String()),
+					logger.Error(err))
 			}
 
 			// Get relationship-connected neighbors
@@ -2952,6 +2960,10 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 						objectNeighbors = append(objectNeighbors, n.ToResponse())
 					}
 				}
+			} else {
+				s.log.Warn("failed to get relationship neighbors",
+					slog.String("object_id", objectID.String()),
+					logger.Error(err))
 			}
 
 			if len(objectNeighbors) > 0 {
@@ -2960,6 +2972,10 @@ func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, 
 		}
 
 		response.Neighbors = neighbors
+	} else if req.IncludeNeighbors {
+		s.log.Warn("FTS returned zero results, skipping neighbor expansion",
+			slog.String("query", req.Query),
+			slog.String("project_id", projectID.String()))
 	}
 
 	return response, nil

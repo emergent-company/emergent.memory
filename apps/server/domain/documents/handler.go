@@ -28,12 +28,20 @@ type ExtractionRetrier interface {
 	RetryByJobID(ctx context.Context, jobID, projectID string) (*RetryableJob, error)
 }
 
+// ChunkingService is a narrow interface for rechunking a document.
+// Defined here to avoid import cycles with the chunking package.
+type ChunkingService interface {
+	RecreateChunks(ctx context.Context, projectID, documentID string) error
+}
+
 // Handler handles document HTTP requests
 type Handler struct {
-	svc        *Service
-	storage    *storage.Service
-	extraction ExtractionRetrier
-	log        *slog.Logger
+	svc            *Service
+	storage        *storage.Service
+	extraction     ExtractionRetrier
+	chunking       ChunkingService
+	extractionJobs ExtractionJobCreator
+	log            *slog.Logger
 }
 
 // NewHandler creates a new documents handler
@@ -41,13 +49,17 @@ func NewHandler(
 	svc *Service,
 	storageSvc *storage.Service,
 	extraction ExtractionRetrier,
+	chunkingSvc ChunkingService,
+	extractionJobsSvc ExtractionJobCreator,
 	log *slog.Logger,
 ) *Handler {
 	return &Handler{
-		svc:        svc,
-		storage:    storageSvc,
-		extraction: extraction,
-		log:        log.With(logger.Scope("documents.handler")),
+		svc:            svc,
+		storage:        storageSvc,
+		extraction:     extraction,
+		chunking:       chunkingSvc,
+		extractionJobs: extractionJobsSvc,
+		log:            log.With(logger.Scope("documents.handler")),
 	}
 }
 
@@ -206,6 +218,15 @@ func (h *Handler) Create(c echo.Context) error {
 		return err
 	}
 
+	// Trigger processing pipeline for newly created documents with content.
+	// The upload path uses a parsing worker; raw-content documents skip parsing
+	// because content is already stored inline. We still need to set conversion
+	// status, chunk the text, and optionally trigger extraction.
+	if wasCreated && req.Content != "" {
+		autoExtract := c.QueryParam("autoExtract") == "true"
+		h.processNewDocument(c.Request().Context(), user.ProjectID, doc.ID, autoExtract)
+	}
+
 	// Return 201 for new document, 200 for deduplicated existing document
 	status := http.StatusCreated
 	if !wasCreated {
@@ -213,6 +234,36 @@ func (h *Handler) Create(c echo.Context) error {
 	}
 
 	return c.JSON(status, doc)
+}
+
+// processNewDocument triggers the post-create pipeline for raw-content documents:
+// set conversion status → recreate chunks → optionally trigger extraction.
+// Errors are logged but not returned — the document creation already succeeded.
+func (h *Handler) processNewDocument(ctx context.Context, projectID, documentID string, autoExtract bool) {
+	if err := h.svc.MarkConversionCompleted(ctx, documentID); err != nil {
+		h.log.Warn("failed to mark conversion completed",
+			slog.String("document_id", documentID),
+			logger.Error(err))
+		return
+	}
+
+	if h.chunking == nil {
+		return
+	}
+	if err := h.chunking.RecreateChunks(ctx, projectID, documentID); err != nil {
+		h.log.Warn("failed to recreate chunks for raw-content document",
+			slog.String("document_id", documentID),
+			logger.Error(err))
+	}
+
+	if !autoExtract || h.extractionJobs == nil {
+		return
+	}
+	if err := h.extractionJobs.TriggerForDocument(ctx, projectID, documentID); err != nil {
+		h.log.Warn("failed to trigger extraction for raw-content document",
+			slog.String("document_id", documentID),
+			logger.Error(err))
+	}
 }
 
 // Delete handles DELETE /api/documents/:id

@@ -132,13 +132,15 @@ func (h *MCPToolHandler) ExecuteCreateAgentDefinition(ctx context.Context, proje
 	}
 
 	def := &AgentDefinition{
-		ProjectID:  projectID,
-		Name:       name,
-		FlowType:   flowType,
-		Visibility: visibility,
-		IsDefault:  isDefault,
-		Tools:      tools,
-		Config:     config,
+		ProjectID:   projectID,
+		Name:        name,
+		FlowType:    flowType,
+		Visibility:  visibility,
+		IsDefault:   isDefault,
+		Tools:       tools,
+		Config:      config,
+		Skills:      []string{},
+		BannedTools: []string{},
 	}
 
 	// Optional fields

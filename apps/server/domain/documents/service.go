@@ -437,6 +437,11 @@ func (s *Service) MarkConversionNotRequired(ctx context.Context, documentID stri
 	return s.repo.UpdateConversionStatus(ctx, documentID, "not_required", nil)
 }
 
+// MarkConversionCompleted marks a document's conversion as completed
+func (s *Service) MarkConversionCompleted(ctx context.Context, documentID string) error {
+	return s.repo.UpdateConversionStatus(ctx, documentID, "completed", nil)
+}
+
 // GetExtractionSummary returns the extraction summary for the most recently completed extraction job
 func (s *Service) GetExtractionSummary(ctx context.Context, projectID, documentID string) (*ExtractionSummary, error) {
 	summary, err := s.repo.GetExtractionSummary(ctx, projectID, documentID)
