@@ -73,6 +73,15 @@ type Config struct {
 	// RetrievalTraceCleanupInterval is the fallback interval used when the cron
 	// schedule is unset or invalid. Default: 1h.
 	RetrievalTraceCleanupInterval time.Duration
+
+	// ProjectDeletionSweepInterval is the interval for hard-purging projects whose
+	// deletion grace period has elapsed. Set via PROJECT_DELETION_SWEEP_INTERVAL
+	// as a Go duration string (e.g. "1m", "90s"). Default: 1 minute.
+	ProjectDeletionSweepInterval time.Duration
+
+	// ProjectDeletionSweepSchedule is the cron schedule override for the project
+	// deletion sweep. Empty string means use the interval.
+	ProjectDeletionSweepSchedule string
 }
 
 // NewConfig creates a new Config from environment variables
@@ -100,6 +109,10 @@ func NewConfig() *Config {
 		RetrievalTraceRetention:       getEnvDuration("SEARCH_TRACE_RETENTION", 720*time.Hour),
 		RetrievalTraceCleanupSchedule: getEnvString("RETRIEVAL_TRACE_CLEANUP_SCHEDULE", "0 0 4 * * *"),
 		RetrievalTraceCleanupInterval: getEnvDuration("RETRIEVAL_TRACE_CLEANUP_INTERVAL", time.Hour),
+		// Project deletion sweep: a Go duration string (e.g. "1m"), consistent
+		// with PROJECT_DELETION_GRACE_PERIOD; default 1 minute.
+		ProjectDeletionSweepInterval: getEnvDurationString("PROJECT_DELETION_SWEEP_INTERVAL", time.Minute),
+		ProjectDeletionSweepSchedule: getEnvString("PROJECT_DELETION_SWEEP_SCHEDULE", ""),
 	}
 }
 
@@ -128,6 +141,17 @@ func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
 	if val := os.Getenv(key); val != "" {
 		if ms, err := strconv.Atoi(val); err == nil {
 			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return defaultVal
+}
+
+// getEnvDurationString returns a duration parsed from a Go duration string
+// (e.g. "1m", "90s"). Empty or invalid values return defaultVal.
+func getEnvDurationString(key string, defaultVal time.Duration) time.Duration {
+	if val := os.Getenv(key); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			return d
 		}
 	}
 	return defaultVal

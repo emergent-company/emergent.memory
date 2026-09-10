@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -30,11 +31,12 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 
 // ListParams defines parameters for listing projects
 type ListParams struct {
-	UserID       string
-	OrgID        string // Optional filter by org
-	ProjectID    string // Optional filter by specific project (for API token scope)
-	IncludeStats bool   // Whether to include aggregate statistics
-	Limit        int
+	UserID         string
+	OrgID          string // Optional filter by org
+	ProjectID      string // Optional filter by specific project (for API token scope)
+	IncludeStats   bool   // Whether to include aggregate statistics
+	IncludePending bool   // Whether to include projects pending deletion
+	Limit          int
 }
 
 // projectWithStats is used internally for scanning queries with stats
@@ -76,8 +78,15 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Project, er
 		ModelTableExpr("kb.projects AS p").
 		Join("INNER JOIN kb.project_memberships AS pm ON pm.project_id = p.id").
 		Where("pm.user_id = ?", params.UserID).
-		Where("p.deleted_at IS NULL").
 		Order("p.created_at DESC")
+
+	if params.IncludePending {
+		// Pending-deletion projects retain deleted_at but stay visible while the
+		// deletion grace period is active so they can be restored.
+		query = query.Where("(p.deleted_at IS NULL OR p.deletion_scheduled_for IS NOT NULL)")
+	} else {
+		query = query.Where("p.deleted_at IS NULL")
+	}
 
 	if params.IncludeStats {
 		query = query.
@@ -358,20 +367,23 @@ func (r *Repository) TransferProject(ctx context.Context, projectID, destOrgID s
 	return nil
 }
 
-// MarkDeleted sets deleted_at and deleted_by on a project so it is immediately
-// hidden from listings. The actual row deletion (hard delete) happens later in
-// a background goroutine.
-func (r *Repository) MarkDeleted(ctx context.Context, id string, userID string) (bool, error) {
+// MarkPendingDeletion synchronously marks a project as pending deletion by
+// setting deleted_at/deleted_by and scheduling the hard purge at scheduleAt.
+// It only matches rows that are not already deleted or scheduled, so repeated
+// calls are safe (they affect zero rows).
+func (r *Repository) MarkPendingDeletion(ctx context.Context, id string, userID string, scheduleAt time.Time) (bool, error) {
 	result, err := r.db.NewUpdate().
 		Model((*Project)(nil)).
 		Set("deleted_at = now()").
 		Set("deleted_by = ?", userID).
+		Set("deletion_scheduled_for = ?", scheduleAt).
 		Where("id = ?", id).
+		Where("deletion_scheduled_for IS NULL").
 		Where("deleted_at IS NULL").
 		Exec(ctx)
 
 	if err != nil {
-		r.log.Error("failed to mark project as deleted", logger.Error(err), slog.String("id", id))
+		r.log.Error("failed to mark project pending deletion", logger.Error(err), slog.String("id", id))
 		return false, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -379,15 +391,45 @@ func (r *Repository) MarkDeleted(ctx context.Context, id string, userID string) 
 	return rowsAffected > 0, nil
 }
 
-// Delete permanently deletes a project (hard delete).
-func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.NewDelete().
-		Model((*Project)(nil)).
+// GetDeletionState returns the deletion scheduling state of a project,
+// including soft-deleted/pending rows. found is false when the row does not exist.
+func (r *Repository) GetDeletionState(ctx context.Context, id string) (scheduledFor *time.Time, deletedAt *time.Time, found bool, err error) {
+	var state struct {
+		DeletionScheduledFor *time.Time `bun:"deletion_scheduled_for"`
+		DeletedAt            *time.Time `bun:"deleted_at"`
+	}
+
+	err = r.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("deletion_scheduled_for", "deleted_at").
 		Where("id = ?", id).
+		Scan(ctx, &state)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil, false, nil
+		}
+		r.log.Error("failed to get project deletion state", logger.Error(err), slog.String("id", id))
+		return nil, nil, false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return state.DeletionScheduledFor, state.DeletedAt, true, nil
+}
+
+// CancelPendingDeletion restores a project from its deletion grace period,
+// clearing deleted_at/deleted_by/deletion_scheduled_for. Returns false when the
+// project was not pending deletion.
+func (r *Repository) CancelPendingDeletion(ctx context.Context, id string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*Project)(nil)).
+		Set("deleted_at = NULL").
+		Set("deleted_by = NULL").
+		Set("deletion_scheduled_for = NULL").
+		Where("id = ?", id).
+		Where("deletion_scheduled_for IS NOT NULL").
 		Exec(ctx)
 
 	if err != nil {
-		r.log.Error("failed to delete project", logger.Error(err), slog.String("id", id))
+		r.log.Error("failed to cancel pending project deletion", logger.Error(err), slog.String("id", id))
 		return false, apperror.ErrDatabase.WithInternal(err)
 	}
 
