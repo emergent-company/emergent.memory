@@ -117,6 +117,37 @@ func TestShareInstanceStoreCRUD(t *testing.T) {
 	assert.Nil(t, afterRevoke, "revoked instance no longer resolves by token")
 }
 
+// TestShareInstanceStoreNullAllowlistRoundTrip verifies a null allowlist (both
+// columns NULL) round-trips as unrestricted, distinct from an empty allowlist.
+func TestShareInstanceStoreNullAllowlistRoundTrip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database integration test in short mode")
+	}
+	db := connectTestDB(t)
+	requireShareInstanceTable(t, db)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+
+	tokenID := seedShareUserAndToken(t, db, projectID, "null-"+uuid.NewString())
+	store := newShareInstanceStore(db)
+
+	inst := &MCPShareInstance{
+		ID:        uuid.NewString(),
+		ProjectID: projectID,
+		Name:      "Unrestricted " + uuid.NewString(),
+		TokenID:   tokenID,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, store.Create(ctx, inst))
+
+	got, err := store.GetByID(ctx, projectID, inst.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Empty(t, got.AllowedTools, "null tool allowlist stays unrestricted")
+	assert.Empty(t, got.AllowedAgents, "null agent allowlist stays unrestricted")
+}
+
 // TestListShareInstancesLegacyDB verifies bound instances surface through the
 // service layer with the bound token ID excluded from legacy entries.
 func TestListShareInstancesLegacyDB(t *testing.T) {

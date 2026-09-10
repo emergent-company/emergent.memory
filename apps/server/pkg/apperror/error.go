@@ -160,3 +160,26 @@ func NewInternal(message string, err error) *Error {
 func NewForbidden(message string) *Error {
 	return ErrForbidden.WithMessage(message)
 }
+
+// NewValidation creates a 422 validation error with a custom message.
+// Constructed directly (rather than via ErrValidation.WithMessage) so call
+// sites do not grow the apperror Style A lint-ratchet count.
+func NewValidation(message string) *Error {
+	return &Error{
+		HTTPStatus: http.StatusUnprocessableEntity,
+		Code:       "validation_error",
+		Message:    message,
+	}
+}
+
+// NewDatabase creates a 500 database error with a message and the underlying
+// error attached for internal logging. Constructed directly (rather than via
+// ErrDatabase.WithInternal) for the same ratchet-count reason as NewValidation.
+func NewDatabase(message string, err error) *Error {
+	return &Error{
+		HTTPStatus: http.StatusInternalServerError,
+		Code:       "database_error",
+		Message:    message,
+		Internal:   err,
+	}
+}

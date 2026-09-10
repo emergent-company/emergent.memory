@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -333,4 +334,154 @@ func assertAppError(t *testing.T, err error, status int) {
 	var appErr *apperror.Error
 	require.ErrorAs(t, err, &appErr)
 	assert.Equal(t, status, appErr.HTTPStatus)
+}
+
+// ============================================================================
+// Security hardening: scope guard, fail-closed resolution, content gating
+// ============================================================================
+
+// TestShareAdminScopeGuardRejectsShareToken proves the guard applied in
+// routes.go to /mcp/shares*, /mcp/tools: a narrowly-scoped MCP share token
+// (which never carries "admin") is forbidden, while a Zitadel/OAuth session and
+// an admin-scoped API token still pass.
+func TestShareAdminScopeGuardRejectsShareToken(t *testing.T) {
+	m := &auth.Middleware{}
+	guard := m.RequireAPITokenScopes("admin")
+	e := echo.New()
+
+	newCtx := func(user *auth.AuthUser) echo.Context {
+		c := e.NewContext(httptest.NewRequest(http.MethodPost, "/api/projects/p/mcp/shares", nil), httptest.NewRecorder())
+		c.Set(string(auth.UserContextKey), user)
+		return c
+	}
+
+	t.Run("share token is forbidden", func(t *testing.T) {
+		shareToken := &auth.AuthUser{
+			ID: "u", APITokenID: "tok-1",
+			Scopes: []string{"data:read", "schema:read", "agents:read", "projects:read", "chat:use"},
+		}
+		nextCalled := false
+		err := guard(func(echo.Context) error { nextCalled = true; return nil })(newCtx(shareToken))
+		require.Error(t, err)
+		he, ok := err.(*echo.HTTPError)
+		require.True(t, ok, "expected echo.HTTPError, got %T", err)
+		assert.Equal(t, http.StatusForbidden, he.Code)
+		assert.False(t, nextCalled, "share token must not reach the share-admin handler")
+	})
+
+	t.Run("admin-scoped token passes", func(t *testing.T) {
+		adminToken := &auth.AuthUser{ID: "u", APITokenID: "tok-admin", Scopes: []string{"admin"}}
+		nextCalled := false
+		err := guard(func(echo.Context) error { nextCalled = true; return nil })(newCtx(adminToken))
+		require.NoError(t, err)
+		assert.True(t, nextCalled)
+	})
+
+	t.Run("oauth session bypasses token scope check", func(t *testing.T) {
+		session := &auth.AuthUser{ID: "u", APITokenID: ""}
+		nextCalled := false
+		err := guard(func(echo.Context) error { nextCalled = true; return nil })(newCtx(session))
+		require.NoError(t, err)
+		assert.True(t, nextCalled)
+	})
+}
+
+// TestHandlerResourcesAndPromptsDeniedForRestrictedInstance proves resources
+// and prompts fail closed for a share instance with an active allowlist.
+func TestHandlerResourcesAndPromptsDeniedForRestrictedInstance(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj-1", Name: "Team A", TokenID: "tok-1",
+		AllowedTools: []string{"entity-search"},
+	}
+	h := newTestHandler(store, &fakeTokenSvc{}, &fakeAgentDir{})
+	user := &auth.AuthUser{ID: "u", ProjectID: "proj-1", APITokenID: "tok-1", Scopes: []string{"data:read", "schema:read"}}
+	e := echo.New()
+
+	for _, method := range []string{"resources/list", "resources/read", "prompts/list", "prompts/get"} {
+		t.Run(method, func(t *testing.T) {
+			req := Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: method}
+			c := e.NewContext(httptest.NewRequest(http.MethodPost, "/api/mcp/rpc", nil), httptest.NewRecorder())
+			c.Set(string(auth.UserContextKey), user)
+			resp := h.routeMethod(c, &req, user)
+			require.NotNil(t, resp.Error, method)
+			assert.Equal(t, ErrCodeForbidden, resp.Error.Code, method)
+		})
+	}
+
+	// A null-allowlist (unrestricted/legacy) instance keeps access.
+	store.byID["i2"] = &MCPShareInstance{ID: "i2", ProjectID: "proj-1", Name: "All", TokenID: "tok-2"}
+	legacyUser := &auth.AuthUser{ID: "u", ProjectID: "proj-1", APITokenID: "tok-2", Scopes: []string{"data:read", "schema:read"}}
+	req := Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "resources/list"}
+	c := e.NewContext(httptest.NewRequest(http.MethodPost, "/api/mcp/rpc", nil), httptest.NewRecorder())
+	c.Set(string(auth.UserContextKey), legacyUser)
+	resp := h.handleResourcesList(c, &req, legacyUser)
+	require.Nil(t, resp.Error)
+}
+
+// TestHandlerToolsCallFailsClosedOnResolveError proves a storage error while
+// resolving the allowlist denies the call instead of executing the tool.
+func TestHandlerToolsCallFailsClosedOnResolveError(t *testing.T) {
+	store := newFakeShareStore()
+	store.getByTokenErr = errors.New("db down")
+	h := newTestHandler(store, &fakeTokenSvc{}, &fakeAgentDir{})
+	token := "api-key"
+	h.sessions[token] = &Session{Initialized: true, ProjectID: "proj-1"}
+
+	user := &auth.AuthUser{ID: "u", ProjectID: "proj-1", APITokenID: "tok-1", Scopes: []string{"data:read"}}
+	params, _ := json.Marshal(ToolsCallParams{Name: "entity-search"})
+	req := Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call", Params: params}
+
+	e := echo.New()
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/mcp/rpc", nil)
+	httpReq.Header.Set("X-API-Key", token)
+	c := e.NewContext(httpReq, httptest.NewRecorder())
+	c.Set(string(auth.UserContextKey), user)
+
+	resp := h.handleToolsCall(c, &req, user)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+}
+
+// TestHandlerToolsListFailsClosedOnResolveError proves a resolution error does
+// not fall back to listing the full scope-permitted catalog.
+func TestHandlerToolsListFailsClosedOnResolveError(t *testing.T) {
+	store := newFakeShareStore()
+	store.getByTokenErr = errors.New("db down")
+	h := newTestHandler(store, &fakeTokenSvc{}, &fakeAgentDir{})
+	token := "api-key"
+	h.sessions[token] = &Session{Initialized: true, ProjectID: "proj-1"}
+
+	user := &auth.AuthUser{ID: "u", ProjectID: "proj-1", APITokenID: "tok-1", Scopes: []string{"data:read"}}
+	req := Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/list"}
+
+	e := echo.New()
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/mcp/rpc", nil)
+	httpReq.Header.Set("X-API-Key", token)
+	c := e.NewContext(httpReq, httptest.NewRecorder())
+	c.Set(string(auth.UserContextKey), user)
+
+	resp := h.handleToolsList(c, &req, user)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+	assert.Nil(t, resp.Result)
+}
+
+// TestStreamablePromptsDeniedForRestrictedInstance proves the streamable
+// transport applies the same content gate.
+func TestStreamablePromptsDeniedForRestrictedInstance(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj-1", Name: "Team A", TokenID: "tok-1",
+		AllowedTools: []string{"entity-search"},
+	}
+	h := NewStreamableHTTPHandler(&Service{shareInstances: store, shareTokens: &fakeTokenSvc{}, agentDir: &fakeAgentDir{}}, slog.Default())
+	session := &MCPSession{ID: "s1", ProjectID: "proj-1", Initialized: true}
+	user := &auth.AuthUser{ID: "u", ProjectID: "proj-1", APITokenID: "tok-1", Scopes: []string{"data:read"}}
+
+	e := echo.New()
+	c := e.NewContext(httptest.NewRequest(http.MethodPost, "/api/mcp", nil), httptest.NewRecorder())
+	resp := h.handlePromptsList(c, &Request{JSONRPC: "2.0", ID: json.RawMessage(`1`)}, session, user)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeForbidden, resp.Error.Code)
 }

@@ -40,12 +40,12 @@ func (h *Handler) HandleCreateShareInstance(c echo.Context) error {
 	user := auth.MustGetUser(c)
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 
 	var req CreateShareInstanceRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	resp, err := h.svc.CreateShareInstance(c.Request().Context(), projectID, user.ID, requestBaseURL(c), req)
@@ -60,7 +60,7 @@ func (h *Handler) HandleListShareInstances(c echo.Context) error {
 	user := auth.MustGetUser(c)
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 	resp, err := h.svc.ListShareInstances(c.Request().Context(), projectID, user.ID)
 	if err != nil {
@@ -75,7 +75,7 @@ func (h *Handler) HandleGetShareInstance(c echo.Context) error {
 	projectID := c.Param("projectId")
 	id := c.Param("id")
 	if projectID == "" || id == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and id are required")
+		return apperror.NewBadRequest("projectId and id are required")
 	}
 	dto, err := h.svc.GetShareInstance(c.Request().Context(), projectID, user.ID, id)
 	if err != nil {
@@ -90,12 +90,12 @@ func (h *Handler) HandleUpdateShareInstance(c echo.Context) error {
 	projectID := c.Param("projectId")
 	id := c.Param("id")
 	if projectID == "" || id == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and id are required")
+		return apperror.NewBadRequest("projectId and id are required")
 	}
 
 	var req UpdateShareInstanceRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	dto, err := h.svc.UpdateShareInstance(c.Request().Context(), projectID, user.ID, id, req)
@@ -111,7 +111,7 @@ func (h *Handler) HandleRevokeShareInstance(c echo.Context) error {
 	projectID := c.Param("projectId")
 	id := c.Param("id")
 	if projectID == "" || id == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and id are required")
+		return apperror.NewBadRequest("projectId and id are required")
 	}
 	if err := h.svc.RevokeShareInstance(c.Request().Context(), projectID, user.ID, id); err != nil {
 		return err
@@ -125,7 +125,7 @@ func (h *Handler) HandleRotateShareInstance(c echo.Context) error {
 	projectID := c.Param("projectId")
 	id := c.Param("id")
 	if projectID == "" || id == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and id are required")
+		return apperror.NewBadRequest("projectId and id are required")
 	}
 	resp, err := h.svc.RotateShareInstance(c.Request().Context(), projectID, user.ID, id, requestBaseURL(c))
 	if err != nil {
@@ -149,7 +149,7 @@ func (h *Handler) HandleListToolCatalog(c echo.Context) error {
 	user := auth.MustGetUser(c)
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 	resp, err := h.svc.ListToolCatalog(c.Request().Context(), projectID, user.ID)
 	if err != nil {

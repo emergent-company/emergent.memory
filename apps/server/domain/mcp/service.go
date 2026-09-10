@@ -1667,17 +1667,20 @@ func (s *Service) GetPromptDefinitions() []PromptDefinition {
 
 // ExecuteTool executes an MCP tool and returns the result
 func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
-	// Handle hidden built-in tools first — these are always available, never listed,
-	// and cannot be blocked by scope filters or tool whitelists.
-	if toolName == "set_session_title" {
-		return s.executeSetSessionTitle(ctx, projectID, args)
-	}
 	// Defense in depth: enforce the share-instance tool allowlist here as well as
-	// in the transports. This covers callers that do not pass through a transport
-	// pre-check — notably the ADK ToolPool during an agent run, which executes
-	// tools with the agent's context.
+	// in the transports, BEFORE any tool-specific dispatch. This covers callers
+	// that do not pass through a transport pre-check — notably the ADK ToolPool
+	// during an agent run, which executes tools with the agent's context — and
+	// includes hidden built-ins such as set_session_title, which must not be
+	// reachable outside a restricted instance's allowlist.
 	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
 		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+	}
+	// Handle hidden built-in tools — these are always available, never listed,
+	// and cannot be blocked by scope filters or tool whitelists (subject to the
+	// instance allowlist check above).
+	if toolName == "set_session_title" {
+		return s.executeSetSessionTitle(ctx, projectID, args)
 	}
 	switch toolName {
 	case "project-get":
