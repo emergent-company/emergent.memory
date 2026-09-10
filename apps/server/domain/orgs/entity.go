@@ -54,6 +54,12 @@ type CreateOrgRequest struct {
 	Name string `json:"name" validate:"required,min=1,max=120"`
 }
 
+// UpdateOrgRequest is the request body for updating an organization. Currently
+// name-only: the Org entity has no description/logo column.
+type UpdateOrgRequest struct {
+	Name string `json:"name" validate:"required,min=1,max=120"`
+}
+
 // ToDTO converts an Org entity to OrgDTO
 func (o *Org) ToDTO() OrgDTO {
 	return OrgDTO{

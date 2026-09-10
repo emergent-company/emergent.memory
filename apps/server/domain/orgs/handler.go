@@ -92,6 +92,37 @@ func (h *Handler) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, org)
 }
 
+// Update renames an organization by ID
+// @Summary      Update organization
+// @Description  Updates an organization's name (name-only; description/logo deferred pending a DB column)
+// @Tags         organizations
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Param        request body UpdateOrgRequest true "Organization update request"
+// @Success      200 {object} OrgDTO "Organization updated"
+// @Failure      400 {object} apperror.Error "Invalid request body or name"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Organization not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id} [patch]
+// @Security     bearerAuth
+func (h *Handler) Update(c echo.Context) error {
+	id := c.Param("id")
+
+	var req UpdateOrgRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	org, err := h.svc.Update(c.Request().Context(), id, req.Name)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, org)
+}
+
 // Delete deletes an organization by ID
 // @Summary      Delete organization
 // @Description  Permanently deletes an organization by ID

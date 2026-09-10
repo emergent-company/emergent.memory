@@ -18,6 +18,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Get organization by ID (authenticated, no specific scope required)
 	g.GET("/:id", h.Get)
 
+	// Update organization (rename; authenticated)
+	g.PATCH("/:id", h.Update)
+
 	// Create organization (authenticated)
 	g.POST("", h.Create)
 

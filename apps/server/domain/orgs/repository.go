@@ -71,6 +71,31 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*Org, error) {
 	return &org, nil
 }
 
+// UpdateName renames an organization, bumping updated_at. Soft-deleted rows are
+// excluded, so renaming a deleted (or unknown) org reports not found.
+func (r *Repository) UpdateName(ctx context.Context, id, name string) (*Org, error) {
+	org := &Org{}
+
+	err := r.db.NewUpdate().
+		Model(org).
+		Set("name = ?", name).
+		Set("updated_at = NOW()").
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Returning("*").
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, apperror.ErrNotFound.WithMessage("Organization not found")
+		}
+		r.log.Error("failed to update organization name", logger.Error(err), slog.String("id", id))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return org, nil
+}
+
 // CountUserMemberships returns the number of organizations a user is a member of
 func (r *Repository) CountUserMemberships(ctx context.Context, userID string) (int, error) {
 	count, err := r.db.NewSelect().

@@ -18,9 +18,29 @@ const (
 	MaxOrgNameLength = 120
 )
 
+// orgRepository is the persistence surface the service depends on. Declared as
+// an interface so unit tests can substitute an in-memory double (the concrete
+// *Repository is still what fx provides through ServiceParams).
+type orgRepository interface {
+	List(ctx context.Context, userID string) ([]OrgDTO, error)
+	GetByID(ctx context.Context, id string) (*Org, error)
+	Create(ctx context.Context, name, userID string) (*Org, error)
+	UpdateName(ctx context.Context, id, name string) (*Org, error)
+	Delete(ctx context.Context, id string) (bool, error)
+	ListMembers(ctx context.Context, orgID string) ([]OrgMemberDTO, error)
+	CountUserMemberships(ctx context.Context, userID string) (int, error)
+	IsUserMember(ctx context.Context, orgID, userID string) (bool, error)
+	FindOrgToolSettings(ctx context.Context, orgID string) ([]OrgToolSetting, error)
+	UpsertOrgToolSetting(ctx context.Context, setting *OrgToolSetting) (*OrgToolSetting, error)
+	DeleteOrgToolSetting(ctx context.Context, orgID, toolName string) (bool, error)
+}
+
+// Compile-time check that the concrete repository satisfies the service port.
+var _ orgRepository = (*Repository)(nil)
+
 // Service handles business logic for organizations
 type Service struct {
-	repo                *Repository
+	repo                orgRepository
 	log                 *slog.Logger
 	toolPoolInvalidator ToolPoolInvalidator
 }
@@ -63,15 +83,25 @@ func (s *Service) GetByID(ctx context.Context, id string) (*OrgDTO, error) {
 	return &dto, nil
 }
 
+// normalizeOrgName trims and validates an organization name, mirroring the
+// min=1/max=120 constraint expressed on the request DTOs.
+func normalizeOrgName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", apperror.ErrBadRequest.WithMessage("Organization name is required")
+	}
+	if len(name) > MaxOrgNameLength {
+		return "", apperror.ErrBadRequest.WithMessage("Organization name must be at most 120 characters")
+	}
+	return name, nil
+}
+
 // Create creates a new organization
 func (s *Service) Create(ctx context.Context, name string, userID string) (*OrgDTO, error) {
 	// Validate and sanitize name
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, apperror.ErrBadRequest.WithMessage("Organization name is required")
-	}
-	if len(name) > MaxOrgNameLength {
-		return nil, apperror.ErrBadRequest.WithMessage("Organization name must be at most 120 characters")
+	name, err := normalizeOrgName(name)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check user's organization limit
@@ -95,6 +125,27 @@ func (s *Service) Create(ctx context.Context, name string, userID string) (*OrgD
 		slog.String("orgID", org.ID),
 		slog.String("name", org.Name),
 		slog.String("userID", userID))
+
+	dto := org.ToDTO()
+	return &dto, nil
+}
+
+// Update renames an organization and returns the updated DTO. Unknown (or
+// soft-deleted) orgs surface the repository's not-found error unchanged.
+func (s *Service) Update(ctx context.Context, id, name string) (*OrgDTO, error) {
+	name, err := normalizeOrgName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	org, err := s.repo.UpdateName(ctx, id, name)
+	if err != nil {
+		return nil, err
+	}
+
+	s.log.Info("organization renamed",
+		slog.String("orgID", org.ID),
+		slog.String("name", org.Name))
 
 	dto := org.ToDTO()
 	return &dto, nil
