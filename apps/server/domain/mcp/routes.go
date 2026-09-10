@@ -40,4 +40,26 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	pg.Use(authMiddleware.RequireAuth())
 	pg.POST("/share", h.HandleShareMCPAccess)
 	pg.GET("/bundle", h.HandleGenerateMCPBundle)
+
+	// Named MCP share instances (add-mcp-share-instances).
+	//
+	// These endpoints are project-admin operations, but handlers resolve the
+	// role of the API-token OWNER (always a project admin), so without an
+	// explicit scope guard a narrowly-scoped MCP share token could mint, rotate,
+	// or delete sibling shares — escalating read access to write and stealing
+	// other instances' rotated tokens. Share tokens derive their scopes solely
+	// from their tool allowlist plus projects:read and never carry "admin", so
+	// RequireAPITokenScopes("admin") blocks that token-chaining path while
+	// leaving Zitadel/OAuth sessions unaffected.
+	adminGroup := pg.Group("")
+	adminGroup.Use(authMiddleware.RequireAPITokenScopes("admin"))
+	adminGroup.POST("/shares", h.HandleCreateShareInstance)
+	adminGroup.GET("/shares", h.HandleListShareInstances)
+	adminGroup.GET("/shares/:id", h.HandleGetShareInstance)
+	adminGroup.PATCH("/shares/:id", h.HandleUpdateShareInstance)
+	adminGroup.DELETE("/shares/:id", h.HandleRevokeShareInstance)
+	adminGroup.POST("/shares/:id/rotate", h.HandleRotateShareInstance)
+
+	// Includable tool catalog for the allowlist picker
+	adminGroup.GET("/tools", h.HandleListToolCatalog)
 }

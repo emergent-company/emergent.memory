@@ -124,6 +124,13 @@ type Service struct {
 
 	// Server port for internal query calls (query_knowledge tool)
 	serverPort int
+
+	// MCP share-instance persistence, credential lifecycle, and agent
+	// directory. Defaults are derived from DB/ApitokenSvc in NewService but are
+	// overridable in tests.
+	shareInstances shareInstanceStore
+	shareTokens    shareTokenService
+	agentDir       agentDirectory
 }
 
 // ServiceParams bundles optional dependencies for NewService.
@@ -205,6 +212,9 @@ func NewService(p ServiceParams) *Service {
 		discoverySvc:            p.DiscoverySvc,
 		docSignalsReader:        p.DocSignalsReader,
 		relaySvc:                p.RelaySvc,
+		shareInstances:          shareInstanceOrNil(p.DB),
+		shareTokens:             p.ApitokenSvc,
+		agentDir:                agentDirectoryOrNil(p.DB),
 	}
 }
 
@@ -1657,8 +1667,18 @@ func (s *Service) GetPromptDefinitions() []PromptDefinition {
 
 // ExecuteTool executes an MCP tool and returns the result
 func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
-	// Handle hidden built-in tools first — these are always available, never listed,
-	// and cannot be blocked by scope filters or tool whitelists.
+	// Defense in depth: enforce the share-instance tool allowlist here as well as
+	// in the transports, BEFORE any tool-specific dispatch. This covers callers
+	// that do not pass through a transport pre-check — notably the ADK ToolPool
+	// during an agent run, which executes tools with the agent's context — and
+	// includes hidden built-ins such as set_session_title, which must not be
+	// reachable outside a restricted instance's allowlist.
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+	}
+	// Handle hidden built-in tools — these are always available, never listed,
+	// and cannot be blocked by scope filters or tool whitelists (subject to the
+	// instance allowlist check above).
 	if toolName == "set_session_title" {
 		return s.executeSetSessionTitle(ctx, projectID, args)
 	}
@@ -4674,8 +4694,30 @@ Let's begin by locating the entity.`, entityName, filterNote, depth,
 	}, nil
 }
 
-// delegateAgentTool dispatches agent-related tool calls to the AgentToolHandler.
+// delegateAgentTool dispatches agent-related tool calls to the AgentToolHandler,
+// applying the share-instance agent allowlist (when present) both before
+// execution and to discovery results.
 func (s *Service) delegateAgentTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
+	scope := InstanceScopeFromContext(ctx)
+	if scope != nil && scope.HasAgentAllowlist {
+		id, _ := agentReference(args)
+		if s.agentDeniedByAllowlist(ctx, projectID, toolName, args, scope) {
+			return agentDenialResult(id), nil
+		}
+	}
+
+	res, err := s.delegateAgentToolInner(ctx, projectID, toolName, args)
+	if err != nil {
+		return res, err
+	}
+	if scope != nil && scope.HasAgentAllowlist {
+		res = s.filterAgentResult(ctx, projectID, toolName, res, scope)
+	}
+	return res, nil
+}
+
+// delegateAgentToolInner is the unguarded dispatch to the AgentToolHandler.
+func (s *Service) delegateAgentToolInner(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
 	if s.agentToolHandler == nil {
 		return nil, fmt.Errorf("agent tools not available: handler not configured")
 	}

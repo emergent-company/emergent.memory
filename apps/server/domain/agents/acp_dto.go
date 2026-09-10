@@ -2,9 +2,9 @@ package agents
 
 import (
 	"encoding/json"
-	"regexp"
-	"strings"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 )
 
 // --- ACP Status Constants ---
@@ -218,25 +218,11 @@ type ACPCreateSessionRequest struct {
 
 // --- Conversion Functions ---
 
-// acpSlugRegexp matches any non-alphanumeric, non-hyphen character.
-var acpSlugRegexp = regexp.MustCompile(`[^a-z0-9-]`)
-
-// acpMultiHyphenRegexp matches consecutive hyphens.
-var acpMultiHyphenRegexp = regexp.MustCompile(`-{2,}`)
-
-// ACPSlugFromName normalizes a free-form agent name to an RFC 1123 DNS label:
-// lowercase, replace non-alphanumeric with hyphens, collapse consecutive hyphens,
-// trim leading/trailing hyphens, truncate to 63 characters.
+// ACPSlugFromName normalizes a free-form agent name to an RFC 1123 DNS label.
+// Implementation lives in pkg/acpslug so the MCP domain can reuse it without
+// importing agents.
 func ACPSlugFromName(name string) string {
-	s := strings.ToLower(name)
-	s = acpSlugRegexp.ReplaceAllString(s, "-")
-	s = acpMultiHyphenRegexp.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if len(s) > 63 {
-		s = s[:63]
-		s = strings.TrimRight(s, "-")
-	}
-	return s
+	return acpslug.FromName(name)
 }
 
 // MapMemoryStatusToACP maps a Memory AgentRunStatus to the ACP status string.

@@ -255,6 +255,14 @@ func (h *Handler) handleToolsList(c echo.Context, req *Request, user *auth.AuthU
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
 	tools = FilterToolsForScopes(tools, user.Scopes)
+	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if serr != nil {
+		// Fail closed: never list the full scope-permitted catalog when the
+		// share-instance allowlist could not be resolved.
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to resolve share instance scope", nil)
+	}
+	tools = FilterToolsForInstance(tools, scope)
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 
@@ -303,6 +311,18 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 		}
 	}
 
+	// Enforce the share-instance tool allowlist (deny-by-default) before any side effect.
+	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if serr != nil {
+		// Fail closed: an unresolved allowlist must never execute the tool.
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to resolve share instance scope", nil)
+	}
+	if InstanceDeniesTool(scope, params.Name) {
+		return NewErrorResponse(req.ID, ErrCodeForbidden,
+			"Tool not allowed: "+params.Name, nil)
+	}
+
 	// Get project ID: prefer the per-request header (auth-middleware-resolved) so that
 	// callers with org-level tokens can target different projects on the same session.
 	// Fall back to the session value set at initialize time only when the header is absent.
@@ -322,7 +342,8 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 	}
 
 	// Execute tool
-	result, err := h.svc.ExecuteTool(c.Request().Context(), projectID, params.Name, params.Arguments)
+	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	result, err := h.svc.ExecuteTool(execCtx, projectID, params.Name, params.Arguments)
 	if err != nil {
 		h.log.Error("tool execution failed",
 			slog.String("tool", params.Name),
@@ -373,7 +394,27 @@ func requiresProject(toolName string) bool {
 	}
 }
 
+// denyInstanceContent resolves the share-instance scope for the request and
+// returns a JSON-RPC error when the caller is a restricted share instance whose
+// allowlist does not cover MCP resources/prompts. Resolution failures fail
+// closed. A nil return means the request may proceed.
+func (h *Handler) denyInstanceContent(c echo.Context, req *Request, user *auth.AuthUser, kind string) *Response {
+	scope, err := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if err != nil {
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to resolve share instance scope", nil)
+	}
+	if InstanceRestrictsContent(scope) {
+		return NewErrorResponse(req.ID, ErrCodeForbidden,
+			kind+" are not available to this MCP share instance", nil)
+	}
+	return nil
+}
+
 func (h *Handler) handleResourcesList(c echo.Context, req *Request, user *auth.AuthUser) *Response {
+	if resp := h.denyInstanceContent(c, req, user, "Resources"); resp != nil {
+		return resp
+	}
 	resources := h.svc.GetResourceDefinitions()
 	result := ResourcesListResult{Resources: resources}
 
@@ -381,6 +422,9 @@ func (h *Handler) handleResourcesList(c echo.Context, req *Request, user *auth.A
 }
 
 func (h *Handler) handleResourcesRead(c echo.Context, req *Request, user *auth.AuthUser) *Response {
+	if resp := h.denyInstanceContent(c, req, user, "Resources"); resp != nil {
+		return resp
+	}
 	var params ResourceReadParams
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -417,6 +461,9 @@ func (h *Handler) handleResourcesRead(c echo.Context, req *Request, user *auth.A
 }
 
 func (h *Handler) handlePromptsList(c echo.Context, req *Request, user *auth.AuthUser) *Response {
+	if resp := h.denyInstanceContent(c, req, user, "Prompts"); resp != nil {
+		return resp
+	}
 	prompts := h.svc.GetPromptDefinitions()
 	result := PromptsListResult{Prompts: prompts}
 
@@ -424,6 +471,9 @@ func (h *Handler) handlePromptsList(c echo.Context, req *Request, user *auth.Aut
 }
 
 func (h *Handler) handlePromptsGet(c echo.Context, req *Request, user *auth.AuthUser) *Response {
+	if resp := h.denyInstanceContent(c, req, user, "Prompts"); resp != nil {
+		return resp
+	}
 	var params PromptGetParams
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {

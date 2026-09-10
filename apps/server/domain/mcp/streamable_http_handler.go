@@ -418,11 +418,11 @@ func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, ses
 	case "initialize":
 		return h.handleInitialize(c, req, session)
 	case "tools/list":
-		return h.handleToolsList(c, req, session)
+		return h.handleToolsList(c, req, session, user)
 	case "tools/call":
 		return h.handleToolsCall(c, req, session, user)
 	case "prompts/list":
-		return h.handlePromptsList(c, req, session)
+		return h.handlePromptsList(c, req, session, user)
 	case "prompts/get":
 		return h.handlePromptsGet(c, req, session, user)
 	default:
@@ -508,7 +508,7 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 }
 
 // handleToolsList handles tools/list method
-func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, session *MCPSession) *Response {
+func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
 	if !session.Initialized {
 		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
 			"Client must call initialize before tools/list",
@@ -518,6 +518,13 @@ func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, se
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), session.ProjectID)
 	tools = FilterToolsForScopes(tools, session.Scopes)
+	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if serr != nil {
+		// Fail closed on allowlist resolution failure.
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to resolve share instance scope", nil)
+	}
+	tools = FilterToolsForInstance(tools, scope)
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 
@@ -562,6 +569,17 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 		}
 	}
 
+	// Enforce the share-instance tool allowlist (deny-by-default) before any side effect.
+	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if serr != nil {
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to resolve share instance scope", nil)
+	}
+	if InstanceDeniesTool(scope, params.Name) {
+		return NewErrorResponse(req.ID, ErrCodeForbidden,
+			"Tool not allowed: "+params.Name, nil)
+	}
+
 	projectID := session.ProjectID
 	if projectID == "" {
 		projectID = user.ProjectID
@@ -575,7 +593,8 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 	}
 
 	// Execute tool
-	result, err := h.svc.ExecuteTool(c.Request().Context(), projectID, params.Name, params.Arguments)
+	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	result, err := h.svc.ExecuteTool(execCtx, projectID, params.Name, params.Arguments)
 	if err != nil {
 		h.log.Error("tool execution failed",
 			slog.String("tool", params.Name),
@@ -590,13 +609,32 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 	return NewSuccessResponse(req.ID, result)
 }
 
+// denyInstanceContent resolves the share-instance scope and returns a JSON-RPC
+// error when a restricted share instance requests MCP resources/prompts, which
+// are not covered by its allowlists. Resolution failures fail closed.
+func (h *StreamableHTTPHandler) denyInstanceContent(c echo.Context, req *Request, user *auth.AuthUser, kind string) *Response {
+	scope, err := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if err != nil {
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to resolve share instance scope", nil)
+	}
+	if InstanceRestrictsContent(scope) {
+		return NewErrorResponse(req.ID, ErrCodeForbidden,
+			kind+" are not available to this MCP share instance", nil)
+	}
+	return nil
+}
+
 // handlePromptsList handles prompts/list method
-func (h *StreamableHTTPHandler) handlePromptsList(c echo.Context, req *Request, session *MCPSession) *Response {
+func (h *StreamableHTTPHandler) handlePromptsList(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
 	if !session.Initialized {
 		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
 			"Client must call initialize before prompts/list",
 			map[string]string{"hint": "Call initialize method first to establish session"},
 		)
+	}
+	if resp := h.denyInstanceContent(c, req, user, "Prompts"); resp != nil {
+		return resp
 	}
 	prompts := h.svc.GetPromptDefinitions()
 	return NewSuccessResponse(req.ID, PromptsListResult{Prompts: prompts})
@@ -609,6 +647,9 @@ func (h *StreamableHTTPHandler) handlePromptsGet(c echo.Context, req *Request, s
 			"Client must call initialize before prompts/get",
 			map[string]string{"hint": "Call initialize method first to establish session"},
 		)
+	}
+	if resp := h.denyInstanceContent(c, req, user, "Prompts"); resp != nil {
+		return resp
 	}
 	var params PromptGetParams
 	if len(req.Params) > 0 {
