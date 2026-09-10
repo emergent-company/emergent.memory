@@ -486,7 +486,8 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	mcpHandler := mcp.NewHandler(mcpSvc, log, userSvc)
 	mcpSSEHandler := mcp.NewSSEHandler(mcpSvc, mcpHandler, log)
 	mcpStreamableHandler := mcp.NewStreamableHTTPHandler(mcpSvc, log)
-	mcp.RegisterRoutes(e, mcpHandler, mcpSSEHandler, mcpStreamableHandler, authMiddleware)
+	mcpAgentEndpointHandler := mcp.NewAgentEndpointHandler(mcpSvc, log)
+	mcp.RegisterRoutes(e, mcpHandler, mcpSSEHandler, mcpStreamableHandler, mcpAgentEndpointHandler, authMiddleware)
 
 	// Register MCP registry routes
 	mcpRegistryRepo := mcpregistry.NewRepository(db)

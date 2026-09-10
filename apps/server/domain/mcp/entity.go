@@ -141,6 +141,58 @@ type AgentToolHandler interface {
 	// description dynamically enriched with the live agent catalog for the given project.
 	// Falls back to GetAgentToolDefinitions when projectID is empty.
 	GetAgentToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition
+
+	// RunAgentOnce runs one agent synchronously with a bounded step/time budget
+	// and returns the assistant reply text plus the run ID. It is used by the
+	// per-agent MCP endpoint. An AgentRunError is returned (wrapped) for
+	// unavailable agents, failed runs, human-input pauses, and budget exhaustion.
+	RunAgentOnce(ctx context.Context, projectID, agentID, message string, budget AgentRunBudget) (reply string, runID string, err error)
+}
+
+// AgentRunBudget bounds a single synchronous run started by the per-agent MCP
+// endpoint so a call fits within an MCP client's tools/call timeout.
+type AgentRunBudget struct {
+	// MaxSteps caps the number of agent steps. Zero means "use the default".
+	MaxSteps int
+	// Timeout caps wall-clock execution. Zero means "use the default".
+	Timeout time.Duration
+}
+
+// AgentRunErrorKind classifies a RunAgentOnce failure so the transport layer can
+// map it to a structured tool error without inspecting error strings.
+type AgentRunErrorKind string
+
+const (
+	// AgentRunErrorUnavailable means the agent is missing, disabled, or foreign.
+	AgentRunErrorUnavailable AgentRunErrorKind = "agent_unavailable"
+	// AgentRunErrorFailed means the run failed.
+	AgentRunErrorFailed AgentRunErrorKind = "run_failed"
+	// AgentRunErrorPaused means the run paused for human input.
+	AgentRunErrorPaused AgentRunErrorKind = "input_required"
+	// AgentRunErrorBudget means the run exceeded its step/time budget.
+	AgentRunErrorBudget AgentRunErrorKind = "budget_exceeded"
+)
+
+// AgentRunError is a structured, machine-classifiable failure from RunAgentOnce.
+type AgentRunError struct {
+	Kind AgentRunErrorKind
+	// Message is a human-readable description safe to return to the client.
+	Message string
+	// Question carries the pending question when Kind is AgentRunErrorPaused.
+	Question string
+	// RunID is the run associated with the failure, when one was created.
+	RunID string
+}
+
+// Error implements the error interface.
+func (e *AgentRunError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Message != "" {
+		return e.Message
+	}
+	return string(e.Kind)
 }
 
 // InitializeParams represents the params for initialize method

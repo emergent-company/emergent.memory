@@ -6,7 +6,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
-func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamableHandler *StreamableHTTPHandler, authMiddleware *auth.Middleware) {
+func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamableHandler *StreamableHTTPHandler, agentEndpointHandler *AgentEndpointHandler, authMiddleware *auth.Middleware) {
 	// OAuth 2.0 Protected Resource Metadata (RFC 9728 / MCP 2025-11-25 auth spec).
 	// Tells MCP clients (mcp-remote etc.) that this server uses bearer token auth
 	// and does not require an OAuth authorization flow.
@@ -51,4 +51,23 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 
 	// Includable tool catalog for the allowlist picker
 	pg.GET("/tools", h.HandleListToolCatalog)
+
+	// Per-agent MCP share lifecycle (add-agent-mcp-endpoint). Registered on
+	// subpaths of the agents resource; uses :id to match the existing agent
+	// routes' param name.
+	ag := e.Group("/api/projects/:projectId/agents/:id")
+	ag.Use(authMiddleware.RequireAuth())
+	ag.POST("/mcp-share", h.HandleCreateAgentShare)
+	ag.GET("/mcp-shares", h.HandleListAgentShares)
+
+	agProject := e.Group("/api/projects/:projectId/agent-mcp-shares")
+	agProject.Use(authMiddleware.RequireAuth())
+	agProject.GET("", h.HandleListProjectAgentShares)
+	agProject.DELETE("/:id", h.HandleRevokeAgentShare)
+	agProject.POST("/:id/rotate", h.HandleRotateAgentShare)
+
+	// Dedicated per-agent MCP endpoint (auth-gated, one tool: call_agent).
+	aeg := e.Group("/api/mcp/agents")
+	aeg.Use(authMiddleware.RequireAuth())
+	aeg.POST("/:agentId", agentEndpointHandler.HandleAgentEndpoint)
 }

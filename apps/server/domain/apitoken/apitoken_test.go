@@ -305,6 +305,7 @@ func TestValidApiTokenScopes(t *testing.T) {
 		"documents:read", "documents:write",
 		"admin",
 		"admin:all",
+		"mcp:agent-call",
 	}
 	if len(ValidApiTokenScopes) != len(expected) {
 		t.Errorf("ValidApiTokenScopes has %d items, want %d", len(ValidApiTokenScopes), len(expected))
