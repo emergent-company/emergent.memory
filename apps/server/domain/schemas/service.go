@@ -664,17 +664,26 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 	}
 
 	db := s.repo.DB()
-	// toVersion is used for the migration archive's to_version key (self-
-	// consistent with rollback). schemaVersion is the pack's human version
-	// string (e.g. "2.0.0"), which the drift scan compares against — stamping
-	// the UUID here would leave objects flagged stale forever.
-	toVersion := req.ToSchemaID
-	schemaVersion := req.ToSchemaID
-	if req.ToSchemaID != "" {
-		if toSchema, schErr := s.repo.GetPackByID(ctx, req.ToSchemaID); schErr == nil && toSchema != nil && toSchema.Version != "" {
-			schemaVersion = toSchema.Version
+	// Migration archive keys (from_version / to_version) MUST be the packs'
+	// HUMAN version strings (e.g. "1.0.0"/"2.0.0"), because the rollback path
+	// queries archives by human version (req.ToVersion). Schema IDs are still
+	// used for pack lookups and the kb.schema_migration_runs record. The
+	// object's schema_version stamp is the to-pack human version so the drift
+	// scan can compare it — stamping the UUID would leave objects flagged
+	// stale forever and would make rollback unfindable.
+	lookupVersion := func(schemaID string) string {
+		if schemaID == "" {
+			return ""
 		}
+		pack, schErr := s.repo.GetPackByID(ctx, schemaID)
+		if schErr != nil || pack == nil {
+			return ""
+		}
+		return pack.Version
 	}
+	fromVersion := resolveArchiveVersion(req.FromSchemaID, lookupVersion)
+	toVersion := resolveArchiveVersion(req.ToSchemaID, lookupVersion)
+	schemaVersion := toVersion
 	maxObjs := req.MaxObjects
 
 	for typeName, toSchema := range toObjSchemas {
@@ -697,7 +706,7 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 		}
 
 		for _, obj := range objs {
-			result := migrator.MigrateObject(ctx, obj, fromSchema, toSchema, req.FromSchemaID, toVersion)
+			result := migrator.MigrateObject(ctx, obj, fromSchema, toSchema, fromVersion, toVersion)
 			if !result.CanProceed && !req.Force {
 				// Check if the block is solely due to declared-removed properties
 				if !canProceedWithRemovedHints(result, removedSet[typeName]) {
@@ -795,6 +804,11 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 			if !result.Success {
 				continue
 			}
+			// result.ToVersion is the archive's from_version — the human pack
+			// version the object is being restored to. Stamp that, not
+			// req.ToVersion (the migration being undone), otherwise the object
+			// is left labelled with the schema we just rolled back from.
+			restoredVersion := result.ToVersion
 			archiveJSON, _ := json.Marshal(obj.MigrationArchive)
 			_, patchErr := tx.NewRaw(`
 				UPDATE kb.graph_objects
@@ -803,17 +817,29 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 				    migration_archive = ?,
 				    updated_at = NOW()
 				WHERE id = ? AND project_id = ?
-			`, obj.Properties, req.ToVersion, string(archiveJSON), obj.ID, projectID).Exec(ctx)
+			`, obj.Properties, restoredVersion, string(archiveJSON), obj.ID, projectID).Exec(ctx)
 			if patchErr != nil {
 				resp.ObjectsFailed++
 			} else {
+				resp.ToVersion = restoredVersion
 				resp.ObjectsRestored++
 			}
 		}
 
 		if req.RestoreTypeRegistry {
-			// Re-install old schema types and remove new schema's additions via raw SQL
-			// This is a best-effort: update schema_version for affected objects
+			// TODO(rollback-version-stamp): kb.project_object_schema_registry_history
+			// is referenced only here and is created by NO migration in
+			// apps/server/migrations (nor present in the test schema/dbml), so
+			// this UPDATE currently errors and is silently discarded — the
+			// registry is never restored. Before this can work a history table
+			// must exist and it must be decided whether its `version` column
+			// holds a human pack version or a schema UUID (the sibling
+			// kb.project_object_schema_registry uses `schema_id uuid`, so a UUID
+			// is plausible — in which case req.ToVersion, a human version, is the
+			// wrong key). The row restored should also logically be the archive's
+			// from_version (pre-migration schema), not the migration's
+			// to_version. Not guessed here: no correct change is verifiable while
+			// the table does not exist.
 			_, _ = tx.NewRaw(`
 				UPDATE kb.project_object_schema_registry
 				SET json_schema = (
@@ -953,6 +979,22 @@ func canProceedWithRemovedHints(result *graph.MigrationResult, removedProps map[
 		}
 	}
 	return true
+}
+
+// resolveArchiveVersion returns the human pack version to use as a
+// migration_archive from_version/to_version key. lookup resolves a schema ID to
+// its pack's human version, returning "" when unavailable. When no human
+// version can be resolved we fall back to the schema ID so the archive key
+// stays non-empty and self-consistent (a later rollback would then have to
+// query the ID, which is the pre-fix behaviour, rather than losing the entry).
+func resolveArchiveVersion(schemaID string, lookup func(string) string) string {
+	if schemaID == "" {
+		return ""
+	}
+	if v := lookup(schemaID); v != "" {
+		return v
+	}
+	return schemaID
 }
 
 // buildFromToObjectSchemas builds agents.ObjectSchema maps for from and to schemas

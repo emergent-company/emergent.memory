@@ -554,3 +554,99 @@ func TestSchemaMigration_MultipleVersionCoexistence(t *testing.T) {
 		assert.Equal(t, "bob@example.com", resultV2ToV2.NewProperties["email"])
 	})
 }
+
+// TestSchemaMigration_RollbackRoundTrip verifies the contract that the service
+// layer relies on: MigrateObject writes HUMAN version strings into the archive
+// keys, and RollbackObject finds the entry by that same human version, restores
+// the dropped data and reports the restored (from) version. This mirrors the
+// service's version-stamped schema_version after a rollback.
+func TestSchemaMigration_RollbackRoundTrip(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	migrator := NewSchemaMigrator(NewPropertyValidator(), logger)
+	ctx := context.Background()
+
+	v1Schema := &agents.ObjectSchema{
+		Name: "Person",
+		Properties: map[string]agents.PropertyDef{
+			"name":      {Type: "string"},
+			"age":       {Type: "number"},
+			"old_field": {Type: "string"},
+		},
+		Required: []string{"name"},
+	}
+
+	v2Schema := &agents.ObjectSchema{
+		Name: "Person",
+		Properties: map[string]agents.PropertyDef{
+			"name": {Type: "string"},
+			"age":  {Type: "number"},
+		},
+		Required: []string{"name"},
+	}
+
+	obj := &GraphObject{
+		ID:            uuid.New(),
+		Type:          "Person",
+		SchemaVersion: stringPtr("1.0.0"),
+		Properties: map[string]any{
+			"name":      "John Doe",
+			"age":       float64(30),
+			"old_field": "deprecated value",
+		},
+		MigrationArchive: []map[string]any{},
+	}
+
+	// Human versions, exactly as ExecuteSchemaMigration now resolves them.
+	fromVersion, toVersion := "1.0.0", "2.0.0"
+
+	migRes := migrator.MigrateObject(ctx, obj, v1Schema, v2Schema, fromVersion, toVersion)
+	require.True(t, migRes.Success, "migration should succeed")
+	require.Len(t, obj.MigrationArchive, 1, "dropped field should be archived")
+
+	entry := obj.MigrationArchive[0]
+	assert.Equal(t, fromVersion, entry["from_version"], "archive from_version must be human")
+	assert.Equal(t, toVersion, entry["to_version"], "archive to_version must be human")
+
+	// Simulate the service persisting the migrated object: new properties and
+	// the to-pack human schema_version.
+	obj.Properties = migRes.NewProperties
+	obj.SchemaVersion = stringPtr(toVersion)
+
+	// Rollback queries by the same human to_version.
+	rbRes := migrator.RollbackObject(obj, toVersion)
+	require.True(t, rbRes.Success, "rollback should find the human-versioned archive: %s", rbRes.Error)
+	assert.Equal(t, fromVersion, rbRes.ToVersion, "rollback reports the restored from_version")
+	assert.Contains(t, rbRes.RestoredProps, "old_field")
+	assert.Equal(t, "deprecated value", obj.Properties["old_field"], "dropped data restored")
+	assert.Empty(t, obj.MigrationArchive, "archive entry consumed by rollback")
+}
+
+// TestSchemaMigration_RollbackRejectsUUIDArchiveKey documents the bug being
+// fixed: an archive keyed by a schema UUID is invisible to a rollback that
+// queries with the human version, which is what produced the silent
+// "No migration archive found for version X" no-op.
+func TestSchemaMigration_RollbackRejectsUUIDArchiveKey(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	migrator := NewSchemaMigrator(NewPropertyValidator(), logger)
+
+	schemaUUID := uuid.New().String()
+	obj := &GraphObject{
+		ID:            uuid.New(),
+		Type:          "Person",
+		SchemaVersion: stringPtr("1.0.0"),
+		Properties:    map[string]any{"name": "John Doe"},
+		MigrationArchive: []map[string]any{
+			{
+				"from_version": schemaUUID,
+				"to_version":   schemaUUID,
+				"dropped_data": map[string]any{"old_field": "value"},
+			},
+		},
+	}
+
+	rbRes := migrator.RollbackObject(obj, "2.0.0")
+	assert.False(t, rbRes.Success, "UUID-keyed archive must not match a human-version rollback")
+	assert.Contains(t, rbRes.Error, "No migration archive found for version 2.0.0")
+	assert.Nil(t, obj.Properties["old_field"], "nothing should have been restored")
+	assert.Len(t, obj.MigrationArchive, 1, "archive entry must be left untouched")
+}
