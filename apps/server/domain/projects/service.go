@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -16,6 +17,9 @@ const (
 	DefaultLimit = 0
 	// MaxLimit caps explicit limit requests
 	MaxLimit = 1000
+	// DefaultDeletionGracePeriod is the default window between marking a project
+	// pending deletion and hard-purging it. Callers can restore within this window.
+	DefaultDeletionGracePeriod = time.Hour
 )
 
 var (
@@ -35,22 +39,44 @@ type BranchReader interface {
 	GetMainBranchID(ctx context.Context, projectID string) (*string, error)
 }
 
+// deletionRepository abstracts the persistence operations used by the project
+// deletion lifecycle (mark, inspect, cancel). *Repository satisfies it.
+// Keeping it an interface allows the lifecycle to be unit-tested without a DB.
+type deletionRepository interface {
+	GetDeletionState(ctx context.Context, id string) (scheduledFor *time.Time, deletedAt *time.Time, found bool, err error)
+	MarkPendingDeletion(ctx context.Context, id string, userID string, scheduleAt time.Time) (bool, error)
+	CancelPendingDeletion(ctx context.Context, id string) (bool, error)
+}
+
 // Service handles business logic for projects
 type Service struct {
 	repo         *Repository
 	agentRepo    *agents.Repository
-	tokenRevoker TokenRevoker // optional; nil is safe
-	branchReader BranchReader // optional; nil is safe
+	tokenRevoker TokenRevoker       // optional; nil is safe
+	branchReader BranchReader       // optional; nil is safe
+	deletionRepo deletionRepository // optional; nil is safe
+	gracePeriod  time.Duration
 	log          *slog.Logger
 }
 
 // NewService creates a new project service
 func NewService(repo *Repository, agentRepo *agents.Repository, log *slog.Logger) *Service {
 	return &Service{
-		repo:      repo,
-		agentRepo: agentRepo,
-		log:       log.With(logger.Scope("projects.svc")),
+		repo:         repo,
+		agentRepo:    agentRepo,
+		deletionRepo: repo,
+		gracePeriod:  DefaultDeletionGracePeriod,
+		log:          log.With(logger.Scope("projects.svc")),
 	}
+}
+
+// SetDeletionGracePeriod overrides the window between marking a project pending
+// deletion and hard-purging it. Non-positive values are ignored.
+func (s *Service) SetDeletionGracePeriod(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	s.gracePeriod = d
 }
 
 // SetTokenRevoker wires in the token revoker (called from the projects module after both
@@ -66,11 +92,12 @@ func (s *Service) SetBranchReader(r BranchReader) {
 
 // ServiceListParams defines parameters for listing projects
 type ServiceListParams struct {
-	UserID       string
-	OrgID        string
-	ProjectID    string // If set, restrict results to this single project (for API token scope)
-	IncludeStats bool   // Whether to include aggregate statistics
-	Limit        int
+	UserID         string
+	OrgID          string
+	ProjectID      string // If set, restrict results to this single project (for API token scope)
+	IncludeStats   bool   // Whether to include aggregate statistics
+	IncludePending bool   // Whether to include projects pending deletion
+	Limit          int
 }
 
 // enrichWithMainBranch populates dto.MainBranchID from the branch store (best-effort; non-fatal).
@@ -107,11 +134,12 @@ func (s *Service) List(ctx context.Context, params ServiceListParams) ([]Project
 	}
 
 	projects, err := s.repo.List(ctx, ListParams{
-		UserID:       params.UserID,
-		OrgID:        params.OrgID,
-		ProjectID:    params.ProjectID,
-		IncludeStats: params.IncludeStats,
-		Limit:        limit,
+		UserID:         params.UserID,
+		OrgID:          params.OrgID,
+		ProjectID:      params.ProjectID,
+		IncludeStats:   params.IncludeStats,
+		IncludePending: params.IncludePending,
+		Limit:          limit,
 	})
 	if err != nil {
 		return nil, err
@@ -334,59 +362,84 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateProjectReques
 	return &dto, nil
 }
 
-// Delete deletes a project
-func (s *Service) Delete(ctx context.Context, id string, userID string) error {
-	if !isValidUUID(id) {
-		return apperror.New(400, "invalid-uuid", "id must be a valid UUID")
-	}
-
-	deleted, err := s.repo.Delete(ctx, id)
-	if err != nil {
-		return err
-	}
-	if !deleted {
-		return apperror.ErrNotFound.WithMessage("Project not found")
-	}
-
-	s.log.Info("project deleted",
-		slog.String("projectID", id),
-		slog.String("deletedBy", userID))
-
-	return nil
+// DeletionInfo describes the outcome of a project deletion request.
+type DeletionInfo struct {
+	// ScheduledFor is the time at which the project will be hard-purged.
+	ScheduledFor time.Time
+	// AlreadyPending is true when the project was already pending deletion and
+	// no new schedule was created (idempotent repeat request).
+	AlreadyPending bool
 }
 
-// DeleteAsync marks the project as deleted synchronously (so it immediately
-// disappears from listings), then fires the actual hard DELETE in a background
-// goroutine. The PostgreSQL cascade through graph objects and relationships can
-// take several minutes for large projects — this avoids blocking the HTTP request.
-func (s *Service) DeleteAsync(ctx context.Context, id string, userID string) error {
+// RequestDeletion synchronously marks a project as pending deletion and schedules
+// it for hard purge after the configured grace period. It is idempotent: if the
+// project is already pending deletion the existing schedule is returned with
+// AlreadyPending=true and no error.
+func (s *Service) RequestDeletion(ctx context.Context, id string, userID string) (*DeletionInfo, error) {
+	if !isValidUUID(id) {
+		return nil, apperror.New(400, "invalid-uuid", "id must be a valid UUID")
+	}
+	if s.deletionRepo == nil {
+		return nil, apperror.ErrDatabase.WithMessage("Deletion repository not configured")
+	}
+
+	scheduledFor, _, found, err := s.deletionRepo.GetDeletionState(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if found && scheduledFor != nil {
+		return &DeletionInfo{ScheduledFor: *scheduledFor, AlreadyPending: true}, nil
+	}
+
+	grace := s.gracePeriod
+	if grace <= 0 {
+		grace = DefaultDeletionGracePeriod
+	}
+	scheduleAt := time.Now().Add(grace)
+
+	marked, err := s.deletionRepo.MarkPendingDeletion(ctx, id, userID, scheduleAt)
+	if err != nil {
+		return nil, err
+	}
+	if !marked {
+		// Another request may have marked it between our read and update, or the
+		// project does not exist. Re-read to distinguish those cases.
+		scheduledFor, _, found, rerr := s.deletionRepo.GetDeletionState(ctx, id)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if found && scheduledFor != nil {
+			return &DeletionInfo{ScheduledFor: *scheduledFor, AlreadyPending: true}, nil
+		}
+		return nil, apperror.ErrNotFound.WithMessage("Project not found")
+	}
+
+	s.log.Info("project marked pending deletion",
+		slog.String("projectID", id),
+		slog.String("initiatedBy", userID),
+		slog.Time("scheduledFor", scheduleAt))
+
+	return &DeletionInfo{ScheduledFor: scheduleAt}, nil
+}
+
+// CancelDeletion restores a project that is within its deletion grace period.
+func (s *Service) CancelDeletion(ctx context.Context, id string) error {
 	if !isValidUUID(id) {
 		return apperror.New(400, "invalid-uuid", "id must be a valid UUID")
 	}
+	if s.deletionRepo == nil {
+		return apperror.ErrDatabase.WithMessage("Deletion repository not configured")
+	}
 
-	// Synchronously mark the project as deleted so it immediately disappears
-	// from list/get queries. This sets deleted_at = now(), deleted_by = userID.
-	marked, err := s.repo.MarkDeleted(ctx, id, userID)
+	cancelled, err := s.deletionRepo.CancelPendingDeletion(ctx, id)
 	if err != nil {
 		return err
 	}
-	if !marked {
-		return apperror.ErrNotFound.WithMessage("Project not found")
+	if !cancelled {
+		return apperror.ErrNotFound.WithMessage("Project not pending deletion")
 	}
 
-	s.log.Info("project marked for deletion, starting background cleanup",
-		slog.String("projectID", id),
-		slog.String("initiatedBy", userID))
-
-	go func() {
-		bgCtx := context.Background()
-		if err := s.Delete(bgCtx, id, userID); err != nil {
-			s.log.Error("background project delete failed",
-				slog.String("projectID", id),
-				slog.String("error", err.Error()))
-		}
-	}()
-
+	s.log.Info("project deletion cancelled, project restored", slog.String("projectID", id))
 	return nil
 }
 

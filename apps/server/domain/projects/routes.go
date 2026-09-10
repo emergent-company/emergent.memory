@@ -37,9 +37,16 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Scope: project:write
 	g.PATCH("/:id", h.Update)
 
-	// Delete project
+	// Delete project (mark pending deletion with grace period)
 	// Scope: org:project:delete
+	// TODO: org:project:delete is not yet enforced here; the existing
+	// projects:read token-scope middleware is retained for gateway service-token
+	// compatibility. Add explicit scope enforcement in a follow-up change.
 	g.DELETE("/:id", h.Delete)
+
+	// Restore a project pending deletion (cancel the grace period)
+	// Scope: org:project:delete
+	g.POST("/:id/restore", h.Restore)
 
 	// List project members
 	// Scope: project:read

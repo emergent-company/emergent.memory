@@ -18,6 +18,7 @@ var Module = fx.Module("scheduler",
 		NewConfig,
 		NewScheduler,
 		ProvideStaleJobCleanupTask,
+		NewProjectDeletionTask,
 	),
 	fx.Invoke(
 		RegisterTasks,
@@ -50,6 +51,7 @@ type TaskParams struct {
 	Storage      *storage.Service
 	AppCfg       *appcfg.Config
 	UserSvc      *auth.UserProfileService
+	DeletionTask *ProjectDeletionTask
 }
 
 // RegisterTasks registers all scheduled tasks
@@ -111,6 +113,15 @@ func RegisterTasks(p TaskParams) error {
 	if err := addScheduledTask(p.Scheduler, p.Log, "session_cleanup",
 		p.Cfg.SessionCleanupSchedule, 24*time.Hour, sessionCleanupTask.Run); err != nil {
 		p.Log.Error("failed to register session cleanup task",
+			slog.String("error", err.Error()))
+	}
+
+	// Register project deletion sweep task (every minute by default). Purges
+	// projects whose deletion grace period has elapsed. Runs durably so pending
+	// deletions survive restarts.
+	if err := addScheduledTask(p.Scheduler, p.Log, "project_deletion_sweep",
+		p.Cfg.ProjectDeletionSweepSchedule, p.Cfg.ProjectDeletionSweepInterval, p.DeletionTask.Run); err != nil {
+		p.Log.Error("failed to register project deletion sweep task",
 			slog.String("error", err.Error()))
 	}
 

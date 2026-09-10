@@ -3,6 +3,7 @@ package projects
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -95,13 +96,15 @@ func (h *Handler) List(c echo.Context) error {
 	}
 
 	includeStats := c.QueryParam("include_stats") == "true"
+	includePending := c.QueryParam("include_pending") == "true"
 
 	projects, err := h.svc.List(c.Request().Context(), ServiceListParams{
-		UserID:       user.ID,
-		OrgID:        orgID,
-		ProjectID:    projectID,
-		IncludeStats: includeStats,
-		Limit:        limit,
+		UserID:         user.ID,
+		OrgID:          orgID,
+		ProjectID:      projectID,
+		IncludeStats:   includeStats,
+		IncludePending: includePending,
+		Limit:          limit,
 	})
 	if err != nil {
 		return err
@@ -208,13 +211,13 @@ func (h *Handler) Update(c echo.Context) error {
 	return c.JSON(http.StatusOK, project)
 }
 
-// Delete deletes a project by ID
+// Delete marks a project as pending deletion
 // @Summary      Delete project
-// @Description  Permanently deletes a project and all associated data
+// @Description  Marks a project for deletion. The project is hidden from normal listings and hard-purged after a grace period; it can be restored in the meantime via POST /api/projects/{id}/restore.
 // @Tags         projects
 // @Produce      json
 // @Param        id path string true "Project ID (UUID)"
-// @Success      200 {object} map[string]string "Deletion status"
+// @Success      202 {object} map[string]any "Pending deletion status"
 // @Failure      400 {object} apperror.Error "Invalid project ID"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Project not found"
@@ -229,17 +232,53 @@ func (h *Handler) Delete(c echo.Context) error {
 
 	id := c.Param("id")
 
-	// DeleteAsync validates access synchronously, then runs the cascade in the
-	// background. Returns immediately so the HTTP response is not blocked by
-	// PostgreSQL cascading through potentially millions of rows.
-	if err := h.svc.DeleteAsync(c.Request().Context(), id, user.ID); err != nil {
+	info, err := h.svc.RequestDeletion(c.Request().Context(), id, user.ID)
+	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusAccepted, map[string]string{
-		"status":    "deleting",
+	message := "Project scheduled for deletion. It can be restored until the deletion grace period elapses."
+	if info.AlreadyPending {
+		message = "Project is already pending deletion."
+	}
+
+	return c.JSON(http.StatusAccepted, map[string]any{
+		"status":               "pending_deletion",
+		"projectId":            id,
+		"deletionScheduledFor": info.ScheduledFor.UTC().Format(time.RFC3339),
+		"alreadyPending":       info.AlreadyPending,
+		"message":              message,
+	})
+}
+
+// Restore cancels a pending project deletion
+// @Summary      Restore project
+// @Description  Cancels a pending deletion for a project still within its grace period, returning it to active status.
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {object} map[string]any "Restored status"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not pending deletion"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/restore [post]
+// @Security     bearerAuth
+func (h *Handler) Restore(c echo.Context) error {
+	user := auth.GetUser(c)
+	if user == nil {
+		return apperror.ErrUnauthorized
+	}
+
+	id := c.Param("id")
+
+	if err := h.svc.CancelDeletion(c.Request().Context(), id); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status":    "active",
 		"projectId": id,
-		"message":   "Project deletion initiated. Data will be removed in the background.",
 	})
 }
 

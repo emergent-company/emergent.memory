@@ -31,6 +31,11 @@ type Project struct {
 	DeletedAt                   *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
 	DeletedBy                   *string    `bun:"deleted_by,type:uuid" json:"deleted_by,omitempty"`
 
+	// DeletionScheduledFor is set (along with DeletedAt/DeletedBy) when a project
+	// is marked pending deletion. The project is hard-purged once this time
+	// elapses; until then it can be restored. Added in migration 00140.
+	DeletionScheduledFor *time.Time `bun:"deletion_scheduled_for" json:"deletionScheduledFor,omitempty"`
+
 	// Budget columns added in migration 00063
 	BudgetUSD            *float64 `bun:"budget_usd" json:"budget_usd,omitempty"`
 	BudgetAlertThreshold float64  `bun:"budget_alert_threshold" json:"budget_alert_threshold,omitempty"`
@@ -123,6 +128,12 @@ type ProjectDTO struct {
 	// Callers can use this as targetBranchID when merging without knowing the branch UUID,
 	// or pass the magic string "main" to the merge endpoint directly.
 	MainBranchID *string `json:"main_branch_id,omitempty"`
+	// DeletionStatus is "active" for normal projects and "pending_deletion" when
+	// the project is in its deletion grace period (DeletionScheduledFor set).
+	DeletionStatus string `json:"deletionStatus"`
+	// DeletionScheduledFor is the RFC3339 time at which the project will be
+	// hard-purged. Omitted unless DeletionStatus is "pending_deletion".
+	DeletionScheduledFor *time.Time `json:"deletionScheduledFor,omitempty"`
 }
 
 // ProjectMemberDTO is the response DTO for project member endpoints
@@ -182,6 +193,13 @@ func (p *Project) ToDTO() ProjectDTO {
 	// Include config fields if they exist
 	if len(p.AutoExtractConfig) > 0 {
 		dto.AutoExtractConfig = p.AutoExtractConfig
+	}
+
+	// Deletion lifecycle: pending_deletion while in the grace period, else active.
+	dto.DeletionStatus = "active"
+	if p.DeletionScheduledFor != nil {
+		dto.DeletionStatus = "pending_deletion"
+		dto.DeletionScheduledFor = p.DeletionScheduledFor
 	}
 
 	return dto
