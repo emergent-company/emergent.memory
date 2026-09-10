@@ -736,14 +736,20 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 		}
 	}
 
-	// Write kb.schema_migration_runs record
+	// Record the run. kb.schema_migration_runs stores HUMAN versions (it has no
+	// from_schema_id/to_schema_id columns); the IDs remain on the job row. The
+	// run record is the fallback source for rollback pack resolution when a
+	// migration was executed synchronously (no job). Previously this INSERT
+	// referenced non-existent columns and its error was discarded, so no run was
+	// ever recorded.
 	now := time.Now()
-	_, _ = db.NewRaw(`
+	if _, runErr := db.NewRaw(`
 		INSERT INTO kb.schema_migration_runs
-		(project_id, from_schema_id, to_schema_id, objects_migrated, objects_failed, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT DO NOTHING
-	`, projectID, req.FromSchemaID, req.ToSchemaID, resp.ObjectsMigrated, resp.ObjectsFailed, now).Exec(ctx)
+		(project_id, from_version, to_version, status, total_objects, successful, failed, started_at, completed_at)
+		VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?)
+	`, projectID, fromVersion, toVersion, resp.ObjectsMigrated+resp.ObjectsFailed, resp.ObjectsMigrated, resp.ObjectsFailed, now, now).Exec(ctx); runErr != nil {
+		s.log.Warn("failed to record schema migration run", logger.Error(runErr))
+	}
 
 	return resp, nil
 }
@@ -777,6 +783,18 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+	}
+
+	// Resolve the pre-migration (from) and migration-target (to) packs up front,
+	// before any writes, so an explicit restore_type_registry request fails
+	// loudly instead of silently no-oping. The resolved packs are then used
+	// inside the single transaction below.
+	var fromPack, toPack *GraphMemorySchema
+	if req.RestoreTypeRegistry {
+		fromPack, toPack, err = s.resolveRollbackPacks(ctx, projectID, req.ToVersion)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Fetch all objects that have a migration_archive entry for toVersion
@@ -827,29 +845,11 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		}
 
 		if req.RestoreTypeRegistry {
-			// TODO(rollback-version-stamp): kb.project_object_schema_registry_history
-			// is referenced only here and is created by NO migration in
-			// apps/server/migrations (nor present in the test schema/dbml), so
-			// this UPDATE currently errors and is silently discarded — the
-			// registry is never restored. Before this can work a history table
-			// must exist and it must be decided whether its `version` column
-			// holds a human pack version or a schema UUID (the sibling
-			// kb.project_object_schema_registry uses `schema_id uuid`, so a UUID
-			// is plausible — in which case req.ToVersion, a human version, is the
-			// wrong key). The row restored should also logically be the archive's
-			// from_version (pre-migration schema), not the migration's
-			// to_version. Not guessed here: no correct change is verifiable while
-			// the table does not exist.
-			_, _ = tx.NewRaw(`
-				UPDATE kb.project_object_schema_registry
-				SET json_schema = (
-					SELECT json_schema FROM kb.project_object_schema_registry_history
-					WHERE project_id = ? AND version = ?
-					LIMIT 1
-				),
-				updated_at = NOW()
-				WHERE project_id = ?
-			`, projectID, req.ToVersion, projectID).Exec(ctx)
+			// Same transaction as the data restore: if the registry restore
+			// fails, the whole rollback rolls back atomically.
+			if regErr := s.repo.RestoreTypeRegistryTx(ctx, tx, projectID, "", fromPack, toPack); regErr != nil {
+				return fmt.Errorf("restore type registry: %w", regErr)
+			}
 		}
 		return nil
 	})
@@ -858,6 +858,74 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 	}
 
 	return resp, nil
+}
+
+// priorFromSchemaID returns the schema ID of the pack that was active before the
+// migration being undone. For a multi-hop job the archive that rollback matches
+// belongs to the final hop, so the pre-migration pack is that hop's
+// from_schema_id; otherwise it is the job's overall from_schema_id.
+func priorFromSchemaID(job *SchemaMigrationJob) string {
+	if job == nil {
+		return ""
+	}
+	if n := len(job.Chain); n > 0 && job.Chain[n-1].FromSchemaID != "" {
+		return job.Chain[n-1].FromSchemaID
+	}
+	return job.FromSchemaID
+}
+
+// resolveRollbackPacks resolves the from (pre-migration) and to (migration
+// target) packs for a registry-restoring rollback of the migration that
+// produced toVersion.
+//
+// Primary source: kb.schema_migration_jobs, the table that persists
+// from_schema_id/to_schema_id. The migration being undone is the most recent
+// completed job whose target pack human version equals toVersion.
+//
+// Fallback: when no job exists (e.g. a synchronous POST /migrate/execute), the
+// version-only kb.schema_migration_runs record supplies the from_version and
+// the from-pack is resolved by (name, version) from the to-pack's name.
+func (s *Service) resolveRollbackPacks(ctx context.Context, projectID, toVersion string) (*GraphMemorySchema, *GraphMemorySchema, error) {
+	if toVersion == "" {
+		return nil, nil, apperror.NewBadRequest("to_version is required to restore the type registry")
+	}
+
+	job, err := s.repo.FindMigrationJobByToPackVersion(ctx, projectID, toVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	if job != nil {
+		toPack, err := s.repo.GetPackByID(ctx, job.ToSchemaID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("restore type registry: cannot resolve to-pack %s: %w", job.ToSchemaID, err)
+		}
+		if toPack.Version != toVersion {
+			return nil, nil, fmt.Errorf("restore type registry: to-pack %s is version %q, expected %q", toPack.ID, toPack.Version, toVersion)
+		}
+		fromID := priorFromSchemaID(job)
+		fromPack, err := s.repo.GetPackByID(ctx, fromID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("restore type registry: cannot resolve from-pack %s: %w", fromID, err)
+		}
+		return fromPack, toPack, nil
+	}
+
+	fromVersion, err := s.repo.FindMigrationRunFromVersion(ctx, projectID, toVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	if fromVersion == "" {
+		return nil, nil, apperror.NewNotFound("migration to version", toVersion)
+	}
+	toPack, err := s.repo.GetProjectPackByVersion(ctx, projectID, toVersion)
+	if err != nil {
+		return nil, nil, fmt.Errorf("restore type registry: cannot resolve to-pack for version %q: %w", toVersion, err)
+	}
+	fromPack, err := s.repo.GetPackByNameVersion(ctx, toPack.Name, fromVersion)
+	if err != nil {
+		return nil, nil, fmt.Errorf("restore type registry: cannot resolve from-pack %s@%s: %w", toPack.Name, fromVersion, err)
+	}
+	return fromPack, toPack, nil
 }
 
 // CommitMigrationArchive prunes migration_archive entries whose to_version is
