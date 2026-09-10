@@ -49,8 +49,10 @@ The system SHALL expose `POST /api/schemas/projects/:projectId/migrate/execute` 
 ### Requirement: Migration rollback restores property data and optionally the type registry
 The system SHALL expose `POST /api/schemas/projects/:projectId/migrate/rollback` that restores dropped property data from `migration_archive`. When `restore_type_registry: true`, the rollback SHALL also restore the type registry to the prior state.
 
+The `to_version` field SHALL name the target version of the migration being undone — it MUST match a migration archive's `to_version` (the version the objects were migrated *to*), and does NOT name the version to roll back to. The archive's `from_version` determines the version restored to. When `restore_type_registry: true` is requested and no migration matching `to_version` can be resolved, the endpoint SHALL fail with a clear 404 error instead of silently no-oping.
+
 #### Scenario: Rollback to a previously archived version (data only)
-- **WHEN** objects have archive entries for the requested `to_version`
+- **WHEN** objects have archive entries for the requested `to_version` (the migration's target version)
 - **WHEN** `restore_type_registry` is false or omitted
 - **THEN** the rollback SHALL restore the `dropped_data` from the archive onto each object's `properties`
 - **THEN** the archive entry SHALL be removed from `migration_archive`
@@ -60,12 +62,14 @@ The system SHALL expose `POST /api/schemas/projects/:projectId/migrate/rollback`
 - **WHEN** `restore_type_registry: true` is set
 - **THEN** the property data restore AND the type registry restore SHALL execute atomically in a single transaction
 - **THEN** the `from_version` schema's types SHALL be re-installed in the registry
-- **THEN** any type registry entries unique to the `to_version` schema SHALL be removed
+- **THEN** registry rows owned by the from/to schema pair whose type name is not part of the from_version schema SHALL be removed — including rows left behind by an in-place type rename that changed `type_name` but kept the row's `schema_id`
+- **THEN** registry rows owned by other schemas SHALL NOT be modified or removed
 - **THEN** if any step fails, the entire rollback SHALL be rolled back atomically
 
-#### Scenario: Rollback attempted with no archive
-- **WHEN** objects have no `migration_archive` entries for the requested `to_version`
-- **THEN** the endpoint SHALL return 404 with "no migration archive found for version `<to_version>`"
+#### Scenario: Rollback attempted with no resolvable migration
+- **WHEN** `restore_type_registry: true` is requested
+- **WHEN** no migration archive/migration matching the requested `to_version` can be resolved
+- **THEN** the endpoint SHALL return a clear 404 error naming `to_version`
 
 ### Requirement: Migration archive commit operation prunes old archive entries
 The system SHALL expose `POST /api/schemas/projects/:projectId/migrate/commit` that removes all `migration_archive` entries up to and including a given version from all objects in the project. After commit, rollback to those versions is no longer possible.

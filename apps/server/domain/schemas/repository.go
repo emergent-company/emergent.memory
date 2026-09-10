@@ -1257,12 +1257,26 @@ func restoreOwnedRegistryRowTx(
 }
 
 // RestoreTypeRegistryTx restores the project's type registry to the from-pack
-// state and removes registry rows for types that exist only in the to-pack.
+// state for the types owned by this from/to schema pair.
+//
+// Reconciliation is driven by schema ownership, not by name alone:
+//
+//  1. Every template registry row owned by FROM or TO (schema_id IN
+//     {from.ID, to.ID}) whose type_name is not part of the from-pack is
+//     deleted. This removes to-only additions AND rows left behind by an
+//     in-place type rename, where MigrateTypes changes the row's type_name
+//     while leaving its schema_id pointing at the original owner. The old
+//     name+to-pack-ID predicate could not see such a row: the from-pack
+//     restore looked it up under the old name, and the row's (renamed) name
+//     was not in the to-only set.
+//  2. The from-pack's types are (re)written via the shared restore writer,
+//     adopting any owned row that already carries the from name and inserting
+//     only when the name is otherwise unregistered.
 //
 // It is transaction-aware: the caller MUST invoke it inside the same
 // transaction as the property-data restore so the rollback is atomic — this
-// method never opens its own transaction. Rows owned by other packs are never
-// modified or removed.
+// method never opens its own transaction. Rows owned by other packs/schemas
+// are never modified or removed.
 func (r *Repository) RestoreTypeRegistryTx(ctx context.Context, tx bun.Tx, projectID, userID string, fromPack, toPack *GraphMemorySchema) error {
 	if fromPack == nil || toPack == nil {
 		return fmt.Errorf("from and to packs are required")
@@ -1270,7 +1284,7 @@ func (r *Repository) RestoreTypeRegistryTx(ctx context.Context, tx bun.Tx, proje
 
 	now := time.Now()
 
-	actions, toOnly := buildRestoreTypeRegistryPlan(fromPack, toPack)
+	actions, fromTypeNames := buildRestoreTypeRegistryPlan(fromPack, toPack)
 
 	var uiConfigs map[string]json.RawMessage
 	if len(fromPack.UIConfigs) > 0 {
@@ -1285,37 +1299,56 @@ func (r *Repository) RestoreTypeRegistryTx(ctx context.Context, tx bun.Tx, proje
 		}
 	}
 
-	if err := r.assignPackWithTypesTx(ctx, tx, projectID, userID, fromPack.ID, actions, uiConfigs, extractionPrompts, now); err != nil {
-		return fmt.Errorf("restore from-pack types: %w", err)
+	// Step 1: remove owned rows that are not part of the from-pack. Done before
+	// the restore so a renamed row cannot linger alongside the re-created
+	// original.
+	if err := deleteOwnedRegistryRowsTx(ctx, tx, projectID, fromPack.ID, toPack.ID, fromTypeNames); err != nil {
+		return fmt.Errorf("remove superseded registry rows: %w", err)
 	}
 
-	// Remove registry rows for types that exist only in the to-pack and are
-	// owned by it. Types installed by other packs share the name but a
-	// different schema_id and are therefore left untouched.
-	for _, name := range toOnly {
-		if _, err := tx.NewRaw(`
-			DELETE FROM kb.project_object_schema_registry
-			WHERE project_id = ? AND type_name = ? AND schema_id = ? AND source = 'template'
-		`, projectID, name, toPack.ID).Exec(ctx); err != nil {
-			return fmt.Errorf("remove to-only type %s: %w", name, err)
-		}
+	// Step 2: (re)write the from-pack's types. Rows owned by other packs that
+	// share a name are never touched (the restore writer is scoped to
+	// ownedSchemaIDs) and prevent an unsafe duplicate insert.
+	if err := r.assignPackWithTypesTx(ctx, tx, projectID, userID, fromPack.ID, actions, uiConfigs, extractionPrompts, now); err != nil {
+		return fmt.Errorf("restore from-pack types: %w", err)
 	}
 
 	return nil
 }
 
+// deleteOwnedRegistryRowsTx deletes template registry rows owned by either
+// schema of the from/to pair whose type_name is not part of the from-pack.
+// When fromTypeNames is empty every owned row is removed. Rows owned by other
+// schemas are never touched.
+func deleteOwnedRegistryRowsTx(ctx context.Context, tx bun.Tx, projectID, fromID, toID string, fromTypeNames []string) error {
+	owned := bun.In([]string{fromID, toID})
+	if len(fromTypeNames) == 0 {
+		_, err := tx.NewRaw(`
+			DELETE FROM kb.project_object_schema_registry
+			WHERE project_id = ? AND schema_id IN (?) AND source = 'template'
+		`, projectID, owned).Exec(ctx)
+		return err
+	}
+	_, err := tx.NewRaw(`
+		DELETE FROM kb.project_object_schema_registry
+		WHERE project_id = ? AND schema_id IN (?) AND source = 'template' AND type_name NOT IN (?)
+	`, projectID, owned, bun.In(fromTypeNames)).Exec(ctx)
+	return err
+}
+
 // buildRestoreTypeRegistryPlan derives the registry writes needed to restore
 // the from-pack state: one "restore" action per from-pack type, plus the list
-// of type names that exist only in the to-pack and must be removed. It is pure
-// so the selection logic is unit-testable without a database.
-func buildRestoreTypeRegistryPlan(fromPack, toPack *GraphMemorySchema) (actions []typeAction, toOnly []string) {
+// of from-pack type names that defines which owned rows survive the
+// reconciliation delete. It is pure so the selection logic is unit-testable
+// without a database.
+func buildRestoreTypeRegistryPlan(fromPack, toPack *GraphMemorySchema) (actions []typeAction, fromTypeNames []string) {
 	if fromPack == nil || toPack == nil {
 		return nil, nil
 	}
 	fromTypes := parseObjectTypeSchemasToMap(fromPack.ObjectTypeSchemas)
-	toTypes := parseObjectTypeSchemasToMap(toPack.ObjectTypeSchemas)
 
 	actions = make([]typeAction, 0, len(fromTypes))
+	fromTypeNames = make([]string, 0, len(fromTypes))
 	for name, schemaJSON := range fromTypes {
 		actions = append(actions, typeAction{
 			name:           name,
@@ -1323,14 +1356,9 @@ func buildRestoreTypeRegistryPlan(fromPack, toPack *GraphMemorySchema) (actions 
 			action:         "restore",
 			ownedSchemaIDs: []string{fromPack.ID, toPack.ID},
 		})
+		fromTypeNames = append(fromTypeNames, name)
 	}
-	for name := range toTypes {
-		if _, ok := fromTypes[name]; ok {
-			continue
-		}
-		toOnly = append(toOnly, name)
-	}
-	return actions, toOnly
+	return actions, fromTypeNames
 }
 
 // mergeSchemas additively merges incomingSchema properties into existingSchema.
