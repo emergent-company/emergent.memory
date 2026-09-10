@@ -264,6 +264,34 @@ COMMENT ON COLUMN core.api_tokens.token_encrypted IS 'Encrypted raw token value 
 
 
 --
+-- Name: mcp_share_instances; Type: TABLE; Schema: core; Owner: -
+--
+
+CREATE TABLE core.mcp_share_instances (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    name text NOT NULL,
+    description text,
+    token_id uuid NOT NULL,
+    allowed_tools text[],
+    allowed_agents uuid[],
+    is_legacy boolean DEFAULT false NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT mcp_share_instances_pkey PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX uq_mcp_share_instances_project_name ON core.mcp_share_instances (project_id, lower(name)) WHERE (revoked_at IS NULL);
+CREATE INDEX idx_mcp_share_instances_token ON core.mcp_share_instances (token_id);
+CREATE INDEX idx_mcp_share_instances_project ON core.mcp_share_instances (project_id);
+
+ALTER TABLE ONLY core.mcp_share_instances
+    ADD CONSTRAINT mcp_share_instances_token_id_fkey FOREIGN KEY (token_id) REFERENCES core.api_tokens(id) ON DELETE CASCADE;
+
+
+--
 -- Name: superadmins; Type: TABLE; Schema: core; Owner: -
 --
 

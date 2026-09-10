@@ -40,4 +40,15 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	pg.Use(authMiddleware.RequireAuth())
 	pg.POST("/share", h.HandleShareMCPAccess)
 	pg.GET("/bundle", h.HandleGenerateMCPBundle)
+
+	// Named MCP share instances (add-mcp-share-instances)
+	pg.POST("/shares", h.HandleCreateShareInstance)
+	pg.GET("/shares", h.HandleListShareInstances)
+	pg.GET("/shares/:id", h.HandleGetShareInstance)
+	pg.PATCH("/shares/:id", h.HandleUpdateShareInstance)
+	pg.DELETE("/shares/:id", h.HandleRevokeShareInstance)
+	pg.POST("/shares/:id/rotate", h.HandleRotateShareInstance)
+
+	// Includable tool catalog for the allowlist picker
+	pg.GET("/tools", h.HandleListToolCatalog)
 }

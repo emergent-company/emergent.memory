@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/domain/email"
@@ -96,6 +97,7 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 			if err != nil {
 				return nil, fmt.Errorf("create mcp share token for %s: %w", addr, err)
 			}
+			s.recordLegacyShareInstance(ctx, projectID, tokenResp.ID, tokenName)
 
 			snippets := buildSnippets(mcpBaseURL, mcpURL, tokenResp.Token)
 			if i == 0 {
@@ -133,6 +135,8 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 		return nil, fmt.Errorf("create mcp share token: %w", err)
 	}
 
+	s.recordLegacyShareInstance(ctx, projectID, tokenResp.ID, name)
+
 	snippets := buildSnippets(mcpBaseURL, mcpURL, tokenResp.Token)
 
 	return &ShareMCPAccessResponse{
@@ -141,6 +145,31 @@ func (s *Service) ShareMCPAccess(ctx context.Context, projectID, userID, senderN
 		ProjectID: projectID,
 		Snippets:  snippets,
 	}, nil
+}
+
+// recordLegacyShareInstance records a legacy (unrestricted) share instance row
+// for a token minted by the legacy /mcp/share flow. Best-effort: a failure must
+// never break the existing share endpoint.
+func (s *Service) recordLegacyShareInstance(ctx context.Context, projectID, tokenID, tokenName string) {
+	store := s.shareStore()
+	if store == nil {
+		return
+	}
+	now := time.Now().UTC()
+	inst := &MCPShareInstance{
+		ID:        uuid.NewString(),
+		ProjectID: projectID,
+		Name:      tokenName,
+		TokenID:   tokenID,
+		IsLegacy:  true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.Create(ctx, inst); err != nil {
+		s.log.Warn("failed to record legacy mcp share instance",
+			"error", err,
+			"token_id", tokenID)
+	}
 }
 
 // buildSnippets constructs ready-to-paste config blocks for supported MCP clients.

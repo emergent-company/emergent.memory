@@ -589,6 +589,18 @@ func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID 
 // Regenerate atomically revokes a project token and creates a new one with the same name and scopes.
 // Returns the new token (with plaintext value). If the insert fails, the revoke is rolled back.
 func (s *Service) Regenerate(ctx context.Context, tokenID, projectID, userID string) (*CreateApiTokenResponseDTO, error) {
+	return s.regenerate(ctx, tokenID, projectID, userID, nil)
+}
+
+// RegenerateWith is Regenerate plus an after-hook invoked inside the same
+// transaction after the replacement token row is inserted. The MCP share
+// rotation uses it to update the instance's token_id atomically with the new
+// token, so a failure cannot leave an orphan active token.
+func (s *Service) RegenerateWith(ctx context.Context, tokenID, projectID, userID string, after func(ctx context.Context, tx bun.Tx, newTokenID string) error) (*CreateApiTokenResponseDTO, error) {
+	return s.regenerate(ctx, tokenID, projectID, userID, after)
+}
+
+func (s *Service) regenerate(ctx context.Context, tokenID, projectID, userID string, after func(context.Context, bun.Tx, string) error) (*CreateApiTokenResponseDTO, error) {
 	// Fetch existing token to get name + scopes
 	existing, err := s.repo.GetByID(ctx, tokenID, projectID)
 	if err != nil {
@@ -666,6 +678,11 @@ func (s *Service) Regenerate(ctx context.Context, tokenID, projectID, userID str
 
 		if _, err := tx.NewInsert().Model(newToken).Exec(ctx); err != nil {
 			return apperror.ErrDatabase.WithInternal(err)
+		}
+		if after != nil {
+			if err := after(ctx, tx, newToken.ID); err != nil {
+				return err
+			}
 		}
 		return nil
 	}); err != nil {

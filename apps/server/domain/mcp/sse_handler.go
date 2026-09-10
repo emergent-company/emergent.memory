@@ -237,7 +237,7 @@ func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID stri
 				map[string]string{"hint": "Call initialize method first to establish session"},
 			)
 		}
-		return h.handleToolsList(req, user.Scopes)
+		return h.handleToolsList(c, req, projectID, user)
 
 	case "tools/call":
 		if !initialized {
@@ -296,9 +296,10 @@ func (h *SSEHandler) handleInitialize(req *Request, projectID string) *Response 
 }
 
 // handleToolsList handles tools/list for SSE transport
-func (h *SSEHandler) handleToolsList(req *Request, scopes []string) *Response {
-	tools := h.svc.GetToolDefinitions()
-	tools = FilterToolsForScopes(tools, scopes)
+func (h *SSEHandler) handleToolsList(c echo.Context, req *Request, projectID string, user *auth.AuthUser) *Response {
+	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), projectID)
+	tools = FilterToolsForScopes(tools, user.Scopes)
+	tools = FilterToolsForInstance(tools, h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID))
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 
@@ -332,7 +333,15 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 		}
 	}
 
-	result, err := h.svc.ExecuteTool(c.Request().Context(), projectID, params.Name, params.Arguments)
+	// Enforce the share-instance tool allowlist (deny-by-default) before any side effect.
+	scope := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if InstanceDeniesTool(scope, params.Name) {
+		return NewErrorResponse(req.ID, ErrCodeForbidden,
+			"Tool not allowed: "+params.Name, nil)
+	}
+
+	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	result, err := h.svc.ExecuteTool(execCtx, projectID, params.Name, params.Arguments)
 	if err != nil {
 		h.log.Error("tool execution failed",
 			slog.String("tool", params.Name),

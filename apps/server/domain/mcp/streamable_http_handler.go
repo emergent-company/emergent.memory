@@ -418,7 +418,7 @@ func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, ses
 	case "initialize":
 		return h.handleInitialize(c, req, session)
 	case "tools/list":
-		return h.handleToolsList(c, req, session)
+		return h.handleToolsList(c, req, session, user)
 	case "tools/call":
 		return h.handleToolsCall(c, req, session, user)
 	case "prompts/list":
@@ -508,7 +508,7 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 }
 
 // handleToolsList handles tools/list method
-func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, session *MCPSession) *Response {
+func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
 	if !session.Initialized {
 		return NewErrorResponse(req.ID, ErrCodeInvalidRequest,
 			"Client must call initialize before tools/list",
@@ -518,6 +518,7 @@ func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, se
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), session.ProjectID)
 	tools = FilterToolsForScopes(tools, session.Scopes)
+	tools = FilterToolsForInstance(tools, h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID))
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 
@@ -562,6 +563,13 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 		}
 	}
 
+	// Enforce the share-instance tool allowlist (deny-by-default) before any side effect.
+	scope := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if InstanceDeniesTool(scope, params.Name) {
+		return NewErrorResponse(req.ID, ErrCodeForbidden,
+			"Tool not allowed: "+params.Name, nil)
+	}
+
 	projectID := session.ProjectID
 	if projectID == "" {
 		projectID = user.ProjectID
@@ -575,7 +583,8 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 	}
 
 	// Execute tool
-	result, err := h.svc.ExecuteTool(c.Request().Context(), projectID, params.Name, params.Arguments)
+	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	result, err := h.svc.ExecuteTool(execCtx, projectID, params.Name, params.Arguments)
 	if err != nil {
 		h.log.Error("tool execution failed",
 			slog.String("tool", params.Name),

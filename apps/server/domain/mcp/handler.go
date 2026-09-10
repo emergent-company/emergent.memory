@@ -255,6 +255,7 @@ func (h *Handler) handleToolsList(c echo.Context, req *Request, user *auth.AuthU
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), user.ProjectID)
 	tools = FilterToolsForScopes(tools, user.Scopes)
+	tools = FilterToolsForInstance(tools, h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID))
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 
@@ -303,6 +304,13 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 		}
 	}
 
+	// Enforce the share-instance tool allowlist (deny-by-default) before any side effect.
+	scope := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if InstanceDeniesTool(scope, params.Name) {
+		return NewErrorResponse(req.ID, ErrCodeForbidden,
+			"Tool not allowed: "+params.Name, nil)
+	}
+
 	// Get project ID: prefer the per-request header (auth-middleware-resolved) so that
 	// callers with org-level tokens can target different projects on the same session.
 	// Fall back to the session value set at initialize time only when the header is absent.
@@ -322,7 +330,8 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 	}
 
 	// Execute tool
-	result, err := h.svc.ExecuteTool(c.Request().Context(), projectID, params.Name, params.Arguments)
+	execCtx := WithInstanceScope(c.Request().Context(), scope)
+	result, err := h.svc.ExecuteTool(execCtx, projectID, params.Name, params.Arguments)
 	if err != nil {
 		h.log.Error("tool execution failed",
 			slog.String("tool", params.Name),
