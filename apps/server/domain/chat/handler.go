@@ -389,6 +389,12 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 // conversationMessageItem mirrors the "message" timeline item shape returned by
 // agents.Repository.GetConversationFullHistory (kind/role/content/created_at)
 // for a single stored kb.chat_messages row.
+//
+// RunID and StepNumber are intentionally left as their zero values: a stored
+// chat row has no owning run or step, and ""/0 is the truthful encoding. The
+// only in-repo consumer of these items (mcp's session-get-messages) forwards
+// them opaquely, and the transcript renderer keys on kind/role/content/
+// created_at; run-scoped "message" items are unaffected.
 func conversationMessageItem(m Message) *agents.ConversationHistoryItem {
 	return &agents.ConversationHistoryItem{
 		Kind:      "message",
@@ -418,34 +424,61 @@ func conversationItemText(it *agents.ConversationHistoryItem) string {
 	return text
 }
 
-// conversationUserMessageKey identifies a user message item by role + content +
-// created_at — the deduplication criterion for rows that exist in both
-// kb.chat_messages and the run-scoped agent_run_messages.
-func conversationUserMessageKey(role string, createdAt time.Time, content string) string {
-	return role + "\x00" + createdAt.UTC().Format(time.RFC3339Nano) + "\x00" + content
+// conversationHistoryPrefix and conversationCurrentMarker delimit the prompt
+// that streamAgentChat constructs for a multi-turn agent chat: prior turns are
+// summarised under the first marker and the raw current user turn follows the
+// second (see streamAgentChat's "Prior conversation context" builder).
+const (
+	conversationHistoryPrefix = "## Prior conversation context\n"
+	conversationCurrentMarker = "## Current user message\n"
+)
+
+// conversationRunUserText normalizes a run-scoped user message's persisted text
+// back to the raw user turn.
+//
+// The executor persists req.UserMessage verbatim (executor.go persistMessage),
+// while streamAgentChat feeds it a history-augmented prompt on every turn after
+// the first. Matching raw chat rows against the normalized suffix is what makes
+// the transcript dedupe effective; the raw text and the once-augmented text are
+// otherwise never equal.
+func conversationRunUserText(content string) string {
+	if !strings.HasPrefix(content, conversationHistoryPrefix) {
+		return content
+	}
+	if i := strings.LastIndex(content, conversationCurrentMarker); i >= 0 {
+		return content[i+len(conversationCurrentMarker):]
+	}
+	return content
 }
 
-// mergeConversationUserMessages interleaves a conversation's stored
-// kb.chat_messages user messages into a run-based timeline, ordered
-// chronologically by created_at. A stored user message that exactly matches a
-// run item (role+content+time) is skipped — both stores can persist the same
-// user message for an agent turn.
+// mergeConversationUserMessages splices a conversation's stored kb.chat_messages
+// user rows into the run-based timeline returned by GetConversationFullHistory.
+//
+// The run timeline is emitted per-run as run_start, that run's messages/tool
+// calls, run_end, and run_end.CreatedAt is the run's *start* time. Re-sorting the
+// combined slice by CreatedAt would therefore hoist every run_end above its own
+// run's messages, so run items keep their emitted relative order and stored rows
+// are only inserted at run boundaries (see conversationRunUserText's callers).
+//
+// Dedupe rule: an agent turn is written twice — once to kb.chat_messages (raw
+// text, earlier) and once to kb.agent_run_messages (persisted req.UserMessage,
+// later, history-augmented on multi-turn chats). A stored user row is treated as
+// a duplicate only when an unmatched run-scoped user message with the same raw
+// text exists. Matching by nearest-preceding timestamp (the chat row is written
+// before the run starts) keeps counts correct: extra identical rows without a
+// run counterpart are still emitted, and two identical turns each matched by
+// their own run are both suppressed.
 func mergeConversationUserMessages(runItems []*agents.ConversationHistoryItem, msgs []Message) []*agents.ConversationHistoryItem {
 	if len(msgs) == 0 {
 		return runItems
 	}
 
-	// Key every run-scoped user message for exact-match dedupe.
-	seen := make(map[string]struct{}, len(runItems))
-	for _, it := range runItems {
-		if it == nil || it.Kind != "message" || it.Role != RoleUser {
-			continue
-		}
-		seen[conversationUserMessageKey(it.Role, it.CreatedAt, conversationItemText(it))] = struct{}{}
+	type storedUser struct {
+		msg     Message
+		item    *agents.ConversationHistoryItem
+		matched bool
 	}
-
-	out := make([]*agents.ConversationHistoryItem, 0, len(runItems)+len(msgs))
-	out = append(out, runItems...)
+	stored := make([]*storedUser, 0, len(msgs))
 	for i := range msgs {
 		if msgs[i].Role != RoleUser {
 			// Assistant/tool turns are already captured run-scoped for
@@ -453,20 +486,71 @@ func mergeConversationUserMessages(runItems []*agents.ConversationHistoryItem, m
 			// run (e.g. get-or-create seeding).
 			continue
 		}
-		item := conversationMessageItem(msgs[i])
-		key := conversationUserMessageKey(item.Role, item.CreatedAt, conversationItemText(item))
-		if _, dup := seen[key]; dup {
+		stored = append(stored, &storedUser{msg: msgs[i], item: conversationMessageItem(msgs[i])})
+	}
+	if len(stored) == 0 {
+		return runItems
+	}
+	sort.SliceStable(stored, func(i, j int) bool {
+		return stored[i].msg.CreatedAt.Before(stored[j].msg.CreatedAt)
+	})
+
+	// Pair each run-scoped user message with the closest preceding stored row
+	// of identical raw text. Walk run items in emitted order so a later run
+	// cannot steal an earlier run's counterpart.
+	for _, it := range runItems {
+		if it == nil || it.Kind != "message" || it.Role != RoleUser {
 			continue
 		}
-		seen[key] = struct{}{}
-		out = append(out, item)
+		runText := conversationRunUserText(conversationItemText(it))
+		best := -1
+		for i := range stored {
+			if stored[i].matched || stored[i].msg.Content != runText {
+				continue
+			}
+			if !stored[i].msg.CreatedAt.After(it.CreatedAt) {
+				// Prefer the latest stored row at or before the run start.
+				if best == -1 || stored[i].msg.CreatedAt.After(stored[best].msg.CreatedAt) {
+					best = i
+				}
+			} else if best == -1 {
+				// No preceding candidate yet; remember the earliest following
+				// row as a fallback (stored is time-ordered, so this is stable).
+				best = i
+			}
+		}
+		if best >= 0 {
+			stored[best].matched = true
+		}
 	}
 
-	// Interleave chronologically; stable sort keeps run items before stored
-	// messages when timestamps tie.
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].CreatedAt.Before(out[j].CreatedAt)
-	})
+	kept := make([]*agents.ConversationHistoryItem, 0, len(stored))
+	for _, s := range stored {
+		if !s.matched {
+			kept = append(kept, s.item)
+		}
+	}
+	if len(kept) == 0 {
+		return runItems
+	}
+
+	out := make([]*agents.ConversationHistoryItem, 0, len(runItems)+len(kept))
+	ci := 0
+	for _, it := range runItems {
+		// A run_start anchors a run block; flush stored rows that predate it so
+		// they land before the run that follows. run_end is deliberately not a
+		// boundary — its CreatedAt equals the run's start, so flushing on it
+		// would reorder messages ahead of the run.
+		if it != nil && it.Kind == "run_start" {
+			for ci < len(kept) && !kept[ci].CreatedAt.After(it.CreatedAt) {
+				out = append(out, kept[ci])
+				ci++
+			}
+		}
+		out = append(out, it)
+	}
+	// Rows newer than the last run (or orphaned inside its window) go last.
+	out = append(out, kept[ci:]...)
 	return out
 }
 
@@ -1210,7 +1294,12 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		}
 		if fallback != "" {
 			responseText = fallback
-			sseWriter.WriteData(sse.NewTokenEvent(fallback))
+			if err := sseWriter.WriteData(sse.NewTokenEvent(fallback)); err != nil {
+				h.log.Warn("failed to stream fallback answer token",
+					slog.String("conversation_id", conv.ID.String()),
+					slog.String("error", err.Error()),
+				)
+			}
 		}
 	}
 
