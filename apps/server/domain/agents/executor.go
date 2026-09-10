@@ -118,6 +118,45 @@ func thinkingTexts(parts []*genai.Part) (operator, reasoning []string) {
 	return operator, reasoning
 }
 
+// finalResponseStreamEvents classifies the parts of a final-response event into
+// the stream events the executor emits for it.
+//
+// Plain (non-Thought) text is always an answer and becomes a text delta. A
+// Thought part is usually chain-of-thought and is surfaced as reasoning, but
+// when the final content carries no plain text at all (e.g. a reasoner in
+// thinking mode that answers entirely in reasoning_content) the Thought text IS
+// the answer and is emitted as a text delta so callers still receive a non-empty
+// final response. Nil and empty parts are skipped.
+func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
+	hasAnswerText := false
+	for _, part := range parts {
+		if part != nil && part.Text != "" && !part.Thought {
+			hasAnswerText = true
+			break
+		}
+	}
+
+	var events []StreamEvent
+	for _, part := range parts {
+		if part == nil || part.Text == "" {
+			continue
+		}
+		if part.Thought && hasAnswerText {
+			events = append(events, StreamEvent{
+				Type: StreamEventThinking,
+				Role: "reasoning",
+				Text: part.Text,
+			})
+		} else {
+			events = append(events, StreamEvent{
+				Type: StreamEventTextDelta,
+				Text: part.Text,
+			})
+		}
+	}
+	return events
+}
+
 // ModelLimitsLookup is a narrow interface for querying model token limits
 // from the provider catalog. It is satisfied by *provider.Repository but
 // declared here to avoid a direct import of the provider domain package into
@@ -2611,23 +2650,16 @@ func (ae *AgentExecutor) runPipeline(
 				// are surfaced as thinking events rather than dropped, so a reasoner
 				// that returns chain-of-thought alongside its final answer is not
 				// silently stripped.
+				//
+				// The final assistant message must always deliver its answer as a
+				// TextDelta — never leave it as thinking-only. When the final content
+				// carries no plain (non-Thought) text part (e.g. a reasoner in
+				// thinking mode that answers entirely in reasoning_content, which is
+				// mapped to a Thought part), the Thought text IS the answer: emit it
+				// as text deltas so callers receive a non-empty final response.
 				if event.Content != nil && req.StreamCallback != nil {
-					for _, part := range event.Content.Parts {
-						if part == nil || part.Text == "" {
-							continue
-						}
-						if part.Thought {
-							req.StreamCallback(StreamEvent{
-								Type: StreamEventThinking,
-								Role: "reasoning",
-								Text: part.Text,
-							})
-						} else {
-							req.StreamCallback(StreamEvent{
-								Type: StreamEventTextDelta,
-								Text: part.Text,
-							})
-						}
+					for _, streamEvent := range finalResponseStreamEvents(event.Content.Parts) {
+						req.StreamCallback(streamEvent)
 					}
 				}
 			}

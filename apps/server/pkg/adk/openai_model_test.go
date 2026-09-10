@@ -601,3 +601,70 @@ func TestOpenAICompatibleModel_ToolSchema_ContainsResolvedPrefixedName(t *testin
 		"the bare whitelist name must not leak into the LLM schema")
 	assert.Equal(t, "Fetch a URL via the Exa MCP server", captured.Tools[0].Function.Description)
 }
+
+// captureOpenAIRequestForTool runs a single-tool GenerateContent against an
+// httptest backend and returns the OpenAI request body the server captured,
+// so tests can assert exactly what tool schema reached the wire.
+func captureOpenAIRequestForTool(t *testing.T, poolTool tool.Tool) openaiRequest {
+	t.Helper()
+	// Pack the resolved tool into genai declarations the way the ADK runner
+	// does before invoking the model (internal/toolinternal/toolutils.PackTool).
+	declarer, ok := poolTool.(interface {
+		Declaration() *genai.FunctionDeclaration
+	})
+	require.True(t, ok, "functiontool must expose Declaration()")
+	decl := declarer.Declaration()
+	require.NotNil(t, decl)
+
+	var captured openaiRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(makeOpenAIResponse("ok")))
+	}))
+	t.Cleanup(srv.Close)
+
+	m := NewOpenAICompatibleModel(srv.URL, "", "llama3")
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{
+			{Role: "user", Parts: []*genai.Part{{Text: "fetch it"}}},
+		},
+		Config: &genai.GenerateContentConfig{
+			Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{decl}}},
+		},
+	}
+	_, err := collectResponse(m.GenerateContent(context.Background(), req, false))
+	require.NoError(t, err)
+	return captured
+}
+
+// TestOpenAICompatibleModel_ToolSchema_SpaceyServerName_ValidFunctionName covers
+// the slugify half of the fix: a server named "E2E MCP 123" exposes its tools
+// under the slugged pool key e2e_mcp_123_web_fetch_exa (domain/agents
+// externalToolKey), which must reach the OpenAI wire schema as a legal function
+// name matching ^[A-Za-z0-9_-]{1,64}$ — the raw spacey key would be dropped or
+// refused by tool-calling providers.
+func TestOpenAICompatibleModel_ToolSchema_SpaceyServerName_ValidFunctionName(t *testing.T) {
+	poolTool, err := functiontool.New(
+		functiontool.Config{
+			Name:        "e2e_mcp_123_web_fetch_exa", // slugged pool key for server "E2E MCP 123"
+			Description: "Fetch a URL via the Exa MCP server",
+			InputSchema: &jsonschema.Schema{Type: "object"},
+		},
+		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
+			return map[string]any{"ok": true, "result": "fetched"}, nil
+		},
+	)
+	require.NoError(t, err)
+
+	captured := captureOpenAIRequestForTool(t, poolTool)
+
+	require.Len(t, captured.Tools, 1, "exactly one tool declaration reaches the model")
+	require.NotNil(t, captured.Tools[0].Function)
+	assert.Equal(t, "e2e_mcp_123_web_fetch_exa", captured.Tools[0].Function.Name)
+	assert.Regexp(t, `^[A-Za-z0-9_-]{1,64}$`, captured.Tools[0].Function.Name,
+		"the slugged key must satisfy the LLM function-name contract on the wire")
+	assert.NotEqual(t, "E2E MCP 123_web_fetch_exa", captured.Tools[0].Function.Name,
+		"the raw spacey server name must never reach the schema")
+}

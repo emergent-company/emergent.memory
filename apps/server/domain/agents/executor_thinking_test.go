@@ -69,3 +69,64 @@ func assertStrings(t *testing.T, got, want []string) {
 		}
 	}
 }
+
+func TestFinalResponseStreamEvents(t *testing.T) {
+	tests := []struct {
+		name  string
+		parts []*genai.Part
+		want  []StreamEvent
+	}{
+		{
+			name: "answer alongside reasoning: text deltas plus reasoning",
+			parts: []*genai.Part{
+				{Text: "chain of thought", Thought: true},
+				{Text: "the answer"},
+			},
+			want: []StreamEvent{
+				{Type: StreamEventThinking, Role: "reasoning", Text: "chain of thought"},
+				{Type: StreamEventTextDelta, Text: "the answer"},
+			},
+		},
+		{
+			name: "reasoning only: Thought text becomes the answer",
+			parts: []*genai.Part{
+				{Text: "covert reasoning", Thought: true},
+			},
+			want: []StreamEvent{
+				{Type: StreamEventTextDelta, Text: "covert reasoning"},
+			},
+		},
+		{
+			name: "skips nil and empty parts",
+			parts: []*genai.Part{
+				nil,
+				{Text: ""},
+				{Text: "answer"},
+				{Text: "later thought", Thought: true},
+			},
+			want: []StreamEvent{
+				{Type: StreamEventTextDelta, Text: "answer"},
+				{Type: StreamEventThinking, Role: "reasoning", Text: "later thought"},
+			},
+		},
+		{
+			name:  "no parts",
+			parts: nil,
+			want:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := finalResponseStreamEvents(tt.parts)
+			if len(got) != len(tt.want) {
+				t.Fatalf("length = %d, want %d (got %v)", len(got), len(tt.want), got)
+			}
+			for i := range got {
+				if got[i].Type != tt.want[i].Type || got[i].Role != tt.want[i].Role || got[i].Text != tt.want[i].Text {
+					t.Errorf("[%d] = %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -353,10 +354,16 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 	}
 
 	if conv.ACPSessionID == nil {
-		// No agent runs yet — return empty history.
+		// No agent runs exist yet — synthesize the transcript from the
+		// conversation's stored kb.chat_messages (role/content/created_at) so
+		// user/assistant rows surface even before a run starts (e.g.
+		// document-classification or get-or-create flows that write chat
+		// messages but never execute an agent turn). Shape mirrors the
+		// "message" items produced by GetConversationFullHistory so the gateway
+		// renders both uniformly.
 		return c.JSON(http.StatusOK, map[string]any{
 			"conversation_id": conversationID,
-			"items":           []any{},
+			"items":           synthesizeConversationMessageItems(conv.Messages),
 		})
 	}
 
@@ -365,11 +372,186 @@ func (h *Handler) GetConversationHistory(c echo.Context) error {
 		return apperror.ErrInternal.WithMessage("failed to load conversation history")
 	}
 
+	// Merge the conversation's stored kb.chat_messages user messages into the
+	// run timeline (interleaved chronologically by created_at) so a
+	// get-or-create conversation that seeded a user message and then ran an
+	// agent turn shows the user message alongside the run items. Identical
+	// (role+content+time) rows present in both stores are deduplicated.
+	items = mergeConversationUserMessages(items, conv.Messages)
+
 	return c.JSON(http.StatusOK, map[string]any{
 		"conversation_id": conversationID,
 		"acp_session_id":  conv.ACPSessionID,
 		"items":           items,
 	})
+}
+
+// conversationMessageItem mirrors the "message" timeline item shape returned by
+// agents.Repository.GetConversationFullHistory (kind/role/content/created_at)
+// for a single stored kb.chat_messages row.
+//
+// RunID and StepNumber are intentionally left as their zero values: a stored
+// chat row has no owning run or step, and ""/0 is the truthful encoding. The
+// only in-repo consumer of these items (mcp's session-get-messages) forwards
+// them opaquely, and the transcript renderer keys on kind/role/content/
+// created_at; run-scoped "message" items are unaffected.
+func conversationMessageItem(m Message) *agents.ConversationHistoryItem {
+	return &agents.ConversationHistoryItem{
+		Kind:      "message",
+		CreatedAt: m.CreatedAt,
+		Role:      m.Role,
+		Content:   map[string]any{"text": m.Content},
+	}
+}
+
+// synthesizeConversationMessageItems converts stored chat messages into
+// timeline "message" items, in stored (created_at ASC) order.
+func synthesizeConversationMessageItems(msgs []Message) []*agents.ConversationHistoryItem {
+	items := make([]*agents.ConversationHistoryItem, 0, len(msgs))
+	for i := range msgs {
+		items = append(items, conversationMessageItem(msgs[i]))
+	}
+	return items
+}
+
+// conversationItemText extracts the plain-text payload of a message timeline
+// item's content object.
+func conversationItemText(it *agents.ConversationHistoryItem) string {
+	if it == nil || it.Content == nil {
+		return ""
+	}
+	text, _ := it.Content["text"].(string)
+	return text
+}
+
+// conversationHistoryPrefix and conversationCurrentMarker delimit the prompt
+// that streamAgentChat constructs for a multi-turn agent chat: prior turns are
+// summarised under the first marker and the raw current user turn follows the
+// second (see streamAgentChat's "Prior conversation context" builder).
+const (
+	conversationHistoryPrefix = "## Prior conversation context\n"
+	conversationCurrentMarker = "## Current user message\n"
+)
+
+// conversationRunUserText normalizes a run-scoped user message's persisted text
+// back to the raw user turn.
+//
+// The executor persists req.UserMessage verbatim (executor.go persistMessage),
+// while streamAgentChat feeds it a history-augmented prompt on every turn after
+// the first. Matching raw chat rows against the normalized suffix is what makes
+// the transcript dedupe effective; the raw text and the once-augmented text are
+// otherwise never equal.
+func conversationRunUserText(content string) string {
+	if !strings.HasPrefix(content, conversationHistoryPrefix) {
+		return content
+	}
+	if i := strings.LastIndex(content, conversationCurrentMarker); i >= 0 {
+		return content[i+len(conversationCurrentMarker):]
+	}
+	return content
+}
+
+// mergeConversationUserMessages splices a conversation's stored kb.chat_messages
+// user rows into the run-based timeline returned by GetConversationFullHistory.
+//
+// The run timeline is emitted per-run as run_start, that run's messages/tool
+// calls, run_end, and run_end.CreatedAt is the run's *start* time. Re-sorting the
+// combined slice by CreatedAt would therefore hoist every run_end above its own
+// run's messages, so run items keep their emitted relative order and stored rows
+// are only inserted at run boundaries (see conversationRunUserText's callers).
+//
+// Dedupe rule: an agent turn is written twice — once to kb.chat_messages (raw
+// text, earlier) and once to kb.agent_run_messages (persisted req.UserMessage,
+// later, history-augmented on multi-turn chats). A stored user row is treated as
+// a duplicate only when an unmatched run-scoped user message with the same raw
+// text exists. Matching by nearest-preceding timestamp (the chat row is written
+// before the run starts) keeps counts correct: extra identical rows without a
+// run counterpart are still emitted, and two identical turns each matched by
+// their own run are both suppressed.
+func mergeConversationUserMessages(runItems []*agents.ConversationHistoryItem, msgs []Message) []*agents.ConversationHistoryItem {
+	if len(msgs) == 0 {
+		return runItems
+	}
+
+	type storedUser struct {
+		msg     Message
+		item    *agents.ConversationHistoryItem
+		matched bool
+	}
+	stored := make([]*storedUser, 0, len(msgs))
+	for i := range msgs {
+		if msgs[i].Role != RoleUser {
+			// Assistant/tool turns are already captured run-scoped for
+			// agent-backed conversations; only stored user rows can precede a
+			// run (e.g. get-or-create seeding).
+			continue
+		}
+		stored = append(stored, &storedUser{msg: msgs[i], item: conversationMessageItem(msgs[i])})
+	}
+	if len(stored) == 0 {
+		return runItems
+	}
+	sort.SliceStable(stored, func(i, j int) bool {
+		return stored[i].msg.CreatedAt.Before(stored[j].msg.CreatedAt)
+	})
+
+	// Pair each run-scoped user message with the closest preceding stored row
+	// of identical raw text. Walk run items in emitted order so a later run
+	// cannot steal an earlier run's counterpart.
+	for _, it := range runItems {
+		if it == nil || it.Kind != "message" || it.Role != RoleUser {
+			continue
+		}
+		runText := conversationRunUserText(conversationItemText(it))
+		best := -1
+		for i := range stored {
+			if stored[i].matched || stored[i].msg.Content != runText {
+				continue
+			}
+			if !stored[i].msg.CreatedAt.After(it.CreatedAt) {
+				// Prefer the latest stored row at or before the run start.
+				if best == -1 || stored[i].msg.CreatedAt.After(stored[best].msg.CreatedAt) {
+					best = i
+				}
+			} else if best == -1 {
+				// No preceding candidate yet; remember the earliest following
+				// row as a fallback (stored is time-ordered, so this is stable).
+				best = i
+			}
+		}
+		if best >= 0 {
+			stored[best].matched = true
+		}
+	}
+
+	kept := make([]*agents.ConversationHistoryItem, 0, len(stored))
+	for _, s := range stored {
+		if !s.matched {
+			kept = append(kept, s.item)
+		}
+	}
+	if len(kept) == 0 {
+		return runItems
+	}
+
+	out := make([]*agents.ConversationHistoryItem, 0, len(runItems)+len(kept))
+	ci := 0
+	for _, it := range runItems {
+		// A run_start anchors a run block; flush stored rows that predate it so
+		// they land before the run that follows. run_end is deliberately not a
+		// boundary — its CreatedAt equals the run's start, so flushing on it
+		// would reorder messages ahead of the run.
+		if it != nil && it.Kind == "run_start" {
+			for ci < len(kept) && !kept[ci].CreatedAt.After(it.CreatedAt) {
+				out = append(out, kept[ci])
+				ci++
+			}
+		}
+		out = append(out, it)
+	}
+	// Rows newer than the last run (or orphaned inside its window) go last.
+	out = append(out, kept[ci:]...)
+	return out
 }
 
 // Validation helpers
@@ -519,9 +701,13 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	message := strings.TrimSpace(req.Message)
 
-	// If agentDefinitionId is provided on a new conversation, validate it exists
+	// If agentDefinitionId is provided, validate it exists. On a new
+	// conversation it is bound at creation; on an existing conversation it is
+	// bound below on the first agent-backed turn (get-or-create flows such as
+	// object-chat leave agent_definition_id unset and only carry the agent in
+	// the redirect URL).
 	var agentDefID *uuid.UUID
-	if req.AgentDefinitionID != nil && req.ConversationID == nil {
+	if req.AgentDefinitionID != nil {
 		parsed, _ := uuid.Parse(*req.AgentDefinitionID) // Already validated format
 		def, err := h.agentRepo.FindDefinitionByID(ctx, parsed.String(), &user.ProjectID)
 		if err != nil {
@@ -536,12 +722,29 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	// Get or create conversation
 	var conv *Conversation
 	if req.ConversationID != nil {
-		// Use existing conversation — ignore agentDefinitionId from request body
+		// Use existing conversation. If it is still unbound and the request
+		// carries an agent definition id, bind it below on this first
+		// agent-backed turn; a conversation that already has an agent keeps it.
 		parsed, _ := uuid.Parse(*req.ConversationID) // Already validated
 		var err error
 		conv, err = h.svc.GetConversation(ctx, user.ProjectID, parsed)
 		if err != nil {
 			return err
+		}
+
+		// Bind the agent on the first agent-backed turn of an unbound
+		// conversation. Get-or-create flows (object-chat, canonical
+		// conversations) leave agent_definition_id unset and only carry the
+		// agent in the chat request, so without this bind the conversation
+		// would take the legacy direct-LLM path instead of the agent executor.
+		if conv.AgentDefinitionID == nil && agentDefID != nil {
+			conv.AgentDefinitionID = agentDefID
+			if err := h.svc.SetAgentDefinitionID(ctx, user.ProjectID, conv.ID, agentDefID); err != nil {
+				h.log.Warn("failed to bind agent to conversation on first turn",
+					slog.String("conversation_id", conv.ID.String()),
+					slog.String("error", err.Error()),
+				)
+			}
 		}
 
 		// Persist the user message
@@ -1061,6 +1264,45 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		return result
 	}
 
+	// Safety net: a reasoner answering entirely in reasoning_content (thinking
+	// mode) never delivers a non-Thought text part, so the executor surfaces the
+	// answer as StreamEventThinking events and fullResponse stays empty even
+	// though the run completed and persisted the final text. When that happens,
+	// recover the answer from the run's persisted assistant content (or the
+	// result summary) and emit it as a single token event so the client still
+	// receives the final text and the assistant row is written to
+	// kb.chat_messages below.
+	if responseText == "" && result != nil && result.Status == agents.RunStatusSuccess {
+		fallback := ""
+		if runMsgs, err := h.agentRepo.FindMessagesByRunID(ctx, result.RunID); err == nil {
+			// Last text-bearing row that is not the user/tool side of the run is
+			// the assistant answer (Role may be "assistant" or the agent author).
+			for i := len(runMsgs) - 1; i >= 0; i-- {
+				if runMsgs[i].Role == RoleUser || runMsgs[i].Role == "tool" {
+					continue
+				}
+				if t := agentRunMessageText(runMsgs[i].Content); t != "" {
+					fallback = t
+					break
+				}
+			}
+		}
+		if fallback == "" {
+			if t, ok := result.Summary["final_response"].(string); ok && t != "" {
+				fallback = t
+			}
+		}
+		if fallback != "" {
+			responseText = fallback
+			if err := sseWriter.WriteData(sse.NewTokenEvent(fallback)); err != nil {
+				h.log.Warn("failed to stream fallback answer token",
+					slog.String("conversation_id", conv.ID.String()),
+					slog.String("error", err.Error()),
+				)
+			}
+		}
+	}
+
 	// Persist assistant response to kb.chat_messages with agent_run_id reference
 	if responseText != "" {
 		var retrievalCtx json.RawMessage
@@ -1079,6 +1321,16 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 	}
 
 	return result
+}
+
+// agentRunMessageText extracts the plain-text payload of an agent run message's
+// content object ({"text": "..."}), returning "" when absent.
+func agentRunMessageText(content map[string]any) string {
+	if content == nil {
+		return ""
+	}
+	text, _ := content["text"].(string)
+	return text
 }
 
 // QueryStreamRequest is the request body for the stateless query endpoint.

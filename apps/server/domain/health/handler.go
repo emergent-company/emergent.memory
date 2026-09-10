@@ -62,8 +62,28 @@ type HealthResponse struct {
 	Timestamp string           `json:"timestamp"`
 	Uptime    string           `json:"uptime"`
 	Version   string           `json:"version"`
+	GitCommit string           `json:"git_commit,omitempty"`
+	BuildTime string           `json:"build_time,omitempty"`
 	Checks    map[string]Check `json:"checks"`
 	Tracing   *TracingInfo     `json:"tracing,omitempty"`
+}
+
+// buildInfo returns the health response's build identity fields from the
+// ldflag-injected version package. The "unknown" sentinel (no ldflags at build
+// time) is normalized to the empty string so an un-injected build is reported
+// as "no commit reported" rather than as a bogus commit hash — consumers (the
+// infra dashboard's source-drift probe) treat an absent commit as legacy.
+func buildInfo() (versionStr, commit, buildTime string) {
+	info := version.Info()
+	commit = info.GitCommit
+	if commit == "unknown" {
+		commit = ""
+	}
+	buildTime = info.BuildTime
+	if buildTime == "unknown" {
+		buildTime = ""
+	}
+	return info.Version, commit, buildTime
 }
 
 // Check represents an individual health check result
@@ -114,11 +134,14 @@ func (h *Handler) Health(c echo.Context) error {
 		}
 	}
 
+	versionStr, commit, buildTime := buildInfo()
 	response := HealthResponse{
 		Status:    overallStatus,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Uptime:    time.Since(h.startAt).String(),
-		Version:   version.Version,
+		Version:   versionStr,
+		GitCommit: commit,
+		BuildTime: buildTime,
 		Checks:    checks,
 		Tracing:   tracingInfo,
 	}

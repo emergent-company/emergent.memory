@@ -2,6 +2,7 @@ package agents
 
 import (
 	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -242,15 +243,21 @@ func TestToolPool_ToolNames_ReturnsAllCachedNames(t *testing.T) {
 //
 // The admin API persists agent tool whitelists with BARE tool names
 // (web_fetch_exa), but the tool pool keys external MCP tools as
-// ServerName_ToolName (ts_web_fetch_exa). These tests pin the fallback that
-// resolves a bare whitelist entry to its prefixed pool key(s).
+// <slugified server>_ToolName (e2e_mcp_123_web_fetch_exa). These tests pin the
+// fallback that resolves a bare whitelist entry to its prefixed pool key(s).
+
+// externalToolFixture describes one external MCP tool by its raw server name
+// and bare tool name — the same inputs buildCache receives from the registry.
+type externalToolFixture struct {
+	serverName string
+	toolName   string
+}
 
 // externalPoolCache builds a projectToolCache that mirrors a real pool layout:
-// builtin tools keyed by bare name, external MCP tools keyed by ServerName_ToolName.
-// externalNames must be prefixed; the bare tool name is derived by stripping the
-// leading "<server>_" segment and indexed into bareNameToKeys the same way
-// buildCache does at runtime.
-func externalPoolCache(builtinNames, externalNames []string) *projectToolCache {
+// builtin tools keyed by bare name; external MCP tools keyed by the same
+// externalToolKey(serverName, toolName) formula buildCache uses, with
+// bareNameToKeys aliasing the raw bare tool name to the pooled key.
+func externalPoolCache(builtinNames []string, extTools []externalToolFixture) *projectToolCache {
 	cache := &projectToolCache{
 		toolDefs:          make(map[string]mcp.ToolDefinition),
 		builtinTools:      make(map[string]bool),
@@ -262,13 +269,11 @@ func externalPoolCache(builtinNames, externalNames []string) *projectToolCache {
 		cache.toolNames = append(cache.toolNames, name)
 		cache.builtinTools[name] = true
 	}
-	for _, prefixed := range externalNames {
-		cache.toolDefs[prefixed] = mcp.ToolDefinition{Name: prefixed, InputSchema: mcp.InputSchema{Type: "object"}}
-		cache.toolNames = append(cache.toolNames, prefixed)
-		if i := strings.Index(prefixed, "_"); i > 0 {
-			bare := prefixed[i+1:]
-			cache.bareNameToKeys[bare] = append(cache.bareNameToKeys[bare], prefixed)
-		}
+	for _, ext := range extTools {
+		key := externalToolKey(ext.serverName, ext.toolName)
+		cache.toolDefs[key] = mcp.ToolDefinition{Name: key, InputSchema: mcp.InputSchema{Type: "object"}}
+		cache.toolNames = append(cache.toolNames, key)
+		cache.bareNameToKeys[ext.toolName] = append(cache.bareNameToKeys[ext.toolName], key)
 	}
 	return cache
 }
@@ -276,7 +281,10 @@ func externalPoolCache(builtinNames, externalNames []string) *projectToolCache {
 func TestMatchToolsByWhitelist_BareExternalName_ResolvesPrefixedKey(t *testing.T) {
 	cache := externalPoolCache(
 		[]string{"search-knowledge"},
-		[]string{"ts_web_fetch_exa", "exa_graph_query"},
+		[]externalToolFixture{
+			{serverName: "ts", toolName: "web_fetch_exa"},
+			{serverName: "exa", toolName: "graph_query"},
+		},
 	)
 	tp := &ToolPool{log: slog.Default()}
 
@@ -292,7 +300,7 @@ func TestMatchToolsByWhitelist_BareExternalName_ResolvesPrefixedKey(t *testing.T
 func TestMatchToolsByWhitelist_ExactPrefixedExternalName_StillMatches(t *testing.T) {
 	cache := externalPoolCache(
 		[]string{"search-knowledge"},
-		[]string{"ts_web_fetch_exa"},
+		[]externalToolFixture{{serverName: "ts", toolName: "web_fetch_exa"}},
 	)
 	tp := &ToolPool{log: slog.Default()}
 
@@ -307,7 +315,10 @@ func TestMatchToolsByWhitelist_ExactPrefixedExternalName_StillMatches(t *testing
 func TestMatchToolsByWhitelist_AmbiguousBareName_ResolvesBothServers(t *testing.T) {
 	cache := externalPoolCache(
 		[]string{"search-knowledge"},
-		[]string{"alpha_web_fetch_exa", "beta_web_fetch_exa"},
+		[]externalToolFixture{
+			{serverName: "alpha", toolName: "web_fetch_exa"},
+			{serverName: "beta", toolName: "web_fetch_exa"},
+		},
 	)
 	tp := &ToolPool{log: slog.Default()}
 
@@ -322,7 +333,7 @@ func TestMatchToolsByWhitelist_AmbiguousBareName_ResolvesBothServers(t *testing.
 func TestMatchToolsByWhitelist_BareAndPrefixedEntry_Dedupes(t *testing.T) {
 	cache := externalPoolCache(
 		[]string{"search-knowledge"},
-		[]string{"ts_web_fetch_exa"},
+		[]externalToolFixture{{serverName: "ts", toolName: "web_fetch_exa"}},
 	)
 	tp := &ToolPool{log: slog.Default()}
 
@@ -337,7 +348,7 @@ func TestMatchToolsByWhitelist_BareAndPrefixedEntry_Dedupes(t *testing.T) {
 func TestMatchToolsByWhitelist_UnknownBareName_ResolvesNothing(t *testing.T) {
 	cache := externalPoolCache(
 		[]string{"search-knowledge"},
-		[]string{"ts_web_fetch_exa"},
+		[]externalToolFixture{{serverName: "ts", toolName: "web_fetch_exa"}},
 	)
 	tp := &ToolPool{log: slog.Default()}
 
@@ -351,7 +362,7 @@ func TestMatchToolsByWhitelist_UnknownBareName_ResolvesNothing(t *testing.T) {
 func TestMatchToolsByWhitelist_RealBareBuiltin_StillMatchesExactly(t *testing.T) {
 	cache := externalPoolCache(
 		[]string{"search-knowledge"},
-		[]string{"ts_web_fetch_exa"},
+		[]externalToolFixture{{serverName: "ts", toolName: "web_fetch_exa"}},
 	)
 	tp := &ToolPool{log: slog.Default()}
 
@@ -374,7 +385,7 @@ func TestResolveTools_BareExternalName_YieldsPrefixedADKTool(t *testing.T) {
 	// depend on it; the prefixed def routes through the builtin wrapper here.
 	tp.cache["test-project"] = externalPoolCache(
 		[]string{"search-knowledge"},
-		[]string{"ts_web_fetch_exa"},
+		[]externalToolFixture{{serverName: "ts", toolName: "web_fetch_exa"}},
 	)
 
 	agentDef := &AgentDefinition{Tools: []string{"web_fetch_exa"}, Name: "research"}
@@ -405,7 +416,7 @@ func TestResolveTools_BareExternalName_WithRegistryService_StillWraps(t *testing
 	}
 	tp.cache["test-project"] = externalPoolCache(
 		[]string{"search-knowledge"},
-		[]string{"ts_web_fetch_exa"},
+		[]externalToolFixture{{serverName: "ts", toolName: "web_fetch_exa"}},
 	)
 
 	agentDef := &AgentDefinition{Tools: []string{"web_fetch_exa"}, Name: "research"}
@@ -420,6 +431,134 @@ func TestResolveTools_BareExternalName_WithRegistryService_StillWraps(t *testing
 		names = append(names, t.Name())
 	}
 	assert.Contains(t, names, "ts_web_fetch_exa")
+}
+
+// --- externalToolKey ---
+//
+// LLM function names must match ^[A-Za-z0-9_-]{1,64}$; server names such as
+// "E2E MCP 123" would otherwise produce pool keys providers silently drop.
+// (SlugifyServerName itself is unit-tested in domain/mcpregistry/names_test.go.)
+
+// functionNameRE mirrors the LLM function-name contract enforced by
+// tool-calling providers.
+var functionNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+func requireValidFunctionName(t *testing.T, name string) {
+	t.Helper()
+	require.Regexp(t, functionNameRE, name, "name %q violates the LLM function-name contract", name)
+}
+
+func TestExternalToolKey_AlwaysValidFunctionName(t *testing.T) {
+	servers := []string{
+		"E2E MCP 123",
+		"MyCool-Server!!v2",
+		"server/with/slashes & dots.v1",
+		"!!!",
+		"",
+		"normal",
+		strings.Repeat("s", 120), // absurdly long server name
+	}
+	tools := []string{"web_fetch_exa", "graph_query", "a"}
+	for _, srv := range servers {
+		for _, tool := range tools {
+			key := externalToolKey(srv, tool)
+			requireValidFunctionName(t, key)
+			// The bare tool-name suffix is always preserved whole.
+			assert.True(t, strings.HasSuffix(key, tool),
+				"externalToolKey(%q, %q) = %q must keep the tool-name suffix", srv, tool, key)
+		}
+	}
+	// Deterministic: same input always yields the same key.
+	assert.Equal(t, externalToolKey("E2E MCP 123", "web_fetch_exa"),
+		externalToolKey("E2E MCP 123", "web_fetch_exa"))
+}
+
+func TestExternalToolKey_TruncatesTo64Chars(t *testing.T) {
+	// 120 's' chars slug to a 120-char server prefix — must be cut to budget.
+	tool := "web_fetch_exa" // 14 chars
+	key := externalToolKey(strings.Repeat("s", 120), tool)
+	requireValidFunctionName(t, key)
+	assert.LessOrEqual(t, len(key), maxFunctionNameLen, "key must never exceed the 64-char cap")
+	assert.True(t, strings.HasSuffix(key, "_"+tool), "key %q must keep the joined tool suffix", key)
+
+	// Truncation landing exactly on an underscore boundary must strip the
+	// trailing '_' before the joining '_' (no empty segment, no "___").
+	// Single-letter words give a perfectly regular slug: "a_b_c_..._z_a_...".
+	// 52 letters → slug length 103; budget = 64-15-1 = 48 is even, so slug[:48]
+	// ends on an underscore (letter index 47) and TrimRight drops it, leaving
+	// letters a..x (indices 0..46, 24 letters) before the joining "_".
+	const abc = "abcdefghijklmnopqrstuvwxyz"
+	serverWords := make([]string, 0, 52)
+	for pass := 0; pass < 2; pass++ {
+		for i := 0; i < 26; i++ {
+			serverWords = append(serverWords, string(abc[i]))
+		}
+	}
+	serverName := strings.Join(serverWords, " ")
+	toolLong := "abcdefghijklmno" // 15 chars → budget = 64-15-1 = 48
+	key = externalToolKey(serverName, toolLong)
+	requireValidFunctionName(t, key)
+	trimmedLetters := make([]string, 24)
+	for i := 0; i < 24; i++ {
+		trimmedLetters[i] = string(abc[i])
+	}
+	expected := strings.Join(trimmedLetters, "_") + "_" + toolLong
+	assert.Equal(t, expected, key)
+	assert.NotContains(t, key, "___")
+}
+
+// --- spacey/non-alnum server names in the pool ---
+
+func TestMatchToolsByWhitelist_SpaceyServerName_ResolvesToSluggedKey(t *testing.T) {
+	cache := externalPoolCache(
+		[]string{"search-knowledge"},
+		[]externalToolFixture{{serverName: "E2E MCP 123", toolName: "web_fetch_exa"}},
+	)
+	tp := &ToolPool{log: slog.Default()}
+
+	// buildCache keys this tool as e2e_mcp_123_web_fetch_exa and aliases the raw
+	// bare name into bareNameToKeys, so a bare whitelist entry still resolves.
+	keys := cache.bareNameToKeys["web_fetch_exa"]
+	require.Len(t, keys, 1)
+	require.Equal(t, "e2e_mcp_123_web_fetch_exa", keys[0])
+
+	defs := tp.matchToolsByWhitelist(cache, []string{"web_fetch_exa"})
+	require.Len(t, defs, 1)
+	assert.Equal(t, "e2e_mcp_123_web_fetch_exa", defs[0].Name)
+	requireValidFunctionName(t, defs[0].Name)
+}
+
+func TestResolveTools_SpaceyServerName_ProducesValidADKToolName(t *testing.T) {
+	tp := &ToolPool{
+		log:        slog.Default(),
+		mcpService: &mcp.Service{},
+		cache:      make(map[string]*projectToolCache),
+	}
+	tp.cache["test-project"] = externalPoolCache(
+		[]string{"search-knowledge"},
+		[]externalToolFixture{{serverName: "E2E MCP 123", toolName: "web_fetch_exa"}},
+	)
+
+	agentDef := &AgentDefinition{Tools: []string{"web_fetch_exa"}, Name: "research"}
+	tools, err := tp.ResolveTools("test-project", agentDef, 0, DefaultMaxDepth)
+	require.NoError(t, err)
+
+	var names []string
+	for _, t := range tools {
+		if t == nil {
+			continue
+		}
+		names = append(names, t.Name())
+	}
+	for _, name := range names {
+		// Every tool that reaches the pipeline must be a legal LLM function name
+		// — including the hidden set_session_title injection.
+		requireValidFunctionName(t, name)
+	}
+	assert.Contains(t, names, "e2e_mcp_123_web_fetch_exa",
+		"spacey server name must resolve to the slugged prefixed ADK tool")
+	assert.Contains(t, names, "set_session_title")
+	assert.NotContains(t, names, "web_fetch_exa")
 }
 
 // --- convertToolResult ---

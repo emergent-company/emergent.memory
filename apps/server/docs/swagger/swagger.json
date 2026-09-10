@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.73.0"
+        "version": "0.77.0"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -25599,11 +25599,17 @@
         "domain_health.HealthResponse": {
             "type": "object",
             "properties": {
+                "build_time": {
+                    "type": "string"
+                },
                 "checks": {
                     "type": "object",
                     "additionalProperties": {
                         "$ref": "#/definitions/domain_health.Check"
                     }
+                },
+                "git_commit": {
+                    "type": "string"
                 },
                 "status": {
                     "type": "string"

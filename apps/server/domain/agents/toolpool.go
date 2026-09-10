@@ -59,6 +59,40 @@ var acpTools = map[string]bool{
 // DefaultMaxDepth is the default maximum agent spawning depth.
 const DefaultMaxDepth = 6
 
+// maxFunctionNameLen matches the LLM function-name contract
+// (^[A-Za-z0-9_-]{1,64}$) that tool-calling providers enforce: names outside
+// this charset/limit are silently dropped or rejected, so the tool never fires.
+const maxFunctionNameLen = 64
+
+// externalToolKey builds the pooled cache key for an external MCP tool:
+// SlugifyServerName(server) + "_" + bare tool name (Diane convention), capped
+// at maxFunctionNameLen so the key is always a legal LLM function name. The
+// bare tool-name suffix is always kept whole; when the combined key is too long
+// the slugged server part is truncated at the budget boundary (and any trailing
+// "_" stripped before the joining "_"). Deterministic; collisions between
+// servers whose names slug to the same prefix are tolerated (bare-alias
+// resolution already handles multi-server ambiguity).
+func externalToolKey(serverName, toolName string) string {
+	slug := mcpregistry.SlugifyServerName(serverName)
+	if slug != "" && len(slug)+1+len(toolName) <= maxFunctionNameLen {
+		return slug + "_" + toolName
+	}
+	// Reserve one character for the joining "_" and the rest for the full
+	// tool-name suffix; the slug gets whatever budget remains.
+	budget := maxFunctionNameLen - len(toolName) - 1
+	switch {
+	case budget >= 1:
+		slug = strings.TrimRight(slug[:budget], "_")
+		return slug + "_" + toolName
+	case len(toolName) <= maxFunctionNameLen:
+		// Tool name alone consumes the entire budget — emit the bare tool name.
+		return toolName
+	default:
+		// Pathological: the bare tool name alone exceeds the function-name cap.
+		return toolName[:maxFunctionNameLen]
+	}
+}
+
 // ToolPoolConfig holds configuration for creating a ToolPool.
 type ToolPoolConfig struct {
 	MCPService      *mcp.Service
@@ -92,9 +126,9 @@ type projectToolCache struct {
 	// relayToolInstance maps prefixed tool name → instance ID for relay tool routing
 	relayToolInstance map[string]string
 	// bareNameToKeys maps a bare tool name → every prefixed pool key exposing it.
-	// External MCP tools are pooled as ServerName_ToolName while the admin API
-	// persists whitelists with bare ToolName values, so whitelist resolution falls
-	// back through this index when an exact pool-key match misses.
+	// External MCP tools are pooled as <slugified server>_ToolName while the admin
+	// API persists whitelists with bare ToolName values, so whitelist resolution
+	// falls back through this index when an exact pool-key match misses.
 	bareNameToKeys map[string][]string
 }
 
@@ -209,8 +243,11 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 			)
 		} else {
 			for _, et := range extTools {
-				// Prefix external tool names: servername_toolname (Diane convention)
-				prefixedName := et.ServerName + "_" + et.ToolName
+				// Prefix external tool names: servername_toolname (Diane convention).
+				// The server-name part is slugified because LLM function names must
+				// match ^[A-Za-z0-9_-]{1,64}$ — raw names like "E2E MCP 123" would
+				// otherwise produce an illegal key that providers silently drop.
+				prefixedName := externalToolKey(et.ServerName, et.ToolName)
 				desc := ""
 				if et.Description != nil {
 					desc = *et.Description
