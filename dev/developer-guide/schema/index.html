@@ -2894,11 +2894,16 @@
 <a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="s1">  }'</span>
 </code></pre></div>
 <h4 id="rollback-a-migration">Rollback a migration<a class="headerlink" href="#rollback-a-migration" title="Permanent link">&para;</a></h4>
-<p>Restores property data from <code>migration_archive</code>. Optionally re-installs the old schema types.</p>
+<p>Restores property data from <code>migration_archive</code> and, optionally, the type registry.</p>
+<p><code>to_version</code> names the <strong>target version of the migration being undone</strong> — it must
+match an archive entry's <code>to_version</code> (the version the objects were migrated <em>to</em>),
+not the version to roll back to. The objects are restored to that archive's
+<code>from_version</code>. A request whose <code>to_version</code> matches no migration archive returns
+a 404.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://api.dev.emergent-company.ai/api/schemas/projects/&lt;projectId&gt;/migrate/rollback<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"to_version": "1.0.0", "restore_type_registry": false}'</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"to_version": "2.0.0", "restore_type_registry": false}'</span>
 </code></pre></div>
 <h4 id="commit-prune-migration-archive">Commit (prune) migration archive<a class="headerlink" href="#commit-prune-migration-archive" title="Permanent link">&para;</a></h4>
 <p>Strips archive entries up to and including <code>through_version</code> from all project objects, freeing storage.</p>
@@ -2982,12 +2987,14 @@
 <a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="w">  </span>--force<span class="w">            </span><span class="c1"># skip confirmation for risky/dangerous</span>
 <a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a><span class="w">  </span>--max-objects<span class="w"> </span><span class="m">500</span><span class="w">  </span><span class="c1"># limit batch size (0 = no limit)</span>
 </code></pre></div>
-<p>Rollback to a previous version:</p>
+<p>Rollback a migration (undo the migration whose target version is <code>2.0.0</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>rollback<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">  </span>--to-version<span class="w"> </span><span class="m">1</span>.0.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">  </span>--to-version<span class="w"> </span><span class="m">2</span>.0.0<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">  </span>--restore-registry<span class="w">  </span><span class="c1"># also reinstall old schema types</span>
 </code></pre></div>
+<p><code>--to-version</code> names the migration's target version (the archive's <code>to_version</code>),
+not the version to return to; objects are restored to the archive's <code>from_version</code>.</p>
 <p>Prune migration archive entries (commit):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>memory<span class="w"> </span>schemas<span class="w"> </span>migrate<span class="w"> </span>commit<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span>--project<span class="w"> </span>&lt;projectId&gt;<span class="w"> </span><span class="se">\</span>
