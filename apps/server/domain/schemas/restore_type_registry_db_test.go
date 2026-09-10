@@ -203,6 +203,57 @@ func TestRestoreTypeRegistryTx(t *testing.T) {
 	}
 }
 
+// TestRestoreTypeRegistryTxRename is the ownership-based reconciliation case:
+// during a forward migration a type rename changes the registry row's
+// type_name while preserving its schema_id (the owner). After rollback the
+// renamed row must be gone, the from-name row must exist with the from-pack
+// definition, and a same-named row owned by an unrelated pack must survive.
+func TestRestoreTypeRegistryTxRename(t *testing.T) {
+	ctx, repo, db, projectID, _ := setupRollbackTest(t)
+
+	fromPack := insertRollbackPack(t, ctx, db, "Rename Pack", "1.0.0", `[
+		{"name":"Contract","properties":{"amount":{"type":"number"}}}
+	]`)
+	toPack := insertRollbackPack(t, ctx, db, "Rename Pack", "2.0.0", `[
+		{"name":"Agreement","properties":{"amount":{"type":"number"},"signed":{"type":"boolean"}}}
+	]`)
+	otherPack := insertRollbackPack(t, ctx, db, "Other Pack", "9.9.9", `[]`)
+
+	// Simulate a forward MigrateTypes rename that updated type_name in place:
+	// the row is now named Agreement but still carries the from-pack owner.
+	insertRegistryRow(t, ctx, db, projectID, "Agreement", fromPack.ID, `{"properties":{"amount":{"type":"number"},"signed":{"type":"boolean"}}}`)
+	// A different pack independently owns a type with the same (renamed) name.
+	insertRegistryRow(t, ctx, db, projectID, "Agreement", otherPack.ID, `{"properties":{"ref":{"type":"string"}}}`)
+
+	err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return repo.RestoreTypeRegistryTx(ctx, tx, projectID, "", fromPack, toPack)
+	})
+	if err != nil {
+		t.Fatalf("RestoreTypeRegistryTx: %v", err)
+	}
+
+	// From-name restored with the from-pack definition and ownership.
+	contract := registryRows(t, ctx, db, projectID, "Contract")
+	if len(contract) != 1 || contract[0].SchemaID == nil || *contract[0].SchemaID != fromPack.ID {
+		t.Fatalf("Contract should be restored to from-pack, got %+v", contract)
+	}
+	if !strings.Contains(string(contract[0].JSON), `"amount"`) {
+		t.Errorf("restored Contract missing from-pack property: %s", contract[0].JSON)
+	}
+
+	// Renamed from-owned row removed; unrelated pack's same-named row intact.
+	agreement := registryRows(t, ctx, db, projectID, "Agreement")
+	if len(agreement) != 1 {
+		t.Fatalf("expected only the other pack's Agreement row, got %+v", agreement)
+	}
+	if agreement[0].SchemaID == nil || *agreement[0].SchemaID != otherPack.ID {
+		t.Fatalf("stale renamed from-owned row survived: %+v", agreement[0])
+	}
+	if !strings.Contains(string(agreement[0].JSON), `"ref"`) {
+		t.Errorf("other pack's Agreement row was modified: %s", agreement[0].JSON)
+	}
+}
+
 func newRollbackService(t *testing.T, db bun.IDB, repo *schemas.Repository, cfg *config.Config) *schemas.Service {
 	t.Helper()
 	// graph.NewService only needs the repository for object listing; other

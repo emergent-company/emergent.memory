@@ -59,7 +59,7 @@ func TestBuildRestoreTypeRegistryPlan(t *testing.T) {
 		]`),
 	}
 
-	actions, toOnly := buildRestoreTypeRegistryPlan(from, to)
+	actions, fromTypeNames := buildRestoreTypeRegistryPlan(from, to)
 
 	if len(actions) != 2 {
 		t.Fatalf("expected 2 restore actions, got %d", len(actions))
@@ -90,16 +90,61 @@ func TestBuildRestoreTypeRegistryPlan(t *testing.T) {
 		t.Errorf("Person restore schema must not contain to-only property: %s", person)
 	}
 
-	if len(toOnly) != 1 || toOnly[0] != "Organization" {
-		t.Fatalf("toOnly = %v, want [Organization]", toOnly)
+	// fromTypeNames drives the ownership-scoped delete: to-only names such as
+	// Organization must not appear, otherwise its owned row would survive.
+	if len(fromTypeNames) != 2 {
+		t.Fatalf("fromTypeNames = %v, want 2 from-pack names", fromTypeNames)
+	}
+	wantNames := map[string]bool{"Person": true, "Belief": true}
+	for _, n := range fromTypeNames {
+		if !wantNames[n] {
+			t.Errorf("unexpected fromTypeName %q", n)
+		}
+	}
+}
+
+// TestBuildRestoreTypeRegistryPlanRenameOwnership documents the reconciliation
+// rule for an in-place type rename: the from-pack name list drives which owned
+// rows survive, so a to-owned row carrying a renamed name is deleted even
+// though it is not in the to-pack's own type list.
+func TestBuildRestoreTypeRegistryPlanRenameOwnership(t *testing.T) {
+	// from-pack declares Contract; the to-pack renames it to Agreement.
+	from := &GraphMemorySchema{
+		ID:                "from-id",
+		ObjectTypeSchemas: json.RawMessage(`[{"name":"Contract","properties":{"amount":{"type":"number"}}}]`),
+	}
+	to := &GraphMemorySchema{
+		ID:                "to-id",
+		ObjectTypeSchemas: json.RawMessage(`[{"name":"Agreement","properties":{"amount":{"type":"number"},"signed":{"type":"boolean"}}}]`),
+	}
+
+	actions, fromTypeNames := buildRestoreTypeRegistryPlan(from, to)
+
+	if len(actions) != 1 || actions[0].name != "Contract" {
+		t.Fatalf("actions = %+v, want single Contract restore", actions)
+	}
+	if actions[0].action != "restore" {
+		t.Errorf("action = %q, want restore", actions[0].action)
+	}
+	if len(actions[0].ownedSchemaIDs) != 2 ||
+		actions[0].ownedSchemaIDs[0] != "from-id" ||
+		actions[0].ownedSchemaIDs[1] != "to-id" {
+		t.Errorf("ownedSchemaIDs = %v, want [from-id to-id]", actions[0].ownedSchemaIDs)
+	}
+	if !strings.Contains(string(actions[0].incomingSchema), `"amount"`) ||
+		strings.Contains(string(actions[0].incomingSchema), `"signed"`) {
+		t.Errorf("restore schema must be the from-pack definition, got %s", actions[0].incomingSchema)
+	}
+	if len(fromTypeNames) != 1 || fromTypeNames[0] != "Contract" {
+		t.Fatalf("fromTypeNames = %v, want [Contract] (Agreement must not survive)", fromTypeNames)
 	}
 }
 
 func TestBuildRestoreTypeRegistryPlanNilPacks(t *testing.T) {
-	if actions, toOnly := buildRestoreTypeRegistryPlan(nil, &GraphMemorySchema{ID: "to"}); actions != nil || toOnly != nil {
-		t.Fatalf("expected nil plan for nil from-pack, got %v / %v", actions, toOnly)
+	if actions, fromTypeNames := buildRestoreTypeRegistryPlan(nil, &GraphMemorySchema{ID: "to"}); actions != nil || fromTypeNames != nil {
+		t.Fatalf("expected nil plan for nil from-pack, got %v / %v", actions, fromTypeNames)
 	}
-	if actions, toOnly := buildRestoreTypeRegistryPlan(&GraphMemorySchema{ID: "from"}, nil); actions != nil || toOnly != nil {
-		t.Fatalf("expected nil plan for nil to-pack, got %v / %v", actions, toOnly)
+	if actions, fromTypeNames := buildRestoreTypeRegistryPlan(&GraphMemorySchema{ID: "from"}, nil); actions != nil || fromTypeNames != nil {
+		t.Fatalf("expected nil plan for nil to-pack, got %v / %v", actions, fromTypeNames)
 	}
 }

@@ -312,13 +312,19 @@ curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId
 
 #### Rollback a migration
 
-Restores property data from `migration_archive`. Optionally re-installs the old schema types.
+Restores property data from `migration_archive` and, optionally, the type registry.
+
+`to_version` names the **target version of the migration being undone** — it must
+match an archive entry's `to_version` (the version the objects were migrated *to*),
+not the version to roll back to. The objects are restored to that archive's
+`from_version`. A request whose `to_version` matches no migration archive returns
+a 404.
 
 ```bash
 curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/migrate/rollback \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"to_version": "1.0.0", "restore_type_registry": false}'
+  -d '{"to_version": "2.0.0", "restore_type_registry": false}'
 ```
 
 #### Commit (prune) migration archive
@@ -450,14 +456,17 @@ memory schemas migrate execute \
   --max-objects 500  # limit batch size (0 = no limit)
 ```
 
-Rollback to a previous version:
+Rollback a migration (undo the migration whose target version is `2.0.0`):
 
 ```bash
 memory schemas migrate rollback \
   --project <projectId> \
-  --to-version 1.0.0 \
+  --to-version 2.0.0 \
   --restore-registry  # also reinstall old schema types
 ```
+
+`--to-version` names the migration's target version (the archive's `to_version`),
+not the version to return to; objects are restored to the archive's `from_version`.
 
 Prune migration archive entries (commit):
 

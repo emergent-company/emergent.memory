@@ -1708,7 +1708,10 @@ var schemasMigrateRollbackCmd = &cobra.Command{
 	Short: "Roll back a schema migration by restoring archived property data",
 	Long: `Restore property data archived during a previous migration.
 
-Use --to-version to specify which schema version to roll back to.
+Use --to-version to name the target version of the migration being undone — it
+must match that migration's archive to_version (the version the objects were
+migrated TO), not the version to roll back to. Objects are restored to the
+archive's from_version.
 Use --restore-registry to also restore the type registry to the pre-migration state
 (re-installs the old schema types and removes new additions). This is a transactional
 operation — if any step fails, the entire rollback is reverted.`,
@@ -1949,7 +1952,7 @@ func init() {
 	schemasMigrateExecuteCmd.Flags().IntVar(&schemaMigrateExecuteMaxObjectsFlag, "max-objects", 0, "Limit number of objects to migrate (0 = no limit)")
 
 	// Migrate rollback flags
-	schemasMigrateRollbackCmd.Flags().StringVar(&schemaMigrateRollbackToVersionFlag, "to-version", "", "Schema version to roll back to (required)")
+	schemasMigrateRollbackCmd.Flags().StringVar(&schemaMigrateRollbackToVersionFlag, "to-version", "", "Target version of the migration to undo; must match the archive's to_version (required)")
 	schemasMigrateRollbackCmd.Flags().BoolVar(&schemaMigrateRollbackRestoreRegistryFlag, "restore-registry", false, "Also restore type registry to the pre-migration state")
 
 	// Migrate commit flags
