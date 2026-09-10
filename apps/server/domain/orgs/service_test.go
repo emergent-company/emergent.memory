@@ -15,8 +15,8 @@ import (
 // fakeOrgRepo is an in-memory orgRepository double for service/handler tests.
 // Only the fields exercised by a given test need to be set.
 type fakeOrgRepo struct {
-	org  *Org   // returned by UpdateName when updateErr is nil
-	err  error  // UpdateName failure
+	org *Org  // returned by UpdateName when updateErr is nil
+	err error // UpdateName failure
 
 	updatedID   string // last id passed to UpdateName
 	updatedName string // last name passed to UpdateName

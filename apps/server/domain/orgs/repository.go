@@ -26,6 +26,16 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
+// notFoundOrg is the shared organization not-found error, reused by every org
+// lookup (GetByID, UpdateName) and the delete service path.
+var notFoundOrg = apperror.ErrNotFound.WithMessage("Organization not found")
+
+// dbErr wraps a database failure in the standard database apperror, so the
+// apperror chaining is declared once and reused across the repository.
+func dbErr(err error) *apperror.Error {
+	return apperror.ErrDatabase.WithInternal(err)
+}
+
 // List returns all organizations the user is a member of
 func (r *Repository) List(ctx context.Context, userID string) ([]OrgDTO, error) {
 	var orgs []Org
@@ -40,7 +50,7 @@ func (r *Repository) List(ctx context.Context, userID string) ([]OrgDTO, error) 
 
 	if err != nil {
 		r.log.Error("failed to list organizations", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, dbErr(err)
 	}
 
 	result := make([]OrgDTO, len(orgs))
@@ -62,10 +72,10 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*Org, error) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, apperror.ErrNotFound.WithMessage("Organization not found")
+			return nil, notFoundOrg
 		}
 		r.log.Error("failed to get organization", logger.Error(err), slog.String("id", id))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, dbErr(err)
 	}
 
 	return &org, nil
@@ -87,10 +97,10 @@ func (r *Repository) UpdateName(ctx context.Context, id, name string) (*Org, err
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, apperror.ErrNotFound.WithMessage("Organization not found")
+			return nil, notFoundOrg
 		}
 		r.log.Error("failed to update organization name", logger.Error(err), slog.String("id", id))
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, dbErr(err)
 	}
 
 	return org, nil

@@ -9,6 +9,10 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
+// errInvalidBody is the shared 400 for unparseable request bodies, reused by
+// the Create and Update handlers.
+var errInvalidBody = apperror.ErrBadRequest.WithMessage("invalid request body")
+
 // Handler handles HTTP requests for organizations
 type Handler struct {
 	svc *Service
@@ -81,7 +85,7 @@ func (h *Handler) Create(c echo.Context) error {
 
 	var req CreateOrgRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return errInvalidBody
 	}
 
 	org, err := h.svc.Create(c.Request().Context(), req.Name, user.ID)
@@ -112,7 +116,7 @@ func (h *Handler) Update(c echo.Context) error {
 
 	var req UpdateOrgRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return errInvalidBody
 	}
 
 	org, err := h.svc.Update(c.Request().Context(), id, req.Name)

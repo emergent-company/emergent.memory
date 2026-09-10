@@ -158,7 +158,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	if !deleted {
-		return apperror.ErrNotFound.WithMessage("Organization not found")
+		return notFoundOrg
 	}
 
 	s.log.Info("organization deleted", slog.String("orgID", id))
