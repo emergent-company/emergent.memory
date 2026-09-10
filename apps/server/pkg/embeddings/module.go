@@ -177,13 +177,23 @@ func (s *Service) EmbedDocuments(ctx context.Context, documents []string) ([][]f
 }
 
 // usageReportingClient is implemented by embedding clients whose responses
-// include token usage: the vertex client and the OpenAI-compatible client
-// (OpenAI direct or LiteLLM-style proxies). Clients without usage support
-// (genai, noop) fall back to plain embedding results.
+// include token usage: the vertex client, the OpenAI-compatible client
+// (OpenAI direct or LiteLLM-style proxies), and the Google Generative AI
+// (genai) client. Clients without usage support (noop) fall back to plain
+// embedding results.
 type usageReportingClient interface {
 	EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error)
 	EmbedDocumentsWithUsage(ctx context.Context, documents []string) (*vertex.BatchEmbedResult, error)
 }
+
+// Compile-time guarantees that the concrete clients selected by
+// resolveClientWithMeta are usage-capable and will take the usage-reporting
+// branch of EmbedQueryWithUsage / EmbedDocumentsWithUsage.
+var (
+	_ usageReportingClient = (*vertex.Client)(nil)
+	_ usageReportingClient = (*embopenai.Client)(nil)
+	_ usageReportingClient = (*embgenai.Client)(nil)
+)
 
 // EmbedQueryWithUsage generates an embedding with usage data (if supported by client)
 func (s *Service) EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error) {
