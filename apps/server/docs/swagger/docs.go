@@ -25601,11 +25601,17 @@ const docTemplate = `{
         "domain_health.HealthResponse": {
             "type": "object",
             "properties": {
+                "build_time": {
+                    "type": "string"
+                },
                 "checks": {
                     "type": "object",
                     "additionalProperties": {
                         "$ref": "#/definitions/domain_health.Check"
                     }
+                },
+                "git_commit": {
+                    "type": "string"
                 },
                 "status": {
                     "type": "string"
@@ -31688,7 +31694,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.73.0",
+	Version:          "0.77.0",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
