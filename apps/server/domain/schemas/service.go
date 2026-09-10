@@ -44,8 +44,9 @@ func (s *Service) GetAvailablePacks(ctx context.Context, projectID string) ([]Me
 	return s.repo.GetAvailablePacks(ctx, projectID)
 }
 
-// ListSchemaPacks returns the project-visible schema catalog (project-owned +
-// global packs) with search + pagination, mirroring the MCP schema-list tool.
+// ListSchemaPacks returns the project's schema catalog (project-owned packs
+// only; NULL-project builtin rows are excluded) with search + pagination,
+// mirroring the MCP schema-list tool.
 func (s *Service) ListSchemaPacks(ctx context.Context, projectID, search string, limit, offset int) ([]SchemaListInfo, int, error) {
 	return s.repo.ListSchemaPacks(ctx, projectID, search, limit, offset)
 }

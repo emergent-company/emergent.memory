@@ -165,32 +165,33 @@ func TestRequiresProject(t *testing.T) {
 			toolName: "schema-uninstall",
 			expected: true,
 		},
-		// Template pack tools that do NOT require project (global registry)
+		// Schema read/delete tools are now strictly project-scoped
 		{
-			name:     "template-list does not require project",
+			name:     "schema-list requires project",
 			toolName: "schema-list",
-			expected: false,
+			expected: true,
 		},
 		{
-			name:     "template-get does not require project",
+			name:     "schema-get requires project",
 			toolName: "schema-get",
-			expected: false,
+			expected: true,
 		},
+		{
+			name:     "schema-delete requires project",
+			toolName: "schema-delete",
+			expected: true,
+		},
+		// Schema create is project-less (project is injected by the caller)
 		{
 			name:     "template-create does not require project",
 			toolName: "schema-create",
 			expected: false,
 		},
+		// schema-version is now scoped to the project
 		{
-			name:     "template-delete does not require project",
-			toolName: "schema-delete",
-			expected: false,
-		},
-		// Global tool
-		{
-			name:     "schema_version does not require project",
+			name:     "schema_version requires project",
 			toolName: "schema-version",
-			expected: false,
+			expected: true,
 		},
 		{
 			name:     "search-knowledge does not require project via requiresProject",
@@ -247,6 +248,34 @@ func TestRequiresProject(t *testing.T) {
 				t.Errorf("requiresProject(%q) = %v, want %v", tt.toolName, result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestExecuteListSchemasRequiresProject asserts schema-list has no global
+// fallback: an empty project ID must return an error before any query runs.
+func TestExecuteListSchemasRequiresProject(t *testing.T) {
+	svc := &Service{}
+
+	result, err := svc.executeListSchemas(context.Background(), "", map[string]any{})
+	if err == nil {
+		t.Fatal("executeListSchemas with empty projectID: expected error, got nil")
+	}
+	if result != nil {
+		t.Errorf("executeListSchemas with empty projectID: expected nil result, got %v", result)
+	}
+}
+
+// TestExecuteSchemaVersionRequiresProject asserts schema-version has no global
+// fallback: an empty project ID must return an error before any query runs.
+func TestExecuteSchemaVersionRequiresProject(t *testing.T) {
+	svc := &Service{}
+
+	result, err := svc.executeSchemaVersion(context.Background(), "")
+	if err == nil {
+		t.Fatal("executeSchemaVersion with empty projectID: expected error, got nil")
+	}
+	if result != nil {
+		t.Errorf("executeSchemaVersion with empty projectID: expected nil result, got %v", result)
 	}
 }
 

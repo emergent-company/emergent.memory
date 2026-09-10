@@ -185,18 +185,22 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID string) ([
 	return packs, nil
 }
 
-// ListSchemaPacks returns the schema catalog visible to a project — the
-// project's own packs plus global ones (project_id IS NULL) — mirroring the MCP
-// schema-list tool so REST consumers can bypass the MCP handshake. Rows are
-// ordered by updated_at DESC and paginated; total ignores limit/offset.
+// ListSchemaPacks returns the schema catalog strictly scoped to a project —
+// only rows whose project_id equals projectID. Rows with a NULL project_id
+// (builtin/shared schemas) are never returned; they surface only through the
+// installed-packs join. This mirrors the MCP schema-list tool so REST consumers
+// can bypass the MCP handshake. Rows are ordered by updated_at DESC and
+// paginated; total ignores limit/offset.
 func (r *Repository) ListSchemaPacks(ctx context.Context, projectID, search string, limit, offset int) ([]SchemaListInfo, int, error) {
+	if projectID == "" {
+		return nil, 0, apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
 	rows := make([]SchemaListInfo, 0)
 	q := r.db.NewSelect().
 		TableExpr("kb.graph_schemas").
-		Column("id", "name", "version", "description", "project_id", "source", "created_at", "updated_at")
-	if projectID != "" {
-		q = q.Where("project_id = ? OR project_id IS NULL", projectID)
-	}
+		Column("id", "name", "version", "description", "project_id", "source", "created_at", "updated_at").
+		Where("project_id = ?", projectID)
 	if search != "" {
 		q = q.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
@@ -206,10 +210,9 @@ func (r *Repository) ListSchemaPacks(ctx context.Context, projectID, search stri
 	}
 
 	var total int
-	countQ := r.db.NewSelect().TableExpr("kb.graph_schemas")
-	if projectID != "" {
-		countQ = countQ.Where("project_id = ? OR project_id IS NULL", projectID)
-	}
+	countQ := r.db.NewSelect().
+		TableExpr("kb.graph_schemas").
+		Where("project_id = ?", projectID)
 	if search != "" {
 		countQ = countQ.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
@@ -1563,6 +1566,30 @@ func (r *Repository) UpdateMigrationJob(ctx context.Context, job *SchemaMigratio
 	_, err := q.Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to update migration job", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// ProvisionBuiltinSchemasToAllProjects installs every source='builtin' schema
+// into every non-deleted project that lacks a project_schemas row for it.
+// Idempotent; respects explicit uninstalls (any existing row, incl. removed).
+// Runs at server startup outside any project/RLS context.
+func (r *Repository) ProvisionBuiltinSchemasToAllProjects(ctx context.Context) error {
+	_, err := r.db.NewRaw(`
+		INSERT INTO kb.project_schemas (project_id, schema_id, active, installed_at)
+		SELECT p.id, gs.id, true, now()
+		FROM kb.projects p
+		JOIN kb.graph_schemas gs ON gs.source = 'builtin'
+		WHERE p.deleted_at IS NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM kb.project_schemas ps
+		      WHERE ps.project_id = p.id AND ps.schema_id = gs.id
+		  )
+		ON CONFLICT (project_id, schema_id) DO NOTHING
+	`).Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to provision builtin schemas to projects", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 	return nil

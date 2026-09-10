@@ -60,11 +60,6 @@ type Service struct {
 	braveSearchAPIKey  string
 	braveSearchTimeout time.Duration
 
-	// Schema version caching
-	cacheMu       sync.RWMutex
-	cachedVersion string
-	cacheExpiry   time.Time
-
 	// Documents service (for document list/get/upload/delete tools)
 	documentsSvc *documents.Service
 
@@ -421,7 +416,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "schema-list",
-			Description: "List all available memory schemas in the global registry. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
+			Description: "List memory schemas owned by the current project. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -581,7 +576,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "schema-delete",
-			Description: "Delete a memory schema from the global registry. Cannot delete system schemas or schemas that are currently installed in any project.",
+			Description: "Delete a memory schema owned by the current project. Cannot delete built-in schemas or schemas that are currently installed in any project.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1688,7 +1683,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "project-create":
 		return s.executeCreateProject(ctx, args)
 	case "schema-version":
-		return s.executeSchemaVersion(ctx)
+		return s.executeSchemaVersion(ctx, projectID)
 	case "entity-type-list":
 		return s.executeListEntityTypes(ctx, projectID, args)
 	case "entity-query":
@@ -4208,9 +4203,13 @@ func (s *Service) readRelationshipsResource(ctx context.Context, projectID strin
 }
 
 func (s *Service) readTemplatesCatalogResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("templates catalog requires a project context")
+	}
+
 	result, err := s.executeListSchemas(ctx, projectID, map[string]any{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("templates catalog: %w", err)
 	}
 
 	jsonData, err := json.Marshal(result.Content[0].Text)

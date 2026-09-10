@@ -181,6 +181,14 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 		}
 	}
 
+	// Provision builtin schemas into every non-deleted project. Builtins are
+	// otherwise invisible now that schema listing is strictly project-scoped.
+	// Runs with the startup context (empty RLS GUC), outside any request scope.
+	if err := s.repo.ProvisionBuiltinSchemasToAllProjects(ctx); err != nil {
+		s.log.Error("failed to provision builtin schemas to projects", logger.Error(err))
+		return err
+	}
+
 	s.log.Info("builtin session-message schemas seeded successfully")
 	return nil
 }

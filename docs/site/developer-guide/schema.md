@@ -19,7 +19,7 @@ draft → published → (deprecated)
 ```
 
 - **Draft** schemas are not visible to projects.
-- **Published** schemas appear in the `available` list for all projects.
+- **Published** schemas are strictly project-scoped: a project's `available` list shows only schemas it owns; global-registry rows surface only after being installed.
 - **Deprecated** schemas remain installed on existing projects but cannot be newly assigned.
 
 ---

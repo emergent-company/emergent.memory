@@ -31,11 +31,11 @@ memory schemas list --output json
 ```
 Shows schemas currently installed on the project — this is the default and what you almost always want. Schemas installed via `memory blueprints install` appear here.
 
-To see schemas available in the global registry (not yet installed):
+To see project-owned schemas that are not yet installed:
 ```bash
 memory schemas list --available
 ```
-> **Note:** On most self-hosted installs the registry is empty. Schemas come from blueprints, not the registry.
+> **Note:** Schemas are strictly project-scoped. Global-registry rows (with no `project_id`) are never listed for a project; they surface only once installed into it.
 
 ### List installed schemas (alias)
 ```bash
