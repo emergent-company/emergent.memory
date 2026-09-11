@@ -20,7 +20,7 @@
 
 ## 4. Frontend — Status Badge System
 
-- [x] 4.1 Add `processingStatus` field to the `DocumentRow` type in `/root/emergent.memory.ui/src/pages/admin/apps/documents/index.tsx`
+- [x] 4.1 Add `processingStatus` field to the `DocumentRow` type in `/root/memory.web-ui/src/pages/admin/apps/documents/index.tsx`
 - [x] 4.2 Add `lastExtractionAt`, `objectsCreated`, `relationshipsCreated` fields to `DocumentRow`
 - [x] 4.3 Create a `getProcessingStatusBadge(status: ProcessingStatus)` helper in the documents page that maps each of the 6 statuses to a DaisyUI badge class + label
 - [x] 4.4 Replace the existing separate conversion-status and extraction-status badge display in the document list row with a single `processingStatus` badge
@@ -40,7 +40,7 @@
 
 ## 7. Frontend — Extraction Summary in Detail Modal and List Row
 
-- [x] 7.1 Add `GET /api/documents/:id/extraction-summary` call to `/root/emergent.memory.ui/src/api/documents.ts` client as `getExtractionSummary(id)`
+- [x] 7.1 Add `GET /api/documents/:id/extraction-summary` call to `/root/memory.web-ui/src/api/documents.ts` client as `getExtractionSummary(id)`
 - [ ] 7.2 In `DocumentDetailModal` Properties tab, add an "Extraction Results" sub-section that lazy-loads `getExtractionSummary(id)` when `processingStatus` is `completed`; display object counts by type, relationship count, and last extraction timestamp
 - [ ] 7.3 Show a "Re-extract" button in the Extraction Results section of the detail modal that re-opens `ExtractionConfigModal`
 - [ ] 7.4 Render compact extraction stats (`objectsCreated` · `relationshipsCreated`) on the document list row when `processingStatus` is `completed`, sourced from the compact fields already returned in the list response (no extra API call)

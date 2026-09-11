@@ -68,10 +68,10 @@ task migrate:up         # Run migrations
 task migrate:status     # Check migration status
 ```
 
-For frontend tasks, use `pnpm` in `/root/emergent.memory.ui`:
+For frontend tasks, use `pnpm` in `/root/memory.web-ui`:
 
 ```bash
-cd /root/emergent.memory.ui
+cd /root/memory.web-ui
 pnpm run dev            # Start Vite dev server
 pnpm run build          # Build for production
 pnpm run test           # Unit tests

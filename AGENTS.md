@@ -1,6 +1,6 @@
 # Memory
 
-Go monorepo for the Memory knowledge graph platform. React admin UI lives in a **separate repo** at `/root/emergent.memory.ui`.
+Go monorepo for the Memory knowledge graph platform. The web UI lives in a **separate repo** at `/root/memory.web-ui` (Go templ + HTMX gateway, plus the Playwright e2e suite — not a React app).
 
 ## Architecture
 
@@ -26,9 +26,11 @@ task test:e2e       # API e2e tests
 task lint           # Go linter
 task cli:install    # build + install memory CLI → ~/.memory/bin/memory
 
-# Frontend (/root/emergent.memory.ui)
-pnpm run lint
-pnpm run test
+# Web UI (/root/memory.web-ui) — Go templ + HTMX gateway
+cd /root/memory.web-ui
+task dev        # gateway with air hot reload (templ + tailwind + go)
+task lint       # lefthook: ruff, golangci-lint, go vet/test, templ, gitleaks
+task e2e:test   # Playwright e2e (see tests/e2e/README.md)
 ```
 
 ## Hot Reload — DO NOT restart after code changes
@@ -60,12 +62,12 @@ task stop        # stop background server
 
 | Creating… | Read first… |
 |---|---|
-| React component | `/root/emergent.memory.ui/src/components/AGENT.md` — 50+ components |
-| React hook | `/root/emergent.memory.ui/src/hooks/AGENT.md` — use `useApi` for ALL API calls |
+| Go templ page/component | `/root/memory.web-ui/gateway/AGENTS.md` — gateway Go/templ guidelines |
+| E2E test (Playwright) | `/root/memory.web-ui/tests/e2e/README.md` — projects, auth, helpers, test-id convention |
 | Go endpoint | `apps/server/AGENT.md` — fx modules, Echo, Bun ORM |
 | Database entity | `apps/server/AGENT.md` — Bun models, kb/core schemas |
 
-Common mistakes: raw `fetch()` calls (use `useApi`), creating components that already exist.
+Common mistakes: hand-editing generated `*_templ.go` (run `templ generate`), skipping the gateway `go build`/`task lint`, and brittle e2e selectors (prefer `getByRole`/`name=` plus the gateway `data-testid` convention).
 
 ## Code Style
 
@@ -103,10 +105,7 @@ logs/admin/admin.out.log      logs/admin/admin.error.log
 |------|----------|
 | `apps/server/AGENT.md` | fx modules, Echo handlers, Bun ORM, job queues |
 | `apps/server/migrations/README.md` | Goose migration workflow |
-| `/root/emergent.memory.ui/src/components/AGENT.md` | 50+ components, atomic design, DaisyUI |
-| `/root/emergent.memory.ui/src/components/organisms/DataTable/AGENT.md` | DataTable config, columns, sorting |
-| `/root/emergent.memory.ui/src/contexts/AGENT.md` | Auth, Theme, Toast, Modal contexts |
-| `/root/emergent.memory.ui/src/hooks/AGENT.md` | 33+ hooks, `useApi` patterns |
-| `/root/emergent.memory.ui/src/pages/AGENT.md` | route structure, page layouts |
+| `/root/memory.web-ui/gateway/AGENTS.md` | gateway Go/templ guidelines + verify commands |
+| `/root/memory.web-ui/tests/e2e/README.md` | Playwright e2e suite: projects, auth, coverage, test-id convention |
 | `docs/testing/AI_AGENT_GUIDE.md` | full testing guide |
 | `docs/database/schema-context.md` | DB schema reference |

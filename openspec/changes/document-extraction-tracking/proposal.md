@@ -26,6 +26,6 @@ Documents currently have opaque statuses that don't reflect the actual processin
 
 - **Backend**: `apps/server/domain/documents/` — document entity, service, repository, handler (new computed/stored status fields, new extraction summary endpoint)
 - **Backend**: `apps/server/domain/extraction/` — object extraction jobs service/handler (new per-document summary query, new admin-facing trigger endpoint on documents)
-- **Frontend**: `/root/emergent.memory.ui/src/pages/admin/apps/documents/` — document list page (status badges, trigger button, progress indicator, summary column)
-- **Frontend**: `/root/emergent.memory.ui/src/components/organisms/DocumentDetailModal/` — processing status tab (live progress, extraction summary)
+- **Frontend**: `/root/memory.web-ui/src/pages/admin/apps/documents/` — document list page (status badges, trigger button, progress indicator, summary column)
+- **Frontend**: `/root/memory.web-ui/src/components/organisms/DocumentDetailModal/` — processing status tab (live progress, extraction summary)
 - **Database**: Possible new computed view or stored column for `extraction_summary` on `kb.documents`; no breaking schema changes

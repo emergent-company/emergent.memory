@@ -1332,7 +1332,7 @@ Backend Controller → Reads req.headers['x-org-id'], req.headers['x-project-id'
 
 **Related Files/Conventions**:
 - `apps/server/Taskfile.yml` - `dev` task runs `air` for Go hot reload
-- `/root/emergent.memory.ui/package.json` - "dev": "vite" (Vite HMR built-in)
+- `/root/memory.web-ui/Taskfile.yml` - `dev` task runs `air` (templ + tailwind + go hot reload)
 - `.github/copilot-instructions.md` - Process management section
 - `docs/HOT_RELOAD.md` - Comprehensive hot reload documentation
 
