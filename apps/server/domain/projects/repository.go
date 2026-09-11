@@ -409,7 +409,7 @@ func (r *Repository) GetDeletionState(ctx context.Context, id string) (scheduled
 			return nil, nil, false, nil
 		}
 		r.log.Error("failed to get project deletion state", logger.Error(err), slog.String("id", id))
-		return nil, nil, false, apperror.ErrDatabase.WithInternal(err)
+		return nil, nil, false, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 
 	return state.DeletionScheduledFor, state.DeletedAt, true, nil

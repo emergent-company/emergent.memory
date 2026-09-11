@@ -25,7 +25,7 @@ func configureDeletionGracePeriod(svc *Service) {
 	}
 	if raw := os.Getenv("PROJECT_DELETION_GRACE_PERIOD"); raw != "" {
 		if d, err := time.ParseDuration(raw); err == nil {
-			svc.SetDeletionGracePeriod(d)
+			svc.ConfigureDeletionGracePeriod(d)
 		}
 	}
 }

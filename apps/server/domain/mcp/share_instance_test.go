@@ -153,6 +153,12 @@ func (f *fakeTokenSvc) Create(_ context.Context, _, _, _ string, scopes []string
 	}, nil
 }
 
+// CreateAgentShareToken mirrors Create; the fake does not enforce scope
+// reservation so tests can exercise the agent-share mint path.
+func (f *fakeTokenSvc) CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error) {
+	return f.Create(ctx, projectID, userID, name, scopes)
+}
+
 func (f *fakeTokenSvc) UpdateScopes(_ context.Context, _, _, _ string, scopes []string) (*apitoken.ApiTokenDTO, error) {
 	if f.updateErr != nil {
 		return nil, f.updateErr
@@ -200,6 +206,16 @@ func (f *fakeAgentDir) ListProjectAgents(_ context.Context, _ string) ([]AgentRe
 	return f.agents, nil
 }
 
+func (f *fakeAgentDir) FindProjectAgentByID(_ context.Context, _, id string) (*AgentRef, error) {
+	for i := range f.agents {
+		if f.agents[i].ID == id {
+			a := f.agents[i]
+			return &a, nil
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeAgentDir) FindAgentIDByName(_ context.Context, _, name string) (string, bool, error) {
 	for _, a := range f.agents {
 		if a.Name == name {
@@ -227,6 +243,13 @@ type stubAgentHandler struct {
 	availableJSON string
 	defsJSON      string
 	defJSON       string
+
+	// RunAgentOnce scaffolding (per-agent MCP endpoint tests).
+	runReply   string
+	runErr     error
+	runCalled  bool
+	runCount   int
+	runAgentID string
 }
 
 func (s *stubAgentHandler) ExecuteListAgents(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
@@ -342,6 +365,15 @@ func (s *stubAgentHandler) ExecuteACPGetRunEvents(context.Context, string, map[s
 func (s *stubAgentHandler) GetAgentToolDefinitions() []ToolDefinition { return nil }
 func (s *stubAgentHandler) GetAgentToolDefinitionsForProject(context.Context, string) []ToolDefinition {
 	return nil
+}
+func (s *stubAgentHandler) RunAgentOnce(_ context.Context, _, agentID, _ string, _ AgentRunBudget) (string, string, error) {
+	s.runCalled = true
+	s.runCount++
+	s.runAgentID = agentID
+	if s.runErr != nil {
+		return "", "run-1", s.runErr
+	}
+	return s.runReply, "run-1", nil
 }
 
 // ============================================================================

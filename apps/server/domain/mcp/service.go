@@ -126,6 +126,10 @@ type Service struct {
 	shareInstances shareInstanceStore
 	shareTokens    shareTokenService
 	agentDir       agentDirectory
+
+	// Per-agent MCP share persistence (add-agent-mcp-endpoint). Default is
+	// derived from DB in NewService but overridable in tests.
+	agentShares agentMCPShareStore
 }
 
 // ServiceParams bundles optional dependencies for NewService.
@@ -210,6 +214,7 @@ func NewService(p ServiceParams) *Service {
 		shareInstances:          shareInstanceOrNil(p.DB),
 		shareTokens:             p.ApitokenSvc,
 		agentDir:                agentDirectoryOrNil(p.DB),
+		agentShares:             agentMCPShareOrNil(p.DB),
 	}
 }
 
@@ -1676,6 +1681,13 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	// instance allowlist check above).
 	if toolName == "set_session_title" {
 		return s.executeSetSessionTitle(ctx, projectID, args)
+	}
+	// Defense in depth: enforce the share-instance tool allowlist here as well as
+	// in the transports. This covers callers that do not pass through a transport
+	// pre-check — notably the ADK ToolPool during an agent run, which executes
+	// tools with the agent's context.
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
 	}
 	switch toolName {
 	case "project-get":

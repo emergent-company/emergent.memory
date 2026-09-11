@@ -99,6 +99,14 @@ var ValidApiTokenScopes = []string{
 	"documents:write",
 	"admin",
 	"admin:all",
+	// Marker scope minted on per-agent MCP share credentials. It is reserved for
+	// the internal agent-share mint path (Service.CreateAgentShareToken): it is
+	// deliberately absent from the CreateApiTokenRequest /
+	// CreateAccountTokenRequest / UpdateApiTokenScopesRequest oneof tags and
+	// Service.Create rejects it, so user-facing token creation cannot mint it.
+	// The project MCP transports reject any credential carrying it (see
+	// domain/mcp/agent_mcp_share.go) and only the per-agent endpoint accepts it.
+	"mcp:agent-call",
 }
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO

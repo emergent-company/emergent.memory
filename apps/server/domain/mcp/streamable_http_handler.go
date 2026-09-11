@@ -90,6 +90,18 @@ func (h *StreamableHTTPHandler) HandleUnifiedEndpoint(c echo.Context) error {
 		})
 	}
 
+	// Fail closed: a per-agent share credential is only valid at its agent
+	// endpoint, never on the project MCP endpoint. Reject before any
+	// session/tool listing or execution.
+	if hasAgentCallScope(auth.MustGetUser(c).Scopes) {
+		return c.JSON(http.StatusForbidden, map[string]any{
+			"error": map[string]string{
+				"code":    "agent_share_credential",
+				"message": "Agent-share credentials are not valid on the project MCP endpoint",
+			},
+		})
+	}
+
 	switch c.Request().Method {
 	case http.MethodPost:
 		return h.handlePOST(c, protocolVersion)

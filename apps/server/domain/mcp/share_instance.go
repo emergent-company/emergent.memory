@@ -91,6 +91,9 @@ func agentAllowlistDeniedTools(toolName string) bool {
 // credential lifecycle. *apitoken.Service satisfies it.
 type shareTokenService interface {
 	Create(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error)
+	// CreateAgentShareToken mints a token permitted to carry the reserved
+	// mcp:agent-call marker (per-agent MCP shares only).
+	CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error)
 	UpdateScopes(ctx context.Context, tokenID, projectID, userID string, scopes []string) (*apitoken.ApiTokenDTO, error)
 	Revoke(ctx context.Context, tokenID, projectID, userID string) error
 	Regenerate(ctx context.Context, tokenID, projectID, userID string) (*apitoken.CreateApiTokenResponseDTO, error)
@@ -114,14 +117,18 @@ type shareInstanceStore interface {
 // AgentRef is a minimal project-agent reference used for allowlist validation
 // and filtering.
 type AgentRef struct {
-	ID   string
-	Name string
+	ID      string
+	Name    string
+	Enabled bool
 }
 
 // agentDirectory resolves project agents. Implemented by Bun and injectable in
 // tests.
 type agentDirectory interface {
 	ListProjectAgents(ctx context.Context, projectID string) ([]AgentRef, error)
+	// FindProjectAgentByID returns one project agent by ID, or nil when it does
+	// not exist in the project.
+	FindProjectAgentByID(ctx context.Context, projectID, id string) (*AgentRef, error)
 	FindAgentIDByName(ctx context.Context, projectID, name string) (string, bool, error)
 	// FindAgentIDByNameOrSlug resolves either the raw kb.agents.name or its
 	// ACP slug (agents.ACPSlugFromName). Used to gate acp-trigger-run, whose
@@ -655,13 +662,34 @@ func (d *bunAgentDirectory) ListProjectAgents(ctx context.Context, projectID str
 	var rows []AgentRef
 	err := d.db.NewSelect().
 		TableExpr("kb.agents").
-		Column("id", "name").
+		Column("id", "name", "enabled").
 		Where("project_id = ?", projectID).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return rows, nil
+}
+
+// FindProjectAgentByID returns a single project agent reference by ID, or nil
+// when the agent does not exist in the project. Used by the per-agent MCP share
+// lifecycle and endpoint to confirm the bound agent still exists.
+func (d *bunAgentDirectory) FindProjectAgentByID(ctx context.Context, projectID, id string) (*AgentRef, error) {
+	ref := new(AgentRef)
+	err := d.db.NewSelect().
+		TableExpr("kb.agents").
+		Column("id", "name", "enabled").
+		Where("project_id = ?", projectID).
+		Where("id = ?", id).
+		Limit(1).
+		Scan(ctx, ref)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return ref, nil
 }
 
 func (d *bunAgentDirectory) FindAgentIDByName(ctx context.Context, projectID, name string) (string, bool, error) {

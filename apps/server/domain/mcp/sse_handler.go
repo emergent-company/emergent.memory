@@ -68,6 +68,12 @@ func NewSSEHandler(svc *Service, handler *Handler, log *slog.Logger) *SSEHandler
 func (h *SSEHandler) HandleSSEConnect(c echo.Context) error {
 	user := auth.MustGetUser(c)
 
+	// Fail closed: per-agent share credentials are not valid on the project MCP
+	// SSE transport.
+	if hasAgentCallScope(user.Scopes) {
+		return apperror.NewForbidden("agent-share credentials are not valid on the project MCP endpoint")
+	}
+
 	projectID := c.Param("projectId")
 	if _, err := uuid.Parse(projectID); err != nil {
 		return apperror.ErrBadRequest.WithMessage("invalid project ID")
@@ -140,6 +146,12 @@ func (h *SSEHandler) HandleSSEConnect(c echo.Context) error {
 // HandleSSEMessage handles POST /mcp/sse/:projectId/message - Send messages to MCP server
 func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 	user := auth.MustGetUser(c)
+
+	// Fail closed: per-agent share credentials are not valid on the project MCP
+	// SSE transport.
+	if hasAgentCallScope(user.Scopes) {
+		return apperror.NewForbidden("agent-share credentials are not valid on the project MCP endpoint")
+	}
 
 	projectID := c.Param("projectId")
 	if _, err := uuid.Parse(projectID); err != nil {

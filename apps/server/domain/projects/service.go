@@ -97,9 +97,9 @@ func NewService(p ServiceParams) *Service {
 	}
 }
 
-// SetDeletionGracePeriod overrides the window between marking a project pending
-// deletion and hard-purging it. Non-positive values are ignored.
-func (s *Service) SetDeletionGracePeriod(d time.Duration) {
+// ConfigureDeletionGracePeriod overrides the window between marking a project
+// pending deletion and hard-purging it. Non-positive values are ignored.
+func (s *Service) ConfigureDeletionGracePeriod(d time.Duration) {
 	if d <= 0 {
 		return
 	}
@@ -458,7 +458,7 @@ func (s *Service) RequestDeletion(ctx context.Context, id string, userID string)
 		return nil, apperror.New(400, "invalid-uuid", "id must be a valid UUID")
 	}
 	if s.deletionRepo == nil {
-		return nil, apperror.ErrDatabase.WithMessage("Deletion repository not configured")
+		return nil, apperror.NewDatabase("Deletion repository not configured", nil)
 	}
 
 	scheduledFor, _, found, err := s.deletionRepo.GetDeletionState(ctx, id)
@@ -506,7 +506,7 @@ func (s *Service) CancelDeletion(ctx context.Context, id string) error {
 		return apperror.New(400, "invalid-uuid", "id must be a valid UUID")
 	}
 	if s.deletionRepo == nil {
-		return apperror.ErrDatabase.WithMessage("Deletion repository not configured")
+		return apperror.NewDatabase("Deletion repository not configured", nil)
 	}
 
 	cancelled, err := s.deletionRepo.CancelPendingDeletion(ctx, id)

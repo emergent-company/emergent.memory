@@ -28,6 +28,12 @@ type MCPToolHandler struct {
 	// (recall/search searchability). Optional; nil disables embedding tracking.
 	embeddingJobs mcp.EmbeddingJobFinder
 	log           *slog.Logger
+
+	// onceRepo / onceRunner back RunAgentOnce (per-agent MCP endpoint). They
+	// default to repo / executor in NewMCPToolHandler and are overridable in
+	// tests via a fake repository / runner.
+	onceRepo   agentOnceRepository
+	onceRunner agentRunner
 }
 
 // NewMCPToolHandler creates a new MCPToolHandler.
@@ -38,6 +44,8 @@ func NewMCPToolHandler(repo *Repository, executor *AgentExecutor, log *slog.Logg
 		log:            log,
 		extractionJobs: extractionJobs,
 		embeddingJobs:  embeddingJobs,
+		onceRepo:       repo,
+		onceRunner:     executor,
 	}
 }
 

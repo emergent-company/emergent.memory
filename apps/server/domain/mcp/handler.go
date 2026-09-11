@@ -88,6 +88,17 @@ func (h *Handler) HandleOAuthProtectedResource(c echo.Context) error {
 func (h *Handler) HandleRPC(c echo.Context) error {
 	user := auth.MustGetUser(c)
 
+	// Fail closed: a per-agent share credential is only valid at its agent
+	// endpoint, never on the project MCP endpoint.
+	if hasAgentCallScope(user.Scopes) {
+		return c.JSON(http.StatusForbidden, NewErrorResponse(
+			nil,
+			ErrCodeForbidden,
+			"Agent-share credentials are not valid on the project MCP endpoint",
+			nil,
+		))
+	}
+
 	// Parse JSON-RPC request
 	var req Request
 	if err := c.Bind(&req); err != nil {
