@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.." # resolve to apps/server/
 #    avatar endpoints using the codebase-standard inline auth pattern) ────────
 BASELINE_AUTH_GUARDS=13       # inline `if user == nil` guards in domain handlers
 BASELINE_SETTERS=3            # cross-domain `func (s *Service) SetXxx` wiring (remaining 3 are false positives: chat.SetAgentDefinitionID DB method + 2 agents HTTP handlers)
-BASELINE_APPERROR_STYLEA=1199 # `apperror.Err*.WithMessage/WithInternal` chaining (raised 2026-09-08 to current main: post-#384 drift from merged avatar/search/project-transfer endpoints)
+BASELINE_APPERROR_STYLEA=1201 # `apperror.Err*.WithMessage/WithInternal` chaining (raised 2026-09-08 to main post-#384; raised 2026-09-11 to 1201 for #423 pack-claims + type-version-history endpoints, which use the schemas-domain standard handler/repo error style)
 BASELINE_RESPONSE_TYPES=6     # non-httputil APIResponse/PaginatedResponse/SuccessResponse defs
 
 auth_guards=$(grep -rn "if user == nil" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ')

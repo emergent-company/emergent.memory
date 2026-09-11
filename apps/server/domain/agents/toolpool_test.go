@@ -660,3 +660,45 @@ func TestConvertToolResult(t *testing.T) {
 		assert.Empty(t, data)
 	})
 }
+
+// --- convertRelayResponse ---
+
+func TestConvertRelayResponse(t *testing.T) {
+	t.Run("raw relay result map is returned, not a result:ok fallback", func(t *testing.T) {
+		// The connector's relay ResponseFrame delivers the raw tool result map
+		// directly. Previously convertRelayResponse looked for a JSON-RPC
+		// "result" key, missed, and returned {"result":"ok"}, silently dropping
+		// the payload.
+		out, err := convertRelayResponse(map[string]any{
+			"reminders": []any{
+				map[string]any{"id": "r1", "title": "buy milk"},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, true, out["ok"])
+		reminders, ok := out["reminders"].([]any)
+		require.True(t, ok, "reminders should survive as a decoded array, got %T", out["reminders"])
+		require.Len(t, reminders, 1)
+		first, ok := reminders[0].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "r1", first["id"])
+		assert.Equal(t, "buy milk", first["title"])
+		assert.NotEqual(t, "ok", out["result"],
+			"raw relay payload must not collapse to the legacy result:ok fallback")
+	})
+
+	t.Run("simple map round-trips its fields", func(t *testing.T) {
+		out, err := convertRelayResponse(map[string]any{
+			"status": "done",
+			"count":  float64(2),
+			"nested": map[string]any{"x": "y"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, true, out["ok"])
+		assert.Equal(t, "done", out["status"])
+		assert.Equal(t, float64(2), out["count"])
+		nested, ok := out["nested"].(map[string]any)
+		require.True(t, ok, "nested map should round-trip, got %T", out["nested"])
+		assert.Equal(t, "y", nested["x"])
+	})
+}
