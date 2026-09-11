@@ -234,7 +234,7 @@ func TestService_UploadAvatar_StoresKeyAndReturnsDTO(t *testing.T) {
 	store := newFakeAvatarStore(true)
 	svc := newTestAvatarService(repo, store)
 
-	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
+	png := testPNGBytes
 	dto, err := svc.UploadAvatar(context.Background(), "profile-1", bytes.NewReader(png), int64(len(png)), "image/png")
 	if err != nil {
 		t.Fatalf("UploadAvatar returned error: %v", err)
@@ -275,7 +275,7 @@ func TestService_UploadAvatar_DeletesPriorObject(t *testing.T) {
 	store.objects[oldKey] = []byte("old image")
 	svc := newTestAvatarService(repo, store)
 
-	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
+	png := testPNGBytes
 	dto, err := svc.UploadAvatar(context.Background(), "profile-1", bytes.NewReader(png), int64(len(png)), "image/png")
 	if err != nil {
 		t.Fatalf("UploadAvatar returned error: %v", err)
@@ -321,7 +321,7 @@ func TestService_UploadAvatar_UploadFails_KeepsExistingAvatar(t *testing.T) {
 	store.uploadErr = errors.New("upload failed")
 	svc := newTestAvatarService(repo, store)
 
-	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
+	png := testPNGBytes
 	_, err := svc.UploadAvatar(context.Background(), "profile-1", bytes.NewReader(png), int64(len(png)), "image/png")
 	assertAppErrorStatus(t, err, 500)
 
@@ -351,7 +351,7 @@ func TestService_UploadAvatar_PersistFails_DeletesNewObject(t *testing.T) {
 	store.objects[oldKey] = []byte("old image")
 	svc := newTestAvatarService(repo, store)
 
-	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
+	png := testPNGBytes
 	_, err := svc.UploadAvatar(context.Background(), "profile-1", bytes.NewReader(png), int64(len(png)), "image/png")
 	if err == nil {
 		t.Fatal("expected UploadAvatar to fail")

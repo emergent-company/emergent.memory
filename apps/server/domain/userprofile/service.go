@@ -1,6 +1,7 @@
 package userprofile
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -97,11 +98,27 @@ func (s *Service) UploadAvatar(ctx context.Context, id string, data io.Reader, s
 		return nil, apperror.ErrServiceUnavailable.WithMessage("storage disabled")
 	}
 
-	ext, ok := avatarExtForContentType(contentType)
-	if !ok {
+	if _, ok := avatarExtForContentType(contentType); !ok {
 		return nil, apperror.ErrBadRequest.WithMessage("unsupported image type")
 	}
-	key := "avatars/" + uuid.New().String() + ext
+
+	// Normalize the image before it is stored: center-crop to a square, scale
+	// to avatarOutputSize and re-encode. Re-encoding strips EXIF/GPS metadata,
+	// and animated GIFs are flattened to their first frame. The output format
+	// (PNG with alpha preserved, otherwise JPEG) determines the object key
+	// extension and content type.
+	raw, err := io.ReadAll(data)
+	if err != nil {
+		return nil, apperror.NewBadRequest("corrupt image data")
+	}
+	normalized, err := normalizeAvatar(raw)
+	if err != nil {
+		// The HTTP handler fully decodes validated uploads before calling this
+		// service, so a decode failure here means the bytes changed in transit
+		// or the format is unsupported by the registered decoders.
+		return nil, apperror.NewBadRequest("corrupt image data")
+	}
+	key := "avatars/" + uuid.New().String() + normalized.ext
 
 	// Get the current profile first so the previous avatar object can be
 	// cleaned up after the new one is in place.
@@ -112,7 +129,7 @@ func (s *Service) UploadAvatar(ctx context.Context, id string, data io.Reader, s
 
 	// Upload the new object before touching the stored reference so a failed
 	// upload leaves the previous avatar untouched.
-	if _, err := s.storage.Upload(ctx, key, data, size, storage.UploadOptions{ContentType: contentType}); err != nil {
+	if _, err := s.storage.Upload(ctx, key, bytes.NewReader(normalized.data), int64(len(normalized.data)), storage.UploadOptions{ContentType: normalized.contentType}); err != nil {
 		return nil, apperror.ErrInternal.WithInternal(err)
 	}
 
