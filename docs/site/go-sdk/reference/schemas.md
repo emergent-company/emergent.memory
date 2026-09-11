@@ -82,6 +82,18 @@ Removes a schema assignment from the current project.
 
 ---
 
+### GetPackClaims
+
+```go
+func (c *Client) GetPackClaims(ctx context.Context) ([]PackBlueprintClaim, error)
+```
+
+Returns the mapping between compiled schema packs and the applied blueprints that claim them for the current project. Only packs claimed by at least one applied blueprint are returned; an empty result is `[]`.
+
+`GET /api/schemas/projects/:projectId/pack-claims`
+
+---
+
 ## Global Schema CRUD Methods
 
 ### CreateSchema
@@ -197,6 +209,23 @@ type InstalledSchemaItem struct {
 type AssignSchemaRequest struct {
     SchemaID       string                 `json:"schema_id"`
     Customizations map[string]interface{} `json:"customizations,omitempty"`
+}
+```
+
+### PackBlueprintClaim
+
+```go
+type PackBlueprintClaim struct {
+    SchemaID   string              `json:"schemaId"`
+    Name       string              `json:"name"`
+    Version    string              `json:"version"`
+    Blueprints []ClaimingBlueprint `json:"blueprints"`
+}
+
+type ClaimingBlueprint struct {
+    BlueprintID string `json:"blueprintId"`
+    Name        string `json:"name"`
+    Version     string `json:"version"`
 }
 ```
 

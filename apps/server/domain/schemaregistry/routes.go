@@ -18,6 +18,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Get a specific object type definition
 	g.GET("/projects/:projectId/types/:typeName", h.GetObjectType)
 
+	// Get a specific object type's version history
+	g.GET("/projects/:projectId/types/:typeName/versions", h.GetTypeVersionHistory)
+
 	// Get stats for project's schema registry
 	g.GET("/projects/:projectId/stats", h.GetTypeStats)
 

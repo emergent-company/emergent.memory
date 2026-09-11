@@ -505,6 +505,23 @@ type SchemaHistoryItem struct {
 	RemovedAt   *time.Time `json:"removedAt,omitempty"`
 }
 
+// PackBlueprintClaim is a pack-centric view of blueprint pack provenance:
+// one row per compiled schema pack, listing the applied blueprints that claim it.
+// Returned by GET /api/schemas/projects/:projectId/pack-claims.
+type PackBlueprintClaim struct {
+	SchemaID   string              `json:"schemaId"`
+	Name       string              `json:"name"`    // pack name (kb.graph_schemas.name)
+	Version    string              `json:"version"` // pack version (kb.graph_schemas.version)
+	Blueprints []ClaimingBlueprint `json:"blueprints"`
+}
+
+// ClaimingBlueprint identifies an applied blueprint that claims a schema pack.
+type ClaimingBlueprint struct {
+	BlueprintID string `json:"blueprintId"`
+	Name        string `json:"name"`    // kb.blueprints.name
+	Version     string `json:"version"` // applied version (kb.blueprint_applications.version)
+}
+
 // TypeRename specifies an object/edge type rename for migration.
 type TypeRename struct {
 	From string `json:"from"`

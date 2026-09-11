@@ -109,6 +109,47 @@ func (h *Handler) GetObjectType(c echo.Context) error {
 	return c.JSON(http.StatusOK, typeEntry)
 }
 
+// GetTypeVersionHistory handles GET /api/schema-registry/projects/:projectId/types/:typeName/versions
+// @Summary      Get object type version history
+// @Description  Returns the persisted version history for a registered object type, newest first
+// @Tags         schema-registry
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        typeName path string true "Object type name"
+// @Success      200 {object} ObjectTypeHistoryResponse "Type version history"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Type not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schema-registry/projects/{projectId}/types/{typeName}/versions [get]
+// @Security     bearerAuth
+func (h *Handler) GetTypeVersionHistory(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	typeName := c.Param("typeName")
+	if typeName == "" {
+		return apperror.NewBadRequest("typeName is required")
+	}
+
+	history, err := h.repo.GetTypeVersionHistory(c.Request().Context(), projectID, typeName)
+	if err != nil {
+		if strings.Contains(err.Error(), "type not found") {
+			return apperror.NewNotFound("Type", typeName)
+		}
+		if strings.Contains(err.Error(), "project not found") {
+			return apperror.NewBadRequest("Project not found")
+		}
+		return apperror.NewInternal("failed to get type version history", err)
+	}
+
+	return c.JSON(http.StatusOK, history)
+}
+
 // GetTypeStats handles GET /api/schema-registry/projects/:projectId/stats
 // @Summary      Get type statistics
 // @Description  Returns statistics about a project's schema registry including counts and object distribution

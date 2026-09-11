@@ -280,6 +280,12 @@ func (s *Service) GetSchemaHistory(ctx context.Context, projectID string) ([]Sch
 	return s.repo.GetAssignmentHistory(ctx, projectID)
 }
 
+// ListPackClaims returns, for a project, the mapping between compiled schema
+// packs and the applied blueprints that claim them.
+func (s *Service) ListPackClaims(ctx context.Context, projectID string) ([]PackBlueprintClaim, error) {
+	return s.repo.ListPackClaims(ctx, projectID)
+}
+
 // ValidateObjects scans all graph objects in a project against the current compiled schema
 // and reports which objects have drifted (stale schema_version).
 func (s *Service) ValidateObjects(ctx context.Context, projectID string) (*ValidateObjectsResponse, error) {

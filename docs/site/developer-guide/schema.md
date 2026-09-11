@@ -203,6 +203,32 @@ Each item includes `status: "installed"` or `status: "uninstalled"` and an optio
 
 ---
 
+## Pack blueprint claims
+
+Returns compiled schema packs claimed by at least one **applied** blueprint (`status = "applied"`). Packs claimed only by unapplied or superseded blueprints are omitted. An empty result is `[]`.
+
+```bash
+curl https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/pack-claims \
+  -H "Authorization: Bearer <token>"
+```
+
+The response is pack-centric:
+
+```json
+[
+  {
+    "schemaId": "<schemaId>",
+    "name": "legal-entities",
+    "version": "1.0.0",
+    "blueprints": [
+      { "blueprintId": "<blueprintId>", "name": "legal", "version": "2.0.0" }
+    ]
+  }
+]
+```
+
+---
+
 ## Schema migrations
 
 Schemas can carry an optional `migrations` block that declares how to migrate live graph data when upgrading from a previous version. The server uses this block to run an **async background migration job** automatically when you install the new schema version.

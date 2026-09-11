@@ -92,6 +92,22 @@ type SchemaHistoryItem struct {
 	RemovedAt   *time.Time `json:"removedAt,omitempty"`
 }
 
+// PackBlueprintClaim maps a compiled schema pack to the applied blueprints that
+// claim it. Returned by GET /api/schemas/projects/:projectId/pack-claims.
+type PackBlueprintClaim struct {
+	SchemaID   string              `json:"schemaId"`
+	Name       string              `json:"name"`
+	Version    string              `json:"version"`
+	Blueprints []ClaimingBlueprint `json:"blueprints"`
+}
+
+// ClaimingBlueprint identifies an applied blueprint that claims a schema pack.
+type ClaimingBlueprint struct {
+	BlueprintID string `json:"blueprintId"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+}
+
 // TypeRename describes a single object or edge type rename.
 type TypeRename struct {
 	From string `json:"from"`
@@ -587,6 +603,17 @@ func (c *Client) UpdatePack(ctx context.Context, packID string, req *UpdatePackR
 func (c *Client) GetPackHistory(ctx context.Context) ([]SchemaHistoryItem, error) {
 	var result []SchemaHistoryItem
 	if err := c.getJSON(ctx, c.projectPath()+"/history", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetPackClaims returns, for the current project, the mapping between compiled
+// schema packs and the applied blueprints that claim them.
+// GET /api/schemas/projects/:projectId/pack-claims
+func (c *Client) GetPackClaims(ctx context.Context) ([]PackBlueprintClaim, error) {
+	var result []PackBlueprintClaim
+	if err := c.getJSON(ctx, c.projectPath()+"/pack-claims", &result); err != nil {
 		return nil, err
 	}
 	return result, nil

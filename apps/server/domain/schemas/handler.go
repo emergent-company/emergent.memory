@@ -460,6 +460,34 @@ func (h *Handler) GetSchemaHistory(c echo.Context) error {
 	return c.JSON(http.StatusOK, history)
 }
 
+// GetPackClaims handles GET /api/schemas/projects/:projectId/pack-claims
+// @Summary      List pack-blueprint claims
+// @Description  Returns, for a project, the mapping between compiled schema packs and the applied blueprints that claim them
+// @Tags         schemas
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {array} PackBlueprintClaim "Pack claims"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/schemas/projects/{projectId}/pack-claims [get]
+// @Security     bearerAuth
+func (h *Handler) GetPackClaims(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	claims, err := h.svc.ListPackClaims(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, claims)
+}
+
 // ValidateObjects handles GET /api/schemas/projects/:projectId/validate
 // @Summary      Validate graph objects
 // @Description  Scans all graph objects in a project against the current compiled schema and reports which objects have drifted (stale schema_version).

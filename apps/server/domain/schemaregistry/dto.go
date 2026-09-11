@@ -49,6 +49,29 @@ type SchemaRegistryStats struct {
 	TypesWithObjects int `json:"types_with_objects"`
 }
 
+// ObjectTypeVersionDTO is one historical snapshot of a registered object type.
+type ObjectTypeVersionDTO struct {
+	RegistryID       string          `bun:"registry_id" json:"registry_id"`
+	SchemaVersion    int             `bun:"schema_version" json:"schema_version"`
+	JSONSchema       json.RawMessage `bun:"json_schema" json:"json_schema"`
+	UIConfig         json.RawMessage `bun:"ui_config" json:"ui_config"`
+	ExtractionConfig json.RawMessage `bun:"extraction_config" json:"extraction_config"`
+	Enabled          bool            `bun:"enabled" json:"enabled"`
+	Description      *string         `bun:"description" json:"description"`
+	Namespace        *string         `bun:"namespace" json:"namespace"`
+	CreatedBy        *string         `bun:"created_by" json:"created_by"`
+	CreatedAt        time.Time       `bun:"created_at" json:"created_at"`
+	Active           bool            `bun:"-" json:"active"`
+}
+
+// ObjectTypeHistoryResponse is the API response for a type's version history.
+type ObjectTypeHistoryResponse struct {
+	ProjectID      string                 `json:"project_id"`
+	TypeName       string                 `json:"type_name"`
+	CurrentVersion int                    `json:"current_version"`
+	Versions       []ObjectTypeVersionDTO `json:"versions"`
+}
+
 // ListTypesQuery contains query parameters for listing types
 type ListTypesQuery struct {
 	EnabledOnly bool   `query:"enabled_only"`

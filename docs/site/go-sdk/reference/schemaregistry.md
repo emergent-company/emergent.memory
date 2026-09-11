@@ -80,6 +80,18 @@ Removes a type from the project registry. Note: only `source: "custom"` or `sour
 
 ---
 
+## HTTP endpoint not yet wrapped in the SDK
+
+The server exposes a type version history endpoint that has no SDK method yet:
+
+`GET /api/schema-registry/projects/:projectId/types/:typeName/versions`
+
+Returns `{ project_id, type_name, current_version, versions: [...] }`, newest first. Each version entry is `{ registry_id, schema_version, json_schema, ui_config, extraction_config, enabled, description, namespace, created_by, created_at, active }`, where `active` is `true` on the current version. One persisted snapshot per `schema_version` is maintained automatically by a DB trigger and backfilled for existing types. Returns `404` if the type does not exist. Uses the same Bearer auth as the other endpoints.
+
+Call it directly with an HTTP client until a `GetTypeVersionHistory` method is added.
+
+---
+
 ## Types
 
 ### SchemaRegistryEntry

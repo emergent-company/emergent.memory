@@ -309,6 +309,69 @@ func (r *Repository) GetAssignmentHistory(ctx context.Context, projectID string)
 	return items, nil
 }
 
+// packClaimRow is one joined row of kb.blueprint_pack_claims with its pack and
+// applied-blueprint metadata. Each (pack, blueprint) pair is one row.
+type packClaimRow struct {
+	SchemaID         string `bun:"schema_id"`
+	Name             string `bun:"name"`
+	Version          string `bun:"version"`
+	BlueprintID      string `bun:"blueprint_id"`
+	BlueprintName    string `bun:"blueprint_name"`
+	BlueprintVersion string `bun:"blueprint_version"`
+}
+
+// groupPackClaims folds joined rows into pack-centric claims, preserving the
+// input row order (the query orders by pack name ASC, blueprint name ASC).
+// The returned slice is non-nil so an empty result marshals to JSON [].
+func groupPackClaims(rows []packClaimRow) []PackBlueprintClaim {
+	claims := make([]PackBlueprintClaim, 0, len(rows))
+	idxBySchema := make(map[string]int, len(rows))
+	for _, row := range rows {
+		idx, ok := idxBySchema[row.SchemaID]
+		if !ok {
+			claims = append(claims, PackBlueprintClaim{
+				SchemaID:   row.SchemaID,
+				Name:       row.Name,
+				Version:    row.Version,
+				Blueprints: []ClaimingBlueprint{},
+			})
+			idx = len(claims) - 1
+			idxBySchema[row.SchemaID] = idx
+		}
+		claims[idx].Blueprints = append(claims[idx].Blueprints, ClaimingBlueprint{
+			BlueprintID: row.BlueprintID,
+			Name:        row.BlueprintName,
+			Version:     row.BlueprintVersion,
+		})
+	}
+	return claims
+}
+
+// ListPackClaims returns, for a project, the mapping between compiled schema
+// packs and the applied blueprints that claim them. Only packs with at least
+// one applied blueprint claim are returned, ordered by pack name then blueprint
+// name. Returns an empty (non-nil) slice when there are no claims.
+func (r *Repository) ListPackClaims(ctx context.Context, projectID string) ([]PackBlueprintClaim, error) {
+	var rows []packClaimRow
+	err := r.db.NewRaw(`
+		SELECT bpc.schema_id, gs.name, gs.version,
+		       bpa.blueprint_id, bp.name AS blueprint_name, bpa.version AS blueprint_version
+		FROM kb.blueprint_pack_claims bpc
+		JOIN kb.graph_schemas gs ON gs.id = bpc.schema_id
+		JOIN kb.blueprint_applications bpa
+		     ON bpa.blueprint_id = bpc.blueprint_id AND bpa.project_id = bpc.project_id
+		JOIN kb.blueprints bp ON bp.id = bpa.blueprint_id
+		WHERE bpc.project_id = ?
+		  AND bpa.status = 'applied'
+		ORDER BY gs.name ASC, bp.name ASC
+	`, projectID).Scan(ctx, &rows)
+	if err != nil {
+		r.log.Error("failed to list pack claims", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return groupPackClaims(rows), nil
+}
+
 // MigrateTypes renames object/edge types and/or property keys across live graph data.
 // When req.DryRun is true the transaction is rolled back after counting affected rows.
 func (r *Repository) MigrateTypes(ctx context.Context, projectID string, req *MigrateRequest) (*MigrateResponse, error) {

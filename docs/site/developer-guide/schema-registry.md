@@ -38,6 +38,38 @@ curl https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId
   -H "Authorization: Bearer <token>"
 ```
 
+### Get type version history
+
+```bash
+curl https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId>/types/Person/versions \
+  -H "Authorization: Bearer <token>"
+```
+
+Returns the persisted version history for a type, newest first. Each `schema_version` has one snapshot, and `active` is `true` on the version matching the current registry row. Existing types are backfilled at their current version, and a DB trigger keeps the history current automatically. Returns `404` if the type does not exist.
+
+```json
+{
+  "project_id": "<projectId>",
+  "type_name": "Person",
+  "current_version": 3,
+  "versions": [
+    {
+      "registry_id": "<uuid>",
+      "schema_version": 3,
+      "json_schema": { "...": "..." },
+      "ui_config": { "...": "..." },
+      "extraction_config": { "...": "..." },
+      "enabled": true,
+      "description": "A person",
+      "namespace": null,
+      "created_by": "<uuid>",
+      "created_at": "2026-01-01T00:00:00Z",
+      "active": true
+    }
+  ]
+}
+```
+
 ### Get type stats
 
 ```bash

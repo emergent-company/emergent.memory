@@ -32,6 +32,29 @@ type ProjectObjectSchemaRegistry struct {
 	MemorySchema *GraphMemorySchema `bun:"rel:belongs-to,join:schema_id=id" json:"memorySchema,omitempty"`
 }
 
+// ProjectObjectSchemaRegistryVersion represents a historical snapshot of a
+// registered object type from kb.project_object_schema_registry_versions.
+type ProjectObjectSchemaRegistryVersion struct {
+	bun.BaseModel `bun:"table:kb.project_object_schema_registry_versions,alias:pov"`
+
+	ID                  string          `bun:"id,pk,type:uuid" json:"id"`
+	RegistryID          string          `bun:"registry_id,notnull,type:uuid" json:"registryId"`
+	ProjectID           string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	TypeName            string          `bun:"type_name,notnull" json:"typeName"`
+	SchemaVersion       int             `bun:"schema_version,notnull" json:"schemaVersion"`
+	Source              string          `bun:"source,notnull" json:"source"`
+	SchemaID            *string         `bun:"schema_id,type:uuid" json:"schemaId,omitempty"`
+	JSONSchema          json.RawMessage `bun:"json_schema,type:jsonb,notnull" json:"jsonSchema"`
+	UIConfig            json.RawMessage `bun:"ui_config,type:jsonb" json:"uiConfig,omitempty"`
+	ExtractionConfig    json.RawMessage `bun:"extraction_config,type:jsonb" json:"extractionConfig,omitempty"`
+	Enabled             bool            `bun:"enabled,notnull,default:true" json:"enabled"`
+	DiscoveryConfidence *float64        `bun:"discovery_confidence" json:"discoveryConfidence,omitempty"`
+	Description         *string         `bun:"description" json:"description,omitempty"`
+	Namespace           *string         `bun:"namespace" json:"namespace,omitempty"`
+	CreatedBy           *string         `bun:"created_by,type:uuid" json:"createdBy,omitempty"`
+	CreatedAt           time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
+}
+
 // GraphMemorySchema represents the kb.graph_schemas table (for joins)
 type GraphMemorySchema struct {
 	bun.BaseModel `bun:"table:kb.graph_schemas,alias:tp"`

@@ -47,6 +47,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Get schema installation history (including soft-deleted)
 	projects.GET("/history", h.GetSchemaHistory)
 
+	// Get pack → claiming-blueprint provenance for the project
+	projects.GET("/pack-claims", h.GetPackClaims)
+
 	// Validate graph objects (check for schema drift)
 	projects.GET("/validate", h.ValidateObjects)
 
