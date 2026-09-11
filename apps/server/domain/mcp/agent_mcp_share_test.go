@@ -137,17 +137,19 @@ func TestAgentShareTokenNameCapped(t *testing.T) {
 	assert.Equal(t, "Agent MCP Share: Team A", short)
 }
 
-// M1 + C1: the share scope set grants read-only MCP access plus the marker, and
-// never broad write scopes.
+// M1 + C1: the share scope set is minimized to the marker plus projects:read.
+// Loopback tool execution bypasses credential scopes (ToolPool.CallTool ->
+// Service.ExecuteTool), so the previous read-only grants were unnecessary yet
+// still valid REST scopes. They must not be present.
 func TestAgentShareScopes(t *testing.T) {
-	assert.Contains(t, agentShareScopes, AgentCallScope)
-	assert.Contains(t, agentShareScopes, "data:read")
-	assert.Contains(t, agentShareScopes, "schema:read")
-	assert.Contains(t, agentShareScopes, "agents:read")
-	assert.Contains(t, agentShareScopes, "projects:read")
-	assert.Contains(t, agentShareScopes, "chat:use")
-	assert.NotContains(t, agentShareScopes, "data:write")
-	assert.NotContains(t, agentShareScopes, "agents:write")
+	assert.ElementsMatch(t, []string{AgentCallScope, "projects:read"}, agentShareScopes)
+
+	for _, overGrant := range []string{"data:read", "schema:read", "agents:read", "chat:use"} {
+		assert.NotContains(t, agentShareScopes, overGrant, "%s broadens REST access beyond the agent endpoint", overGrant)
+	}
+	for _, writeScope := range []string{"data:write", "agents:write", "schema:write", "admin", "admin:all"} {
+		assert.NotContains(t, agentShareScopes, writeScope)
+	}
 }
 
 func TestHasAgentCallScope(t *testing.T) {

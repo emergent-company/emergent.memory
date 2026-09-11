@@ -1,6 +1,7 @@
 package apitoken
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -314,6 +315,45 @@ func TestValidApiTokenScopes(t *testing.T) {
 		if ValidApiTokenScopes[i] != scope {
 			t.Errorf("ValidApiTokenScopes[%d] = %q, want %q", i, ValidApiTokenScopes[i], scope)
 		}
+	}
+}
+
+// The agent-share marker must be reserved to the internal share mint path: all
+// user-facing token create/update entry points reject it. Each rejection runs
+// before any repository access, so this stays a non-DB test.
+func TestUserFacingTokenPathsRejectReservedAgentCallScope(t *testing.T) {
+	svc := &Service{}
+	scopes := []string{agentCallScope}
+
+	cases := map[string]func() error{
+		"Create": func() error {
+			_, err := svc.Create(context.Background(), "", "", "test", scopes)
+			return err
+		},
+		"CreateAccountToken": func() error {
+			_, err := svc.CreateAccountToken(context.Background(), "", "test", scopes)
+			return err
+		},
+		"UpdateScopes": func() error {
+			_, err := svc.UpdateScopes(context.Background(), "tok", "", "", scopes)
+			return err
+		},
+		"UpdateAccountTokenScopes": func() error {
+			_, err := svc.UpdateAccountTokenScopes(context.Background(), "tok", "", scopes)
+			return err
+		},
+	}
+
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := call()
+			if err == nil {
+				t.Fatal("expected rejection of the reserved agent-call scope")
+			}
+			if !strings.Contains(err.Error(), "reserved") {
+				t.Fatalf("error = %q, want it to mention reserved", err.Error())
+			}
+		})
 	}
 }
 

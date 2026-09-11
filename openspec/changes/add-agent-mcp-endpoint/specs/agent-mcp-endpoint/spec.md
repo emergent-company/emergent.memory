@@ -25,12 +25,12 @@ The system SHALL expose an MCP endpoint at `/api/mcp/agents/:agentId` that suppo
 
 ### Requirement: call_agent runs the bound agent synchronously and returns its reply
 
-`call_agent` SHALL accept a required `message` string argument, run the bound agent once, and return the assistant's reply text in the tool result. The call MUST NOT return until the run has completed or the run budget is exhausted.
+`call_agent` SHALL accept a required `message` string argument, run the bound agent once, and return the agent's reply text in the tool result. The call MUST NOT return until the run has completed or the run budget is exhausted.
 
 #### Scenario: Message returns the agent reply
 
 - **WHEN** an authorized client calls `call_agent` with a `message`
-- **THEN** the bound agent runs and the tool result contains the assistant's reply text
+- **THEN** the bound agent runs and the tool result contains the agent's reply text
 
 #### Scenario: Missing message is rejected
 
@@ -39,7 +39,7 @@ The system SHALL expose an MCP endpoint at `/api/mcp/agents/:agentId` that suppo
 
 #### Scenario: Reply reflects the agent's response
 
-- **WHEN** the agent produces an assistant message during the run
+- **WHEN** the agent produces an agent-authored message during the run
 - **THEN** that message's text is returned as the tool result content
 
 ### Requirement: Each call is an independent, stateless run
@@ -137,21 +137,26 @@ A credential minted for a per-agent share SHALL carry a dedicated marker scope (
 - **WHEN** a client uses a normal project key against `/api/mcp/agents/:agentId`
 - **THEN** the system returns HTTP 403
 
-### Requirement: The reply contains only assistant text
+### Requirement: The reply contains only agent-authored text
 
-The reply returned by `call_agent` SHALL be extracted exclusively from run messages whose raw role is `assistant`. System messages and tool results MUST NOT be returned as the reply, even though the ACP role mapping collapses them to `agent`. When a run completes without any non-empty assistant text, the system MUST return a structured error (`isError` true) and MUST NOT return an empty or fabricated success.
+The reply returned by `call_agent` SHALL be extracted from the run's persisted agent-authored messages. The executor persists assistant turns under the ADK event Author — the sanitized agent name, for example `research_agent` — rather than the literal `assistant`, so the extractor MUST accept any raw role that is not an explicit `user`, `tool`, `tool_result`, or `system` side. System messages and tool results MUST NOT be returned as the reply, even though the ACP role mapping collapses them to `agent`. When a run completes without any non-empty agent-authored text, the system MUST return a structured error (`isError` true) and MUST NOT return an empty or fabricated success.
 
-#### Scenario: System and tool_result text is never returned
+#### Scenario: System and tool output is never returned
 
-- **WHEN** a run's messages include `system` or `tool_result` text but no assistant text
+- **WHEN** a run's messages include `system`, `tool`, or `tool_result` text but no agent-authored text
 - **THEN** the tool result is a structured error and the reply is empty
 
-#### Scenario: Assistant text is preferred over other roles
+#### Scenario: Agent-authored text is preferred over other roles
 
-- **WHEN** a run's messages include system, user, tool_result, and assistant text
-- **THEN** only the assistant text is returned
+- **WHEN** a run's messages include system, user, tool, tool_result, and agent-authored text
+- **THEN** only the agent-authored text is returned
 
-#### Scenario: No assistant reply is an error, not silent success
+#### Scenario: The sanitized agent name role is accepted
 
-- **WHEN** a run completes successfully but persists no non-empty assistant message
+- **WHEN** the agent's reply is persisted under the sanitized agent name role (the executor's real behavior)
+- **THEN** that text is returned rather than a "no assistant reply" error
+
+#### Scenario: No agent reply is an error, not silent success
+
+- **WHEN** a run completes successfully but persists no non-empty agent-authored message
 - **THEN** the tool result is a structured error rather than an empty success

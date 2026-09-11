@@ -12,7 +12,7 @@
 
 ## 3. Run-once execution helper
 
-- [x] 3.1 Add a `RunAgentOnce(ctx, projectID, agentID, message)` helper that runs the agent synchronously with capped max-steps/timeout and returns `(reply string, runID string, err error)` by reading persisted run messages and extracting assistant text (reuse the ACP extraction helpers); verify unit tests with a fake executor for success, failure, and paused runs.
+- [x] 3.1 Add a `RunAgentOnce(ctx, projectID, agentID, message)` helper that runs the agent synchronously with capped max-steps/timeout and returns `(reply string, runID string, err error)` by reading persisted run messages and extracting agent-authored text (the executor persists assistant turns under the sanitized agent name); verify unit tests with a fake executor for success, failure, and paused runs.
 - [x] 3.2 Map run failure, paused/input-required, and agent missing/disabled to distinct structured errors; verify tests cover each.
 
 ## 4. Per-agent MCP endpoint

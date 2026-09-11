@@ -103,8 +103,44 @@ func (s *Service) checkAdminAllGrant(ctx context.Context, userID string, scopes 
 	return nil
 }
 
-// Create creates a new API token
+// agentCallScope is the reserved marker scope minted only by the internal
+// per-agent MCP share lifecycle. It mirrors mcp.AgentCallScope but is declared
+// here to avoid importing domain/mcp (which imports this package).
+const agentCallScope = "mcp:agent-call"
+
+// Create creates a user-facing API token. It rejects the reserved agent-share
+// marker scope; the internal per-agent share mint path uses
+// CreateAgentShareToken instead.
 func (s *Service) Create(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
+	return s.create(ctx, projectID, userID, name, scopes, false)
+}
+
+// CreateAgentShareToken mints a token that may carry the reserved
+// mcp:agent-call marker. It must only be called by the per-agent MCP share
+// lifecycle (domain/mcp/agent_mcp_share.go); all user-facing paths call Create.
+func (s *Service) CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
+	return s.create(ctx, projectID, userID, name, scopes, true)
+}
+
+// rejectReservedAgentCallScope returns an error when scopes carries the
+// agent-share marker. Only the internal per-agent share mint path may set it.
+func rejectReservedAgentCallScope(scopes []string) error {
+	for _, scope := range scopes {
+		if scope == agentCallScope {
+			return apperror.NewBadRequest("scope " + agentCallScope + " is reserved for agent MCP shares")
+		}
+	}
+	return nil
+}
+
+// create is the shared implementation behind Create and CreateAgentShareToken.
+// allowAgentCallScope gates the reserved mcp:agent-call marker.
+func (s *Service) create(ctx context.Context, projectID, userID, name string, scopes []string, allowAgentCallScope bool) (*CreateApiTokenResponseDTO, error) {
+	if !allowAgentCallScope {
+		if err := rejectReservedAgentCallScope(scopes); err != nil {
+			return nil, err
+		}
+	}
 	// Validate scopes
 	for _, scope := range scopes {
 		valid := false
@@ -282,6 +318,9 @@ func (s *Service) Revoke(ctx context.Context, tokenID, projectID, userID string)
 
 // CreateAccountToken creates a new account-level (non-project-bound) API token
 func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
+	if err := rejectReservedAgentCallScope(scopes); err != nil {
+		return nil, err
+	}
 	// Validate scopes
 	for _, scope := range scopes {
 		valid := false
@@ -484,6 +523,9 @@ func (s *Service) RevokeEphemeral(ctx context.Context, tokenID string) {
 
 // UpdateScopes updates the scopes of a non-revoked project token.
 func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID string, scopes []string) (*ApiTokenDTO, error) {
+	if err := rejectReservedAgentCallScope(scopes); err != nil {
+		return nil, err
+	}
 	// Validate scopes
 	for _, scope := range scopes {
 		valid := false
@@ -544,6 +586,9 @@ func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID s
 
 // UpdateAccountTokenScopes updates the scopes of a non-revoked account-level token.
 func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID string, scopes []string) (*ApiTokenDTO, error) {
+	if err := rejectReservedAgentCallScope(scopes); err != nil {
+		return nil, err
+	}
 	// Validate scopes
 	for _, scope := range scopes {
 		valid := false

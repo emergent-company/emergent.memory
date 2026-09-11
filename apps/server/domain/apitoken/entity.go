@@ -58,18 +58,18 @@ type ApiTokenListResponseDTO struct {
 // CreateApiTokenRequest is the request body for creating a token
 type CreateApiTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all mcp:agent-call"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all"`
 }
 
 // CreateAccountTokenRequest is the request body for creating an account-level token (no project binding)
 type CreateAccountTokenRequest struct {
 	Name   string   `json:"name" validate:"required,min=1,max=255"`
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all mcp:agent-call"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all"`
 }
 
 // UpdateApiTokenScopesRequest is the request body for updating token scopes
 type UpdateApiTokenScopesRequest struct {
-	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all mcp:agent-call"`
+	Scopes []string `json:"scopes" validate:"required,min=1,dive,oneof=schema:read schema:write data:read data:write agents:read agents:write projects:read projects:write chat:use graph:read graph:write schema:migrate branches:read branches:write search journal:read journal:write skills:read skills:write documents:read documents:write admin admin:all"`
 }
 
 // Available scopes for API tokens
@@ -99,8 +99,12 @@ var ValidApiTokenScopes = []string{
 	"documents:write",
 	"admin",
 	"admin:all",
-	// Marker scope minted on per-agent MCP share credentials. It is never a
-	// general project scope: the project MCP transports reject it (see
+	// Marker scope minted on per-agent MCP share credentials. It is reserved for
+	// the internal agent-share mint path (Service.CreateAgentShareToken): it is
+	// deliberately absent from the CreateApiTokenRequest /
+	// CreateAccountTokenRequest / UpdateApiTokenScopesRequest oneof tags and
+	// Service.Create rejects it, so user-facing token creation cannot mint it.
+	// The project MCP transports reject any credential carrying it (see
 	// domain/mcp/agent_mcp_share.go) and only the per-agent endpoint accepts it.
 	"mcp:agent-call",
 }

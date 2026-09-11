@@ -6,7 +6,7 @@ A user wants to hand a single configured Memory agent to an external LLM as an M
 
 - Add a per-agent MCP endpoint `/api/mcp/agents/:agentId` exposing exactly one tool, `call_agent`, over the existing MCP JSON-RPC transport (`initialize` / `tools/list` / `tools/call`).
 - Add a per-agent share credential stored in a new `core.agent_mcp_shares` table: an API token bound to one project + agent, created, listed, revoked, and rotated by project admins.
-- `call_agent` runs the bound agent synchronously for a single `message` argument and returns the assistant's reply text. Each call is an independent run (stateless).
+- `call_agent` runs the bound agent synchronously for a single `message` argument and returns the agent's reply text. Each call is an independent run (stateless).
 - Authenticate the endpoint with the existing `X-API-Key` / `Authorization: Bearer` mechanism; a request is authorized only if its token is actively bound to the agent named in the URL.
 - Bound the run with a capped step/time budget so a call fits within an MCP client's `tools/call` timeout; map run failures and human-in-the-loop pauses to structured tool errors.
 - **No breaking change** to the existing `/api/mcp` project endpoint or its share instances.

@@ -153,6 +153,12 @@ func (f *fakeTokenSvc) Create(_ context.Context, _, _, _ string, scopes []string
 	}, nil
 }
 
+// CreateAgentShareToken mirrors Create; the fake does not enforce scope
+// reservation so tests can exercise the agent-share mint path.
+func (f *fakeTokenSvc) CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error) {
+	return f.Create(ctx, projectID, userID, name, scopes)
+}
+
 func (f *fakeTokenSvc) UpdateScopes(_ context.Context, _, _, _ string, scopes []string) (*apitoken.ApiTokenDTO, error) {
 	if f.updateErr != nil {
 		return nil, f.updateErr

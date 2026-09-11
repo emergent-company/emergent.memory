@@ -91,6 +91,9 @@ func agentAllowlistDeniedTools(toolName string) bool {
 // credential lifecycle. *apitoken.Service satisfies it.
 type shareTokenService interface {
 	Create(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error)
+	// CreateAgentShareToken mints a token permitted to carry the reserved
+	// mcp:agent-call marker (per-agent MCP shares only).
+	CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error)
 	UpdateScopes(ctx context.Context, tokenID, projectID, userID string, scopes []string) (*apitoken.ApiTokenDTO, error)
 	Revoke(ctx context.Context, tokenID, projectID, userID string) error
 	Regenerate(ctx context.Context, tokenID, projectID, userID string) (*apitoken.CreateApiTokenResponseDTO, error)

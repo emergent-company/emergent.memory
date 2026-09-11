@@ -67,10 +67,15 @@ func enabledAgent() *Agent {
 	return &Agent{ID: "agent-1", ProjectID: "proj-1", Name: "Alpha", Enabled: true}
 }
 
+// agentReplyRole is the role the executor actually persists for an assistant
+// turn: the sanitized agent name (ADK event Author), NOT "assistant". Tests use
+// it to exercise the real production path.
+const agentReplyRole = "Research_Agent"
+
 func assistantMessages(text string) []*AgentRunMessage {
 	return []*AgentRunMessage{
 		{Role: "user", Content: map[string]any{"text": "hello"}},
-		{Role: "assistant", Content: map[string]any{"text": text}},
+		{Role: agentReplyRole, Content: map[string]any{"text": text}},
 	}
 }
 
@@ -94,17 +99,20 @@ func TestRunAgentOnceSuccess(t *testing.T) {
 	assert.Equal(t, "ping", runner.gotReq.UserMessage)
 }
 
-// H1: the reply MUST come only from RAW role=="assistant" messages. The ACP
-// mapping collapses system/tool_result to "agent", so filtering mapped roles
-// would leak those texts.
-func TestRunAgentOnceReplyOnlyFromAssistantRole(t *testing.T) {
+// H1: the reply MUST come from the agent-authored turn and MUST NOT leak
+// system prompts or tool output. The executor persists tool responses under
+// both "tool" and, historically/ACP, "tool_result"; the ACP mapping also
+// collapses system/tool_result to "agent", so a mapped-role filter would leak
+// those texts.
+func TestRunAgentOnceReplyOnlyFromAgentRole(t *testing.T) {
 	repo := &fakeOnceRepo{
 		agent: enabledAgent(),
 		msgs: []*AgentRunMessage{
 			{Role: "system", Content: map[string]any{"text": "SECRET SYSTEM PROMPT"}},
 			{Role: "user", Content: map[string]any{"text": "hello"}},
-			{Role: "tool_result", Content: map[string]any{"text": "RAW TOOL OUTPUT"}},
-			{Role: "assistant", Content: map[string]any{"text": "the real answer"}},
+			{Role: "tool", Content: map[string]any{"text": "RAW TOOL OUTPUT"}},
+			{Role: "tool_result", Content: map[string]any{"text": "RAW TOOL RESULT"}},
+			{Role: agentReplyRole, Content: map[string]any{"text": "the real answer"}},
 		},
 	}
 	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
@@ -116,6 +124,45 @@ func TestRunAgentOnceReplyOnlyFromAssistantRole(t *testing.T) {
 	assert.NotContains(t, reply, "SECRET")
 	assert.NotContains(t, reply, "RAW TOOL")
 	assert.Equal(t, "r1", runID)
+}
+
+// The executor persists assistant turns with role == sanitized agent name
+// (ADK event Author), not the literal "assistant". This regression test uses
+// that real role to prove call_agent returns a reply instead of failing with
+// "agent run produced no assistant reply".
+func TestRunAgentOnceReplyFromSanitizedAgentNameRole(t *testing.T) {
+	repo := &fakeOnceRepo{
+		agent: enabledAgent(),
+		msgs: []*AgentRunMessage{
+			{Role: "user", Content: map[string]any{"text": "hello"}},
+			{Role: sanitizeAgentName("Research Agent"), Content: map[string]any{"text": "production reply"}},
+		},
+	}
+	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
+	h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+	reply, runID, err := h.RunAgentOnce(context.Background(), "proj-1", "agent-1", "ping", mcp.AgentRunBudget{})
+	require.NoError(t, err)
+	assert.Equal(t, "production reply", reply)
+	assert.Equal(t, "r1", runID)
+}
+
+// A literal "assistant" role from an ACP-mapped or legacy run is still
+// accepted for backwards compatibility.
+func TestRunAgentOnceReplyFromLiteralAssistantRole(t *testing.T) {
+	repo := &fakeOnceRepo{
+		agent: enabledAgent(),
+		msgs: []*AgentRunMessage{
+			{Role: "user", Content: map[string]any{"text": "hello"}},
+			{Role: "assistant", Content: map[string]any{"text": "legacy reply"}},
+		},
+	}
+	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
+	h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+	reply, _, err := h.RunAgentOnce(context.Background(), "proj-1", "agent-1", "ping", mcp.AgentRunBudget{})
+	require.NoError(t, err)
+	assert.Equal(t, "legacy reply", reply)
 }
 
 func TestRunAgentOnceSystemOnlyIsStructuredError(t *testing.T) {
@@ -171,9 +218,9 @@ func TestRunAgentOncePicksLastAssistantMessage(t *testing.T) {
 	repo := &fakeOnceRepo{
 		agent: enabledAgent(),
 		msgs: []*AgentRunMessage{
-			{Role: "assistant", Content: map[string]any{"text": "first"}},
+			{Role: agentReplyRole, Content: map[string]any{"text": "first"}},
 			{Role: "tool_result", Content: map[string]any{"text": "RAW TOOL OUTPUT"}},
-			{Role: "assistant", Content: map[string]any{"text": "second"}},
+			{Role: agentReplyRole, Content: map[string]any{"text": "second"}},
 		},
 	}
 	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}

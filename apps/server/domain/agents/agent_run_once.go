@@ -193,12 +193,33 @@ func runFailureMessage(ctx context.Context, repo agentOnceRepository, runID stri
 	return "agent run failed"
 }
 
-// assistantReply returns the last non-empty assistant message text from the
-// run's persisted RAW messages. It filters strictly on role == "assistant": the
-// ACP mapping collapses system and tool_result messages to "agent", so mapping
-// first would leak system prompts or tool output to the caller. When no
-// assistant text exists it returns an explicit structured error rather than an
-// empty success.
+// isAgentReplyRole reports whether a persisted run-message role can carry the
+// bound agent's reply text.
+//
+// The executor persists assistant turns under the ADK event Author, which is the
+// sanitized agent name (e.g. "research_agent"), NOT the literal "assistant"
+// (see persistEventContent and sanitizeAgentName). Filtering on role ==
+// "assistant" therefore never matched a real run and made call_agent always
+// return "agent run produced no assistant reply". We instead accept any role
+// that is not an explicit user/tool/system side, mirroring the chat fallback in
+// domain/chat/handler.go. Both "tool" (executor tool responses) and
+// "tool_result" (ACP/historical tool output) are excluded, as is "system", so
+// prompts and raw tool output never leak to the caller.
+func isAgentReplyRole(role string) bool {
+	switch role {
+	case "", "user", "tool", "tool_result", "system":
+		return false
+	default:
+		return true
+	}
+}
+
+// assistantReply returns the last non-empty reply text from the run's persisted
+// RAW messages. It accepts the agent-authored role (the sanitized agent name)
+// as well as a literal "assistant" role, while excluding user/tool/system
+// messages so the ACP collapse of system and tool_result to "agent" cannot leak
+// them. When no reply text exists it returns an explicit structured error
+// rather than an empty success.
 func assistantReply(ctx context.Context, repo agentOnceRepository, runID string) (string, error) {
 	if runID == "" {
 		return "", &mcp.AgentRunError{
@@ -216,7 +237,7 @@ func assistantReply(ctx context.Context, repo agentOnceRepository, runID string)
 	}
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
-		if m == nil || m.Role != "assistant" {
+		if m == nil || !isAgentReplyRole(m.Role) {
 			continue
 		}
 		var b strings.Builder

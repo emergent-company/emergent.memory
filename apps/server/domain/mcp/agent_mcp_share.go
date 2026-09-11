@@ -26,11 +26,22 @@ import (
 // share key usable only against its own agent.
 const AgentCallScope = "mcp:agent-call"
 
-// agentShareScopes is the scope set a per-agent MCP share token needs. It grants
-// the legacy read-only MCP set (so the bound agent's internal loopback tool
-// calls for search/graph/schema work) plus the marker scope that makes the
-// credential valid only at the per-agent endpoint. No broad write scopes.
-var agentShareScopes = append(append([]string(nil), readOnlyMCPScopes...), AgentCallScope)
+// agentShareScopes is the scope set minted on a per-agent MCP share token: the
+// marker scope plus projects:read, and nothing else.
+//
+// Loopback authorization: the bound agent's internal tool calls run through
+// ToolPool.CallTool -> mcp.Service.ExecuteTool, which executes built-in tools
+// directly and never consults the credential's scopes. handleToolsCall's
+// per-tool RequiredScope check is a transport-layer guard and is bypassed on
+// that path. The read-only MCP scopes previously granted here (data:read,
+// schema:read, agents:read, chat:use) were therefore not needed for internal
+// tool execution, yet they are valid REST scopes: a leaked share key could use
+// them to read project data or use chat project-wide, contradicting the
+// "exactly one call_agent tool" promise. They are deliberately dropped.
+// projects:read is retained as the narrowest project-context scope (and is what
+// share tokens are expected to carry); the marker keeps the credential usable
+// only at the per-agent endpoint.
+var agentShareScopes = []string{AgentCallScope, "projects:read"}
 
 // hasAgentCallScope reports whether scopes contains the per-agent marker scope.
 func hasAgentCallScope(scopes []string) bool {
@@ -354,7 +365,7 @@ func (s *Service) CreateAgentShare(ctx context.Context, projectID, userID, baseU
 		return nil, apperror.New(409, "agent_mcp_share_name_exists", "An agent MCP share named \""+name+"\" already exists for this project")
 	}
 
-	token, err := tokenSvc.Create(ctx, projectID, userID, agentShareTokenName(name), append([]string(nil), agentShareScopes...))
+	token, err := tokenSvc.CreateAgentShareToken(ctx, projectID, userID, agentShareTokenName(name), append([]string(nil), agentShareScopes...))
 	if err != nil {
 		return nil, err
 	}

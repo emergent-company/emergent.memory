@@ -39,15 +39,15 @@ The in-flight `add-mcp-share-instances` change adds project-level share instance
 
 ### 4. Synchronous, stateless execution with a bounded budget
 
-**Decision:** `call_agent` starts one run via the executor, waits for completion, then reads the run's persisted messages to extract the assistant reply. Apply a maximum step count and timeout. Ignore/park conversation continuity.
+**Decision:** `call_agent` starts one run via the executor, waits for completion, then reads the run's persisted messages to extract the agent-authored reply. Apply a maximum step count and timeout. Ignore/park conversation continuity.
 
 **Rationale:** MCP `tools/call` is request/response and the client timeout is finite; a bounded blocking run is the simplest correct v1. Alternatives: async + poll (needs a second tool and inspection tools, currently blocked by shares) and session-continuous runs (needs a session contract) — both deferred.
 
 ### 5. Reply extraction via persisted run messages
 
-**Decision:** Reuse the run-message read path and ACP text extraction (`FindMessagesByRunID`, `memoryMessagesToACP`/`RunToACPObject`) to obtain the assistant text; a new `RunAgentOnce`-style helper returns `(reply, runID, error)`.
+**Decision:** Reuse the run-message read path (`FindMessagesByRunID`) with the same text-part extraction used by the ACP helpers to obtain the agent-authored text; a new `RunAgentOnce`-style helper returns `(reply, runID, error)`.
 
-**Rationale:** This is the only existing mechanism that yields assistant text from a run; reusing it avoids changing `ExecuteResult`.
+**Rationale:** This is the only existing mechanism that yields reply text from a run; reusing it avoids changing `ExecuteResult`.
 
 ### 6. Authorization = active token bound to the URL's agent
 
@@ -57,15 +57,15 @@ The in-flight `add-mcp-share-instances` change adds project-level share instance
 
 ### 7. Marker scope isolates share credentials from the project MCP endpoint
 
-**Decision:** Mint every per-agent share token with the dedicated scope `mcp:agent-call` (plus the legacy read-only MCP set so the agent's internal loopback tool calls keep working). All project MCP transports (`handler.go` JSON-RPC, `streamable_http_handler.go`, `sse_handler.go`) reject any credential carrying `mcp:agent-call` with HTTP 403 before listing or executing. The per-agent endpoint requires the marker scope.
+**Decision:** Mint every per-agent share token with the dedicated scope `mcp:agent-call` plus the narrow `projects:read` scope, and nothing else. The bound agent's internal tool calls run through `ToolPool.CallTool -> mcp.Service.ExecuteTool`, which executes built-in tools directly and does not consult the credential's scopes, so no read-only project grants are needed. All project MCP transports (`handler.go` JSON-RPC, `streamable_http_handler.go`, `sse_handler.go`) reject any credential carrying `mcp:agent-call` with HTTP 403 before listing or executing. The per-agent endpoint requires the marker scope, and the marker is mintable only through the internal agent-share path (`Service.CreateAgentShareToken`) — public token creation rejects it.
 
-**Rationale:** Agent tools have an empty `RequiredScope`, so without a marker a share key would pass scope filtering at `/api/mcp` and could call `trigger_agent(agent_name=B)` for any agent in the project. A marker makes the credential valid at exactly one surface. Normal project tokens never carry it, so they are unaffected.
+**Rationale:** Agent tools have an empty `RequiredScope`, so without a marker a share key would pass scope filtering at `/api/mcp` and could call `trigger_agent(agent_name=B)` for any agent in the project. A marker makes the credential valid at exactly one surface. Normal project tokens never carry it, so they are unaffected. Dropping the legacy read-only scopes prevents a leaked share key from reading project data or using chat over the REST API, preserving the "exactly one call_agent tool" promise.
 
 ### 8. Reply extraction filters raw message roles, not ACP roles
 
-**Decision:** `RunAgentOnce` extracts the reply from persisted RAW run messages whose `role == "assistant"`, not from `memoryMessagesToACP` output. If no non-empty assistant text exists it returns a structured `AgentRunError` (never an empty success).
+**Decision:** `RunAgentOnce` extracts the reply from persisted RAW run messages whose role is agent-authored — any role that is not `user`, `tool`, `tool_result`, or `system` — not from `memoryMessagesToACP` output. The executor persists assistant turns under the ADK event Author (the sanitized agent name, e.g. `research_agent`), not the literal `assistant`, so a strict `role == "assistant"` filter never matched a real run. If no non-empty agent-authored text exists it returns a structured `AgentRunError` (never an empty success).
 
-**Rationale:** `memoryRoleToACP` maps both `system` and `tool_result` to `agent`, so filtering on the mapped role would leak system prompts or raw tool output as the agent's reply. Filtering raw rows is the only safe boundary.
+**Rationale:** `memoryRoleToACP` maps both `system` and `tool_result` to `agent`, so filtering on the mapped role would leak system prompts or raw tool output as the agent's reply. Filtering raw rows by a deny-list (`user`/`tool`/`tool_result`/`system`) is the only safe boundary and matches the executor's real role assignment.
 
 ## Risks / Trade-offs
 
