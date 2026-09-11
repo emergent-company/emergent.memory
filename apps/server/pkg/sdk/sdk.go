@@ -123,10 +123,11 @@ type Config struct {
 
 // AuthConfig holds authentication configuration.
 type AuthConfig struct {
-	Mode      string // "apikey", "apitoken", or "oauth"
-	APIKey    string // For API key mode (standalone X-API-Key) or API token mode (emt_* Bearer token)
-	CredsPath string // For OAuth credential storage
-	ClientID  string // For OAuth mode
+	Mode      string   // "apikey", "apitoken", or "oauth"
+	APIKey    string   // For API key mode (standalone X-API-Key) or API token mode (emt_* Bearer token)
+	CredsPath string   // For OAuth credential storage
+	ClientID  string   // For OAuth mode
+	Scopes    []string // Optional: OAuth device-flow scopes (defaults to auth.DefaultDeviceFlowScopes)
 }
 
 // New creates a new Emergent API client.
@@ -247,7 +248,7 @@ func NewWithDeviceFlow(cfg Config) (*Client, error) {
 	}
 
 	// Create OAuth provider
-	authProvider := auth.NewOAuthProvider(oidcConfig, cfg.Auth.ClientID, cfg.Auth.CredsPath)
+	authProvider := auth.NewOAuthProviderWithScopes(oidcConfig, cfg.Auth.ClientID, cfg.Auth.CredsPath, cfg.Auth.Scopes)
 
 	// Initiate device flow
 	deviceResp, err := authProvider.InitiateDeviceFlow(context.Background())
