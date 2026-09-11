@@ -13,6 +13,10 @@
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
+# Pinned github-mcp-server release baked into the runtime image. Used by the
+# MCP registry to run a stdio GitHub server with native GitHub App auth
+# (the server mints/refreshes installation tokens itself; no token stored).
+ARG GITHUB_MCP_SERVER_VERSION=1.12.1
 
 # ── Stage 1: Server + Migration + Swagger ──────────────────────────
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS server-builder
@@ -116,6 +120,35 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o /out/memory \
     ./cmd
 
+# ── Stage 2b: GitHub MCP server (stdio) ───────────────────────────
+# Baked so the MCP registry can run a stdio GitHub server with native GitHub
+# App auth; the server mints and refreshes installation tokens itself, so no
+# long-lived token is stored in config. The tarball is arch-specific but the
+# download runs on the build platform (no emulation).
+FROM --platform=$BUILDPLATFORM alpine:3.21 AS github-mcp-builder
+
+ARG TARGETARCH
+ARG GITHUB_MCP_SERVER_VERSION
+
+RUN apk add --no-cache curl tar coreutils
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) asset_arch=x86_64 ;; \
+      arm64) asset_arch=arm64 ;; \
+      *) echo "unsupported TARGETARCH for github-mcp-server: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_SERVER_VERSION}"; \
+    asset="github-mcp-server_Linux_${asset_arch}.tar.gz"; \
+    curl -fsSL -o "/tmp/${asset}" "${base}/${asset}"; \
+    curl -fsSL -o /tmp/github-mcp-checksums.txt "${base}/github-mcp-server_${GITHUB_MCP_SERVER_VERSION}_checksums.txt"; \
+    expected="$(awk -v a="${asset}" '$2==a || $2=="*"a {print $1}' /tmp/github-mcp-checksums.txt)"; \
+    test -n "${expected}"; \
+    echo "${expected}  /tmp/${asset}" | sha256sum -c -; \
+    mkdir -p /out; \
+    tar -xzf "/tmp/${asset}" -C /out github-mcp-server; \
+    chmod +x /out/github-mcp-server; \
+    test -s /out/github-mcp-server
+
 # ── Stage 3: Runtime ──────────────────────────────────────────────
 FROM alpine:3.21
 
@@ -139,6 +172,10 @@ WORKDIR /app
 COPY --from=server-builder /out/emergent-server /usr/local/bin/
 COPY --from=server-builder /out/emergent-migrate /usr/local/bin/
 COPY --from=cli-builder /out/memory /usr/local/bin/
+
+# GitHub MCP server (stdio) — invoked by the MCP registry with GitHub App auth
+COPY --from=github-mcp-builder /out/github-mcp-server /usr/local/bin/github-mcp-server
+RUN chmod +x /usr/local/bin/github-mcp-server
 
 # Copy swagger docs (server looks for ./docs/swagger relative to WORKDIR)
 COPY --from=server-builder /build/server/docs/swagger /app/docs/swagger
