@@ -8,11 +8,11 @@ Before implementing new features, **always check** these domain-specific AGENT.m
 
 | File                                                      | Domain              | Key Topics                                                                          |
 | --------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------- |
-| `/root/emergent.memory.ui/src/components/AGENT.md`        | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
-| `/root/emergent.memory.ui/src/hooks/AGENT.md`             | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
+| `/root/memory.web-ui/src/components/AGENT.md`        | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
+| `/root/memory.web-ui/src/hooks/AGENT.md`             | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
 | `apps/server/AGENT.md`                                 | Go Backend          | fx modules, Echo handlers, Bun ORM, job queues                                      |
 
-> **Frontend repo**: The React admin lives at `/root/emergent.memory.ui` (remote: `emergent-company/emergent.memory.ui`). It is a standalone Vite project — not in this monorepo.
+> **Frontend repo**: The React admin lives at `/root/memory.web-ui` (remote: `emergent-company/memory.web-ui`). It is a standalone Vite project — not in this monorepo.
 
 **When to read these files:**
 
@@ -73,10 +73,10 @@ task lint               # Go linter
 task migrate:up         # Run migrations
 ```
 
-For frontend tasks, use `pnpm` in `/root/emergent.memory.ui`:
+For frontend tasks, use `pnpm` in `/root/memory.web-ui`:
 
 ```bash
-cd /root/emergent.memory.ui
+cd /root/memory.web-ui
 pnpm run test           # Unit tests
 pnpm run build          # Production build
 ```

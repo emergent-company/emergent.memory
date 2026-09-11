@@ -27,5 +27,5 @@ Admins have no way to share MCP access with teammates or external agents without
 - **`apps/server/domain/mcp/`**: New handler endpoints for token generation and email dispatch
 - **`apps/server/domain/apitoken/`**: Reuse existing token creation with `project_viewer` scopes; no schema changes expected
 - **`apps/server/domain/email/`**: New email template for MCP invite (setup guide content)
-- **Admin UI (`/root/emergent.memory.ui`)**: New modal or settings panel under project MCP settings for generating tokens and sending invites
+- **Admin UI (`/root/memory.web-ui`)**: New modal or settings panel under project MCP settings for generating tokens and sending invites
 - **No breaking changes** — all new surface area; existing MCP auth flow is unchanged

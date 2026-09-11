@@ -6,7 +6,7 @@ applyTo: '**'
 
 ## Overview
 
-The backend is a pure Go server (`apps/server-go`). The React admin frontend lives in a separate repo at `/root/emergent.memory.ui`. Use `task` (Taskfile) for backend commands and `pnpm` for frontend commands.
+The backend is a pure Go server (`apps/server-go`). The React admin frontend lives in a separate repo at `/root/memory.web-ui`. Use `task` (Taskfile) for backend commands and `pnpm` for frontend commands.
 
 **For detailed testing guidance and templates, see `docs/testing/AI_AGENT_GUIDE.md`** which provides:
 
@@ -26,7 +26,7 @@ tests/
   └── e2e/                # Go API e2e tests
 ```
 
-### Admin (repo: `/root/emergent.memory.ui`)
+### Admin (repo: `/root/memory.web-ui`)
 
 ```
 tests/
@@ -47,10 +47,10 @@ task test:integration              # Integration tests
 task test:coverage                 # With coverage report
 ```
 
-### Frontend (emergent.memory.ui)
+### Frontend (memory.web-ui)
 
 ```bash
-# cd /root/emergent.memory.ui
+# cd /root/memory.web-ui
 pnpm run test                      # Unit tests (Vitest)
 pnpm run test:coverage             # With coverage
 ```
@@ -62,7 +62,7 @@ pnpm run test:coverage             # With coverage
 task test
 task test:e2e
 
-# Frontend (cd /root/emergent.memory.ui)
+# Frontend (cd /root/memory.web-ui)
 pnpm run test
 ```
 
@@ -86,11 +86,11 @@ Ports: Postgres 5432, Zitadel 8080, API 3002.
 ## Coverage Reports
 
 - **Backend:** `task test:coverage` → `apps/server/coverage.html`
-- **Frontend:** `cd /root/emergent.memory.ui && pnpm run test:coverage`
+- **Frontend:** `cd /root/memory.web-ui && pnpm run test:coverage`
 
 ## CI Alignment
 
-GitHub Actions under `.github/workflows/` use task commands for backend tests. Frontend CI is in the `emergent.memory.ui` repo.
+GitHub Actions under `.github/workflows/` use task commands for backend tests. Frontend CI is in the `memory.web-ui` repo.
 
 ## Debugging Failures
 
@@ -144,8 +144,8 @@ After any Playwright test run, IMMEDIATELY check the HTML report:
 | Server unit (Go)   | `apps/server/tests/**/*_test.go`             |
 | Server integration | `apps/server/tests/integration/**/*_test.go` |
 | Server e2e (Go)    | `apps/server/tests/e2e/**/*_test.go`         |
-| Admin unit         | `/root/emergent.memory.ui/tests/unit/**/*.test.{ts,tsx}` |
-| Admin e2e          | `/root/emergent.memory.ui/tests/e2e/specs/**/*.spec.ts`  |
+| Admin unit         | `/root/memory.web-ui/tests/unit/**/*.test.{ts,tsx}` |
+| Admin e2e          | `/root/memory.web-ui/tests/e2e/specs/**/*.spec.ts`  |
 
 ## Quick Reference
 
@@ -155,7 +155,7 @@ After any Playwright test run, IMMEDIATELY check the HTML report:
 | Server E2E        | `task test:e2e`                                 | Requires Postgres + Zitadel running      |
 | Server integration| `task test:integration`                         |                                          |
 | Server coverage   | `task test:coverage`                            | Outputs coverage.html                    |
-| Admin unit tests  | `cd /root/emergent.memory.ui && pnpm run test`  | Append `-- -t "name"` for focused run    |
+| Admin unit tests  | `cd /root/memory.web-ui && pnpm run test`  | Append `-- -t "name"` for focused run    |
 | Server status     | `task status`                                   | Check if server is running               |
 
 ## Troubleshooting
