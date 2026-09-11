@@ -135,10 +135,10 @@ type CreateAgentMCPShareResponse struct {
 func normalizeAgentShareName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return "", apperror.ErrValidation.WithMessage("name is required")
+		return "", apperror.NewValidation("name is required")
 	}
 	if len(trimmed) > 255 {
-		return "", apperror.ErrValidation.WithMessage("name must be at most 255 characters")
+		return "", apperror.NewValidation("name must be at most 255 characters")
 	}
 	return trimmed, nil
 }
@@ -200,7 +200,7 @@ func (r *bunAgentMCPShareStore) ListByProject(ctx context.Context, projectID str
 	var rows []*AgentMCPShare
 	err := r.db.NewRaw(agentMCPShareSelect+` WHERE ams.project_id = ? ORDER BY ams.created_at DESC`, projectID).Scan(ctx, &rows)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return rows, nil
 }
@@ -209,7 +209,7 @@ func (r *bunAgentMCPShareStore) ListByAgent(ctx context.Context, projectID, agen
 	var rows []*AgentMCPShare
 	err := r.db.NewRaw(agentMCPShareSelect+` WHERE ams.project_id = ? AND ams.agent_id = ? ORDER BY ams.created_at DESC`, projectID, agentID).Scan(ctx, &rows)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return rows, nil
 }
@@ -221,7 +221,7 @@ func (r *bunAgentMCPShareStore) GetByID(ctx context.Context, projectID, id strin
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return row, nil
 }
@@ -233,7 +233,7 @@ func (r *bunAgentMCPShareStore) GetByTokenID(ctx context.Context, tokenID string
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return row, nil
 }
@@ -245,7 +245,7 @@ func (r *bunAgentMCPShareStore) FindByName(ctx context.Context, projectID, name 
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return row, nil
 }
@@ -256,7 +256,7 @@ func (r *bunAgentMCPShareStore) Create(ctx context.Context, share *AgentMCPShare
 		if isUniqueViolation(err) {
 			return apperror.New(409, "agent_mcp_share_name_exists", "An agent MCP share with this name already exists")
 		}
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return nil
 }
@@ -276,7 +276,7 @@ func (r *bunAgentMCPShareStore) Update(ctx context.Context, share *AgentMCPShare
 		if isUniqueViolation(err) {
 			return apperror.New(409, "agent_mcp_share_name_exists", "An agent MCP share with this name already exists")
 		}
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return nil
 }
@@ -318,19 +318,19 @@ func (s *Service) CreateAgentShare(ctx context.Context, projectID, userID, baseU
 	store := s.agentShareStore()
 	tokenSvc := s.shareTokenSvc()
 	if store == nil || tokenSvc == nil {
-		return nil, apperror.ErrInternal.WithMessage("agent share storage unavailable")
+		return nil, apperror.NewInternal("agent share storage unavailable", nil)
 	}
 
 	agentID = strings.TrimSpace(agentID)
 	if _, err := uuid.Parse(agentID); err != nil {
-		return nil, apperror.ErrValidation.WithMessage("invalid agent id: " + agentID)
+		return nil, apperror.NewValidation("invalid agent id: " + agentID)
 	}
 	agent, err := s.resolveProjectAgent(ctx, projectID, agentID)
 	if err != nil {
 		return nil, err
 	}
 	if agent == nil {
-		return nil, apperror.ErrNotFound.WithMessage("Agent not found in project")
+		return nil, apperror.NewNotFound("Agent", agentID)
 	}
 
 	name := strings.TrimSpace(req.Name)
@@ -344,7 +344,7 @@ func (s *Service) CreateAgentShare(ctx context.Context, projectID, userID, baseU
 		name = normalized
 	}
 	if len(name) > 255 {
-		return nil, apperror.ErrValidation.WithMessage("name must be at most 255 characters")
+		return nil, apperror.NewValidation("name must be at most 255 characters")
 	}
 	existing, err := store.FindByName(ctx, projectID, name)
 	if err != nil {
@@ -389,7 +389,7 @@ func (s *Service) CreateAgentShare(ctx context.Context, projectID, userID, baseU
 func (s *Service) resolveProjectAgent(ctx context.Context, projectID, agentID string) (*AgentRef, error) {
 	dir := s.agentDirectorySvc()
 	if dir == nil {
-		return nil, apperror.ErrInternal.WithMessage("agent directory unavailable")
+		return nil, apperror.NewInternal("agent directory unavailable", nil)
 	}
 	return dir.FindProjectAgentByID(ctx, projectID, agentID)
 }
@@ -401,7 +401,7 @@ func (s *Service) ListAgentShares(ctx context.Context, projectID, userID, agentI
 	}
 	store := s.agentShareStore()
 	if store == nil {
-		return nil, apperror.ErrInternal.WithMessage("agent share storage unavailable")
+		return nil, apperror.NewInternal("agent share storage unavailable", nil)
 	}
 	shares, err := store.ListByAgent(ctx, projectID, agentID)
 	if err != nil {
@@ -417,7 +417,7 @@ func (s *Service) ListProjectAgentShares(ctx context.Context, projectID, userID 
 	}
 	store := s.agentShareStore()
 	if store == nil {
-		return nil, apperror.ErrInternal.WithMessage("agent share storage unavailable")
+		return nil, apperror.NewInternal("agent share storage unavailable", nil)
 	}
 	shares, err := store.ListByProject(ctx, projectID)
 	if err != nil {
@@ -435,14 +435,14 @@ func (s *Service) RevokeAgentShare(ctx context.Context, projectID, userID, id st
 	store := s.agentShareStore()
 	tokenSvc := s.shareTokenSvc()
 	if store == nil || tokenSvc == nil {
-		return apperror.ErrInternal.WithMessage("agent share storage unavailable")
+		return apperror.NewInternal("agent share storage unavailable", nil)
 	}
 	share, err := store.GetByID(ctx, projectID, id)
 	if err != nil {
 		return err
 	}
 	if share == nil {
-		return apperror.ErrNotFound.WithMessage("Agent MCP share not found")
+		return apperror.NewNotFound("Agent MCP share", id)
 	}
 	if share.RevokedAt != nil {
 		return nil
@@ -465,14 +465,14 @@ func (s *Service) RotateAgentShare(ctx context.Context, projectID, userID, id, b
 	store := s.agentShareStore()
 	tokenSvc := s.shareTokenSvc()
 	if store == nil || tokenSvc == nil {
-		return nil, apperror.ErrInternal.WithMessage("agent share storage unavailable")
+		return nil, apperror.NewInternal("agent share storage unavailable", nil)
 	}
 	share, err := store.GetByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
 	}
 	if share == nil {
-		return nil, apperror.ErrNotFound.WithMessage("Agent MCP share not found")
+		return nil, apperror.NewNotFound("Agent MCP share", id)
 	}
 	if share.RevokedAt != nil {
 		return nil, apperror.New(409, "agent_mcp_share_revoked", "Agent MCP share is revoked and cannot be rotated")
@@ -537,17 +537,17 @@ func (s *Service) ResolveAgentShareByToken(ctx context.Context, apiTokenID strin
 func (s *Service) AuthorizeAgentShare(ctx context.Context, apiTokenID, agentID string) (*AgentMCPShare, error) {
 	share := s.ResolveAgentShareByToken(ctx, apiTokenID)
 	if share == nil {
-		return nil, apperror.ErrForbidden.WithMessage("credential is not bound to an agent MCP share")
+		return nil, apperror.NewForbidden("credential is not bound to an agent MCP share")
 	}
 	if share.AgentID != agentID {
-		return nil, apperror.ErrForbidden.WithMessage("credential is bound to a different agent")
+		return nil, apperror.NewForbidden("credential is bound to a different agent")
 	}
 	now := time.Now().UTC()
 	if share.TokenRevokedAt != nil {
-		return nil, apperror.ErrForbidden.WithMessage("share credential is revoked")
+		return nil, apperror.NewForbidden("share credential is revoked")
 	}
 	if share.TokenExpiresAt != nil && !share.TokenExpiresAt.After(now) {
-		return nil, apperror.ErrForbidden.WithMessage("share credential is expired")
+		return nil, apperror.NewForbidden("share credential is expired")
 	}
 	return share, nil
 }

@@ -71,7 +71,7 @@ func (h *SSEHandler) HandleSSEConnect(c echo.Context) error {
 	// Fail closed: per-agent share credentials are not valid on the project MCP
 	// SSE transport.
 	if hasAgentCallScope(user.Scopes) {
-		return apperror.ErrForbidden.WithMessage("agent-share credentials are not valid on the project MCP endpoint")
+		return apperror.NewForbidden("agent-share credentials are not valid on the project MCP endpoint")
 	}
 
 	projectID := c.Param("projectId")
@@ -150,7 +150,7 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 	// Fail closed: per-agent share credentials are not valid on the project MCP
 	// SSE transport.
 	if hasAgentCallScope(user.Scopes) {
-		return apperror.ErrForbidden.WithMessage("agent-share credentials are not valid on the project MCP endpoint")
+		return apperror.NewForbidden("agent-share credentials are not valid on the project MCP endpoint")
 	}
 
 	projectID := c.Param("projectId")

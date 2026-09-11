@@ -31,12 +31,12 @@ func (h *Handler) HandleCreateAgentShare(c echo.Context) error {
 	projectID := c.Param("projectId")
 	agentID := c.Param("id")
 	if projectID == "" || agentID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and agent id are required")
+		return apperror.NewBadRequest("projectId and agent id are required")
 	}
 
 	var req CreateAgentMCPShareRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return apperror.NewBadRequest("invalid request body")
 	}
 
 	resp, err := h.svc.CreateAgentShare(c.Request().Context(), projectID, user.ID, requestBaseURL(c), agentID, req)
@@ -52,7 +52,7 @@ func (h *Handler) HandleListAgentShares(c echo.Context) error {
 	projectID := c.Param("projectId")
 	agentID := c.Param("id")
 	if projectID == "" || agentID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and agent id are required")
+		return apperror.NewBadRequest("projectId and agent id are required")
 	}
 	resp, err := h.svc.ListAgentShares(c.Request().Context(), projectID, user.ID, agentID)
 	if err != nil {
@@ -66,7 +66,7 @@ func (h *Handler) HandleListProjectAgentShares(c echo.Context) error {
 	user := auth.MustGetUser(c)
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
 	}
 	resp, err := h.svc.ListProjectAgentShares(c.Request().Context(), projectID, user.ID)
 	if err != nil {
@@ -81,7 +81,7 @@ func (h *Handler) HandleRevokeAgentShare(c echo.Context) error {
 	projectID := c.Param("projectId")
 	id := c.Param("id")
 	if projectID == "" || id == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and id are required")
+		return apperror.NewBadRequest("projectId and id are required")
 	}
 	if err := h.svc.RevokeAgentShare(c.Request().Context(), projectID, user.ID, id); err != nil {
 		return err
@@ -95,7 +95,7 @@ func (h *Handler) HandleRotateAgentShare(c echo.Context) error {
 	projectID := c.Param("projectId")
 	id := c.Param("id")
 	if projectID == "" || id == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId and id are required")
+		return apperror.NewBadRequest("projectId and id are required")
 	}
 	resp, err := h.svc.RotateAgentShare(c.Request().Context(), projectID, user.ID, id, requestBaseURL(c))
 	if err != nil {

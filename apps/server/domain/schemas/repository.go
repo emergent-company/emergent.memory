@@ -193,7 +193,7 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID string) ([
 // paginated; total ignores limit/offset.
 func (r *Repository) ListSchemaPacks(ctx context.Context, projectID, search string, limit, offset int) ([]SchemaListInfo, int, error) {
 	if projectID == "" {
-		return nil, 0, apperror.ErrBadRequest.WithMessage("projectId is required")
+		return nil, 0, apperror.NewBadRequest("projectId is required")
 	}
 
 	rows := make([]SchemaListInfo, 0)
@@ -1618,7 +1618,7 @@ func (r *Repository) ProvisionBuiltinSchemasToAllProjects(ctx context.Context) e
 	`).Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to provision builtin schemas to projects", logger.Error(err))
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return nil
 }

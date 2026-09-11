@@ -278,8 +278,7 @@ func (h *Handler) Delete(c echo.Context) error {
 // @Router       /api/projects/{id}/restore [post]
 // @Security     bearerAuth
 func (h *Handler) Restore(c echo.Context) error {
-	user := auth.GetUser(c)
-	if user == nil {
+	if auth.GetUser(c) == nil {
 		return apperror.ErrUnauthorized
 	}
 

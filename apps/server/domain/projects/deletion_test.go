@@ -61,13 +61,13 @@ func TestSetDeletionGracePeriod(t *testing.T) {
 	svc := newDeletionTestService(&fakeDeletionRepo{})
 	assert.Equal(t, DefaultDeletionGracePeriod, svc.gracePeriod)
 
-	svc.SetDeletionGracePeriod(2 * time.Hour)
+	svc.ConfigureDeletionGracePeriod(2 * time.Hour)
 	assert.Equal(t, 2*time.Hour, svc.gracePeriod)
 
 	// Non-positive values are ignored, keeping the previous value.
-	svc.SetDeletionGracePeriod(0)
+	svc.ConfigureDeletionGracePeriod(0)
 	assert.Equal(t, 2*time.Hour, svc.gracePeriod)
-	svc.SetDeletionGracePeriod(-time.Minute)
+	svc.ConfigureDeletionGracePeriod(-time.Minute)
 	assert.Equal(t, 2*time.Hour, svc.gracePeriod)
 }
 
@@ -122,7 +122,7 @@ func TestRequestDeletion_MarksActiveProject(t *testing.T) {
 		},
 	}
 	svc := newDeletionTestService(repo)
-	svc.SetDeletionGracePeriod(time.Hour)
+	svc.ConfigureDeletionGracePeriod(time.Hour)
 
 	before := time.Now()
 	info, err := svc.RequestDeletion(context.Background(), testProjectUUID, "user-42")
