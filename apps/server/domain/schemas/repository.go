@@ -185,18 +185,22 @@ func (r *Repository) GetAvailablePacks(ctx context.Context, projectID string) ([
 	return packs, nil
 }
 
-// ListSchemaPacks returns the schema catalog visible to a project — the
-// project's own packs plus global ones (project_id IS NULL) — mirroring the MCP
-// schema-list tool so REST consumers can bypass the MCP handshake. Rows are
-// ordered by updated_at DESC and paginated; total ignores limit/offset.
+// ListSchemaPacks returns the schema catalog strictly scoped to a project —
+// only rows whose project_id equals projectID. Rows with a NULL project_id
+// (builtin/shared schemas) are never returned; they surface only through the
+// installed-packs join. This mirrors the MCP schema-list tool so REST consumers
+// can bypass the MCP handshake. Rows are ordered by updated_at DESC and
+// paginated; total ignores limit/offset.
 func (r *Repository) ListSchemaPacks(ctx context.Context, projectID, search string, limit, offset int) ([]SchemaListInfo, int, error) {
+	if projectID == "" {
+		return nil, 0, apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
 	rows := make([]SchemaListInfo, 0)
 	q := r.db.NewSelect().
 		TableExpr("kb.graph_schemas").
-		Column("id", "name", "version", "description", "project_id", "source", "created_at", "updated_at")
-	if projectID != "" {
-		q = q.Where("project_id = ? OR project_id IS NULL", projectID)
-	}
+		Column("id", "name", "version", "description", "project_id", "source", "created_at", "updated_at").
+		Where("project_id = ?", projectID)
 	if search != "" {
 		q = q.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
@@ -206,10 +210,9 @@ func (r *Repository) ListSchemaPacks(ctx context.Context, projectID, search stri
 	}
 
 	var total int
-	countQ := r.db.NewSelect().TableExpr("kb.graph_schemas")
-	if projectID != "" {
-		countQ = countQ.Where("project_id = ? OR project_id IS NULL", projectID)
-	}
+	countQ := r.db.NewSelect().
+		TableExpr("kb.graph_schemas").
+		Where("project_id = ?", projectID)
 	if search != "" {
 		countQ = countQ.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
@@ -885,6 +888,29 @@ func (r *Repository) DeletePack(ctx context.Context, packID, projectID string) e
 	return nil
 }
 
+// typeAction is a precomputed registry write for a single object type. It is
+// shared by AssignPackWithTypes and RestoreTypeRegistryTx so the install/merge
+// SQL lives in exactly one place.
+type typeAction struct {
+	name           string
+	incomingSchema json.RawMessage
+	action         string // "install", "skip", "merge", or "restore"
+	conflict       *SchemaConflict
+	mergedSchema   json.RawMessage
+	// ownedSchemaIDs scopes a "restore" action to registry rows owned by one of
+	// these schema IDs, so types installed by unrelated packs are left alone.
+	ownedSchemaIDs []string
+}
+
+// nullableUUID renders an empty user ID as SQL NULL so inserts into a uuid
+// column succeed when no user is available (e.g. a programmatic rollback).
+func nullableUUID(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
+}
+
 // AssignPackWithTypes assigns a schema to a project AND populates the type registry.
 // When req.DryRun is true, no database changes are made — only the preview is returned.
 // When req.Merge is true, incoming type schemas are additively merged into existing types
@@ -980,14 +1006,6 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	}
 
 	// Pre-compute per-type actions: new / skip / merge
-	type typeAction struct {
-		name           string
-		incomingSchema json.RawMessage
-		action         string // "install", "skip", "merge"
-		conflict       *SchemaConflict
-		mergedSchema   json.RawMessage
-	}
-
 	var actions []typeAction
 
 	for typeName, incomingSchema := range objectTypeSchemas {
@@ -1095,51 +1113,7 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			}
 		}
 
-		for _, a := range actions {
-			uiConfigJSON := "{}"
-			if uiConfigs != nil {
-				if cfg, ok := uiConfigs[a.name]; ok {
-					uiConfigJSON = string(cfg)
-				}
-			}
-			extractionConfigJSON := "{}"
-			if extractionPrompts != nil {
-				if cfg, ok := extractionPrompts[a.name]; ok {
-					extractionConfigJSON = string(cfg)
-				}
-			}
-
-			switch a.action {
-			case "install":
-				_, err := tx.NewRaw(`
-					INSERT INTO kb.project_object_schema_registry
-					(project_id, type_name, source, schema_id, json_schema, ui_config, extraction_config, enabled, created_by)
-					VALUES (?, ?, 'template', ?, ?, ?, ?, true, ?)
-				`, projectID, a.name, req.SchemaID, string(a.incomingSchema), uiConfigJSON, extractionConfigJSON, userID).Exec(ctx)
-				if err != nil {
-					return err
-				}
-
-			case "merge":
-				if len(a.mergedSchema) > 0 {
-					_, err := tx.NewRaw(`
-						UPDATE kb.project_object_schema_registry
-						SET json_schema = ?, updated_at = ?
-						WHERE project_id = ? AND type_name = ?
-					`, string(a.mergedSchema), now, projectID, a.name).Exec(ctx)
-					if err != nil {
-						return err
-					}
-				}
-
-			case "skip":
-				r.log.Info("type already registered, skipping",
-					slog.String("typeName", a.name),
-					slog.String("projectId", projectID))
-			}
-		}
-
-		return nil
+		return r.assignPackWithTypesTx(ctx, tx, projectID, userID, req.SchemaID, actions, uiConfigs, extractionPrompts, now)
 	})
 
 	if err != nil {
@@ -1149,6 +1123,242 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 
 	result.AssignmentID = assignment.ID
 	return result, nil
+}
+
+// assignPackWithTypesTx applies precomputed per-type registry actions inside an
+// existing transaction. AssignPackWithTypes and RestoreTypeRegistryTx share it
+// so install/merge/restore semantics live in one place. Callers own the
+// surrounding transaction; this never opens a nested one.
+func (r *Repository) assignPackWithTypesTx(
+	ctx context.Context,
+	tx bun.Tx,
+	projectID, userID, schemaID string,
+	actions []typeAction,
+	uiConfigs, extractionPrompts map[string]json.RawMessage,
+	now time.Time,
+) error {
+	for _, a := range actions {
+		uiConfigJSON := "{}"
+		if uiConfigs != nil {
+			if cfg, ok := uiConfigs[a.name]; ok {
+				uiConfigJSON = string(cfg)
+			}
+		}
+		extractionConfigJSON := "{}"
+		if extractionPrompts != nil {
+			if cfg, ok := extractionPrompts[a.name]; ok {
+				extractionConfigJSON = string(cfg)
+			}
+		}
+
+		switch a.action {
+		case "install":
+			_, err := tx.NewRaw(`
+				INSERT INTO kb.project_object_schema_registry
+				(project_id, type_name, source, schema_id, json_schema, ui_config, extraction_config, enabled, created_by)
+				VALUES (?, ?, 'template', ?, ?, ?, ?, true, ?)
+			`, projectID, a.name, schemaID, string(a.incomingSchema), uiConfigJSON, extractionConfigJSON, nullableUUID(userID)).Exec(ctx)
+			if err != nil {
+				return err
+			}
+
+		case "merge":
+			if len(a.mergedSchema) > 0 {
+				_, err := tx.NewRaw(`
+					UPDATE kb.project_object_schema_registry
+					SET json_schema = ?, updated_at = ?
+					WHERE project_id = ? AND type_name = ?
+				`, string(a.mergedSchema), now, projectID, a.name).Exec(ctx)
+				if err != nil {
+					return err
+				}
+			}
+
+		case "restore":
+			// Rewrite the row only when it belongs to one of the migration's
+			// schemas; a type installed by an unrelated pack must not be
+			// clobbered.
+			updated, err := restoreOwnedRegistryRowTx(ctx, tx, projectID, schemaID, a, uiConfigJSON, extractionConfigJSON, now)
+			if err != nil {
+				return err
+			}
+			if updated {
+				continue
+			}
+			// No owned row exists. Insert only when the type is not registered
+			// at all, so restoring never creates a duplicate type_name row or
+			// shadows another pack's type.
+			var count int
+			if err := tx.NewRaw(`
+				SELECT COUNT(*) FROM kb.project_object_schema_registry
+				WHERE project_id = ? AND type_name = ?
+			`, projectID, a.name).Scan(ctx, &count); err != nil {
+				return err
+			}
+			if count == 0 {
+				_, err := tx.NewRaw(`
+					INSERT INTO kb.project_object_schema_registry
+					(project_id, type_name, source, schema_id, json_schema, ui_config, extraction_config, enabled, created_by)
+					VALUES (?, ?, 'template', ?, ?, ?, ?, true, ?)
+				`, projectID, a.name, schemaID, string(a.incomingSchema), uiConfigJSON, extractionConfigJSON, nullableUUID(userID)).Exec(ctx)
+				if err != nil {
+					return err
+				}
+			}
+
+		case "skip":
+			r.log.Info("type already registered, skipping",
+				slog.String("typeName", a.name),
+				slog.String("projectId", projectID))
+		}
+	}
+	return nil
+}
+
+// restoreOwnedRegistryRowTx updates the registry row for a.name when it is
+// owned by one of the action's schemas. Returns true when a row was rewritten.
+func restoreOwnedRegistryRowTx(
+	ctx context.Context,
+	tx bun.Tx,
+	projectID, schemaID string,
+	a typeAction,
+	uiConfigJSON, extractionConfigJSON string,
+	now time.Time,
+) (bool, error) {
+	ids := make([]string, 0, len(a.ownedSchemaIDs))
+	for _, id := range a.ownedSchemaIDs {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return false, nil
+	}
+	res, err := tx.NewRaw(`
+		UPDATE kb.project_object_schema_registry
+		SET json_schema = ?,
+		    ui_config = ?,
+		    extraction_config = ?,
+		    schema_id = ?,
+		    enabled = true,
+		    updated_at = ?
+		WHERE project_id = ?
+		  AND type_name = ?
+		  AND schema_id IN (?)
+	`, string(a.incomingSchema), uiConfigJSON, extractionConfigJSON, schemaID, now, projectID, a.name, bun.In(ids)).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// RestoreTypeRegistryTx restores the project's type registry to the from-pack
+// state for the types owned by this from/to schema pair.
+//
+// Reconciliation is driven by schema ownership, not by name alone:
+//
+//  1. Every template registry row owned by FROM or TO (schema_id IN
+//     {from.ID, to.ID}) whose type_name is not part of the from-pack is
+//     deleted. This removes to-only additions AND rows left behind by an
+//     in-place type rename, where MigrateTypes changes the row's type_name
+//     while leaving its schema_id pointing at the original owner. The old
+//     name+to-pack-ID predicate could not see such a row: the from-pack
+//     restore looked it up under the old name, and the row's (renamed) name
+//     was not in the to-only set.
+//  2. The from-pack's types are (re)written via the shared restore writer,
+//     adopting any owned row that already carries the from name and inserting
+//     only when the name is otherwise unregistered.
+//
+// It is transaction-aware: the caller MUST invoke it inside the same
+// transaction as the property-data restore so the rollback is atomic — this
+// method never opens its own transaction. Rows owned by other packs/schemas
+// are never modified or removed.
+func (r *Repository) RestoreTypeRegistryTx(ctx context.Context, tx bun.Tx, projectID, userID string, fromPack, toPack *GraphMemorySchema) error {
+	if fromPack == nil || toPack == nil {
+		return fmt.Errorf("from and to packs are required")
+	}
+
+	now := time.Now()
+
+	actions, fromTypeNames := buildRestoreTypeRegistryPlan(fromPack, toPack)
+
+	var uiConfigs map[string]json.RawMessage
+	if len(fromPack.UIConfigs) > 0 {
+		if err := json.Unmarshal(fromPack.UIConfigs, &uiConfigs); err != nil {
+			r.log.Warn("failed to parse ui_configs during registry restore", logger.Error(err))
+		}
+	}
+	var extractionPrompts map[string]json.RawMessage
+	if len(fromPack.ExtractionPrompts) > 0 {
+		if err := json.Unmarshal(fromPack.ExtractionPrompts, &extractionPrompts); err != nil {
+			r.log.Warn("failed to parse extraction_prompts during registry restore", logger.Error(err))
+		}
+	}
+
+	// Step 1: remove owned rows that are not part of the from-pack. Done before
+	// the restore so a renamed row cannot linger alongside the re-created
+	// original.
+	if err := deleteOwnedRegistryRowsTx(ctx, tx, projectID, fromPack.ID, toPack.ID, fromTypeNames); err != nil {
+		return fmt.Errorf("remove superseded registry rows: %w", err)
+	}
+
+	// Step 2: (re)write the from-pack's types. Rows owned by other packs that
+	// share a name are never touched (the restore writer is scoped to
+	// ownedSchemaIDs) and prevent an unsafe duplicate insert.
+	if err := r.assignPackWithTypesTx(ctx, tx, projectID, userID, fromPack.ID, actions, uiConfigs, extractionPrompts, now); err != nil {
+		return fmt.Errorf("restore from-pack types: %w", err)
+	}
+
+	return nil
+}
+
+// deleteOwnedRegistryRowsTx deletes template registry rows owned by either
+// schema of the from/to pair whose type_name is not part of the from-pack.
+// When fromTypeNames is empty every owned row is removed. Rows owned by other
+// schemas are never touched.
+func deleteOwnedRegistryRowsTx(ctx context.Context, tx bun.Tx, projectID, fromID, toID string, fromTypeNames []string) error {
+	owned := bun.In([]string{fromID, toID})
+	if len(fromTypeNames) == 0 {
+		_, err := tx.NewRaw(`
+			DELETE FROM kb.project_object_schema_registry
+			WHERE project_id = ? AND schema_id IN (?) AND source = 'template'
+		`, projectID, owned).Exec(ctx)
+		return err
+	}
+	_, err := tx.NewRaw(`
+		DELETE FROM kb.project_object_schema_registry
+		WHERE project_id = ? AND schema_id IN (?) AND source = 'template' AND type_name NOT IN (?)
+	`, projectID, owned, bun.In(fromTypeNames)).Exec(ctx)
+	return err
+}
+
+// buildRestoreTypeRegistryPlan derives the registry writes needed to restore
+// the from-pack state: one "restore" action per from-pack type, plus the list
+// of from-pack type names that defines which owned rows survive the
+// reconciliation delete. It is pure so the selection logic is unit-testable
+// without a database.
+func buildRestoreTypeRegistryPlan(fromPack, toPack *GraphMemorySchema) (actions []typeAction, fromTypeNames []string) {
+	if fromPack == nil || toPack == nil {
+		return nil, nil
+	}
+	fromTypes := parseObjectTypeSchemasToMap(fromPack.ObjectTypeSchemas)
+
+	actions = make([]typeAction, 0, len(fromTypes))
+	fromTypeNames = make([]string, 0, len(fromTypes))
+	for name, schemaJSON := range fromTypes {
+		actions = append(actions, typeAction{
+			name:           name,
+			incomingSchema: schemaJSON,
+			action:         "restore",
+			ownedSchemaIDs: []string{fromPack.ID, toPack.ID},
+		})
+		fromTypeNames = append(fromTypeNames, name)
+	}
+	return actions, fromTypeNames
 }
 
 // mergeSchemas additively merges incomingSchema properties into existingSchema.
@@ -1389,6 +1599,30 @@ func (r *Repository) UpdateMigrationJob(ctx context.Context, job *SchemaMigratio
 	return nil
 }
 
+// ProvisionBuiltinSchemasToAllProjects installs every source='builtin' schema
+// into every non-deleted project that lacks a project_schemas row for it.
+// Idempotent; respects explicit uninstalls (any existing row, incl. removed).
+// Runs at server startup outside any project/RLS context.
+func (r *Repository) ProvisionBuiltinSchemasToAllProjects(ctx context.Context) error {
+	_, err := r.db.NewRaw(`
+		INSERT INTO kb.project_schemas (project_id, schema_id, active, installed_at)
+		SELECT p.id, gs.id, true, now()
+		FROM kb.projects p
+		JOIN kb.graph_schemas gs ON gs.source = 'builtin'
+		WHERE p.deleted_at IS NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM kb.project_schemas ps
+		      WHERE ps.project_id = p.id AND ps.schema_id = gs.id
+		  )
+		ON CONFLICT (project_id, schema_id) DO NOTHING
+	`).Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to provision builtin schemas to projects", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
 // FindActiveMigrationJob returns the first pending or running migration job for
 // the given project/from/to schema combination. Used for deduplication.
 func (r *Repository) FindActiveMigrationJob(ctx context.Context, projectID, fromSchemaID, toSchemaID string) (*SchemaMigrationJob, error) {
@@ -1407,4 +1641,85 @@ func (r *Repository) FindActiveMigrationJob(ctx context.Context, projectID, from
 		return nil, nil //nolint:nilerr
 	}
 	return &job, nil
+}
+
+// FindMigrationJobByToPackVersion returns the most recent migration job in the
+// project whose target pack (kb.graph_schemas) carries the given human version.
+// It returns (nil, nil) when no matching job exists.
+//
+// kb.schema_migration_jobs is the table that persists from_schema_id and
+// to_schema_id. kb.schema_migration_runs stores human version strings instead,
+// so it cannot resolve schema IDs on its own.
+func (r *Repository) FindMigrationJobByToPackVersion(ctx context.Context, projectID, toVersion string) (*SchemaMigrationJob, error) {
+	if toVersion == "" {
+		return nil, nil
+	}
+	var job SchemaMigrationJob
+	err := r.db.NewSelect().
+		Model(&job).
+		Join("JOIN kb.graph_schemas AS gs ON gs.id = smj.to_schema_id").
+		Where("smj.project_id = ?", projectID).
+		Where("gs.version = ?", toVersion).
+		OrderExpr("(smj.status = 'completed') DESC").
+		Order("smj.created_at DESC").
+		Order("smj.id DESC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to find migration job by to-pack version", logger.Error(err))
+		return nil, apperror.NewInternal("failed to find migration job by to-pack version", err)
+	}
+	return &job, nil
+}
+
+// FindMigrationRunFromVersion returns the from_version recorded by the most
+// recent kb.schema_migration_runs row in the project whose to_version matches.
+// It returns ("", nil) when no matching run exists.
+func (r *Repository) FindMigrationRunFromVersion(ctx context.Context, projectID, toVersion string) (string, error) {
+	if toVersion == "" {
+		return "", nil
+	}
+	var fromVersion string
+	err := r.db.NewRaw(`
+		SELECT from_version
+		FROM kb.schema_migration_runs
+		WHERE project_id = ? AND to_version = ?
+		ORDER BY started_at DESC
+		LIMIT 1
+	`, projectID, toVersion).Scan(ctx, &fromVersion)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		r.log.Error("failed to find migration run by to-version", logger.Error(err))
+		return "", apperror.NewInternal("failed to find migration run by to-version", err)
+	}
+	return fromVersion, nil
+}
+
+// GetProjectPackByVersion returns an active pack assigned to the project whose
+// human version matches. Used to resolve a migration's to-pack when only
+// version-only run records are available.
+func (r *Repository) GetProjectPackByVersion(ctx context.Context, projectID, version string) (*GraphMemorySchema, error) {
+	var pack GraphMemorySchema
+	err := r.db.NewSelect().
+		Model(&pack).
+		Join("JOIN kb.project_schemas AS ps ON ps.schema_id = gtp.id").
+		Where("ps.project_id = ?", projectID).
+		Where("ps.removed_at IS NULL").
+		Where("gtp.version = ?", version).
+		Order("ps.installed_at DESC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, apperror.NewNotFound("pack version", version)
+		}
+		r.log.Error("failed to get project pack by version", logger.Error(err))
+		return nil, apperror.NewInternal("failed to get project pack by version", err)
+	}
+	return &pack, nil
 }

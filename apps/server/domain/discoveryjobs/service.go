@@ -883,6 +883,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		Source:                  "discovered",
 		DiscoveryJobID:          &jobID,
 		PendingReview:           true,
+		ProjectID:               &projectID,
 	})
 	if err != nil {
 		s.handleJobError(ctx, jobID, err)

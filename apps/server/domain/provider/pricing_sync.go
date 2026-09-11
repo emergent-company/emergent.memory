@@ -2,11 +2,8 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
@@ -17,35 +14,16 @@ const (
 	// pricingSyncSchedule runs the sync daily at 02:00 UTC.
 	// Scheduler uses seconds-precision (6-field) cron: "second minute hour dom month dow".
 	pricingSyncSchedule = "0 0 2 * * *"
-
-	// pricingFetchURL is the source for retail pricing data.
-	// Format: JSON array of { provider, model, text_input, image_input,
-	//         video_input, audio_input, output } where all prices are per 1M tokens.
-	pricingFetchURL = "https://raw.githubusercontent.com/emergent-company/model-pricing/main/pricing.json"
-
-	// pricingFetchTimeout is the maximum time allowed for the HTTP fetch.
-	pricingFetchTimeout = 15 * time.Second
 )
 
-// pricingEntry is the JSON shape of a single model pricing record from the
-// external registry.
-type pricingEntry struct {
-	Provider       string  `json:"provider"`
-	Model          string  `json:"model"`
-	TextInputPrice float64 `json:"text_input"`
-	ImageInput     float64 `json:"image_input"`
-	VideoInput     float64 `json:"video_input"`
-	AudioInput     float64 `json:"audio_input"`
-	OutputPrice    float64 `json:"output"`
-}
-
-// staticPricing holds known retail prices as a compile-time fallback.
-// These reflect publicly documented Google AI / Vertex AI / OpenAI pricing as
-// of Sept 2026. All prices are per 1M tokens in USD.
+// staticPricing is the canonical retail pricing list, embedded at compile time.
+// It is the single source of truth for retail pricing: Sync upserts exactly
+// these rows into provider_pricing, and there is no remote registry to fetch
+// from. These reflect publicly documented Google AI / Vertex AI / OpenAI /
+// DeepSeek pricing as of Sept 2026. All prices are per 1M tokens in USD.
 //
-// The remote registry URL may be unavailable, so this embedded list is the
-// operative source for retail pricing. Embedding prices are text-input rates
-// only (embedding usage events carry no output tokens).
+// Embedding prices are text-input rates only (embedding usage events carry no
+// output tokens).
 var staticPricing = []ProviderPricing{
 	// Google AI (Gemini API) — gemini-1.5-flash
 	{Provider: ProviderGoogleAI, Model: "gemini-1.5-flash", TextInputPrice: 0.075, ImageInputPrice: 0.075, AudioInputPrice: 0.075, OutputPrice: 0.30},
@@ -91,13 +69,20 @@ var staticPricing = []ProviderPricing{
 	{Provider: ProviderDeepSeek, Model: "deepseek-reasoner", TextInputPrice: 0.28, OutputPrice: 0.42},
 }
 
-// PricingSyncService fetches the latest retail pricing from an external registry
-// and upserts it into provider_pricing. A daily cron job drives this sync.
+// pricingUpserter is the subset of Repository used by PricingSyncService.
+// It exists so Sync can be exercised with a recording double in tests without
+// a database.
+type pricingUpserter interface {
+	UpsertPricing(ctx context.Context, entries []ProviderPricing) error
+}
+
+// PricingSyncService seeds and refreshes provider_pricing from the embedded
+// staticPricing list, the canonical source of retail pricing. A daily cron job
+// drives the sync.
 type PricingSyncService struct {
-	repo   *Repository
-	sched  *scheduler.Scheduler
-	client *http.Client
-	log    *slog.Logger
+	repo  pricingUpserter
+	sched *scheduler.Scheduler
+	log   *slog.Logger
 }
 
 // NewPricingSyncService creates a PricingSyncService.
@@ -107,10 +92,7 @@ func NewPricingSyncService(repo *Repository, sched *scheduler.Scheduler, log *sl
 	s := &PricingSyncService{
 		repo:  repo,
 		sched: sched,
-		client: &http.Client{
-			Timeout: pricingFetchTimeout,
-		},
-		log: log.With(logger.Scope("provider.pricing_sync")),
+		log:   log.With(logger.Scope("provider.pricing_sync")),
 	}
 
 	// Register the daily cron job
@@ -123,90 +105,26 @@ func NewPricingSyncService(repo *Repository, sched *scheduler.Scheduler, log *sl
 	return s
 }
 
-// Sync fetches the latest retail pricing and upserts it into provider_pricing.
-// If the remote fetch fails, it falls back to the embedded static pricing list.
+// Sync upserts the embedded staticPricing list into provider_pricing. Pricing
+// has no remote source: staticPricing is the source of truth, so Sync performs
+// no network I/O. It runs once at startup and then daily via cron to refresh
+// the table (and to backfill rows after a schema change).
 func (s *PricingSyncService) Sync(ctx context.Context) error {
-	entries, err := s.fetchRemotePricing(ctx)
-	if err != nil {
-		s.log.Warn("failed to fetch remote pricing, using static fallback",
-			logger.Error(err),
-		)
-		entries = staticPricingEntries()
-	} else if len(entries) == 0 {
-		s.log.Warn("remote pricing returned empty list, using static fallback")
-		entries = staticPricingEntries()
-	}
+	entries := staticPricingEntries()
 
 	if err := s.repo.UpsertPricing(ctx, entries); err != nil {
 		return fmt.Errorf("failed to upsert pricing: %w", err)
 	}
 
-	s.log.Info("provider pricing synced", slog.Int("models", len(entries)))
+	s.log.Info("provider pricing synced",
+		slog.Int("models", len(entries)),
+		slog.String("source", "embedded static list"),
+	)
 	return nil
 }
 
-// fetchRemotePricing downloads and parses the pricing JSON from the external registry.
-func (s *PricingSyncService) fetchRemotePricing(ctx context.Context) ([]ProviderPricing, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pricingFetchURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build request: %w", err)
-	}
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d from pricing registry", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB cap
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var raw []pricingEntry
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("failed to parse pricing JSON: %w", err)
-	}
-
-	return parsePricingEntries(raw), nil
-}
-
-// parsePricingEntries converts raw JSON entries to ProviderPricing entities.
-func parsePricingEntries(raw []pricingEntry) []ProviderPricing {
-	entries := make([]ProviderPricing, 0, len(raw))
-	for _, r := range raw {
-		var pt ProviderType
-		switch r.Provider {
-		case "google":
-			pt = ProviderGoogleAI
-		case "google-vertex":
-			pt = ProviderVertexAI
-		case "openai":
-			pt = ProviderOpenAI
-		case "deepseek":
-			pt = ProviderDeepSeek
-		default:
-			continue // skip unknown providers
-		}
-		entries = append(entries, ProviderPricing{
-			Provider:        pt,
-			Model:           r.Model,
-			TextInputPrice:  r.TextInputPrice,
-			ImageInputPrice: r.ImageInput,
-			VideoInputPrice: r.VideoInput,
-			AudioInputPrice: r.AudioInput,
-			OutputPrice:     r.OutputPrice,
-			LastSynced:      time.Now().UTC(),
-		})
-	}
-	return entries
-}
-
-// staticPricingEntries returns the embedded fallback pricing list.
+// staticPricingEntries returns the embedded canonical pricing list with
+// LastSynced stamped to the current time.
 func staticPricingEntries() []ProviderPricing {
 	now := time.Now().UTC()
 	entries := make([]ProviderPricing, len(staticPricing))

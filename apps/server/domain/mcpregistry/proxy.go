@@ -16,6 +16,23 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
+// proxyRepo is the repository surface ProxyManager needs from the server store.
+// *Repository satisfies it; the narrow interface lets CallTool's dual-mode server
+// resolution be unit-tested without a database.
+type proxyRepo interface {
+	FindServerByName(ctx context.Context, projectID, name string) (*MCPServer, error)
+	FindAllServers(ctx context.Context, projectID string) ([]*MCPServer, error)
+}
+
+// mcpClientConn is the client surface the proxy uses on an MCP connection.
+// *mcpclient.Client satisfies it; tests may inject a fake to assert the exact
+// requests dispatched without a live server.
+type mcpClientConn interface {
+	CallTool(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error)
+	ListTools(ctx context.Context, req mcpgo.ListToolsRequest) (*mcpgo.ListToolsResult, error)
+	Close() error
+}
+
 // ProxyManager manages connections to external MCP servers and proxies
 // tool calls to them. It maintains a connection pool keyed by server ID,
 // with lazy connect and automatic reconnection.
@@ -23,7 +40,7 @@ import (
 // The proxy strips the server name prefix from tool names before forwarding
 // (e.g. "myserver_search" → calls "search" on the server named "myserver").
 type ProxyManager struct {
-	repo *Repository
+	repo proxyRepo
 	log  *slog.Logger
 
 	mu    sync.RWMutex
@@ -32,7 +49,7 @@ type ProxyManager struct {
 
 // mcpConnection wraps an mcp-go client with metadata for lifecycle management.
 type mcpConnection struct {
-	client      *mcpclient.Client
+	client      mcpClientConn
 	serverID    string
 	serverName  string
 	serverType  MCPServerType
@@ -50,41 +67,34 @@ func NewProxyManager(repo *Repository, log *slog.Logger) *ProxyManager {
 }
 
 // CallTool connects to the appropriate external MCP server and forwards a tool call.
-// The prefixedToolName includes the server name prefix (e.g. "myserver_search").
+// The prefixedToolName includes the server name prefix (e.g. "myserver_search" or,
+// for pool keys built from slugified server names, "e2e_mcp_123_web_fetch_exa").
 // This method:
-//  1. Parses the prefix to identify the server name and real tool name
-//  2. Looks up the server config from the database
+//  1. Resolves the raw server config + unprefixed tool name (dual-mode: raw
+//     name split first, then slugified-prefix matching — see resolveServerForTool)
+//  2. Checks the server is enabled
 //  3. Gets or creates a connection to the server
 //  4. Forwards the tools/call request with the unprefixed tool name
 //  5. Converts the response to our internal mcp.ToolResult format
 func (pm *ProxyManager) CallTool(ctx context.Context, projectID, prefixedToolName string, args map[string]any) (*mcp.ToolResult, error) {
-	// Parse prefix: "servername_toolname" → ("servername", "toolname")
-	serverName, toolName, err := ParsePrefixedToolName(prefixedToolName)
+	// Resolve the raw server row and the unprefixed tool name to forward.
+	server, toolName, err := pm.resolveServerForTool(ctx, projectID, prefixedToolName)
 	if err != nil {
-		return nil, fmt.Errorf("parsing prefixed tool name: %w", err)
-	}
-
-	// Look up server config
-	server, err := pm.repo.FindServerByName(ctx, projectID, serverName)
-	if err != nil {
-		return nil, fmt.Errorf("looking up server %q: %w", serverName, err)
-	}
-	if server == nil {
-		return nil, fmt.Errorf("MCP server %q not found in project", serverName)
+		return nil, err
 	}
 	if !server.Enabled {
-		return nil, fmt.Errorf("MCP server %q is disabled", serverName)
+		return nil, fmt.Errorf("MCP server %q is disabled", server.Name)
 	}
 
 	// Get or create connection
 	conn, err := pm.getOrConnect(ctx, server)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to MCP server %q: %w", serverName, err)
+		return nil, fmt.Errorf("connecting to MCP server %q: %w", server.Name, err)
 	}
 
 	// Forward the tool call with the unprefixed name
 	pm.log.Debug("proxying tool call",
-		slog.String("server", serverName),
+		slog.String("server", server.Name),
 		slog.String("tool", toolName),
 		slog.String("prefixed", prefixedToolName),
 	)
@@ -98,11 +108,86 @@ func (pm *ProxyManager) CallTool(ctx context.Context, projectID, prefixedToolNam
 	if err != nil {
 		// On call failure, evict the connection so next call reconnects
 		pm.evict(server.ID)
-		return nil, fmt.Errorf("calling tool %q on server %q: %w", toolName, serverName, err)
+		return nil, fmt.Errorf("calling tool %q on server %q: %w", toolName, server.Name, err)
 	}
 
 	// Convert mcp-go CallToolResult to our internal mcp.ToolResult
 	return convertCallToolResult(result), nil
+}
+
+// resolveServerForTool maps a prefixed tool name ("<server>_<tool>") to the raw
+// MCPServer row and the unprefixed tool name to forward to that server.
+//
+// Two resolution strategies are attempted, in order:
+//
+//  1. RAW MODE (backward compatible). The name is split at the FIRST "_" and
+//     the server is looked up by that exact name — the historical behaviour of
+//     ParsePrefixedToolName + FindServerByName. This covers legacy raw-format
+//     keys and server names that contain no "_".
+//
+//  2. SLUG MODE. Pool keys built by the agents ToolPool prefix the server's
+//     SlugifyServerName(name) form (e.g. server "E2E MCP 123" → key
+//     "e2e_mcp_123_web_fetch_exa"). When the raw lookup misses, every project
+//     server is slugged and the LONGEST slug that prefixes the tool name wins —
+//     longest first prevents a short slug like "e2e" from shadowing a longer one
+//     like "e2e_mcp_123". Two servers whose names slug identically are
+//     ambiguous; the first in server order (name ASC) is used, matching the
+//     collision tolerance already present at pool-key build time.
+//
+// Known limitation: the 64-char function-name cap in agents.externalToolKey can
+// truncate the slug for pathological combined keys >64 chars. A truncated key no
+// longer starts with the full SlugifyServerName prefix, so such calls fail this
+// lookup. Acceptable for v1 — those keys are unusable for LLM calling anyway.
+func (pm *ProxyManager) resolveServerForTool(ctx context.Context, projectID, prefixedToolName string) (*MCPServer, string, error) {
+	// RAW MODE: split at the first "_" and look the server up by exact name.
+	var rawServerName string
+	if idx := strings.Index(prefixedToolName, "_"); idx > 0 && idx < len(prefixedToolName)-1 {
+		rawServerName = prefixedToolName[:idx]
+		server, err := pm.repo.FindServerByName(ctx, projectID, rawServerName)
+		if err != nil {
+			return nil, "", fmt.Errorf("looking up server %q: %w", rawServerName, err)
+		}
+		if server != nil {
+			return server, prefixedToolName[idx+1:], nil
+		}
+	}
+
+	// SLUG MODE: find the longest SlugifyServerName prefix that matches.
+	// FindAllServers (not FindEnabledServers) so a slugged key for a disabled
+	// server still resolves here and CallTool reports it as disabled.
+	servers, err := pm.repo.FindAllServers(ctx, projectID)
+	if err != nil {
+		return nil, "", fmt.Errorf("listing MCP servers for slug resolution: %w", err)
+	}
+	var best *MCPServer
+	var bestSlug, bestTool string
+	for _, srv := range servers {
+		slug := SlugifyServerName(srv.Name)
+		prefix := slug + "_"
+		if !strings.HasPrefix(prefixedToolName, prefix) {
+			continue
+		}
+		tool := strings.TrimPrefix(prefixedToolName, prefix)
+		if tool == "" {
+			continue
+		}
+		if best == nil || len(slug) > len(bestSlug) {
+			best = srv
+			bestSlug = slug
+			bestTool = tool
+		}
+	}
+	if best != nil {
+		return best, bestTool, nil
+	}
+
+	slugsTried := make([]string, 0, len(servers))
+	for _, srv := range servers {
+		slugsTried = append(slugsTried, SlugifyServerName(srv.Name))
+	}
+	return nil, "", fmt.Errorf(
+		"MCP server for tool %q not found in project (raw name %q miss; tried slug prefixes of %d server(s): %v)",
+		prefixedToolName, rawServerName, len(servers), slugsTried)
 }
 
 // DiscoverTools connects to an external MCP server and calls tools/list to discover

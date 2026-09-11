@@ -1,59 +1,86 @@
 package provider
 
 import (
+	"context"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
+	"time"
 )
 
-// TestParsePricingEntries verifies the provider mapping in parsePricingEntries,
-// including the openai and deepseek additions, and that unknown providers are
-// skipped.
-func TestParsePricingEntries(t *testing.T) {
-	raw := []pricingEntry{
-		{Provider: "google", Model: "gemini-2.5-flash", TextInputPrice: 0.15, OutputPrice: 0.60},
-		{Provider: "google-vertex", Model: "gemini-2.5-pro", TextInputPrice: 1.25, OutputPrice: 5.00},
-		{Provider: "openai", Model: "gpt-4o", TextInputPrice: 2.50, OutputPrice: 10.00},
-		{Provider: "deepseek", Model: "deepseek-v4-pro", TextInputPrice: 1.74, OutputPrice: 3.48},
-		{Provider: "unknown-provider", Model: "mystery-model", OutputPrice: 1.0},
+// recordingPricingRepo is a hermetic test double for the pricing upsert sink.
+// It records the entries passed to UpsertPricing so tests can assert Sync's
+// behaviour without a database or any network access.
+type recordingPricingRepo struct {
+	calls   int
+	entries []ProviderPricing
+	err     error
+}
+
+func (r *recordingPricingRepo) UpsertPricing(_ context.Context, entries []ProviderPricing) error {
+	r.calls++
+	r.entries = append([]ProviderPricing(nil), entries...)
+	return r.err
+}
+
+// TestPricingSync_UpsertsStaticListWithoutNetwork verifies that Sync writes the
+// embedded staticPricing list straight to the repository (the source of truth)
+// and does not depend on any remote registry fetch. The recording repo also
+// makes the "no network" property structural: Sync has no HTTP client to call.
+func TestPricingSync_UpsertsStaticListWithoutNetwork(t *testing.T) {
+	repo := &recordingPricingRepo{}
+	svc := &PricingSyncService{repo: repo, log: slog.Default()}
+
+	start := time.Now().Add(-time.Minute)
+	if err := svc.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync() error = %v", err)
 	}
 
-	entries := parsePricingEntries(raw)
-	if len(entries) != 4 {
-		t.Fatalf("parsePricingEntries() returned %d entries, want 4 (unknown provider skipped)", len(entries))
+	if repo.calls != 1 {
+		t.Fatalf("UpsertPricing called %d times, want 1", repo.calls)
+	}
+	if len(repo.entries) != len(staticPricing) {
+		t.Fatalf("UpsertPricing received %d entries, want %d (len(staticPricing))", len(repo.entries), len(staticPricing))
 	}
 
-	want := []struct {
-		provider       ProviderType
-		model          string
-		textInputPrice float64
-		outputPrice    float64
-	}{
-		{ProviderGoogleAI, "gemini-2.5-flash", 0.15, 0.60},
-		{ProviderVertexAI, "gemini-2.5-pro", 1.25, 5.00},
-		{ProviderOpenAI, "gpt-4o", 2.50, 10.00},
-		{ProviderDeepSeek, "deepseek-v4-pro", 1.74, 3.48},
+	got := make(map[string]ProviderPricing, len(repo.entries))
+	for _, e := range repo.entries {
+		got[string(e.Provider)+"/"+e.Model] = e
 	}
 
-	for i, w := range want {
-		got := entries[i]
-		if got.Provider != w.provider {
-			t.Errorf("entries[%d].Provider = %q, want %q", i, got.Provider, w.provider)
+	for _, want := range staticPricing {
+		key := string(want.Provider) + "/" + want.Model
+		entry, ok := got[key]
+		if !ok {
+			t.Errorf("upserted entries missing static row %s", key)
+			continue
 		}
-		if got.Model != w.model {
-			t.Errorf("entries[%d].Model = %q, want %q", i, got.Model, w.model)
+		if entry.TextInputPrice != want.TextInputPrice || entry.OutputPrice != want.OutputPrice {
+			t.Errorf("%s prices = (%v, %v), want (%v, %v)",
+				key, entry.TextInputPrice, entry.OutputPrice, want.TextInputPrice, want.OutputPrice)
 		}
-		if got.TextInputPrice != w.textInputPrice {
-			t.Errorf("entries[%d].TextInputPrice = %v, want %v", i, got.TextInputPrice, w.textInputPrice)
-		}
-		if got.OutputPrice != w.outputPrice {
-			t.Errorf("entries[%d].OutputPrice = %v, want %v", i, got.OutputPrice, w.outputPrice)
-		}
-		if got.LastSynced.IsZero() {
-			t.Errorf("entries[%d].LastSynced should be set", i)
+		if entry.LastSynced.IsZero() || entry.LastSynced.Before(start) {
+			t.Errorf("%s LastSynced = %v, want recent non-zero timestamp", key, entry.LastSynced)
 		}
 	}
 }
 
-// TestStaticPricingCoversEmbeddings guards the embedded fallback pricing list:
+// TestPricingSync_PropagatesUpsertError verifies Sync surfaces repository errors.
+func TestPricingSync_PropagatesUpsertError(t *testing.T) {
+	repo := &recordingPricingRepo{err: errors.New("db down")}
+	svc := &PricingSyncService{repo: repo, log: slog.Default()}
+
+	err := svc.Sync(context.Background())
+	if err == nil {
+		t.Fatalf("Sync() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "failed to upsert pricing") {
+		t.Fatalf("Sync() error = %q, want it to wrap the upsert failure", err)
+	}
+}
+
+// TestStaticPricingCoversEmbeddings guards the embedded canonical pricing list:
 // embedding models must carry retail rates so embedding usage events and the
 // Providers rate panel resolve costs (model-only fallback also matches when a
 // Gemini embedding is served through an OpenAI-compatible/LiteLLM provider).

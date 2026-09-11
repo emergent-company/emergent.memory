@@ -311,7 +311,13 @@ func (h *SSEHandler) handleInitialize(req *Request, projectID string) *Response 
 func (h *SSEHandler) handleToolsList(c echo.Context, req *Request, projectID string, user *auth.AuthUser) *Response {
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), projectID)
 	tools = FilterToolsForScopes(tools, user.Scopes)
-	tools = FilterToolsForInstance(tools, h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID))
+	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if serr != nil {
+		// Fail closed on allowlist resolution failure.
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to resolve share instance scope", nil)
+	}
+	tools = FilterToolsForInstance(tools, scope)
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: tools})
 }
 
@@ -346,7 +352,11 @@ func (h *SSEHandler) handleToolsCall(c echo.Context, req *Request, projectID str
 	}
 
 	// Enforce the share-instance tool allowlist (deny-by-default) before any side effect.
-	scope := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
+	if serr != nil {
+		return NewErrorResponse(req.ID, ErrCodeInternalError,
+			"Failed to resolve share instance scope", nil)
+	}
 	if InstanceDeniesTool(scope, params.Name) {
 		return NewErrorResponse(req.ID, ErrCodeForbidden,
 			"Tool not allowed: "+params.Name, nil)

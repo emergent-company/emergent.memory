@@ -60,11 +60,6 @@ type Service struct {
 	braveSearchAPIKey  string
 	braveSearchTimeout time.Duration
 
-	// Schema version caching
-	cacheMu       sync.RWMutex
-	cachedVersion string
-	cacheExpiry   time.Time
-
 	// Documents service (for document list/get/upload/delete tools)
 	documentsSvc *documents.Service
 
@@ -426,7 +421,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "schema-list",
-			Description: "List all available memory schemas in the global registry. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
+			Description: "List memory schemas owned by the current project. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -586,7 +581,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "schema-delete",
-			Description: "Delete a memory schema from the global registry. Cannot delete system schemas or schemas that are currently installed in any project.",
+			Description: "Delete a memory schema owned by the current project. Cannot delete built-in schemas or schemas that are currently installed in any project.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1672,8 +1667,18 @@ func (s *Service) GetPromptDefinitions() []PromptDefinition {
 
 // ExecuteTool executes an MCP tool and returns the result
 func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
-	// Handle hidden built-in tools first — these are always available, never listed,
-	// and cannot be blocked by scope filters or tool whitelists.
+	// Defense in depth: enforce the share-instance tool allowlist here as well as
+	// in the transports, BEFORE any tool-specific dispatch. This covers callers
+	// that do not pass through a transport pre-check — notably the ADK ToolPool
+	// during an agent run, which executes tools with the agent's context — and
+	// includes hidden built-ins such as set_session_title, which must not be
+	// reachable outside a restricted instance's allowlist.
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+	}
+	// Handle hidden built-in tools — these are always available, never listed,
+	// and cannot be blocked by scope filters or tool whitelists (subject to the
+	// instance allowlist check above).
 	if toolName == "set_session_title" {
 		return s.executeSetSessionTitle(ctx, projectID, args)
 	}
@@ -1690,7 +1695,7 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "project-create":
 		return s.executeCreateProject(ctx, args)
 	case "schema-version":
-		return s.executeSchemaVersion(ctx)
+		return s.executeSchemaVersion(ctx, projectID)
 	case "entity-type-list":
 		return s.executeListEntityTypes(ctx, projectID, args)
 	case "entity-query":
@@ -4210,9 +4215,13 @@ func (s *Service) readRelationshipsResource(ctx context.Context, projectID strin
 }
 
 func (s *Service) readTemplatesCatalogResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("templates catalog requires a project context")
+	}
+
 	result, err := s.executeListSchemas(ctx, projectID, map[string]any{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("templates catalog: %w", err)
 	}
 
 	jsonData, err := json.Marshal(result.Content[0].Text)

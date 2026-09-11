@@ -19,7 +19,7 @@ import (
 //   - *CredentialService            — credential resolution hierarchy (Project → Env)
 //   - *ModelCatalogService          — model catalog with API fetch + static fallback
 //   - *UsageService                 — async LLM usage event recording
-//   - *PricingSyncService           — daily pricing sync cron job
+//   - *PricingSyncService           — daily refresh of provider_pricing from the embedded static pricing list
 //   - *ModelLimitsSyncService       — daily model output token limits sync from models.dev
 //   - *ModelCatalogSyncService      — periodic re-sync of OpenAI-compatible provider model catalogs
 //   - adk.CredentialResolver        — adapts CredentialService to pkg/adk interface
@@ -78,9 +78,9 @@ func provideModelCatalogSyncService(repo *Repository, credsvc *CredentialService
 	return NewModelCatalogSyncService(repo, credsvc, catalog, sched, log)
 }
 
-// runStartupPricingSync performs an initial pricing sync on server startup.
-// This ensures the pricing table is populated on first run without waiting
-// for the next daily cron execution.
+// runStartupPricingSync seeds provider_pricing from the embedded static pricing
+// list on server startup. This ensures the pricing table is populated on first
+// run without waiting for the next daily cron execution.
 func runStartupPricingSync(lc fx.Lifecycle, pricingSync *PricingSyncService, log *slog.Logger) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"google.golang.org/genai"
+
+	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 )
 
 const (
@@ -117,24 +119,59 @@ func NewClient(ctx context.Context, cfg Config, opts ...ClientOption) (*Client, 
 
 // EmbedQuery generates an embedding for a single query
 func (c *Client) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
-	embeddings, err := c.embedWithRetry(ctx, []string{query}, "RETRIEVAL_QUERY")
+	result, err := c.EmbedQueryWithUsage(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Embedding) == 0 {
+		return nil, fmt.Errorf("no embedding returned")
+	}
+	return result.Embedding, nil
+}
+
+// EmbedDocuments generates embeddings for multiple documents
+func (c *Client) EmbedDocuments(ctx context.Context, documents []string) ([][]float32, error) {
+	result, err := c.EmbedDocumentsWithUsage(ctx, documents)
+	if err != nil {
+		return nil, err
+	}
+	return result.Embeddings, nil
+}
+
+// EmbedQueryWithUsage generates an embedding for a single query and reports
+// the token usage returned by the API. Provider is "googleai" (the Gemini
+// Developer API / Google Generative AI backend).
+func (c *Client) EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error) {
+	embeddings, tokens, err := c.embedWithRetry(ctx, []string{query}, "RETRIEVAL_QUERY")
 	if err != nil {
 		return nil, err
 	}
 	if len(embeddings) == 0 {
 		return nil, fmt.Errorf("no embedding returned")
 	}
-	return embeddings[0], nil
+	return &vertex.EmbedResult{
+		Embedding: embeddings[0],
+		Usage:     &vertex.Usage{PromptTokens: tokens, TotalTokens: tokens},
+		Model:     c.model,
+		Provider:  "googleai",
+	}, nil
 }
 
-// EmbedDocuments generates embeddings for multiple documents
-func (c *Client) EmbedDocuments(ctx context.Context, documents []string) ([][]float32, error) {
+// EmbedDocumentsWithUsage generates embeddings for multiple documents and
+// reports the summed token usage returned by the API. Provider is "googleai".
+func (c *Client) EmbedDocumentsWithUsage(ctx context.Context, documents []string) (*vertex.BatchEmbedResult, error) {
 	if len(documents) == 0 {
-		return [][]float32{}, nil
+		return &vertex.BatchEmbedResult{
+			Embeddings: [][]float32{},
+			Usage:      &vertex.Usage{},
+			Model:      c.model,
+			Provider:   "googleai",
+		}, nil
 	}
 
 	// Process in batches
 	var allEmbeddings [][]float32
+	totalTokens := 0
 
 	for i := 0; i < len(documents); i += DefaultBatchSize {
 		end := i + DefaultBatchSize
@@ -143,19 +180,27 @@ func (c *Client) EmbedDocuments(ctx context.Context, documents []string) ([][]fl
 		}
 		batch := documents[i:end]
 
-		embeddings, err := c.embedWithRetry(ctx, batch, "RETRIEVAL_DOCUMENT")
+		embeddings, tokens, err := c.embedWithRetry(ctx, batch, "RETRIEVAL_DOCUMENT")
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed batch %d-%d: %w", i, end, err)
 		}
 
 		allEmbeddings = append(allEmbeddings, embeddings...)
+		totalTokens += tokens
 	}
 
-	return allEmbeddings, nil
+	return &vertex.BatchEmbedResult{
+		Embeddings: allEmbeddings,
+		Usage:      &vertex.Usage{PromptTokens: totalTokens, TotalTokens: totalTokens},
+		Model:      c.model,
+		Provider:   "googleai",
+	}, nil
 }
 
-// embedWithRetry embeds a batch of texts with retry logic
-func (c *Client) embedWithRetry(ctx context.Context, texts []string, taskType string) ([][]float32, error) {
+// embedWithRetry embeds a batch of texts with retry logic, returning the
+// embeddings and the summed prompt-token count reported by the API (0 when
+// the response carries no usage metadata).
+func (c *Client) embedWithRetry(ctx context.Context, texts []string, taskType string) ([][]float32, int, error) {
 	var lastErr error
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
@@ -167,19 +212,19 @@ func (c *Client) embedWithRetry(ctx context.Context, texts []string, taskType st
 			)
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, 0, ctx.Err()
 			case <-time.After(delay):
 			}
 		}
 
-		embeddings, err := c.embedBatch(ctx, texts, taskType)
+		embeddings, tokens, err := c.embedBatch(ctx, texts, taskType)
 		if err == nil {
-			return embeddings, nil
+			return embeddings, tokens, nil
 		}
 
 		// Don't retry on context cancellation
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 		}
 
 		lastErr = err
@@ -189,12 +234,13 @@ func (c *Client) embedWithRetry(ctx context.Context, texts []string, taskType st
 		)
 	}
 
-	return nil, fmt.Errorf("all retries exhausted: %w", lastErr)
+	return nil, 0, fmt.Errorf("all retries exhausted: %w", lastErr)
 }
 
-func (c *Client) embedBatch(ctx context.Context, texts []string, taskType string) ([][]float32, error) {
+func (c *Client) embedBatch(ctx context.Context, texts []string, taskType string) ([][]float32, int, error) {
 	embeddings := make([][]float32, 0, len(texts))
 	outputDim := int32(DefaultDimension)
+	totalTokens := 0
 
 	for _, text := range texts {
 		result, err := c.client.Models.EmbedContent(
@@ -207,17 +253,31 @@ func (c *Client) embedBatch(ctx context.Context, texts []string, taskType string
 			},
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to embed text: %w", err)
+			return nil, 0, fmt.Errorf("failed to embed text: %w", err)
 		}
 
 		if len(result.Embeddings) == 0 {
-			return nil, fmt.Errorf("no embeddings returned for text")
+			return nil, 0, fmt.Errorf("no embeddings returned for text")
 		}
 
-		embeddings = append(embeddings, result.Embeddings[0].Values)
+		emb := result.Embeddings[0]
+		embeddings = append(embeddings, emb.Values)
+		totalTokens += embeddingPromptTokens(emb)
 	}
 
-	return embeddings, nil
+	return embeddings, totalTokens, nil
+}
+
+// embeddingPromptTokens extracts the prompt-token count reported for a single
+// embedding result. The genai SDK exposes the per-input token count on
+// ContentEmbedding.Statistics (ContentEmbeddingStatistics.TokenCount). It
+// returns 0 when statistics are absent, so callers can still embed without
+// usage data.
+func embeddingPromptTokens(emb *genai.ContentEmbedding) int {
+	if emb == nil || emb.Statistics == nil {
+		return 0
+	}
+	return int(emb.Statistics.TokenCount)
 }
 
 // calculateBackoff calculates the backoff delay for a given attempt

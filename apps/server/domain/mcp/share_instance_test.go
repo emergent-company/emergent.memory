@@ -31,10 +31,11 @@ const (
 // ============================================================================
 
 type fakeShareStore struct {
-	byID      map[string]*MCPShareInstance
-	legacy    []*LegacyTokenRef
-	createErr error
-	updateErr error
+	byID          map[string]*MCPShareInstance
+	legacy        []*LegacyTokenRef
+	createErr     error
+	updateErr     error
+	getByTokenErr error
 }
 
 func newFakeShareStore() *fakeShareStore {
@@ -60,6 +61,9 @@ func (f *fakeShareStore) GetByID(_ context.Context, projectID, id string) (*MCPS
 }
 
 func (f *fakeShareStore) GetByTokenID(_ context.Context, tokenID string) (*MCPShareInstance, error) {
+	if f.getByTokenErr != nil {
+		return nil, f.getByTokenErr
+	}
 	for _, inst := range f.byID {
 		if inst.TokenID == tokenID && inst.RevokedAt == nil {
 			return inst, nil
@@ -681,15 +685,20 @@ func TestResolveInstanceScope(t *testing.T) {
 	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
 
 	t.Run("present instance", func(t *testing.T) {
-		scope := svc.ResolveInstanceScope(context.Background(), "tok-1")
+		scope, err := svc.ResolveInstanceScope(context.Background(), "tok-1")
+		require.NoError(t, err)
 		require.NotNil(t, scope)
 		assert.True(t, scope.HasToolAllowlist)
 		assert.True(t, scope.HasAgentAllowlist)
 	})
 
 	t.Run("absent instance is legacy", func(t *testing.T) {
-		assert.Nil(t, svc.ResolveInstanceScope(context.Background(), "unknown"))
-		assert.Nil(t, svc.ResolveInstanceScope(context.Background(), ""))
+		s1, err := svc.ResolveInstanceScope(context.Background(), "unknown")
+		require.NoError(t, err)
+		assert.Nil(t, s1)
+		s2, err := svc.ResolveInstanceScope(context.Background(), "")
+		require.NoError(t, err)
+		assert.Nil(t, s2)
 	})
 }
 
@@ -884,7 +893,9 @@ func TestResolveInstanceScopeRevokedIsNil(t *testing.T) {
 		AllowedTools: []string{"entity-search"}, RevokedAt: &revoked,
 	}
 	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
-	assert.Nil(t, svc.ResolveInstanceScope(context.Background(), "tok-1"))
+	scope, err := svc.ResolveInstanceScope(context.Background(), "tok-1")
+	require.NoError(t, err)
+	assert.Nil(t, scope)
 }
 
 func TestToolAllowlistRejectsAgentExecutionTool(t *testing.T) {
@@ -984,7 +995,8 @@ func TestShareInstanceEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	// Connect as the minted token.
-	scope := svc.ResolveInstanceScope(context.Background(), "tok-live")
+	scope, err := svc.ResolveInstanceScope(context.Background(), "tok-live")
+	require.NoError(t, err)
 	require.NotNil(t, scope)
 
 	all := []ToolDefinition{{Name: "entity-search"}, {Name: "schema-list"}, {Name: "graph-traverse"}}
@@ -1000,6 +1012,118 @@ func TestShareInstanceEndToEnd(t *testing.T) {
 	require.Len(t, instances.Instances, 1)
 	require.NoError(t, svc.RevokeShareInstance(context.Background(), "proj", "user", instances.Instances[0].ID))
 
-	assert.Nil(t, svc.ResolveInstanceScope(context.Background(), "tok-live"))
+	afterRevoke, err := svc.ResolveInstanceScope(context.Background(), "tok-live")
+	require.NoError(t, err)
+	assert.Nil(t, afterRevoke)
 	assert.Contains(t, tok.revoked, "tok-live")
+}
+
+// ============================================================================
+// Security-hardening tests
+// ============================================================================
+
+// TestResolveInstanceScopeStoreErrorFailsClosed verifies that a storage error
+// during allowlist resolution is surfaced as an error rather than being
+// silently treated as "unrestricted".
+func TestResolveInstanceScopeStoreErrorFailsClosed(t *testing.T) {
+	store := newFakeShareStore()
+	store.getByTokenErr = errors.New("db down")
+	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
+
+	scope, err := svc.ResolveInstanceScope(context.Background(), "tok-1")
+	require.Error(t, err)
+	assert.Nil(t, scope)
+}
+
+// TestInstanceRestrictsContent covers the resources/prompts gating predicate.
+func TestInstanceRestrictsContent(t *testing.T) {
+	assert.False(t, InstanceRestrictsContent(nil))
+	assert.False(t, InstanceRestrictsContent(&InstanceScope{}))
+	assert.True(t, InstanceRestrictsContent(&InstanceScope{HasToolAllowlist: true}))
+	assert.True(t, InstanceRestrictsContent(&InstanceScope{HasAgentAllowlist: true}))
+}
+
+// TestNormalizeToolAllowlistRejectsAdminScope ensures an admin-scoped tool can
+// never be allowlisted (which would derive the "admin" scope onto a share token
+// and re-enable token chaining).
+func TestNormalizeToolAllowlistRejectsAdminScope(t *testing.T) {
+	lookup := testLookup(
+		ToolDefinition{Name: "trace-list", RequiredScope: "admin"},
+		ToolDefinition{Name: "account-key-list", RequiredScope: "account:read"},
+		ToolDefinition{Name: "entity-search", RequiredScope: "graph:read"},
+	)
+	for _, name := range []string{"trace-list", "account-key-list"} {
+		tools := []string{name}
+		_, err := normalizeToolAllowlist(&tools, lookup)
+		require.Error(t, err, name)
+	}
+
+	// deriveScopesForToolNames must also reject admin scopes defensively.
+	_, err := deriveScopesForToolNames([]string{"trace-list"}, lookup)
+	require.Error(t, err)
+}
+
+// TestBuildToolCatalogExcludesAdminScopedTools verifies the catalog never offers
+// a tool that would derive an administrative scope.
+func TestBuildToolCatalogExcludesAdminScopedTools(t *testing.T) {
+	got := BuildToolCatalog(context.Background(), &Service{}, "")
+	for _, tool := range got {
+		assert.NotEqual(t, "admin", tool.RequiredScope, "tool %s must not be includable", tool.Name)
+	}
+}
+
+// TestUpdateShareInstanceRollsBackAllowlistOnScopeFailure verifies atomicity:
+// when the token-scope write fails after the allowlist was persisted, the prior
+// allowlist is restored so scopes and allowlist cannot diverge.
+func TestUpdateShareInstanceRollsBackAllowlistOnScopeFailure(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1",
+		AllowedTools: []string{"entity-search"},
+	}
+	tok := &fakeTokenSvc{updateErr: errors.New("scope write failed")}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	tools := []string{"schema-list"}
+	_, err := svc.UpdateShareInstance(context.Background(), "proj", "user", "i1", UpdateShareInstanceRequest{Tools: &tools})
+	require.Error(t, err)
+	assert.Equal(t, []string{"entity-search"}, store.byID["i1"].AllowedTools,
+		"allowlist must be rolled back to the prior value")
+}
+
+// TestUpdateShareInstanceNormalizesBeforePersisting verifies that an agent
+// normalization failure never writes token scopes (no scope/allowlist divergence).
+func TestUpdateShareInstanceNormalizesBeforePersisting(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1",
+		AllowedTools: []string{"entity-search"},
+	}
+	tok := &fakeTokenSvc{}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	tools := []string{"schema-list"}
+	badAgents := []string{"ghost"}
+	_, err := svc.UpdateShareInstance(context.Background(), "proj", "user", "i1", UpdateShareInstanceRequest{
+		Tools:  &tools,
+		Agents: &badAgents,
+	})
+	require.Error(t, err)
+	assert.Nil(t, tok.updateScopes, "token scopes must not be written when validation fails")
+	assert.Equal(t, []string{"entity-search"}, store.byID["i1"].AllowedTools)
+}
+
+// TestSetSessionTitleEnforcesInstanceAllowlist is the fix for the in-execution
+// allowlist hole: hidden built-ins are checked before dispatch.
+func TestSetSessionTitleEnforcesInstanceAllowlist(t *testing.T) {
+	svc := &Service{}
+	restricted := &InstanceScope{HasToolAllowlist: true, AllowedTools: []string{"entity-search"}}
+	ctx := WithInstanceScope(context.Background(), restricted)
+	_, err := svc.ExecuteTool(ctx, "proj", "set_session_title", map[string]any{"title": "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not allowed")
+
+	// Unrestricted (nil scope) keeps working: dispatch reaches the handler.
+	_, err = svc.ExecuteTool(context.Background(), "proj", "set_session_title", nil)
+	require.NoError(t, err)
 }

@@ -276,3 +276,105 @@ func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConf
 
 	return result.RowsAffected()
 }
+
+// projectDeletionBatchSize is the maximum number of projects selected per batch.
+const projectDeletionBatchSize = 50
+
+// projectDeletionMaxBatches caps how many batches a single sweep processes so a
+// large backlog drains gradually without exceeding the scheduler task timeout.
+const projectDeletionMaxBatches = 20
+
+// ProjectDeletionTask hard-purges projects whose deletion grace period elapsed.
+// It runs as a durable scheduler task so pending deletions survive restarts
+// (unlike the previous in-process goroutine).
+//
+// Each due project is deleted by its own guarded statement rather than one
+// bulk DELETE. This isolates poison pills: if a single project's cascade always
+// errors or times out, only that project is skipped — the rest of the batch
+// still makes progress instead of rolling back and being retried forever.
+type ProjectDeletionTask struct {
+	db  *bun.DB
+	log *slog.Logger
+}
+
+// NewProjectDeletionTask creates a new project deletion sweep task.
+func NewProjectDeletionTask(db *bun.DB, log *slog.Logger) *ProjectDeletionTask {
+	return &ProjectDeletionTask{
+		db:  db,
+		log: log.With(logger.Scope("scheduler.project_deletion")),
+	}
+}
+
+// Run executes the project deletion sweep. Zero rows is a successful no-op.
+func (t *ProjectDeletionTask) Run(ctx context.Context) error {
+	start := time.Now()
+	total := 0
+
+	for i := 0; i < projectDeletionMaxBatches; i++ {
+		// Select a bounded FIFO batch of due project IDs. No row locking here:
+		// the guarded DELETE below re-verifies each row, so a concurrent
+		// restore/reschedule is handled safely without a held lock.
+		var ids []string
+		err := t.db.NewSelect().
+			TableExpr("kb.projects").
+			Column("id").
+			Where("deletion_scheduled_for IS NOT NULL").
+			Where("deletion_scheduled_for <= now()").
+			Order("deletion_scheduled_for ASC").
+			Limit(projectDeletionBatchSize).
+			Scan(ctx, &ids)
+		if err != nil {
+			t.log.Error("failed to select projects due for purge",
+				slog.String("error", err.Error()))
+			return err
+		}
+		if len(ids) == 0 {
+			break
+		}
+
+		deletedInBatch := 0
+		for _, id := range ids {
+			// Guarded delete: re-check the schedule at delete time. A project
+			// whose deletion was cancelled (restored) or rescheduled between the
+			// SELECT and this DELETE no longer matches — 0 rows affected — so it is
+			// never hard-deleted by a stale list, closing the TOCTOU window.
+			result, derr := t.db.NewRaw(`
+				DELETE FROM kb.projects
+				WHERE id = ?
+				  AND deletion_scheduled_for IS NOT NULL
+				  AND deletion_scheduled_for <= now()`, id).Exec(ctx)
+			if derr != nil {
+				// Poison-pill isolation: log and continue so one bad cascade does
+				// not abort the whole run.
+				t.log.Error("failed to purge project, skipping",
+					slog.String("projectID", id),
+					slog.String("error", derr.Error()))
+				continue
+			}
+			if n, _ := result.RowsAffected(); n > 0 {
+				deletedInBatch++
+			}
+		}
+		total += deletedInBatch
+
+		if len(ids) < projectDeletionBatchSize {
+			break
+		}
+		// When a full batch yields no deletions, the remaining due rows are all
+		// poison pills; stop looping over the same batch this run.
+		if deletedInBatch == 0 {
+			break
+		}
+	}
+
+	if total > 0 {
+		t.log.Info("purged expired projects",
+			slog.Int("count", total),
+			slog.Duration("duration", time.Since(start)))
+	} else {
+		t.log.Debug("no expired projects to purge",
+			slog.Duration("duration", time.Since(start)))
+	}
+
+	return nil
+}

@@ -41,22 +41,7 @@ type TemplateInfo struct {
 	Source      string `json:"source"`
 }
 
-func (s *Service) getSchemaVersion(ctx context.Context) (string, error) {
-	s.cacheMu.RLock()
-	if s.cachedVersion != "" && time.Now().Before(s.cacheExpiry) {
-		version := s.cachedVersion
-		s.cacheMu.RUnlock()
-		return version, nil
-	}
-	s.cacheMu.RUnlock()
-
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
-
-	if s.cachedVersion != "" && time.Now().Before(s.cacheExpiry) {
-		return s.cachedVersion, nil
-	}
-
+func (s *Service) getSchemaVersion(ctx context.Context, projectID string) (string, error) {
 	type packInfo struct {
 		ID        string    `bun:"id"`
 		UpdatedAt time.Time `bun:"updated_at"`
@@ -66,6 +51,7 @@ func (s *Service) getSchemaVersion(ctx context.Context) (string, error) {
 	err := s.db.NewSelect().
 		TableExpr("kb.graph_schemas").
 		Column("id", "updated_at").
+		Where("project_id = ?", projectID).
 		OrderExpr("id ASC").
 		Scan(ctx, &packs)
 
@@ -81,14 +67,18 @@ func (s *Service) getSchemaVersion(ctx context.Context) (string, error) {
 	hash := md5.Sum([]byte(composite))
 	version := hex.EncodeToString(hash[:])[:16]
 
-	s.cachedVersion = version
-	s.cacheExpiry = time.Now().Add(60 * time.Second)
-
 	return version, nil
 }
 
-func (s *Service) executeSchemaVersion(ctx context.Context) (*ToolResult, error) {
-	version, err := s.getSchemaVersion(ctx)
+func (s *Service) executeSchemaVersion(ctx context.Context, projectID string) (*ToolResult, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("project context required")
+	}
+	if _, err := uuid.Parse(projectID); err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	version, err := s.getSchemaVersion(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +87,7 @@ func (s *Service) executeSchemaVersion(ctx context.Context) (*ToolResult, error)
 	err = s.db.NewSelect().
 		TableExpr("kb.graph_schemas").
 		ColumnExpr("COUNT(*)").
+		Where("project_id = ?", projectID).
 		Scan(ctx, &packCount)
 	if err != nil {
 		s.log.Warn("failed to count schemas")
@@ -114,6 +105,10 @@ func (s *Service) executeSchemaVersion(ctx context.Context) (*ToolResult, error)
 }
 
 func (s *Service) executeListSchemas(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("project context required")
+	}
+
 	search, _ := args["search"].(string)
 
 	limit := 20
@@ -145,11 +140,8 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 
 	query := s.db.NewSelect().
 		TableExpr("kb.graph_schemas").
-		Column("id", "name", "version", "description", "project_id", "source", "created_at", "updated_at")
-
-	if projectID != "" {
-		query = query.Where("project_id = ? OR project_id IS NULL", projectID)
-	}
+		Column("id", "name", "version", "description", "project_id", "source", "created_at", "updated_at").
+		Where("project_id = ?", projectID)
 
 	if search != "" {
 		query = query.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
@@ -169,6 +161,7 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 			Name:        r.Name,
 			Version:     r.Version,
 			Description: r.Description,
+			Visibility:  "project",
 			ProjectID:   r.ProjectID,
 			Source:      r.Source,
 			CreatedAt:   r.CreatedAt,
@@ -178,10 +171,9 @@ func (s *Service) executeListSchemas(ctx context.Context, projectID string, args
 
 	// Get total count
 	var total int
-	countQuery := s.db.NewSelect().TableExpr("kb.graph_schemas")
-	if projectID != "" {
-		countQuery = countQuery.Where("project_id = ? OR project_id IS NULL", projectID)
-	}
+	countQuery := s.db.NewSelect().
+		TableExpr("kb.graph_schemas").
+		Where("project_id = ?", projectID)
 	if search != "" {
 		countQuery = countQuery.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
@@ -211,7 +203,7 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 	err := s.db.NewRaw(`
 		SELECT id, name, version, description, project_id, source, created_at, updated_at
 		FROM kb.graph_schemas
-		WHERE id = ? AND (project_id = ? OR project_id IS NULL)
+		WHERE id = ? AND (project_id = ? OR source = 'builtin')
 	`, schemaID, projectID).Scan(ctx, &schema)
 	if err != nil {
 		return nil, fmt.Errorf("schema not found: %s", schemaID)
@@ -345,7 +337,7 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 			gs.version AS schema_version
 		FROM kb.project_schemas ps
 		JOIN kb.graph_schemas gs ON ps.schema_id = gs.id
-		WHERE ps.project_id = ?
+		WHERE ps.project_id = ? AND ps.removed_at IS NULL AND ps.active = true
 		ORDER BY ps.installed_at DESC
 	`, projectUUID).Scan(ctx, &rows)
 	if err != nil {
@@ -363,7 +355,7 @@ func (s *Service) executeGetInstalledTemplates(ctx context.Context, projectID st
 	err = s.db.NewRaw(`
 		SELECT id, name, version, source
 		FROM kb.graph_schemas
-		WHERE id IN (SELECT schema_id FROM kb.project_schemas WHERE project_id = ?)
+		WHERE id IN (SELECT schema_id FROM kb.project_schemas WHERE project_id = ? AND removed_at IS NULL)
 		ORDER BY name
 	`, projectUUID).Scan(ctx, &templates)
 	if err != nil {
@@ -429,7 +421,7 @@ func (s *Service) executeAssignSchema(ctx context.Context, projectID string, arg
 	err = s.db.NewRaw(`
 		SELECT id, name
 		FROM kb.graph_schemas
-		WHERE id = ? AND (project_id = ? OR project_id IS NULL)
+		WHERE id = ? AND (project_id = ? OR source = 'builtin')
 	`, schemaID, projectID).Scan(ctx, &schemaRow)
 	if err != nil {
 		return nil, fmt.Errorf("schema not found: %s", schemaID)
@@ -714,14 +706,17 @@ func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, arg
 		TableExpr("kb.graph_schemas").
 		Column("id", "name", "source").
 		Where("id = ?", packID).
-		Where("(project_id = ? OR project_id IS NULL)", projectID).
+		Where("project_id = ?", projectID).
 		Scan(ctx, &pack)
 
 	if err != nil {
 		return nil, fmt.Errorf("schema not found: %s", packID)
 	}
 
-	if pack.Source == "system" {
+	// Defense-in-depth: builtins are normally NULL-project and are already excluded
+	// by the strict project_id filter above, but reject explicitly in case a builtin
+	// is ever project-owned.
+	if pack.Source == "builtin" || pack.Source == "system" {
 		return nil, fmt.Errorf("cannot delete built-in schemas")
 	}
 
@@ -739,7 +734,7 @@ func (s *Service) executeDeleteSchema(ctx context.Context, projectID string, arg
 	}
 
 	_, err = s.db.NewRaw(`
-		DELETE FROM kb.graph_schemas WHERE id = ? AND (project_id = ? OR project_id IS NULL)
+		DELETE FROM kb.graph_schemas WHERE id = ? AND project_id = ?
 	`, packID, projectID).Exec(ctx)
 
 	if err != nil {

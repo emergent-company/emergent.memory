@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -273,10 +274,10 @@ type CatalogResponse struct {
 func normalizeInstanceName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return "", apperror.ErrValidation.WithMessage("name is required")
+		return "", apperror.NewValidation("name is required")
 	}
 	if len(trimmed) > 255 {
-		return "", apperror.ErrValidation.WithMessage("name must be at most 255 characters")
+		return "", apperror.NewValidation("name must be at most 255 characters")
 	}
 	return trimmed, nil
 }
@@ -301,6 +302,19 @@ func dedupeStrings(in []string) []string {
 // toolLookupFunc resolves a tool name to its definition (nil when unknown).
 type toolLookupFunc func(name string) *ToolDefinition
 
+// isAdministrativeScope reports whether a tool's required scope grants the
+// administrative ("admin"/"admin:all") or account-level surface. Such scopes
+// are never derivable from a share-instance allowlist: emitting "admin" would
+// let a share token satisfy the share-admin route guard and chain into other
+// instances. This is the belt-and-suspenders complement to that route guard.
+func isAdministrativeScope(scope string) bool {
+	switch scope {
+	case "admin", "admin:all":
+		return true
+	}
+	return strings.HasPrefix(scope, "account:")
+}
+
 // normalizeToolAllowlist validates and de-duplicates an explicit tool
 // allowlist. A nil input means unrestricted. An empty input is rejected.
 func normalizeToolAllowlist(tools *[]string, lookup toolLookupFunc) ([]string, error) {
@@ -308,23 +322,26 @@ func normalizeToolAllowlist(tools *[]string, lookup toolLookupFunc) ([]string, e
 		return nil, nil
 	}
 	if len(*tools) == 0 {
-		return nil, apperror.ErrValidation.WithMessage("tools must not be empty; omit the field for an unrestricted allowlist")
+		return nil, apperror.NewValidation("tools must not be empty; omit the field for an unrestricted allowlist")
 	}
 	out := make([]string, 0, len(*tools))
 	for _, raw := range *tools {
 		name := strings.TrimSpace(raw)
 		if name == "" {
-			return nil, apperror.ErrValidation.WithMessage("tool name must not be empty")
+			return nil, apperror.NewValidation("tool name must not be empty")
 		}
 		def := lookup(name)
 		if def == nil {
-			return nil, apperror.ErrValidation.WithMessage("unknown tool: " + name)
+			return nil, apperror.NewValidation("unknown tool: " + name)
 		}
 		if def.AgentOnly {
-			return nil, apperror.ErrValidation.WithMessage("agent-only tool cannot be shared: " + name)
+			return nil, apperror.NewValidation("agent-only tool cannot be shared: " + name)
+		}
+		if isAdministrativeScope(def.RequiredScope) {
+			return nil, apperror.NewValidation("tool cannot be shared because it requires an administrative scope: " + name)
 		}
 		if agentExecutionTools[name] || agentMutationTools[name] {
-			return nil, apperror.ErrValidation.WithMessage("tool cannot be shared because its side effects run outside the instance context: " + name)
+			return nil, apperror.NewValidation("tool cannot be shared because its side effects run outside the instance context: " + name)
 		}
 		out = append(out, name)
 	}
@@ -338,7 +355,10 @@ func deriveScopesForToolNames(tools []string, lookup toolLookupFunc) ([]string, 
 	for _, name := range tools {
 		def := lookup(name)
 		if def == nil {
-			return nil, apperror.ErrValidation.WithMessage("unknown tool: " + name)
+			return nil, apperror.NewValidation("unknown tool: " + name)
+		}
+		if isAdministrativeScope(def.RequiredScope) {
+			return nil, apperror.NewValidation("tool requires an administrative scope: " + name)
 		}
 		if def.RequiredScope != "" {
 			seen[def.RequiredScope] = true
@@ -435,6 +455,15 @@ func InstanceDeniesTool(scope *InstanceScope, toolName string) bool {
 	return false
 }
 
+// InstanceRestrictsContent reports whether the instance imposes an explicit
+// allowlist. MCP resources and prompts are not covered by the tool/agent
+// allowlists, so they must fail closed for any restricted instance. A nil scope
+// (legacy/unrestricted, including null-allowlist instances) keeps the historical
+// behavior.
+func InstanceRestrictsContent(scope *InstanceScope) bool {
+	return scope != nil && (scope.HasToolAllowlist || scope.HasAgentAllowlist)
+}
+
 // FilterToolsForInstance applies the instance tool allowlist on top of scope
 // filtering. When an agent allowlist is active it also removes agent-definition,
 // run-inspection, and agent-mutation tools that cannot be safely scoped to the
@@ -504,7 +533,7 @@ func (r *bunShareInstanceStore) ListByProject(ctx context.Context, projectID str
 	var rows []*MCPShareInstance
 	err := r.db.NewRaw(shareInstanceSelect+` WHERE msi.project_id = ? ORDER BY msi.created_at DESC`, projectID).Scan(ctx, &rows)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return rows, nil
 }
@@ -516,7 +545,7 @@ func (r *bunShareInstanceStore) GetByID(ctx context.Context, projectID, id strin
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return row, nil
 }
@@ -532,7 +561,7 @@ func (r *bunShareInstanceStore) GetByTokenID(ctx context.Context, tokenID string
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return row, nil
 }
@@ -549,7 +578,7 @@ func (r *bunShareInstanceStore) FindByName(ctx context.Context, projectID, name 
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return row, nil
 }
@@ -560,7 +589,7 @@ func (r *bunShareInstanceStore) Create(ctx context.Context, inst *MCPShareInstan
 		if isUniqueViolation(err) {
 			return apperror.New(409, "share_instance_name_exists", "A share instance with this name already exists")
 		}
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return nil
 }
@@ -582,7 +611,7 @@ func (r *bunShareInstanceStore) Update(ctx context.Context, inst *MCPShareInstan
 		if isUniqueViolation(err) {
 			return apperror.New(409, "share_instance_name_exists", "A share instance with this name already exists")
 		}
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return nil
 }
@@ -599,7 +628,7 @@ func (r *bunShareInstanceStore) ListLegacyTokens(ctx context.Context, projectID 
 		Order("created_at DESC").
 		Scan(ctx, &rows)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return rows, nil
 }
@@ -634,11 +663,14 @@ func (d *bunAgentDirectory) ListProjectAgents(ctx context.Context, projectID str
 		Where("project_id = ?", projectID).
 		Scan(ctx, &rows)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return rows, nil
 }
 
+// FindProjectAgentByID returns a single project agent reference by ID, or nil
+// when the agent does not exist in the project. Used by the per-agent MCP share
+// lifecycle and endpoint to confirm the bound agent still exists.
 func (d *bunAgentDirectory) FindProjectAgentByID(ctx context.Context, projectID, id string) (*AgentRef, error) {
 	ref := new(AgentRef)
 	err := d.db.NewSelect().
@@ -652,7 +684,7 @@ func (d *bunAgentDirectory) FindProjectAgentByID(ctx context.Context, projectID,
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return ref, nil
 }
@@ -670,7 +702,7 @@ func (d *bunAgentDirectory) FindAgentIDByName(ctx context.Context, projectID, na
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", false, nil
 		}
-		return "", false, apperror.ErrDatabase.WithInternal(err)
+		return "", false, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return id, id != "", nil
 }
@@ -749,14 +781,14 @@ func instanceTokenName(name string) string {
 func (s *Service) EnsureProjectAdmin(ctx context.Context, projectID, userID string) error {
 	tokenSvc := s.shareTokenSvc()
 	if tokenSvc == nil {
-		return apperror.ErrInternal.WithMessage("api token service unavailable")
+		return apperror.NewInternal("api token service unavailable", nil)
 	}
 	role, err := tokenSvc.GetUserProjectRole(ctx, projectID, userID)
 	if err != nil {
 		return err
 	}
 	if role != "project_admin" {
-		return apperror.ErrForbidden.WithMessage("project admin role required to manage MCP shares")
+		return apperror.NewForbidden("project admin role required to manage MCP shares")
 	}
 	return nil
 }
@@ -770,7 +802,7 @@ func (s *Service) CreateShareInstance(ctx context.Context, projectID, userID, ba
 	store := s.shareStore()
 	tokenSvc := s.shareTokenSvc()
 	if store == nil || tokenSvc == nil {
-		return nil, apperror.ErrInternal.WithMessage("share instance storage unavailable")
+		return nil, apperror.NewInternal("share instance storage unavailable", nil)
 	}
 
 	name, err := normalizeInstanceName(req.Name)
@@ -839,7 +871,7 @@ func (s *Service) normalizeAgentAllowlist(ctx context.Context, projectID string,
 	}
 	dir := s.agentDirectorySvc()
 	if dir == nil {
-		return nil, apperror.ErrInternal.WithMessage("agent directory unavailable")
+		return nil, apperror.NewInternal("agent directory unavailable", nil)
 	}
 	projectAgents, err := dir.ListProjectAgents(ctx, projectID)
 	if err != nil {
@@ -854,10 +886,10 @@ func (s *Service) normalizeAgentAllowlist(ctx context.Context, projectID string,
 	for _, raw := range agents {
 		id, perr := uuid.Parse(strings.TrimSpace(raw))
 		if perr != nil {
-			return nil, apperror.ErrValidation.WithMessage("invalid agent id: " + raw)
+			return nil, apperror.NewValidation("invalid agent id: " + raw)
 		}
 		if !known[id.String()] {
-			return nil, apperror.ErrValidation.WithMessage("unknown agent: " + id.String())
+			return nil, apperror.NewValidation("unknown agent: " + id.String())
 		}
 		if seen[id] {
 			continue
@@ -875,7 +907,7 @@ func (s *Service) ListShareInstances(ctx context.Context, projectID, userID stri
 	}
 	store := s.shareStore()
 	if store == nil {
-		return nil, apperror.ErrInternal.WithMessage("share instance storage unavailable")
+		return nil, apperror.NewInternal("share instance storage unavailable", nil)
 	}
 	instances, err := store.ListByProject(ctx, projectID)
 	if err != nil {
@@ -910,14 +942,14 @@ func (s *Service) GetShareInstance(ctx context.Context, projectID, userID, id st
 	}
 	store := s.shareStore()
 	if store == nil {
-		return nil, apperror.ErrInternal.WithMessage("share instance storage unavailable")
+		return nil, apperror.NewInternal("share instance storage unavailable", nil)
 	}
 	inst, err := store.GetByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
 	}
 	if inst == nil {
-		return nil, apperror.ErrNotFound.WithMessage("Share instance not found")
+		return nil, apperror.NewNotFound("Share instance", id)
 	}
 	dto := inst.toDTO(time.Now().UTC())
 	return &dto, nil
@@ -932,18 +964,23 @@ func (s *Service) UpdateShareInstance(ctx context.Context, projectID, userID, id
 	store := s.shareStore()
 	tokenSvc := s.shareTokenSvc()
 	if store == nil || tokenSvc == nil {
-		return nil, apperror.ErrInternal.WithMessage("share instance storage unavailable")
+		return nil, apperror.NewInternal("share instance storage unavailable", nil)
 	}
 	inst, err := store.GetByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
 	}
 	if inst == nil {
-		return nil, apperror.ErrNotFound.WithMessage("Share instance not found")
+		return nil, apperror.NewNotFound("Share instance", id)
 	}
 	if inst.RevokedAt != nil {
 		return nil, apperror.New(409, "share_instance_revoked", "Share instance is revoked and cannot be updated")
 	}
+
+	// Work on a copy so a validation failure never leaks partial mutations into
+	// the caller's stored row (and so rollback can restore the exact prior state).
+	prev := *inst
+	updated := *inst
 
 	if req.Name != nil {
 		name, nerr := normalizeInstanceName(*req.Name)
@@ -958,12 +995,19 @@ func (s *Service) UpdateShareInstance(ctx context.Context, projectID, userID, id
 			if conflict != nil && conflict.ID != inst.ID {
 				return nil, apperror.New(409, "share_instance_name_exists", "A share instance named \""+name+"\" already exists for this project")
 			}
-			inst.Name = name
+			updated.Name = name
 		}
 	}
 	if req.Description != nil {
-		inst.Description = req.Description
+		updated.Description = req.Description
 	}
+
+	// Validate/normalize EVERYTHING before persisting anything. In particular,
+	// agent normalization must not run after token scopes have been written, or a
+	// failed normalization would leave scopes and allowlist divergent.
+	var newTools []string
+	var newScopes []string
+	scopesChanged := false
 	if req.Tools != nil {
 		s.GetToolDefinitionsForProject(ctx, projectID)
 		tools, terr := normalizeToolAllowlist(req.Tools, s.GetToolByName)
@@ -974,24 +1018,39 @@ func (s *Service) UpdateShareInstance(ctx context.Context, projectID, userID, id
 		if derr != nil {
 			return nil, derr
 		}
-		if _, uerr := tokenSvc.UpdateScopes(ctx, inst.TokenID, projectID, userID, scopes); uerr != nil {
-			return nil, uerr
-		}
-		inst.AllowedTools = tools
+		newTools = tools
+		newScopes = scopes
+		scopesChanged = true
 	}
 	if req.Agents != nil {
 		agents, aerr := s.normalizeAgentAllowlist(ctx, projectID, *req.Agents)
 		if aerr != nil {
 			return nil, aerr
 		}
-		inst.AllowedAgents = agents
+		updated.AllowedAgents = agents
+	}
+	if scopesChanged {
+		updated.AllowedTools = newTools
 	}
 
-	inst.UpdatedAt = time.Now().UTC()
-	if err := store.Update(ctx, inst); err != nil {
+	updated.UpdatedAt = time.Now().UTC()
+
+	// Persist the allowlist first. If this fails, token scopes are untouched, so
+	// scopes and allowlist cannot diverge. Only once the allowlist is durable do
+	// we update the token scopes, compensating on failure by restoring the prior
+	// persisted allowlist (mirrors RotateShareInstance's rollback approach).
+	if err := store.Update(ctx, &updated); err != nil {
 		return nil, err
 	}
-	dto := inst.toDTO(inst.UpdatedAt)
+	if scopesChanged {
+		if _, uerr := tokenSvc.UpdateScopes(ctx, updated.TokenID, projectID, userID, newScopes); uerr != nil {
+			if rbErr := store.Update(ctx, &prev); rbErr != nil {
+				return nil, fmt.Errorf("update share instance scopes: %w (allowlist rollback failed: %v)", uerr, rbErr)
+			}
+			return nil, uerr
+		}
+	}
+	dto := updated.toDTO(updated.UpdatedAt)
 	return &dto, nil
 }
 
@@ -1004,14 +1063,14 @@ func (s *Service) RevokeShareInstance(ctx context.Context, projectID, userID, id
 	store := s.shareStore()
 	tokenSvc := s.shareTokenSvc()
 	if store == nil || tokenSvc == nil {
-		return apperror.ErrInternal.WithMessage("share instance storage unavailable")
+		return apperror.NewInternal("share instance storage unavailable", nil)
 	}
 	inst, err := store.GetByID(ctx, projectID, id)
 	if err != nil {
 		return err
 	}
 	if inst == nil {
-		return apperror.ErrNotFound.WithMessage("Share instance not found")
+		return apperror.NewNotFound("Share instance", id)
 	}
 	if inst.RevokedAt != nil {
 		return nil
@@ -1034,14 +1093,14 @@ func (s *Service) RotateShareInstance(ctx context.Context, projectID, userID, id
 	store := s.shareStore()
 	tokenSvc := s.shareTokenSvc()
 	if store == nil || tokenSvc == nil {
-		return nil, apperror.ErrInternal.WithMessage("share instance storage unavailable")
+		return nil, apperror.NewInternal("share instance storage unavailable", nil)
 	}
 	inst, err := store.GetByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
 	}
 	if inst == nil {
-		return nil, apperror.ErrNotFound.WithMessage("Share instance not found")
+		return nil, apperror.NewNotFound("Share instance", id)
 	}
 	if inst.RevokedAt != nil {
 		return nil, apperror.New(409, "share_instance_revoked", "Share instance is revoked and cannot be rotated")
@@ -1102,6 +1161,12 @@ func BuildToolCatalog(ctx context.Context, s *Service, projectID string) []Catal
 		if d.AgentOnly {
 			continue
 		}
+		// Tools requiring an administrative/account scope are never includable:
+		// deriving "admin" onto a share token would let it satisfy the
+		// share-admin route guard and chain into sibling instances.
+		if isAdministrativeScope(d.RequiredScope) {
+			continue
+		}
 		// Agent execution/mutation tools cannot be safely constrained by a
 		// static allowlist (their side effects run outside the request
 		// context), so they are never includable.
@@ -1125,18 +1190,26 @@ func BuildToolCatalog(ctx context.Context, s *Service, projectID string) []Catal
 }
 
 // ResolveInstanceScope resolves the allowlist for the authenticated API token
-// (from AuthUser.APITokenID). Returns nil for legacy/unknown tokens.
-func (s *Service) ResolveInstanceScope(ctx context.Context, apiTokenID string) *InstanceScope {
+// (from AuthUser.APITokenID). It returns (nil, nil) for legacy/unknown tokens
+// (including bound instances with a null allowlist), meaning "unrestricted".
+//
+// A non-nil error means the share-instance lookup itself failed. Callers MUST
+// fail closed (deny) on error rather than treating it as unrestricted; silently
+// returning nil would disable allowlist enforcement for the request.
+func (s *Service) ResolveInstanceScope(ctx context.Context, apiTokenID string) (*InstanceScope, error) {
 	if apiTokenID == "" {
-		return nil
+		return nil, nil
 	}
 	store := s.shareStore()
 	if store == nil {
-		return nil
+		return nil, nil
 	}
 	inst, err := store.GetByTokenID(ctx, apiTokenID)
-	if err != nil || inst == nil || inst.RevokedAt != nil {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if inst == nil || inst.RevokedAt != nil {
+		return nil, nil
 	}
 	scope := &InstanceScope{}
 	if len(inst.AllowedTools) > 0 {
@@ -1151,9 +1224,9 @@ func (s *Service) ResolveInstanceScope(ctx context.Context, apiTokenID string) *
 		}
 	}
 	if !scope.HasToolAllowlist && !scope.HasAgentAllowlist {
-		return nil
+		return nil, nil
 	}
-	return scope
+	return scope, nil
 }
 
 // mcpEndpointURL builds the canonical MCP endpoint from a base URL.

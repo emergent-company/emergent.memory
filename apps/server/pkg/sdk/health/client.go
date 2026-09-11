@@ -34,6 +34,8 @@ type HealthResponse struct {
 	Timestamp string           `json:"timestamp"`
 	Uptime    string           `json:"uptime"`
 	Version   string           `json:"version"`
+	GitCommit string           `json:"git_commit,omitempty"`
+	BuildTime string           `json:"build_time,omitempty"`
 	Checks    map[string]Check `json:"checks"`
 }
 

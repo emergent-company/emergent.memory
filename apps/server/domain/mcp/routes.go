@@ -41,27 +41,43 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	pg.POST("/share", h.HandleShareMCPAccess)
 	pg.GET("/bundle", h.HandleGenerateMCPBundle)
 
-	// Named MCP share instances (add-mcp-share-instances)
-	pg.POST("/shares", h.HandleCreateShareInstance)
-	pg.GET("/shares", h.HandleListShareInstances)
-	pg.GET("/shares/:id", h.HandleGetShareInstance)
-	pg.PATCH("/shares/:id", h.HandleUpdateShareInstance)
-	pg.DELETE("/shares/:id", h.HandleRevokeShareInstance)
-	pg.POST("/shares/:id/rotate", h.HandleRotateShareInstance)
+	// Named MCP share instances (add-mcp-share-instances).
+	//
+	// These endpoints are project-admin operations, but handlers resolve the
+	// role of the API-token OWNER (always a project admin), so without an
+	// explicit scope guard a narrowly-scoped MCP share token could mint, rotate,
+	// or delete sibling shares — escalating read access to write and stealing
+	// other instances' rotated tokens. Share tokens derive their scopes solely
+	// from their tool allowlist plus projects:read and never carry "admin", so
+	// RequireAPITokenScopes("admin") blocks that token-chaining path while
+	// leaving Zitadel/OAuth sessions unaffected.
+	adminGroup := pg.Group("")
+	adminGroup.Use(authMiddleware.RequireAPITokenScopes("admin"))
+	adminGroup.POST("/shares", h.HandleCreateShareInstance)
+	adminGroup.GET("/shares", h.HandleListShareInstances)
+	adminGroup.GET("/shares/:id", h.HandleGetShareInstance)
+	adminGroup.PATCH("/shares/:id", h.HandleUpdateShareInstance)
+	adminGroup.DELETE("/shares/:id", h.HandleRevokeShareInstance)
+	adminGroup.POST("/shares/:id/rotate", h.HandleRotateShareInstance)
 
 	// Includable tool catalog for the allowlist picker
-	pg.GET("/tools", h.HandleListToolCatalog)
+	adminGroup.GET("/tools", h.HandleListToolCatalog)
 
 	// Per-agent MCP share lifecycle (add-agent-mcp-endpoint). Registered on
 	// subpaths of the agents resource; uses :id to match the existing agent
 	// routes' param name.
+	//
+	// These are likewise project-admin credential-minting operations, so they
+	// share the same RequireAPITokenScopes("admin") guard as the project share
+	// lifecycle above: a narrowly-scoped project share token must not be able to
+	// mint, rotate, or revoke agent shares.
 	ag := e.Group("/api/projects/:projectId/agents/:id")
-	ag.Use(authMiddleware.RequireAuth())
+	ag.Use(authMiddleware.RequireAuth(), authMiddleware.RequireAPITokenScopes("admin"))
 	ag.POST("/mcp-share", h.HandleCreateAgentShare)
 	ag.GET("/mcp-shares", h.HandleListAgentShares)
 
 	agProject := e.Group("/api/projects/:projectId/agent-mcp-shares")
-	agProject.Use(authMiddleware.RequireAuth())
+	agProject.Use(authMiddleware.RequireAuth(), authMiddleware.RequireAPITokenScopes("admin"))
 	agProject.GET("", h.HandleListProjectAgentShares)
 	agProject.DELETE("/:id", h.HandleRevokeAgentShare)
 	agProject.POST("/:id/rotate", h.HandleRotateAgentShare)

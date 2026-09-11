@@ -76,12 +76,12 @@ func (h *Handler) GetAvailablePacks(c echo.Context) error {
 	return c.JSON(http.StatusOK, packs)
 }
 
-// ListPacks handles GET /api/schemas/projects/:projectId — the schema catalog
-// visible to a project (project-owned + global packs), mirroring the MCP
-// schema-list tool so REST callers (e.g. the web gateway's blueprints page) can
-// bypass the MCP handshake.
+// ListPacks handles GET /api/schemas/projects/:projectId — the project-owned
+// schema catalog (strictly project-scoped; NULL-project builtin rows are
+// excluded), mirroring the MCP schema-list tool so REST callers (e.g. the web
+// gateway's blueprints page) can bypass the MCP handshake.
 // @Summary      List schema packs
-// @Description  Returns schema packs visible to a project (project-owned + global), with optional search and pagination
+// @Description  Returns schema packs owned by a project (strictly project-scoped), with optional search and pagination
 // @Tags         schemas
 // @Accept       json
 // @Produce      json
