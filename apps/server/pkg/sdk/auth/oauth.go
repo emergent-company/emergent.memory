@@ -21,12 +21,25 @@ type OAuthProvider struct {
 	credentials *Credentials
 	clientID    string
 	credsPath   string
+	scopes      []string
 }
+
+// DefaultDeviceFlowScopes is the scope set requested by the device flow when no
+// override is provided. It includes offline_access so the provider issues a
+// refresh token, allowing a stored session to be renewed without
+// re-authentication.
+var DefaultDeviceFlowScopes = []string{"openid", "profile", "email", "offline_access"}
 
 // NewOAuthProvider creates a new OAuth provider.
 // If credentials exist at credsPath and are valid, they will be loaded.
 // Otherwise, device flow must be initiated manually.
 func NewOAuthProvider(oidcConfig *OIDCConfig, clientID, credsPath string) *OAuthProvider {
+	return NewOAuthProviderWithScopes(oidcConfig, clientID, credsPath, nil)
+}
+
+// NewOAuthProviderWithScopes is NewOAuthProvider with explicit device-flow
+// scopes. An empty slice uses DefaultDeviceFlowScopes.
+func NewOAuthProviderWithScopes(oidcConfig *OIDCConfig, clientID, credsPath string, scopes []string) *OAuthProvider {
 	// Expand tilde in path
 	if strings.HasPrefix(credsPath, "~/") {
 		home, _ := os.UserHomeDir()
@@ -37,6 +50,7 @@ func NewOAuthProvider(oidcConfig *OIDCConfig, clientID, credsPath string) *OAuth
 		oidcConfig: oidcConfig,
 		clientID:   clientID,
 		credsPath:  credsPath,
+		scopes:     scopes,
 	}
 
 	// Try to load existing credentials
@@ -155,7 +169,11 @@ type tokenErrorResponse struct {
 func (p *OAuthProvider) InitiateDeviceFlow(ctx context.Context) (*DeviceCodeResponse, error) {
 	data := url.Values{}
 	data.Set("client_id", p.clientID)
-	data.Set("scope", "openid profile email")
+	scopes := p.scopes
+	if len(scopes) == 0 {
+		scopes = DefaultDeviceFlowScopes
+	}
+	data.Set("scope", strings.Join(scopes, " "))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", p.oidcConfig.DeviceAuthorizationEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
