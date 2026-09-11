@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.77.0"
+        "version": "0.79.0"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -8823,6 +8823,74 @@
                         }
                     }
                 }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Updates an organization's name (name-only; description/logo deferred pending a DB column)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "organizations"
+                ],
+                "summary": "Update organization",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Organization update request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_orgs.UpdateOrgRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Organization updated",
+                        "schema": {
+                            "$ref": "#/definitions/domain_orgs.OrgDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body or name",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Organization not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
             }
         },
         "/api/orgs/{id}/members": {
@@ -9318,7 +9386,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Permanently deletes a project and all associated data",
+                "description": "Marks a project for deletion. The project is hidden from normal listings and hard-purged after a grace period; it can be restored in the meantime via POST /api/projects/{id}/restore.",
                 "produces": [
                     "application/json"
                 ],
@@ -9336,13 +9404,11 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Deletion status",
+                    "202": {
+                        "description": "Pending deletion status",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -9679,6 +9745,65 @@
                     },
                     "404": {
                         "description": "Project or user not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{id}/restore": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Cancels a pending deletion for a project still within its grace period, returning it to active status.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Restore project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Restored status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid project ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Project not pending deletion",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -10298,6 +10423,83 @@
                 }
             }
         },
+        "/api/projects/{projectId}/agents/{id}/mcp-share": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a share credential binding a new project API token to one agent, exposing it as a single-tool MCP server. Returns the raw token exactly once.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Create a per-agent MCP share",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Agent ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Share",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateAgentMCPShareRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateAgentMCPShareResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Project admin required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Agent not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Duplicate name",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/invites": {
             "get": {
                 "security": [
@@ -10452,6 +10654,110 @@
                     },
                     "422": {
                         "description": "Invalid email address",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/mcp/shares": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates a named MCP share instance bound to a new project API token with the selected tool/agent allowlists. Returns the raw token exactly once.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Create an MCP share instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Share instance",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateShareInstanceResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Project admin required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Duplicate name",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid allowlist",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/mcp/tools": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the memory tools that can be granted to an MCP share instance (name, description, required scope, category), excluding agent-only tools. Admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "List includable MCP tools",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CatalogResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Project admin required",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -11509,6 +11815,74 @@
                 }
             }
         },
+        "/api/schema-registry/projects/{projectId}/types/{typeName}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the persisted version history for a registered object type, newest first",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schema-registry"
+                ],
+                "summary": "Get object type version history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Object type name",
+                        "name": "typeName",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Type version history",
+                        "schema": {
+                            "$ref": "#/definitions/domain_schemaregistry.ObjectTypeHistoryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Type not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/schemas": {
             "post": {
                 "security": [
@@ -11573,7 +11947,7 @@
                         "bearerAuth": []
                     }
                 ],
-                "description": "Returns schema packs visible to a project (project-owned + global), with optional search and pagination",
+                "description": "Returns schema packs owned by a project (strictly project-scoped), with optional search and pagination",
                 "consumes": [
                     "application/json"
                 ],
@@ -12456,6 +12830,64 @@
                     },
                     "404": {
                         "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/schemas/projects/{projectId}/pack-claims": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns, for a project, the mapping between compiled schema packs and the applied blueprints that claim them",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schemas"
+                ],
+                "summary": "List pack-blueprint claims",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Pack claims",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_schemas.PackBlueprintClaim"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -25916,6 +26348,159 @@
                 }
             }
         },
+        "domain_mcp.CatalogResponse": {
+            "type": "object",
+            "properties": {
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcp.CatalogToolDTO"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_mcp.CatalogToolDTO": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "requiredScope": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcp.CreateAgentMCPShareRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcp.CreateAgentMCPShareResponse": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastUsedAt": {
+                    "type": "string"
+                },
+                "mcpUrl": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcp.CreateShareInstanceRequest": {
+            "type": "object",
+            "properties": {
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "domain_mcp.CreateShareInstanceResponse": {
+            "type": "object",
+            "properties": {
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isLegacy": {
+                    "type": "boolean"
+                },
+                "lastUsedAt": {
+                    "type": "string"
+                },
+                "mcpUrl": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_mcp.ErrorObject": {
             "type": "object",
             "properties": {
@@ -26943,6 +27528,19 @@
                 }
             }
         },
+        "domain_orgs.UpdateOrgRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "minLength": 1
+                }
+            }
+        },
         "domain_orgs.UpsertOrgToolSettingRequest": {
             "type": "object",
             "properties": {
@@ -27035,6 +27633,10 @@
                 "deleted_by": {
                     "type": "string"
                 },
+                "deletionScheduledFor": {
+                    "description": "DeletionScheduledFor is set (along with DeletedAt/DeletedBy) when a project\nis marked pending deletion. The project is hard-purged once this time\nelapses; until then it can be restored. Added in migration 00140.",
+                    "type": "string"
+                },
                 "extraction_config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -27082,6 +27684,14 @@
                     "type": "number"
                 },
                 "chat_prompt_template": {
+                    "type": "string"
+                },
+                "deletionScheduledFor": {
+                    "description": "DeletionScheduledFor is the RFC3339 time at which the project will be\nhard-purged. Omitted unless DeletionStatus is \"pending_deletion\".",
+                    "type": "string"
+                },
+                "deletionStatus": {
+                    "description": "DeletionStatus is \"active\" for normal projects and \"pending_deletion\" when\nthe project is in its deletion grace period (DeletionScheduledFor set).",
                     "type": "string"
                 },
                 "id": {
@@ -28466,6 +29076,73 @@
                 }
             }
         },
+        "domain_schemaregistry.ObjectTypeHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "current_version": {
+                    "type": "integer"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "type_name": {
+                    "type": "string"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemaregistry.ObjectTypeVersionDTO"
+                    }
+                }
+            }
+        },
+        "domain_schemaregistry.ObjectTypeVersionDTO": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "extraction_config": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "json_schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "schema_version": {
+                    "type": "integer"
+                },
+                "ui_config": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "domain_schemaregistry.ProjectObjectSchemaRegistry": {
             "type": "object",
             "properties": {
@@ -28812,6 +29489,22 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "domain_schemas.ClaimingBlueprint": {
+            "type": "object",
+            "properties": {
+                "blueprintId": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "kb.blueprints.name",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "applied version (kb.blueprint_applications.version)",
+                    "type": "string"
                 }
             }
         },
@@ -29240,6 +29933,28 @@
                     "type": "string"
                 },
                 "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_schemas.PackBlueprintClaim": {
+            "type": "object",
+            "properties": {
+                "blueprints": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_schemas.ClaimingBlueprint"
+                    }
+                },
+                "name": {
+                    "description": "pack name (kb.graph_schemas.name)",
+                    "type": "string"
+                },
+                "schemaId": {
+                    "type": "string"
+                },
+                "version": {
+                    "description": "pack version (kb.graph_schemas.version)",
                     "type": "string"
                 }
             }

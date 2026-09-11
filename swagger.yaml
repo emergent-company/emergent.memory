@@ -4041,6 +4041,106 @@ definitions:
       total:
         type: integer
     type: object
+  domain_mcp.CatalogResponse:
+    properties:
+      tools:
+        items:
+          $ref: '#/definitions/domain_mcp.CatalogToolDTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  domain_mcp.CatalogToolDTO:
+    properties:
+      category:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      requiredScope:
+        type: string
+    type: object
+  domain_mcp.CreateAgentMCPShareRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  domain_mcp.CreateAgentMCPShareResponse:
+    properties:
+      agentId:
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      lastUsedAt:
+        type: string
+      mcpUrl:
+        type: string
+      name:
+        type: string
+      projectId:
+        type: string
+      status:
+        type: string
+      token:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  domain_mcp.CreateShareInstanceRequest:
+    properties:
+      agents:
+        items:
+          type: string
+        type: array
+      description:
+        type: string
+      name:
+        type: string
+      tools:
+        items:
+          type: string
+        type: array
+    type: object
+  domain_mcp.CreateShareInstanceResponse:
+    properties:
+      agents:
+        items:
+          type: string
+        type: array
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      isLegacy:
+        type: boolean
+      lastUsedAt:
+        type: string
+      mcpUrl:
+        type: string
+      name:
+        type: string
+      projectId:
+        type: string
+      status:
+        type: string
+      token:
+        type: string
+      tools:
+        items:
+          type: string
+        type: array
+      updatedAt:
+        type: string
+    type: object
   domain_mcp.ErrorObject:
     properties:
       code:
@@ -4726,6 +4826,15 @@ definitions:
       updatedAt:
         type: string
     type: object
+  domain_orgs.UpdateOrgRequest:
+    properties:
+      name:
+        maxLength: 120
+        minLength: 1
+        type: string
+    required:
+    - name
+    type: object
   domain_orgs.UpsertOrgToolSettingRequest:
     properties:
       config:
@@ -4791,6 +4900,12 @@ definitions:
         type: string
       deleted_by:
         type: string
+      deletionScheduledFor:
+        description: |-
+          DeletionScheduledFor is set (along with DeletedAt/DeletedBy) when a project
+          is marked pending deletion. The project is hard-purged once this time
+          elapses; until then it can be restored. Added in migration 00140.
+        type: string
       extraction_config:
         additionalProperties: {}
         type: object
@@ -4822,6 +4937,16 @@ definitions:
       budget_usd:
         type: number
       chat_prompt_template:
+        type: string
+      deletionScheduledFor:
+        description: |-
+          DeletionScheduledFor is the RFC3339 time at which the project will be
+          hard-purged. Omitted unless DeletionStatus is "pending_deletion".
+        type: string
+      deletionStatus:
+        description: |-
+          DeletionStatus is "active" for normal projects and "pending_deletion" when
+          the project is in its deletion grace period (DeletionScheduledFor set).
         type: string
       id:
         type: string
@@ -5744,6 +5869,50 @@ definitions:
       version:
         type: string
     type: object
+  domain_schemaregistry.ObjectTypeHistoryResponse:
+    properties:
+      current_version:
+        type: integer
+      project_id:
+        type: string
+      type_name:
+        type: string
+      versions:
+        items:
+          $ref: '#/definitions/domain_schemaregistry.ObjectTypeVersionDTO'
+        type: array
+    type: object
+  domain_schemaregistry.ObjectTypeVersionDTO:
+    properties:
+      active:
+        type: boolean
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      enabled:
+        type: boolean
+      extraction_config:
+        items:
+          type: integer
+        type: array
+      json_schema:
+        items:
+          type: integer
+        type: array
+      namespace:
+        type: string
+      registry_id:
+        type: string
+      schema_version:
+        type: integer
+      ui_config:
+        items:
+          type: integer
+        type: array
+    type: object
   domain_schemaregistry.ProjectObjectSchemaRegistry:
     properties:
       createdAt:
@@ -5996,6 +6165,17 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  domain_schemas.ClaimingBlueprint:
+    properties:
+      blueprintId:
+        type: string
+      name:
+        description: kb.blueprints.name
+        type: string
+      version:
+        description: applied version (kb.blueprint_applications.version)
+        type: string
     type: object
   domain_schemas.CommitMigrationArchiveRequest:
     properties:
@@ -6287,6 +6467,21 @@ definitions:
       schema_version:
         type: string
       type:
+        type: string
+    type: object
+  domain_schemas.PackBlueprintClaim:
+    properties:
+      blueprints:
+        items:
+          $ref: '#/definitions/domain_schemas.ClaimingBlueprint'
+        type: array
+      name:
+        description: pack name (kb.graph_schemas.name)
+        type: string
+      schemaId:
+        type: string
+      version:
+        description: pack version (kb.graph_schemas.version)
         type: string
     type: object
   domain_schemas.PropertyConflict:
@@ -7930,7 +8125,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.77.0
+  version: 0.79.0
 paths:
   /.well-known/oauth-protected-resource:
     get:
@@ -13735,6 +13930,51 @@ paths:
       summary: Get organization by ID
       tags:
       - organizations
+    patch:
+      consumes:
+      - application/json
+      description: Updates an organization's name (name-only; description/logo deferred
+        pending a DB column)
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Organization update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_orgs.UpdateOrgRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Organization updated
+          schema:
+            $ref: '#/definitions/domain_orgs.OrgDTO'
+        "400":
+          description: Invalid request body or name
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Organization not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update organization
+      tags:
+      - organizations
   /api/orgs/{id}/members:
     get:
       description: Returns all members of an organization with their roles
@@ -13991,7 +14231,9 @@ paths:
       - projects
   /api/projects/{id}:
     delete:
-      description: Permanently deletes a project and all associated data
+      description: Marks a project for deletion. The project is hidden from normal
+        listings and hard-purged after a grace period; it can be restored in the meantime
+        via POST /api/projects/{id}/restore.
       parameters:
       - description: Project ID (UUID)
         in: path
@@ -14001,11 +14243,10 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
-          description: Deletion status
+        "202":
+          description: Pending deletion status
           schema:
-            additionalProperties:
-              type: string
+            additionalProperties: true
             type: object
         "400":
           description: Invalid project ID
@@ -14278,6 +14519,45 @@ paths:
       security:
       - bearerAuth: []
       summary: Remove project member
+      tags:
+      - projects
+  /api/projects/{id}/restore:
+    post:
+      description: Cancels a pending deletion for a project still within its grace
+        period, returning it to active status.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Restored status
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid project ID
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Project not pending deletion
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Restore project
       tags:
       - projects
   /api/projects/{id}/transfer:
@@ -14686,6 +14966,58 @@ paths:
       summary: Enable an agent
       tags:
       - agents
+  /api/projects/{projectId}/agents/{id}/mcp-share:
+    post:
+      consumes:
+      - application/json
+      description: Creates a share credential binding a new project API token to one
+        agent, exposing it as a single-tool MCP server. Returns the raw token exactly
+        once.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Agent ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Share
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcp.CreateAgentMCPShareRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_mcp.CreateAgentMCPShareResponse'
+        "403":
+          description: Project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Agent not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Duplicate name
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create a per-agent MCP share
+      tags:
+      - mcp
   /api/projects/{projectId}/invites:
     get:
       description: Returns all invitations (pending, accepted, declined, revoked)
@@ -14791,6 +15123,75 @@ paths:
       security:
       - bearerAuth: []
       summary: Share read-only MCP access
+      tags:
+      - mcp
+  /api/projects/{projectId}/mcp/shares:
+    post:
+      consumes:
+      - application/json
+      description: Creates a named MCP share instance bound to a new project API token
+        with the selected tool/agent allowlists. Returns the raw token exactly once.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Share instance
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcp.CreateShareInstanceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_mcp.CreateShareInstanceResponse'
+        "403":
+          description: Project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Duplicate name
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Invalid allowlist
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create an MCP share instance
+      tags:
+      - mcp
+  /api/projects/{projectId}/mcp/tools:
+    get:
+      description: Returns the memory tools that can be granted to an MCP share instance
+        (name, description, required scope, category), excluding agent-only tools.
+        Admin only.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcp.CatalogResponse'
+        "403":
+          description: Project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List includable MCP tools
       tags:
       - mcp
   /api/projects/{projectId}/skills:
@@ -15511,6 +15912,51 @@ paths:
       summary: Update registered type
       tags:
       - schema-registry
+  /api/schema-registry/projects/{projectId}/types/{typeName}/versions:
+    get:
+      consumes:
+      - application/json
+      description: Returns the persisted version history for a registered object type,
+        newest first
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Object type name
+        in: path
+        name: typeName
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Type version history
+          schema:
+            $ref: '#/definitions/domain_schemaregistry.ObjectTypeHistoryResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Type not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get object type version history
+      tags:
+      - schema-registry
   /api/schemas:
     post:
       consumes:
@@ -15672,7 +16118,7 @@ paths:
     get:
       consumes:
       - application/json
-      description: Returns schema packs visible to a project (project-owned + global),
+      description: Returns schema packs owned by a project (strictly project-scoped),
         with optional search and pagination
       parameters:
       - description: Project ID (UUID)
@@ -16259,6 +16705,44 @@ paths:
       security:
       - bearerAuth: []
       summary: Get migration job status
+      tags:
+      - schemas
+  /api/schemas/projects/{projectId}/pack-claims:
+    get:
+      consumes:
+      - application/json
+      description: Returns, for a project, the mapping between compiled schema packs
+        and the applied blueprints that claim them
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Pack claims
+          schema:
+            items:
+              $ref: '#/definitions/domain_schemas.PackBlueprintClaim'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List pack-blueprint claims
       tags:
       - schemas
   /api/schemas/projects/{projectId}/validate:
