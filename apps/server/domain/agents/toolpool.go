@@ -1050,42 +1050,19 @@ func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error)
 	return defs, nil
 }
 
-// convertRelayResponse converts a raw MCP JSON-RPC response map from a relay tool
-// call into a format compatible with convertToolResult.
-// The response map is expected to have a "result" key (on success) or "error" key
-// (on failure), following the JSON-RPC 2.0 specification.
+// convertRelayResponse converts a raw relay tool result map into the shape
+// expected by ADK function tools via convertToolResult.
+//
+// The relay ResponseFrame carries the raw tool result directly (not a JSON-RPC
+// envelope) — see the relay branch of mcp.Service.ExecuteTool. Real relay
+// failures surface as a Go error from CallTool (the connector sets
+// ResponseFrame.Error), so callers handle those before reaching here.
 func convertRelayResponse(response map[string]any) (map[string]any, error) {
-	// Check for JSON-RPC error
-	if errRaw, ok := response["error"]; ok {
-		errMap, ok := errRaw.(map[string]any)
-		if ok {
-			msg, _ := errMap["message"].(string)
-			if msg != "" {
-				return map[string]any{"error": msg}, nil
-			}
-		}
-		return map[string]any{"error": "relay tool returned an error"}, nil
-	}
-
-	// Extract result field from JSON-RPC response
-	resultRaw, ok := response["result"]
-	if !ok {
-		return map[string]any{"result": "ok"}, nil
-	}
-
-	// Marshal result into ToolResult for convertToolResult
-	result := &mcp.ToolResult{}
-	data, err := json.Marshal(resultRaw)
+	resultBytes, err := json.Marshal(response)
 	if err != nil {
-		return map[string]any{
-			"error": "invalid relay tool result: failed to marshal result",
-		}, nil
+		return map[string]any{"error": "invalid relay tool result"}, nil
 	}
-	if err := json.Unmarshal(data, result); err != nil {
-		return map[string]any{
-			"error": "invalid relay tool result: failed to unmarshal into ToolResult",
-		}, nil
-	}
-
-	return convertToolResult(result)
+	return convertToolResult(&mcp.ToolResult{
+		Content: []mcp.ContentBlock{{Type: "text", Text: string(resultBytes)}},
+	})
 }
