@@ -288,15 +288,18 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 			}
 			relayToolCount += len(relayToolDefs)
 			for _, rt := range relayToolDefs {
-				// rt.Name is already prefixed with instanceID_ by relaySessionTools() in
-				// domain/mcp/service.go — do not prefix again here.
-				cache.toolDefs[rt.Name] = mcp.ToolDefinition{
-					Name:        rt.Name,
+				// extractRelayToolDefs returns the bare MCP tool name. The pool key
+				// (and relay call routing in wrapSingleTool/CallTool) requires the
+				// prefixed form {instanceID}_{tool} — the same key stored in agent
+				// whitelists by the gateway relay agent picker.
+				fullName := sess.InstanceID + "_" + rt.Name
+				cache.toolDefs[fullName] = mcp.ToolDefinition{
+					Name:        fullName,
 					Description: rt.Description,
 					InputSchema: rt.InputSchema,
 				}
-				cache.toolNames = append(cache.toolNames, rt.Name)
-				cache.relayToolInstance[rt.Name] = sess.InstanceID
+				cache.toolNames = append(cache.toolNames, fullName)
+				cache.relayToolInstance[fullName] = sess.InstanceID
 			}
 		}
 		if relayToolCount > 0 {
@@ -1000,6 +1003,10 @@ func (tp *ToolPool) wrapHiddenBuiltin(projectID, name, description string, schem
 // extractRelayToolDefs extracts MCP tool definitions from a relay session's tools/list
 // result map. The map is expected to have a "tools" key whose value is an array of
 // MCP tool objects, each with "name", "description", and "inputSchema" fields.
+//
+// Returned ToolDefinition names are BARE MCP tool names (e.g. "reminders_list").
+// Callers that register these in the tool pool must prefix them with the relay
+// instance ID ({instanceID}_{tool}) to match relay routing and agent whitelists.
 func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error) {
 	toolsRaw, ok := toolsMap["tools"]
 	if !ok {
