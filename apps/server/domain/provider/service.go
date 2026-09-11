@@ -165,7 +165,10 @@ func (s *CredentialService) decryptProjectConfig(cfg *ProjectProviderConfig) (*R
 		}
 		resolved.APIKey = string(plaintext)
 	case ProviderDeepSeek:
-		resolved.BaseURL = "https://api.deepseek.com/v1"
+		resolved.BaseURL = cfg.BaseURL
+		if resolved.BaseURL == "" {
+			resolved.BaseURL = "https://api.deepseek.com/v1"
+		}
 		resolved.APIKey = string(plaintext)
 	}
 	return resolved, nil
@@ -702,7 +705,10 @@ func (s *CredentialService) buildTempResolvedCred(provider ProviderType, req Ups
 		}
 		cred.APIKey = req.APIKey
 	case ProviderDeepSeek:
-		cred.BaseURL = "https://api.deepseek.com/v1"
+		cred.BaseURL = req.BaseURL
+		if cred.BaseURL == "" {
+			cred.BaseURL = "https://api.deepseek.com/v1"
+		}
 		cred.APIKey = req.APIKey
 	}
 	return cred
