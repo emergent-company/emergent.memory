@@ -1,11 +1,20 @@
 package mcpregistry
 
 import (
+	"sort"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
 	"github.com/uptrace/bun"
 )
+
+// EncryptedSecret holds an AES-GCM ciphertext and its nonce for a single secret
+// value. Go's encoding/json marshals []byte as base64, so both fields are stored
+// as base64 strings inside the JSONB columns.
+type EncryptedSecret struct {
+	Ciphertext []byte `json:"ct"`
+	Nonce      []byte `json:"nonce"`
+}
 
 // ToolPoolInvalidator is implemented by agents.ToolPool to invalidate cached
 // tool definitions when MCP server configurations change.
@@ -42,8 +51,12 @@ type MCPServer struct {
 	Env         map[string]any `bun:"env,type:jsonb,default:'{}'" json:"env"`         // environment vars
 	URL         *string        `bun:"url" json:"url,omitempty"`                       // for sse/http
 	Headers     map[string]any `bun:"headers,type:jsonb,default:'{}'" json:"headers"` // for sse/http
-	CreatedAt   time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
-	UpdatedAt   time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+	// SecretEnv / SecretHeaders hold encrypted secret values. json:"-" ensures
+	// they are never serialized; the DTO exposes only key names.
+	SecretEnv     map[string]EncryptedSecret `bun:"secret_env,type:jsonb,default:'{}'" json:"-"`
+	SecretHeaders map[string]EncryptedSecret `bun:"secret_headers,type:jsonb,default:'{}'" json:"-"`
+	CreatedAt     time.Time                  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt     time.Time                  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 
 	// Relations
 	Tools []*MCPServerTool `bun:"rel:has-many,join:id=server_id" json:"tools,omitempty"`
@@ -73,21 +86,25 @@ type MCPServerTool struct {
 
 // MCPServerDTO is the response DTO for an MCP server.
 type MCPServerDTO struct {
-	ID          string             `json:"id"`
-	ProjectID   string             `json:"projectId"`
-	Name        string             `json:"name"`
-	Description *string            `json:"description,omitempty"`
-	Enabled     bool               `json:"enabled"`
-	Type        MCPServerType      `json:"type"`
-	Command     *string            `json:"command,omitempty"`
-	Args        []string           `json:"args,omitempty"`
-	Env         map[string]any     `json:"env,omitempty"`
-	URL         *string            `json:"url,omitempty"`
-	Headers     map[string]any     `json:"headers,omitempty"`
-	ToolCount   int                `json:"toolCount"`
-	Tools       []MCPServerToolDTO `json:"tools,omitempty"`
-	CreatedAt   time.Time          `json:"createdAt"`
-	UpdatedAt   time.Time          `json:"updatedAt"`
+	ID          string         `json:"id"`
+	ProjectID   string         `json:"projectId"`
+	Name        string         `json:"name"`
+	Description *string        `json:"description,omitempty"`
+	Enabled     bool           `json:"enabled"`
+	Type        MCPServerType  `json:"type"`
+	Command     *string        `json:"command,omitempty"`
+	Args        []string       `json:"args,omitempty"`
+	Env         map[string]any `json:"env,omitempty"`
+	URL         *string        `json:"url,omitempty"`
+	Headers     map[string]any `json:"headers,omitempty"`
+	// SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.
+	// The corresponding values are never returned by the API.
+	SecretEnvKeys     []string           `json:"secretEnvKeys"`
+	SecretHeadersKeys []string           `json:"secretHeadersKeys"`
+	ToolCount         int                `json:"toolCount"`
+	Tools             []MCPServerToolDTO `json:"tools,omitempty"`
+	CreatedAt         time.Time          `json:"createdAt"`
+	UpdatedAt         time.Time          `json:"updatedAt"`
 }
 
 // MCPServerToolDTO is the response DTO for an MCP server tool.
@@ -121,6 +138,10 @@ type CreateMCPServerDTO struct {
 	Env         map[string]any `json:"env"`
 	URL         *string        `json:"url"`
 	Headers     map[string]any `json:"headers"`
+	// SecretEnvKeys/SecretHeadersKeys name the entries in Env/Headers whose
+	// values must be encrypted at rest instead of stored in plaintext.
+	SecretEnvKeys     []string `json:"secretEnvKeys"`
+	SecretHeadersKeys []string `json:"secretHeadersKeys"`
 }
 
 // UpdateMCPServerDTO is the request DTO for updating an MCP server.
@@ -133,6 +154,12 @@ type UpdateMCPServerDTO struct {
 	Env         map[string]any `json:"env"`
 	URL         *string        `json:"url"`
 	Headers     map[string]any `json:"headers"`
+	// SecretEnvKeys/SecretHeadersKeys name the entries in Env/Headers whose
+	// values must be encrypted at rest. A key listed with an empty/omitted
+	// value keeps its previously stored ciphertext; keys no longer listed are
+	// removed.
+	SecretEnvKeys     []string `json:"secretEnvKeys"`
+	SecretHeadersKeys []string `json:"secretHeadersKeys"`
 }
 
 // UpdateMCPServerToolDTO is the request DTO for toggling a tool and/or updating its config.
@@ -303,22 +330,56 @@ func (s *MCPServer) ToDTO() *MCPServerDTO {
 		tools = append(tools, *t.ToDTO())
 	}
 	return &MCPServerDTO{
-		ID:          s.ID,
-		ProjectID:   s.ProjectID,
-		Name:        s.Name,
-		Description: s.Description,
-		Enabled:     s.Enabled,
-		Type:        s.Type,
-		Command:     s.Command,
-		Args:        s.Args,
-		Env:         s.Env,
-		URL:         s.URL,
-		Headers:     s.Headers,
-		ToolCount:   toolCount,
-		Tools:       tools,
-		CreatedAt:   s.CreatedAt,
-		UpdatedAt:   s.UpdatedAt,
+		ID:                s.ID,
+		ProjectID:         s.ProjectID,
+		Name:              s.Name,
+		Description:       s.Description,
+		Enabled:           s.Enabled,
+		Type:              s.Type,
+		Command:           s.Command,
+		Args:              s.Args,
+		Env:               stripSecretKeys(s.Env, s.SecretEnv),
+		URL:               s.URL,
+		Headers:           stripSecretKeys(s.Headers, s.SecretHeaders),
+		SecretEnvKeys:     sortedSecretKeys(s.SecretEnv),
+		SecretHeadersKeys: sortedSecretKeys(s.SecretHeaders),
+		ToolCount:         toolCount,
+		Tools:             tools,
+		CreatedAt:         s.CreatedAt,
+		UpdatedAt:         s.UpdatedAt,
 	}
+}
+
+// stripSecretKeys returns a copy of values with every key present in secrets
+// removed. It returns nil when values is nil, and an empty (non-nil) map when
+// all entries were secret, so callers can distinguish "no values" from "all
+// values were secret".
+func stripSecretKeys(values map[string]any, secrets map[string]EncryptedSecret) map[string]any {
+	if values == nil {
+		return nil
+	}
+	if len(secrets) == 0 {
+		return values
+	}
+	out := make(map[string]any, len(values))
+	for k, v := range values {
+		if _, secret := secrets[k]; secret {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// sortedSecretKeys returns the keys of an encrypted-secret map in deterministic
+// (lexicographic) order. Always non-nil so JSON emits [] rather than null.
+func sortedSecretKeys(secrets map[string]EncryptedSecret) []string {
+	keys := make([]string, 0, len(secrets))
+	for k := range secrets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ToDetailDTO converts an MCPServer entity (with loaded tools) to MCPServerDetailDTO.

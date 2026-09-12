@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/crypto"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -18,6 +19,7 @@ type Service struct {
 	mcpService     *mcp.Service
 	proxy          *ProxyManager
 	registryClient *RegistryClient
+	encryptor      *crypto.Encryptor // nil if encryption key not configured
 	log            *slog.Logger
 
 	// Track registered builtin servers per project to avoid re-registration
@@ -32,12 +34,15 @@ type Service struct {
 // NewService creates a new MCP registry service.
 // The ToolPool invalidator is wired post-construction via RegisterToolPoolInvalidator
 // (nil-safe) to break the mcpregistry ↔ agents circular dependency.
-func NewService(repo *Repository, mcpService *mcp.Service, registryClient *RegistryClient, log *slog.Logger) *Service {
+// encryptor may be nil when LLM_ENCRYPTION_KEY is not configured; secret values
+// can then not be stored or read.
+func NewService(repo *Repository, mcpService *mcp.Service, registryClient *RegistryClient, encryptor *crypto.Encryptor, log *slog.Logger) *Service {
 	return &Service{
 		repo:              repo,
 		mcpService:        mcpService,
-		proxy:             NewProxyManager(repo, log),
+		proxy:             NewProxyManager(repo, encryptor, log),
 		registryClient:    registryClient,
+		encryptor:         encryptor,
 		log:               log.With(logger.Scope("mcpregistry.svc")),
 		builtinRegistered: make(map[string]bool),
 	}
@@ -196,17 +201,29 @@ func (s *Service) CreateServer(ctx context.Context, projectID string, dto *Creat
 		enabled = *dto.Enabled
 	}
 
+	// Move secret keys out of the plaintext env/headers maps and encrypt them.
+	env, secretEnv, err := splitSecrets(s.encryptor, dto.Env, dto.SecretEnvKeys, nil, "env")
+	if err != nil {
+		return nil, err
+	}
+	headers, secretHeaders, err := splitSecrets(s.encryptor, dto.Headers, dto.SecretHeadersKeys, nil, "header")
+	if err != nil {
+		return nil, err
+	}
+
 	server := &MCPServer{
-		ProjectID:   projectID,
-		Name:        dto.Name,
-		Description: dto.Description,
-		Enabled:     enabled,
-		Type:        dto.Type,
-		Command:     dto.Command,
-		Args:        dto.Args,
-		Env:         dto.Env,
-		URL:         dto.URL,
-		Headers:     dto.Headers,
+		ProjectID:     projectID,
+		Name:          dto.Name,
+		Description:   dto.Description,
+		Enabled:       enabled,
+		Type:          dto.Type,
+		Command:       dto.Command,
+		Args:          dto.Args,
+		Env:           env,
+		URL:           dto.URL,
+		Headers:       headers,
+		SecretEnv:     secretEnv,
+		SecretHeaders: secretHeaders,
 	}
 
 	if err := s.repo.CreateServer(ctx, server); err != nil {
@@ -237,7 +254,8 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 
 	// Cannot modify builtin servers (except enable/disable)
 	if server.Type == ServerTypeBuiltin {
-		if dto.Name != nil || dto.Command != nil || dto.URL != nil || dto.Args != nil || dto.Env != nil || dto.Headers != nil {
+		if dto.Name != nil || dto.Command != nil || dto.URL != nil || dto.Args != nil || dto.Env != nil || dto.Headers != nil ||
+			dto.SecretEnvKeys != nil || dto.SecretHeadersKeys != nil {
 			return nil, fmt.Errorf("cannot modify builtin server configuration — only enable/disable is allowed")
 		}
 	}
@@ -266,13 +284,23 @@ func (s *Service) UpdateServer(ctx context.Context, id string, projectID string,
 		server.Args = dto.Args
 	}
 	if dto.Env != nil {
-		server.Env = dto.Env
+		env, secretEnv, splitErr := splitSecrets(s.encryptor, dto.Env, dto.SecretEnvKeys, server.SecretEnv, "env")
+		if splitErr != nil {
+			return nil, splitErr
+		}
+		server.Env = env
+		server.SecretEnv = secretEnv
 	}
 	if dto.URL != nil {
 		server.URL = dto.URL
 	}
 	if dto.Headers != nil {
-		server.Headers = dto.Headers
+		headers, secretHeaders, splitErr := splitSecrets(s.encryptor, dto.Headers, dto.SecretHeadersKeys, server.SecretHeaders, "header")
+		if splitErr != nil {
+			return nil, splitErr
+		}
+		server.Headers = headers
+		server.SecretHeaders = secretHeaders
 	}
 
 	if err := s.repo.UpdateServer(ctx, server); err != nil {
@@ -888,6 +916,79 @@ func schemaToMap(schema mcp.InputSchema) map[string]any {
 		return map[string]any{}
 	}
 	return result
+}
+
+// splitSecrets separates secret entries from a plaintext env/headers map and
+// encrypts them at rest. It returns the plaintext map with the secret keys
+// removed, plus the merged encrypted-secret map.
+//
+// Semantics:
+//   - A key listed in secretKeys whose value is a non-empty string is encrypted
+//     and stored. A nil encryptor in this case is an error.
+//   - A key listed in secretKeys whose value is empty/omitted retains the prior
+//     ciphertext from existing (used by partial updates). On create existing is
+//     nil, so nothing is stored for empty values.
+//   - Keys not listed in secretKeys are removed from the encrypted map, even if
+//     they previously had ciphertext.
+//
+// kind is used only for error messages ("env" or "header").
+func splitSecrets(enc *crypto.Encryptor, values map[string]any, secretKeys []string, existing map[string]EncryptedSecret, kind string) (map[string]any, map[string]EncryptedSecret, error) {
+	keySet := make(map[string]struct{}, len(secretKeys))
+	for _, k := range secretKeys {
+		keySet[k] = struct{}{}
+	}
+
+	plaintext := values
+	if values != nil && len(keySet) > 0 {
+		plaintext = make(map[string]any, len(values))
+		for k, v := range values {
+			if _, secret := keySet[k]; secret {
+				continue
+			}
+			plaintext[k] = v
+		}
+	}
+
+	secrets := make(map[string]EncryptedSecret, len(keySet))
+	for _, k := range secretKeys {
+		raw := ""
+		if values != nil {
+			if v, ok := values[k]; ok {
+				raw = secretValueString(v)
+			}
+		}
+		if raw != "" {
+			if enc == nil {
+				return nil, nil, fmt.Errorf("credential encryption not configured (LLM_ENCRYPTION_KEY missing)")
+			}
+			ct, nonce, err := enc.Encrypt([]byte(raw))
+			if err != nil {
+				return nil, nil, fmt.Errorf("encrypting secret %s %q: %w", kind, k, err)
+			}
+			secrets[k] = EncryptedSecret{Ciphertext: ct, Nonce: nonce}
+			continue
+		}
+		// Empty/omitted value: retain previously stored ciphertext, if any.
+		if prev, ok := existing[k]; ok {
+			secrets[k] = prev
+		}
+	}
+
+	return plaintext, secrets, nil
+}
+
+// secretValueString renders an env/header value as the string that will be
+// encrypted. nil renders as empty; strings pass through unchanged; anything
+// else uses the same %v formatting as the stdio env encoder.
+func secretValueString(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	default:
+		return fmt.Sprintf("%v", t)
+	}
 }
 
 // ============================================================================

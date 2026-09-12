@@ -13,6 +13,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/crypto"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -40,8 +41,9 @@ type mcpClientConn interface {
 // The proxy strips the server name prefix from tool names before forwarding
 // (e.g. "myserver_search" → calls "search" on the server named "myserver").
 type ProxyManager struct {
-	repo proxyRepo
-	log  *slog.Logger
+	repo      proxyRepo
+	encryptor *crypto.Encryptor // nil if encryption key not configured
+	log       *slog.Logger
 
 	mu    sync.RWMutex
 	conns map[string]*mcpConnection // keyed by server ID
@@ -58,11 +60,14 @@ type mcpConnection struct {
 }
 
 // NewProxyManager creates a new ProxyManager.
-func NewProxyManager(repo *Repository, log *slog.Logger) *ProxyManager {
+// encryptor may be nil when LLM_ENCRYPTION_KEY is not configured; with no
+// encryptor there can be no stored secrets, so decryption is a no-op.
+func NewProxyManager(repo *Repository, encryptor *crypto.Encryptor, log *slog.Logger) *ProxyManager {
 	return &ProxyManager{
-		repo:  repo,
-		log:   log.With(logger.Scope("mcpregistry.proxy")),
-		conns: make(map[string]*mcpConnection),
+		repo:      repo,
+		encryptor: encryptor,
+		log:       log.With(logger.Scope("mcpregistry.proxy")),
+		conns:     make(map[string]*mcpConnection),
 	}
 }
 
@@ -397,7 +402,10 @@ func (pm *ProxyManager) connectAndInitialize(ctx context.Context, server *MCPSer
 		if server.Command == nil || *server.Command == "" {
 			return nil, nil, fmt.Errorf("command is required for stdio server")
 		}
-		env := envMapToSlice(server.Env)
+		env, err := pm.decryptEnv(server)
+		if err != nil {
+			return nil, nil, err
+		}
 		client, err = mcpclient.NewStdioMCPClient(*server.Command, env, server.Args...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("creating stdio client: %w", err)
@@ -408,7 +416,10 @@ func (pm *ProxyManager) connectAndInitialize(ctx context.Context, server *MCPSer
 			return nil, nil, fmt.Errorf("url is required for SSE server")
 		}
 		var opts []transport.ClientOption
-		headers := headersMapToStringMap(server.Headers)
+		headers, err := pm.decryptHeaders(server)
+		if err != nil {
+			return nil, nil, err
+		}
 		if len(headers) > 0 {
 			opts = append(opts, transport.WithHeaders(headers))
 		}
@@ -426,7 +437,10 @@ func (pm *ProxyManager) connectAndInitialize(ctx context.Context, server *MCPSer
 			return nil, nil, fmt.Errorf("url is required for HTTP server")
 		}
 		var opts []transport.StreamableHTTPCOption
-		headers := headersMapToStringMap(server.Headers)
+		headers, err := pm.decryptHeaders(server)
+		if err != nil {
+			return nil, nil, err
+		}
 		if len(headers) > 0 {
 			opts = append(opts, transport.WithHTTPHeaders(headers))
 		}
@@ -564,8 +578,11 @@ func (pm *ProxyManager) connectStdio(ctx context.Context, server *MCPServer) (*m
 		return nil, fmt.Errorf("command is required for stdio server")
 	}
 
-	// Convert env map to []string{"KEY=value"} format
-	env := envMapToSlice(server.Env)
+	// Build the subprocess environment, merging decrypted secrets.
+	env, err := pm.decryptEnv(server)
+	if err != nil {
+		return nil, err
+	}
 
 	c, err := mcpclient.NewStdioMCPClient(*server.Command, env, server.Args...)
 	if err != nil {
@@ -588,7 +605,10 @@ func (pm *ProxyManager) connectSSE(ctx context.Context, server *MCPServer) (*mcp
 	}
 
 	var opts []transport.ClientOption
-	headers := headersMapToStringMap(server.Headers)
+	headers, err := pm.decryptHeaders(server)
+	if err != nil {
+		return nil, err
+	}
 	if len(headers) > 0 {
 		opts = append(opts, transport.WithHeaders(headers))
 	}
@@ -618,7 +638,10 @@ func (pm *ProxyManager) connectHTTP(ctx context.Context, server *MCPServer) (*mc
 	}
 
 	var opts []transport.StreamableHTTPCOption
-	headers := headersMapToStringMap(server.Headers)
+	headers, err := pm.decryptHeaders(server)
+	if err != nil {
+		return nil, err
+	}
 	if len(headers) > 0 {
 		opts = append(opts, transport.WithHTTPHeaders(headers))
 	}
@@ -767,4 +790,50 @@ func headersMapToStringMap(headers map[string]any) map[string]string {
 		result[k] = fmt.Sprintf("%v", v)
 	}
 	return result
+}
+
+// decryptEnv builds the stdio environment slice from the server's plaintext Env
+// plus every decrypted SecretEnv entry. It returns an error if a stored secret
+// cannot be decrypted. With no stored secrets (and thus possibly a nil
+// encryptor) it is a no-op.
+func (pm *ProxyManager) decryptEnv(server *MCPServer) ([]string, error) {
+	env := envMapToSlice(server.Env)
+	if len(server.SecretEnv) == 0 {
+		return env, nil
+	}
+	if pm.encryptor == nil {
+		return nil, fmt.Errorf("credential encryption not configured (LLM_ENCRYPTION_KEY missing)")
+	}
+	for k, secret := range server.SecretEnv {
+		plaintext, err := pm.encryptor.Decrypt(secret.Ciphertext, secret.Nonce)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting secret env %q: %w", k, err)
+		}
+		env = append(env, fmt.Sprintf("%s=%s", k, plaintext))
+	}
+	return env, nil
+}
+
+// decryptHeaders builds the HTTP/SSE header map from the server's plaintext
+// Headers plus every decrypted SecretHeaders entry. It returns an error if a
+// stored secret cannot be decrypted. With no stored secrets it is a no-op.
+func (pm *ProxyManager) decryptHeaders(server *MCPServer) (map[string]string, error) {
+	headers := headersMapToStringMap(server.Headers)
+	if len(server.SecretHeaders) == 0 {
+		return headers, nil
+	}
+	if pm.encryptor == nil {
+		return nil, fmt.Errorf("credential encryption not configured (LLM_ENCRYPTION_KEY missing)")
+	}
+	if headers == nil {
+		headers = make(map[string]string, len(server.SecretHeaders))
+	}
+	for k, secret := range server.SecretHeaders {
+		plaintext, err := pm.encryptor.Decrypt(secret.Ciphertext, secret.Nonce)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting secret header %q: %w", k, err)
+		}
+		headers[k] = string(plaintext)
+	}
+	return headers, nil
 }
