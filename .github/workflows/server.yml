@@ -136,10 +136,35 @@ jobs:
         run: |
           docker images memory-server:${{ github.sha }} --format "{{.Size}}"
 
+  migration-guard:
+    name: Migration Immutability
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject changes to existing migrations
+        run: |
+          set -euo pipefail
+          BASE="origin/${{ github.base_ref }}"
+          git fetch --no-tags origin "${{ github.base_ref }}" --depth=1
+          CHANGED=$(git diff --name-status --diff-filter=MDRT "$BASE"...HEAD -- 'apps/server/migrations/*.sql' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "::error::Existing migrations must never be modified, renamed, or deleted."
+            echo "Create a NEW migration file instead. Renumbering an already-applied migration"
+            echo "causes Goose to silently skip it on environments that recorded the old version."
+            echo "$CHANGED"
+            exit 1
+          fi
+          echo "OK: only new migration files added."
+
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [lint, build, test-unit]
+    needs: [lint, build, test-unit, migration-guard]
     steps:
       - name: CI gate
         run: echo "CI passed"
