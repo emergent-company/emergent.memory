@@ -52,6 +52,31 @@ func errResult(msg string) (*mcp.ToolResult, error) {
 	}, nil
 }
 
+// stringSliceArg extracts a []string from an MCP tool argument. It accepts the
+// first matching key (camelCase or snake_case) and tolerates both []any and
+// []string values.
+func stringSliceArg(args map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		raw, ok := args[key]
+		if !ok {
+			continue
+		}
+		switch v := raw.(type) {
+		case []string:
+			return v
+		case []any:
+			out := make([]string, 0, len(v))
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					out = append(out, s)
+				}
+			}
+			return out
+		}
+	}
+	return nil
+}
+
 // ============================================================================
 // MCP Server Tools
 // ============================================================================
@@ -159,6 +184,8 @@ func (h *MCPRegistryToolHandler) ExecuteCreateMCPServer(ctx context.Context, pro
 	if headers, ok := args["headers"].(map[string]any); ok {
 		dto.Headers = headers
 	}
+	dto.SecretEnvKeys = stringSliceArg(args, "secretEnvKeys", "secret_env_keys")
+	dto.SecretHeadersKeys = stringSliceArg(args, "secretHeadersKeys", "secret_headers_keys")
 
 	server, err := h.service.CreateServer(ctx, projectID, dto)
 	if err != nil {
@@ -204,6 +231,8 @@ func (h *MCPRegistryToolHandler) ExecuteUpdateMCPServer(ctx context.Context, pro
 	if headers, ok := args["headers"].(map[string]any); ok {
 		dto.Headers = headers
 	}
+	dto.SecretEnvKeys = stringSliceArg(args, "secretEnvKeys", "secret_env_keys")
+	dto.SecretHeadersKeys = stringSliceArg(args, "secretHeadersKeys", "secret_headers_keys")
 
 	server, err := h.service.UpdateServer(ctx, id, projectID, dto)
 	if err != nil {

@@ -7,6 +7,8 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/crypto"
 )
 
 // Module provides the MCP registry domain
@@ -41,12 +43,24 @@ type serviceParams struct {
 	Repo           *Repository
 	MCPService     *mcp.Service
 	RegistryClient *RegistryClient
+	Cfg            *config.Config
 	Log            *slog.Logger
 }
 
 // provideService creates a Service from fx dependencies.
+// The encryptor is optional: when LLM_ENCRYPTION_KEY is unset, secret MCP
+// env/header values cannot be stored or read (see Service).
 func provideService(p serviceParams) *Service {
-	return NewService(p.Repo, p.MCPService, p.RegistryClient, p.Log)
+	var enc *crypto.Encryptor
+	if p.Cfg != nil && p.Cfg.LLMProvider.IsEncryptionConfigured() {
+		e, err := crypto.NewEncryptor(p.Cfg.LLMProvider.EncryptionKey)
+		if err != nil {
+			p.Log.Error("failed to initialize MCP secret encryptor", "error", err)
+		} else {
+			enc = e
+		}
+	}
+	return NewService(p.Repo, p.MCPService, p.RegistryClient, enc, p.Log)
 }
 
 // registerMCPRegistryToolHandler wires the MCP registry tool handler into
