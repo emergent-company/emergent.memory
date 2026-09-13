@@ -17,8 +17,7 @@ on:
 jobs:
   build:
     name: Build docs
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:

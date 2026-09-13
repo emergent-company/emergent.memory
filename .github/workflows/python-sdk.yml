@@ -20,8 +20,7 @@ defaults:
 jobs:
   lint:
     name: Lint
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,8 +41,7 @@ jobs:
 
   typecheck:
     name: Type Check
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,8 +59,7 @@ jobs:
 
   test:
     name: Test (Python ${{ matrix.python-version }})
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -96,8 +93,7 @@ jobs:
 
   api-coverage:
     name: API Coverage Check
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
     # Informational — reports gaps but doesn't block CI
     continue-on-error: true
     steps:
