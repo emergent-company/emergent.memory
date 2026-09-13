@@ -21,7 +21,8 @@ env:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
     if: "!startsWith(github.ref, 'refs/tags/')"
     steps:
       - name: Checkout
@@ -42,7 +43,8 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
     if: "!startsWith(github.ref, 'refs/tags/')"
     steps:
       - name: Checkout
@@ -77,7 +79,8 @@ jobs:
 
   build-examples:
     name: Build Examples
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
     needs: [lint, test]
     steps:
       - name: Checkout
