@@ -44,7 +44,8 @@ xcodebuild archive \
     -derivedDataPath "${DERIVED_DATA}" \
     DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-}" \
     CODE_SIGN_STYLE=Manual \
-    CODE_SIGN_IDENTITY="Developer ID Application"
+    CODE_SIGN_IDENTITY="Developer ID Application" \
+    SWIFT_STRICT_CONCURRENCY=minimal
 
 # Step 3: Export .app
 echo "==> Exporting .app..."
