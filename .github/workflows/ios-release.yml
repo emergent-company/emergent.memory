@@ -83,7 +83,7 @@ jobs:
             -authenticationKeyID ${{ secrets.APP_STORE_CONNECT_KEY_ID }} \
             -authenticationKeyIssuerID ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }} \
             DEVELOPMENT_TEAM=74LC88G9SC \
-            SWIFT_STRICT_CONCURRENCY=minimal \
+            SWIFT_VERSION=5 \
             MARKETING_VERSION=${{ steps.version.outputs.marketing }} \
             CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build_number }}
 

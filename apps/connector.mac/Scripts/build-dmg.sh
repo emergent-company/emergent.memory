@@ -45,7 +45,7 @@ xcodebuild archive \
     DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-}" \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="Developer ID Application" \
-    SWIFT_STRICT_CONCURRENCY=minimal
+    SWIFT_VERSION=5
 
 # Step 3: Export .app
 echo "==> Exporting .app..."
