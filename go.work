@@ -1,8 +1,12 @@
-go 1.25.6
+go 1.26
 
 use (
 	./apps/server
 	./apps/server/pkg/sdk
+	./apps/cli
+	./apps/connector.linux
+	./apps/web-ui/gateway
+	./e2e
 	./blueprints/code-memory-blueprint/tools/api-audit
 	./blueprints/code-memory-blueprint/tools/coverage-audit
 	./blueprints/code-memory-blueprint/tools/func-tree
@@ -19,6 +23,5 @@ use (
 	./blueprints/code-memory-blueprint/tools/test-coverage
 	./blueprints/code-memory-blueprint/tools/entity-seed
 	./blueprints/code-memory-blueprint/tools/uml-gen
-	./tools/cli
 	./tools/opencode-test-suite
 )

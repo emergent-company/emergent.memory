@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/upgrade"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/upgrade"
 )
 
 // useUpgradeClient swaps the command's client factory for the test and restores

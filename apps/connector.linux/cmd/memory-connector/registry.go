@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/mcphost"
-	"github.com/emergent-company/memory.web-ui/connector/internal/relay"
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/relay"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 // buildRegistry assembles a fresh registry for cfg: the built-in platform/Apple

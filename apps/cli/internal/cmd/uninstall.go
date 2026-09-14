@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/installer"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/installer"
 	"github.com/spf13/cobra"
 )
 

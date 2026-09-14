@@ -7,8 +7,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/account"
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
 )
 
 // authListAccount is one entry in the `auth list --json` document.

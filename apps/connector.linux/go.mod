@@ -1,4 +1,4 @@
-module github.com/emergent-company/memory.web-ui/connector
+module github.com/emergent-company/emergent.memory/apps/connector.linux
 
 go 1.26
 

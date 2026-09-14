@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/upgrade"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/upgrade"
 )
 
 // upgradeTimeout bounds the whole resolve + download + replace operation.

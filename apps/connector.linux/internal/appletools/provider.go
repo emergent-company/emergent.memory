@@ -1,6 +1,6 @@
 package appletools
 
-import "github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+import "github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 
 // PlatformNote explains why the Apple tool set is absent on hosts without
 // osascript (non-macOS). `status` surfaces it when no Apple tools registered.

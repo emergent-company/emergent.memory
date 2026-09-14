@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/search"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 )
 
 func main() {

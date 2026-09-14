@@ -15,8 +15,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/mcphost"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 )
 
 // --- harness -----------------------------------------------------------------

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/autoupdate"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/completion"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/autoupdate"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/completion"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

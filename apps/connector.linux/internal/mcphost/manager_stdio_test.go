@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 // stdioHelperEnv marks the re-executed test binary as the MCP stdio server.

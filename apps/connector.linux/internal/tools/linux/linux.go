@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 // Stable tool names. These are the policy-target keys used for enable/disable

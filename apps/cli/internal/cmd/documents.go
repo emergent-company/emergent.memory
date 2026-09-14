@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	sdkdocs "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/documents"
-	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 

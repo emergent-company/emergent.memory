@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 // newFSDeleteTool builds the linux-fs-delete tool. Deletes require a root that

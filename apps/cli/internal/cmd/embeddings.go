@@ -23,7 +23,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 

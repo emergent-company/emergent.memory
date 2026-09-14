@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 // maxNotesLimit caps notes_search results.

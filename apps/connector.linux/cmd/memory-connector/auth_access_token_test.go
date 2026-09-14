@@ -11,7 +11,7 @@ import (
 
 	sdkauth "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/account"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
 )
 
 // seedAccessSession persists a session for serverURL in the account store that

@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
 )
 
 // systemdUnitName is the user unit managed by install/uninstall.

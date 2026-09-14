@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/spf13/cobra"
 )
 

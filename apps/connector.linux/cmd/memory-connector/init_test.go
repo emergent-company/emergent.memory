@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
 )
 
 // newSessionsHub starts a stub hub for GET /api/mcp-relay/sessions that

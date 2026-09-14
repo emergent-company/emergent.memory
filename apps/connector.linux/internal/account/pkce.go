@@ -18,7 +18,7 @@ import (
 
 	sdkauth "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/secretstore"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/secretstore"
 )
 
 // PendingLoginTTL is how long an unfinished PKCE login stays valid.

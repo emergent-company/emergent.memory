@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
 	"github.com/emergent-company/go-daisy/staticfs"
-	"github.com/emergent-company/memory.web-ui/webui"
 	"github.com/getsentry/sentry-go"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"

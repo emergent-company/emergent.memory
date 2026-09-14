@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/acp"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
-	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 

@@ -37,10 +37,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 

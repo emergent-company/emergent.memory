@@ -18,11 +18,11 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/documents"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/health"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 )
 
 // ViewMode represents the current view mode

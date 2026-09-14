@@ -11,11 +11,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/skillsfs"
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/skillsfs"
-	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

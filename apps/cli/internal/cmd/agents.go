@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agents"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
-	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 

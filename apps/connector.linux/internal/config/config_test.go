@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/mcphost"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 )
 
 const validYAML = "server_url: https://memory.example.test\n" +

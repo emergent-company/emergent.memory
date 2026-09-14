@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/appletools"
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
-	"github.com/emergent-company/memory.web-ui/connector/internal/tools"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/appletools"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/tools"
 )
 
 const sessionsBody = `{"sessions":[{"instance_id":"mbp-1","version":"0.1.0","tool_count":2,"connected_at":"2026-09-09T10:00:00Z"},{"instance_id":"other-host","tool_count":1}]}`

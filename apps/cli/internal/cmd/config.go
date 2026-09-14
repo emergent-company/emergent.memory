@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
-	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/auth"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 

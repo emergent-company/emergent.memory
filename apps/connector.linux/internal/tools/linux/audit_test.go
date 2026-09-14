@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 func discardAudit() *auditLogger {

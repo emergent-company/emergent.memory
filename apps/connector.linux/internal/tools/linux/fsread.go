@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 // newFSReadTool builds the linux-fs-read tool. Reads are capped at maxBytes and

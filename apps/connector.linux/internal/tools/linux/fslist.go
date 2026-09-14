@@ -6,7 +6,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 // newFSListTool builds the linux-fs-list tool. Listing requires a root that

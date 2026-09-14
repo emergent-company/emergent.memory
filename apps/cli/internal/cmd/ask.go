@@ -14,8 +14,8 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/x/term"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

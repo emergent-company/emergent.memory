@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
-	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"

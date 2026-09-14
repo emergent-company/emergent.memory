@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/auth"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 

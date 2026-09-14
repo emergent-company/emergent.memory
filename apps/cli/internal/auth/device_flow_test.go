@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/testutil"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

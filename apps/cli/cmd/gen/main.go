@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/cmd"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/cmd"
 )
 
 func main() {

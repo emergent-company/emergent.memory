@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/installer"
-	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/installer"
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 

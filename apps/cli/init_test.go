@@ -18,7 +18,7 @@ func TestProjectStructure(t *testing.T) {
 
 	data, err := os.ReadFile(goModPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "github.com/emergent-company/emergent.memory/tools/cli",
+	assert.Contains(t, string(data), "github.com/emergent-company/emergent.memory/apps/cli",
 		"go.mod should have correct module path")
 
 	requiredDirs := []string{

@@ -13,9 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/account"
-	"github.com/emergent-company/memory.web-ui/connector/internal/memoryapi"
-	"github.com/emergent-company/memory.web-ui/connector/internal/secretstore"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/secretstore"
 )
 
 // Project is the connector-owned project type (an alias for the API layer's

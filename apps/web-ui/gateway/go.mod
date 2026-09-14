@@ -1,4 +1,4 @@
-module github.com/emergent-company/memory.web-ui
+module github.com/emergent-company/emergent.memory/apps/web-ui
 
 go 1.26
 

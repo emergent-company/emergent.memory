@@ -1,4 +1,4 @@
-module github.com/emergent-company/emergent.memory.e2e
+module github.com/emergent-company/emergent.memory/e2e
 
 go 1.25.6
 

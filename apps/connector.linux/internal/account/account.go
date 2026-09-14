@@ -24,8 +24,8 @@ import (
 
 	sdkauth "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/secretstore"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/secretstore"
 )
 
 // ClientID is the public OAuth client id used for device-flow sign-in. It is

@@ -9,10 +9,10 @@ import (
 
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/term"

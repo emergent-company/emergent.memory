@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
 )
 
 // ErrNotFound reports a reminder identifier that resolved to no reminder.

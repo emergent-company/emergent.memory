@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/graphexplore"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/graphexplore"
 	"github.com/spf13/cobra"
 )
 

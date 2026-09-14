@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
 	sdkgraph "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/blueprints"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────

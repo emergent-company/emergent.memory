@@ -30,7 +30,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/relay"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/relay"
 )
 
 // binaryPath is the built memory-connector binary, populated once by TestMain.

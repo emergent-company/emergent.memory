@@ -6,7 +6,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/tui"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/tui"
 	"github.com/spf13/cobra"
 )
 

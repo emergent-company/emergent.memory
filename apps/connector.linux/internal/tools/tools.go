@@ -7,10 +7,10 @@ package tools
 import (
 	"runtime"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/appletools"
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
-	"github.com/emergent-company/memory.web-ui/connector/internal/tools/linux"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/appletools"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/tools/linux"
 )
 
 // DisabledTool pairs a stable tool name with the human reason it is absent.

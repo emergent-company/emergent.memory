@@ -1,4 +1,4 @@
-module github.com/emergent-company/emergent.memory/tools/cli
+module github.com/emergent-company/emergent.memory/apps/cli
 
 go 1.25.0
 

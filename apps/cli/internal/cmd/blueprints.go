@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/blueprints"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
 	"github.com/spf13/cobra"
 )
 

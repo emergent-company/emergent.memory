@@ -1,5 +1,5 @@
 // Package upgrade implements self-update for the memory-connector CLI. It
-// resolves the newest connector-v* release in the shared memory.web-ui repo,
+// resolves the newest connector-v* release in the shared emergent.memory monorepo,
 // downloads the matching os/arch archive, verifies its .sha256 checksum when
 // available, extracts the bare memory-connector binary, and atomically replaces
 // the running executable.
@@ -29,7 +29,7 @@ import (
 
 // Repo is the GitHub repository that publishes connector releases (alongside
 // the web UI and gateway releases).
-const Repo = "emergent-company/memory.web-ui"
+const Repo = "emergent-company/emergent.memory"
 
 const (
 	// DefaultAPIBase is the GitHub REST API base.

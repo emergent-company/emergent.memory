@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/account"
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/memoryapi"
-	"github.com/emergent-company/memory.web-ui/connector/internal/project"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/project"
 )
 
 type fakeProjectAPI struct {

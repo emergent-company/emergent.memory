@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/skillsfs"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/skillsfs"
 	"github.com/spf13/cobra"
 )
 

@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/account"
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
 )
 
 // exitError carries an explicit process exit code out of a cobra RunE. main

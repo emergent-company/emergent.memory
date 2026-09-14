@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"time"
 
+	cliauth "github.com/emergent-company/emergent.memory/apps/cli/internal/auth"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
-	cliauth "github.com/emergent-company/emergent.memory/tools/cli/internal/auth"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/config"
 )
 
 // oauthClientID is the client ID for the memory-cli OAuth app.

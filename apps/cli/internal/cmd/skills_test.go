@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/client"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

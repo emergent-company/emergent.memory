@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/memoryapi"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
 )
 
 // writeUseConfig seeds a config that already carries an instance id and a

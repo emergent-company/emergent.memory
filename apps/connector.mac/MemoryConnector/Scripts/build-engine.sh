@@ -14,7 +14,7 @@
 set -euo pipefail
 
 REPO_ROOT="$SRCROOT/../../.."
-ENGINE_SRC="$REPO_ROOT/connector"
+ENGINE_SRC="$REPO_ROOT/apps/connector.linux"
 OUT_DIR="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 OUT_BIN="$OUT_DIR/memory-connector"
 

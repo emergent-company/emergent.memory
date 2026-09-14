@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
 	sdkagents "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
 	sdkprojects "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	sdkschemas "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/schemas"
 	sdkskills "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/skills"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/blueprints"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────

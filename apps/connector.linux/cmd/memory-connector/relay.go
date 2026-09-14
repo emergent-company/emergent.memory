@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/mgmtapi"
-	"github.com/emergent-company/memory.web-ui/connector/internal/relay"
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
-	"github.com/emergent-company/memory.web-ui/connector/internal/tools"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mgmtapi"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/relay"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/tools"
 )
 
 // runRelay runs the relay client in the foreground. It is a thin wrapper over

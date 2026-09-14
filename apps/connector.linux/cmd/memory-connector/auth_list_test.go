@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/account"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
 )
 
 func TestAuthListEmptyIsNotAnError(t *testing.T) {

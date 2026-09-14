@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/mcphost"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 )
 
 // reloadTimeout bounds one live reload (close old manager, start new servers).

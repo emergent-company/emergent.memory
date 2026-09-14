@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/mcphost"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/mcphost"
 )
 
 // Config holds the per-machine connector profile. project_id is optional when

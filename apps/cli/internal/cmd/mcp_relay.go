@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	internalui "github.com/emergent-company/emergent.memory/tools/cli/internal/ui"
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 

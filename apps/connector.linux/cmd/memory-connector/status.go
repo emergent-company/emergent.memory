@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
-	"github.com/emergent-company/memory.web-ui/connector/internal/status"
-	"github.com/emergent-company/memory.web-ui/connector/internal/toolreg"
-	"github.com/emergent-company/memory.web-ui/connector/internal/tools"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/status"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/toolreg"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/tools"
 )
 
 // statusTimeout bounds the hub sessions check.

@@ -24,7 +24,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/config"
 )
 
 // version is the connector release version reported to users and the hub. It

@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/completion"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/invitations"
-	"github.com/emergent-company/emergent.memory/tools/cli/internal/completion"
 	"github.com/spf13/cobra"
 )
 

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emergent-company/memory.web-ui/connector/internal/account"
-	"github.com/emergent-company/memory.web-ui/connector/internal/memoryapi"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
+	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
 )
 
 type fakeSessions struct {
