@@ -308,7 +308,7 @@ struct MemoryQRScannerView: View {
         let session: AVCaptureSession
         let onFound: (String) -> Void
 
-        final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
+        final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate, @unchecked Sendable {
             let onFound: (String) -> Void
 
             init(onFound: @escaping (String) -> Void) {
