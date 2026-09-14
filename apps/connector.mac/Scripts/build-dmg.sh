@@ -43,8 +43,7 @@ xcodebuild archive \
     -archivePath "${ARCHIVE_PATH}" \
     -derivedDataPath "${DERIVED_DATA}" \
     DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-}" \
-    CODE_SIGN_STYLE="${DEVELOPMENT_TEAM:+Manual}" \
-    | xcpretty || true
+    CODE_SIGN_STYLE="${DEVELOPMENT_TEAM:+Manual}"
 
 # Step 3: Export .app
 echo "==> Exporting .app..."

@@ -76,6 +76,7 @@ jobs:
             -project VoiceAgent.xcodeproj \
             -scheme VoiceAgent \
             -configuration Release \
+            -destination 'generic/platform=iOS' \
             -archivePath build/VoiceAgent.xcarchive \
             -allowProvisioningUpdates \
             -authenticationKeyPath /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8 \
