@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""AI code review: PR diff -> litellm -> pull_request_review (verdict + body)."""
+"""AI code review: PR diff -> litellm -> pull_request_review (verdict + body).
+
+Triggered by workflow_run (after CI passes), so it derives the PR number and
+base branch from the workflow_run context instead of the pull_request context.
+"""
 import json
 import os
 import subprocess
@@ -7,7 +11,37 @@ import sys
 import urllib.request
 
 
+def get_pr_number() -> str:
+    if os.environ.get("PR_NUMBER"):
+        return os.environ["PR_NUMBER"]
+    branch = os.environ.get("HEAD_BRANCH")
+    if branch:
+        r = subprocess.run(
+            ["gh", "pr", "list", "--head", branch, "--state", "open",
+             "--json", "number", "-q", ".[0].number"],
+            capture_output=True, text=True,
+        )
+        n = r.stdout.strip()
+        if n:
+            return n
+    sys.exit("could not determine PR number")
+
+
+def get_base(pr: str) -> str:
+    r = subprocess.run(
+        ["gh", "pr", "view", pr, "--json", "baseRefName", "-q", ".baseRefName"],
+        capture_output=True, text=True,
+    )
+    base = r.stdout.strip()
+    return base or "main"
+
+
 def get_diff(base: str) -> str:
+    # Ensure the base branch ref is present, then diff base...HEAD.
+    subprocess.run(
+        ["git", "fetch", "--no-tags", "origin", base],
+        capture_output=True,
+    )
     r = subprocess.run(
         ["git", "diff", f"origin/{base}...HEAD"],
         capture_output=True, text=True,
@@ -19,12 +53,10 @@ def get_diff(base: str) -> str:
 
 def parse_review(content: str) -> dict:
     s = (content or "").strip()
-    # strip markdown fences if present
     if s.startswith("```"):
         s = s.split("\n", 1)[-1]
         if s.rstrip().endswith("```"):
             s = s.rstrip()[:-3]
-    # extract first { ... last }
     i, j = s.find("{"), s.rfind("}")
     if i != -1 and j != -1 and j > i:
         s = s[i : j + 1]
@@ -35,8 +67,8 @@ def parse_review(content: str) -> dict:
 
 
 def main() -> None:
-    base = os.environ.get("GITHUB_BASE_REF", "main")
-    pr_number = os.environ["PR_NUMBER"]
+    pr_number = get_pr_number()
+    base = get_base(pr_number)
     repo = os.environ["GITHUB_REPOSITORY"]
     base_url = os.environ["LITELLM_BASE_URL"].rstrip("/")
     key = os.environ["LITELLM_API_KEY"]

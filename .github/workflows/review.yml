@@ -1,8 +1,9 @@
 name: AI Code Review
 
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
+  workflow_run:
+    workflows: ["Server Go CI"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -11,14 +12,15 @@ permissions:
 jobs:
   review:
     name: Review
-    # Runs on mcj-one (self-hosted) so it can reach the litellm endpoint over
-    # Tailscale; GitHub-hosted runners cannot.
+    # Only review PR-triggered runs whose CI fully passed (the `ci` gate).
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout PR head
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Review
@@ -26,5 +28,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
           LITELLM_BASE_URL: http://litellm.tail0358fa.ts.net:4000/v1
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: python3 .github/scripts/ai_review.py
