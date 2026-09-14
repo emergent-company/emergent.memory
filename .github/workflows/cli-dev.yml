@@ -1,6 +1,6 @@
 name: Memory CLI Dev
 
-# Dev channel: push to main touching tools/cli/** → rolling prerelease under the
+# Dev channel: push to main touching apps/cli/** → rolling prerelease under the
 # fixed tag `cli-dev`, overwritten each build. The dev version embeds the short
 # commit sha so builds are identifiable. Cross-compiles on GitHub-hosted runners
 # (CGO disabled), so it never blocks on the self-hosted macOS runner.
@@ -9,7 +9,7 @@ on:
   push:
     branches: [master, main]
     paths:
-      - 'tools/cli/**'
+      - 'apps/cli/**'
       - '.github/workflows/cli-dev.yml'
       - 'scripts/gen-manifest.sh'
 
@@ -63,10 +63,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: tools/cli/go.sum
+          cache-dependency-path: apps/cli/go.sum
 
       - name: Build binary
-        working-directory: tools/cli
+        working-directory: apps/cli
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -76,12 +76,12 @@ jobs:
           COMMIT=$(git rev-parse --short HEAD)
           BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           go build -trimpath \
-            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Version=${{ needs.version.outputs.version }} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${{ needs.version.outputs.version }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
             -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }} \
             ./cmd
 
       - name: Create archive
-        working-directory: tools/cli/dist
+        working-directory: apps/cli/dist
         shell: bash
         run: |
           tar czf memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -91,7 +91,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: memory-cli-dev-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: tools/cli/dist/*.tar.gz*
+          path: apps/cli/dist/*.tar.gz*
           retention-days: 7
 
   release:

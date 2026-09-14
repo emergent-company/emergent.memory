@@ -4,7 +4,7 @@ on:
   push:
     branches: [master, main]
     paths:
-      - 'tools/cli/**'
+      - 'apps/cli/**'
       - '.github/workflows/cli.yml'
       - 'VERSION'
     tags:
@@ -12,7 +12,7 @@ on:
   pull_request:
     branches: [master, main]
     paths:
-      - 'tools/cli/**'
+      - 'apps/cli/**'
       - '.github/workflows/cli.yml'
       - 'VERSION'
   workflow_dispatch:
@@ -33,13 +33,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: tools/cli/go.sum
+          cache-dependency-path: apps/cli/go.sum
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          working-directory: tools/cli
+          working-directory: apps/cli
           install-mode: goinstall
         env:
           GOWORK: off
@@ -56,10 +56,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: tools/cli/go.sum
+          cache-dependency-path: apps/cli/go.sum
 
       - name: Run tests
-        working-directory: tools/cli
+        working-directory: apps/cli
         env:
           GOWORK: off
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
@@ -67,7 +67,7 @@ jobs:
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
-          files: tools/cli/coverage.out
+          files: apps/cli/coverage.out
           flags: memory-cli
           fail_ci_if_error: false
 
@@ -120,7 +120,7 @@ jobs:
           echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
 
       - name: Build binary
-        working-directory: tools/cli
+        working-directory: apps/cli
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
@@ -129,7 +129,7 @@ jobs:
           GOWORK: off
         run: |
           go build \
-            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
             -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
             ./cmd
 
@@ -137,7 +137,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: tools/cli/dist/memory-cli-*
+          path: apps/cli/dist/memory-cli-*
           retention-days: 7
 
   build-cross:
@@ -165,7 +165,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: tools/cli/go.sum
+          cache-dependency-path: apps/cli/go.sum
 
       - name: Get version info
         id: version
@@ -183,7 +183,7 @@ jobs:
           echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
 
       - name: Build binary
-        working-directory: tools/cli
+        working-directory: apps/cli
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -196,12 +196,12 @@ jobs:
           fi
 
           go build \
-            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
             -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} \
             ./cmd
 
       - name: Create archive
-        working-directory: tools/cli/dist
+        working-directory: apps/cli/dist
         run: |
           tar czf memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
 
@@ -210,8 +210,8 @@ jobs:
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            tools/cli/dist/*.tar.gz
-            tools/cli/dist/*.zip
+            apps/cli/dist/*.tar.gz
+            apps/cli/dist/*.zip
           retention-days: 90
 
   release:
@@ -320,7 +320,7 @@ jobs:
 
           ### One-Line Install
           ```bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/tools/cli/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/apps/cli/install.sh | bash
           ```
 
           ### Manual Install
@@ -333,7 +333,7 @@ jobs:
 
           Verify downloads: `sha256sum -c checksums.txt`
 
-          [CLI Documentation](https://github.com/${{ github.repository }}/blob/main/tools/cli/README.md)
+          [CLI Documentation](https://github.com/${{ github.repository }}/blob/main/apps/cli/README.md)
 
           ---
 
@@ -393,11 +393,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: release-linux-*
-          path: tools/cli/artifacts
+          path: apps/cli/artifacts
           merge-multiple: true
 
       - name: Extract binaries for Docker
-        working-directory: tools/cli
+        working-directory: apps/cli
         run: |
           echo "=== Downloaded artifacts ==="
           ls -la artifacts/
@@ -430,8 +430,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: tools/cli
-          file: tools/cli/Dockerfile.prebuilt
+          context: apps/cli
+          file: apps/cli/Dockerfile.prebuilt
           push: true
           tags: |
             ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}
