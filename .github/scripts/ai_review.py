@@ -79,20 +79,26 @@ def main() -> None:
     content = resp["choices"][0]["message"].get("content") or ""
     review = parse_review(content)
     verdict = review.get("verdict", "REQUEST_CHANGES")
-    if verdict not in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
-        verdict = "REQUEST_CHANGES"
     body = review.get("body") or "(no review body)"
+
+    # GITHUB_TOKEN cannot submit an APPROVE review (GitHub blocks bot approvals).
+    # Request changes when issues are found; otherwise post a non-blocking
+    # comment. The required human review remains the final merge gate.
+    if verdict == "REQUEST_CHANGES":
+        event = "REQUEST_CHANGES"
+    else:
+        event = "COMMENT"
 
     subprocess.run(
         [
             "gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
             "--method", "POST",
-            "--field", f"event={verdict}",
+            "--field", f"event={event}",
             "--field", f"body={body}",
         ],
         check=True,
     )
-    print(f"Review posted: {verdict}")
+    print(f"Review posted: {event}")
 
 
 if __name__ == "__main__":
