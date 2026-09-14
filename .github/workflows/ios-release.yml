@@ -1,0 +1,65 @@
+name: iOS Release (TestFlight)
+
+# Stable channel: tag vX.Y.Z → archive VoiceAgent, export IPA, upload to TestFlight.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & upload to TestFlight
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive version
+        id: version
+        run: |
+          echo "marketing=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "build_number=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Archive
+        working-directory: apps/ios
+        run: |
+          xcodebuild archive \
+            -project VoiceAgent.xcodeproj \
+            -scheme VoiceAgent \
+            -configuration Release \
+            -archivePath build/VoiceAgent.xcarchive \
+            DEVELOPMENT_TEAM=74LC88G9SC \
+            MARKETING_VERSION=${{ steps.version.outputs.marketing }} \
+            CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build_number }}
+
+      - name: Export IPA
+        working-directory: apps/ios
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/VoiceAgent.xcarchive \
+            -exportPath build/Export \
+            -exportOptionsPlist ExportOptions.plist
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-ios-${{ github.sha }}
+          path: apps/ios/build/Export/*.ipa
+          retention-days: 14
+
+      - name: Upload to TestFlight
+        run: |
+          mkdir -p ~/private_keys
+          echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > ~/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+          IPA=$(find apps/ios/build/Export -name "*.ipa" -type f | head -1)
+          [ -z "$IPA" ] && { echo "::error::No IPA found"; exit 1; }
+          xcrun altool --upload-app \
+            -f "$IPA" \
+            -t ios \
+            --apiKey "${{ secrets.APP_STORE_CONNECT_KEY_ID }}" \
+            --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
+            --output-format xml
