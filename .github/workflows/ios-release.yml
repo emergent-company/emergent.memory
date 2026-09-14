@@ -48,6 +48,12 @@ jobs:
           echo "marketing=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           echo "build_number=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      - name: Write App Store Connect API key
+        run: |
+          mkdir -p /tmp/private_keys
+          echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+          chmod 600 /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+
       - name: Archive
         working-directory: apps/ios
         run: |
@@ -56,6 +62,10 @@ jobs:
             -scheme VoiceAgent \
             -configuration Release \
             -archivePath build/VoiceAgent.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.APP_STORE_CONNECT_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }} \
             DEVELOPMENT_TEAM=74LC88G9SC \
             MARKETING_VERSION=${{ steps.version.outputs.marketing }} \
             CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build_number }}
