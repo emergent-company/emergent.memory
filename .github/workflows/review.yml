@@ -1,0 +1,30 @@
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: Review
+    # Runs on mcj-one (self-hosted) so it can reach the litellm endpoint over
+    # Tailscale; GitHub-hosted runners cannot.
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          LITELLM_BASE_URL: http://litellm.tail0358fa.ts.net:4000/v1
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 .github/scripts/ai_review.py
