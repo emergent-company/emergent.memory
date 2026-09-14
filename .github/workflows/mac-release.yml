@@ -1,6 +1,8 @@
 name: Mac Release
 
 # Stable channel: tag vX.Y.Z → sign + notarize + DMG, upload to shared release.
+# Skipped entirely when apps/connector.mac/** is unchanged since the last tag —
+# notarization is the ~10min bottleneck and can't be re-aliased.
 
 on:
   push:
@@ -11,9 +13,32 @@ permissions:
   contents: write
 
 jobs:
+  check:
+    name: Check if changed
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.c.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Diff since last tag
+        id: c
+        shell: bash
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -n "$PREV" ] && ! git diff --name-only "$PREV" HEAD -- apps/connector.mac/ | grep -q .; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build, sign, notarize, package
     runs-on: macos-14
+    needs: check
+    if: needs.check.outputs.changed == 'true'
     env:
       DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
       NOTARIZE_APPLE_ID: ${{ secrets.NOTARIZE_APPLE_ID }}
