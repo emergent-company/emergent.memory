@@ -1,0 +1,32 @@
+# Ollama service for Memory self-hosted variant.
+# Start with: docker compose -f docker-compose.ollama.yml up -d
+#
+# GPU support (NVIDIA):
+#   Ensure nvidia-container-toolkit is installed, then uncomment the deploy section.
+#   docker compose -f docker-compose.ollama.yml up -d
+#
+# Apple Silicon / CPU-only:
+#   Works out of the box — Ollama uses Metal on Mac, CPU on Linux.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1       # keep models loaded for voice (avoids reload pauses)
+      - OLLAMA_HOST=0.0.0.0
+    # Uncomment for NVIDIA GPU passthrough:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  ollama-data:

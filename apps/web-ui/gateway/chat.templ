@@ -1,0 +1,445 @@
+package main
+
+import (
+	"github.com/emergent-company/memory.web-ui/webui"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// ChatPage renders the chat workspace — the primary sessions surface.
+// agents may be nil when the agent list failed to load (loadErr set).
+// schedRuns are best-effort scheduled-agent runs shown in the session rail
+// (data-origin="scheduled"); convID is the ?c= conversation to resume on
+// load; prompt is the ?prompt= first message to auto-send on load.
+// voiceEnabled gates the voice controls (call/mute buttons, status readout,
+// level meter, audio element, and the voice client scripts) on the project's
+// voice setting. modelWarnings maps agentID → the error-level "model can't be
+// served" message shown by the chat workspace's warning banner for agents
+// whose chats cannot run (nil/empty when none apply).
+templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string) {
+	<div class="h-full">
+		if loadErr != nil {
+			<div class="mx-auto max-w-3xl p-6">
+				@pageError("Agents unavailable", loadErr)
+			</div>
+		} else if len(agents) == 0 {
+			<div class="mx-auto w-full max-w-3xl p-6">
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--bot",
+					Title:       "No agents to talk to",
+					Description: "Create an agent first — then come back here and have a conversation.",
+					Variant:     ui.EmptyStateHero,
+					IconStyle:   ui.EmptyStateIconTile,
+					Bordered:    true,
+					ActionHref:  "/agents",
+					ActionLabel: "Create an agent",
+					ActionIcon:  "lucide--plus",
+				})
+			</div>
+		} else {
+			@chatWorkspace(agents, convs, agentNames, schedRuns, preselect, convID, prompt, voiceEnabled, modelWarnings)
+		}
+	</div>
+}
+
+// chatWorkspace is the full chat surface: a resumable session rail on the
+// left, and the streaming conversation (header, log, composer) on the right.
+// chat.js drives resume + streaming via the /api/* endpoints.
+templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string) {
+	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
+		<aside id="chat-rail" class="bg-base-100 border-base-content/5 relative hidden w-full shrink-0 flex-col border-r md:flex md:w-72">
+			<!-- Drag-to-resize grip on the right edge (desktop only; below md the
+			     rail is a full-width overlay). Width is driven by chat.js
+			     (single source of truth, persisted to localStorage). -->
+			<div
+				id="chat-rail-resize"
+				class="hidden md:block"
+				role="separator"
+				aria-orientation="vertical"
+				aria-label="Resize session list"
+				title="Drag to resize"
+			></div>
+			<div class="border-base-content/5 flex items-center justify-between gap-2 border-b px-4 py-3">
+				<span class="text-base-content/50 text-xs font-semibold tracking-[0.14em] uppercase">Sessions</span>
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					Shape:      ui.ButtonShapeCircle,
+					Icon:       "lucide--x",
+					AriaLabel:  "Close session list",
+					ExtraClass: "md:hidden",
+					Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
+				})
+			</div>
+			<div class="space-y-2 p-3 pb-1">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/chat",
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Block:   true,
+					Icon:    "lucide--plus",
+					Attrs:   templ.Attributes{"data-testid": "new-chat"},
+				}) {
+					New chat
+				}
+				<select id="chat-agent-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by agent">
+					<option value="">All agents</option>
+					for _, a := range agents {
+						<option value={ a.ID }>{ a.Name }</option>
+					}
+				</select>
+				<select id="chat-origin-filter" class="select select-sm select-bordered w-full" aria-label="Filter sessions by type">
+					<option value="">All types</option>
+					<option value="manual">Manual</option>
+					<option value="scheduled">Scheduled</option>
+				</select>
+			</div>
+			<div id="chat-rail-list" data-testid="session-list" class="min-h-0 grow overflow-y-auto p-2">
+				@chatRailList(convs, agentNames, schedRuns, convID)
+			</div>
+		</aside>
+		<div class="flex min-w-0 grow flex-col">
+			<div class="border-base-content/5 flex flex-wrap items-center justify-between gap-3 border-b bg-base-100 px-4 py-3 lg:px-6">
+				<div class="flex items-center gap-3">
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--panel-left",
+						AriaLabel:  "Toggle session list",
+						ExtraClass: "md:hidden",
+						Attrs:      templ.Attributes{"data-action": "toggle-chat-rail"},
+					})
+					@ui.IconTile("lucide--messages-square", ui.IconTileProps{Tone: "primary"})
+					<div>
+						<h1 class="text-sm font-semibold">Chat with Memory</h1>
+						<p class="text-base-content/45 text-xs">
+							if voiceEnabled {
+								Chat by text or voice.
+							} else {
+								Chat by text.
+							}
+						</p>
+					</div>
+				</div>
+			</div>
+			@chatModelWarningBanner(modelWarnings[defaultAgentID(agents, preselect)])
+			<div id="chat-log" class="min-h-0 grow overflow-y-auto">
+				<div class="mx-auto flex min-h-full max-w-6xl flex-col justify-end gap-3 p-4 lg:p-6">
+					@chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything — Memory answers from the selected agent's persona, using its model and tools.", "mt-1 max-w-sm text-sm") {
+						<div class="flex w-full max-w-xs flex-col items-center gap-1.5">
+							<label for="chat-agent" class="text-base-content/45 text-xs font-semibold tracking-wider uppercase">Agent</label>
+							<select id="chat-agent" class="select select-bordered w-full" aria-label="Agent">
+								for _, a := range agents {
+									<option value={ a.ID } data-warn={ modelWarnings[a.ID] } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
+								}
+							</select>
+						</div>
+						<div class="mt-1 flex flex-wrap justify-center gap-2">
+							@chatSuggestion("What can you do?")
+							@chatSuggestion("Summarize the latest conversations")
+							@chatSuggestion("Help me draft a status update")
+						</div>
+					}
+					<div id="chat-messages" class="flex flex-col gap-3"></div>
+				</div>
+			</div>
+			<div class="border-base-content/5 border-t bg-base-100 px-4 py-3 lg:px-6">
+				<form id="chat-form" class="mx-auto max-w-6xl" hx-boost="false">
+					<div class="flex flex-wrap items-stretch gap-2">
+						<textarea
+							id="chat-input"
+							data-testid="chat-input"
+							rows="1"
+							class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow basis-48 resize-none"
+							placeholder={ chatPlaceholder(agents, preselect) }
+							aria-label="Message"
+						></textarea>
+						<div class="flex shrink-0 flex-wrap items-stretch gap-1.5 sm:gap-2">
+							if voiceEnabled {
+								<div class="flex h-9 shrink-0 items-center gap-2 self-center rounded-full border border-base-content/10 bg-base-200/50 px-2.5">
+									<span id="voice-status" class="text-base-content/45 text-xs whitespace-nowrap" aria-live="polite">idle</span>
+									<span class="bg-base-content/10 h-3.5 w-px" aria-hidden="true"></span>
+									<div id="voice-level" class="voice-level" aria-hidden="true">
+										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+									</div>
+								</div>
+								@ui.Button(ui.ButtonProps{
+									Type:       ui.ButtonTypeButton,
+									Variant:    ui.ButtonGhost,
+									Size:       ui.ButtonSM,
+									Shape:      ui.ButtonShapeSquare,
+									Icon:       "lucide--mic",
+									AriaLabel:  "Mute microphone",
+									ExtraClass: "hidden h-full min-h-11 w-11 shrink-0",
+									Attrs:      templ.Attributes{"id": "voice-mute-btn"},
+								})
+								@ui.Button(ui.ButtonProps{
+									Type:       ui.ButtonTypeButton,
+									Variant:    ui.ButtonPrimary,
+									Size:       ui.ButtonSM,
+									Icon:       "lucide--phone",
+									AriaLabel:  "Start voice call",
+									ExtraClass: "h-full min-h-11 shrink-0",
+									Attrs:      templ.Attributes{"id": "voice-call-btn"},
+								}) {
+									<span class="voice-call-label voice-call-start">Call</span>
+									<span class="voice-call-label voice-call-stop hidden">Hang up</span>
+								}
+							}
+							@ui.Button(ui.ButtonProps{
+								Type:       ui.ButtonTypeSubmit,
+								Variant:    ui.ButtonPrimary,
+								Size:       ui.ButtonSM,
+								Shape:      ui.ButtonShapeSquare,
+								Icon:       "lucide--arrow-up",
+								AriaLabel:  "Send",
+								ExtraClass: "h-full min-h-11 w-11 shrink-0",
+								Attrs:      templ.Attributes{"id": "chat-send", "data-testid": "chat-send"},
+							})
+							<span id="chat-stop" class="hidden shrink-0">
+								@ui.Button(ui.ButtonProps{
+									Type:       ui.ButtonTypeButton,
+									Variant:    ui.ButtonNeutral,
+									Size:       ui.ButtonSM,
+									Shape:      ui.ButtonShapeSquare,
+									Icon:       "lucide--square",
+									AriaLabel:  "Stop generating",
+									ExtraClass: "h-full min-h-11 w-11",
+								})
+							</span>
+						</div>
+					</div>
+					<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+				</form>
+			</div>
+		</div>
+		if voiceEnabled {
+			<audio id="agent-audio" class="hidden" autoplay playsinline></audio>
+		}
+		<style>
+			/* Voice controls — meter + button states driven by voice.js.
+			   voice.js sets --level (0.0–1.0) on #voice-level every animation
+			   frame and toggles .voice-speaking while the mic is above
+			   threshold; it flips #voice-call-btn to .voice-calling and
+			   #voice-mute-btn to .voice-muted. Unlayered CSS on purpose, so
+			   these overrides beat daisyUI's layered component styles. */
+			#voice-level {
+				--level: 0;
+				display: inline-flex;
+				align-items: flex-end;
+				gap: 2px;
+				height: 1rem;
+			}
+			#voice-level .voice-level-bar {
+				position: relative;
+				width: 3px;
+				height: 100%;
+				border-radius: 2px;
+				overflow: hidden;
+				background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+				transition: background-color 120ms ease, box-shadow 120ms ease;
+			}
+			#voice-level .voice-level-fill {
+				position: absolute;
+				inset: 0;
+				border-radius: inherit;
+				background: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+				transform: scaleY(0);
+				transform-origin: bottom;
+				transition: transform 70ms ease-out, background-color 120ms ease;
+			}
+			/* arc profile: middle bars rise highest, edges stay lower */
+			#voice-level .voice-level-bar:nth-child(1) .voice-level-fill { transform: scaleY(calc(var(--level) * 0.4)); }
+			#voice-level .voice-level-bar:nth-child(2) .voice-level-fill { transform: scaleY(calc(var(--level) * 0.7)); }
+			#voice-level .voice-level-bar:nth-child(3) .voice-level-fill { transform: scaleY(calc(var(--level) * 1)); }
+			#voice-level .voice-level-bar:nth-child(4) .voice-level-fill { transform: scaleY(calc(var(--level) * 0.7)); }
+			#voice-level .voice-level-bar:nth-child(5) .voice-level-fill { transform: scaleY(calc(var(--level) * 0.4)); }
+			/* mic is picking up the user's voice — brass + soft glow */
+			#voice-level.voice-speaking .voice-level-bar {
+				background: color-mix(in oklch, var(--color-primary) 25%, transparent);
+				box-shadow: 0 0 6px color-mix(in oklch, var(--color-primary) 50%, transparent);
+			}
+			#voice-level.voice-speaking .voice-level-fill {
+				background: var(--color-primary);
+			}
+			/* call button: idle = primary "Call"; .voice-calling = hang-up.
+			   Hover/active derive from --btn-color, so the whole button
+			   re-themes red when voice.js flips the class. */
+			#voice-call-btn.voice-calling {
+				--btn-color: var(--color-error);
+				--btn-fg: var(--color-error-content);
+			}
+			#voice-call-btn.voice-calling .voice-call-start { display: none; }
+			#voice-call-btn.voice-calling .voice-call-stop { display: inline-flex; }
+			/* mute button: .voice-muted shows the mic is off */
+			#voice-mute-btn.voice-muted {
+				background: color-mix(in oklch, var(--color-error) 12%, transparent);
+				border-color: color-mix(in oklch, var(--color-error) 30%, transparent);
+				color: var(--color-error);
+			}
+		</style>
+		if voiceEnabled {
+			<script src={ templ.SafeURL(webui.AssetPath("/js/vendor/livekit-client.umd.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/voice.js")) }></script>
+		}
+		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
+		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
+		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
+		<script src={ templ.SafeURL(webui.AssetPath("/js/chat.js")) }></script>
+	</div>
+}
+
+// chatRailList renders the session rail's list portion: the two empty states
+// plus (when there are rows) a ui.List of sessionRailItem + scheduledRailItem.
+// Rendered by both the full chat page and the /partial/chat-rail refresh.
+templ chatRailList(convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, convID string) {
+	{{ hasRows := (convs != nil && len(convs.Conversations) > 0) || len(schedRuns) > 0 }}
+	@chatRailEmpty(hasRows)
+	if hasRows {
+		@ui.List(ui.ListProps{}) {
+			if convs != nil {
+				for _, c := range convs.Conversations {
+					@sessionRailItem(c, agentNames[c.AgentDefinitionID], c.ID == convID)
+				}
+			}
+			for _, r := range schedRuns {
+				@scheduledRailItem(r)
+			}
+		}
+	}
+}
+
+// sessionRailItem is one resumable conversation in the session rail.
+// Clicking it asks chat.js to load the transcript and continue it. All
+// conversations are on-demand, so their origin is "manual".
+templ sessionRailItem(c Conversation, agentName string, active bool) {
+	{{
+		attrs := templ.Attributes{
+			"data-action": "resume-session",
+			"data-id":     c.ID,
+			"data-agent":  c.AgentDefinitionID,
+			"data-origin": "manual",
+			"data-testid": "session-row",
+		}
+		if active {
+			attrs["data-active"] = "true"
+		}
+	}}
+	@ui.ListRow(ui.ListRowProps{
+		Title:    c.Title,
+		Subtitle: railSubtitle(agentName, c.UpdatedAt),
+		Leading:  ui.IconSpan("lucide--messages-square", "size-4 text-base-content/40"),
+		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")},
+		Attrs:    attrs,
+	})
+}
+
+// scheduledRailItem is one scheduled-agent run in the session rail. Runs are
+// not resumable conversations, but clicking one opens its transcript in the
+// chat workspace (data-action="open-run", handled by chat.js → resumeRun,
+// which renders /api/runs/{id}/history as normal chat bubbles so a paused run
+// can be continued in place).
+templ scheduledRailItem(r scheduledRunRow) {
+	{{
+		attrs := templ.Attributes{
+			"data-action": "open-run",
+			"data-id":     r.ID,
+			"data-run-id": r.ID,
+			"data-origin": "scheduled",
+			"data-testid": "session-row",
+		}
+	}}
+	@ui.ListRow(ui.ListRowProps{
+		Title:    r.AgentName,
+		Subtitle: railRunSubtitle(r),
+		Leading:  ui.IconSpan("lucide--calendar-clock", "size-4 text-base-content/40"),
+		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")},
+		Attrs:    attrs,
+	})
+}
+
+// railRunSubtitle builds the meta line for a scheduled run rail item.
+func railRunSubtitle(r scheduledRunRow) string {
+	if r.Status == "" {
+		return relTime(r.StartedAt)
+	}
+	return r.Status + " · " + relTime(r.StartedAt)
+}
+
+// railSubtitle builds the meta line for a session rail item.
+func railSubtitle(agentName, updatedAt string) string {
+	if agentName == "" {
+		return relTime(updatedAt)
+	}
+	return agentName + " · " + relTime(updatedAt)
+}
+
+// railEmptyClass returns the class for the session rail's "no conversations
+// yet" placeholder, hiding it when there are conversations to list.
+func railEmptyClass(hasConvs bool) string {
+	if hasConvs {
+		return "hidden px-3 py-6 text-center"
+	}
+	return "px-3 py-6 text-center"
+}
+
+// chatRailEmpty renders the two session-rail empty states. Both carry stable
+// IDs so chat.js can toggle them in place as the filters change:
+// #chat-rail-empty is the "no sessions at all" state (shown when hasRows is
+// false); #chat-rail-empty-filtered is the "filter matched nothing" state
+// (hidden until the filters have no matches).
+templ chatRailEmpty(hasRows bool) {
+	<div id="chat-rail-empty" class={ railEmptyClass(hasRows) }>
+		@ui.IconSpan("lucide--messages-square", "size-6 text-base-content/25")
+		<p class="text-base-content/45 mt-2 text-xs">No sessions yet. Chat once or create a schedule and runs land here.</p>
+	</div>
+	<div id="chat-rail-empty-filtered" class="hidden px-3 py-6 text-center">
+		@ui.IconSpan("lucide--filter", "size-6 text-base-content/25")
+		<p class="text-base-content/45 mt-2 text-xs">No sessions match the current filter.</p>
+	</div>
+}
+
+// chatModelWarningBanner is the pre-send model-availability banner shown in
+// the chat workspace between the header row and the log. message is the
+// error-level warning for the currently selected agent ("" when its model can
+// be served). It mirrors the agent dashboard's agentModelWarningBox error
+// variant: an alert-error box plus a "Configure a provider" link to
+// /settings/providers. chat.js re-fills #chat-model-warning-text and toggles
+// the hidden class when the #chat-agent picker changes; the text itself always
+// comes from the server-computed map (never duplicated client-side).
+templ chatModelWarningBanner(message string) {
+	<div id="chat-model-warning" role="alert" class={ "alert alert-error alert-outline mx-auto w-full max-w-6xl px-4 pt-3 lg:px-6", templ.KV("hidden", message == "") }>
+		@ui.IconSpan("lucide--alert-triangle", "size-5")
+		<div class="flex min-w-0 items-center gap-3">
+			<span class="min-w-0 grow" id="chat-model-warning-text">{ message }</span>
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLink,
+				Href:       "/settings/providers",
+				Variant:    ui.ButtonOutline,
+				Size:       ui.ButtonXS,
+				Icon:       "lucide--server",
+				ExtraClass: "shrink-0 h-auto",
+			}) {
+				Configure a provider
+			}
+		</div>
+	</div>
+}
+
+// chatSuggestion renders a tappable prompt chip for the welcome state.
+templ chatSuggestion(text string) {
+	<button
+		type="button"
+		class="memory-suggestion border-base-content/15 bg-base-100/50 text-base-content/70 hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
+		data-suggestion={ text }
+	>
+		{ text }
+	</button>
+}

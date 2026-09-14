@@ -1,0 +1,1196 @@
+# .runlog.yaml — test categories for the runlog TUI
+# Tests not listed here appear under "Uncategorized".
+# Install runlog: go install github.com/emergent-company/runlog/cmd/runlog@latest
+
+testCommand: "cd /root/emergent.memory.e2e && PATH=$PATH:/root/.memory/bin TEST_RUNNER=daemon MEMORY_TEST_SERVER=http://localhost:3002 MEMORY_TEST_TOKEN=e2e-test-user MEMORY_AUTH_MODE=standalone go test -v -count=1 -run ^{name}$ ./tests/api/... ./tests/integration/... ./tests/cli/..."
+db: "tests/cli/logs/runs.db"
+
+categories:
+  cli/install:
+    - TestCLIInstalled_Version
+    - TestCLIInstalled_Help
+    - TestCLIInstalled_SetToken
+    - TestCLIInstalled_StatusAuthenticated
+    - TestCLIInstalled_ConfigShowAndSet
+    - TestOpencodeInstalled
+    - TestOpencodeSeesInstalledSkills
+
+  cli/projects:
+    - TestCLIInstalled_ProjectCreateGetDelete
+    - TestCLIInstalled_ProjectGetWithStats
+    - TestCLIInstalled_ProjectSet
+    - TestCLIInstalled_ProjectSetInfo
+    - TestCLIInstalled_ProjectsList
+    - TestCLIInstalled_ProjectsListJSON
+    - TestCLIInstalled_ProjectCreateGetDelete_StepAPI
+
+  cli/agents:
+    - TestCLIInstalled_AgentDefinitionCreateGetDelete
+    - TestCLIInstalled_AgentDefinitionList
+    - TestCLIInstalled_AgentCreateGetDelete
+    - TestCLIInstalled_AgentTriggerAndRuns
+    - TestCLIInstalled_AgentUpdate
+    - TestCLIInstalled_AgentDefinitionUpdate
+    - TestCLIInstalled_AgentGetRun
+    - TestCLIInstalled_AgentsListJSON
+    - TestCLIInstalled_AgentDefinitionOverridesListEmpty
+    - TestCLIInstalled_AgentDefinitionOverrideSetAndClear
+    - TestCLIInstalled_AgentDefinitionOverrideHelp
+    - TestCLIInstalled_AgentDefinitionOverridesHelp
+
+  cli/graph:
+    - TestCLIInstalled_GraphObjectCreateGetDelete
+    - TestCLIInstalled_GraphObjectUpdate
+    - TestCLIInstalled_GraphObjectListJSON
+    - TestCLIInstalled_GraphRelationshipCreateListDelete
+    - TestCLIInstalled_GraphObjectEdges
+    - TestCLIInstalled_GraphObjectCreateBatch
+    - TestCLIInstalled_GraphRelationshipCreateBatch
+    - TestCLIInstalled_GraphRelationshipGet
+    - TestCLIInstalled_GraphObjectsListTable
+    - TestCLIInstalled_GraphRelationshipsListJSON
+
+  cli/schemas:
+    - TestCLIInstalled_SchemasList
+    - TestCLIInstalled_SchemasInstalledEmpty
+    - TestCLIInstalled_SchemasInstallUninstall
+    - TestCLIInstalled_SchemasCompiledTypes
+    - TestCLIInstalled_SchemasCreateGetDelete
+    - TestCLIInstalled_SchemasListJSON
+
+  cli/tokens:
+    - TestCLIInstalled_AccountTokenCreate
+    - TestCLIInstalled_TokensList
+    - TestCLIInstalled_TokenGetAndRevoke
+    - TestCLIInstalled_TokensListJSON
+
+  cli/documents:
+    - TestCLIInstalled_DocumentUploadGetDelete
+    - TestCLIInstalled_DocumentsList
+    - TestCLIInstalled_DocumentsListJSON
+
+  cli/skills:
+    - TestCLIInstalled_SkillsInstall
+    - TestCLIInstalled_SkillsInstall_NonMemorySkillsAbsent
+    - TestCLIInstalled_SkillsValid
+    - TestCLIInstalled_SkillsList
+    - TestCLIInstalled_SkillCreateGetUpdateDelete
+    - TestCLIInstalled_SkillListProject
+    - TestCLIInstalled_SkillsImportFile
+    - TestCLIInstalled_SkillsImportFromDir
+
+  cli/hooks:
+    - TestCLIInstalled_HookCreateListDelete
+
+  cli/builtin-tools:
+    - TestCLIInstalled_BuiltinToolsList
+    - TestCLIInstalled_BuiltinToolsToggle
+
+  cli/mcp-servers:
+    - TestCLIInstalled_MCPServerCreateGetListDelete
+    - TestCLIInstalled_MCPServerToolsEmpty
+    - TestCLIInstalled_MCPServerSync
+    - TestCLIInstalled_MCPServerInspect
+    - TestCLIInstalled_MCPServerInspectHelp
+    - TestCLIInstalled_MCPServerSyncHelp
+    - TestCLIInstalled_MCPServerToolsHelp
+
+  cli/provider:
+    - TestCLIInstalled_ProviderUsage
+    - TestCLIInstalled_ProviderUsageJSON
+    - TestCLIInstalled_ProviderUsageWithProject
+    - TestCLIInstalled_ProviderList
+    - TestCLIInstalled_ProviderListJSON
+    - TestCLIInstalled_ProviderTimeseries
+    - TestCLIInstalled_ProviderTimeseriesJSON
+    - TestCLIInstalled_ProviderTimeseriesGranularity
+    - TestCLIInstalled_ProviderModelsList
+    - TestCLIInstalled_ProviderModelsFilterType
+    - TestCLIInstalled_ProviderTest
+    - TestCLIInstalled_ProviderConfigureProjectHelp
+    - TestCLIInstalled_ProviderConfigureProjectRemoveNoop
+
+  cli/blueprints:
+    - TestCLIInstalled_BlueprintsDump
+    - TestCLIInstalled_BlueprintsDumpWithTypes
+    - TestCLIInstalled_BlueprintsApplyLocal
+    - TestCLIInstalled_BlueprintsApplyWithUpgrade
+
+  cli/query:
+    - TestCLIInstalled_QuerySearchMode
+    - TestCLIInstalled_QueryJSONOutput
+    - TestCLIInstalled_QueryAgentMode
+    - TestCLIInstalled_QueryWithProjectToken
+
+  cli/adk-sessions:
+    - TestCLIInstalled_ADKSessionsListEmpty
+    - TestCLIInstalled_ADKSessionsListJSON
+
+  cli/questions:
+    - TestCLIInstalled_AgentQuestionsListProject
+    - TestCLIInstalled_AgentQuestionsRespondInvalid
+    - TestCLIInstalled_AgentQuestionsRespondHelp
+
+  cli/login-logout:
+    - TestCLIInstalled_LoginHelp
+    - TestCLIInstalled_LogoutHelp
+    - TestCLIInstalled_Logout
+
+  cli/config:
+    - TestCLIInstalled_ConfigSetServer
+    - TestCLIInstalled_ConfigSetCredentials
+
+  cli/init:
+    - TestCLIInstalled_Init
+    - TestCLIInstalled_InitHelp
+    - TestCLIInstalled_InitIdempotent
+
+  cli/embeddings:
+    - TestCLIInstalled_EmbeddingsStatus
+    - TestCLIInstalled_EmbeddingsPauseResume
+    - TestCLIInstalled_EmbeddingsConfig
+
+  cli/traces:
+    - TestCLIInstalled_TracesList
+    - TestCLIInstalled_TracesSearch
+    - TestCLIInstalled_TracesGet
+
+  cli/server:
+    - TestCLIInstalled_ServerDoctor
+
+  cli/misc:
+    - TestCLIInstalled_MCPGuide
+    - TestCLIInstalled_CompletionBash
+    - TestCLIInstalled_CompletionZsh
+    - TestCLIInstalled_CompletionFish
+    - TestCLIInstalled_CompletionPowershell
+    - TestCLIInstalled_UpgradeHelp
+
+  cli/project-token-auth:
+    - TestCLIInstalled_ProjectToken_GraphObjects
+    - TestCLIInstalled_ProjectToken_GraphRelationships
+    - TestCLIInstalled_ProjectToken_Schemas
+    - TestCLIInstalled_ProjectToken_QuerySearch
+    - TestCLIInstalled_ProjectToken_QueryAgent
+    - TestCLIInstalled_ProjectToken_TokensList
+    - TestCLIInstalled_ProjectToken_ProviderTest
+    - TestCLIInstalled_ProjectToken_GraphEdges
+
+  ask/cli:
+    - TestCLIInstalled_AskNoProjectStream
+    - TestCLIInstalled_AskRequiresAuth
+    - TestCLIInstalled_AskProjectStream
+    - TestCLIInstalled_AskProjectSetup
+    - TestCLIInstalled_AskNoProjectVariants
+    - TestCLIInstalled_AskAgentCreateProject
+    - TestCLIInstalled_AskProjectCreateProject
+    - TestCLIInstalled_AskProjectVariants
+    - TestCLIInstalled_AskAgentCreateAgentDef
+
+  ask/commands:
+    - TestAsk_GlobalVersion
+    - TestAsk_GlobalHelp
+    - TestAsk_GlobalSetupGuide
+    - TestAsk_ProjectCreate
+    - TestAsk_ProjectGet
+    - TestAsk_ProjectDelete
+    - TestAsk_ProjectsList
+    - TestAsk_TokenCreate
+    - TestAsk_TokenRevoke
+    - TestAsk_AgentDefCreate
+    - TestAsk_AgentCreate
+    - TestAsk_AgentTrigger
+    - TestAsk_GraphObjectCreate
+    - TestAsk_GraphObjectsList
+    - TestAsk_GraphRelationshipsList
+    - TestAsk_SkillsList
+    - TestAsk_SkillsInstall
+    - TestAsk_ConfigSetServerURL
+    - TestAsk_ConfigSetProjectID
+    - TestAsk_MCPServerConfigure
+    - TestAsk_BlueprintInstall
+
+  ask/edge-cases:
+    - TestAsk_Edge_BogusProjectID
+    - TestAsk_Edge_DeletedProject
+    - TestAsk_Edge_EmptyGraphTraversal
+    - TestAsk_Edge_UnicodeObjectProperties
+    - TestAsk_Edge_UnknownEntityType
+    - TestAsk_Edge_DuplicateRelationship
+    - TestAsk_Edge_SelfReferencingRelationship
+    - TestAsk_Edge_IdempotentProjectCreate
+    - TestAsk_Edge_OutOfScopeQuestion
+    - TestAsk_Edge_DeleteObjectWithRelationships
+    - TestAsk_Edge_MinimalGraphObject
+    - TestAsk_Edge_RevokedToken
+    - TestAsk_Edge_AmbiguousEntityReference
+    - TestAsk_Edge_DeleteAlreadyDeletedObject
+    - TestAsk_Edge_DeepNestedProperties
+    - TestAsk_Edge_NonexistentAction
+    - TestAsk_Edge_SpecialCharsInName
+    - TestAsk_Edge_ContradictoryInstructions
+    - TestAsk_Edge_RelationshipDirection
+    - TestAsk_Edge_LongMessage
+
+  ask/multi-step:
+    - TestAsk_MultiStep_ProjectLifecycle
+    - TestAsk_MultiStep_AgentFullCycle
+    - TestAsk_MultiStep_GraphWebOfObjects
+    - TestAsk_MultiStep_DataDiscoveryAndQuery
+    - TestAsk_MultiStep_TokenAndProjectSetup
+    - TestAsk_MultiStep_QueryThenMutate
+    - TestAsk_MultiStep_ErrorRecovery
+    - TestAsk_MultiStep_CRUDLifecycle
+    - TestAsk_MultiStep_CrossTypeGraphTraversal
+    - TestAsk_MultiStep_BulkCreateAndSelectiveDelete
+
+  ask/prompt:
+    - TestAskPrompt_DocsClassification_HowToCreateProject
+    - TestAskPrompt_DocsClassification_WhatIsKnowledgeGraph
+    - TestAskPrompt_DocsClassification_SupportedProviders
+    - TestAskPrompt_TaskClassification_ListGraphObjects
+    - TestAskPrompt_TaskClassification_CountObjects
+    - TestAskPrompt_CLIFirst_NoCurlByDefault
+    - TestAskPrompt_APIWhenAsked
+    - TestAskPrompt_CrossProject_ListProjects
+    - TestAskPrompt_RelocatedCommands_MCPServers
+    - TestAskPrompt_AuthAware_ProjectContextMentioned
+    - TestAskPrompt_Timing_DocsQuestion
+    - TestAskPrompt_Timing_TaskQuestion
+
+  query/prompt:
+    - TestQueryPrompt_FindSeededObject
+    - TestQueryPrompt_ListByType
+    - TestQueryPrompt_EmptyGraph
+    - TestQueryPrompt_RelationshipTraversal
+    - TestQueryPrompt_Timing_SearchMode
+    - TestQueryPrompt_Timing_AgentMode
+
+  blueprints/install:
+    - TestBlueprintMultiAgent_Install
+    - TestBlueprintProjectInfo_Install
+    - TestBlueprintV3_SkillsInstalled
+    - TestBlueprintV3_SkillsUpgrade
+    - TestAINewsBlueprint_InstallAndRun
+
+  blueprints/orchestrator:
+    - TestOrchestratorCompletesWorkPackage
+    - TestOrchestratorDelegatesResearch
+    - TestOrchestratorResearchThenCode
+    - TestOrchestratorParallelCoders
+    - TestOrchestratorSecurityReview
+    - TestOrchestratorHumanApproval
+
+  blueprints/v2:
+    - TestV2OrchestratorResearchThenCode
+
+  blueprints/v3:
+    - TestV3OrchestratorContextPropagation
+    - TestV3PythonSeniorCoderResearchThenCode
+    - TestV3PythonSeniorCoderNativeSearch
+
+  docs/install:
+    - TestDocInstall_BinaryNameIsMemory
+    - TestDocInstall_VersionFormat
+    - TestDocInstall_BinaryInMemoryBinDir
+    - TestDocInstall_RootInstallScriptBinaryName
+    - TestDocInstall_ToolsInstallScriptExists
+    - TestDocInstall_UpgradeCommandExists
+
+  docs/help:
+    - TestDocHelp_TopLevelSubcommands
+    - TestDocHelp_Projects
+    - TestDocHelp_ProjectsCreate
+    - TestDocHelp_Agents
+    - TestDocHelp_AgentsTrigger
+    - TestDocHelp_Graph
+    - TestDocHelp_GraphObjects
+    - TestDocHelp_Skills
+    - TestDocHelp_Provider
+    - TestDocHelp_Blueprints
+    - TestDocHelp_Tokens
+    - TestDocHelp_Ask
+    - TestDocHelp_Defs
+    - TestDocHelp_DefsCreateFlags
+    - TestDocHelp_AgentsCreateFlags
+    - TestDocHelp_AgentsHooks
+    - TestDocHelp_AgentsQuestions
+    - TestDocHelp_SkillsAllSubcommands
+    - TestDocHelp_SkillsImportFlags
+    - TestDocHelp_Documents
+    - TestDocHelp_Query
+    - TestDocHelp_TokensCreateFlags
+    - TestDocHelp_GraphObjectsAllSubcommands
+    - TestDocHelp_ProjectTokenGlobalFlag
+    - TestDocHelp_GlobalFlagsPresent
+    - TestDocHelp_Schemas
+    - TestDocHelp_Server
+    - TestDocHelp_MCPGuide
+    - TestDocHelp_Completion
+    - TestDocHelp_AgentDefinitionsAlias
+    - TestDocHelp_GraphRelationshipsAllSubcommands
+    - TestDocHelp_GraphRelationshipsCreateFlags
+    - TestDocHelp_DocumentsUploadFlags
+    - TestDocHelp_GraphObjectsCreateFlags
+    - TestDocHelp_AllTopLevelCommandsPresent
+
+  docs/commands:
+    - TestDocCmd_ProjectsCreateAndDelete
+    - TestDocCmd_ProjectsList
+    - TestDocCmd_Status
+    - TestDocCmd_ConfigShowContainsServerURL
+    - TestDocCmd_GraphObjectsList
+    - TestDocCmd_GraphRelationshipsList
+    - TestDocCmd_AgentsList
+    - TestDocCmd_SkillsListGlobal
+    - TestDocCmd_DefsCreateAndDelete
+    - TestDocCmd_TokensCreateAndRevoke
+    - TestDocCmd_GraphObjectsCreate
+    - TestDocCmd_ProjectsListOutputJSON
+    - TestDocCmd_SchemasList
+    - TestDocCmd_MCPGuide
+
+  docs/site:
+    - TestDocSite_HomePageLoads
+    - TestDocSite_GettingStartedPage
+    - TestDocSite_KnowledgeGraphPage
+    - TestDocSite_AgentsPage
+    - TestDocSite_ProviderSetupPage
+    - TestDocSite_GoSDKPage
+    - TestDocSite_GettingStartedCLIExamples
+    - TestDocSite_AgentsPageCLIExamples
+    - TestDocSite_KnowledgeGraphCLIExamples
+
+  production:
+    - TestProduction_SetToken
+    - TestProduction_AuthAndList
+    - TestProduction_ServerHealth
+    - TestProduction_IssuerEndpoint
+
+  experiments:
+    - TestQuerySDKvsMCP_SDK
+    - TestQuerySDKvsMCP_MCP
+    - TestResearchAndCodeModelComparison_Flash25
+    - TestResearchAndCodeModelComparison_FlashLite
+
+  tools:
+    - TestBraveSearch_ConfigureAndSearch
+    - TestBraveSearch_OrgLevelKey
+    - TestTaskCLI_BlueprintWorkflow
+
+  api/suites:
+    - TestHealthSuite
+    - TestProjectsSuite
+    - TestDocumentsSuite
+    - TestGraphSuite
+    - TestSearchSuite
+    - TestChunksSuite
+    - TestOrgsSuite
+
+  api/benchmark:
+    - TestPerformanceBenchmark
+
+  api/adk-sessions:
+    - TestADKSessions_GetInvalidSession
+    - TestADKSessions_ListEmpty
+  api/agents:
+    - TestAgentChat_StreamChat_InvalidAgentDefinition
+    - TestAgentsQuestionsLive_ListAndRespond
+    - TestAgentsQuestionsRemote_APIEndpoints
+    - TestAgentsQuestions_ListQuestionsByProject_InvalidStatusFilter
+    - TestAgentsQuestions_ListQuestionsByProject_RequiresAuth
+    - TestAgentsQuestions_ListQuestionsByRun_RunNotFound
+    - TestAgentsQuestions_RespondToQuestion_NotFound
+    - TestAgentsQuestions_RespondToQuestion_RequiresAuth
+    - TestAgentsVisibility_CancelRun_NotFound
+    - TestAgentsVisibility_CancelRun_RequiresAuth
+    - TestAgentsVisibility_GetRunMessages_NotFound
+    - TestAgentsVisibility_GetRunToolCalls_NotFound
+    - TestAgentsVisibility_GetRun_NotFound
+    - TestAgentsVisibility_ListProjectRuns_InvalidStatusFilter
+    - TestAgentsVisibility_ListProjectRuns_RequiresAuth
+    - TestAgentsVisibility_ListProjectRuns_ReturnsArray
+    - TestAgents_CreateAgent_MissingName
+    - TestAgents_CreateAgent_MissingProjectID
+    - TestAgents_CreateAgent_RequiresAuth
+    - TestAgents_CreateAgent_Success
+    - TestAgents_CreateDefinition_MissingName
+    - TestAgents_CreateDefinition_RequiresAuth
+    - TestAgents_CreateDefinition_RequiresProjectID
+    - TestAgents_CreateDefinition_Success
+    - TestAgents_DeleteAgent_NotFound
+    - TestAgents_DeleteAgent_Success
+    - TestAgents_DeleteDefinition_NotFound
+    - TestAgents_DeleteDefinition_Success
+    - TestAgents_GetAgentRuns_Success
+    - TestAgents_GetAgent_NotFound
+    - TestAgents_GetAgent_Success
+    - TestAgents_GetDefinition_NotFound
+    - TestAgents_GetDefinition_Success
+    - TestAgents_ListAgents_RequiresProjectID
+    - TestAgents_ListAgents_Success
+    - TestAgents_ListDefinitions_RequiresProjectID
+    - TestAgents_ListDefinitions_Success
+    - TestAgents_ListProjectRuns_RequiresAuth
+    - TestAgents_ListProjectRuns_Success
+    - TestAgents_TriggerAgent_NotFound
+    - TestAgents_TriggerAgent_StubMode
+    - TestAgents_UpdateAgent_NotFound
+    - TestAgents_UpdateAgent_Success
+    - TestAgents_UpdateDefinition_NotFound
+    - TestAgents_UpdateDefinition_Success
+  api/auth:
+    - TestApiToken_CreateDuplicateName
+    - TestApiToken_CreateEmptyScopes
+    - TestApiToken_CreateInvalidScope
+    - TestApiToken_CreateMissingName
+    - TestApiToken_CreateMissingScopes
+    - TestApiToken_CreateNameTooLong
+    - TestApiToken_CreateRequiresAuth
+    - TestApiToken_CreateSuccess
+    - TestApiToken_DuplicateNameNotAllowedAfterRevoke
+    - TestApiToken_GetNotFound
+    - TestApiToken_GetRequiresAuth
+    - TestApiToken_GetSuccess
+    - TestApiToken_ListDoesNotIncludeTokenValue
+    - TestApiToken_ListRequiresAuth
+    - TestApiToken_ListReturnsTokens
+    - TestApiToken_RevokeAlreadyRevoked
+    - TestApiToken_RevokeNotFound
+    - TestApiToken_RevokeRequiresAuth
+    - TestApiToken_RevokeSuccess
+    - TestApiToken_RevokedTokenReturns401
+    - TestApiToken_ValidTokenAuthenticates
+    - TestAuthInfo_IssuerIsPublic
+    - TestAuthInfo_MeRequiresAuth
+    - TestAuthInfo_MeReturnsUserInfo
+    - TestAuth_APIToken_InvalidReturns401
+    - TestAuth_APIToken_RevokedReturns401
+    - TestAuth_APIToken_ValidAuthenticates
+    - TestAuth_CachedIntrospection
+    - TestAuth_Documents_LimitedScopeReturns403
+    - TestAuth_Documents_MissingAuthReturns401
+    - TestAuth_Documents_MissingProjectHeaderReturns400
+    - TestAuth_InvalidTokenReturns401
+    - TestAuth_MissingTokenReturns401
+    - TestAuth_ScopedToken_EnforcesScope
+    - TestAuth_ValidTokenAuthenticates
+  api/branches:
+    - TestBranches_CRUD_FullLifecycle
+    - TestBranches_Create_RejectsDuplicateNameSameProject
+    - TestBranches_Create_RejectsEmptyName
+    - TestBranches_Create_RejectsInvalidParentBranchID
+    - TestBranches_Create_RejectsInvalidProjectID
+    - TestBranches_Create_RejectsNonExistentParentBranch
+    - TestBranches_Create_RequiresAuth
+    - TestBranches_Create_RequiresGraphWriteScope
+    - TestBranches_Create_RequiresName
+    - TestBranches_Create_SuccessWithNameOnly
+    - TestBranches_Create_SuccessWithProjectID
+    - TestBranches_Create_WithParentBranch
+    - TestBranches_Delete_RejectsInvalidUUID
+    - TestBranches_Delete_RequiresAuth
+    - TestBranches_Delete_RequiresGraphWriteScope
+    - TestBranches_Delete_Returns404ForNonExistent
+    - TestBranches_Delete_Success
+    - TestBranches_GetByID_RejectsInvalidUUID
+    - TestBranches_GetByID_RequiresAuth
+    - TestBranches_GetByID_RequiresGraphReadScope
+    - TestBranches_GetByID_Returns404ForNonExistent
+    - TestBranches_List_AllowsOptionalProjectID
+    - TestBranches_List_FiltersByProjectID
+    - TestBranches_List_RejectsInvalidProjectID
+    - TestBranches_List_RequiresAuth
+    - TestBranches_List_RequiresGraphReadScope
+    - TestBranches_Merge_DryRun_DoesNotMutate
+    - TestBranches_Merge_DryRun_EmptyBranches
+    - TestBranches_Merge_InvalidTargetBranchID
+    - TestBranches_Merge_MissingSourceBranchID
+    - TestBranches_Merge_RequiresAuth
+    - TestBranches_Update_RejectsEmptyName
+    - TestBranches_Update_RejectsInvalidUUID
+    - TestBranches_Update_RequiresAuth
+    - TestBranches_Update_RequiresGraphWriteScope
+    - TestBranches_Update_Returns404ForNonExistent
+    - TestBranches_Update_Success
+  api/chat:
+    - TestChatHistory_ChronologicalOrder
+    - TestChatHistory_EmptyForFirstMessage
+    - TestChatHistory_Limit
+    - TestChatHistory_MultiTurnConversation_BuildsContextSummary
+    - TestChatHistory_ProjectIsolation
+    - TestChat_AddMessage_ConversationNotFound
+    - TestChat_AddMessage_RequiresValidRole
+    - TestChat_AddMessage_Success
+    - TestChat_CreateConversation_RequiresMessage
+    - TestChat_CreateConversation_RequiresTitle
+    - TestChat_CreateConversation_Success
+    - TestChat_CreateConversation_WithCanonicalID
+    - TestChat_DeleteConversation_NotFound
+    - TestChat_DeleteConversation_RequiresChatAdminScope
+    - TestChat_DeleteConversation_Success
+    - TestChat_GetConversation_InvalidID
+    - TestChat_GetConversation_NotFound
+    - TestChat_GetConversation_Success
+    - TestChat_ListConversations_Empty
+    - TestChat_ListConversations_Pagination
+    - TestChat_ListConversations_RequiresAuth
+    - TestChat_ListConversations_RequiresChatUseScope
+    - TestChat_ListConversations_RequiresProjectID
+    - TestChat_ListConversations_ReturnsConversations
+    - TestChat_ProjectIsolation
+    - TestChat_StreamChat_ConversationNotFound
+    - TestChat_StreamChat_CreatesNewConversation
+    - TestChat_StreamChat_InvalidConversationID
+    - TestChat_StreamChat_LLMNotConfigured
+    - TestChat_StreamChat_ProjectIsolation
+    - TestChat_StreamChat_RequiresAuth
+    - TestChat_StreamChat_RequiresChatUseScope
+    - TestChat_StreamChat_RequiresMessage
+    - TestChat_StreamChat_RequiresProjectID
+    - TestChat_StreamChat_TitleTruncation
+    - TestChat_StreamChat_UsesExistingConversation
+    - TestChat_StreamChat_WithCanonicalID
+    - TestChat_UpdateConversation_NotFound
+    - TestChat_UpdateConversation_RequiresChatAdminScope
+    - TestChat_UpdateConversation_Success
+  api/chunks:
+    - TestChunks_BulkDeleteByDocumentsEmptyArray
+    - TestChunks_BulkDeleteByDocumentsSuccess
+    - TestChunks_BulkDeleteEmptyArray
+    - TestChunks_BulkDeletePartialNotFound
+    - TestChunks_BulkDeleteSuccess
+    - TestChunks_DeleteByDocumentInvalidUUID
+    - TestChunks_DeleteByDocumentNoChunks
+    - TestChunks_DeleteByDocumentSuccess
+    - TestChunks_DeleteInvalidUUID
+    - TestChunks_DeleteNotFound
+    - TestChunks_DeleteProjectIsolation
+    - TestChunks_DeleteRequiresAuth
+    - TestChunks_DeleteRequiresProjectID
+    - TestChunks_DeleteRequiresWriteScope
+    - TestChunks_DeleteSuccess
+    - TestChunks_ListEmpty
+    - TestChunks_ListFilterByDocumentID
+    - TestChunks_ListInvalidDocumentID
+    - TestChunks_ListProjectIsolation
+    - TestChunks_ListRequiresAuth
+    - TestChunks_ListRequiresChunksReadScope
+    - TestChunks_ListRequiresProjectID
+    - TestChunks_ListReturnsChunks
+  api/documents:
+    - TestDocumentsBatchUpload_RejectsWhenNoFilesProvided
+    - TestDocumentsBatchUpload_RequiresAuth
+    - TestDocumentsBatchUpload_RequiresDocumentsWriteScope
+    - TestDocumentsBatchUpload_RequiresProjectID
+    - TestDocumentsUpload_RejectsWhenFileIsMissing
+    - TestDocumentsUpload_RequiresAuth
+    - TestDocumentsUpload_RequiresDocumentsWriteScope
+    - TestDocumentsUpload_RequiresProjectID
+    - TestDocuments_BulkDeleteEmptyArray
+    - TestDocuments_BulkDeleteInvalidUUID
+    - TestDocuments_BulkDeletePartialNotFound
+    - TestDocuments_BulkDeleteRequiresAuth
+    - TestDocuments_BulkDeleteRequiresDeleteScope
+    - TestDocuments_BulkDeleteSuccess
+    - TestDocuments_CreateDeduplication
+    - TestDocuments_CreateDefaultFilename
+    - TestDocuments_CreateEmptyContent
+    - TestDocuments_CreateFilenameTooLong
+    - TestDocuments_CreateRequiresAuth
+    - TestDocuments_CreateRequiresProjectID
+    - TestDocuments_CreateRequiresWriteScope
+    - TestDocuments_CreateSuccess
+    - TestDocuments_CursorPagination
+    - TestDocuments_CursorPaginationStress
+    - TestDocuments_DeleteInvalidUUID
+    - TestDocuments_DeleteNotFound
+    - TestDocuments_DeleteProjectIsolation
+    - TestDocuments_DeleteRequiresAuth
+    - TestDocuments_DeleteRequiresDeleteScope
+    - TestDocuments_DeleteRequiresProjectID
+    - TestDocuments_DeleteSuccess
+    - TestDocuments_FilterBySourceType
+    - TestDocuments_GetNotFound
+    - TestDocuments_GetNotFoundInOtherProject
+    - TestDocuments_GetRequiresAuth
+    - TestDocuments_GetRequiresDocumentsReadScope
+    - TestDocuments_GetRequiresProjectID
+    - TestDocuments_GetSuccess
+    - TestDocuments_InvalidCursor
+    - TestDocuments_InvalidLimit
+    - TestDocuments_ListEmpty
+    - TestDocuments_ListLimit
+    - TestDocuments_ListProjectIsolation
+    - TestDocuments_ListRequiresAuth
+    - TestDocuments_ListRequiresDocumentsReadScope
+    - TestDocuments_ListRequiresProjectID
+    - TestDocuments_ListReturnsDocuments
+  api/embeddings:
+    - TestEmbeddingPolicies_CreateRejectsInvalidProjectID
+    - TestEmbeddingPolicies_CreateRejectsNegativeMaxPropertySize
+    - TestEmbeddingPolicies_CreateRequiresAuth
+    - TestEmbeddingPolicies_CreateRequiresGraphWriteScope
+    - TestEmbeddingPolicies_CreateRequiresObjectType
+    - TestEmbeddingPolicies_CreateRequiresProjectID
+    - TestEmbeddingPolicies_DeleteRequiresAuth
+    - TestEmbeddingPolicies_DeleteRequiresGraphWriteScope
+    - TestEmbeddingPolicies_DeleteRequiresProjectID
+    - TestEmbeddingPolicies_DeleteReturns404ForNonExistent
+    - TestEmbeddingPolicies_GetByIDRejectsInvalidUUID
+    - TestEmbeddingPolicies_GetByIDRequiresAuth
+    - TestEmbeddingPolicies_GetByIDRequiresProjectID
+    - TestEmbeddingPolicies_GetByIDReturns404ForNonExistent
+    - TestEmbeddingPolicies_ListRequiresAuth
+    - TestEmbeddingPolicies_ListRequiresGraphReadScope
+    - TestEmbeddingPolicies_ListRequiresProjectID
+    - TestEmbeddingPolicies_ListReturnsEmptyArrayForNewProject
+    - TestEmbeddingPolicies_UpdateRejectsInvalidMaxPropertySize
+    - TestEmbeddingPolicies_UpdateRequiresAuth
+    - TestEmbeddingPolicies_UpdateRequiresGraphWriteScope
+    - TestEmbeddingPolicies_UpdateRequiresProjectID
+    - TestEmbeddingPolicies_UpdateReturns404ForNonExistent
+  api/extraction:
+    - TestExtraction_CancelCancelsPendingJob
+    - TestExtraction_CreateRequiresAdminWriteScope
+    - TestExtraction_CreateRequiresAuth
+    - TestExtraction_DocumentSource_ExtractsFromDocument
+    - TestExtraction_GetJobLogs_ReturnsAgentExecutionDetails
+    - TestExtraction_GetStatisticsReturnsAggregates
+    - TestExtraction_ListReturnsPaginatedResults
+    - TestExtraction_ManualSource_ExtractsEntities
+  api/graph:
+    - TestGraphAnalytics_GetMostAccessed_RequiresAuth
+    - TestGraphAnalytics_GetMostAccessed_RequiresProjectID
+    - TestGraphAnalytics_GetMostAccessed_Success
+    - TestGraphAnalytics_GetMostAccessed_WithLimit
+    - TestGraphAnalytics_GetUnused_ExcludesRecentlyAccessed
+    - TestGraphAnalytics_GetUnused_RequiresAuth
+    - TestGraphAnalytics_GetUnused_RequiresProjectID
+    - TestGraphAnalytics_GetUnused_Success
+    - TestGraphAnalytics_GetUnused_WithDaysThreshold
+    - TestGraphFieldProjection_ListObjects_FieldProjection
+    - TestGraphFieldProjection_ListObjects_NoFieldProjection
+    - TestGraphQuery_GraphQueryAgentHiddenFromList
+    - TestGraphQuery_IsIdempotent
+    - TestGraphQuery_RequiresMessage
+    - TestGraphQuery_ReturnsSSEStream
+    - TestGraphSearch_DebugModeRequiresScope
+    - TestGraphSearch_DebugModeRequiresScopeViaQueryParam
+    - TestGraphSearch_DebugModeViaBodyField
+    - TestGraphSearch_DebugModeViaQueryParam
+    - TestGraphSearch_EmptyResults
+    - TestGraphSearch_EmptyResultsWithDebug
+    - TestGraphSearch_HybridSearch_BasicQuery
+    - TestGraphSearch_HybridSearch_RequiresAuth
+    - TestGraphSearch_HybridSearch_RequiresProjectID
+    - TestGraphSearch_HybridSearch_RequiresQueryOrVector
+    - TestGraphSearch_NoDebugWithoutFlag
+    - TestGraphSearch_WithBranchID
+    - TestGraphSearch_WithLabels
+    - TestGraphSearch_WithLimit
+    - TestGraphSearch_WithStatus
+    - TestGraphSearch_WithTypes
+    - TestGraphSearch_WithWeights
+    - TestGraphSimilar_InvalidObjectID
+    - TestGraphSimilar_NoEmbedding
+    - TestGraphSimilar_RequiresAuth
+    - TestGraphSimilar_RequiresProjectID
+    - TestGraphSubgraph_CreateSubgraph_DifferentBranches
+    - TestGraphSubgraph_CreateSubgraph_DuplicateRef
+    - TestGraphSubgraph_CreateSubgraph_EmptyObjects
+    - TestGraphSubgraph_CreateSubgraph_InvalidRef
+    - TestGraphSubgraph_CreateSubgraph_NilBranches
+    - TestGraphSubgraph_CreateSubgraph_ObjectsOnly
+    - TestGraphSubgraph_CreateSubgraph_ObjectsRetrievable
+    - TestGraphSubgraph_CreateSubgraph_SameBranch
+    - TestGraphSubgraph_CreateSubgraph_SelfLoop
+    - TestGraphSubgraph_CreateSubgraph_Success
+    - TestGraphSubgraph_CreateSubgraph_Unauthorized
+    - TestGraph_CreateObject_MinimalFields
+    - TestGraph_CreateObject_MissingType
+    - TestGraph_CreateObject_RequiresAuth
+    - TestGraph_CreateObject_RequiresProjectID
+    - TestGraph_CreateObject_Success
+    - TestGraph_CreateRelationship_EndpointNotFound
+    - TestGraph_CreateRelationship_Idempotent
+    - TestGraph_CreateRelationship_MissingType
+    - TestGraph_CreateRelationship_RequiresAuth
+    - TestGraph_CreateRelationship_SelfLoopNotAllowed
+    - TestGraph_CreateRelationship_Success
+    - TestGraph_DeleteObject_NotFound
+    - TestGraph_DeleteObject_Success
+    - TestGraph_DeleteRelationship_Success
+    - TestGraph_FTSSearch_EmptyResults
+    - TestGraph_FTSSearch_RequiresAuth
+    - TestGraph_FTSSearch_RequiresQuery
+    - TestGraph_FTSSearch_WithFilters
+    - TestGraph_GetObjectEdges_Empty
+    - TestGraph_GetObjectEdges_WithRelationships
+    - TestGraph_GetObjectHistory_Success
+    - TestGraph_GetObject_NotFound
+    - TestGraph_GetObject_Success
+    - TestGraph_GetRelationshipHistory_Success
+    - TestGraph_GetRelationship_NotFound
+    - TestGraph_GetRelationship_Success
+    - TestGraph_HybridSearch_QueryAndVector
+    - TestGraph_HybridSearch_QueryOnly
+    - TestGraph_HybridSearch_RequiresAuth
+    - TestGraph_HybridSearch_RequiresQueryOrVector
+    - TestGraph_HybridSearch_VectorOnly
+    - TestGraph_HybridSearch_WithFilters
+    - TestGraph_ListObjects_Empty
+    - TestGraph_ListObjects_FilterByType
+    - TestGraph_ListObjects_InvalidCursor
+    - TestGraph_ListObjects_Pagination_Cursor
+    - TestGraph_ListObjects_Pagination_Limit
+    - TestGraph_ListObjects_WithObjects
+    - TestGraph_ListRelationships_Empty
+    - TestGraph_ListRelationships_FilterBySrcID
+    - TestGraph_ListRelationships_FilterByType
+    - TestGraph_PatchObject_MergesProperties
+    - TestGraph_PatchObject_Success
+    - TestGraph_PatchRelationship_MergesProperties
+    - TestGraph_PatchRelationship_Success
+    - TestGraph_RestoreObject_Success
+    - TestGraph_RestoreRelationship_Success
+    - TestGraph_VectorSearch_EmptyResults
+    - TestGraph_VectorSearch_RequiresAuth
+    - TestGraph_VectorSearch_RequiresVector
+    - TestGraph_VectorSearch_WithFilters
+  api/health:
+    - TestHealth_Debug
+    - TestHealth_Endpoint
+    - TestHealth_Healthz
+    - TestHealth_NoAuthRequired
+    - TestHealth_Ready
+  api/mcp:
+    - TestMCPNew_CreateAndGetSkill
+    - TestMCPNew_GetEmbeddingStatus_NotConfigured
+    - TestMCPNew_ListADKSessions
+    - TestMCPNew_ListDocuments
+    - TestMCPNew_ListSkills
+    - TestMCPNew_ListTraces_SkipWhenTempoNotConfigured
+    - TestMCPNew_QueryKnowledge
+    - TestMCPNew_UploadDocument
+    - TestMCPRegistry_CreateServer_BuiltinTypeRejected
+    - TestMCPRegistry_CreateServer_DuplicateName
+    - TestMCPRegistry_CreateServer_HTTPMissingURL
+    - TestMCPRegistry_CreateServer_HTTPSuccess
+    - TestMCPRegistry_CreateServer_RequiresAuth
+    - TestMCPRegistry_CreateServer_StdioMissingCommand
+    - TestMCPRegistry_CreateServer_StdioType
+    - TestMCPRegistry_DeleteServer_CascadesTools
+    - TestMCPRegistry_DeleteServer_Success
+    - TestMCPRegistry_GetRegistryServer_NotFound
+    - TestMCPRegistry_GetRegistryServer_Success
+    - TestMCPRegistry_GetServer_NotFound
+    - TestMCPRegistry_GetServer_Success
+    - TestMCPRegistry_InspectServer_NotFound
+    - TestMCPRegistry_InspectServer_RequiresAuth
+    - TestMCPRegistry_InspectServer_UnreachableHTTP
+    - TestMCPRegistry_InstallFromRegistry_CustomName
+    - TestMCPRegistry_InstallFromRegistry_MissingRegistryName
+    - TestMCPRegistry_InstallFromRegistry_RequiresAuth
+    - TestMCPRegistry_InstallFromRegistry_StdioOnlyBlocked
+    - TestMCPRegistry_InstallFromRegistry_Success
+    - TestMCPRegistry_ListServers_Empty
+    - TestMCPRegistry_ListServers_RequiresAuth
+    - TestMCPRegistry_ListServers_WithServers
+    - TestMCPRegistry_SearchRegistry_EmptyQuery
+    - TestMCPRegistry_SearchRegistry_RequiresAuth
+    - TestMCPRegistry_SearchRegistry_Success
+    - TestMCPRegistry_SyncTools_RemovesStale
+    - TestMCPRegistry_SyncTools_Success
+    - TestMCPRegistry_ToggleTool_Success
+    - TestMCPRegistry_UpdateServer_Success
+    - TestMCPSSE_Session_DELETE_Terminates
+    - TestMCPSSE_Tool_AssignTemplatePack_NotFound
+    - TestMCPSSE_Tool_AssignTemplatePack_RequiresTemplatePackID
+    - TestMCPSSE_Tool_CreateTemplatePack_RequiresName
+    - TestMCPSSE_Tool_CreateTemplatePack_RequiresSchemas
+    - TestMCPSSE_Tool_CreateTemplatePack_RequiresVersion
+    - TestMCPSSE_Tool_DeleteTemplatePack_NotFound
+    - TestMCPSSE_Tool_DeleteTemplatePack_RequiresPackID
+    - TestMCPSSE_Tool_GetAvailableTemplates
+    - TestMCPSSE_Tool_GetEntityEdges_NotFound
+    - TestMCPSSE_Tool_GetEntityEdges_RequiresEntityID
+    - TestMCPSSE_Tool_GetInstalledTemplates
+    - TestMCPSSE_Tool_GetTemplatePack_NotFound
+    - TestMCPSSE_Tool_ListEntityTypes
+    - TestMCPSSE_Tool_ListTemplatePacks
+    - TestMCPSSE_Tool_ListTemplatePacks_WithPagination
+    - TestMCPSSE_Tool_QueryEntities_EmptyResult
+    - TestMCPSSE_Tool_QueryEntities_RequiresTypeName
+    - TestMCPSSE_Tool_QueryEntities_WithPagination
+    - TestMCPSSE_Tool_SchemaVersion
+    - TestMCPSSE_Tool_SearchEntities_EmptyResult
+    - TestMCPSSE_Tool_SearchEntities_RequiresQuery
+    - TestMCPSSE_Tool_SearchEntities_WithTypeFilter
+    - TestMCPSSE_Tool_UninstallTemplatePack_NotFound
+    - TestMCPSSE_Tool_UninstallTemplatePack_RequiresAssignmentID
+    - TestMCPSSE_Tool_UpdateTemplateAssignment_NotFound
+    - TestMCPSSE_Tool_UpdateTemplateAssignment_RequiresAssignmentID
+    - TestMCPSSE_ToolsList_DiscoverAll18Tools
+    - TestMCPSchemaLifecycle_CreateEntityRequiresType
+    - TestMCPSchemaLifecycle_CreateRelationshipRequiresAllParams
+    - TestMCPSchemaLifecycle_DeleteEntityRequiresEntityID
+    - TestMCPSchemaLifecycle_UpdateEntityRequiresEntityID
+    - TestMCP_RPC_Initialize
+    - TestMCP_RPC_Initialize_MissingParams
+    - TestMCP_RPC_InvalidJSONRPCVersion
+    - TestMCP_RPC_MethodNotFound
+    - TestMCP_RPC_RequiresAuth
+    - TestMCP_RPC_ToolsCall_ListEntityTypes
+    - TestMCP_RPC_ToolsCall_QueryEntities_Empty
+    - TestMCP_RPC_ToolsCall_QueryEntities_MissingTypeName
+    - TestMCP_RPC_ToolsCall_QueryEntities_PaginationCountsOnlyLatestVersions
+    - TestMCP_RPC_ToolsCall_QueryEntities_ReturnsLatestVersionOnly
+    - TestMCP_RPC_ToolsCall_QueryEntities_StableCanonicalID
+    - TestMCP_RPC_ToolsCall_SchemaVersion
+    - TestMCP_RPC_ToolsCall_SearchEntities_Empty
+    - TestMCP_RPC_ToolsCall_SearchEntities_MissingQuery
+    - TestMCP_RPC_ToolsList
+    - TestMCP_RPC_ToolsList_RequiresInitialize
+    - TestMCP_SSE_Connect_InvalidProjectID
+    - TestMCP_SSE_Connect_RequiresAuth
+    - TestMCP_SSE_Message_RequiresAuth
+    - TestMCP_Unified_DELETE_RequiresSessionID
+    - TestMCP_Unified_DELETE_TerminatesSession
+    - TestMCP_Unified_POST_Initialize
+    - TestMCP_Unified_POST_RequiresAuth
+    - TestMCP_Unified_POST_SessionManagement
+  api/notifications:
+    - TestNotifications_Dismiss_RequiresAuth
+    - TestNotifications_Dismiss_ReturnsNotFoundForUnknownID
+    - TestNotifications_GetCounts_RequiresAuth
+    - TestNotifications_GetCounts_ReturnsStructure
+    - TestNotifications_GetStats_RequiresAuth
+    - TestNotifications_GetStats_ReturnsStructure
+    - TestNotifications_List_RequiresAuth
+    - TestNotifications_List_ReturnsDataArray
+    - TestNotifications_MarkAllRead_RequiresAuth
+    - TestNotifications_MarkAllRead_ReturnsStatus
+    - TestNotifications_MarkRead_RequiresAuth
+    - TestNotifications_MarkRead_ReturnsNotFoundForUnknownID
+  api/orgs:
+    - TestOrgs_CreateEmptyNameFails
+    - TestOrgs_CreateInvalidJSONFails
+    - TestOrgs_CreateMissingNameFails
+    - TestOrgs_CreateNameTooLongFails
+    - TestOrgs_CreateRequiresAuth
+    - TestOrgs_CreateSuccess
+    - TestOrgs_CreateTrimsWhitespace
+    - TestOrgs_CreateWhitespaceOnlyNameFails
+    - TestOrgs_CreatorSeesOrg
+    - TestOrgs_DeleteNotFound
+    - TestOrgs_DeleteRequiresAuth
+    - TestOrgs_DeleteSuccess
+    - TestOrgs_GetNotFound
+    - TestOrgs_GetRequiresAuth
+    - TestOrgs_GetResponseStructure
+    - TestOrgs_GetSuccess
+    - TestOrgs_ListMultipleOrgs
+    - TestOrgs_ListRequiresAuth
+    - TestOrgs_ListReturnsUserOrgs
+  api/projects:
+    - TestProjects_CreateDuplicateNameFails
+    - TestProjects_CreateEmptyNameFails
+    - TestProjects_CreateMissingOrgIDFails
+    - TestProjects_CreateOrgNotFoundFails
+    - TestProjects_CreateRequiresAuth
+    - TestProjects_CreateSuccess
+    - TestProjects_CreateTrimsWhitespace
+    - TestProjects_CreatorBecomesAdmin
+    - TestProjects_DeleteInvalidUUID
+    - TestProjects_DeleteNotFound
+    - TestProjects_DeleteRequiresAuth
+    - TestProjects_DeleteSuccess
+    - TestProjects_GetInvalidUUID
+    - TestProjects_GetNotFound
+    - TestProjects_GetRequiresAuth
+    - TestProjects_GetSuccess
+    - TestProjects_ListFilterByOrgID
+    - TestProjects_ListInvalidOrgIDReturnsEmpty
+    - TestProjects_ListMembersNotFound
+    - TestProjects_ListMembersRequiresAuth
+    - TestProjects_ListMembersSuccess
+    - TestProjects_ListRequiresAuth
+    - TestProjects_ListReturnsUserProjects
+    - TestProjects_ListWithLimit
+    - TestProjects_RemoveMemberCannotRemoveLastAdmin
+    - TestProjects_RemoveMemberNotFound
+    - TestProjects_RemoveMemberRequiresAuth
+    - TestProjects_SingleGetStatsIncluded
+    - TestProjects_StatsIncludedWhenRequested
+    - TestProjects_StatsNotIncludedByDefault
+    - TestProjects_UpdateEmptyBody
+    - TestProjects_UpdateInvalidUUID
+    - TestProjects_UpdateNotFound
+    - TestProjects_UpdatePartial
+    - TestProjects_UpdateRequiresAuth
+    - TestProjects_UpdateSuccess
+  api/provider:
+    - TestProvider_GetOrgUsageSummary_Empty
+    - TestProvider_GetProjectPolicy_NotFound
+    - TestProvider_GetProjectUsageSummary_Empty
+    - TestProvider_ListOrgCredentials_RequiresAuth
+    - TestProvider_ListProjectPolicies
+    - TestProvider_SaveGoogleAICredential_MissingAPIKey
+    - TestProvider_SaveGoogleAICredential_RequiresAuth
+    - TestProvider_SaveGoogleAICredential_WrongOrg
+    - TestProvider_SetAndGetProjectPolicy_Organization
+    - TestProvider_SetProjectPolicy_InvalidPolicy
+    - TestProvider_SetProjectPolicy_ProjectLevel_MissingAPIKey
+  api/search:
+    - TestSearchUsers_CaseInsensitive
+    - TestSearchUsers_ExcludesCurrentUser
+    - TestSearchUsers_MinLength
+    - TestSearchUsers_NoMatches
+    - TestSearchUsers_RequiresAuth
+    - TestSearchUsers_RequiresEmailParam
+    - TestSearchUsers_ResponseStructure
+    - TestSearchUsers_ReturnsUsersArray
+    - TestSearch_UnifiedSearch_CustomWeights
+    - TestSearch_UnifiedSearch_DebugModeRequiresScope
+    - TestSearch_UnifiedSearch_DebugModeRequiresScopeViaQueryParam
+    - TestSearch_UnifiedSearch_DebugModeViaBodyField
+    - TestSearch_UnifiedSearch_DebugModeViaQueryParam
+    - TestSearch_UnifiedSearch_DefaultFusionStrategy
+    - TestSearch_UnifiedSearch_EmptyResults
+    - TestSearch_UnifiedSearch_FusionStrategyGraphFirst
+    - TestSearch_UnifiedSearch_FusionStrategyInterleave
+    - TestSearch_UnifiedSearch_FusionStrategyRRF
+    - TestSearch_UnifiedSearch_FusionStrategyTextFirst
+    - TestSearch_UnifiedSearch_FusionStrategyWeighted
+    - TestSearch_UnifiedSearch_IncludesExecutionTime
+    - TestSearch_UnifiedSearch_NoDebugWithoutFlag
+    - TestSearch_UnifiedSearch_QueryTooLong
+    - TestSearch_UnifiedSearch_RequiresAuth
+    - TestSearch_UnifiedSearch_RequiresProjectID
+    - TestSearch_UnifiedSearch_RequiresQuery
+    - TestSearch_UnifiedSearch_RequiresSearchReadScope
+    - TestSearch_UnifiedSearch_ResultTypesGraph
+    - TestSearch_UnifiedSearch_ResultTypesText
+    - TestSearch_UnifiedSearch_ReturnsBothResults
+    - TestSearch_UnifiedSearch_ReturnsGraphResults
+    - TestSearch_UnifiedSearch_ReturnsTextResults
+    - TestSearch_UnifiedSearch_WithLimit
+  api/security:
+    - TestSecurityScopes_Chat_AllowsFullToken
+    - TestSecurityScopes_Chat_DeniesTokenWithoutChatScope
+    - TestSecurityScopes_Chat_RequiresAuth
+    - TestSecurityScopes_Chunks_AllowsFullToken
+    - TestSecurityScopes_Chunks_DeniesTokenWithoutChunksRead
+    - TestSecurityScopes_Chunks_RequiresAuth
+    - TestSecurityScopes_Documents_AllowsFullToken
+    - TestSecurityScopes_Documents_AllowsTokenWithDataRead
+    - TestSecurityScopes_Documents_DeniesTokenWithoutDataWrite
+    - TestSecurityScopes_Documents_DeniesTokenWithoutDocumentsRead
+    - TestSecurityScopes_Documents_RequiresAuth
+    - TestSecurityScopes_Graph_AllowsFullToken
+    - TestSecurityScopes_Graph_RequiresAuth
+    - TestSecurityScopes_Orgs_AllowsFullToken
+    - TestSecurityScopes_Orgs_RequiresAuth
+    - TestSecurityScopes_Projects_RequiresAuth
+    - TestSecurityScopes_Search_RequiresAuth
+  api/skills:
+    - TestSkills_CreateGlobal_DuplicateName
+    - TestSkills_CreateGlobal_InvalidName
+    - TestSkills_CreateGlobal_RequiresAuth
+    - TestSkills_CreateGlobal_Success
+    - TestSkills_DeleteSkill_Success
+    - TestSkills_GetSkill_NotFound
+    - TestSkills_GetSkill_Success
+    - TestSkills_ListGlobal_RequiresAuth
+    - TestSkills_ListGlobal_ReturnsArray
+    - TestSkills_ListProjectSkills_IncludesGlobalSkills
+    - TestSkills_ListProjectSkills_ProjectSkillOverridesGlobal
+    - TestSkills_UpdateSkill_Success
+  api/tasks:
+    - TestTasks_Cancel_RequiresAuth
+    - TestTasks_Cancel_RequiresProjectID
+    - TestTasks_GetAllCounts_RequiresAuth
+    - TestTasks_GetByID_RequiresAuth
+    - TestTasks_GetByID_RequiresProjectID
+    - TestTasks_GetByID_ReturnsNotFoundForInvalidID
+    - TestTasks_GetCounts_RequiresAuth
+    - TestTasks_GetCounts_RequiresProjectID
+    - TestTasks_GetCounts_ReturnsZeroCounts
+    - TestTasks_ListAll_RequiresAuth
+    - TestTasks_List_AcceptsProjectIDHeader
+    - TestTasks_List_AcceptsProjectIDQueryParam
+    - TestTasks_List_RequiresAuth
+    - TestTasks_List_RequiresProjectID
+    - TestTasks_List_ReturnsEmptyArrayWhenNoTasks
+    - TestTasks_Resolve_RequiresAuth
+    - TestTasks_Resolve_RequiresProjectID
+  api/templates:
+    - TestTemplatePacks_AssignPack_NotFoundForInvalidPackID
+    - TestTemplatePacks_AssignPack_RequiresAuth
+    - TestTemplatePacks_AssignPack_RequiresTemplatePackID
+    - TestTemplatePacks_DeleteAssignment_NotFoundForInvalidID
+    - TestTemplatePacks_DeleteAssignment_RequiresAuth
+    - TestTemplatePacks_GetAvailablePacks_RequiresAuth
+    - TestTemplatePacks_GetAvailablePacks_ReturnsArray
+    - TestTemplatePacks_GetCompiledTypes_RequiresAuth
+    - TestTemplatePacks_GetCompiledTypes_ReturnsEmptyWhenNoPacks
+    - TestTemplatePacks_GetInstalledPacks_RequiresAuth
+    - TestTemplatePacks_GetInstalledPacks_ReturnsEmptyArray
+    - TestTemplatePacks_UpdateAssignment_NotFoundForInvalidID
+    - TestTemplatePacks_UpdateAssignment_RequiresAuth
+  api/tenants:
+    - TestTenantIsolation_CannotAccessOtherProjectDocument
+    - TestTenantIsolation_CannotDeleteOtherProjectDocument
+    - TestTenantIsolation_Chunks_CannotAccessWithWrongProjectContext
+    - TestTenantIsolation_Chunks_FilteredByProject
+    - TestTenantIsolation_CrossProject_PreventAccessFromAnotherProject
+    - TestTenantIsolation_CrossProject_RLSFiltersDocumentList
+    - TestTenantIsolation_DocumentsIsolatedByProject
+    - TestTenantIsolation_DocumentsListScopedByProjectID
+    - TestTenantIsolation_IsolationMatrix
+    - TestTenantIsolation_OwnerCanAccessAndDelete
+    - TestTenantIsolation_RejectsInvalidUUIDHeader
+    - TestTenantIsolation_RequiresProjectIDForChunks
+    - TestTenantIsolation_RequiresProjectIDHeader
+  api/users:
+    - TestUserActivity_DeleteAll_DeletesActivity
+    - TestUserActivity_DeleteAll_RequiresAuth
+    - TestUserActivity_DeleteAll_SucceedsWhenEmpty
+    - TestUserActivity_DeleteByResource_RequiresAuth
+    - TestUserActivity_DeleteByResource_SucceedsWhenResourceNotFound
+    - TestUserActivity_DeleteByResource_ValidatesResourceID
+    - TestUserActivity_GetRecentByType_FiltersCorrectly
+    - TestUserActivity_GetRecentByType_RequiresAuth
+    - TestUserActivity_GetRecent_RequiresAuth
+    - TestUserActivity_Record_RecordsActivity
+    - TestUserActivity_Record_RequiresAuth
+    - TestUserActivity_Record_RequiresFields
+    - TestUserActivity_Record_RequiresProjectID
+    - TestUserActivity_Record_ValidatesProjectID
+    - TestUserActivity_Record_ValidatesResourceID
+    - TestUserActivity_Record_WithOptionalFields
+    - TestUserProfile_GetProfile_RequiresAuth
+    - TestUserProfile_GetProfile_ResponseStructure
+    - TestUserProfile_GetProfile_Success
+    - TestUserProfile_UpdateProfile_DisplayNameTooLong
+    - TestUserProfile_UpdateProfile_EmptyFirstName
+    - TestUserProfile_UpdateProfile_FirstNameTooLong
+    - TestUserProfile_UpdateProfile_InvalidJSON
+    - TestUserProfile_UpdateProfile_LastNameTooLong
+    - TestUserProfile_UpdateProfile_NullFieldsIgnored
+    - TestUserProfile_UpdateProfile_PhoneTooLong
+    - TestUserProfile_UpdateProfile_RequiresAtLeastOneField
+    - TestUserProfile_UpdateProfile_RequiresAuth
+    - TestUserProfile_UpdateProfile_UpdateDisplayName
+    - TestUserProfile_UpdateProfile_UpdateFirstName
+    - TestUserProfile_UpdateProfile_UpdateLastName
+    - TestUserProfile_UpdateProfile_UpdateMultipleFields
+    - TestUserProfile_UpdateProfile_UpdatePhoneE164
+  api/webhooks:
+    - TestAgentsWebhooks_CreateHook_MissingLabel
+    - TestAgentsWebhooks_CreateHook_NonExistentAgent
+    - TestAgentsWebhooks_CreateHook_RequiresAuth
+    - TestAgentsWebhooks_CreateHook_Success
+    - TestAgentsWebhooks_DeleteHook_NonExistentAgent
+    - TestAgentsWebhooks_DeleteHook_RequiresAuth
+    - TestAgentsWebhooks_DeleteHook_Success
+    - TestAgentsWebhooks_ListHooks_Empty
+    - TestAgentsWebhooks_ListHooks_RequiresAuth
+    - TestAgentsWebhooks_ListHooks_Success
+    - TestAgentsWebhooks_ReceiveWebhook_InvalidToken
+    - TestAgentsWebhooks_ReceiveWebhook_MissingAuth
+    - TestAgentsWebhooks_ReceiveWebhook_MultipleHooksIndependent
+    - TestAgentsWebhooks_ReceiveWebhook_NonExistentHook
+    - TestAgentsWebhooks_ReceiveWebhook_Success
+    - TestAgentsWebhooks_ReceiveWebhook_TokenNotReusableAfterDelete
+    - TestAgentsWebhooks_ReceiveWebhook_WithPayload
+  cli/discovery:
+    - TestDiscovery_ExtendExistingSchema
+    - TestDiscovery_FinalizeWithoutOrgID
+    - TestDiscovery_StartAndFinalizeSchema
+  cli/test:
+    - TestCLIInstalled_DocumentChunking
+    - TestCLIInstalled_DocumentConversion
+    - TestCLIInstalled_DocumentConversionMultiFileTypes
+    - TestCLIInstalled_DocumentExtractionEfficiency
+    - TestCLIInstalled_DocumentExtractionWithSchema
+    - TestCLIInstalled_DocumentLargeFileExtraction
+    - TestCLIInstalled_DocumentLargePDFExtraction
+    - TestCLIInstalled_DocumentUploadAutoExtract
+    - TestCLIInstalled_Fixture_DocumentUploadGetDelete
+    - TestCLIInstalled_Fixture_ProjectGetDelete
+    - TestCLIInstalled_Memory_CoreTierAutoInjection
+    - TestCLIInstalled_Memory_DecayFlagAndRestore
+    - TestCLIInstalled_Memory_LLMMerge_Contradiction
+    - TestCLIInstalled_Memory_LLMMerge_NOOP
+    - TestCLIInstalled_Memory_ManageMemoryCRUD
+    - TestCLIInstalled_Memory_PromoteToCoreRejectsWrongUser
+    - TestCLIInstalled_Memory_RecencyRanking
+    - TestCLIInstalled_Memory_SaveRecallLifecycle
+    - TestCLIInstalled_Memory_TemporalContradiction
+    - TestCLI_Browse_Help
+    - TestCLI_Browse_NoTTY
+    - TestCLI_GraphObjectsList_JSON
+    - TestCLI_ProjectsList_CSV
+    - TestCLI_ProjectsList_JSON
+    - TestCLI_ServerCtl_Help
+    - TestCLI_ServerCtl_Status_NoPanic
+    - TestCLI_ServerInstall_Help
+    - TestCLI_ServerUninstall_Help
+    - TestCLI_ServerUpgrade_Help
+    - TestCLI_Status_OutputFields
+    - TestCLI_Upgrade_Help
+  misc/other:
+    - TestBlueprintV3_SkillsInstalled
+    - TestBlueprintV3_SkillsUpgrade
+    - TestCostTracking_AskWithProject
+    - TestCostTracking_DirectAPI
+    - TestEvents_GetConnectionsCount_AcceptsMultipleTokens
+    - TestEvents_GetConnectionsCount_RequiresAuth
+    - TestEvents_GetConnectionsCount_ReturnsValidJSON
+    - TestEvents_GetConnectionsCount_ReturnsZeroInitially
+    - TestEvents_Stream_RequiresAuth
+    - TestEvents_Stream_RequiresProjectID
+    - TestGetOrgsAndProjects_MultipleOrgs
+    - TestGetOrgsAndProjects_MultipleProjects
+    - TestGetOrgsAndProjects_OrgHasProjects
+    - TestGetOrgsAndProjects_ProjectRoleIsIncluded
+    - TestGetOrgsAndProjects_RequiresAuth
+    - TestGetOrgsAndProjects_ReturnsOrgStructure
+    - TestGetOrgsAndProjects_RoleIsIncluded
+    - TestInstallMemorySkills_CustomDir
+    - TestInstallMemorySkills_Force_Overwrites
+    - TestInstallMemorySkills_Idempotent
+    - TestInstallMemorySkills_SkillManifestsValid
+    - TestListPending_CreateAndVerifyInviteResponse
+    - TestListPending_EmptyArrayWhenNoInvites
+    - TestListPending_MultipleInvites
+    - TestListPending_PendingListReturnsArray
+    - TestListPending_ProjectInviteStructure
+    - TestListPending_RequiresAuth
+    - TestRelationshipSearch_BackwardCompat_ExistingResponseStructure
+    - TestRelationshipSearch_BackwardCompat_RelationshipCreationDoesNotBreakExistingAPIs
+    - TestRelationshipSearch_BackwardCompat_SearchWorksWithoutRelationships
+    - TestRelationshipSearch_UnifiedSearch_RelationshipMetadataInExecutionTime
+    - TestResearchAndCodeModelComparison_Flash25
+    - TestSuperadmin_GetMe_DoesNotRequireProjectID
+    - TestSuperadmin_GetMe_IgnoresProjectIDHeader
+    - TestSuperadmin_GetMe_RequiresAuth
+    - TestSuperadmin_GetMe_ResponseContentType
+    - TestSuperadmin_GetMe_ReturnsNullForRegularUser
+    - TestSuperadmin_GetMe_WithInvalidToken
+    - TestToolSettings_BraveWebSearch_ProjectApiKey
+    - TestToolSettings_OrgDefaultUsedWhenNoProjectOverride
+    - TestToolSettings_OrgToolSettings_CRUD
+    - TestToolSettings_ProjectOverridesOrg
+    - TestToolSettings_ToggleBuiltinTool
+    - TestV2OrchestratorResearchThenCode
+    - TestV3OrchestratorContextPropagation
+    - TestV3PythonSeniorCoderNativeSearch
+    - TestV3PythonSeniorCoderResearchThenCode
+
+  integration/extraction:
+    - TestReExtractionFriends5Episodes
+  - TestAgentGraphQueryLive_VectorSearchOnRelationships
+  - TestAgentGraphQueryLive_MultiStepGraphTraversal

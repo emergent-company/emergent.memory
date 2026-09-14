@@ -1,0 +1,783 @@
+/*
+ * Memory web UI — Tailwind CSS v4 input.
+ *
+ * The gateway reuses go-daisy's compiled app.css at runtime, but that build
+ * only contains utilities go-daisy's own components use. Memory's templates
+ * and client JS use additional classes (e.g. `md:w-72`), so this project
+ * compiles its OWN Tailwind + daisyUI build and serves it at
+ * /assets/css/app.css (embedded via webui/static).
+ *
+ * Build: task css  (see gateway/Taskfile.yml)
+ *   tailwindcss -i webui/css/app.css -o webui/static/css/app.css --minify
+ *
+ * node_modules (tailwindcss v4, daisyUI 5.5.19, @iconify/tailwind4) is
+ * symlinked from /root/go-daisy/node_modules by the css task, so bare
+ * @import/@plugin specifiers resolve and Tailwind's automatic source
+ * detection can run. Explicit @source directives below declare exactly which
+ * project files contribute utility classes.
+ */
+
+@import "tailwindcss";
+
+/* daisyUI 5 — compile only the dark theme (the app's single theme), and
+   prune daisyUI modules the gateway never renders (audited: gateway templ +
+   the go-daisy ui/nav/form/table/layout packages use ~48 of the ~70 modules).
+   `status` is NOT excluded: go-daisy's Badge renders its Dot prop as
+   <span class="status status-<intent> status-xs">, so the module must compile
+   for every badge status dot to have size/colour at all. */
+@plugin "daisyui" {
+  themes: dark --default;
+  exclude: artboard, aura, carousel, fab, filter, glass, hover3d, hovergallery,
+    megamenu, mockup, otp, radialprogress, textrotate, typography;
+}
+
+/* Memory brand theme: ink-navy surfaces, brass primary (the butler's tray),
+   steel secondary, mint accent. Overrides the built-in "dark" theme. */
+@plugin "daisyui/theme" {
+  name: "dark";
+  default: true;
+  prefersdark: true;
+  color-scheme: dark;
+
+  --color-base-100: oklch(0.215 0.016 274); /* surface */
+  --color-base-200: oklch(0.175 0.014 274); /* page background */
+  --color-base-300: oklch(0.135 0.012 274); /* deepest elevation */
+  --color-base-content: oklch(0.93 0.008 265);
+
+  --color-primary: oklch(0.74 0.135 78); /* brass */
+  --color-primary-content: oklch(0.2 0.04 78);
+
+  --color-secondary: oklch(0.64 0.105 240); /* steel */
+  --color-secondary-content: oklch(0.96 0.01 240);
+
+  --color-accent: oklch(0.76 0.15 162); /* mint */
+  --color-accent-content: oklch(0.17 0.04 162);
+
+  --color-neutral: oklch(0.265 0.02 274);
+  --color-neutral-content: oklch(0.9 0.01 265);
+
+  --color-info: oklch(0.69 0.115 240);
+  --color-info-content: oklch(0.97 0.01 240);
+  --color-success: oklch(0.71 0.15 152);
+  --color-success-content: oklch(0.97 0.01 152);
+  --color-warning: oklch(0.81 0.155 82);
+  --color-warning-content: oklch(0.2 0.04 82);
+  --color-error: oklch(0.63 0.2 26);
+  --color-error-content: oklch(0.97 0.01 26);
+
+  --radius-selector: 1rem;
+  --radius-field: 0.25rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+/* Iconify — Lucide icons as utility classes (used by go-daisy IconSpan and
+   the client JS). */
+@plugin "@iconify/tailwind4" {
+  prefixes: lucide;
+}
+
+/* ---------------------------------------------------------------------------
+ * Content sources: every Memory file that can mention utility classes.
+ * (Relative to this file, i.e. gateway/…)
+ * ------------------------------------------------------------------------- */
+@source "../**/*.templ";
+@source "../**/*.go";
+@source "../static/js/*.js";
+/* go-daisy component source (vendored) — generate the utilities and lucide
+   icons go-daisy's components emit, on demand, instead of loading go-daisy's
+   pre-compiled bundle. Keep every OTHER vendored dependency out of the scan.
+
+   NOTE: Tailwind treats `@source not` exclusions as global over the final
+   candidate set regardless of declaration order, so an exclusion of the whole
+   vendor tree ("../../vendor/**") silently swallows the go-daisy sources above
+   and the classes/icons that ONLY go-daisy emits never compile — e.g. the
+   navbar's lucide--menu/panel-left-close hamburger icons and the daisyUI
+   `.modal-toggle` rule that hides command-palette/spotlight checkboxes. Exclude
+   per top-level vendor dependency instead of the shared vendor root. */
+@source "../../vendor/github.com/emergent-company/go-daisy/components";
+@source not "../../vendor/buf.build/**";
+@source not "../../vendor/cel.dev/**";
+@source not "../../vendor/go.opentelemetry.io/**";
+@source not "../../vendor/go.uber.org/**";
+@source not "../../vendor/go.yaml.in/**";
+@source not "../../vendor/golang.org/**";
+@source not "../../vendor/google.golang.org/**";
+@source not "../../vendor/gopkg.in/**";
+
+/* go-daisy's co-located custom component CSS (sidebar/layout/topbar/alpine/
+   view-transition rules) — see gateway/godaisy_css.go (blank-import forces the
+   package dir, and with it custom.css, into vendor). */
+@import "../../vendor/github.com/emergent-company/go-daisy/components/css/custom.css";
+
+/* ---------------------------------------------------------------------------
+ * Memory brand layer — atmosphere, chat polish, session rail, motion.
+ * Plain CSS on purpose: these intentionally override daisyUI component
+ * defaults, so they stay unlayered (unlayered beats layered).
+ * ------------------------------------------------------------------------- */
+
+/* ---------- Atmosphere ---------- */
+/* Keep the root element dark regardless of daisyUI's theme cascade. Without
+   this, iOS Safari (Home-Screen PWA) shows a white page during navigation and
+   back/bfcache restores, because the dark theme only lands once the late
+   stylesheets have parsed. base-200 is the page background (#0E1017). */
+html {
+  color-scheme: dark;
+  background-color: #0E1017;
+  /* Base font size: 15px root so 1rem = 15px and all rem-based utilities
+     scale down from the browser's 16px default. */
+  font-size: 15px;
+}
+
+/* The brand theme tokens are declared once, in the @plugin "daisyui/theme"
+   block above (dark, default). The unlayered :root redeclaration that used to
+   beat go-daisy's light "nord" default in the co-loaded stylesheet is gone —
+   go-daisy's CSS is no longer loaded, so the dark theme is authoritative. */
+
+body {
+  /* soft brass glow top-right, faint violet bottom-left */
+  background-image:
+    radial-gradient(1100px 520px at 88% -12%, oklch(0.74 0.135 78 / 0.07), transparent 62%),
+    radial-gradient(900px 600px at -10% 110%, oklch(0.64 0.105 240 / 0.05), transparent 60%);
+  background-attachment: fixed;
+}
+
+#_layout-sidebar {
+  background-image:
+    radial-gradient(480px 320px at 0% 0%, oklch(0.74 0.135 78 / 0.06), transparent 60%);
+}
+
+/* Topbar wrapper is h-14 but its Navbar child has no height, so content was
+   top-aligned instead of vertically centered. Fill the wrapper so the Navbar's
+   items-center vertically centers its content to match the sidebar header. */
+#_layout-topbar {
+  height: 100%;
+}
+
+main#main-content {
+  background-image:
+    radial-gradient(800px 400px at 50% 0%, oklch(0.74 0.135 78 / 0.035), transparent 60%);
+}
+
+/* ---------- iOS safe areas (notch + home indicator) ---------- */
+/* The shell fills the viewport (h-screen + viewport-fit=cover), so every bar
+   and drawer that touches a screen edge sits underneath the notch / status
+   bar / home indicator on notched iPhones. The rules below push the CONTENT
+   clear of the unsafe insets while the chrome's own background stays
+   full-bleed. They are purely additive: on desktop and non-notched browsers
+   every env() inset resolves to 0px, so all padding here collapses to zero
+   and no desktop layout shifts.
+
+   env() needs constant() as its pre-iOS-11.2 spelling; the constant() line is
+   declared first (parsed only by old iOS) and the env() line overrides it
+   everywhere else. iOS Safari inside the browser (not installed) reports 0
+   insets for the browser chrome areas, so these rules only kick in where the
+   page genuinely runs edge-to-edge. */
+
+/* Top bar (appShell wraps the sticky #_layout-topbar Navbar in an id-less
+   h-14 div). Grow that wrapper by the top inset and pad its top, so the bar's
+   background extends behind the notch/status bar while the Navbar content
+   drops below it, in line with the sidebar header. */
+div:has(> #_layout-topbar) {
+  padding-top: constant(safe-area-inset-top);
+  padding-top: env(safe-area-inset-top, 0px);
+  height: calc(3.5rem + env(safe-area-inset-top, 0px));
+}
+
+/* Left drawer (#_layout-sidebar, sidebar_user.templ): fixed full-height on
+   <lg, in-flow sibling on lg+. It spans the screen's top and left edges, so
+   its header must clear the status bar/notch and (in notched landscape) the
+   rounded corner at the left edge. The drawer's own background still bleeds
+   under the unsafe regions. */
+#_layout-sidebar {
+  padding-top: constant(safe-area-inset-top);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: constant(safe-area-inset-left);
+  padding-left: env(safe-area-inset-left, 0px);
+}
+/* The nav menu is the drawer's scroll container; pad its scroll end so the
+   last item clears the home indicator (iPad/landscape) instead of hiding
+   behind it. */
+#_layout-sidebar .sidebar-menu {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Assistant drawer (#sidepanel-panel, sidepanel.templ): fixed right edge,
+   full height. Header clears the status bar/notch; content clears the right
+   rounded corner in notched landscape. The form (bottom-anchored composer)
+   keeps its own bar background full-bleed to the bottom edge and gains the
+   inset as extra bottom padding, lifting the textarea off the home indicator.
+   The centered modal reuses this same DOM, so scope both rules to drawer mode
+   (:not(.sidepanel-in-modal)) — in the modal nothing touches a screen edge. */
+#sidepanel-panel:not(.sidepanel-in-modal) {
+  padding-top: constant(safe-area-inset-top);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: constant(safe-area-inset-right);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+#sidepanel-panel:not(.sidepanel-in-modal) #sidepanel-form {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Chat composer bar (chat.templ): bottom-anchored under #chat-log, so its
+   controls would sit on the home indicator. #chat-log + div is that wrapper;
+   on the run-transcript page (runs.templ) the adjacent sibling is #chat-empty,
+   which is display:none, so the rule is inert there. calc keeps the existing
+   py-3 (0.75rem) and adds the inset on top. */
+#chat-log + div {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Chat composer on the chat page only; the run page (runs.templ) has no
+   composer, so the transcript is the bottom-most surface (#chat-root carries
+   data-run there). Its log wrapper is the scroll content — extend its bottom
+   padding by the inset so the last message clears the home indicator.
+   (max() would be nicer, but the lg breakpoint changes the base padding from
+   1rem to 1.5rem, so the media query mirrors that.) */
+#chat-root[data-run] #chat-log > div {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 64rem) {
+  #chat-root[data-run] #chat-log > div {
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Session rail (#chat-rail / #chat-rail-list, chat.templ): on md+ the rail is
+   an in-flow column whose bottom edge lands on the viewport's bottom, so the
+   scrolled-to-end session list would end under the home indicator (iPad /
+   landscape). Extend the list's scroll-end padding by the inset; below md the
+   rail is a toggled in-flow block away from the screen edges, where the inset
+   is 0 anyway. */
+#chat-rail-list {
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* ---------- Logo monogram ---------- */
+.memory-monogram {
+  background: linear-gradient(140deg, oklch(0.82 0.14 85), oklch(0.62 0.16 62));
+  color: oklch(0.16 0.03 60);
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.95rem;
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.35),
+    0 4px 14px oklch(0.62 0.16 62 / 0.35);
+}
+
+/* ---------- Chat ---------- */
+#chat-log {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-base-300) transparent;
+}
+#chat-log::-webkit-scrollbar { width: 8px; }
+#chat-log::-webkit-scrollbar-thumb { background: var(--color-base-300); border-radius: 8px; }
+#chat-log::-webkit-scrollbar-track { background: transparent; }
+
+.chat-bubble {
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.2);
+}
+.chat-bubble.chat-bubble-neutral {
+  background: oklch(0.24 0.018 274);
+  border: 1px solid oklch(1 0 0 / 0.06);
+}
+
+/* streaming caret */
+.memory-caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: var(--color-primary);
+  animation: memory-blink 0.9s steps(2, start) infinite;
+}
+@keyframes memory-blink { 50% { opacity: 0; } }
+
+/* animated typing indicator in the assistant bubble while streaming */
+.memory-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 2px;
+}
+.memory-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-base-content);
+  opacity: 0.35;
+  animation: memory-typing 1.2s ease-in-out infinite;
+}
+.memory-typing span:nth-child(2) { animation-delay: 0.15s; }
+.memory-typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes memory-typing {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30% { transform: translateY(-3px); opacity: 0.9; }
+}
+
+/* tool event chip — rendered inline in the message stream */
+.memory-tool-chip {
+  /* flex items in #chat-messages stretch by default; keep the chip its
+     natural pill width and left-aligned with the assistant bubbles */
+  align-self: flex-start;
+  transition: opacity 0.2s ease, border-color 0.2s ease;
+}
+.memory-tool-chip[data-status="ok"] { border-color: oklch(0.71 0.15 152 / 0.35); }
+.memory-tool-chip[data-status="error"] { border-color: oklch(0.63 0.2 26 / 0.45); }
+
+/* suggestion chips in chat welcome state */
+.memory-suggestion {
+  transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.memory-suggestion:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ---------- Markdown (rendered assistant content) ---------- */
+/* LLM markdown is sanitized to bare elements (no classes survive), wrapped
+   in .memory-md inside the chat bubble. All styles are scoped to that
+   wrapper so nothing leaks into the rest of the UI. */
+.memory-md {
+  overflow-wrap: break-word;
+  line-height: 1.65;
+  /* Flex/grid items default to min-width:auto, which would let a wide pre
+     stretch the question card past its max-width instead of scrolling.
+     min-width:0 lets this wrapper (and .card-body above it) shrink to the
+     available space; max-width:100% bounds it. Harmless in assistant bubbles
+     (block context, no flex ancestor). */
+  min-width: 0;
+  max-width: 100%;
+}
+.memory-md > :first-child { margin-top: 0; }
+.memory-md > :last-child { margin-bottom: 0; }
+
+/* headings — clear hierarchy, tight leading, hairline rules on the big two */
+.memory-md h1,
+.memory-md h2,
+.memory-md h3,
+.memory-md h4,
+.memory-md h5,
+.memory-md h6 {
+  margin: 1.25em 0 0.5em;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--color-base-content);
+}
+.memory-md h1 {
+  font-size: 1.3rem;
+  letter-spacing: -0.01em;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid oklch(1 0 0 / 0.09);
+}
+.memory-md h2 {
+  font-size: 1.125rem;
+  letter-spacing: -0.005em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid oklch(1 0 0 / 0.07);
+}
+.memory-md h3 { font-size: 1rem; }
+.memory-md h4 { font-size: 0.9375rem; }
+.memory-md h5 {
+  font-size: 0.875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.memory-md h6 {
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+}
+
+/* prose */
+.memory-md p { margin: 0.55em 0; }
+.memory-md strong { font-weight: 650; color: oklch(0.97 0.006 265); }
+.memory-md em { font-style: italic; }
+.memory-md del {
+  color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  text-decoration-color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
+}
+
+/* inline code — subtle brass-tinted pill */
+.memory-md code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  font-size: 0.85em;
+  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--color-primary) 24%, transparent);
+  color: color-mix(in oklch, var(--color-primary) 80%, oklch(0.93 0.008 265));
+  padding: 0.12em 0.4em;
+  border-radius: 0.375rem;
+}
+
+/* fenced code blocks — raised, deeper surface, scrolls horizontally */
+.memory-md pre {
+  margin: 0.8em 0;
+  padding: 0.8rem 1rem;
+  background: oklch(0.185 0.014 274);
+  border: 1px solid oklch(1 0 0 / 0.07);
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: 0.8375rem;
+  line-height: 1.6;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-base-300) transparent;
+}
+.memory-md pre::-webkit-scrollbar { height: 8px; }
+.memory-md pre::-webkit-scrollbar-thumb { background: var(--color-base-300); border-radius: 8px; }
+.memory-md pre::-webkit-scrollbar-track { background: transparent; }
+.memory-md pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: color-mix(in oklch, var(--color-base-content) 92%, transparent);
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* blockquote — brass accent bar, muted voice */
+.memory-md blockquote {
+  margin: 0.9em 0;
+  padding: 0.5em 1em;
+  border-left: 3px solid color-mix(in oklch, var(--color-primary) 55%, transparent);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: oklch(1 0 0 / 0.035);
+  color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+}
+.memory-md blockquote > :first-child { margin-top: 0; }
+.memory-md blockquote > :last-child { margin-bottom: 0; }
+
+/* links — brass, visible but restrained underline */
+.memory-md a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklch, var(--color-primary) 45%, transparent);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+.memory-md a:hover {
+  color: color-mix(in oklch, var(--color-primary) 85%, white);
+  text-decoration-color: var(--color-primary);
+}
+
+/* lists */
+.memory-md ul,
+.memory-md ol {
+  margin: 0.6em 0;
+  padding-left: 1.5em;
+}
+.memory-md ul { list-style: disc; }
+.memory-md ul ul { list-style: circle; }
+.memory-md ul ul ul { list-style: square; }
+.memory-md ol { list-style: decimal; }
+.memory-md li {
+  margin: 0.28em 0;
+  padding-left: 0.15em;
+}
+.memory-md li::marker { color: color-mix(in oklch, var(--color-primary) 65%, transparent); }
+.memory-md li > ul,
+.memory-md li > ol { margin: 0.2em 0; }
+
+/* tables — header emphasis, row rules, wraps instead of blowing out.
+   width:100% fills the bubble so columns distribute instead of collapsing to
+   the widest cell; wide tables still scroll via overflow-x (min-content
+   overflows the block box). */
+.memory-md table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  margin: 0.9em 0;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.memory-md th,
+.memory-md td {
+  border-bottom: 1px solid oklch(1 0 0 / 0.09);
+  padding: 0.5em 0.85em;
+  text-align: left;
+  vertical-align: top;
+  /* break-word (not "anywhere"): keeps each column's min-content at its
+     longest word, so key/value first columns (Property | Value) keep a sane
+     width and numeric index columns (1 | 2 | 3) stay narrow instead of
+     blowing out. Only breaks mid-word when a single token exceeds the cell. */
+  overflow-wrap: break-word;
+}
+.memory-md thead th {
+  background: oklch(1 0 0 / 0.045);
+  border-bottom: 1px solid oklch(1 0 0 / 0.16);
+  font-weight: 600;
+  color: color-mix(in oklch, var(--color-base-content) 88%, var(--color-primary));
+}
+.memory-md tbody tr:nth-child(even) { background: oklch(1 0 0 / 0.018); }
+.memory-md tbody tr:last-child td { border-bottom: 0; }
+
+/* rule — warm hairline */
+.memory-md hr {
+  margin: 1.4em 0;
+  border: 0;
+  border-top: 1px solid oklch(0.74 0.135 78 / 0.2);
+}
+
+/* ---------- Rows / affordances ---------- */
+tr[data-row]:hover .row-actions {
+  opacity: 1;
+}
+.row-actions {
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+
+/* ---------- Badge legibility (dark theme) ---------- */
+/* daisyUI's badge-soft paints the label with --badge-color. For the neutral
+   variant that token (--color-neutral) is near-identical in lightness to the
+   base-100 surface, so "soft neutral" labels vanish. Unlayered so it beats the
+   layered badge-soft rule; point the label at --color-neutral-content. */
+.badge-soft.badge-neutral {
+  color: var(--color-neutral-content);
+}
+
+/* Badge dots: go-daisy renders Dot as <span class="status status-<intent>
+   status-xs"> but the daisyUI `status` module used to be excluded, leaving an
+   empty zero-size span. With the module restored the dot has geometry; this
+   pairs it with the chip's own text colour so it always contrasts with the
+   chip background — solid chips use their *-content token, soft/outline/ghost
+   chips use their accent, and the neutral dot inherits the lightened
+   soft-neutral label above. Unlayered + higher specificity overrides the
+   per-intent .status-* background. */
+.badge .status {
+  color: inherit;
+  background-color: currentColor;
+}
+
+/* scrollbar for code/tool output blocks */
+pre.memory-scroll::-webkit-scrollbar { height: 6px; }
+pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); border-radius: 6px; }
+
+/* ---------- Session rail (chat page) ---------- */
+#chat-rail-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-base-300) transparent;
+}
+#chat-rail-list::-webkit-scrollbar { width: 8px; }
+#chat-rail-list::-webkit-scrollbar-thumb { background: var(--color-base-300); border-radius: 8px; }
+#chat-rail-list::-webkit-scrollbar-track { background: transparent; }
+
+#chat-rail .list-row {
+  cursor: pointer;
+  border-radius: 0.5rem;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+#chat-rail .list-row:hover {
+  background: oklch(1 0 0 / 0.04);
+}
+#chat-rail .list-row[data-active="true"] {
+  background: oklch(0.74 0.135 78 / 0.13);
+  color: var(--color-primary);
+}
+#chat-rail .list-row[data-active="true"] .font-medium {
+  color: var(--color-primary);
+}
+#chat-rail .list-row[data-active="true"] .text-base-content\/50,
+#chat-rail .list-row[data-active="true"] .text-base-content\/40,
+#chat-rail .list-row[data-active="true"] .text-base-content\/25 {
+  color: color-mix(in oklch, var(--color-primary) 60%, transparent);
+}
+
+/* ---------- Motion ---------- */
+/* entry stagger for table rows — cheap, subtle */
+@keyframes memory-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.memory-rise {
+  animation: memory-rise 0.28s ease both;
+}
+.memory-rise:nth-child(1) { animation-delay: 0.02s; }
+.memory-rise:nth-child(2) { animation-delay: 0.05s; }
+.memory-rise:nth-child(3) { animation-delay: 0.08s; }
+.memory-rise:nth-child(4) { animation-delay: 0.11s; }
+.memory-rise:nth-child(5) { animation-delay: 0.14s; }
+.memory-rise:nth-child(6) { animation-delay: 0.17s; }
+
+/* ---------- Assistant side panel: resize grip + modal window ---------- */
+/* Drag handle on the drawer's left edge. Half-overhangs so it is easy to
+   grab; touch-action:none lets pointer dragging win over scrolling. */
+#sidepanel-resize {
+  position: absolute;
+  top: 0;
+  left: -6px;
+  z-index: 30;
+  width: 14px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#sidepanel-resize::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 2.25rem;
+  border-radius: 9999px;
+  background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+  transition: background-color 0.15s ease, height 0.15s ease;
+}
+#sidepanel-resize:hover::after,
+#sidepanel-resize:active::after {
+  background: color-mix(in oklch, var(--color-primary) 55%, transparent);
+  height: 3rem;
+}
+
+/* ---------- Chat session rail: resize grip ---------- */
+/* Drag handle on the rail's right edge (mirrors #sidepanel-resize but
+   anchored right, so dragging right widens the session list). The rail
+   carries `relative` for the absolute handle to anchor against. */
+#chat-rail-resize {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  z-index: 30;
+  width: 14px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#chat-rail-resize::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 2.25rem;
+  border-radius: 9999px;
+  background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+  transition: background-color 0.15s ease, height 0.15s ease;
+}
+#chat-rail-resize:hover::after,
+#chat-rail-resize:active::after {
+  background: color-mix(in oklch, var(--color-primary) 55%, transparent);
+  height: 3rem;
+}
+
+/* Modal window mode: the drawer <aside> is moved into #sidepanel-modal-box and
+   re-anchored from fixed off-canvas to a normal block filling the box. These
+   overrides are unlayered (like the rest of this file), so they beat the
+   Tailwind/daisyUI utilities on the aside (fixed, translate-x-full, max-w-md,
+   transition-transform, shadow-2xl). */
+#sidepanel-modal-box {
+  display: flex;
+  width: min(94vw, 68rem);
+  max-width: none;
+  height: min(88vh, 52rem);
+  padding: 0;
+  overflow: hidden;
+}
+#sidepanel-panel.sidepanel-in-modal {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  transform: none;
+  translate: none;
+  /* neutralize Tailwind's translate utilities (--tw-translate-*) too */
+  --tw-translate-x: 0;
+  --tw-translate-y: 0;
+  transition: none;
+  box-shadow: none;
+  border-radius: inherit;
+}
+/* drawer-only controls (resize grip, width toggle, expand button) make no
+   sense inside the centered modal */
+#sidepanel-panel.sidepanel-in-modal #sidepanel-resize,
+#sidepanel-panel.sidepanel-in-modal .sidepanel-drawer-only {
+  display: none;
+}
+
+/* Modal: center the conversation column and the bottom composer, mirroring the
+   /chat page (chat.templ wraps its log + form in mx-auto max-w-3xl/max-w-6xl).
+   The header stays full-width; only the log column and the form's inner
+   content are constrained, so the border-t on the form still spans the box. */
+#sidepanel-panel.sidepanel-in-modal #sidepanel-log > div {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 48rem; /* max-w-3xl — comfortable chat column at the modal's 68rem */
+}
+#sidepanel-panel.sidepanel-in-modal #sidepanel-form > div,
+#sidepanel-panel.sidepanel-in-modal #sidepanel-form > p {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 48rem;
+}
+
+/* Modal: the sessions dropdown has room to breathe — double the drawer's
+   w-64 (16rem) × max-h-96 (24rem) menu. Drawer mode keeps the small menu
+   (rule only exists under .sidepanel-in-modal). */
+#sidepanel-panel.sidepanel-in-modal #sidepanel-session-menu {
+  width: 32rem;
+  max-height: 48rem;
+}
+
+/* ---------- Toast countdown bar ---------- */
+/* width is driven by the inline animation-duration (per-toast duration); the
+   inline animation-play-state pauses it while hovered. */
+@keyframes toast-shrink {
+  from { width: 100%; }
+  to { width: 0; }
+}
+.toast-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: currentColor;
+  opacity: 0.5;
+  animation: toast-shrink linear forwards;
+}
+
+/* ---------- PWA: standalone display-mode hooks ---------- */
+/* Installed launches ("Add to Home Screen" on iOS, installed on Android) run
+   in a standalone window with no browser chrome. Future PWA-only styling —
+   app-chrome refinements, install-prompt visuals, title-bar-area handling on
+   Android — lives here, scoped so it can never leak into regular browsing.
+
+   It is intentionally small today: the env(safe-area-*) rules above already
+   handle the notch and home indicator, because insets are only nonzero when
+   the page truly runs edge-to-edge (installed standalone or fullscreen). */
+@media (display-mode: standalone) {
+  /* The app is an h-screen shell, so rubber-banding / pull-to-refresh on the
+     document does nothing but flash the overscroll glow. Kill it at the
+     document level; the inner scroll containers (#main-content, #chat-log,
+     #sidepanel-log, …) keep their own bounce. */
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
+}
+
+/* prefers-reduced-motion: kill the flourish */
+@media (prefers-reduced-motion: reduce) {
+  .memory-rise { animation: none; }
+  .memory-caret { animation: none; opacity: 0.6; }
+  .memory-typing span { animation: none; }
+  .toast-bar { animation: none; }
+}

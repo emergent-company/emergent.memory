@@ -1,0 +1,1462 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Project Settings ---
+
+// settingsField delegates to go-daisy's form.FormControl (LabelAbove) for the
+// fieldset/hint scaffolding, adding the app's one delta: an info tooltip
+// rendered inline in the legend, so every setting explains itself.
+templ settingsField(name, label, tip, hint string, attrs templ.Attributes) {
+	@form.FormControl(name, "", form.LabelAbove, hint, "", attrs) {
+		<legend class="fieldset-legend flex items-center gap-1.5">
+			<span>{ label }</span>
+			@ui.InfoTip(tip)
+		</legend>
+		{ children... }
+	}
+}
+
+// settingsSubNav is the vertical sub-navigation rail for the Settings area
+// (General / Assistant / Overrides / Providers / Voice / Devices / MCP nodes),
+// mirroring agentSubNav. It stacks horizontally on small screens and becomes a
+// sticky left rail on desktop.
+templ settingsSubNav(active string, providersMissing bool) {
+	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Settings sections">
+		@subNavItem("/settings", active == "general", "lucide--settings", "General")
+		@subNavItem("/settings/assistant", active == "assistant", "lucide--bot", "Assistant")
+		@subNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
+		{{ activeP := active == "providers" }}
+		<a
+			class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !activeP) }
+			href="/settings/providers"
+			if activeP {
+				aria-current="page"
+			}
+		>
+			if activeP {
+				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-primary")
+			} else {
+				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-base-content/40")
+			}
+			<span>Providers</span>
+			if providersMissing && !activeP {
+				<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured" title="No provider configured"></span>
+			}
+		</a>
+		@subNavItem("/settings/voice", active == "voice", "lucide--mic", "Voice")
+		@subNavItem("/settings/devices", active == "devices", "lucide--smartphone", "Devices")
+		@subNavItem("/settings/mcp-nodes", active == "mcp-nodes", "lucide--radio", "MCP nodes")
+	</nav>
+}
+
+// ProjectSettingsPage renders the General section of project settings: the
+// project record (Project info), the editor-agent selection, and the remember
+// pipeline + dedup threshold (Remember & dedup). A failed project fetch renders
+// the whole-page error state; flashMsg/flashErr surface PRG feedback from the
+// save flows.
+templ ProjectSettingsPage(data projectSettingsData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@projectSettingsHeader(data.Project != nil && data.LoadErr == nil)
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageError("Project settings unavailable", data.LoadErr)
+		} else {
+			@layout.Rail(settingsSubNav("general", data.ProvidersMissing), nil) {
+				@projectInfoPanel(data.Project)
+				@editorAgentPanel(data.EditorAgent, data.Agents)
+				@rememberDedupPanel(data.RememberAgent, data.DedupThreshold, data.Agents)
+			}
+		}
+	}
+}
+
+// AssistantSettingsPage renders the Assistant section: the agent that powers
+// the global assistant side panel.
+templ AssistantSettingsPage(data assistantSettingsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Assistant")), "", "Assistant", "The agent that powers the assistant side panel.", detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel("assistant", "lucide--bot")
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@layout.Rail(settingsSubNav("assistant", data.ProvidersMissing), nil) {
+			@assistantPanel(data.AssistantAgent, data.Agents)
+		}
+	}
+}
+
+// OverridesSettingsPage renders the Agent overrides section: per-agent
+// definition overrides.
+templ OverridesSettingsPage(data overridesSettingsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Agent overrides")), "", "Agent overrides", "Per-agent definition overrides.", detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel("overrides", "lucide--wrench")
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@layout.Rail(settingsSubNav("overrides", data.ProvidersMissing), nil) {
+			@agentOverridesPanel(data.Overrides)
+		}
+	}
+}
+
+// ProvidersSettingsPage renders the Providers section: configured LLM
+// providers and per-model rates.
+templ ProvidersSettingsPage(data providersSettingsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Providers")), "", "Providers", "LLM providers and per-model rates.", detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel("providers", "lucide--server")
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@layout.Rail(settingsSubNav("providers", data.ProvidersMissing), nil) {
+			@providersPanel(data.Providers)
+		}
+	}
+}
+
+// VoiceSettingsPage renders the Voice section: text-to-speech and
+// speech-to-text providers, LiveKit endpoints, and turn tuning. flashMsg/
+// flashErr surface PRG feedback from the save flow.
+templ VoiceSettingsPage(data voiceSettingsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Voice")), "", "Voice", "Text-to-speech and speech-to-text providers, LiveKit endpoints, and turn tuning.", detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel("voice", "lucide--mic")
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@layout.Rail(settingsSubNav("voice", data.ProvidersMissing), nil) {
+			@voicePanel(data.Voice)
+		}
+	}
+}
+
+// DevicesSettingsPage renders the Devices section: the iOS setup QR code and
+// the registered-devices list. flashMsg/flashErr surface PRG feedback from the
+// revoke flow.
+templ DevicesSettingsPage(data devicesSettingsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Devices")), "", "Devices", "iOS setup and registered devices.", detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel("devices", "lucide--smartphone")
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@layout.Rail(settingsSubNav("devices", data.ProvidersMissing), nil) {
+			@iosSetupPanel(data.IOSQRImage)
+			@devicesPanel(data.Devices)
+		}
+	}
+}
+
+templ projectSettingsHeader(ok bool) {
+	@pageHeader("Project", "Project Settings", "Project-level Memory configuration — the project record and the remember pipeline.") {
+		if ok {
+			@countBadgeLabel("project", "lucide--settings")
+		}
+	}
+}
+
+// projectInfoPanel edits the project record itself: name, project info, chat
+// prompt template, extraction toggles, and budget. The name is required; the
+// free-text fields are always submitted so clearing them clears the value.
+templ projectInfoPanel(p *Project) {
+	@ui.Section("Project info", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="flex flex-col gap-4">
+			@settingsField("project-name", "Name", "Display name shown in the UI and briefings. Purely cosmetic — the project ID is stable, so renaming never breaks stored data or links.", "Required.", nil) {
+				<input id="project-name" name="name" type="text" value={ p.Name } placeholder="My project" class="input w-full" hx-post="/settings/project/name" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
+			}
+			@settingsField("project-info", "Project info", "Free-form background about this project. Surfaces to agents via the project briefing, so a good summary here noticeably improves agent context and answer quality.", "Free-form context about this project.", nil) {
+				<textarea id="project-info" name="project_info" rows="4" placeholder="What this project is about…" class="textarea w-full resize-none" hx-post="/settings/project/project_info" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none">{ p.ProjectInfo }</textarea>
+			}
+			@settingsField("chat-prompt-template", "Chat prompt template", "Prepended to every chat prompt in this project. Re-primes the model for all conversations — a wrong template degrades every response, not just one.", "Template used for chat prompts.", nil) {
+				<textarea id="chat-prompt-template" name="chat_prompt_template" rows="3" placeholder="You are chatting within {project_name}…" class="textarea w-full resize-none" hx-post="/settings/project/chat_prompt_template" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none">{ p.ChatPromptTemplate }</textarea>
+			}
+			<div class="flex flex-wrap gap-x-8 gap-y-2">
+				<label class="cursor-pointer label justify-start gap-3">
+					<input type="checkbox" name="auto_extract_objects" class="toggle" checked?={ p.AutoExtractObjects != nil && *p.AutoExtractObjects } hx-post="/settings/project/auto_extract_objects" hx-trigger="change" hx-include="this" hx-swap="none"/>
+					<span class="label-text flex items-center gap-1.5">
+						<span>Auto-extract objects from new documents</span>
+						@ui.InfoTip("When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually.")
+					</span>
+				</label>
+				<label class="cursor-pointer label justify-start gap-3">
+					<input type="checkbox" name="auto_merge_extraction_branches" class="toggle" checked?={ p.AutoMergeExtractionBranches != nil && *p.AutoMergeExtractionBranches } hx-post="/settings/project/auto_merge_extraction_branches" hx-trigger="change" hx-include="this" hx-swap="none"/>
+					<span class="label-text flex items-center gap-1.5">
+						<span>Auto-merge extraction branches</span>
+						@ui.InfoTip("When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked.")
+					</span>
+				</label>
+			</div>
+			@settingsField("budget-usd", "Budget (USD)", "Monthly LLM spend cap. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets. Empty means no cap.", "Monthly budget cap, if any.", nil) {
+				<input id="budget-usd" name="budget_usd" type="number" step="0.01" min="0" value={ budgetInputValue(p.BudgetUSD) } placeholder="e.g. 25.00" class="input w-full" hx-post="/settings/project/budget_usd" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
+			}
+			if p.BudgetUSD == nil {
+				<p class="text-base-content/45 -mt-2 text-xs">Budget not set.</p>
+			}
+		</div>
+	}
+}
+
+// assistantPanel edits the assistant agent selection (which agent definition
+// powers the global assistant side panel). The empty option hides the
+// assistant; a stored value that no longer exists in the list is preserved as
+// an "(unlisted)" option.
+templ assistantPanel(assistantAgent string, agents []AgentDefinitionSummary) {
+	@ui.Section("Assistant", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="flex flex-col gap-4">
+			@settingsField("assistant-agent", "Assistant agent", "The agent that powers the assistant side panel and the 'Add with assistant' button. Empty hides the assistant.", "Pick the agent to use as the assistant. Empty hides the assistant.", nil) {
+				<select id="assistant-agent" name="assistant_agent" class="select w-full" hx-post="/settings/assistant" hx-trigger="change" hx-include="this" hx-swap="none">
+					<option value="" selected?={ assistantAgent == "" }>None — hide assistant</option>
+					for _, a := range agents {
+						<option value={ a.ID } selected?={ a.ID == assistantAgent }>{ a.Name }</option>
+					}
+					if assistantAgent != "" && !agentListedByID(agents, assistantAgent) {
+						<option value={ assistantAgent } selected>{ assistantAgent } (unlisted)</option>
+					}
+				</select>
+			}
+			if assistantAgent == "" {
+				<p class="text-base-content/45 -mt-2 text-xs">Assistant is hidden until you pick an agent.</p>
+			}
+		</div>
+	}
+}
+
+// agentOverridesPanel lists the project's agent definition overrides (each
+// with a delete form) and the add/update form. Writing an existing agent name
+// updates its override; a new name creates one.
+templ agentOverridesPanel(overrides []AgentOverrideEntry) {
+	@ui.Section("Agent overrides", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<h3 class="mb-3 text-sm font-semibold">Current overrides</h3>
+		if len(overrides) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--bot",
+				Title:       "No agent overrides",
+				Description: "Agent definitions use their default configuration.",
+				Bordered:    true,
+			})
+		} else {
+			<div class="flex flex-col gap-2">
+				for _, e := range overrides {
+					@overrideRow(e)
+				}
+			</div>
+		}
+		<h3 class="mb-3 mt-5 text-sm font-semibold">Add or update an override</h3>
+		@overrideForm()
+	}
+}
+
+templ overrideRow(e AgentOverrideEntry) {
+	@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-start justify-between gap-3"}) {
+		<div class="min-w-0">
+			<p class="text-sm font-medium">{ e.AgentName }</p>
+			<p class="text-base-content/55 mt-0.5 text-xs">
+				if e.Override != nil {
+					{ overrideSummary(*e.Override) }
+				} else {
+					no overridden fields
+				}
+			</p>
+		</div>
+		<form method="post" action={ templ.URL("/settings/overrides/" + url.PathEscape(e.AgentName) + "/delete") }>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeSubmit,
+				Variant:   ui.ButtonError,
+				Style:     ui.ButtonStyleOutline,
+				Size:      ui.ButtonSM,
+				Icon:      "lucide--trash-2",
+				AriaLabel: "Delete override for " + e.AgentName,
+			}) {
+				Delete
+			}
+		</form>
+	}
+}
+
+templ overrideForm() {
+	<form class="flex flex-col gap-4" method="post" action="/settings/overrides">
+		@settingsField("override-agent", "Agent name", "Which agent definition this override applies to — matched by name. Typing an existing agent's name silently overrides that agent, so make sure it's the one you intend.", "The agent definition this override applies to.", nil) {
+			<input id="override-agent" name="agentName" type="text" required placeholder="memory" class="input w-full"/>
+		}
+		@settingsField("override-prompt", "System prompt", "Replaces the agent's default system prompt, changing its persona, tone, and instructions. Empty keeps the default.", "Overrides the agent's default system prompt.", nil) {
+			<textarea id="override-prompt" name="systemPrompt" rows="3" placeholder="Be terse…" class="textarea w-full resize-none"></textarea>
+		}
+		@settingsField("override-model", "Model", "Replaces the agent's model, e.g. deepseek/deepseek-v4-flash. Directly trades that agent's cost, speed, and capability.", "Overrides the agent's model.", nil) {
+			<input id="override-model" name="model" type="text" placeholder="deepseek/deepseek-v4-flash" class="input w-full"/>
+		}
+		@settingsField("override-tools", "Tools", "Replaces the agent's allowed tool list. Restricting tools limits what the agent can do and can break workflows that depend on them; empty keeps the default list.", "Comma-separated tool names, e.g. web_search, memory_lookup.", nil) {
+			<input id="override-tools" name="tools" type="text" placeholder="web_search, memory_lookup" class="input w-full"/>
+		}
+		@settingsField("override-steps", "Max steps", "Caps reasoning steps per run. Lower is cheaper and faster but can cut off long tasks; higher is more thorough but slower and costlier.", "Limits the agent's reasoning steps.", nil) {
+			<input id="override-steps" name="maxSteps" type="number" min="1" placeholder="10" class="input w-full"/>
+		}
+		@form.FormActions("", "") {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--save",
+			}) {
+				Save override
+			}
+		}
+	</form>
+}
+
+// editorAgentPanel edits the editor-agent selection (which agent definition
+// runs object-content edits: proposing and applying property/content changes
+// with its memory tools). The empty option is the default agent (the project's
+// IsDefault agent, else the first enabled/first agent); selecting it clears the
+// override. A stored value that no longer exists in the list is preserved as
+// an "(unlisted)" option.
+templ editorAgentPanel(editorAgent string, agents []AgentDefinitionSummary) {
+	@ui.Section("Editor agent", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="flex flex-col gap-4">
+			@settingsField("editor-agent", "Editor agent", "The agent that proposes and applies edits to knowledge-graph objects from the object page (correcting properties, rewording content, rewiring relationships). A wrong choice yields low-quality object changes.", "The agent definition that runs object-content edits. Empty uses the default agent.", nil) {
+				<select id="editor-agent" name="editor_agent" class="select w-full" hx-post="/settings/editor" hx-trigger="change" hx-include="this" hx-swap="none">
+					<option value="" selected?={ editorAgent == "" }>None — use default agent</option>
+					for _, a := range agents {
+						<option value={ a.ID } selected?={ a.ID == editorAgent }>{ a.Name }</option>
+					}
+					if editorAgent != "" && !agentListedByID(agents, editorAgent) {
+						<option value={ editorAgent } selected>{ editorAgent } (unlisted)</option>
+					}
+				</select>
+			}
+			if editorAgent == "" {
+				<p class="text-base-content/45 -mt-2 text-xs">Object edits run on the default agent until you pick one.</p>
+			}
+		</div>
+	}
+}
+
+// rememberDedupPanel edits the remember pipeline config (which agent
+// definition powers POST /remember) and the entity-create dedup threshold.
+// The remember agent is a dropdown of the project's agent definitions. The
+// empty option is the canonical "domain-remember-agent (default)"; selecting
+// it clears the override and falls back to the built-in agent. A stored value
+// that no longer exists in the list is preserved as an "(unlisted)" option. An
+// empty dedup threshold leaves it unchanged.
+templ rememberDedupPanel(rememberAgent, dedupThreshold string, agents []AgentDefinitionSummary) {
+	@ui.Section("Remember & dedup", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="flex flex-col gap-4">
+			@settingsField("remember-agent", "Remember agent", "The agent whose prompt, model, and tools run the remember pipeline that turns conversations into memories. A wrong choice yields low-quality or mis-structured memories.", "The agent definition that powers the remember pipeline. Empty clears it.", nil) {
+				<select id="remember-agent" name="remember_agent" class="select w-full" hx-post="/settings/remember/agent" hx-trigger="change" hx-include="this" hx-swap="none">
+					<option value="" selected?={ rememberAgentIsDefault(rememberAgent) }>{ defaultRememberAgent } (default)</option>
+					for _, a := range agents {
+						if a.Name != defaultRememberAgent {
+							<option value={ a.Name } selected?={ a.Name == rememberAgent }>{ a.Name }</option>
+						}
+					}
+					if !rememberAgentIsDefault(rememberAgent) && !agentListed(agents, rememberAgent) {
+						<option value={ rememberAgent } selected>{ rememberAgent } (unlisted)</option>
+					}
+				</select>
+			}
+			@settingsField("dedup-threshold", "Similarity threshold", "Cosine-similarity cutoff (0.0–1.0) for near-duplicate detection when creating entities. Higher merges more aggressively (fewer duplicates, risk of combining distinct similar items); lower keeps more near-duplicates.", "Entity-create dedup threshold, 0.0–1.0. Empty leaves it unchanged.", nil) {
+				<input id="dedup-threshold" name="dedup_threshold" type="number" step="0.01" min="0" max="1" value={ dedupThreshold } placeholder="0.8" class="input w-full" hx-post="/settings/remember/dedup" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
+			}
+		</div>
+	}
+}
+
+// iosSetupPanel shows the iOS client onboarding QR code. The QR encodes a
+// fresh one-time setup token that the app exchanges (POST /api/setup) for a
+// per-device API key. It renders whenever the QR can be generated; the image
+// sits on a light background because QR codes need high contrast against the
+// dark theme to scan reliably.
+templ iosSetupPanel(qrImage string) {
+	@ui.Section("iOS setup", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		if qrImage != "" {
+			<div class="flex items-start gap-5">
+				<img src={ qrImage } alt="QR code that connects the Memory iOS app to this project" width="200" height="200" class="rounded-box border border-base-content/10 bg-white p-3"/>
+				<div class="min-w-0 pt-1">
+					<p class="text-sm font-medium">Scan with the Memory iOS app to connect.</p>
+					<p class="text-base-content/55 mt-1 text-xs">One-time code — gives this device its own access key. Reload the page for a new code.</p>
+				</div>
+			</div>
+		} else {
+			<p class="text-base-content/45 text-xs">QR code unavailable.</p>
+		}
+	}
+}
+
+// devicesPanel lists the registered devices (per-device keys issued via the
+// setup QR), each with a revoke form. Revoking a device cuts its /api/*
+// access immediately; the key is masked because it is a live credential.
+templ devicesPanel(devices []device) {
+	@ui.Section("Devices", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		if len(devices) == 0 {
+			<p class="text-base-content/45 text-xs">No devices registered yet.</p>
+		} else {
+			<div class="flex flex-col gap-2">
+				for _, d := range devices {
+					@deviceRow(d)
+				}
+			</div>
+		}
+	}
+}
+
+// deviceRow renders one registered device: the reported device name (else
+// modelDisplay/modelId, else the masked key for legacy entries without a
+// manifest), platform + OS version, and a revoke button (PRG → POST
+// /settings/devices/:key/revoke). Legacy entries render exactly the masked-key
+// + registration-time row.
+templ deviceRow(d device) {
+	@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-start justify-between gap-3"}) {
+		<div class="min-w-0">
+			if deviceDisplayName(d) != "" {
+				<p class="text-sm font-medium">{ deviceDisplayName(d) }</p>
+				<p class="text-base-content/55 mt-0.5 text-xs">
+					if deviceMetaLine(d) != "" {
+						{ deviceMetaLine(d) } · Registered { relTime(d.CreatedAt) }
+					} else {
+						Registered { relTime(d.CreatedAt) }
+					}
+				</p>
+			} else {
+				<p class="text-sm font-medium font-mono">{ maskDeviceKey(d.Key) }</p>
+				<p class="text-base-content/55 mt-0.5 text-xs">Registered { relTime(d.CreatedAt) }</p>
+			}
+		</div>
+		<form method="post" action={ templ.URL("/settings/devices/" + d.Key + "/revoke") }>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeSubmit,
+				Variant:   ui.ButtonError,
+				Style:     ui.ButtonStyleOutline,
+				Size:      ui.ButtonSM,
+				Icon:      "lucide--trash-2",
+				AriaLabel: "Revoke device " + maskDeviceKey(d.Key),
+			}) {
+				Revoke
+			}
+		</form>
+	}
+}
+
+// voicePanel edits the project's voice configuration: the master enable
+// toggle, TTS/STT providers, LiveKit endpoints, and turn tuning. Each field
+// auto-saves on change/blur via HTMX — independent fields post to
+// /settings/voice/:key, coupled fields post as an atomic unit to
+// /settings/voice/group/:group — so there is no whole-form "Save voice"
+// button. The save outcome surfaces as a toast (success/error) via the
+// HX-Trigger header, not inline markup. Values persist per project via the
+// generic settings API (category "voice"); empty fields fall back to env
+// defaults. Provider secrets are env-driven and shown set/not-set only, never
+// editable.
+templ voicePanel(v voiceSettings) {
+	@ui.Section("Voice", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="flex flex-col gap-4">
+			// Master enable toggle: a single-field save (enabled). A checked
+			// toggle posts enabled=on; unchecked sends no value, and the
+			// handler stores false either way.
+			<label class="cursor-pointer label justify-start gap-3">
+				<input
+					type="checkbox"
+					id="enabled"
+					name="enabled"
+					class="toggle"
+					checked?={ v.Enabled }
+					hx-post="/settings/voice/enabled"
+					hx-trigger="change"
+					hx-include="this" hx-swap="none"
+				/>
+				<span class="label-text flex items-center gap-1.5">
+					<span>Enable voice</span>
+					@ui.InfoTip("Master switch for voice. When off, the chat page hides its voice controls and voice is disabled for the project.")
+				</span>
+			</label>
+
+			// TTS provider/model/voice are a coupled group: any change saves
+			// all three atomically to /settings/voice/group/tts. Choosing a
+			// provider that does not use a model or voice (client/none) makes
+			// the server clear them as part of the same save.
+			@settingsField("tts-provider", "TTS provider", "Where text-to-speech happens: cartesia (server-side audio), client (the device speaks the text), or none (text only).", "Empty keeps the default.", nil) {
+				<select
+					id="tts-provider"
+					name="tts_provider"
+					class="select w-full"
+					hx-post="/settings/voice/group/tts"
+					hx-trigger="change"
+					hx-include="#tts-provider, #tts-model, #tts-voice" hx-swap="none"
+				>
+					<option value="cartesia" selected?={ v.TTSProvider == "cartesia" }>cartesia</option>
+					<option value="client" selected?={ v.TTSProvider == "client" }>client</option>
+					<option value="none" selected?={ v.TTSProvider == "none" }>none</option>
+				</select>
+			}
+			@settingsField("tts-model", "TTS model", "The text-to-speech model the provider uses, e.g. sonic-3.5.", "Empty keeps the default.", nil) {
+				<input
+					id="tts-model"
+					name="tts_model"
+					type="text"
+					value={ v.TTSModel }
+					placeholder="sonic-3.5"
+					class="input w-full"
+					hx-post="/settings/voice/group/tts"
+					hx-trigger="change delay:400ms"
+					hx-include="#tts-provider, #tts-model, #tts-voice" hx-swap="none"
+				/>
+			}
+			@settingsField("tts-voice", "TTS voice", "The provider's voice ID used for spoken replies.", "Empty keeps the default.", nil) {
+				<input
+					id="tts-voice"
+					name="tts_voice"
+					type="text"
+					value={ v.TTSVoice }
+					placeholder="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+					class="input w-full"
+					hx-post="/settings/voice/group/tts"
+					hx-trigger="change delay:400ms"
+					hx-include="#tts-provider, #tts-model, #tts-voice" hx-swap="none"
+				/>
+			}
+
+			@settingsField("stt-provider", "STT provider", "The speech-to-text provider that transcribes your speech.", "Empty keeps the default.", nil) {
+				<select
+					id="stt-provider"
+					name="stt_provider"
+					class="select w-full"
+					hx-post="/settings/voice/stt_provider"
+					hx-trigger="change"
+					hx-include="this" hx-swap="none"
+				>
+					<option value="deepgram" selected?={ v.STTProvider == "deepgram" }>deepgram</option>
+				</select>
+			}
+			@settingsField("stt-model", "STT model", "The speech-to-text model, e.g. nova-3.", "Empty keeps the default.", nil) {
+				<input
+					id="stt-model"
+					name="stt_model"
+					type="text"
+					value={ v.STTModel }
+					placeholder="nova-3"
+					class="input w-full"
+					hx-post="/settings/voice/stt_model"
+					hx-trigger="change delay:400ms"
+					hx-include="this" hx-swap="none"
+				/>
+			}
+			@settingsField("stt-language", "STT language", "Language code for speech recognition, e.g. multi for auto-detect.", "Empty keeps the default.", nil) {
+				<input
+					id="stt-language"
+					name="stt_language"
+					type="text"
+					value={ v.STTLanguage }
+					placeholder="multi"
+					class="input w-full"
+					hx-post="/settings/voice/stt_language"
+					hx-trigger="change delay:400ms"
+					hx-include="this" hx-swap="none"
+				/>
+			}
+			@settingsField("livekit-url", "LiveKit URL", "WebSocket endpoint the voice client connects to.", "Empty keeps the default.", nil) {
+				<input
+					id="livekit-url"
+					name="livekit_url"
+					type="text"
+					value={ v.LiveKitURL }
+					placeholder="ws://localhost:7880"
+					class="input w-full"
+					hx-post="/settings/voice/livekit_url"
+					hx-trigger="change delay:400ms"
+					hx-include="this" hx-swap="none"
+				/>
+			}
+			@settingsField("livekit-public-url", "LiveKit public URL", "Publicly reachable LiveKit URL sent to clients. Falls back to the LiveKit URL when empty.", "Empty keeps the default.", nil) {
+				<input
+					id="livekit-public-url"
+					name="livekit_public_url"
+					type="text"
+					value={ v.LiveKitPublicURL }
+					placeholder="wss://gw.example.com"
+					class="input w-full"
+					hx-post="/settings/voice/livekit_public_url"
+					hx-trigger="change delay:400ms"
+					hx-include="this" hx-swap="none"
+				/>
+			}
+			if v.LiveKitPublicURL == "" {
+				<p class="text-base-content/45 -mt-2 text-xs">Not set.</p>
+			}
+			@settingsField("exit-keywords", "Exit keywords", "Comma-separated words that end a voice call, e.g. stop, goodbye, end.", "Comma-separated words.", nil) {
+				<input
+					id="exit-keywords"
+					name="exit_keywords"
+					type="text"
+					value={ v.ExitKeywords }
+					placeholder="stop, goodbye, end"
+					class="input w-full"
+					hx-post="/settings/voice/exit_keywords"
+					hx-trigger="change delay:400ms"
+					hx-include="this" hx-swap="none"
+				/>
+			}
+			@settingsField("goodbye-text", "Goodbye text", "What the agent says when a call ends.", "Empty keeps the default.", nil) {
+				<input
+					id="goodbye-text"
+					name="goodbye_text"
+					type="text"
+					value={ v.GoodbyeText }
+					placeholder="Goodbye."
+					class="input w-full"
+					hx-post="/settings/voice/goodbye_text"
+					hx-trigger="change delay:400ms"
+					hx-include="this" hx-swap="none"
+				/>
+			}
+			@settingsField("away-timeout", "Away timeout", "Seconds of silence before the agent says goodbye.", "Seconds. Empty keeps the default.", nil) {
+				<input
+					id="away-timeout"
+					name="away_timeout"
+					type="text"
+					value={ v.AwayTimeout }
+					placeholder="20"
+					class="input w-full"
+					hx-post="/settings/voice/away_timeout"
+					hx-trigger="change delay:400ms"
+					hx-include="this" hx-swap="none"
+				/>
+			}
+			// The endpoint delays are a coupled group: editing either field
+			// saves both to /settings/voice/group/endpoint_delays. The
+			// voiceEndpointDelayGate trigger filter blocks the request while
+			// min > max and surfaces an error toast, so an invalid pair never
+			// reaches the server (which re-validates as a backstop).
+			@settingsField("endpoint-min-delay", "Endpoint min delay", "Shortest pause (seconds) before the agent responds.", "Seconds. Empty keeps the default.", nil) {
+				<input
+					id="endpoint-min-delay"
+					name="endpoint_min_delay"
+					type="text"
+					value={ v.EndpointMinDelay }
+					placeholder="0.4"
+					class="input w-full"
+					hx-post="/settings/voice/group/endpoint_delays"
+					hx-trigger="change[voiceEndpointDelayGate()] delay:400ms"
+					hx-include="#endpoint-min-delay, #endpoint-max-delay" hx-swap="none"
+				/>
+			}
+			@settingsField("endpoint-max-delay", "Endpoint max delay", "Longest pause (seconds) before the agent responds.", "Seconds. Empty keeps the default.", nil) {
+				<input
+					id="endpoint-max-delay"
+					name="endpoint_max_delay"
+					type="text"
+					value={ v.EndpointMaxDelay }
+					placeholder="3"
+					class="input w-full"
+					hx-post="/settings/voice/group/endpoint_delays"
+					hx-trigger="change[voiceEndpointDelayGate()] delay:400ms"
+					hx-include="#endpoint-min-delay, #endpoint-max-delay" hx-swap="none"
+				/>
+			}
+			<script type="text/javascript">
+			// Client-side gate for the endpoint-delays group: while the minimum
+			// exceeds the maximum (both non-empty), block the HTMX save and
+			// surface an error toast, so an invalid pair never reaches the
+			// server (which re-validates as a backstop).
+			window.voiceEndpointDelayGate = function () {
+				var minEl = document.getElementById('endpoint-min-delay');
+				var maxEl = document.getElementById('endpoint-max-delay');
+				var min = minEl ? minEl.value.trim() : '';
+				var max = maxEl ? maxEl.value.trim() : '';
+				if (min !== '' && max !== '') {
+					var mn = parseFloat(min);
+					var mx = parseFloat(max);
+					if (!isNaN(mn) && !isNaN(mx) && mn > mx) {
+						if (window.MemoryApp) { window.MemoryApp.toast('error', 'Endpoint min delay cannot exceed endpoint max delay.'); }
+						return false;
+					}
+				}
+				return true;
+			};
+			</script>
+			<div class="flex flex-col gap-2">
+				<label class="cursor-pointer label justify-start gap-3">
+					<input
+						type="checkbox"
+						id="allow-interruptions"
+						name="allow_interruptions"
+						class="toggle"
+						checked?={ v.AllowInterruptions }
+						hx-post="/settings/voice/allow_interruptions"
+						hx-trigger="change"
+						hx-include="this" hx-swap="none"
+					/>
+					<span class="label-text flex items-center gap-1.5">
+						<span>Allow interruptions</span>
+						@ui.InfoTip("When on, you can interrupt the agent mid-response.")
+					</span>
+				</label>
+				<label class="cursor-pointer label justify-start gap-3">
+					<input
+						type="checkbox"
+						id="preemptive-generation"
+						name="preemptive_generation"
+						class="toggle"
+						checked?={ v.PreemptiveGeneration }
+						hx-post="/settings/voice/preemptive_generation"
+						hx-trigger="change"
+						hx-include="this" hx-swap="none"
+					/>
+					<span class="label-text flex items-center gap-1.5">
+						<span>Preemptive generation</span>
+						@ui.InfoTip("When on, the agent drafts its reply while you are still speaking.")
+					</span>
+				</label>
+			</div>
+			<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+				@voiceSecretRow("Cartesia API key", v.CartesiaKeySet)
+				@voiceSecretRow("Deepgram API key", v.DeepgramKeySet)
+				@voiceSecretRow("LiveKit API secret", v.LiveKitSecretSet)
+			</dl>
+		</div>
+	}
+}
+
+// voiceSecretRow renders a secret's set/not-set state without leaking it.
+templ voiceSecretRow(label string, set bool) {
+	<div>
+		<dt class="text-base-content/45 text-xs">{ label }</dt>
+		<dd class="mt-0.5 text-sm">
+			if set {
+				<span class="text-success">set</span>
+			} else {
+				<span class="text-base-content/45">not set</span>
+			}
+		</dd>
+	</div>
+}
+
+// providersPanel lists the LLM providers configured for this project, their
+// models, and each model's rate (USD per 1M tokens) with automatic/custom
+// badges and per-model override + remove forms. A failed read renders an error
+// inside the panel (the rest of Settings stays usable); no configured
+// providers replace the whole stack with a single call-to-action hero.
+templ providersPanel(d providerPanelData) {
+	if len(d.Providers) == 0 && d.Err == nil {
+		@providersEmptyCTA()
+	} else {
+		@providerManagementPanel(d)
+		if providersNeedEmbeddingProvider(d) {
+			@embeddingProviderWarning()
+		}
+		@defaultModelsPanel(d)
+		@ui.Section("Rates", ui.SectionProps{
+			Margin:    "mb-6",
+			BodyClass: "p-5",
+		}) {
+			if d.Err != nil {
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: "Failed to load providers: " + d.Err.Error(),
+				})
+			} else if len(d.Groups) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--server",
+					Title:       "No models to price",
+					Description: "Configure a provider and its model catalog will appear here for rate overrides.",
+					Bordered:    true,
+				})
+			} else {
+				<p class="text-base-content/55 mb-4 text-xs">Rates are USD per 1M tokens. Automatic rates track retail pricing; overriding a model sets a custom rate for this project.</p>
+				for _, g := range d.Groups {
+					@providerGroup(g)
+				}
+			}
+		}
+	}
+}
+
+// providersEmptyCTA is the zero-provider hero on the Providers page. It
+// replaces the Provider configuration / Default models / Rates boxes entirely
+// (those are meaningless with no provider behind them) and points the user at
+// adding their first LLM provider. The text→action gap (mt-7) and centered
+// rhythm come from ui.EmptyState's hero scale.
+templ providersEmptyCTA() {
+	<div class="mb-6">
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--server",
+			Title:       "Connect your first LLM provider",
+			Description: "LLM providers are the AI services — OpenAI, DeepSeek, Google, Vertex — that generate responses and embeddings. Memory needs at least one configured before agents can run, so this is the first thing to set up.",
+			Variant:     ui.EmptyStateHero,
+			IconStyle:   ui.EmptyStateIconTile,
+			Bordered:    true,
+			ActionHref:  "/settings/providers/new",
+			ActionLabel: "Add your first provider",
+			ActionIcon:  "lucide--plus",
+		})
+	</div>
+}
+
+// embeddingProviderWarning is the guidance callout shown on the Providers page
+// when the project has at least one provider but none can generate embeddings:
+// document indexing needs a separate embedding-capable provider. It reuses the
+// agent model warning visual (outline alert + link button on one row) and links
+// to the existing add-provider flow.
+templ embeddingProviderWarning() {
+	<div class="mb-6 flex items-stretch gap-2">
+		<div class="min-w-0 flex-1">
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: "None of this project's providers can generate embeddings, so document indexing is unavailable. Add an embedding-capable provider (Google or Google Vertex) to index documents.",
+			})
+		</div>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeLink,
+			Href:       "/settings/providers/new",
+			Variant:    ui.ButtonOutline,
+			Size:       ui.ButtonXS,
+			Icon:       "lucide--plus",
+			ExtraClass: "h-auto",
+		}) {
+			Add embedding provider
+		}
+	</div>
+}
+
+// defaultModelsPanel selects the project's default generative + embedding
+// models (memory's kb.project_model_config), saved inline on change.
+templ defaultModelsPanel(d providerPanelData) {
+	@ui.Section("Default models", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<p class="text-base-content/55 mb-4 text-xs">Used when an agent has no explicit model ("Auto — default model"). Model names carry a provider prefix.</p>
+		<form class="flex flex-col gap-4" hx-post="/settings/providers/model-config" hx-trigger="change delay:400ms" hx-swap="none">
+			@defaultModelSelect("generative_model", "Default generative model", modelConfigGen(d), defaultModelCatalog(d, "generative"))
+			@defaultModelSelect("embedding_model", "Embedding model", modelConfigEmb(d), defaultModelCatalog(d, "embedding"))
+		</form>
+	}
+}
+
+// defaultModelSelect renders one grouped model dropdown for the default-model
+// form. Options are provider-prefixed ("provider/model").
+templ defaultModelSelect(name, label, current string, models []Model) {
+	@settingsField("", label, "Provider-prefixed model name (configured provider), e.g. openai/deepseek-v4-pro.", "", nil) {
+		<select name={ name } class="select w-full">
+			<option value="" selected?={ current == "" }>None — no default</option>
+			for _, g := range modelGroups(models) {
+				<optgroup label={ g.Provider }>
+					for _, m := range g.Models {
+						<option value={ m.Provider + "/" + m.ModelName } selected?={ current == m.Provider+"/"+m.ModelName }>{ modelDisplay(m) }</option>
+					}
+				</optgroup>
+			}
+		</select>
+	}
+}
+
+// providerModelSelect renders a provider-grouped model dropdown for the
+// provider config form's fallback models. Options are prefixed
+// ("provider/model"); a synthetic "(current)" option keeps a stored value
+// selected when it isn't in the catalog (e.g. legacy bare names).
+templ providerModelSelect(name, label, current string, models []Model) {
+	@settingsField("", label, "Provider-prefixed model name (e.g. openai/deepseek-v4-flash). Fallback used when the project has no default.", "", nil) {
+		<select name={ name } class="select w-full">
+			<option value="" selected?={ current == "" }>None — auto-select</option>
+			for _, g := range modelGroups(models) {
+				<optgroup label={ g.Provider }>
+					for _, m := range g.Models {
+						<option value={ m.Provider + "/" + m.ModelName } selected?={ current == m.Provider+"/"+m.ModelName }>{ modelDisplay(m) }</option>
+					}
+				</optgroup>
+			}
+			if current != "" && !prefixedModelInCatalog(models, current) {
+				<option value={ current } selected>{ current } (current)</option>
+			}
+		</select>
+	}
+}
+
+// providerManagementPanel lists configured providers and offers an add/update
+// form plus per-provider test/remove actions.
+templ providerManagementPanel(d providerPanelData) {
+	@ui.Section("Provider configuration", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="mb-4 flex items-center justify-between gap-2">
+			<p class="text-base-content/55 text-xs">Credentials for the LLM providers this project can use. Test runs a live generate call.</p>
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers/new", Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Add provider }
+		</div>
+		if len(d.Providers) > 0 {
+			<div class="flex flex-col gap-2">
+				for _, p := range d.Providers {
+					@providerConfigRow(p)
+				}
+			</div>
+		} else {
+			<p class="text-base-content/45 text-sm">No providers configured yet.</p>
+		}
+	}
+}
+
+// providerConfigRow shows one configured provider with edit/test/remove
+// actions pushed to the right.
+templ providerConfigRow(p ProjectProviderConfig) {
+	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
+		<div class="flex flex-wrap items-center gap-3">
+			<span class="font-mono text-sm font-medium">{ p.Provider }</span>
+			if p.BaseURL != "" {
+				<span class="text-xs text-base-content/55">{ p.BaseURL }</span>
+			}
+			<div class="ml-auto flex items-center gap-2">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers/" + url.PathEscape(p.Provider) + "/edit", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Edit }
+				<form method="post" hx-post={ templ.URL("/settings/providers/" + url.PathEscape(p.Provider) + "/test") } hx-swap="none">
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeSubmit,
+						Variant:   ui.ButtonGhost,
+						Style:     ui.ButtonStyleOutline,
+						Size:      ui.ButtonSM,
+						Icon:      "lucide--zap",
+					}) {
+						Test
+					}
+				</form>
+				<form method="post" action={ templ.URL("/settings/providers/" + url.PathEscape(p.Provider) + "/remove") }>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeSubmit,
+						Variant:   ui.ButtonError,
+						Style:     ui.ButtonStyleOutline,
+						Size:      ui.ButtonSM,
+						Icon:      "lucide--trash-2",
+					}) {
+						Remove
+					}
+				</form>
+			</div>
+		</div>
+	</div>
+}
+
+// providerConfigForm adds or updates a project provider's credentials. p is
+// nil for the add form and non-nil for edit. draft + draftProvider are set
+// when the page re-renders after a failed save: every input then repopulates
+// from the submitted draft (credentials included) so the form never disappears
+// on error. Without a draft, only the non-secret fields prefill from p
+// (credentials are never returned by the API, so stay blank).
+//
+// Save is gated on a live connection test, but only for openai: the submit
+// button starts disabled, "Test connection" probes the typed base_url + api_key
+// via HTMX (POST /settings/providers/test) and the resulting success toast
+// enables Save and shows a "Connection verified" hint. Any edit to the form
+// re-disables Save until the next successful test. The base_url field and the
+// test button only exist for openai (the official-API providers — google,
+// deepseek, google-vertex — don't use a probe-able base URL, so Save is always
+// enabled for them and the backend validates credentials on save).
+templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, draftProvider string, genModels, embModels []Model) {
+	<form
+		id="provider-form"
+		method="post"
+		action="/settings/providers/config"
+		class="flex flex-col gap-4"
+		if p != nil {
+			data-provider={ p.Provider }
+		}
+	>
+		<h3 class="text-sm font-semibold">{ providerFormTitle(p) }</h3>
+		if p == nil {
+			<label class="form-control w-full">
+				<div class="label"><span class="label-text">Provider</span></div>
+				<select id="provider-type" name="provider" class="select w-full">
+					<option value="google" if draftProvider == "google" { selected }>google</option>
+					<option value="google-vertex" if draftProvider == "google-vertex" { selected }>google-vertex</option>
+					<option value="openai" if draftProvider == "openai" { selected }>openai</option>
+					<option value="deepseek" if draftProvider == "deepseek" { selected }>deepseek</option>
+				</select>
+			</label>
+		} else {
+			<input type="hidden" name="provider" value={ p.Provider }/>
+			<p class="text-sm text-base-content/70">Provider: <span class="font-mono font-semibold">{ p.Provider }</span></p>
+		}
+		@form.PasswordField(form.PasswordFieldProps{
+			Name:        "api_key",
+			Label:       "API key",
+			Placeholder: "sk-…",
+			ShowToggle:  true,
+			Attrs: templ.Attributes{
+				"autocomplete": "off",
+			},
+			Value: func() string {
+				if draft != nil {
+					return draft.APIKey
+				}
+				return ""
+			}(),
+		})
+		<label id="base-url-field" class="form-control w-full" style="display:none">
+			<div class="label"><span class="label-text">Base URL (OpenAI-compatible)</span></div>
+			<input
+				name="base_url"
+				type="text"
+				class="input w-full"
+				placeholder="https://api.example.com/v1"
+				if draft != nil {
+					value={ draft.BaseURL }
+				} else {
+					value={ providerConfigBaseURL(p) }
+				}
+			/>
+			<div id="base-url-status" class="mt-1 items-center gap-1.5 text-xs" style="display:none"></div>
+		</label>
+		if p != nil {
+			<p class="text-base-content/55 text-xs">Fallback models used when the project has no default set.</p>
+			<div id="provider-fallback-models" class="flex flex-col gap-4">
+				@providerModelSelect("generative_model", "Generative model", providerFallbackCurrent(draft, p, false), genModels)
+				@providerModelSelect("embedding_model", "Embedding model", providerFallbackCurrent(draft, p, true), embModels)
+			</div>
+		}
+		<div id="vertex-fields" class="flex flex-col gap-4" style={ vertexFieldsStyle(p) }>
+			<label class="form-control w-full">
+				<div class="label"><span class="label-text">Service account JSON (Google Vertex AI)</span></div>
+				<textarea name="service_account_json" rows="4" class="textarea w-full resize-none" placeholder='{"type": "service_account", …}'>
+					if draft != nil {
+						{ draft.ServiceAccountJSON }
+					}
+				</textarea>
+			</label>
+			<label class="form-control w-full">
+				<div class="label"><span class="label-text">GCP project</span></div>
+				<input
+					name="gcp_project"
+					type="text"
+					class="input w-full"
+					placeholder="my-gcp-project"
+					if draft != nil {
+						value={ draft.GCPProject }
+					} else {
+						value={ providerConfigGCPProject(p) }
+					}
+				/>
+			</label>
+			<label class="form-control w-full">
+				<div class="label"><span class="label-text">Location</span></div>
+				<input
+					name="location"
+					type="text"
+					class="input w-full"
+					placeholder="us-central1"
+					if draft != nil {
+						value={ draft.Location }
+					} else {
+						value={ providerConfigLocation(p) }
+					}
+				/>
+			</label>
+		</div>
+		<div class="flex flex-wrap items-center justify-end gap-2">
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
+			if p != nil {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Style:   ui.ButtonStyleOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--zap",
+					Attrs: templ.Attributes{
+						"id":           "provider-test-btn",
+						"style":        "display:none",
+						"hx-post":      "/settings/providers/test",
+						"hx-include":   "#provider-form",
+						"hx-target":    "#provider-fallback-models",
+						"hx-swap":      "innerHTML",
+						"hx-push-url":  "false",
+					},
+				}) {
+					Test connection
+				}
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--save",
+				Attrs: templ.Attributes{
+					"id": "provider-save-btn",
+					// Edit mode gates the openai Save on a successful connection
+					// test (its base_url is user-supplied). google/deepseek/
+					// google-vertex have no probe-able base URL, so Save is
+					// always enabled for them and the backend validates
+					// credentials on save. Add mode is never gated — memory
+					// validates credentials on save and the form must stay
+					// retryable after a failed-save re-render.
+					"disabled": p != nil && p.Provider == "openai",
+				},
+			}) {
+				if p == nil {
+					Add provider
+				} else {
+					Save provider
+				}
+			}
+		</div>
+		<div class="flex flex-col gap-1">
+			if p != nil {
+				<span id="provider-tested-hint" class="items-center gap-1.5 text-sm text-success" style="display:none">
+					@ui.IconSpan("lucide--check-circle", "size-4")
+					Connection verified — you can save.
+				</span>
+			}
+			<span id="provider-vertex-hint" class="items-center gap-1.5 text-sm text-base-content/55" style="display:none">
+				Vertex uses service-account auth, so there is no base URL to probe — test not available. Save is enabled without testing.
+			</span>
+			<span id="provider-official-hint" class="items-center gap-1.5 text-sm text-base-content/55" style="display:none">
+				@ui.IconSpan("lucide--info", "size-4")
+				Uses the official API — no base URL or connection test needed.
+			</span>
+		</div>
+		<script type="text/javascript">
+			(function () {
+				var form = document.getElementById('provider-form');
+				if (!form) return;
+				var sel = document.getElementById('provider-type');
+				var vertexFields = document.getElementById('vertex-fields');
+				var baseUrlField = document.getElementById('base-url-field');
+				var testBtn = document.getElementById('provider-test-btn');
+				var saveBtn = document.getElementById('provider-save-btn');
+				var testedHint = document.getElementById('provider-tested-hint');
+				var vertexHint = document.getElementById('provider-vertex-hint');
+				var officialHint = document.getElementById('provider-official-hint');
+				var urlInput = form.querySelector('[name="base_url"]');
+				var keyInput = form.querySelector('[name="api_key"]');
+				var urlStatus = document.getElementById('base-url-status');
+
+				/* Advisory reachability check under the base_url field: fires
+				   ~600ms after typing stops, posts base_url + api_key to
+				   /settings/providers/check-url, and shows a one-line result.
+				   Purely informational — never flips data-tested or Save. */
+				var urlTimer = null;
+				function clearUrlStatus() {
+					if (!urlStatus) return;
+					urlStatus.replaceChildren();
+					urlStatus.style.display = 'none';
+				}
+				function showUrlStatus(iconClass, textClass, text) {
+					if (!urlStatus) return;
+					urlStatus.replaceChildren();
+					var icon = document.createElement('span');
+					icon.className = 'iconify ' + iconClass + ' size-4 shrink-0';
+					icon.setAttribute('aria-hidden', 'true');
+					var msg = document.createElement('span');
+					msg.className = textClass;
+					// textContent only — detail is backend/upstream text and
+					// must never be parsed as markup.
+					msg.textContent = text;
+					urlStatus.appendChild(icon);
+					urlStatus.appendChild(msg);
+					urlStatus.style.display = 'flex';
+				}
+				function renderUrlStatus(r) {
+					if (!r) return clearUrlStatus();
+					if (r.ok === true) {
+						return showUrlStatus('lucide--check-circle text-success', 'text-success', 'Reachable');
+					}
+					if (r.status === 401) {
+						return showUrlStatus('lucide--circle-alert text-warning', 'text-warning', 'Authentication failed (HTTP 401) — check that the API key is correct.');
+					}
+					if (r.detail) {
+						return showUrlStatus('lucide--circle-alert text-warning', 'text-warning', r.detail);
+					}
+					clearUrlStatus();
+				}
+				function scheduleUrlCheck() {
+					if (urlTimer) clearTimeout(urlTimer);
+					if (!urlInput) return;
+					var url = urlInput.value.trim();
+					if (url === '') {
+						clearUrlStatus();
+						return;
+					}
+					var key = keyInput ? keyInput.value.trim() : '';
+					if (key === '') {
+						showUrlStatus('lucide--circle-alert text-warning', 'text-warning', 'An API key is required to check the connection.');
+						return;
+					}
+					urlTimer = setTimeout(function () {
+						urlTimer = null;
+						var body = new URLSearchParams();
+						body.append('base_url', url);
+						body.append('api_key', key);
+						fetch('/settings/providers/check-url', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+							body: body,
+						})
+							.then(function (resp) { return resp.json(); })
+							.then(renderUrlStatus)
+							.catch(clearUrlStatus);
+					}, 600);
+				}
+
+				function currentProvider() {
+					if (sel) return sel.value;
+					return form.getAttribute('data-provider') || '';
+				}
+				function isOpenAI() {
+					return currentProvider() === 'openai';
+				}
+				function isVertex() {
+					return currentProvider() === 'google-vertex';
+				}
+				function isOfficial() {
+					var prov = currentProvider();
+					return prov === 'google' || prov === 'deepseek';
+				}
+				function refresh() {
+					/* data-provider is set on the edit form only — the add form
+					   is credentials-only and its Save/Add button is never
+					   gated on a connection test. */
+					var isEdit = !!form.getAttribute('data-provider');
+					var openai = isOpenAI();
+					var v = isVertex();
+					if (baseUrlField) baseUrlField.style.display = openai ? '' : 'none';
+					if (testBtn) testBtn.style.display = openai ? '' : 'none';
+					if (vertexFields) vertexFields.style.display = v ? 'flex' : 'none';
+					if (vertexHint) vertexHint.style.display = v ? 'flex' : 'none';
+					if (officialHint) officialHint.style.display = isOfficial() ? 'flex' : 'none';
+					var tested = form.getAttribute('data-tested') === '1';
+					if (testedHint) testedHint.style.display = (openai && tested) ? 'flex' : 'none';
+					if (saveBtn && isEdit) saveBtn.disabled = openai && !tested;
+				}
+				/* Any edit invalidates the previous successful test. */
+				function invalidate() {
+					form.removeAttribute('data-tested');
+					refresh();
+				}
+				if (sel) sel.addEventListener('change', invalidate);
+				form.addEventListener('change', invalidate);
+				form.addEventListener('input', invalidate);
+				if (urlInput) {
+					urlInput.addEventListener('input', scheduleUrlCheck);
+					urlInput.addEventListener('change', scheduleUrlCheck);
+				}
+				/* Typing/pasting a key re-runs the same debounced check, so the
+				   "API key required" advisory clears once a key is present. */
+				if (keyInput) {
+					keyInput.addEventListener('input', scheduleUrlCheck);
+					keyInput.addEventListener('change', scheduleUrlCheck);
+				}
+				/* Only the toast that follows THIS page's test request may
+				   enable Save; the same event also surfaces the toast via
+				   app.js's memory-toast listener. */
+				if (testBtn) {
+					testBtn.addEventListener('click', function () {
+						form.setAttribute('data-test-pending', '1');
+					});
+				}
+				document.body.addEventListener('memory-toast', function (evt) {
+					if (form.getAttribute('data-test-pending') !== '1') return;
+					form.removeAttribute('data-test-pending');
+					var detail = evt.detail || {};
+					if (detail.kind === 'success') {
+						form.setAttribute('data-tested', '1');
+					}
+					refresh();
+				});
+				document.body.addEventListener('htmx:after:request', function (evt) {
+					/* htmx v4 fires after:request on the requesting element (here
+					   the test button) and bubbles to body; the detail no longer
+					   carries elt, so compare evt.target. */
+					if (evt.target === testBtn) {
+						form.removeAttribute('data-test-pending');
+					}
+				});
+				refresh();
+			})();
+		</script>
+	</form>
+}
+
+// providerConfigSaveErrorModal is the auto-opening alert shown when a save
+// fails and the page re-renders: it explains the backend message, keeps the
+// (repopulated) form on screen, and offers "Keep editing" vs "Back to
+// providers". The modal body uses the backend's message as-is — it already
+// reads like plain-language guidance (e.g. base_url reachability hints).
+templ providerConfigSaveErrorModal(err error) {
+	@modalShell("provider-save-error-modal", "", "max-w-md") {
+		<div class="mb-3 flex items-start gap-3">
+			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--alert-triangle", "size-5")
+			</div>
+			<h3 class="text-lg font-semibold">Couldn't save provider</h3>
+		</div>
+		<p class="text-base-content/55 text-sm">Your entries are still in the form below — nothing was lost.</p>
+		<p class="text-base-content/80 mt-2 text-sm">{ err.Error() }</p>
+		<div class="mt-6 flex flex-wrap items-center justify-end gap-2">
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Back to providers }
+			<form method="dialog">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+				}) {
+					Keep editing
+				}
+			</form>
+		</div>
+	}
+	<script type="text/javascript">
+		(function () {
+			var d = document.getElementById('provider-save-error-modal');
+			if (d && typeof d.showModal === 'function') d.showModal();
+		})();
+	</script>
+}
+
+// providerConfigPage is the add/edit provider form page shell.
+templ providerConfigPage(data providerConfigPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Providers", "/settings/providers", providerFormTitle(data.Provider))), "", providerFormTitle(data.Provider), "Configure an LLM provider.", detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel("providers", "lucide--server")
+		}
+		if data.FlashMsg != "" {
+			@flashToast("success", data.FlashMsg)
+		}
+		@layout.Rail(settingsSubNav("providers", data.ProvidersMissing), nil) {
+			@ui.Section("Provider", ui.SectionProps{
+				Margin:    "mb-6",
+				BodyClass: "p-5",
+			}) {
+				@providerConfigForm(data.Provider, data.Draft, data.DraftProvider, data.GenerativeModels, data.EmbeddingModels)
+			}
+			if data.FlashErr != nil {
+				@providerConfigSaveErrorModal(data.FlashErr)
+			}
+		}
+	}
+}
+
+// providerFallbackModelOptions is the htmx-swapped fragment returned by POST
+// /settings/providers/test on every response: the two fallback model selects
+// (same names/labels as the add/edit form, empty current value — pre-save
+// seeding on the add form). The Go handler swaps it into
+// #provider-fallback-models via innerHTML, so no outer wrapper here.
+templ providerFallbackModelOptions(genModels, embModels []Model) {
+	@providerModelSelect("generative_model", "Generative model", "", genModels)
+	@providerModelSelect("embedding_model", "Embedding model", "", embModels)
+}
+
+// providerGroup renders one configured provider with its model rows.
+templ providerGroup(g providerRateGroup) {
+	<div class="mb-5 last:mb-0">
+		<div class="mb-2 flex items-center gap-2">
+			<span class="iconify lucide--server size-3.5 text-base-content/40" aria-hidden="true"></span>
+			<h3 class="font-mono text-sm font-semibold">{ g.Provider }</h3>
+		</div>
+		<div class="flex flex-col gap-3">
+			for _, r := range g.Rows {
+				@providerModelRow(r)
+			}
+		</div>
+	</div>
+}
+
+// providerModelRow renders one model's rate line in a single row: the model
+// name, badge, and the input/output price inputs (auto-saved as a coupled
+// group on change), the effective rate summary, and a remove action for
+// overrides.
+templ providerModelRow(r providerRateRow) {
+	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
+		<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+			<form
+				class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2"
+				hx-post={ templ.URL("/settings/providers/" + url.PathEscape(r.Provider) + "/" + url.PathEscape(r.Model)) }
+				hx-trigger="change delay:400ms"
+				hx-swap="none"
+			>
+				<span class="flex flex-col gap-0.5">
+					<span class="flex items-center gap-2">
+						<span class="font-mono text-sm font-medium">{ r.Model }</span>
+						@providerRateBadge(r)
+					</span>
+					<span class="text-sm">
+						if r.IsCustom {
+							<span class="text-base-content/80 tabular-nums">{ formatRateUSD(r.OverrideInput) } in / { formatRateUSD(r.OverrideOutput) } out</span>
+						} else if r.HasAuto {
+							<span class="text-base-content/80 tabular-nums">{ formatRateUSD(r.AutoInput) } in / { formatRateUSD(r.AutoOutput) } out</span>
+						} else {
+							<span class="text-base-content/40 text-xs">unknown rate</span>
+						}
+					</span>
+				</span>
+				<span class="ml-auto flex items-center gap-x-3">
+					@providerPriceField("textInputPrice", "In", rateInputValue(r.IsCustom, r.HasAuto, r.OverrideInput, r.AutoInput))
+					@providerPriceField("outputPrice", "Out", rateInputValue(r.IsCustom, r.HasAuto, r.OverrideOutput, r.AutoOutput))
+				</span>
+			</form>
+			if r.IsCustom {
+				<form method="post" hx-post={ templ.URL("/settings/providers/" + url.PathEscape(r.Provider) + "/" + url.PathEscape(r.Model) + "/delete") } hx-swap="none">
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeSubmit,
+						Variant:   ui.ButtonGhost,
+						Style:     ui.ButtonStyleOutline,
+						Size:      ui.ButtonSM,
+						Icon:      "lucide--rotate-ccw",
+						AriaLabel: "Remove custom rate for " + r.Provider + "/" + r.Model,
+					}) {
+						Remove
+					}
+				</form>
+			}
+		</div>
+	</div>
+}
+
+// providerRateBadge marks a row as custom (overridden). Automatic rows show
+// no badge — the rate summary already communicates the retail rate.
+templ providerRateBadge(r providerRateRow) {
+	if r.IsCustom {
+		@ui.Badge(ui.BadgeProps{Label: "custom", Variant: ui.BadgeAccent, Size: ui.BadgeSizeXS, Dot: true})
+	}
+}
+
+// providerPriceField is one labeled numeric price input of the rate row: the
+// label sits above the input (column layout) for readability. Prices are USD
+// per 1M tokens.
+templ providerPriceField(name, label, value string) {
+	<label class="flex flex-col gap-1">
+		<span class="text-base-content/45 text-[10px] font-semibold tracking-wider uppercase">{ label } $/1M</span>
+		<input
+			type="number"
+			name={ name }
+			step="0.000001"
+			min="0"
+			value={ value }
+			placeholder="0.00"
+			class="input input-sm input-bordered w-28"
+		/>
+	</label>
+}

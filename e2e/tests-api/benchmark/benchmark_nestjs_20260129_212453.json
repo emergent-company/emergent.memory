@@ -1,0 +1,57 @@
+{
+  "server_type": "nestjs",
+  "base_url": "http://localhost:3002",
+  "concurrent_workers": 10,
+  "iterations_per_worker": 50,
+  "timestamp": "2026-01-29T21:24:51.51887445+01:00",
+  "endpoints": [
+    {
+      "endpoint": "/health",
+      "method": "GET",
+      "total_requests": 500,
+      "success_requests": 500,
+      "failed_requests": 0,
+      "min_ms": 1.445,
+      "max_ms": 16.726,
+      "avg_ms": 5.294,
+      "p50_ms": 4.129,
+      "p95_ms": 14.458,
+      "p99_ms": 15.522,
+      "total_ms": 268,
+      "requests_per_second": 1861.516708713365
+    },
+    {
+      "endpoint": "/documents",
+      "method": "GET",
+      "total_requests": 500,
+      "success_requests": 500,
+      "failed_requests": 0,
+      "min_ms": 4.651,
+      "max_ms": 35.478,
+      "avg_ms": 13.952,
+      "p50_ms": 13.414,
+      "p95_ms": 17.547,
+      "p99_ms": 28.853,
+      "total_ms": 701,
+      "requests_per_second": 713.1263297987579
+    },
+    {
+      "endpoint": "/projects",
+      "method": "GET",
+      "total_requests": 500,
+      "success_requests": 0,
+      "failed_requests": 500,
+      "min_ms": 4.027,
+      "max_ms": 29.659,
+      "avg_ms": 12.946,
+      "p50_ms": 12.812,
+      "p95_ms": 14.779,
+      "p99_ms": 21.894,
+      "total_ms": 652,
+      "requests_per_second": 766.2995872482066
+    }
+  ],
+  "total_benchmark_ms": 1622,
+  "total_requests": 1500,
+  "success_rate_percent": 66.66666666666666
+}

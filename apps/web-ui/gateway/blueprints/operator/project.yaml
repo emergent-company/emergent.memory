@@ -1,0 +1,23 @@
+name: operator
+version: 1.0.0
+description: >
+  The general assistant for Memory. Reads and changes every setting — agents,
+  skills, blueprints/schema, MCP servers, documents, and graph objects — through
+  chat. Every change is proposed first and applied only after explicit user
+  acceptance.
+author: memory
+
+projectInfo: |
+  # Operator Blueprint
+
+  A single general-assistant agent that operates the whole platform. It carries
+  no schema — only an agent definition (prompt + tool grant) — mirroring the
+  Emergent Memory `blueprint-architect` blueprint, which ships an authoring
+  agent rather than object types.
+
+  Key design decisions:
+  - Pure-agent blueprint: installs the `operator` agent, registers no schema
+  - Every mutation is gated behind `ask_user` — propose, then apply on accept
+  - Broad-but-scoped tool grant via name globs (agent-def-*, skill-*, schema-*,
+    blueprint-*)
+  - Model pinned to openai/deepseek-v4-pro (multi-step inspection + proposal authoring)

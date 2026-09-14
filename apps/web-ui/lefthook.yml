@@ -1,0 +1,79 @@
+# lefthook.yml — git hooks + lint for Memory (Python agent/ + Go gateway/).
+#
+# Install hooks:   lefthook install
+# Run pre-commit:  lefthook run pre-commit
+# Run lint:        lefthook run lint
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: ruff-check
+      glob: "**/*.py"
+      run: ruff check {staged_files}
+
+    - name: gofmt
+      glob: "gateway/**/*.go"
+      run: |
+        files=$(gofmt -l {staged_files})
+        if [ -n "$files" ]; then
+          echo "gofmt needed:"; echo "$files"; exit 1
+        fi
+
+    - name: go-vet
+      glob: "gateway/**/*.go"
+      run: cd gateway && go vet ./...
+
+    - name: go-build
+      glob: "gateway/**/*.go"
+      run: cd gateway && go build ./...
+
+    - name: templ-generate
+      glob: "gateway/**/*.templ"
+      run: cd gateway && templ generate -check
+
+    - name: no-secrets
+      run: gitleaks protect --staged --config .gitleaks.toml --no-banner
+
+lint:
+  parallel: true
+  jobs:
+    - name: ruff-check
+      run: ruff check .
+
+    - name: golangci-lint
+      run: cd gateway && golangci-lint run ./...
+
+    - name: gofmt
+      run: |
+        files=$(gofmt -l $(find gateway -name "*.go" -not -path "*/vendor/*"))
+        if [ -n "$files" ]; then
+          echo "gofmt needed:"; echo "$files"; exit 1
+        fi
+
+    - name: go-vet
+      run: cd gateway && go vet ./...
+
+    - name: go-test
+      run: cd gateway && go test ./...
+
+    - name: connector-golangci-lint
+      run: cd connector && golangci-lint run ./...
+
+    - name: connector-gofmt
+      run: |
+        files=$(gofmt -l $(find connector -name "*.go" -not -path "*/vendor/*"))
+        if [ -n "$files" ]; then
+          echo "gofmt needed:"; echo "$files"; exit 1
+        fi
+
+    - name: connector-go-vet
+      run: cd connector && go vet ./...
+
+    - name: connector-go-test
+      run: cd connector && go test ./...
+
+    - name: templ-generate
+      run: cd gateway && templ generate -check
+
+    - name: no-secrets
+      run: gitleaks dir . --config .gitleaks.toml --no-banner

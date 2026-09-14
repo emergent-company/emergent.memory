@@ -1,0 +1,27 @@
+{
+  "": "https://opencode.ai/config.json",
+  "mcp": {
+    "livekit-docs": {
+      "enabled": true,
+      "type": "http",
+      "url": "https://docs.livekit.io/mcp"
+    },
+    "chrome-devtools": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8080/mcp",
+      "timeout": 120000
+    },
+    "xcodebuild": {
+      "type": "local",
+      "command": "ssh",
+      "args": ["mcj-mini", "npx -y xcodebuildmcp@latest mcp"],
+      "enabled": true
+    },
+    "sentry": {
+      "type": "remote",
+      "url": "https://mcp.sentry.dev/mcp/emergent-company/memory-ui",
+      "enabled": true
+    }
+  },
+  "$schema": "https://opencode.ai/config.json"
+}

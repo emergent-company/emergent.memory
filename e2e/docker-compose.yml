@@ -1,0 +1,129 @@
+# docker-compose.yml for memory CLI Docker-based installation tests.
+#
+# This compose file spins up:
+#   - test-db:               Postgres + pgvector (required by the server)
+#   - test-emergent-server:  the Memory backend API in standalone mode
+#   - test-emergent-client:  the Go test container that installs the CLI via install.sh
+#                            and runs all tests against the live server
+#
+# Usage:
+#   docker compose -f docker-compose.yml up --build --abort-on-container-exit
+#
+# The test-emergent-client container exits with the test process exit code, so CI can
+# inspect the exit code to determine pass/fail.
+#
+# Test logs are written to ./test-logs/ on the host (mounted into the container).
+#
+# Environment variables you can override:
+#   MEMORY_SERVER_IMAGE   - Memory server Docker image (default: ghcr.io/emergent-company/memory-server:latest)
+#   MEMORY_TEST_TOKEN     - static API key for the standalone server (default: e2e-test-user)
+#   MEMORY_TEST_SERVER    - override the server URL seen by tests (default: http://test-emergent-server:3002)
+#   TEST_RUN              - optional -run filter, e.g. TestCLIInstalled_Version
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Postgres + pgvector (required by the Memory server)
+  # ─────────────────────────────────────────────────────────────────────────
+  test-db:
+    image: pgvector/pgvector:pg17
+    container_name: test-emergent-db
+    ports:
+      - "5436:5432"
+    environment:
+      POSTGRES_USER: emergent
+      POSTGRES_PASSWORD: emergent
+      POSTGRES_DB: emergent
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emergent -d emergent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # MinIO storage (required for document upload tests and health check)
+  # ─────────────────────────────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
+  # Memory API server (standalone mode)
+  # ─────────────────────────────────────────────────────────────────────────
+  test-emergent-server:
+    image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
+    container_name: test-emergent-server
+    depends_on:
+      test-db:
+        condition: service_healthy
+    environment:
+      # Standalone mode — API key is used instead of Zitadel OAuth
+      STANDALONE_MODE: "true"
+      STANDALONE_API_KEY: ${MEMORY_TEST_TOKEN:-e2e-test-user}
+      STANDALONE_USER_EMAIL: "e2e@localhost"
+      STANDALONE_ORG_NAME: "E2E Org"
+      STANDALONE_PROJECT_NAME: "E2E Project"
+
+      # Database
+      POSTGRES_HOST: test-emergent-db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: emergent
+      POSTGRES_PASSWORD: emergent
+      POSTGRES_DB: emergent
+
+      # Storage (MinIO on host, port 9012)
+      STORAGE_ENDPOINT: http://172.17.0.1:9012
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: local-test-minio
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
+
+      # Server
+      PORT: "3002"
+      GO_ENV: development
+      DB_AUTOINIT: "true"
+
+      # LLM provider — OpenAI-compatible via litellm
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk--hdGtQNlFMQDO3aW2d-bPw}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://litellm:4000/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-openai/deepseek-v4-flash}
+
+      # DeepSeek (direct)
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-sk-c9bf6d9840264ce5b912d2d16484d5b9}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
+
+      # Disable optional features that need external services
+      ENABLE_AGENT_WORKSPACES: "false"
+      KREUZBERG_ENABLED: "false"
+      WHISPER_ENABLED: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3002/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 60s
+    ports:
+      - "3002:3002"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # CLI test runner
+  # Installs the emergent CLI from the GitHub release and runs all Go tests.
+  # ─────────────────────────────────────────────────────────────────────────
+  test-emergent-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: test-emergent-client
+    depends_on:
+      test-emergent-server:
+        condition: service_healthy
+    environment:
+      MEMORY_TEST_SERVER: "${MEMORY_TEST_SERVER:-http://test-emergent-server:3002}"
+      TEST_LOG_DIR: "/test-logs"
+      TEST_RUNNER: "docker"
+      CI: "true"
+      TEST_RUN: "${TEST_RUN:-}"
+    volumes:
+      # Persist test session logs to the host so they survive container exit.
+      - ./test-logs:/test-logs
+      # Share the runs DB so Docker and host runs both write to logs/runs.db.
+      - ./logs:/tests/logs
+    # entrypoint.sh installs the CLI then runs go test with optional -run filter.
+    # No command: override here — entrypoint.sh handles TEST_RUN filtering.

@@ -1,0 +1,421 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	"github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Schedules list ---
+
+// SchedulesPage renders the scheduled agents list: each agent's name, cron
+// schedule, enabled state, and last-run status, with run-now and edit actions.
+// A failed list fetch renders the whole-page error state; flashMsg/flashErr
+// surface PRG feedback. defs feeds the edit page's agent-definition selector.
+// schedules must already be filtered to triggerType "schedule".
+templ SchedulesPage(schedules []ScheduledAgent, defs []AgentDefinitionSummary, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@schedulesHeader(len(schedules), loadErr == nil)
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageError("Failed to load schedules", loadErr)
+		} else if len(schedules) == 0 {
+			@schedulesEmpty()
+		} else {
+			@schedulesTable(schedules, defs)
+		}
+	}
+}
+
+templ schedulesHeader(count int, ok bool) {
+	@pageHeader("Memory", "Schedules", "Run an agent on a recurring schedule — a prompt, a cron expression, and the definition that powers each run.") {
+		<div class="flex items-center gap-2">
+			if ok {
+				@countBadgeLabel(scheduleCountLabel(count), "lucide--calendar-clock")
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/schedules/new",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+			}) {
+				Add schedule
+			}
+		</div>
+	}
+}
+
+templ schedulesEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--calendar-clock",
+		Title:       "No schedules yet",
+		Description: "Create the first schedule — a name, a prompt, and a cron expression. Runs land in the session list as scheduled.",
+		Bordered:    true,
+		Class:       "py-12",
+		ActionHref:  "/schedules/new",
+		ActionLabel: "Add schedule",
+		ActionIcon:  "lucide--plus",
+	})
+}
+
+// schedulesTable lists scheduled agents, mirroring the agents table style.
+templ schedulesTable(schedules []ScheduledAgent, defs []AgentDefinitionSummary) {
+	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+		@table.TableWithProps(table.TableProps{Bordered: false}) {
+			@table.TableHead() {
+				@table.TableHeadRow() {
+					@table.TableHeadCell("Schedule")
+					@table.TableHeadCell("Cron")
+					@table.TableHeadCell("Agent")
+					@table.TableHeadCell("Last run")
+					@table.TableHeadCell("")
+				}
+			}
+			@table.TableBody() {
+				for i, a := range schedules {
+					@scheduleRow(strconv.Itoa(i), a, defs)
+				}
+			}
+		}
+	}
+}
+
+// scheduleRow is one scheduled agent: name, cron, enabled state (inline
+// switch), last-run status, and the run-now action. Editing happens on the
+// detail page (/schedules/{id}); the whole row is clickable to open it.
+templ scheduleRow(rowID string, a ScheduledAgent, defs []AgentDefinitionSummary) {
+	@table.TableRow(a.ID, true, templ.Attributes{"class": "memory-rise", "data-href": "/schedules/" + url.PathEscape(a.ID)}) {
+		@table.TableCell("", nil) {
+			<a class="flex items-center gap-3 hover:opacity-80" href={ templ.URL("/schedules/" + url.PathEscape(a.ID)) }>
+				@ui.IconTile("lucide--calendar-clock", ui.IconTileProps{Tone: "primary"})
+				<div class="min-w-0">
+					<p class="truncate text-sm font-medium">{ a.Name }</p>
+					@monoMeta(shortID(a.ID), "text-base-content/35")
+				</div>
+			</a>
+		}
+		@table.TableCell("", nil) {
+			@ui.Badge(ui.BadgeProps{Label: a.CronSchedule, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+		}
+		@table.TableCell("", nil) {
+			@scheduleDefinitionCell(defs, a)
+		}
+		@table.TableCell("", nil) {
+			@scheduleLastRunBadges(a)
+		}
+		@table.TableCell("text-right", nil) {
+			<div class="flex items-center justify-end gap-2">
+				<form method="post" action={ templ.URL("/schedules/" + a.ID + "/trigger") }>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeSubmit,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Icon:      "lucide--play",
+						AriaLabel: "Run " + a.Name + " now",
+					}) {
+						Run now
+					}
+				</form>
+				<form method="post" action={ templ.URL("/schedules/" + a.ID + "/toggle") }>
+					<input type="checkbox" name="enabled" class="toggle toggle-sm" aria-label={ "Toggle " + a.Name } if a.Enabled { checked } onchange="this.form.submit()"/>
+				</form>
+			</div>
+		}
+	}
+}
+
+// schedulePrompt renders the agent's prompt, or a placeholder when unset.
+func schedulePrompt(a ScheduledAgent) string {
+	if a.Prompt != nil && strings.TrimSpace(*a.Prompt) != "" {
+		return *a.Prompt
+	}
+	return "No prompt — the linked agent definition supplies the instructions."
+}
+
+// scheduleEnabledBadge shows the enabled/disabled state.
+templ scheduleEnabledBadge(a ScheduledAgent) {
+	if a.Enabled {
+		@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+	} else {
+		@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
+	}
+}
+
+// scheduleDefinitionCell shows the linked agent definition's name in the list
+// (empty state when the schedule has no definition linked). Surfacing it here
+// lets the owner confirm the definition persisted without opening the detail
+// page — the list otherwise only shows name/cron/enabled/last-run.
+templ scheduleDefinitionCell(defs []AgentDefinitionSummary, a ScheduledAgent) {
+	if n := scheduleDefinitionName(defs, a); n != "" {
+		@ui.Badge(ui.BadgeProps{Label: n, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--bot"})
+	} else {
+		<span class="text-base-content/35 text-sm">—</span>
+	}
+}
+
+// scheduleLastRunBadges shows when the agent last ran and whether it
+// succeeded. A never-run agent gets a "never run" badge.
+templ scheduleLastRunBadges(a ScheduledAgent) {
+	@ui.Badge(ui.BadgeProps{Label: scheduleLastRunLabel(a), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--clock"})
+	if a.LastRunStatus != nil && *a.LastRunStatus != "" {
+		@ui.Badge(ui.BadgeProps{Label: scheduleStatusLabel(a), Variant: scheduleStatusIntent(a.LastRunStatus), Size: ui.BadgeSizeXS, Dot: true})
+	}
+}
+
+// scheduleCountLabel renders a schedule count with correct pluralisation.
+func scheduleCountLabel(n int) string {
+	if n == 1 {
+		return "1 schedule"
+	}
+	return strconv.Itoa(n) + " schedules"
+}
+
+// --- Schedule detail/edit ---
+
+// ScheduleDetailPage renders one scheduled agent: breadcrumbs, run-now,
+// summary badges, the edit form, recent runs, and the delete action. A failed
+// agent fetch renders the whole-page error state; FlashMsg/FlashErr surface
+// PRG feedback from the update flow.
+templ ScheduleDetailPage(data scheduleDetailData) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if data.LoadErr != nil {
+			@pageError("Schedule unavailable", data.LoadErr)
+		} else {
+			@scheduleDetailHeader(data.Agent)
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			@scheduleDetailMeta(data.Agent, data.Defs)
+			@scheduleEditForm(data.Agent, data.Defs)
+			@scheduleRunsSection(data.Runs)
+			@scheduleDangerZone(data.Agent)
+			@scheduleDeleteDialog(data.Agent)
+		}
+	}
+}
+
+templ scheduleDetailHeader(a *ScheduledAgent) {
+	@detailHeader(crumbsActive(nav.Crumbs("Schedules", "/schedules", a.Name)), "", a.Name, "Run this schedule on demand, edit its prompt or cron, or delete it.") {
+		<form method="post" action={ templ.URL("/schedules/" + a.ID + "/trigger") }>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--play",
+			}) {
+				Run now
+			}
+		</form>
+	}
+}
+
+// scheduleDetailMeta is the badge row under the detail header: enabled state,
+// last run, cron, linked definition, and the full id.
+templ scheduleDetailMeta(a *ScheduledAgent, defs []AgentDefinitionSummary) {
+	<div class="mb-6 flex flex-wrap items-center gap-2">
+		@scheduleEnabledBadge(*a)
+		@scheduleLastRunBadges(*a)
+		@ui.Badge(ui.BadgeProps{Label: "cron " + a.CronSchedule, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+		if n := scheduleDefinitionName(defs, *a); n != "" {
+			@ui.Badge(ui.BadgeProps{Label: "agent " + n, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--bot"})
+		}
+		@monoMeta(a.ID, "text-base-content/40")
+	</div>
+}
+
+// scheduleDefinitionSelect is the agent-definition <select> shared by the
+// create and edit forms. current is the linked definition id ("" for a fresh
+// form).
+templ scheduleDefinitionSelect(id string, defs []AgentDefinitionSummary, current *string) {
+	<select id={ id } name="agentDefinitionId" required class="select w-full">
+		<option value="" disabled selected?={ current == nil }>Pick an agent definition…</option>
+		for _, d := range defs {
+			<option value={ d.ID } selected?={ current != nil && *current == d.ID }>{ d.Name }</option>
+		}
+	</select>
+}
+
+// scheduleEditForm is the edit form (PRG → POST /schedules/:id/update).
+templ scheduleEditForm(a *ScheduledAgent, defs []AgentDefinitionSummary) {
+	@ui.Section("Edit schedule", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/schedules/" + a.ID + "/update") }>
+			@form.FormControl("edit-sched-name", "Name", form.LabelAbove, "", "", nil) {
+				<input id="edit-sched-name" name="name" type="text" required value={ a.Name } class="input w-full"/>
+			}
+			@form.FormControl("edit-sched-prompt", "Prompt", form.LabelAbove, "The instructions each run executes. Empty uses the definition's system prompt.", "", nil) {
+				<textarea id="edit-sched-prompt" name="prompt" rows="3" class="textarea w-full resize-none">{ schedulePromptValue(a) }</textarea>
+			}
+			@form.FormControl("edit-sched-cron", "Cron schedule", form.LabelAbove, "5-field cron (min hour dom mon dow). Runs more often than every 15 minutes are rejected.", "", nil) {
+				<input id="edit-sched-cron" name="cronSchedule" type="text" required value={ a.CronSchedule } placeholder="0 8 * * *" class="input w-full font-mono"/>
+			}
+			@form.FormControl("edit-sched-def", "Agent definition", form.LabelAbove, "The agent that powers each run — its model, system prompt, and tools.", "", nil) {
+				@scheduleDefinitionSelect("edit-sched-def", defs, a.AgentDefinitionID)
+			}
+			<label class="label flex w-full justify-between gap-3">
+				<span class="text-sm font-medium">Enabled</span>
+				<input id="edit-sched-enabled" name="enabled" type="checkbox" if a.Enabled { checked } class="checkbox"/>
+			</label>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--save",
+				}) {
+					Save changes
+				}
+			}
+		</form>
+	}
+}
+
+// scheduleRunsSection lists the schedule's recent runs, each linking to its
+// transcript (/runs/{id}). Empty state when the schedule has not run yet.
+templ scheduleRunsSection(runs []ScheduledAgentRun) {
+	@ui.Section("Latest runs", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+		if len(runs) == 0 {
+			<p class="text-base-content/50 text-sm">No runs yet. Runs appear here after the schedule fires — or after you hit Run now.</p>
+		} else {
+			<ul class="list bg-base-100 rounded-box border border-base-200">
+				for _, r := range runs {
+					<a class="list-row hover:bg-base-200/50" data-testid="schedule-run-row" href={ templ.URL("/runs/" + url.PathEscape(r.ID)) }>
+						@ui.IconSpan("lucide--activity", "size-4 shrink-0 text-base-content/40")
+						<div class="list-col-grow">
+							<div class="font-medium text-sm">{ scheduleRunTitle(r) }</div>
+							<div class="text-base-content/50 text-xs">{ scheduleRunSubtitle(r) }</div>
+						</div>
+						@ui.Badge(ui.BadgeProps{Label: r.Status, Variant: scheduleStatusIntent(&r.Status), Size: ui.BadgeSizeXS, Dot: true})
+						@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
+					</a>
+				}
+			</ul>
+		}
+	}
+}
+
+// scheduleDangerZone is the delete affordance; it opens the confirm dialog.
+templ scheduleDangerZone(a *ScheduledAgent) {
+	@ui.Section("Danger zone", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<div class="flex items-center gap-3">
+				<div class="bg-error/10 text-error grid size-9 shrink-0 place-items-center rounded-lg border border-error/15">
+					@ui.IconSpan("lucide--trash-2", "size-4.5")
+				</div>
+				<div>
+					<p class="text-sm font-medium">Delete this schedule</p>
+					<p class="text-base-content/50 text-xs">Removes it and stops future runs. Irreversible.</p>
+				</div>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonError,
+				Style:     ui.ButtonStyleOutline,
+				Size:      ui.ButtonSM,
+				Icon:      "lucide--trash-2",
+				AriaLabel: "Delete " + a.Name,
+				OnClick:   openScheduleDelete(),
+			}) {
+				Delete
+			}
+		</div>
+	}
+}
+
+// scheduleDeleteDescription is the delete-confirm detail paragraph.
+templ scheduleDeleteDescription(a *ScheduledAgent) {
+	<p class="text-base-content/55 mt-1 text-sm">
+		This removes <span class="font-medium text-base-content">{ a.Name }</span> and its schedule. It will no longer run. Irreversible.
+	</p>
+}
+
+// scheduleDeleteDialog confirms deletion before the POST to /schedules/:id/delete.
+// The action is fixed because the dialog only exists on the detail page for
+// the schedule being viewed — no per-schedule JS state needed.
+templ scheduleDeleteDialog(a *ScheduledAgent) {
+	@confirmDeleteDialog("schedule-delete-modal", "schedule", scheduleDeleteDescription(a)) {
+		<form method="post" action={ templ.URL("/schedules/" + a.ID + "/delete") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Delete schedule
+				}
+			}
+		</form>
+	}
+}
+
+// --- New schedule ---
+
+// SchedulesNewPage renders the create form for a new schedule: a
+// breadcrumb/title header, an optional error toast, and the create form.
+templ SchedulesNewPage(defs []AgentDefinitionSummary, flashErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Schedules", "/schedules", "New schedule")), "", "New schedule", "A name, a prompt, and a cron expression — the linked agent definition supplies the model and tools.")
+		if flashErr != nil {
+			@flashToast("error", flashErr.Error())
+		}
+		@scheduleCreateForm(defs)
+	}
+}
+
+// scheduleCreateForm is the create form (PRG → POST /schedules).
+templ scheduleCreateForm(defs []AgentDefinitionSummary) {
+	@ui.Section("Schedule", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<form class="flex flex-col gap-4" method="post" action="/schedules">
+			@form.FormControl("sched-name", "Name", form.LabelAbove, "", "", nil) {
+				<input id="sched-name" name="name" type="text" required placeholder="e.g. Daily briefing" class="input w-full"/>
+			}
+			@form.FormControl("sched-prompt", "Prompt", form.LabelAbove, "The instructions each run executes. Empty uses the definition's system prompt.", "", nil) {
+				<textarea id="sched-prompt" name="prompt" rows="4" placeholder="Summarize yesterday's notes and surface anything that needs my attention…" class="textarea w-full resize-none"></textarea>
+			}
+			@form.FormControl("sched-cron", "Cron schedule", form.LabelAbove, "5-field cron (min hour dom mon dow), e.g. 0 8 * * * for 08:00 daily. Runs more often than every 15 minutes are rejected.", "", nil) {
+				<input id="sched-cron" name="cronSchedule" type="text" required placeholder="0 8 * * *" class="input w-full font-mono"/>
+			}
+			@form.FormControl("sched-def", "Agent definition", form.LabelAbove, "The agent that powers each run — its model, system prompt, and tools.", "", nil) {
+				@scheduleDefinitionSelect("sched-def", defs, nil)
+			}
+			<label class="label flex w-full justify-between gap-3">
+				<span class="text-sm font-medium">Enabled on creation</span>
+				<input id="sched-enabled" name="enabled" type="checkbox" checked class="checkbox"/>
+			</label>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--calendar-clock",
+				}) {
+					Create schedule
+				}
+			}
+		</form>
+	}
+}
+
+script openScheduleDelete() {
+	var d = document.getElementById("schedule-delete-modal");
+	if (d) d.showModal();
+}

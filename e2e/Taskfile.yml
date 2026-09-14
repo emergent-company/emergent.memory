@@ -1,0 +1,232 @@
+version: "3"
+
+vars:
+  RUNLOG_DB: "{{.TASKFILE_DIR}}/.runlog/runs.db"
+  RUNLOG_PORT: "17432"
+  LOG_DIR: "{{.TASKFILE_DIR}}/logs/tests"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmd: task --list
+
+  # ─── Daemon ────────────────────────────────────────────────
+
+  daemon:start:
+    desc: Start runlog daemon + Docker server (mcj-emergent)
+    deps: [server:start]
+    cmds:
+      - |
+        if curl -sf http://localhost:{{.RUNLOG_PORT}} > /dev/null 2>&1; then
+          echo "  runlog daemon already running on port {{.RUNLOG_PORT}}"
+        else
+          echo "  starting runlog daemon on port {{.RUNLOG_PORT}}..."
+          mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
+          nohup runlog daemon --db "{{.RUNLOG_DB}}" --port "{{.RUNLOG_PORT}}" \
+            > "{{.LOG_DIR}}/daemon.log" 2>&1 &
+          sleep 2
+          echo "  daemon started (port {{.RUNLOG_PORT}})"
+        fi
+
+  daemon:stop:
+    desc: Stop the runlog daemon
+    cmds:
+      - |
+        PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
+        if [ -n "$PID" ]; then
+          kill "$PID" 2>/dev/null || true
+          echo "daemon stopped (PID $PID)"
+        else
+          echo "no daemon running on port {{.RUNLOG_PORT}}"
+        fi
+
+  daemon:restart:
+    desc: Restart runlog daemon (keeps server running)
+    cmds:
+      - task: daemon:stop
+      - sleep 1
+      - task: daemon:start
+
+  # ─── mcj-emergent Docker server ────────────────────────────
+
+  server:start:
+    desc: Start Docker server stack (db + server for mcj-emergent)
+    cmds:
+      - |
+        echo "  checking Docker server stack..."
+        if docker compose ps test-emergent-server --format json 2>/dev/null | grep -q '"State":"running"'; then
+          echo "  mcj-emergent server already running"
+        else
+          echo "  starting Docker server stack..."
+          docker compose up -d test-emergent-server 2>&1 | tail -5
+          echo "  waiting for server health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://mcj-emergent:3002/ > /dev/null 2>&1; then
+              echo "  server healthy after ~${i}s"
+              break
+            fi
+            sleep 2
+          done
+        fi
+    dir: "{{.TASKFILE_DIR}}"
+
+  server:stop:
+    desc: Stop Docker server stack
+    cmds:
+      - docker compose down
+    dir: "{{.TASKFILE_DIR}}"
+
+  server:restart:
+    desc: Restart Docker server stack
+    cmds:
+      - task: server:stop
+      - task: server:start
+
+  # ─── Hot-reload dev server (air) ──────────────────────────
+  # Starts the runlog web UI on port 17432 with auto-rebuild on source changes.
+  # Usage: task dev:server        foreground (Ctrl+C to stop)
+  #        task dev:server:bg     background
+
+  dev:server:
+    desc: "Run runlog dev server with hot-reload (air) — Ctrl+C to stop"
+    cmds:
+      - air -c .air.memory.toml
+    dir: "{{.TASKFILE_DIR}}"
+
+  dev:server:bg:
+    desc: "Start runlog dev server with hot-reload in background"
+    cmds:
+      - |
+        if curl -sf http://localhost:{{.RUNLOG_PORT}}/ui/ > /dev/null 2>&1; then
+          echo "dev server already running on port {{.RUNLOG_PORT}}"
+        else
+          nohup air -c .air.memory.toml > /tmp/air-memory.log 2>&1 &
+          echo "dev server starting on port {{.RUNLOG_PORT}} (PID $$!)"
+          sleep 3
+          if curl -sf http://localhost:{{.RUNLOG_PORT}}/ui/ > /dev/null 2>&1; then
+            echo "ready"
+          else
+            echo "check /tmp/air-memory.log"
+          fi
+        fi
+
+  dev:server:stop:
+    desc: "Stop the hot-reload dev server"
+    cmds:
+      - |
+        PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
+        if [ -n "$PID" ]; then
+          AIRPID=$(ps aux | grep "air.*memory" | grep -v grep | awk '{print $2}')
+          if [ -n "$AIRPID" ]; then kill "$AIRPID" 2>/dev/null || true; fi
+          kill "$PID" 2>/dev/null || true
+          echo "dev server stopped"
+        else
+          echo "no dev server running on port {{.RUNLOG_PORT}}"
+        fi
+
+  # ─── Tests — local dev server ──────────────────────────────
+
+  test:rextract:
+    desc: "Run 5-episode Friends re-extraction test against local server (localhost:5300)"
+    deps: [daemon:start]
+    cmds:
+      - |
+        HOME=$HOME MEMORY_TEST_ENV=localhost \
+          runlog test "" TestReExtractionFriends5Episodes -- -timeout 1200s -v
+    dir: "{{.TASKFILE_DIR}}"
+
+  test:integration:
+    desc: "Run all ported integration tests against local server"
+    deps: [daemon:start]
+    cmds:
+      - |
+        HOME=$HOME MEMORY_TEST_ENV=localhost \
+          runlog test "" {{.CLI_ARGS}} -- -timeout 1200s -v
+    dir: "{{.TASKFILE_DIR}}"
+
+  # ─── Tests — mcj-emergent Docker server ────────────────────
+
+  test:mcj:
+    desc: "Run all tests against mcj-emergent Docker server"
+    deps: [daemon:start]
+    cmds:
+      - runlog test mcj-emergent {{.CLI_ARGS}}
+    dir: "{{.TASKFILE_DIR}}"
+
+  test:mcj:single:
+    desc: "Run a single test against mcj-emergent (usage: task test:mcj:single -- TestName)"
+    deps: [daemon:start]
+    cmds:
+      - runlog test mcj-emergent {{.CLI_ARGS}}
+    dir: "{{.TASKFILE_DIR}}"
+
+  # ─── Docker CI runner ──────────────────────────────────────
+
+  test:docker:
+    desc: "Run tests inside Docker full stack (server + tests)"
+    cmds:
+      - ./run_tests.sh {{.CLI_ARGS}}
+    dir: "{{.TASKFILE_DIR}}"
+
+  test:docker:tests-only:
+    desc: "Run tests inside Docker against already-running server"
+    cmds:
+      - ./run_tests.sh --tests-only {{.CLI_ARGS}}
+    dir: "{{.TASKFILE_DIR}}"
+
+  # ─── Lint ──────────────────────────────────────────────────
+
+  lint:
+    desc: Run lefthook lint group (gofmt, go-vet, go-build, gitleaks)
+    cmds:
+      - lefthook run lint
+
+  # ─── Utilities ────────────────────────────────────────────
+
+  logs:clean:
+    desc: "Remove all per-run log directories (keeps runs.db)"
+    cmds:
+      - rm -rf "{{.LOG_DIR}}" tests/integration/logs tests/api/logs tests/cli/logs
+      - echo "logs cleaned"
+
+  runs:clear:
+    desc: "Delete runs.db (all run history)"
+    cmds:
+      - runlog clear --db "{{.RUNLOG_DB}}"
+      - echo "runs.db cleared"
+
+  runs:reap:
+    desc: "Mark stale runs as FAIL"
+    cmds:
+      - runlog reap
+    dir: "{{.TASKFILE_DIR}}"
+
+  status:
+    desc: "Show daemon, server, and recent runs status"
+    cmds:
+      - |
+        echo "=== runlog daemon ==="
+        if curl -sf http://localhost:{{.RUNLOG_PORT}} > /dev/null 2>&1; then
+          echo "  daemon: RUNNING (port {{.RUNLOG_PORT}})"
+          echo "  DB: {{.RUNLOG_DB}}"
+        else
+          echo "  daemon: NOT RUNNING"
+        fi
+        echo ""
+        echo "=== mcj-emergent Docker server ==="
+        if docker compose ps test-emergent-server --format json 2>/dev/null | grep -q '"State":"running"'; then
+          echo "  server: RUNNING (http://mcj-emergent:3002)"
+        else
+          echo "  server: NOT RUNNING"
+        fi
+        echo ""
+        echo "=== Local dev server (localhost:5300) ==="
+        if curl -sf http://localhost:5300/health > /dev/null 2>&1; then
+          echo "  server: RUNNING"
+        else
+          echo "  server: NOT RUNNING"
+        fi
+        echo ""
+        echo "=== Recent test runs ==="
+        runlog runs --since 1h | head -10 || echo "  (no recent runs)"
+    dir: "{{.TASKFILE_DIR}}"

@@ -1,0 +1,936 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Agent dashboard ---
+
+// AgentDashboardPage renders the per-agent dashboard: summary, configured
+// tools, and recent chats, plus a memories link. A failed agent fetch
+// (LoadErr) renders the whole-page error state; a conversations failure
+// (ChatsErr) degrades only the recent-chats section.
+templ AgentDashboardPage(data agentDashboardData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "")
+			@layout.Rail(agentSubNav(data.Agent.ID, "dashboard"), nil) {
+				@agentSummaryCard(data)
+				@agentModelNotice(data)
+				@agentToolsSection(data)
+				@agentChatsSection(data)
+			}
+		}
+	}
+}
+
+// agentSubNav is the vertical sub-navigation rail for the per-agent pages
+// (dashboard / settings / sandbox / sessions). It stacks horizontally on small
+// screens and becomes a sticky left rail on desktop.
+templ agentSubNav(agentID string, active string) {
+	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Agent sections">
+		@subNavItem("/agents/"+url.PathEscape(agentID), active == "dashboard", "lucide--layout-dashboard", "Dashboard")
+		@subNavItem("/agents/"+url.PathEscape(agentID)+"/settings", active == "settings", "lucide--settings", "Settings")
+		@subNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
+		@subNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
+	</nav>
+}
+
+templ subNavItem(href string, isActive bool, icon string, label string) {
+	<a
+		class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", isActive), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !isActive) }
+		href={ templ.URL(href) }
+		if isActive {
+			aria-current="page"
+		}
+	>
+		if isActive {
+			@ui.IconSpan(icon, "size-4 shrink-0 text-primary")
+		} else {
+			@ui.IconSpan(icon, "size-4 shrink-0 text-base-content/40")
+		}
+		<span>{ label }</span>
+	</a>
+}
+
+templ agentDashboardHeader(a *AgentDefinition, section string) {
+	{{ crumbs := crumbsActive(nav.Crumbs("Agents", "/agents", a.Name, "/agents/"+url.PathEscape(a.ID)))
+	if section != "" {
+		crumbs = crumbsActive(nav.Crumbs("Agents", "/agents", a.Name, "/agents/"+url.PathEscape(a.ID), section))
+	} }}
+	@detailHeader(crumbs, "", a.Name, a.Description, detailHeaderOpts{Margin: "mb-6", Dashboard: true}) {
+		@ui.Badge(ui.BadgeProps{
+			Label:   "updated " + relTime(a.UpdatedAt),
+			Variant: ui.BadgeGhost,
+			Size:    ui.BadgeSizeSM,
+			Icon:    "lucide--clock",
+		})
+	}
+}
+
+templ agentSummaryCard(data agentDashboardData) {
+	@ui.CardRaw("card-border", "p-5", nil) {
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<div class="flex items-center gap-3">
+				@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+				<h2 class="text-lg font-semibold">{ data.Agent.Name }</h2>
+			</div>
+			@ui.Badge(ui.BadgeProps{
+				Label:   visibilityLabel(data.Agent.Visibility),
+				Variant: visibilityIntent(data.Agent.Visibility),
+				Size:    ui.BadgeSizeSM,
+				Dot:     true,
+			})
+		</div>
+		<div class="mt-5 grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
+			@agentSummaryField("Model") {
+				if name, isDefault := agentModelName(data.Agent, data.DefaultModel); name != "" {
+					<span class="font-mono text-sm">{ name }</span>
+					if isDefault {
+						<span class="text-base-content/40 text-sm"> (default)</span>
+					}
+				} else {
+					<span class="text-base-content/40 text-sm">auto — default model</span>
+				}
+			}
+			@agentSummaryField("Flow") {
+				@ui.Badge(ui.BadgeProps{
+					Label:   flowLabel(data.Agent.FlowType),
+					Variant: ui.BadgeNeutral,
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+				})
+			}
+			@agentSummaryField("Visibility") {
+				@ui.Badge(ui.BadgeProps{
+					Label:   visibilityLabel(data.Agent.Visibility),
+					Variant: visibilityIntent(data.Agent.Visibility),
+					Size:    ui.BadgeSizeXS,
+					Dot:     true,
+				})
+			}
+			@agentSummaryField("Tools") {
+				@ui.Badge(ui.BadgeProps{
+					Label:   strconv.Itoa(data.Agent.ToolCount) + " tool" + plural(data.Agent.ToolCount),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--wrench",
+				})
+			}
+		</div>
+		<div class="mt-5 flex flex-wrap items-center gap-2 border-t border-base-200 pt-4">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/chat?agent=" + url.QueryEscape(data.Agent.ID),
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--messages-square",
+			}) {
+				Chat with this agent
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/agents/" + url.PathEscape(data.Agent.ID) + "/memories",
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--brain",
+			}) {
+				Memories
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    mcpShareSettingsBase + "/new?agent=" + url.QueryEscape(data.Agent.ID),
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--share-2",
+			}) {
+				Share via MCP
+			}
+		</div>
+	}
+}
+
+// agentModelNotice warns under the dashboard summary card when the agent's
+// model can't be served: an agent with no explicit model and no resolvable
+// default is error if the project has no configured provider (chats can't run)
+// and warning if the default isn't pinned; an explicit model is error when its
+// provider prefix matches no configured provider (or none is configured).
+templ agentModelNotice(data agentDashboardData) {
+	if sev, msg := agentModelDashboardIssue(data.Agent, data.DefaultModel, data.HasProviders, data.ProviderNames); sev != "" {
+		<div class="mt-6">
+			@agentModelWarningBox(sev, msg)
+		</div>
+	}
+}
+
+// agentModelSettingsWarning alerts in the settings Model section when the
+// agent's model can't be served (see agentModelNotice for the rules).
+templ agentModelSettingsWarning(data agentSettingsData) {
+	if sev, msg := agentModelSettingsIssue(data.Agent, data.DefaultModel, data.HasProviders, data.ProviderNames); sev != "" {
+		@agentModelWarningBox(sev, msg)
+	}
+}
+
+// agentModelWarningBox is the shared warning visual: a severity alert with a
+// link to the providers settings (where providers and the default model are
+// configured) on the same row, stretching to match the alert's height.
+templ agentModelWarningBox(sev, message string) {
+	<div class="flex items-stretch gap-2">
+		<div class="min-w-0 flex-1">
+			@ui.Alert(ui.AlertProps{
+				Type:    modelWarningAlertType(sev),
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: message,
+			})
+		</div>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeLink,
+			Href:       "/settings/providers",
+			Variant:    ui.ButtonOutline,
+			Size:       ui.ButtonXS,
+			Icon:       "lucide--server",
+			ExtraClass: "h-auto",
+		}) {
+			if sev == "error" {
+				Configure a provider
+			} else {
+				Set a default model
+			}
+		}
+	</div>
+}
+
+templ agentSummaryField(label string) {
+	<div>
+		@ui.Eyebrow(label, ui.EyebrowProps{Size: "text-[11px]"})
+		<div class="mt-1.5">{ children... }
+</div>
+	</div>
+}
+
+templ agentToolsSection(data agentDashboardData) {
+	@ui.Section("Configured tools", ui.SectionProps{
+		Margin:    "mt-6",
+		BodyClass: "p-5",
+		Empty:     len(data.Agent.Tools) == 0 && len(data.Agent.BannedTools) == 0,
+		EmptyIcon: "lucide--wrench", EmptyTitle: "No tools configured", EmptyDesc: "This agent has no tool overrides — it uses the platform defaults.",
+	}) {
+		<div class="flex flex-col gap-4">
+			<div>
+				@ui.Eyebrow("Allowed tools", ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"})
+				if len(data.Agent.Tools) == 0 {
+					<p class="text-base-content/40 text-sm italic">None</p>
+				} else {
+					<div class="flex flex-wrap gap-1.5">
+						for _, t := range data.Agent.Tools {
+							@ui.Badge(ui.BadgeProps{
+								Label:   t,
+								Variant: ui.BadgeInfo,
+								Style:   ui.BadgeStyleSoft,
+								Size:    ui.BadgeSizeXS,
+								Icon:    "lucide--wrench",
+							})
+						}
+					</div>
+				}
+			</div>
+			if len(data.Agent.BannedTools) > 0 {
+				<div>
+					@ui.Eyebrow("Banned tools", ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"})
+					<div class="flex flex-wrap gap-1.5">
+						for _, t := range data.Agent.BannedTools {
+							@ui.Badge(ui.BadgeProps{
+								Label:   t,
+								Variant: ui.BadgeError,
+								Style:   ui.BadgeStyleSoft,
+								Size:    ui.BadgeSizeXS,
+								Icon:    "lucide--ban",
+							})
+						}
+					</div>
+				</div>
+			}
+		</div>
+	}
+}
+
+// agentChatsList renders the shared conversations list: a titled Section with
+// an error alert on ChatsErr, otherwise a cardList of chatLinkRow. Shared by
+// the dashboard's "Recent chats" section and the dedicated Sessions page.
+templ agentChatsList(chatsErr error, chats []Conversation, title, margin, emptyTitle string) {
+	@ui.Section(title, ui.SectionProps{
+		Margin:    margin,
+		Empty:     chatsErr == nil && len(chats) == 0,
+		EmptyIcon: "lucide--messages-square", EmptyTitle: emptyTitle, EmptyDesc: "Start a conversation with this agent and it will show up here.",
+		Raw: true,
+	}) {
+		if chatsErr != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: "Failed to load conversations: " + chatsErr.Error(),
+			})
+		} else {
+			@cardList("", cardListProps{}) {
+				for _, c := range chats {
+					@chatLinkRow(c)
+				}
+			}
+		}
+	}
+}
+
+templ agentChatsSection(data agentDashboardData) {
+	@agentChatsList(data.ChatsErr, data.Chats, "Recent chats", "mt-6", "No chats yet")
+}
+
+templ chatLinkRow(c Conversation) {
+	@listRow(templ.URL("/chat?c=" + url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), relTime(c.UpdatedAt))
+}
+
+// --- Agent settings ---
+
+// AgentSettingsPage renders the in-page edit form for one agent: header,
+// sub-nav, and a full settings form mirroring the create/edit modal's fields.
+// A failed agent fetch (LoadErr) renders the whole-page error state;
+// FlashMsg/FlashErr surface PRG feedback from the update flow.
+templ AgentSettingsPage(data agentSettingsData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "Settings")
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings"), nil) {
+				@agentSettingsForm(data)
+			}
+		}
+	}
+}
+
+// agentSettingsForm is the edit form (PRG → POST /agents/:id/update). Field
+// names mirror the old modal's submitAgentForm mapping exactly. The body is
+// split into section panels (general / model / tools / skills / delegation)
+// matching the dashboard's section rhythm.
+templ agentSettingsForm(data agentSettingsData) {
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/update") }>
+		@ui.Section("General", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="flex flex-col gap-4">
+				@form.FormControl("agent-settings-name", "Name", form.LabelAbove, "", "", nil) {
+					<input id="agent-settings-name" name="name" type="text" required value={ data.Agent.Name } placeholder="e.g. Support Butler" class="input w-full"/>
+				}
+				@form.FormControl("agent-settings-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
+					<textarea id="agent-settings-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none">{ data.Agent.SystemPrompt }</textarea>
+				}
+				@form.FormControl("agent-settings-language", "Language", form.LabelAbove, "Voice language — drives speech-to-text and text-to-speech. Leave empty for auto-detection.", "", nil) {
+					<select id="agent-settings-language" name="language" class="select w-full">
+						<option value="">Auto — detect language</option>
+						for _, l := range agentLanguages {
+							<option value={ l.Code } selected?={ agentLanguageCode(agentLanguageValue(data.Agent)) == l.Code }>{ l.Label }</option>
+						}
+					</select>
+				}
+			</div>
+		}
+		@ui.Section("Model", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="flex flex-col gap-4">
+				@agentModelSettingsWarning(data)
+				@modelSelect("agent-settings-model", data.Models, data.Agent.Model, nil)
+				@modelParamsGrid("agent-settings", data.Agent.Model)
+			</div>
+		}
+		@ui.Section("Tools", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+				<span class="text-sm font-medium">Default approval</span>
+				<select name="defaultToolPolicy" class="select select-sm w-40">
+					<option value="allow" if data.Agent.DefaultToolPolicy == "allow" { selected }>Allow</option>
+					<option value="ask" if data.Agent.DefaultToolPolicy == "ask" { selected }>Ask</option>
+					<option value="deny" if data.Agent.DefaultToolPolicy == "deny" { selected }>Deny</option>
+				</select>
+			</div>
+			@agentToolPicker(data)
+		}
+		@ui.Section("Skills", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			@form.FormControl("agent-settings-skills", "", form.LabelAbove, "Reusable capabilities this agent can call.", "", nil) {
+				@checkboxPicker(checkboxPickerProps{
+					Name:          "skill",
+					EmptyNote:     skillEmptyNote(),
+					LabelClass:    "items-start gap-2 py-1.5",
+					CheckboxClass: "checkbox checkbox-sm mt-0.5",
+					TitleClass:    "block text-sm font-medium",
+					DescClass:     "text-base-content/50 block text-xs",
+					WrapTitle:     true,
+					Items:         skillPickerItems(data.Skills, func(name string) bool { return containsString(data.Agent.Skills, name) }),
+				})
+			}
+		}
+		@ui.Section("Delegation", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			@form.FormControl("agent-settings-delegation", "", form.LabelAbove, "If on, this agent can hand off to the agents you select.", "", nil) {
+				<label class="label flex w-full justify-between gap-3">
+					<span class="text-sm font-medium">Can delegate to other agents</span>
+					<input
+						id="agent-settings-delegation-enabled"
+						name="delegationEnabled"
+						type="checkbox"
+						if data.Agent.Delegation != nil && data.Agent.Delegation.Enabled {
+							checked
+						}
+						class="checkbox"
+					/>
+				</label>
+				@checkboxPicker(checkboxPickerProps{
+					Name:          "delegation-target",
+					Wrapped:       true,
+					EmptyNote:     delegateEmptyNote(),
+					LabelClass:    "gap-2 py-1",
+					CheckboxClass: "checkbox",
+					TitleClass:    "text-base-content/80 text-sm",
+					Items:         delegatePickerItems(data.Agents, data.Agent.Name, func(name string) bool { return data.Agent.Delegation != nil && containsString(data.Agent.Delegation.Targets, name) }),
+				})
+			}
+		}
+		<div class="mt-6">
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--save",
+				}) {
+					Save changes
+				}
+			}
+		</div>
+	</form>
+}
+
+// --- Agent sandbox ---
+
+// AgentSandboxPage renders the per-agent sandbox (workspace) config page:
+// header, sub-nav, and a form mirroring the AgentSettingsPage layout. A failed
+// agent/config fetch (LoadErr) renders the whole-page error state;
+// FlashMsg/FlashErr surface PRG feedback from the update flow.
+templ AgentSandboxPage(data agentSandboxData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "Sandbox")
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			@layout.Rail(agentSubNav(data.Agent.ID, "sandbox"), nil) {
+				@agentSandboxForm(data)
+			}
+		}
+	}
+}
+
+// agentSandboxForm is the sandbox edit form (PRG → POST
+// /agents/:id/sandbox/update). Empty tools means "all allowed"; repo_source
+// url is only honored for a fixed source.
+templ agentSandboxForm(data agentSandboxData) {
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/sandbox/update") }>
+		@ui.Section("Provider", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="flex flex-col gap-4">
+				@form.FormControl("agent-sandbox-enabled", "", form.LabelAbove, "Enable a sandboxed workspace for this agent.", "", nil) {
+					<label class="label flex w-full justify-between gap-3">
+						<span class="text-sm font-medium">Enable sandbox</span>
+						<input id="agent-sandbox-enabled" name="enabled" type="checkbox" checked?={ sandboxConfigEnabled(data.Config) } class="checkbox"/>
+					</label>
+				}
+				@form.FormControl("agent-sandbox-provider", "Provider", form.LabelAbove, "Sandbox runtime. Auto picks a healthy provider.", "", nil) {
+					<select id="agent-sandbox-provider" name="provider" class="select w-full">
+						<option value="" selected?={ sandboxConfigProvider(data.Config) == "" }>Auto</option>
+						<option value="gvisor" selected?={ sandboxConfigProvider(data.Config) == "gvisor" }>gVisor (Docker)</option>
+						<option value="firecracker" selected?={ sandboxConfigProvider(data.Config) == "firecracker" }>Firecracker</option>
+						<option value="e2b" selected?={ sandboxConfigProvider(data.Config) == "e2b" }>E2B</option>
+					</select>
+				}
+				@form.FormControl("agent-sandbox-base-image", "Base image", form.LabelAbove, "Container image for the workspace.", "", nil) {
+					<input id="agent-sandbox-base-image" name="baseImage" type="text" value={ sandboxBaseImage(data.Config) } placeholder="memory-workspace:latest" class="input w-full" list="sandbox-base-images"/>
+					<datalist id="sandbox-base-images">
+						for _, img := range data.Images {
+							<option value={ img.Name }></option>
+						}
+					</datalist>
+				}
+				if healthy := sandboxHealthyProviders(data.Providers); healthy != "" {
+					<p class="text-base-content/50 text-xs">Available: { healthy }</p>
+				}
+			</div>
+		}
+		@ui.Section("Repository", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="flex flex-col gap-4">
+				@form.FormControl("agent-sandbox-repo-type", "Source", form.LabelAbove, "", "", nil) {
+					<select id="agent-sandbox-repo-type" name="repoSourceType" class="select w-full">
+						<option value="none" selected?={ sandboxRepoSourceType(data.Config) == "none" }>No checkout (empty workspace)</option>
+						<option value="fixed" selected?={ sandboxRepoSourceType(data.Config) == "fixed" }>Fixed repository</option>
+						<option value="task_context" selected?={ sandboxRepoSourceType(data.Config) == "task_context" }>From task context</option>
+					</select>
+				}
+				@form.FormControl("agent-sandbox-repo-url", "Repository URL", form.LabelAbove, "Used when source is Fixed.", "", nil) {
+					<input id="agent-sandbox-repo-url" name="repoSourceUrl" type="text" value={ sandboxRepoSourceURL(data.Config) } placeholder="https://github.com/org/repo" class="input w-full"/>
+				}
+				@form.FormControl("agent-sandbox-repo-branch", "Branch", form.LabelAbove, "Default branch; overridden by task context.", "", nil) {
+					<input id="agent-sandbox-repo-branch" name="repoSourceBranch" type="text" value={ sandboxRepoSourceBranch(data.Config) } placeholder="main" class="input w-full"/>
+				}
+			</div>
+		}
+		@ui.Section("Tools", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="flex flex-col gap-2.5">
+				for _, tool := range sandboxToolNames {
+					<label class="flex cursor-pointer items-center gap-2.5">
+						<input type="checkbox" name="sandboxTool" value={ tool } checked?={ sandboxToolEnabled(data.Config, tool) } class="checkbox"/>
+						<span class="font-mono text-[13px]">{ tool }</span>
+					</label>
+				}
+				<p class="text-base-content/50 mt-2 text-xs">If none selected, all tools are allowed.</p>
+			</div>
+		}
+		@ui.Section("Resources", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+				@form.FormControl("agent-sandbox-cpu", "CPU", form.LabelAbove, "", "", nil) {
+					<input id="agent-sandbox-cpu" name="cpu" type="text" value={ sandboxResourceValue(data.Config, "cpu") } placeholder="2" class="input w-full"/>
+				}
+				@form.FormControl("agent-sandbox-memory", "Memory", form.LabelAbove, "", "", nil) {
+					<input id="agent-sandbox-memory" name="memory" type="text" value={ sandboxResourceValue(data.Config, "memory") } placeholder="4G" class="input w-full"/>
+				}
+				@form.FormControl("agent-sandbox-disk", "Disk", form.LabelAbove, "", "", nil) {
+					<input id="agent-sandbox-disk" name="disk" type="text" value={ sandboxResourceValue(data.Config, "disk") } placeholder="10G" class="input w-full"/>
+				}
+			</div>
+		}
+		@ui.Section("Setup & environment", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="flex flex-col gap-4">
+				@form.FormControl("agent-sandbox-setup", "Setup commands", form.LabelAbove, "Run on workspace start, one per line.", "", nil) {
+					<textarea id="agent-sandbox-setup" name="setupCommands" rows="4" placeholder="pip install -r requirements.txt" class="textarea w-full resize-none">{ sandboxSetupCommands(data.Config) }</textarea>
+				}
+				@form.FormControl("agent-sandbox-env", "Environment variables", form.LabelAbove, "KEY=VALUE, one per line.", "", nil) {
+					<textarea id="agent-sandbox-env" name="envVars" rows="4" placeholder="FOO=bar" class="textarea w-full resize-none">{ sandboxEnvVars(data.Config) }</textarea>
+				}
+			</div>
+		}
+		<div class="mt-6">
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--save",
+				}) {
+					Save changes
+				}
+			}
+		</div>
+	</form>
+}
+
+// agentToolPicker is the tools panel body: one collapsible group per MCP
+// server, one per connected external relay node (allow-only — no per-tool
+// policy select, unlike registry servers), plus an "Other" group for the
+// agent's tools that no registered server or connected relay node offers (so
+// they're never silently dropped on save).
+templ agentToolPicker(data agentSettingsData) {
+	{{ noServers := len(data.MCPServers) == 0
+	relayGroups := relayPickerGroups(data.RelayNodes)
+	unlisted := unlistedTools(data.Agent, data.MCPServers, data.RelayNodes) }}
+	if noServers && len(relayGroups) == 0 && len(unlisted) == 0 {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--wrench",
+			Title:       "No tools available",
+			Description: "Register an MCP server, or connect an external MCP node, to give this agent tools to call.",
+			ActionHref:  "/settings/mcp-servers",
+			ActionLabel: "Register an MCP server",
+			ActionIcon:  "lucide--plus",
+		})
+	} else {
+		<div class="flex flex-col gap-3">
+			for _, srv := range data.MCPServers {
+				@agentToolServerGroup(srv, data.Agent)
+			}
+			for _, node := range relayGroups {
+				@agentToolRelayGroup(node, data.Agent)
+			}
+			if len(unlisted) > 0 {
+				@agentToolOtherGroup(unlisted, data.Agent)
+			}
+		</div>
+	}
+}
+
+// agentToolGroupProps configures one collapsible tool group in the agent tools
+// picker. The two callers — registry server groups and external relay node
+// groups — share the <details> shell and tool-row shape; only the border tone,
+// summary icon, remote badge, and per-tool policy select differ.
+type agentToolGroupProps struct {
+	BorderClass     string
+	BodyBorderClass string
+	Icon            string
+	IconClass       string
+	Title           string
+	TitleMono       bool
+	RemoteBadge     bool
+	Count           int
+	Open            bool
+	Tools           []agentToolRow
+	WithPolicy      bool
+	Agent           *AgentDefinition
+}
+
+// agentToolRow is one pre-resolved tool in a group: Name is the agent-facing
+// tool name (submitted and displayed), Checked whether the agent whitelists it.
+type agentToolRow struct {
+	Name        string
+	Description string
+	Checked     bool
+}
+
+// agentToolGroup renders one collapsible <details> tool group: a summary
+// (icon + title + optional remote badge + tool count) and a body listing each
+// tool as a toggle row, with an optional per-tool policy select (registry
+// servers only).
+templ agentToolGroup(p agentToolGroupProps) {
+	<details
+		class={ "group rounded-box border", p.BorderClass }
+		if p.Open {
+			open
+		}
+	>
+		<summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 select-none [&::-webkit-details-marker]:hidden">
+			<div class="flex min-w-0 items-center gap-2.5">
+				@ui.IconSpan(p.Icon, "size-4 shrink-0 "+p.IconClass)
+				if p.TitleMono {
+					<span class="truncate font-mono text-sm font-medium">{ p.Title }</span>
+				} else {
+					<span class="truncate text-sm font-medium">{ p.Title }</span>
+				}
+				if p.RemoteBadge {
+					@ui.Badge(ui.BadgeProps{
+						Label:   "remote",
+						Variant: ui.BadgeWarning,
+						Style:   ui.BadgeStyleSoft,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--radio",
+					})
+				}
+			</div>
+			<div class="flex shrink-0 items-center gap-2">
+				@ui.Badge(ui.BadgeProps{
+					Label:   countLabel(p.Count, "tool", "tools"),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--wrench",
+				})
+				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-base-content/40 transition-transform group-open:rotate-180")
+			</div>
+		</summary>
+		<div class={ "flex flex-col border-t", p.BodyBorderClass }>
+			for _, t := range p.Tools {
+				<div class="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-base-200/50" data-tool-row>
+					<label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+						<input
+							name="tool"
+							type="checkbox"
+							value={ t.Name }
+							if t.Checked {
+								checked
+							}
+							class="toggle toggle-sm shrink-0"
+							if p.WithPolicy {
+								onchange="var s=this.closest('[data-tool-row]').querySelector('[data-tool-policy]'); if (s) s.disabled = !this.checked;"
+							}
+						/>
+						<span class="min-w-0">
+							<span class="block font-mono text-[13px] font-medium">{ t.Name }</span>
+							if t.Description != "" {
+								<span class="text-base-content/50 block truncate text-xs">{ t.Description }</span>
+							}
+						</span>
+					</label>
+					if p.WithPolicy {
+						@toolPolicySelect(p.Agent, t.Name)
+					}
+				</div>
+			}
+		</div>
+	</details>
+}
+
+// serverToolRows pre-resolves a registry server's tools into group rows.
+func serverToolRows(srv MCPServer, agent *AgentDefinition) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(srv.Tools))
+	for _, t := range srv.Tools {
+		rows = append(rows, agentToolRow{Name: t.ToolName, Description: t.Description, Checked: containsString(agent.Tools, t.ToolName)})
+	}
+	return rows
+}
+
+// relayToolRows pre-resolves a relay node's tools into group rows, using each
+// tool's agent-facing <instance>_<tool> name.
+func relayToolRows(node relayNode, agent *AgentDefinition) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(node.Tools))
+	for _, t := range node.Tools {
+		name := relayAgentToolName(node.Session.InstanceID, t.Name)
+		rows = append(rows, agentToolRow{Name: name, Description: t.Description, Checked: containsString(agent.Tools, name)})
+	}
+	return rows
+}
+
+// agentToolServerGroup builds a group for one registry MCP server: a per-tool
+// policy select, neutral border tone, no remote badge. It opens by default when
+// the agent already uses a tool from that server, so active picks stay visible
+// without dumping every tool (e.g. "builtin" has ~124).
+templ agentToolServerGroup(srv MCPServer, agent *AgentDefinition) {
+	@agentToolGroup(agentToolGroupProps{
+		BorderClass:     "border-base-content/10 bg-base-200/40",
+		BodyBorderClass: "border-base-content/10",
+		Icon:            "lucide--server",
+		IconClass:       "text-base-content/40",
+		Title:           srv.Name,
+		Count:           srv.ToolCount,
+		Open:            mcpServerInUse(srv, agent),
+		Tools:           serverToolRows(srv, agent),
+		WithPolicy:      true,
+		Agent:           agent,
+	})
+}
+
+// agentToolRelayGroup builds a group for one connected external MCP relay node:
+// allow-only (no per-tool policy select), a remote badge, and a primary border
+// tone to distinguish it from registry server groups.
+templ agentToolRelayGroup(node relayNode, agent *AgentDefinition) {
+	@agentToolGroup(agentToolGroupProps{
+		BorderClass:     "border-primary/25 bg-primary/[0.04]",
+		BodyBorderClass: "border-primary/15",
+		Icon:            "lucide--radio",
+		IconClass:       "text-primary/60",
+		Title:           node.Session.InstanceID,
+		TitleMono:       true,
+		RemoteBadge:     true,
+		Count:           len(node.Tools),
+		Open:            relayNodeInUse(node, agent),
+		Tools:           relayToolRows(node, agent),
+		Agent:           agent,
+	})
+}
+
+// agentToolOtherGroup lists the agent's current tools that no registered MCP
+// server offers (e.g. the bridge's Home Assistant tools). Always checked —
+// they're preserved so the picker never drops them on save.
+templ agentToolOtherGroup(tools []string, agent *AgentDefinition) {
+	<div class="rounded-box border border-dashed border-base-content/20 bg-base-200/40 p-3">
+		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
+		<p class="text-base-content/50 mt-0.5 mb-2 text-xs">Not from a registered MCP server — kept so existing tools aren't dropped on save.</p>
+		<div class="flex flex-col divide-y divide-base-content/10">
+			for _, t := range tools {
+				<div class="flex items-center gap-2.5 py-2" data-tool-row>
+					<label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+						<input name="tool" type="checkbox" value={ t } checked class="toggle toggle-sm shrink-0"
+							onchange="var s=this.closest('[data-tool-row]').querySelector('[data-tool-policy]'); if (s) s.disabled = !this.checked;"/>
+						<span class="block font-mono text-[13px] font-medium">{ t }</span>
+					</label>
+					@toolPolicySelect(agent, t)
+				</div>
+			}
+		</div>
+	</div>
+}
+
+// toolPolicySelect renders a compact per-tool approval-policy dropdown. When
+// the tool is not enabled the select is disabled/dimmed; the toggle row's
+// onchange re-enables it live.
+templ toolPolicySelect(agent *AgentDefinition, tool string) {
+	<select
+		name={ "toolPolicy." + tool }
+		class="select select-xs w-32 shrink-0"
+		if !containsString(agent.Tools, tool) {
+			disabled
+		}
+		data-tool-policy={ tool }
+	>
+		<option value="" if toolPolicyValue(agent, tool) == "" { selected }>Inherit</option>
+		<option value="allow" if toolPolicyValue(agent, tool) == "allow" { selected }>Allow</option>
+		<option value="ask" if toolPolicyValue(agent, tool) == "ask" { selected }>Ask</option>
+		<option value="deny" if toolPolicyValue(agent, tool) == "deny" { selected }>Deny</option>
+	</select>
+}
+
+// --- Agent sessions ---
+
+// AgentSessionsPage renders the full conversation list for one agent. A
+// failed agent fetch (LoadErr) renders the whole-page error state; a
+// conversations failure (ChatsErr) degrades only the list section.
+templ AgentSessionsPage(data agentSessionsData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "Sessions")
+			@layout.Rail(agentSubNav(data.Agent.ID, "sessions"), nil) {
+				@agentChatsList(data.ChatsErr, data.Chats, "Sessions", "", "No sessions yet")
+			}
+		}
+	}
+}
+
+// --- Agent memories ---
+
+// MemoriesPage renders the memory browser for one agent: a search form, a
+// list of memories (content, category, confidence), or a detail view when
+// selected is non-nil. Mirrors the iOS memory browser semantics: empty query
+// lists all, a query searches.
+templ MemoriesPage(id string, name string, query string, memories []Memory, selected *Memory, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Agents", "/agents", name, "/agents/"+url.PathEscape(id), "Memories")), "", "Memories for "+name, "", detailHeaderOpts{Margin: "mb-6"}) {
+			if loadErr == nil {
+				@countBadgeLabel(countLabel(len(memories), "memory", "memories"), "lucide--brain")
+			}
+		}
+		<form class="mb-6 w-full sm:max-w-md" method="get" action={ templ.URL("/agents/" + url.PathEscape(id) + "/memories") }>
+			<label class="input input-bordered flex w-full items-center gap-2">
+				@ui.IconSpan("lucide--search", "size-4 shrink-0 opacity-50")
+				<input type="search" name="q" value={ query } placeholder="Search memories…" class="grow"/>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM, AriaLabel: "Search"}) { Search }
+			</label>
+		</form>
+		if loadErr != nil {
+			@pageError("Failed to load memories", loadErr)
+		} else if selected != nil {
+			@memoryDetail(id, query, *selected)
+		} else if len(memories) == 0 {
+			@memoriesEmpty(query)
+		} else {
+			@memoriesList(id, query, memories)
+		}
+	}
+}
+
+templ memoriesList(id string, query string, memories []Memory) {
+	@cardList("", cardListProps{}) {
+		for _, m := range memories {
+			@memoryRow(id, query, m)
+		}
+	}
+}
+
+templ memoryRow(id string, query string, m Memory) {
+	<a
+		class="flex flex-col gap-1.5 px-4 py-3 transition-colors hover:bg-base-200/50"
+		href={ templ.URL(memoryDetailURL(id, query, m.ID)) }
+	>
+		<div class="flex flex-wrap items-center gap-2">
+			if m.Category != "" {
+				@ui.Badge(ui.BadgeProps{Label: m.Category, Variant: memoryCategoryIntent(m.Category), Size: ui.BadgeSizeXS})
+			}
+			if m.Score > 0 {
+				@ui.Badge(ui.BadgeProps{
+					Label:   matchLabel(m.Score),
+					Variant: ui.BadgeInfo,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--search",
+				})
+			} else if m.Confidence > 0 {
+				@ui.Badge(ui.BadgeProps{
+					Label:   confidenceLabel(m.Confidence),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--gauge",
+				})
+			}
+		</div>
+		<p class="line-clamp-2 text-sm text-base-content/80">{ m.Content }</p>
+	</a>
+}
+
+templ memoryDetail(id string, query string, m Memory) {
+	@ui.CardRaw("card-border", "p-5", nil) {
+		<div class="flex flex-wrap items-center gap-2">
+			if m.Category != "" {
+				@ui.Badge(ui.BadgeProps{Label: m.Category, Variant: memoryCategoryIntent(m.Category), Size: ui.BadgeSizeSM})
+			}
+			if m.Score > 0 {
+				@ui.Badge(ui.BadgeProps{
+					Label:   matchLabel(m.Score),
+					Variant: ui.BadgeInfo,
+					Size:    ui.BadgeSizeSM,
+					Icon:    "lucide--search",
+				})
+			} else if m.Confidence > 0 {
+				@ui.Badge(ui.BadgeProps{
+					Label:   confidenceLabel(m.Confidence),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeSM,
+					Icon:    "lucide--gauge",
+				})
+			}
+			<a class="ms-auto text-sm font-medium hover:text-primary" href={ templ.URL(memoryListURL(id, query)) }>Back to list</a>
+		</div>
+		<div class="bg-base-200/40 rounded-box mt-4 p-4">
+			<p class="text-sm" style="white-space: pre-wrap">{ m.Content }</p>
+		</div>
+		<div class="mt-4 border-t border-base-200 pt-3">
+			<span class="text-base-content/40 font-mono text-xs">{ m.ID }</span>
+		</div>
+	}
+}
+
+// memoriesEmpty is the Memories page's full-surface empty state (list
+// replacement); py-12 keeps the panel present under the search form.
+templ memoriesEmpty(query string) {
+	if query != "" {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--search",
+			Title:       "No matching memories",
+			Description: "Nothing stored matches your search.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--brain",
+			Title:       "No memories yet",
+			Description: "Memories will show up here once the memory service stores something.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	}
+}

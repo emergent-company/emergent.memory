@@ -1,0 +1,412 @@
+name: personal-memory
+version: "2.1.0"
+author: memory
+description: >
+  Personal knowledge graph schema for Diane personal AI agent.
+  Models the user's life context: people, tasks, projects, calendar events,
+  finances, contacts, places, notes, and habits. Written by Diane's
+  memory-extractor agent and various data-sync tools.
+
+objectTypes:
+  - name: Person
+    label: Person
+    description: >
+      A person in the user's life — family, friend, colleague, or public figure.
+      Diane builds and enriches these from email, calendar, and conversation context.
+    properties:
+      first_name:
+        type: string
+        description: First name
+      last_name:
+        type: string
+        description: Last name
+      display_name:
+        type: string
+        description: Full display name or preferred name
+      relationship:
+        type: string
+        description: "Relationship to the user: family, friend, colleague, acquaintance, public_figure"
+      emails:
+        type: string
+        description: JSON array of email addresses
+      phones:
+        type: string
+        description: JSON array of phone numbers
+      organization:
+        type: string
+        description: Company or organisation they belong to
+      job_title:
+        type: string
+        description: Job title or role
+      birthday:
+        type: string
+        description: Birthday in YYYY-MM-DD format
+      notes:
+        type: string
+        widget: textarea
+        description: Free-form notes about this person
+      last_contacted:
+        type: string
+        description: Date of last contact or interaction (RFC3339)
+      source:
+        type: string
+        description: "Where this record originated: gmail, apple_contacts, calendar, manual"
+
+  - name: Task
+    label: Task
+    description: >
+      A to-do item or action the user needs to complete. Created by Diane
+      from conversations, emails, or explicitly by the user.
+    properties:
+      title:
+        type: string
+        description: Short task title
+      description:
+        type: string
+        description: Detailed description or context for the task
+      status:
+        type: string
+        description: "Current status: pending, in_progress, blocked, done, cancelled"
+      priority:
+        type: string
+        description: "Priority level: low, medium, high, urgent"
+      due_date:
+        type: string
+        description: Due date in YYYY-MM-DD or RFC3339 format
+      completed_at:
+        type: string
+        description: Timestamp when task was completed (RFC3339)
+      source:
+        type: string
+        description: "Where this task originated: email, calendar, conversation, apple_reminders, manual"
+      source_ref:
+        type: string
+        description: Reference ID in the source system (e.g. Gmail message ID, reminder ID)
+      tags:
+        type: string
+        description: JSON array of tag strings
+
+  - name: Project
+    label: Project
+    description: >
+      A collection of related tasks and goals with a defined objective.
+      Can represent work projects, personal goals, or life areas.
+    properties:
+      name:
+        type: string
+        description: Project name
+      description:
+        type: string
+        description: Purpose and scope of the project
+      status:
+        type: string
+        description: "Current status: active, on_hold, completed, archived"
+      start_date:
+        type: string
+        description: Project start date (YYYY-MM-DD)
+      target_date:
+        type: string
+        description: Target completion date (YYYY-MM-DD)
+      completed_at:
+        type: string
+        description: Actual completion date (RFC3339)
+      tags:
+        type: string
+        description: JSON array of tag strings
+
+  - name: CalendarEvent
+    label: Calendar Event
+    description: >
+      A calendar event synced to the knowledge graph by Diane. Generic
+      abstraction covering any calendar provider (Google Calendar, Apple
+      Calendar, Outlook, and others).
+    properties:
+      event_id:
+        type: string
+        description: Event ID in the source calendar
+      calendar_id:
+        type: string
+        description: Calendar ID the event belongs to
+      account:
+        type: string
+        description: Calendar account email address
+      summary:
+        type: string
+        description: Event title / summary
+      description:
+        type: string
+        description: Event description or agenda
+      location:
+        type: string
+        description: Physical or virtual location of the event
+      start:
+        type: string
+        description: Event start time (RFC3339 or YYYY-MM-DD for all-day)
+      end:
+        type: string
+        description: Event end time (RFC3339 or YYYY-MM-DD for all-day)
+      all_day:
+        type: boolean
+        description: Whether this is an all-day event
+      status:
+        type: string
+        description: "Event status: confirmed, tentative, cancelled"
+      html_link:
+        type: string
+        description: URL to view the event in the calendar app
+      hangout_link:
+        type: string
+        description: Video call link for the event
+      attendees:
+        type: string
+        description: JSON array of attendee objects with email, displayName, responseStatus
+      organizer_email:
+        type: string
+        description: Email address of the event organiser
+      organizer_name:
+        type: string
+        description: Display name of the event organiser
+      recurrence:
+        type: string
+        description: JSON array of RRULE/EXRULE recurrence strings
+      visibility:
+        type: string
+        description: "Event visibility: default, public, private, confidential"
+      transparency:
+        type: string
+        description: "Whether event blocks time: opaque (busy) or transparent (free)"
+
+  - name: FinancialTransaction
+    label: Financial Transaction
+    description: >
+      A financial transaction from Actual Budget or Enable Banking.
+    properties:
+      source:
+        type: string
+        description: "Origin system: actual_budget or enable_banking"
+      external_id:
+        type: string
+        description: Transaction ID in the source system
+      date:
+        type: string
+        description: Transaction date (YYYY-MM-DD)
+      amount:
+        type: number
+        description: Transaction amount (negative = debit, positive = credit)
+      currency:
+        type: string
+        description: ISO 4217 currency code (e.g. EUR, USD, GBP)
+      payee:
+        type: string
+        description: Payee or merchant name
+      account_id:
+        type: string
+        description: Account ID in the source system
+      account_name:
+        type: string
+        description: Human-readable account name
+      category:
+        type: string
+        description: Budget category assigned to this transaction
+      memo:
+        type: string
+        description: Transaction memo or notes
+      cleared:
+        type: boolean
+        description: Whether the transaction has cleared the bank
+      reconciled:
+        type: boolean
+        description: Whether the transaction has been reconciled
+      iban:
+        type: string
+        description: IBAN of the counterpart account (Enable Banking only)
+
+  - name: Contact
+    label: Contact
+    description: >
+      A contact from Apple Contacts, enriched by Diane. Generic type covering
+      any contact source.
+    properties:
+      source:
+        type: string
+        description: "Origin: apple_contacts, gmail, manual"
+      source_id:
+        type: string
+        description: Native contact ID in the source system
+      first_name:
+        type: string
+        description: First name
+      last_name:
+        type: string
+        description: Last name
+      display_name:
+        type: string
+        description: Full display name
+      emails:
+        type: string
+        description: JSON array of email address objects with label and value
+      phones:
+        type: string
+        description: JSON array of phone number objects with label and value
+      organization:
+        type: string
+        description: Company or organisation name
+      job_title:
+        type: string
+        description: Job title or role
+      notes:
+        type: string
+        widget: textarea
+        description: Free-form notes field from the contact
+      groups:
+        type: string
+        description: JSON array of contact group names
+
+  - name: Place
+    label: Place
+    description: >
+      A physical location from Google Places.
+    properties:
+      place_id:
+        type: string
+        description: Google Places unique identifier
+      name:
+        type: string
+        description: Place name
+      address:
+        type: string
+        description: Formatted address string
+      lat:
+        type: number
+        description: Latitude coordinate
+      lng:
+        type: number
+        description: Longitude coordinate
+      types:
+        type: string
+        description: JSON array of Google Places type strings (e.g. restaurant, cafe)
+      rating:
+        type: number
+        description: Google rating (0–5)
+      website:
+        type: string
+        description: Official website URL
+      phone:
+        type: string
+        description: International phone number
+      google_maps_url:
+        type: string
+        description: Google Maps URL for this place
+
+  - name: Memo
+    label: Note
+    description: >
+      A free-form note or memory captured by the user or extracted by Diane
+      from conversations, emails, or documents.
+    properties:
+      title:
+        type: string
+        description: Short title or heading for the note
+      content:
+        type: string
+        widget: textarea
+        description: Full content of the note (markdown supported)
+      source:
+        type: string
+        description: "Where this note came from: conversation, email, document, manual"
+      source_ref:
+        type: string
+        description: Reference to the source (e.g. Gmail message ID, file path)
+      tags:
+        type: string
+        description: JSON array of tag strings
+
+  - name: Habit
+    label: Habit
+    description: >
+      A recurring behaviour or routine the user is tracking. Diane monitors
+      completion and surfaces streaks and gaps in the daily briefing.
+    properties:
+      name:
+        type: string
+        description: Habit name (e.g. Morning run, Read 30 minutes)
+      description:
+        type: string
+        description: Details about the habit and its goal
+      frequency:
+        type: string
+        description: "How often: daily, weekdays, weekly, custom"
+      target_time:
+        type: string
+        description: Preferred time of day (e.g. 07:00)
+      status:
+        type: string
+        description: "Current status: active, paused, archived"
+      streak_current:
+        type: integer
+        description: Current consecutive completion streak (days)
+      streak_best:
+        type: integer
+        description: Best ever consecutive streak (days)
+      last_completed:
+        type: string
+        description: Date last completed (YYYY-MM-DD)
+      tags:
+        type: string
+        description: JSON array of tag strings
+
+relationshipTypes:
+  - name: assigned_to
+    label: Assigned To
+    description: Links a task to the person responsible for it.
+    sourceType: Task
+    targetType: Person
+
+  - name: belongs_to_project
+    label: Belongs To Project
+    description: Links a task to its parent project.
+    sourceType: Task
+    targetType: Project
+
+  - name: involves_person
+    label: Involves Person
+    description: Links a calendar event or note to a person involved.
+    sourceType: CalendarEvent
+    targetType: Person
+
+  - name: located_at
+    label: Located At
+    description: Links a calendar event to its physical place.
+    sourceType: CalendarEvent
+    targetType: Place
+
+  - name: related_to_contact
+    label: Related To Contact
+    description: Links a person in the knowledge graph to their contact record.
+    sourceType: Person
+    targetType: Contact
+
+  - name: has_transaction
+    label: Has Transaction
+    description: Links a project or note to a related financial transaction.
+    sourceType: Project
+    targetType: FinancialTransaction
+
+  - name: references_file
+    label: References File
+    description: Links a note or task to a relevant file in the file registry.
+    sourceType: Memo
+    targetType: file
+
+  - name: triggered_task
+    label: Triggered Task
+    description: Links a calendar event or note to a task it spawned.
+    sourceType: CalendarEvent
+    targetType: Task
+
+migrations:
+  from_version: "2.0.0"
+  property_renames:
+    - type_name: CalendarEvent
+      from: google_event_id
+      to: event_id

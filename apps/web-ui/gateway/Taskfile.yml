@@ -1,0 +1,71 @@
+version: "3"
+
+# Memory gateway — build, test, lint (Taskfile).
+#
+# NOTE: use `task build` (go build -o memory .) for the executable — `go build
+# ./...` compiles all packages but discards the binary once the module has >1
+# package (main + webui).
+
+vars:
+  # Tailwind v4 + daisyUI 5 live in go-daisy's node_modules (this repo has no
+  # JS toolchain of its own). Symlinked into the gateway so bare @import /
+  # @plugin specifiers in webui/css/app.css resolve.
+  TAILWIND_BIN: node_modules/.bin/tailwindcss
+  CSS_IN: webui/css/app.css
+  CSS_OUT: webui/static/css/app.css
+
+tasks:
+  css:
+    desc: Compile Memory's Tailwind CSS (Tailwind v4 + daisyUI 5.5.19)
+    cmds:
+      - test -e node_modules || ln -s /root/go-daisy/node_modules node_modules
+      # vendor go-daisy (and the blank-imported css package) so webui/css/app.css
+      # can @source its components and @import its co-located custom.css from the
+      # stable ./vendor path (see gateway/godaisy_css.go).
+      - test -e vendor/github.com/emergent-company/go-daisy || go mod vendor
+      - "{{.TAILWIND_BIN}} -i {{.CSS_IN}} -o {{.CSS_OUT}} --minify"
+
+  generate:
+    desc: Generate templ Go files
+    cmds:
+      - templ generate ./...
+
+  build:
+    desc: Compile CSS + templ, then build the binary
+    deps: [css, generate]
+    cmds:
+      # Version metadata mirrors the CI Docker build (repo-root Dockerfile:
+      # -X main.version / -X main.commit). Best-effort: falls back to
+      # dev/unknown when git or tags are unavailable.
+      - go build -ldflags "-X main.version=$(git describe --tags --always 2>/dev/null || echo dev) -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" -o memory .
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - gofmt -w .
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  run:
+    desc: Build + run the gateway
+    deps: [build]
+    cmds:
+      - ./memory
+
+  dev:
+    desc: Run gateway with air hot reload (templ + tailwind + go)
+    cmds:
+      - air -env_files ../.env

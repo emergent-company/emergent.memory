@@ -1,0 +1,18 @@
+// Memory macOS connector app — build configuration.
+//
+// NOTE: the authoritative bundle id / team / product name now live in
+// project.yml target settings (XcodeGen target settings override base
+// xcconfigs). This file is retained as the documented identity + signing
+// source and keeps the values in one human-readable place; it is no longer
+// load-bearing for PRODUCT_BUNDLE_IDENTIFIER.
+//
+// Signing is MANUAL with a stable Apple Development identity on purpose:
+// ad-hoc signing changes the binary's cdhash on every rebuild, which makes
+// macOS treat each build as a new app and resets the one-time
+// Notes/Reminders Automation (TCC) grants. A stable identity preserves them.
+
+PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory.connector
+PRODUCT_NAME = Memory
+# Keep the Swift module/target identity as "MemoryConnector" so existing
+# `@testable import MemoryConnector` and build invocations are unchanged.
+PRODUCT_MODULE_NAME = MemoryConnector

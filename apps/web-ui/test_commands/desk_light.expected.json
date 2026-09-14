@@ -1,0 +1,12 @@
+{
+  "tool_calls": [
+    {
+      "name": "ha_call_service"
+    }
+  ],
+  "text_contains": [
+    "lampk",
+    "biurku",
+    "desk"
+  ]
+}

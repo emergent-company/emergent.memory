@@ -1,0 +1,831 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- MCP Servers management pages (/settings/mcp-servers) ---
+//
+// One crumb-framed list page plus standalone create (/new) and edit
+// (/:id/edit) pages sharing a single transport form, mirroring the api_tokens
+// trio's structure. Each list row is an expandable <details> in the same
+// visual language as the agent tool picker (agentToolServerGroup): the
+// summary carries name / type badge / enabled badge / tool count; the expanded
+// body holds the row's sync/inspect/edit/delete actions and the cached tool
+// rows with per-tool toggles (D4/D6). Sync / inspect / toggles run through
+// inline JS (mcpServersScript); create/update/delete are PRG posts.
+
+// MCPServersPage renders the registry list (/settings/mcp-servers): one
+// expandable row per registered server (builtin + external). A project with no
+// servers renders the shared EmptyState with a CTA to /new.
+templ MCPServersPage(data mcpServersPageData) {
+	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-list-root": ""}) {
+		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers")) }}
+		@detailHeader(crumbs, "", "MCP Servers", "Register and maintain the MCP servers that power agent tools.", detailHeaderOpts{Margin: "mb-6"}) {
+			if data.LoadErr == nil {
+				@countBadge(len(data.Servers), "server", "lucide--server")
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    mcpShareSettingsBase,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--share-2",
+				}) {
+					Sharing
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    mcpServerSettingsBase + "/new",
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plus",
+				}) {
+					New server
+				}
+			}
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageError("MCP servers unavailable", data.LoadErr)
+		} else if len(data.Servers) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--server",
+				Title:       "No MCP servers yet",
+				Description: "Register an MCP server to give agents tools from external sources — a local command, an SSE endpoint, or an HTTP API.",
+				Bordered:    true,
+				Class:       "py-12",
+				ActionHref:  mcpServerSettingsBase + "/new",
+				ActionLabel: "Register a server",
+				ActionIcon:  "lucide--plus",
+			})
+		} else {
+			@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+				<div class="flex flex-col divide-y divide-base-200">
+					for _, srv := range data.Servers {
+						@mcpServerRow(srv)
+					}
+				</div>
+			}
+		}
+		@mcpServersScript()
+	}
+}
+
+// mcpServerRow is one registry entry: a collapsible <details> whose summary
+// shows the server identity (name, transport badge, enabled badge, cached
+// tool count) and whose body lists the cached tools. Builtin servers render
+// read-only: no action buttons, no enabled toggle, no per-tool toggles.
+templ mcpServerRow(srv MCPServer) {
+	{{ builtin := mcpServerIsBuiltin(srv) }}
+	<details
+		class="group rounded-box border border-base-content/10 bg-base-200/40"
+		data-mcp-row
+		data-mcp-server={ srv.ID }
+	>
+		<summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 select-none [&::-webkit-details-marker]:hidden">
+			<div class="flex min-w-0 items-center gap-2.5">
+				@ui.IconSpan("lucide--server", "size-4 shrink-0 text-base-content/40")
+				<span class="truncate text-sm font-medium">{ srv.Name }</span>
+				@ui.Badge(ui.BadgeProps{Label: mcpServerTransportForDisplay(srv.Type), Variant: mcpServerBadgeIntent(srv.Type), Size: ui.BadgeSizeXS})
+				if srv.Enabled {
+					@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+				} else {
+					@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
+				}
+			</div>
+			<div class="flex shrink-0 items-center gap-2">
+				@ui.Badge(ui.BadgeProps{
+					Label:   countLabel(len(srv.Tools), "tool", "tools"),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--wrench",
+					Attrs: templ.Attributes{
+						"data-mcp-count": srv.ID,
+					},
+				})
+				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-base-content/40 transition-transform group-open:rotate-180")
+			</div>
+		</summary>
+		<div class="flex flex-col border-t border-base-content/10">
+			if !builtin {
+				@mcpServerRowActions(srv)
+			}
+			if srv.Type == "stdio" {
+				<p class="text-base-content/45 flex items-center gap-1.5 px-3 pt-2 text-[11px]">
+					@ui.IconSpan("lucide--shield-alert", "size-3.5 shrink-0 text-warning")
+					Runs <span class="font-mono">{ srv.Command }</span> on the memory host.
+				</p>
+			}
+			@mcpServerToolsList(srv, srv.Tools)
+			@mcpServerInspectArea(srv.ID)
+			if !builtin {
+				@mcpServerDeleteDialog(srv)
+			}
+		</div>
+	</details>
+}
+
+// mcpServerRowActions is the expanded-body action toolbar for one external
+// server: the enabled toggle and the Sync / Inspect / Edit / Delete actions.
+templ mcpServerRowActions(srv MCPServer) {
+	<div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-content/10 px-3 py-2">
+		<label class="flex cursor-pointer items-center gap-2" title="Enable or disable this server. Disabled servers stop offering tools to agents.">
+			<input
+				type="checkbox"
+				class="toggle toggle-sm"
+				checked?={ srv.Enabled }
+				aria-label={ "Enable " + srv.Name }
+				data-mcp-enabled-toggle
+				data-mcp-server={ srv.ID }
+			/>
+			<span class="text-base-content/60 text-xs">Enabled</span>
+		</label>
+		<div class="flex items-center gap-1">
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeSquare,
+				Icon:      "lucide--refresh-cw",
+				AriaLabel: "Sync " + srv.Name,
+				Attrs: templ.Attributes{
+					"data-mcp-action": "sync",
+					"data-mcp-server": srv.ID,
+					"title":           "Re-discover tools from this server",
+				},
+			})
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeSquare,
+				Icon:      "lucide--scan",
+				AriaLabel: "Inspect " + srv.Name,
+				Attrs: templ.Attributes{
+					"data-mcp-action": "inspect",
+					"data-mcp-server": srv.ID,
+					"title":           "Probe this server's capabilities",
+				},
+			})
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeLink,
+				Href:      mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/edit",
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeSquare,
+				Icon:      "lucide--sliders-horizontal",
+				AriaLabel: "Edit " + srv.Name,
+				Attrs:     templ.Attributes{"title": "Edit connection details"},
+			})
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeSquare,
+				Icon:      "lucide--trash-2",
+				ExtraClass: "text-error hover:text-error",
+				AriaLabel: "Delete " + srv.Name,
+				OnClick:   openMCPDelete(srv.ID),
+			})
+		</div>
+	</div>
+}
+
+// mcpServerToolsList renders the "Cached tools" section header above the rows
+// container for one server. The rows container itself is rendered by
+// mcpServerToolsContainer so a completed sync can swap in the exact same
+// subtree (mcpToolsFragment).
+templ mcpServerToolsList(srv MCPServer, tools []MCPTool) {
+	<div class="flex flex-col">
+		<div class="flex items-center justify-between px-3 pt-2">
+			@ui.Eyebrow("Cached tools", ui.EyebrowProps{Size: "text-[10px]", Margin: ""})
+			if len(tools) > 0 {
+				<span class="text-base-content/40 text-[10px]">sync refreshes this list</span>
+			}
+		</div>
+		@mcpServerToolsContainer(srv, tools)
+	</div>
+}
+
+// mcpServerToolsContainer is the data-mcp-tools rows container for one
+// server's cached tools: per-tool rows (with toggle-sm for external servers,
+// read-only for builtin) or the no-tools hint. Rendered identically on the
+// initial page and into the sync JSON payload.
+templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool) {
+	<div class="flex flex-col" data-mcp-tools={ srv.ID }>
+		if len(tools) == 0 {
+			<p class="text-base-content/45 px-3 py-2 text-xs">
+				No tools cached yet
+				if !mcpServerIsBuiltin(srv) {
+					— run Sync to discover what this server offers.
+				} else {
+					.
+				}
+			</p>
+		} else {
+			for _, t := range tools {
+				@mcpServerToolRow(srv, t)
+			}
+		}
+	</div>
+}
+
+// mcpServerToolRow is one cached tool row: a toggle-sm (external servers)
+// plus the tool name (mono) and its muted description, mirroring the agent
+// tool picker row visuals. Builtin rows drop the toggle (read-only).
+templ mcpServerToolRow(srv MCPServer, t MCPTool) {
+	<div class="flex items-center gap-2.5 px-3 py-1.5" data-mcp-tool-row>
+		if !mcpServerIsBuiltin(srv) {
+			<input
+				type="checkbox"
+				class="toggle toggle-sm shrink-0"
+				checked?={ t.Enabled }
+				aria-label={ "Toggle " + t.ToolName }
+				data-mcp-tool-toggle
+				data-mcp-server={ srv.ID }
+				data-mcp-tool={ t.ID }
+			/>
+		}
+		<span class="min-w-0">
+			<span class="block font-mono text-[13px] font-medium">{ t.ToolName }</span>
+			if t.Description != "" {
+				<span class="text-base-content/50 block truncate text-xs">{ t.Description }</span>
+			}
+		</span>
+	</div>
+}
+
+// mcpServerInspectArea is the per-row target for the inspect result rendered
+// by mcpServersScript after a POST /inspect round-trip (D5). Empty until the
+// user inspects a server.
+templ mcpServerInspectArea(serverID string) {
+	<div class="border-t border-base-content/10 px-3 py-2" data-mcp-inspect-area={ serverID } hidden></div>
+}
+
+// mcpServerDeleteDescription is the delete-confirm detail paragraph.
+templ mcpServerDeleteDescription(srv MCPServer) {
+	<p class="text-base-content/55 mt-1 text-sm">
+		This permanently removes <span class="font-medium text-base-content">{ srv.Name }</span> and its cached tools. Agents referencing its tools stop offering them immediately. Irreversible.
+	</p>
+}
+
+// mcpServerDeleteDialog confirms deletion before the POST to
+// /settings/mcp-servers/:id/delete. One dialog per row (its action is fixed).
+templ mcpServerDeleteDialog(srv MCPServer) {
+	@confirmDeleteDialog("mcp-server-delete-"+srv.ID, "MCP server", mcpServerDeleteDescription(srv)) {
+		<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/delete") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Delete server
+				}
+			}
+		</form>
+	}
+}
+
+// openMCPDelete opens one row's delete-confirm dialog.
+script openMCPDelete(serverID string) {
+	var d = document.getElementById("mcp-server-delete-" + serverID);
+	if (d) d.showModal();
+}
+
+// MCPServerNewPage renders the create page (GET /settings/mcp-servers/new):
+// name + transport choice + transport fields, posting to POST .../new.
+// ?err= surfaces PRG feedback from the create flow; FieldErrs render inline
+// under the offending field groups on validation re-renders.
+templ MCPServerNewPage(data mcpServerFormData) {
+	@layout.Container(layout.ContainerMD, templ.Attributes{"data-mcp-form": ""}) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "New server")), "", "New MCP server", "Name the server and pick a transport — stdio runs a command on the memory host, sse/http dial a remote endpoint.", detailHeaderOpts{Margin: "mb-6"}) {}
+		@flashToasts("", data.FlashErr)
+		@mcpServerFormBody(data, false)
+		@mcpServersScript()
+	}
+}
+
+// MCPServerEditPage renders the edit page (GET /settings/mcp-servers/:id/edit):
+// the server's connection details pre-filled, posting to POST .../:id/update.
+// LoadErr / NotFound render their own states; ?err= surfaces PRG feedback.
+templ MCPServerEditPage(data mcpServerFormData) {
+	{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Edit server")) }}
+	@layout.Container(layout.ContainerMD, templ.Attributes{"data-mcp-form": ""}) {
+		if data.LoadErr != nil {
+			@detailHeader(crumbs, "", "Edit server", "", detailHeaderOpts{Margin: "mb-6"}) {}
+			@pageError("Server unavailable", data.LoadErr)
+		} else if data.NotFound || data.ID == "" {
+			@detailHeader(crumbs, "", "Edit server", "", detailHeaderOpts{Margin: "mb-6"}) {}
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--server",
+				Title:       "MCP server not found",
+				Description: "No MCP server with this id.",
+				Bordered:    true,
+			})
+		} else {
+			{{ title, subtitle := mcpFormPageHeading(true, data.Name) }}
+			@detailHeader(crumbs, "", title, subtitle, detailHeaderOpts{Margin: "mb-6"}) {}
+			@flashToasts("", data.FlashErr)
+			@mcpServerFormBody(data, true)
+		}
+		@mcpServersScript()
+	}
+}
+
+// mcpServerFormBody is the shared create/edit form card. editing selects the
+// POST target (/new vs /:id/update), the submit label, and whether the
+// transport radio group stays live (edit re-renders on a transport change
+// with an inline error — memory cannot change a server's transport).
+templ mcpServerFormBody(data mcpServerFormData, editing bool) {
+	@ui.CardRaw("card-border", "p-5", nil) {
+		{{ action := mcpServerSettingsBase + "/new"
+		if editing {
+			action = mcpServerSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
+		} }}
+		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-4" data-mcp-form-fields>
+			@form.FormControl("mcp-server-name", "Name", form.LabelAbove, "Unique within this project. Agents reference servers by name.", data.FieldErrs.Name, nil) {
+				<input id="mcp-server-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. github-mcp-server" class="input w-full"/>
+			}
+			@mcpServerTransportGroup(data, editing)
+			if data.GeneralErr != nil {
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: data.GeneralErr.Error(),
+				})
+			}
+			@mcpServerTransportFields(data)
+			<label class="label flex w-full justify-between gap-3">
+				<span class="text-sm font-medium">Enabled</span>
+				<input id="mcp-server-enabled" name="enabled" type="checkbox" checked?={ data.Enabled } class="checkbox"/>
+			</label>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    mcpServerSettingsBase,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--x",
+				}) {
+					Cancel
+				}
+				if editing {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--save",
+					}) {
+						Save changes
+					}
+				} else {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--server",
+					}) {
+						Create server
+					}
+				}
+			}
+		</form>
+	}
+}
+
+// mcpServerTransportGroup renders the transport radio picker (stdio/sse/http).
+// Panels show/hide via mcpServersScript; the type fieldset error renders under
+// the radios.
+templ mcpServerTransportGroup(data mcpServerFormData, editing bool) {
+	<div class="flex flex-col gap-1.5">
+		@ui.Eyebrow("Transport", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+		<div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+			for _, t := range mcpTransportOptions {
+				<label class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-content/10 bg-base-100 px-3 py-2 transition-colors hover:border-base-content/25">
+					<input type="radio" name="type" value={ t.Value } class="radio radio-sm mt-0.5" data-mcp-transport checked?={ data.Type == t.Value || (!editing && data.Type == "" && t.Value == "stdio") }/>
+					<span class="min-w-0">
+						<span class="block font-mono text-xs font-medium">{ t.Title }</span>
+						<span class="text-base-content/50 block text-[11px] leading-snug">{ t.Desc }</span>
+					</span>
+				</label>
+			}
+		</div>
+		if data.FieldErrs.Type != "" {
+			<p class="text-error text-xs">{ data.FieldErrs.Type }</p>
+		}
+	</div>
+}
+
+// mcpServerTransportFields renders the transport-conditional connection
+// fields. Both panels stay in the DOM (a no-JS submission is still safe: the
+// server maps only the selected transport's fields); mcpServersScript shows
+// the panel matching the checked radio. sse and http share one remote panel —
+// their fields (url + headers) are identical.
+templ mcpServerTransportFields(data mcpServerFormData) {
+	{{ remote := data.Type == "sse" || data.Type == "http" }}
+	<div class="flex flex-col gap-4">
+		<div data-mcp-transport-panel="stdio" hidden?={ remote }>
+			@form.FormControl("mcp-server-command", "Command", form.LabelAbove, "The process memory spawns on its host. Include the full path or a resolvable binary.", data.FieldErrs.Command, nil) {
+				<input id="mcp-server-command" name="command" type="text" value={ data.Command } placeholder="e.g. npx -y @modelcontextprotocol/server-github" class="input w-full font-mono"/>
+			}
+			<div class="mt-3">
+				@form.FormControl("mcp-server-args", "Arguments", form.LabelAbove, "One argument per line, passed to the command in order.", "", nil) {
+					<textarea id="mcp-server-args" name="args" rows="3" class="textarea w-full resize-none font-mono">{ mcpArgsText(data.Args) }</textarea>
+				}
+			</div>
+			<div class="mt-3">
+				@mcpServerKVEditor("mcp-server-env", "env", "Environment variables", "KEY=VALUE pairs set on the spawned process.", data.Env, data.FieldErrs.Env)
+			</div>
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--shield-alert",
+				Message: "stdio servers run a process on the memory host with the environment and arguments below — same trust boundary as the backend itself.",
+			})
+		</div>
+		<div data-mcp-transport-panel="remote" hidden?={ !remote }>
+			@form.FormControl("mcp-server-url", "Server URL", form.LabelAbove, "The endpoint this server listens on.", data.FieldErrs.URL, nil) {
+				<input id="mcp-server-url" name="url" type="text" value={ data.URL } placeholder="https://mcp.example.com/sse" class="input w-full font-mono"/>
+			}
+			<div class="mt-3">
+				@mcpServerKVEditor("mcp-server-headers", "headers", "HTTP headers", "Optional headers sent with every request — e.g. an Authorization token.", data.Headers, data.FieldErrs.Headers)
+			</div>
+		</div>
+	</div>
+}
+
+// mcpServerKVEditor renders a key/value row editor with an add-row button.
+// The rows post as name="<prefix>.key"/"<prefix>.value" pairs plus an
+// always-submitted name="<prefix>.secret" select (Plain -> "", Secret -> "1")
+// and are parsed back by mcpKVFieldsFromForm. The select (rather than a
+// checkbox) is what keeps the secret values index-aligned with their rows:
+// unchecked checkboxes are simply omitted from the POST body.
+// inputNamePrefix matches the data-mcp-kv grouping used by mcpServersScript.
+templ mcpServerKVEditor(id, prefix, label, hint string, rows []mcpKVField, fieldErr string) {
+	@form.FormControl(id, label, form.LabelAbove, hint, fieldErr, nil) {
+		<div class="flex flex-col gap-1.5" data-mcp-kv data-mcp-kv-prefix={ prefix }>
+			for _, r := range rows {
+				@mcpServerKVRow(prefix, r)
+			}
+			@mcpServerKVRow(prefix, mcpKVField{})
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--plus", ExtraClass: "mt-1 self-start", Attrs: templ.Attributes{"data-mcp-kv-add": ""}}) { Add row }
+		</div>
+		<p class="text-base-content/45 mt-2 text-xs">Values are stored in plaintext and shown only in this form. Mark a value Secret to store it write-only — after saving it is never shown again, and leaving it blank keeps the stored value.</p>
+	}
+}
+
+// mcpKVValuePlaceholder tweaks the value input's placeholder for write-only
+// secret rows (memory never returns the stored value).
+func mcpKVValuePlaceholder(secret bool) string {
+	if secret {
+		return "Leave blank to keep stored value"
+	}
+	return "Value"
+}
+
+// mcpKVSecretTitle is the secret-select tooltip copy.
+func mcpKVSecretTitle() string {
+	return "Store this value as a secret — it is write-only and never shown again."
+}
+
+// mcpServerKVRow is one key/value input row plus a Secret select (a blank row
+// is always appended so the user can add the first pair without JS). Secret
+// rows pre-fill with an empty value and carry a "leave blank to keep" hint.
+// The select always submits, so its index stays aligned with the key/value
+// inputs even when earlier rows are Plain.
+templ mcpServerKVRow(prefix string, r mcpKVField) {
+	<div class="flex flex-col gap-1" data-mcp-kv-row>
+		<div class="flex items-center gap-1.5">
+			<input type="text" name={ prefix + ".key" } value={ r.Key } placeholder="Name" class="input input-sm min-w-0 flex-1 font-mono"/>
+			<input type="text" name={ prefix + ".value" } value={ r.Value } placeholder={ mcpKVValuePlaceholder(r.Secret) } class="input input-sm min-w-0 flex-1 font-mono"/>
+			<select name={ prefix + ".secret" } class="select select-sm shrink-0" title={ mcpKVSecretTitle() } aria-label="Row visibility">
+				<option value="" selected?={ !r.Secret }>Plain</option>
+				<option value="1" selected?={ r.Secret }>Secret</option>
+			</select>
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Shape: ui.ButtonShapeSquare, Icon: "lucide--x", ExtraClass: "shrink-0", AriaLabel: "Remove row", Attrs: templ.Attributes{"data-mcp-kv-remove": ""}})
+		</div>
+		if r.Secret {
+			<p class="text-base-content/45 pl-1 text-xs">Leave blank to keep the stored value.</p>
+		}
+	</div>
+}
+
+// mcpArgsText joins one arg per line for the stdio arguments textarea.
+func mcpArgsText(args []string) string {
+	out := ""
+	for i, a := range args {
+		if i > 0 {
+			out += "\n"
+		}
+		out += a
+	}
+	return out
+}
+
+// mcpServerTransportForDisplay labels a server's type for the list badge
+// (stdio/sse/http/builtin; unknown types render verbatim).
+func mcpServerTransportForDisplay(t string) string {
+	switch t {
+	case "", "stdio", "sse", "http", "builtin":
+		return t
+	default:
+		return t
+	}
+}
+
+// mcpServersScript wires the client-side behaviors of both pages (design D5):
+//   - list: sync (POST → re-render cached-tool list from the returned HTML,
+//     surface pruned-tool names), inspect (render the probe result into the
+//     row's inspect area), server-level enabled toggle, per-tool toggles;
+//   - create/edit: transport radio panel switching, kv row add/remove.
+//
+// Listeners attach once to document (delegation survives hx-boost swaps); the
+// wiring flag prevents double-attach on in-page navigation.
+templ mcpServersScript() {
+	<script type="text/javascript">
+		(function () {
+			if (window.__mcpUIWired) return;
+			var listRoot = document.querySelector('[data-mcp-list-root], [data-mcp-form]');
+			if (!listRoot) return;
+			window.__mcpUIWired = true;
+
+			function toast(kind, message) {
+				var payload = JSON.stringify({ type: kind, message: message, duration: 4200 });
+				try {
+					var c = document.getElementById('toast-container');
+					if (c && window.Alpine) {
+						var q = window.Alpine.$data(c);
+						if (q && q.add) { q.add(JSON.parse(payload)); return; }
+					}
+					sessionStorage.setItem('memory-toast', payload);
+				} catch (e) {}
+			}
+			function plural(n) { return n === 1 ? '' : 's'; }
+			function rowFor(el) { return el.closest('[data-mcp-row]'); }
+			function setBusy(btn, busy) { if (btn) btn.disabled = busy; }
+
+			async function readJSON(resp) {
+				var j = null;
+				try { j = await resp.json(); } catch (e) {}
+				return j || {};
+			}
+
+			async function syncServer(btn) {
+				var id = btn.getAttribute('data-mcp-server');
+				setBusy(btn, true);
+				try {
+					var resp = await fetch('/api/mcp-servers/' + encodeURIComponent(id) + '/sync', { method: 'POST' });
+					var j = await readJSON(resp);
+					if (!resp.ok) {
+						toast('error', j.error || ('Sync failed (' + resp.status + ').'));
+						return;
+					}
+					var tools = j.tools || [];
+					var panel = document.querySelector('[data-mcp-tools="' + id + '"]');
+					if (panel && j.html) panel.outerHTML = j.html;
+					var count = document.querySelector('[data-mcp-count="' + id + '"]');
+					if (count) count.textContent = tools.length + ' tool' + plural(tools.length);
+					var msg = 'Synced — ' + tools.length + ' tool' + plural(tools.length) + '.';
+					if (j.pruned && j.pruned.length) {
+						msg += ' Removed: ' + j.pruned.join(', ');
+					}
+					toast('success', msg);
+				} finally {
+					setBusy(btn, false);
+				}
+			}
+
+			async function inspectServer(btn) {
+				var id = btn.getAttribute('data-mcp-server');
+				setBusy(btn, true);
+				try {
+					var resp = await fetch('/api/mcp-servers/' + encodeURIComponent(id) + '/inspect', { method: 'POST' });
+					var j = await readJSON(resp);
+					if (!resp.ok) {
+						toast('error', j.error || ('Inspect failed (' + resp.status + ').'));
+						return;
+					}
+					var area = document.querySelector('[data-mcp-inspect-area="' + id + '"]');
+					if (!area) return;
+					var row = rowFor(btn);
+					if (row) row.open = true;
+					renderInspect(area, j);
+				} finally {
+					setBusy(btn, false);
+				}
+			}
+
+			function renderInspect(area, r) {
+				area.hidden = false;
+				area.innerHTML = '';
+				var box = document.createElement('div');
+				box.className = 'rounded-box border px-3 py-2.5 text-xs';
+				var head = document.createElement('p');
+				head.className = 'flex items-center gap-1.5 text-sm font-semibold';
+				area.appendChild(box);
+				if (r.status !== 'ok') {
+					box.className += ' border-error/25 bg-error/5';
+					head.appendChild(icon('lucide--circle-x'));
+					head.appendChild(textNode('Inspect failed'));
+					box.appendChild(head);
+					var err = document.createElement('p');
+					err.className = 'text-error mt-1';
+					err.textContent = r.error || r.status || 'connection error';
+					box.appendChild(err);
+					return;
+				}
+				box.className += ' border-base-content/15 bg-base-200/40';
+				head.appendChild(icon('lucide--check-circle'));
+				var who = '';
+				if (r.serverInfo) {
+					who = r.serverInfo.name;
+					if (r.serverInfo.version) who += ' v' + r.serverInfo.version;
+				}
+				head.appendChild(textNode('Reachable' + (who ? ' — ' + who : '') + (r.latencyMs ? ' (' + r.latencyMs + 'ms)' : '')));
+				box.appendChild(head);
+				var kinds = [
+					{ label: 'tools', items: r.tools || [] },
+					{ label: 'prompts', items: r.prompts || [] },
+					{ label: 'resources', items: r.resources || [] },
+					{ label: 'resource templates', items: r.resourceTemplates || [] }
+				];
+				var listed = false;
+				for (var i = 0; i < kinds.length; i++) {
+					var k = kinds[i];
+					if (!k.items.length) continue;
+					listed = true;
+					var line = document.createElement('p');
+					line.className = 'text-base-content/70 mt-1.5';
+					var names = [];
+					for (var j = 0; j < k.items.length && j < 5; j++) {
+						names.push(k.items[j].name || k.items[j].uri || k.items[j].uriTemplate || '?');
+					}
+					line.textContent = k.items.length + ' ' + k.label + ': ' + names.join(', ') + (k.items.length > 5 ? '…' : '');
+					box.appendChild(line);
+				}
+				if (!listed) {
+					var none = document.createElement('p');
+					none.className = 'text-base-content/45 mt-1.5';
+					none.textContent = 'No tools, prompts, or resources advertised.';
+					box.appendChild(none);
+				}
+			}
+
+			function icon(name) {
+				var i = document.createElement('span');
+				i.className = name + ' size-4 shrink-0';
+				i.setAttribute('aria-hidden', 'true');
+				return i;
+			}
+			function textNode(s) { return document.createTextNode(s); }
+
+			async function toggleServerEnabled(input) {
+				var id = input.getAttribute('data-mcp-server');
+				var enabled = input.checked;
+				input.disabled = true;
+				try {
+					var resp = await fetch('/settings/mcp-servers/' + encodeURIComponent(id) + '/toggle', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+						body: 'enabled=' + (enabled ? 'true' : 'false')
+					});
+					var j = await readJSON(resp);
+					if (!resp.ok) {
+						input.checked = !enabled;
+						toast('error', j.error || ('Update failed (' + resp.status + ').'));
+					}
+				} finally {
+					input.disabled = false;
+				}
+			}
+
+			async function toggleTool(input) {
+				var id = input.getAttribute('data-mcp-server');
+				var tool = input.getAttribute('data-mcp-tool');
+				var enabled = input.checked;
+				input.disabled = true;
+				try {
+					var resp = await fetch('/api/mcp-servers/' + encodeURIComponent(id) + '/tools/' + encodeURIComponent(tool), {
+						method: 'PATCH',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ enabled: enabled })
+					});
+					if (!resp.ok) {
+						input.checked = !enabled;
+						var j = await readJSON(resp);
+						toast('error', j.error || ('Update failed (' + resp.status + ').'));
+					}
+				} finally {
+					input.disabled = false;
+				}
+			}
+
+			function showTransportPanel(form, type) {
+				if (!form) return;
+				var radios = form.querySelectorAll('input[data-mcp-transport]');
+				var panels = form.querySelectorAll('[data-mcp-transport-panel]');
+				for (var i = 0; i < panels.length; i++) {
+					var p = panels[i];
+					var active = p.getAttribute('data-mcp-transport-panel') === 'remote'
+						? (type === 'sse' || type === 'http')
+						: p.getAttribute('data-mcp-transport-panel') === type;
+					if (active) { p.hidden = false; } else { p.hidden = true; }
+				}
+			}
+
+			function kvPrefix(container) {
+				return container.getAttribute('data-mcp-kv-prefix') || 'kv';
+			}
+			function addKVRow(container) {
+				var prefix = kvPrefix(container);
+				var wrap = document.createElement('div');
+				wrap.className = 'flex flex-col gap-1';
+				wrap.setAttribute('data-mcp-kv-row', '');
+				var row = document.createElement('div');
+				row.className = 'flex items-center gap-1.5';
+				var key = document.createElement('input');
+				key.type = 'text'; key.className = 'input input-sm min-w-0 flex-1 font-mono';
+				key.name = prefix + '.key'; key.placeholder = 'Name';
+				var val = document.createElement('input');
+				val.type = 'text'; val.className = 'input input-sm min-w-0 flex-1 font-mono';
+				val.name = prefix + '.value'; val.placeholder = 'Value';
+				var secret = document.createElement('select');
+				secret.className = 'select select-sm shrink-0';
+				secret.name = prefix + '.secret';
+				secret.title = 'Store this value as a secret — it is write-only and never shown again.';
+				secret.setAttribute('aria-label', 'Row visibility');
+				var plainOpt = document.createElement('option');
+				plainOpt.value = ''; plainOpt.textContent = 'Plain'; plainOpt.selected = true;
+				var secretOpt = document.createElement('option');
+				secretOpt.value = '1'; secretOpt.textContent = 'Secret';
+				secret.appendChild(plainOpt); secret.appendChild(secretOpt);
+				var rm = document.createElement('button');
+				rm.type = 'button'; rm.className = 'btn btn-ghost btn-sm btn-square shrink-0';
+				rm.setAttribute('data-mcp-kv-remove', '');
+				rm.setAttribute('aria-label', 'Remove row');
+				var x = document.createElement('span');
+				x.className = 'lucide--x size-4';
+				x.setAttribute('aria-hidden', 'true');
+				rm.appendChild(x);
+				row.appendChild(key); row.appendChild(val); row.appendChild(secret); row.appendChild(rm);
+				wrap.appendChild(row);
+				var addBtn = container.querySelector('[data-mcp-kv-add]');
+				container.insertBefore(wrap, addBtn);
+				key.focus();
+			}
+
+			document.addEventListener('click', function (e) {
+				var btn = e.target && e.target.closest ? e.target.closest('button, a') : null;
+				if (!btn) return;
+				if (btn.hasAttribute('data-mcp-action')) {
+					var action = btn.getAttribute('data-mcp-action');
+					if (action === 'sync') { e.preventDefault(); syncServer(btn); }
+					else if (action === 'inspect') { e.preventDefault(); inspectServer(btn); }
+					return;
+				}
+				var kvAdd = btn.closest('[data-mcp-kv-add]');
+				if (kvAdd) { e.preventDefault(); addKVRow(kvAdd.closest('[data-mcp-kv]')); return; }
+				var kvRemove = btn.closest('[data-mcp-kv-remove]');
+				if (kvRemove) { e.preventDefault(); kvRemove.closest('[data-mcp-kv-row]').remove(); return; }
+			});
+
+			document.addEventListener('change', function (e) {
+				var t = e.target;
+				if (!t || !t.closest) return;
+				var form = t.closest('[data-mcp-form-fields]');
+				if (t.hasAttribute('data-mcp-transport') && form) {
+					showTransportPanel(form, t.value);
+					return;
+				}
+				var enabled = t.closest('[data-mcp-enabled-toggle]');
+				if (enabled) { toggleServerEnabled(enabled); return; }
+				var tool = t.closest('[data-mcp-tool-toggle]');
+				if (tool) { toggleTool(tool); return; }
+			});
+
+			// One-time panel visibility per current radio state.
+			var forms = document.querySelectorAll('[data-mcp-form-fields]');
+			for (var i = 0; i < forms.length; i++) {
+				var f = forms[i];
+				var checkedRadio = f.querySelector('input[data-mcp-transport]:checked');
+				if (checkedRadio) showTransportPanel(f, checkedRadio.value);
+			}
+		})();
+	</script>
+}

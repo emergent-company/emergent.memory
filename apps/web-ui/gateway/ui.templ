@@ -1,0 +1,1018 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/alpine"
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	"github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/memory.web-ui/webui"
+)
+
+// appShell is the full document: HTML shell (dark theme) + sidebar + topbar +
+// scrollable main content. main carries id="main-content" so the sidebar's
+// HTMX navigation swaps partials into it.
+//
+// The shell is rendered here (not via go-daisy's layout.PageFull) so the app
+// can load its own self-contained htmx v4 build (webui/static/js/htmx.min.js)
+// instead of go-daisy's bundled htmx 2.x, with v2-compat config applied right
+// after load. Everything else mirrors PageFull's document structure.
+templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, user *currentUser, accounts []currentUser, content templ.Component, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark" class="group/html" data-asset-track="reload">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+			<meta name="htmx-config" content='{"implicitInheritance":true,"noSwap":[204,304]}'/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="theme-color" content="#171921"/>
+			<!-- iOS / Android standalone PWA: without these, "Add to Home Screen"
+		     opens in Safari (not standalone) and full-page navigations or
+		     target=_blank links surface a native "Done"/X context instead of
+		     staying in-app. -->
+			<meta name="apple-mobile-web-app-capable" content="yes"/>
+			<meta name="mobile-web-app-capable" content="yes"/>
+			<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+			<meta name="apple-mobile-web-app-title" content={ appBrand }/>
+			<link rel="manifest" href="/assets/manifest.webmanifest"/>
+			<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"/>
+			<link rel="icon" type="image/png" sizes="512x512" href="/assets/icon-512.png"/>
+			@appleSplashLinks()
+			<title>{ title }</title>
+			<meta name="sentry-dsn" content={ sentryDSN }/>
+			<meta name="sentry-environment" content={ sentryEnvironment }/>
+			<meta name="sentry-traces-sample-rate" content={ sentryTracesSampleRate }/>
+			<meta name="sentry-replay-session-sample-rate" content={ sentryReplaySessionSampleRate }/>
+			<meta name="sentry-replay-on-error-sample-rate" content={ sentryReplayOnErrorSampleRate }/>
+			if sentryDSN != "" {
+				<script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.replay.feedback.min.js" crossorigin="anonymous"></script>
+				<script>
+			(function () {
+				var m = function (n) { var e = document.querySelector('meta[name="' + n + '"]'); return e ? e.content : ""; };
+				Sentry.init({
+					dsn: m("sentry-dsn"),
+					environment: m("sentry-environment"),
+					integrations: [
+						Sentry.browserTracingIntegration(),
+						Sentry.replayIntegration({ maskAllText: true, maskAllInputs: true, blockAllMedia: true })
+					],
+					tracesSampleRate: parseFloat(m("sentry-traces-sample-rate")),
+					replaysSessionSampleRate: parseFloat(m("sentry-replay-session-sample-rate")),
+					replaysOnErrorSampleRate: parseFloat(m("sentry-replay-on-error-sample-rate"))
+				});
+			})();
+			</script>
+			}
+			<!-- Paint the root dark before any stylesheet loads: iOS Safari (incl.
+		     Home-Screen PWAs) paints the page white during navigation/back and
+		     bfcache restores unless the document declares a dark color-scheme
+		     and background up front. -->
+			<style>html{color-scheme:dark;background-color:#0E1017}</style>
+			<meta name="view-transition" content="same-origin"/>
+		</head>
+		<body class="bg-base-200 min-h-screen">
+			<!-- Modal container -->
+			<div id="modal-container"></div>
+			<!-- Toast container -->
+			@toastQueue()
+			@spotlightSearch(agents)
+			<div class="flex h-screen overflow-hidden">
+				<input
+					type="checkbox"
+					id="_layout-sidebar-toggle-trigger"
+					class="hidden"
+					aria-label="Toggle layout sidebar"
+				/>
+				<label
+					for="_layout-sidebar-toggle-trigger"
+					id="_layout-sidebar-backdrop"
+				></label>
+				if groups != nil {
+					@appSidebar(groups, providersMissing)
+				}
+				<div class="flex min-w-0 grow flex-col overflow-hidden">
+					<div class="bg-base-100 border-base-content/5 z-10 h-14 shrink-0 border-b">
+						@layout.Navbar(appBrand, spotlightTrigger()) {
+							@projectSwitcher(currentProject, currentOrgName, activeOrg, projectGroups, orgs, recentProjects, showRecent)
+							if assistantAgent != "" {
+								@ui.Button(ui.ButtonProps{
+									Type:      ui.ButtonTypeButton,
+									Variant:   ui.ButtonGhost,
+									Size:      ui.ButtonSM,
+									Icon:      "lucide--bot",
+									AriaLabel: "Open assistant panel",
+									Attrs: templ.Attributes{
+										"id":            "sidepanel-toggle",
+										"data-action":   "toggle-sidepanel",
+										"data-testid":   "sidepanel-toggle",
+										"aria-expanded": "false",
+									},
+								}) {
+									Assistant
+								}
+							}
+							@userAccountMenu(user, accounts)
+						}
+					</div>
+					<main
+						id="main-content"
+						data-testid={ pageTestID(title) }
+						class="grow overflow-auto"
+						hx-boost="true"
+						hx-target="#main-content"
+						hx-swap="innerHTML"
+						hx-history-elt="true"
+					>
+						@content
+					</main>
+				</div>
+				if assistantAgent != "" {
+					@sidePanel(agents, assistantAgent)
+				}
+			</div>
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+			<!-- htmx v4, self-hosted (embedded via webui/static) -->
+			<script src={ templ.SafeURL(webui.AssetPath("/js/htmx.min.js")) }></script>
+			<script>
+			// Restore htmx 2.x behavior on v4 (see htmx v4 migration guide):
+			//  - attribute inheritance was made explicit (:inherited suffix)
+			//  - 4xx/5xx responses now swap by default
+			//  - defaultTimeout became 60000 (was 0)
+			htmx.config.implicitInheritance = true;
+			htmx.config.noSwap = [204, 304, "4xx", "5xx"];
+			htmx.config.defaultTimeout = 0;
+		</script>
+			<script>
+			// aria-busy while an htmx request is in flight (v4 event names)
+			(function() {
+			document.addEventListener('htmx:before:request', function() {
+				document.documentElement.setAttribute('aria-busy', 'true');
+			});
+			document.addEventListener('htmx:after:settle', function() {
+				document.documentElement.removeAttribute('aria-busy');
+			});
+		})();
+		</script>
+			@alpine.Tag()
+			<script src={ templ.SafeURL(webui.AssetPath("/js/app.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/sidepanel.js")) }></script>
+		</body>
+	</html>
+}
+
+// memoryLogo is the brand mark used in the sidebar header.
+templ memoryLogo() {
+	<div class="flex items-center gap-2.5 select-none">
+		<div class="memory-monogram grid place-items-center rounded-lg font-bold">M</div>
+		<div class="leading-tight">
+			<span class="block text-[15px] font-semibold tracking-tight">Memory</span>
+		</div>
+	</div>
+}
+
+// pageError is the shared fetch-failure state.
+templ pageError(heading string, err error) {
+	<div class="mb-4">
+		<h1 class="text-2xl font-semibold tracking-tight">{ heading }</h1>
+	</div>
+	@ui.Alert(ui.AlertProps{
+		Type:    ui.AlertError,
+		Style:   ui.AlertStyleOutline,
+		Icon:    "lucide--alert-triangle",
+		Message: err.Error(),
+	})
+}
+
+// --- script blocks exposed to the page (call into window.MemoryApp) ---
+
+script openAgentForm(id string) {
+	window.MemoryApp && window.MemoryApp.openAgentForm(id)
+}
+
+script openDeleteConfirm(id string, name string) {
+	window.MemoryApp && window.MemoryApp.openDeleteConfirm(id, name)
+}
+
+// --- Agents ---
+templ AgentsPage(agents []AgentDefinitionSummary, models []Model, skills []Skill, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@agentsHeader(len(agents), loadErr == nil)
+		if loadErr != nil {
+			@pageError("Agents unavailable", loadErr)
+		} else if len(agents) == 0 {
+			@agentsEmpty()
+		} else {
+			<div class="hidden md:block">
+				@agentsTable(agents)
+			</div>
+			<div class="md:hidden">
+				@agentCardGrid(agents)
+			</div>
+		}
+		@agentFormDialog(agents, models, skills)
+		@deleteConfirmDialog()
+	}
+}
+
+templ agentsHeader(count int, ok bool) {
+	@pageHeader("Control plane", "Agents", "The personas Memory can become — pick a model, set the tone, grant tools.") {
+		<div class="flex items-center gap-2">
+			if ok {
+				@countBadge(count, "agent", "lucide--bot")
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+				OnClick: openAgentForm(""),
+			}) {
+				New agent
+			}
+		</div>
+	}
+}
+
+// agentsEmpty is the first-run full-surface empty state for the Agents page.
+// It replaces the whole list; py-12 keeps the panel present under the header
+// (compact scale of ui.EmptyState).
+templ agentsEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--bot",
+		Title:       "No agents yet",
+		Description: "Create the first agent — a name, a model, a purpose. Memory will be ready to chat in seconds.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--plus",
+			OnClick: openAgentForm(""),
+		}) {
+			New agent
+		}
+	}
+}
+
+// statRow lays out go-daisy StatCards in the app's 3-up grid.
+templ statRow(cards []ui.StatCardProps, margin string) {
+	<div class={ "grid grid-cols-1 gap-3 sm:grid-cols-2", margin }>
+		for _, c := range cards {
+			@ui.StatCard(c)
+		}
+	</div>
+}
+
+// agentCardGrid is the mobile list (below md) of agents: one short card per
+// agent (name + bot icon + chat affordance), single-column on mobile and
+// denser from sm upward. From md up agentsTable takes over. Cards carry the
+// same entrance stagger (memory-rise) the table rows use.
+templ agentCardGrid(agents []AgentDefinitionSummary) {
+	<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+		for _, a := range agents {
+			@agentCard(a)
+		}
+	</div>
+}
+
+// agentCard is one agent in the grid. The whole card is one target: a
+// data-href on the shell opens the agent's dashboard (/agents/<id>) via the
+// app.js click delegate (same mechanism as the table rows elsewhere). The
+// right-aligned chat icon is the one exception — it is a real <a> to
+// /chat?agent=<id>, and the delegate ignores clicks inside anchors so the
+// native link wins.
+templ agentCard(a AgentDefinitionSummary) {
+	@ui.CardRaw(
+		"card-border memory-rise cursor-pointer group transition-all duration-200 hover:-translate-y-0.5 hover:border-base-content/25 hover:shadow-md",
+		"p-4",
+		templ.Attributes{"data-href": "/agents/" + url.PathEscape(a.ID)},
+	) {
+		<div class="flex items-center gap-3">
+			@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+			<p class="min-w-0 grow truncate text-base font-medium transition-colors duration-200 group-hover:text-primary" title={ a.Name }>{ a.Name }</p>
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLink,
+				Href:       "/chat?agent=" + url.QueryEscape(a.ID),
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				Shape:      ui.ButtonShapeCircle,
+				Icon:       "lucide--messages-square",
+				AriaLabel:  "Chat with " + a.Name,
+				ExtraClass: "shrink-0",
+			})
+		</div>
+	}
+}
+
+// agentsTable is the desktop list (md and up) of agents: the compact daisyUI
+// table used by the other resource pages. It is hidden below md, where
+// agentCardGrid takes over.
+templ agentsTable(agents []AgentDefinitionSummary) {
+	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+		@table.TableWithProps(table.TableProps{Bordered: false}) {
+			@table.TableHead() {
+				@table.TableHeadRow() {
+					@table.TableHeadCell("Agent")
+					@table.TableHeadCell("Model")
+					@table.TableHeadCell("Tools")
+					@table.TableHeadCell("Flow")
+					@table.TableHeadCell("Visibility")
+					@table.TableHeadCell("Updated")
+					@table.TableHeadCell("")
+				}
+			}
+			@table.TableBody() {
+				for _, a := range agents {
+					@agentRow(a)
+				}
+			}
+		}
+	}
+}
+
+// agentRow is one desktop table row. The agent cell is the clickable target
+// (an <a> to the agent dashboard); the row still carries the memory-rise
+// entrance stagger. Edit and delete live in the trailing actions cell.
+templ agentRow(a AgentDefinitionSummary) {
+	@table.TableRow(a.ID, true, templ.Attributes{"class": "memory-rise"}) {
+		@table.TableCell("", nil) {
+			<a class="flex items-center gap-3 hover:opacity-80" href={ templ.URL("/agents/" + url.PathEscape(a.ID)) }>
+				@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+				<div class="min-w-0">
+					<p class="truncate text-sm font-medium">{ a.Name }</p>
+					@monoMeta(shortID(a.ID), "text-base-content/35")
+				</div>
+			</a>
+		}
+		@table.TableCell("", nil) {
+			if a.EffectiveModel != "" {
+				<span class="font-mono text-[11px]">{ a.EffectiveModel }</span>
+			} else {
+				@emptyDash()
+			}
+		}
+		@table.TableCell("", nil) {
+			if a.ToolCount > 0 {
+				@ui.Badge(ui.BadgeProps{
+					Label:   strconv.Itoa(a.ToolCount) + " tool" + plural(a.ToolCount),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--wrench",
+				})
+			} else {
+				@emptyDash()
+			}
+		}
+		@table.TableCell("", nil) {
+			@ui.Badge(ui.BadgeProps{
+				Label:   flowLabel(a.FlowType),
+				Variant: ui.BadgeNeutral,
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeXS,
+			})
+		}
+		@table.TableCell("", nil) {
+			@ui.Badge(ui.BadgeProps{
+				Label:   visibilityLabel(a.Visibility),
+				Variant: visibilityIntent(a.Visibility),
+				Size:    ui.BadgeSizeXS,
+				Dot:     true,
+			})
+		}
+		@table.TableCell("", nil) {
+			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(a.UpdatedAt) }</span>
+		}
+		@table.TableCell("text-right", nil) {
+			<div class="flex justify-end gap-1">
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeLink,
+					Href:      "/agents/" + url.PathEscape(a.ID) + "/settings",
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					Shape:     ui.ButtonShapeSquare,
+					Icon:      "lucide--pencil",
+					AriaLabel: "Edit " + a.Name,
+				})
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					Shape:      ui.ButtonShapeSquare,
+					Icon:       "lucide--trash-2",
+					ExtraClass: "text-error hover:text-error",
+					AriaLabel:  "Delete " + a.Name,
+					OnClick:    openDeleteConfirm(a.ID, a.Name),
+				})
+			</div>
+		}
+	}
+}
+
+// agentFormDialog is the create/edit form (vanilla <dialog>, driven by app.js).
+// The model field is a catalog dropdown (optgroup per provider); the value
+// submitted is the prefixed provider/model name (e.g. openai/gpt-4o), matching
+// what the memory backend stores. The skills section lists every skill by name
+// (mirroring the delegation target picker) so the owner can attach them; the
+// delegation section lists every agent by name so the owner can pick which
+// ones this agent may hand off to.
+templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []Skill) {
+	@modalShell("agent-form-modal", "", "w-full max-w-lg") {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				<h3 id="agent-form-title" class="text-lg font-semibold">New agent</h3>
+				<p id="agent-form-subtitle" class="text-base-content/50 mt-0.5 text-sm">Define a persona, a brain, and its tools.</p>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-action": "close-agent-form"},
+			})
+		</div>
+		<form id="agent-form" class="flex flex-col gap-4">
+			<input type="hidden" id="agent-id" name="id"/>
+			@form.FormControl("agent-name", "Name", form.LabelAbove, "", "", nil) {
+				<input id="agent-name" name="name" type="text" required placeholder="e.g. Support Butler" class="input w-full"/>
+			}
+			@form.FormControl("agent-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
+				<textarea id="agent-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none"></textarea>
+			}
+			@modelSelect("agent-model", models, nil, templ.Attributes{"data-testid": "model-select"})
+			@modelParamsGrid("agent", nil)
+			@form.FormControl("agent-tools", "Tools", form.LabelAbove, "Comma-separated tool names the agent may use.", "", nil) {
+				<input id="agent-tools" name="tools" type="text" placeholder="web_search, code_exec, memory_lookup" class="input w-full"/>
+			}
+			@form.FormControl("agent-skills", "Skills", form.LabelAbove, "Reusable capabilities this agent can call.", "", nil) {
+				@checkboxPicker(checkboxPickerProps{
+					Name:          "skill",
+					EmptyID:       "agent-skills-empty",
+					EmptyNote:     skillEmptyNote(),
+					LabelClass:    "items-start gap-2 py-1.5",
+					CheckboxClass: "checkbox checkbox-sm mt-0.5",
+					TitleClass:    "block text-sm font-medium",
+					DescClass:     "text-base-content/50 block text-xs",
+					WrapTitle:     true,
+					Items:         skillPickerItems(skills, nil),
+				})
+			}
+			@form.FormControl("agent-delegation", "Delegation", form.LabelAbove, "If on, this agent can hand off to the agents you select.", "", nil) {
+				<label class="label flex w-full justify-between gap-3">
+					<span class="text-sm font-medium">Can delegate to other agents</span>
+					<input id="agent-delegation-enabled" name="delegationEnabled" type="checkbox" class="checkbox"/>
+				</label>
+				@checkboxPicker(checkboxPickerProps{
+					Name:          "delegation-target",
+					Wrapped:       true,
+					WrapID:        "agent-delegation-targets",
+					EmptyID:       "agent-delegation-empty",
+					EmptyNote:     delegateEmptyNote(),
+					LabelClass:    "gap-2 py-1",
+					CheckboxClass: "checkbox",
+					TitleClass:    "text-base-content/80 text-sm",
+					Items:         delegatePickerItems(agents, "", nil),
+				})
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"data-action": "close-agent-form"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"id": "agent-form-submit"},
+				}) {
+					Create agent
+				}
+			}
+		</form>
+	}
+}
+
+// deleteAgentDescription is the delete-confirm detail paragraph for agents
+// (the name span is filled by app.js's openDeleteConfirm).
+templ deleteAgentDescription() {
+	<p class="text-base-content/55 mt-1 text-sm">
+		This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.
+	</p>
+}
+
+// deleteConfirmDialog confirms agent deletion before the DELETE call.
+templ deleteConfirmDialog() {
+	@confirmDeleteDialog("delete-confirm-modal", "agent", deleteAgentDescription()) {
+		@form.FormActions("", "") {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-action": "close-delete-confirm"},
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonError,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"id": "delete-agent-go"},
+			}) {
+				Delete
+			}
+		}
+	}
+}
+
+// --- shared page chrome (extracted from repeated inline markup) ---
+
+// pageHeader renders the standard list-page header: kicker eyebrow + title +
+// subtitle on the left, right-side actions/badges via children.
+templ pageHeader(kicker, title, subtitle string) {
+	<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
+		<div>
+			@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
+			<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+			if subtitle != "" {
+				<p class="text-base-content/55 mt-1 text-sm">{ subtitle }</p>
+			}
+		</div>
+		{ children... }
+	</div>
+}
+
+// detailHeaderOpts configures detailHeader variants. All fields optional.
+type detailHeaderOpts struct {
+	// Margin is the outer wrapper margin class. Default "mb-4".
+	Margin string
+	// Dashboard switches to the dashboard variant: baseline-aligned right-side
+	// actions (items-end), no min-w-0 on the title column, and the larger
+	// lg:text-3xl title.
+	Dashboard bool
+	// Bare drops the flex title/actions row entirely — title (+subtitle) only,
+	// no right-side children. For headers without any actions.
+	Bare bool
+	// SubtitleFull renders the subtitle at full width (no max-w-2xl).
+	SubtitleFull bool
+	// TitleAdornment renders inline next to the h1 (same flex line), e.g. a
+	// version badge. Nil (the default) keeps the h1 markup byte-identical for
+	// every existing caller.
+	TitleAdornment templ.Component
+}
+
+// detailHeader renders a detail-page header: breadcrumb trail (scrolls on
+// overflow), optional kicker eyebrow, h1 (+ optional subtitle), and right-side
+// badges/actions via children. Pass kicker="" to drop the eyebrow when the
+// breadcrumb already names the section.
+templ detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, opts ...detailHeaderOpts) {
+	{{
+		o := detailHeaderOpts{}
+		if len(opts) > 0 {
+			o = opts[0]
+		}
+		margin := o.Margin
+		if margin == "" {
+			margin = "mb-4"
+		}
+		itemsClass := "items-center"
+		if o.Dashboard {
+			itemsClass = "items-end"
+		}
+	}}
+	<div class={ margin }>
+		@nav.Breadcrumbs(crumbs, nav.BreadcrumbsDividerDefault)
+		if o.Bare {
+			<div class="mt-2">
+				<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
+				if subtitle != "" {
+					<p class="text-base-content/55 mt-1 text-sm">{ subtitle }</p>
+				}
+			</div>
+		} else {
+			<div class={ "mt-2 flex flex-wrap", itemsClass, "justify-between gap-4" }>
+				{{
+					subtitleClass := "text-base-content/55 mt-1"
+					if !o.SubtitleFull {
+						subtitleClass += " max-w-2xl"
+					}
+				}}
+				if o.Dashboard {
+					<div>
+						<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+						if subtitle != "" {
+							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
+						}
+					</div>
+				} else {
+					<div class="min-w-0">
+						if kicker != "" {
+							@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
+						}
+						if o.TitleAdornment != nil {
+							<div class="flex flex-wrap items-center gap-2">
+								<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
+								@o.TitleAdornment
+							</div>
+						} else {
+							<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
+						}
+						if subtitle != "" {
+							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
+						}
+					</div>
+				}
+				{ children... }
+			</div>
+		}
+	</div>
+}
+
+// crumbsActive marks the trailing crumb as the current page (active styling).
+// nav.Crumbs builds the trail without setting Active, so detail headers pass
+// their result through this helper.
+func crumbsActive(crumbs []nav.BreadcrumbItem) []nav.BreadcrumbItem {
+	if n := len(crumbs); n > 0 {
+		crumbs[n-1].Active = true
+	}
+	return crumbs
+}
+
+// chipRow renders an eyebrow label above a flex-wrap row of chips/badges.
+// margin is the eyebrow margin class; wrapped adds an outer <div> so the group
+// renders as a single block (e.g. one grid cell in the migration plan).
+templ chipRow(label, margin string, wrapped bool) {
+	if wrapped {
+		<div>
+			@ui.Eyebrow(label, ui.EyebrowProps{Size: "text-[10px]", Margin: margin})
+			<div class="flex flex-wrap gap-1.5">
+				{ children... }
+			</div>
+		</div>
+	} else {
+		@ui.Eyebrow(label, ui.EyebrowProps{Size: "text-[10px]", Margin: margin})
+		<div class="flex flex-wrap gap-1.5">
+			{ children... }
+		</div>
+	}
+}
+
+// promptBlock renders the "System prompt" eyebrow above a scrollable
+// pre-formatted text block.
+templ promptBlock(text string) {
+	@ui.Eyebrow("System prompt", ui.EyebrowProps{Size: "text-[10px]", Margin: "mt-4 mb-2"})
+	<pre class="max-h-80 overflow-auto whitespace-pre-wrap rounded-box border border-base-content/10 bg-base-200/40 p-3 font-mono text-xs leading-relaxed">{ text }</pre>
+}
+
+// countBadge renders the "N noun(s)" ghost SM badge.
+templ countBadge(n int, noun, icon string) {
+	@countBadgeLabel(strconv.Itoa(n)+" "+noun+plural(n), icon)
+}
+
+// countBadgeLabel renders a ghost SM badge with a pre-built count label.
+templ countBadgeLabel(label, icon string) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   label,
+		Variant: ui.BadgeGhost,
+		Size:    ui.BadgeSizeSM,
+		Icon:    icon,
+	})
+}
+
+// cardListProps configures the optional aspects of cardList (mirrors
+// ui.SectionProps for the titled variant).
+type cardListProps struct {
+	// Margin is the section wrapper's margin class, e.g. "mt-6" or "mb-8"
+	// (ignored when Title is "").
+	Margin string
+	// Empty switches to the section's empty state (ignored when Title is "").
+	Empty      bool
+	EmptyIcon  string
+	EmptyTitle string
+	EmptyDesc  string
+}
+
+// cardList renders a bordered card with a divide-y row list. When title is
+// non-empty it renders a titled ui.Section (with optional empty state);
+// otherwise a bare ui.CardRaw. Children are the list rows.
+templ cardList(title string, props cardListProps) {
+	if title != "" {
+		@ui.Section(title, ui.SectionProps{
+			Margin:    props.Margin,
+			CardClass: "card-border overflow-hidden",
+			BodyClass: "p-0",
+			Empty:     props.Empty,
+			EmptyIcon: props.EmptyIcon, EmptyTitle: props.EmptyTitle, EmptyDesc: props.EmptyDesc,
+		}) {
+			<div class="divide-y divide-base-200">
+				{ children... }
+			</div>
+		}
+	} else {
+		@ui.CardRaw("card-border overflow-hidden", "p-0", nil) {
+			<div class="divide-y divide-base-200">
+				{ children... }
+			</div>
+		}
+	}
+}
+
+// modalBoxAttrs returns the optional id for a modal-box element ("" omits it).
+func modalBoxAttrs(boxID string) templ.Attributes {
+	if boxID == "" {
+		return nil
+	}
+	return templ.Attributes{"id": boxID}
+}
+
+// modalShell renders the shared native <dialog class="modal"> shell: a
+// modal-box (boxClass e.g. "max-w-sm", boxID when set) and the standard
+// backdrop form. Children are the modal-box content.
+templ modalShell(id, boxID, boxClass string) {
+	<dialog id={ id } class="modal" hx-boost="false">
+		<div { modalBoxAttrs(boxID)... } class={ "modal-box", templ.KV(boxClass, boxClass != "") }>
+			{ children... }
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button>close</button>
+		</form>
+	</dialog>
+}
+
+// confirmDeleteDialog renders the shared delete-confirmation modal shell:
+// error icon circle, "Delete <noun>?" heading, and the backdrop. description
+// is the detail paragraph (rendered under the heading); children are the
+// action buttons (outside the icon/title row, directly in the modal box).
+templ confirmDeleteDialog(id, noun string, description templ.Component) {
+	@modalShell(id, "", "max-w-sm") {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--trash-2", "size-5")
+			</div>
+			<div>
+				<h3 class="text-lg font-semibold">Delete { noun }?</h3>
+				@description
+			</div>
+		</div>
+		{ children... }
+	}
+}
+
+// checkboxPickerItem is one checkbox option in a checkboxPicker list.
+type checkboxPickerItem struct {
+	Value   string
+	Title   string
+	Desc    string
+	Checked bool
+}
+
+// checkboxPickerProps configures a checkboxPicker list: a SoftBox of checkbox
+// rows (title + optional description) with a visible empty note and, when
+// EmptyID is set, a hidden duplicate note after the list (modal behavior).
+type checkboxPickerProps struct {
+	Name          string          // input name attribute
+	Wrapped       bool            // wrap the list in an outer <div class="mt-2">
+	WrapID        string          // outer wrapper div id (modal dialog)
+	EmptyID       string          // empty-note id ("" = plain visible note only)
+	EmptyNote     templ.Component // empty-note content (visible + hidden)
+	LabelClass    string          // label classes after "label flex"
+	CheckboxClass string          // checkbox class
+	TitleClass    string          // title span class
+	DescClass     string          // description span class ("" = title only)
+	WrapTitle     bool            // wrap title(+desc) in a min-w-0 span
+	Items         []checkboxPickerItem
+}
+
+// checkboxPicker renders the shared checkbox option list used by the agent
+// skill and delegation-target pickers.
+templ checkboxPicker(p checkboxPickerProps) {
+	if p.Wrapped {
+		<div { modalBoxAttrs(p.WrapID)... } class="mt-2">
+			@checkboxPickerBody(p)
+		</div>
+	} else {
+		@checkboxPickerBody(p)
+	}
+}
+
+templ checkboxPickerBody(p checkboxPickerProps) {
+	if len(p.Items) == 0 {
+		@pickerEmptyNote(p.EmptyID, p.EmptyNote)
+	} else {
+		@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-col"}) {
+			for _, it := range p.Items {
+				<label class={ "label flex " + p.LabelClass }>
+					<input
+						name={ p.Name }
+						type="checkbox"
+						value={ it.Value }
+						if it.Checked {
+							checked
+						}
+						class={ p.CheckboxClass }
+					/>
+					if p.WrapTitle {
+						<span class="min-w-0">
+							<span class={ p.TitleClass }>{ it.Title }</span>
+							if it.Desc != "" {
+								<span class={ p.DescClass }>{ it.Desc }</span>
+							}
+						</span>
+					} else {
+						<span class={ p.TitleClass }>{ it.Title }</span>
+					}
+				</label>
+			}
+			@pickerHiddenNote(p.EmptyID, p.EmptyNote)
+		}
+	}
+}
+
+// pickerEmptyNote is the visible "no items yet" note (carries emptyID when set,
+// as in the agent form dialog).
+templ pickerEmptyNote(emptyID string, content templ.Component) {
+	if emptyID != "" {
+		<p id={ emptyID } class="text-base-content/45 text-sm">@content</p>
+	} else {
+		<p class="text-base-content/45 text-sm">@content</p>
+	}
+}
+
+// pickerHiddenNote is the hidden duplicate empty note rendered after the list
+// in the modal dialog (toggled by app.js).
+templ pickerHiddenNote(emptyID string, content templ.Component) {
+	if emptyID != "" {
+		<p id={ emptyID } class="text-base-content/45 hidden text-sm">@content</p>
+	}
+}
+
+// skillEmptyNote is the skill picker's empty-note content (links to /skills).
+templ skillEmptyNote() {
+	No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.
+}
+
+// delegateEmptyNote is the delegation picker's empty-note content.
+templ delegateEmptyNote() {
+	No other agents to delegate to.
+}
+
+// skillPickerItems builds checkboxPicker items from a skill list.
+func skillPickerItems(skills []Skill, selected func(string) bool) []checkboxPickerItem {
+	items := make([]checkboxPickerItem, 0, len(skills))
+	for _, sk := range skills {
+		items = append(items, checkboxPickerItem{Value: sk.Name, Title: sk.Name, Desc: sk.Description, Checked: selected != nil && selected(sk.Name)})
+	}
+	return items
+}
+
+// delegatePickerItems builds checkboxPicker items from an agent list, skipping
+// exclude (typically the agent being edited).
+func delegatePickerItems(agents []AgentDefinitionSummary, exclude string, selected func(string) bool) []checkboxPickerItem {
+	items := make([]checkboxPickerItem, 0, len(agents))
+	for _, a := range agents {
+		if a.Name == exclude {
+			continue
+		}
+		items = append(items, checkboxPickerItem{Value: a.Name, Title: a.Name, Checked: selected != nil && selected(a.Name)})
+	}
+	return items
+}
+
+// modelCurrentOption renders the synthetic "(current)" option when the
+// agent's stored model is not in the catalog (so it stays selectable).
+templ modelCurrentOption(current *ModelConfig, models []Model) {
+	if current != nil && current.Name != "" && !modelInCatalog(models, current.Name) {
+		<option value={ current.Name } selected>{ current.Name } (current)</option>
+	}
+}
+
+// modelSelect renders the model catalog dropdown (optgroup per provider, with
+// the "Auto — default model" option). Each catalog option's value is the
+// prefixed provider/model name; current is the agent's stored model — its
+// option renders selected, plus a "(current)" fallback when it is not in the
+// catalog (pass nil for a fresh form).
+templ modelSelect(id string, models []Model, current *ModelConfig, attrs templ.Attributes) {
+	@form.FormControl(id, "Model", form.LabelAbove, "Any model the bridge can reach — hosted or local.", "", nil) {
+		<select id={ id } { attrs... } name="modelName" class="select w-full">
+			<option value="">Auto — default model</option>
+			for _, g := range modelGroups(models) {
+				<optgroup label={ g.Provider }>
+					for _, m := range g.Models {
+						<option
+							value={ m.Provider + "/" + m.ModelName }
+							if current != nil && m.Provider+"/"+m.ModelName == current.Name {
+								selected
+							}
+						>{ modelDisplay(m) }</option>
+					}
+				</optgroup>
+			}
+			@modelCurrentOption(current, models)
+		</select>
+	}
+}
+
+// modelParamsGrid renders the temperature/max-tokens 2-col input grid.
+// current is the agent's stored model for value prefill (pass nil for a fresh
+// form with placeholder-only inputs).
+templ modelParamsGrid(idPrefix string, current *ModelConfig) {
+	<div class="grid grid-cols-2 gap-3">
+		@form.FormControl(idPrefix+"-temperature", "Temperature", form.LabelAbove, "", "", nil) {
+			<input
+				id={ idPrefix + "-temperature" }
+				name="temperature"
+				type="number"
+				min="0"
+				max="2"
+				step="0.1"
+				if current != nil {
+					value={ temperatureInputValue(current) }
+				}
+				placeholder="0.7"
+				class="input w-full"
+			/>
+		}
+		@form.FormControl(idPrefix+"-max-tokens", "Max tokens", form.LabelAbove, "", "", nil) {
+			<input
+				id={ idPrefix + "-max-tokens" }
+				name="maxTokens"
+				type="number"
+				min="1"
+				step="1"
+				if current != nil {
+					value={ maxTokensInputValue(current) }
+				}
+				placeholder="4096"
+				class="input w-full"
+			/>
+		}
+	</div>
+}
+
+// flashToasts renders the standard PRG feedback pair: error toast first, then
+// success. Both are skipped when unset.
+templ flashToasts(flashMsg string, flashErr error) {
+	if flashErr != nil {
+		@flashToast("error", flashErr.Error())
+	}
+	if flashMsg != "" {
+		@flashToast("success", flashMsg)
+	}
+}
+
+// chatWelcomeHero renders the empty-state hero shared by the chat workspace and
+// the assistant sidepanel: primary-tint icon tile + title/subtitle. headingLevel
+// selects h2 (default) or h3; children hold any extra content below the copy.
+templ chatWelcomeHero(id, icon, wrapClass, title string, headingLevel int, headingClass, subtitle, subClass string) {
+	<div id={ id } class={ "flex flex-col items-center justify-center", wrapClass, "text-center" }>
+		<div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-2xl border">
+			@ui.IconSpan(icon, "size-7")
+		</div>
+		<div>
+			if headingLevel == 3 {
+				<h3 class={ headingClass, "font-semibold" }>{ title }</h3>
+			} else {
+				<h2 class={ headingClass, "font-semibold" }>{ title }</h2>
+			}
+			<p class={ "text-base-content/50", subClass }>{ subtitle }</p>
+		</div>
+		{ children... }
+	</div>
+}
+
+// emptyDash renders the muted em-dash fallback.
+templ emptyDash() {
+	<span class="text-base-content/30 text-sm">—</span>
+}
+
+// monoMeta renders a mono metadata line; pass the exact text color class.
+templ monoMeta(text, colorClass string) {
+	<span class={ "font-mono text-[11px] " + colorClass }>{ text }</span>
+}
+
+// listRow renders a clickable list-page row: a leading icon/tile, a grow
+// column (title + meta), trailing content (badges etc.), and an auto chevron.
+templ listRow(href templ.SafeURL, leading templ.Component, title, meta string) {
+	<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/50" href={ href }>
+		@leading
+		<div class="min-w-0 grow">
+			<p class="truncate text-sm font-medium">{ title }</p>
+			<p class="text-base-content/50 text-xs">{ meta }</p>
+		</div>
+		{ children... }
+		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
+	</a>
+}

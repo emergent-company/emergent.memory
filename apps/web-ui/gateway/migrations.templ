@@ -1,0 +1,492 @@
+package main
+
+import (
+	"strconv"
+	"strings"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// schemaOptionGroup groups schema history entries by name for the from/to
+// selects. Order follows history order; each name appears once.
+type schemaOptionGroup struct {
+	Name    string
+	Options []SchemaHistoryItem
+}
+
+func schemaOptionGroups(history []SchemaHistoryItem) []schemaOptionGroup {
+	groups := []schemaOptionGroup{}
+	index := map[string]int{}
+	for _, h := range history {
+		if i, ok := index[h.Name]; ok {
+			groups[i].Options = append(groups[i].Options, h)
+		} else {
+			index[h.Name] = len(groups)
+			groups = append(groups, schemaOptionGroup{Name: h.Name, Options: []SchemaHistoryItem{h}})
+		}
+	}
+	return groups
+}
+
+func schemaOptionLabel(h SchemaHistoryItem) string {
+	label := h.Name + " v" + h.Version
+	if h.Active {
+		label += " (active)"
+	} else {
+		label += " (removed)"
+	}
+	return label
+}
+
+// riskBadgeVariant maps a migration risk level to a badge color.
+func riskBadgeVariant(level string) ui.BadgeIntent {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "safe":
+		return ui.BadgeSuccess
+	case "cautious":
+		return ui.BadgeNeutral
+	case "risky":
+		return ui.BadgeWarning
+	case "dangerous":
+		return ui.BadgeError
+	default:
+		return ui.BadgeNeutral
+	}
+}
+
+func joinOrDash(props []string) string {
+	if len(props) == 0 {
+		return "—"
+	}
+	return strings.Join(props, ", ")
+}
+
+// activePackLabel labels a resync target option by its owning pack.
+func activePackLabel(p activePackOption) string {
+	return p.Name + " v" + p.Version + " (active)"
+}
+
+// packGroupLabel renders the owning-pack heading for a stale group.
+func packGroupLabel(pack string) string {
+	if pack == "" {
+		return "Unresolved pack"
+	}
+	return pack
+}
+
+// objectRefLabel is the human identifier of a stale object: its key, falling
+// back to the entity id when memory reports no key.
+func objectRefLabel(it ObjectValidationResult) string {
+	if it.Key != "" {
+		return it.Key
+	}
+	return it.EntityID
+}
+
+// staleIssueLabel classifies a memory issue string for the drift table badge:
+// a NULL stamp (schema_version not set), a lagging stamp (mismatch), or a
+// content write. Unknown text is shown verbatim.
+func staleIssueLabel(issue string) string {
+	low := strings.ToLower(issue)
+	switch {
+	case strings.Contains(low, "not set"), strings.Contains(low, "null"), strings.Contains(low, "missing"):
+		return "NULL stamp"
+	case strings.Contains(low, "mismatch"), strings.Contains(low, "lag"):
+		return "stamp lag"
+	case strings.Contains(low, "content"):
+		return "content write"
+	default:
+		return issue
+	}
+}
+
+// staleIssueVariant colors the drift-table issue badge by its category.
+func staleIssueVariant(issue string) ui.BadgeIntent {
+	switch staleIssueLabel(issue) {
+	case "NULL stamp":
+		return ui.BadgeWarning
+	case "content write":
+		return ui.BadgeError
+	default:
+		return ui.BadgeNeutral
+	}
+}
+
+// --- Schema migrations ---
+templ MigrationsPage(data migrationData) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@migrationsHeader()
+		if data.Err != "" {
+			@flashToast("error", data.Err)
+		}
+		if data.Block != "" {
+			<div class="mb-4">
+				@ui.Alert(ui.AlertProps{Type: ui.AlertWarning, Style: ui.AlertStyleOutline, Icon: "lucide--shield-alert", Message: "Migration blocked: " + data.Block})
+			</div>
+		}
+		if data.Msg != "" {
+			@flashToast("success", data.Msg)
+		}
+		switch migrationCardKindFor(data) {
+		case migrationCardUpgrade, migrationCardResync:
+			@migrationForm(data)
+		case migrationCardFallback:
+			@migrationFallbackCard(data)
+		default:
+			@noMigrationCard()
+		}
+		@previewSection(data)
+		@rollbackForm()
+		@validationSection(data)
+		@historySection(data)
+	}
+}
+
+templ migrationsHeader() {
+	@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", "Schema migrations")), "", "Schema migrations", "Rename types and properties across live graph data when a blueprint version changes.", detailHeaderOpts{Margin: "mb-6", Bare: true})
+}
+
+templ noMigrationCard() {
+	@ui.CardRaw("card-border", "p-5", nil) {
+		<div class="flex items-center gap-3">
+			@ui.IconSpan("lucide--check-circle", "size-5 text-success")
+			<div>
+				<p class="text-sm font-medium">No pending migrations</p>
+				<p class="text-base-content/55 text-xs">All installed schemas are up to date — nothing to merge.</p>
+			</div>
+		</div>
+	}
+}
+
+// migrationFallbackCard renders when objects are stale but no active schema
+// install exists to migrate against. Neutral copy only — no /blueprints upgrade
+// promise (staleness is a same-version re-stamp concern, not a missing upgrade).
+templ migrationFallbackCard(data migrationData) {
+	@ui.CardRaw("card-border", "p-5", nil) {
+		<div class="flex items-start gap-3">
+			@ui.IconSpan("lucide--shield-alert", "size-5 shrink-0 text-warning")
+			<div class="min-w-0 grow">
+				<p class="text-sm font-medium">Schema drift detected</p>
+				<p class="text-base-content/55 text-xs">{ staleObjectsMessage(data.Validation, migrationCardKindFor(data)) }</p>
+			</div>
+		</div>
+	}
+}
+
+templ migrationForm(data migrationData) {
+	@ui.CardRaw("card-border", "p-5", nil) {
+		if migrationCardKindFor(data) == migrationCardResync {
+			<h2 class="text-base font-semibold">Objects lag the installed schema</h2>
+			<p class="text-base-content/55 mt-1 text-sm">The target is the active schema (from == to). Preview then Execute re-stamps conforming objects to the installed schema version — no renames or type changes. Objects that do not conform are dropped and still block without Force.</p>
+			if data.SuggestedPack != "" {
+				<p class="text-base-content/55 mt-1 text-xs">Suggested target: <span class="text-base-content font-medium">{ data.SuggestedPack }</span></p>
+			}
+		} else {
+			<h2 class="text-base font-semibold">Migrate</h2>
+			<p class="text-base-content/55 mt-1 text-sm">Preview or execute a schema migration between two schema versions.</p>
+		}
+		<form method="post" action="/blueprints/migrate" class="mt-4 flex flex-col gap-3">
+			if migrationCardKindFor(data) == migrationCardResync && len(data.ActivePacks) > 1 {
+				<label class="form-control">
+					<span class="label-text text-xs font-medium">Pack to re-stamp</span>
+					<select name="resyncPack" class="select select-bordered select-sm w-full">
+						for _, p := range data.ActivePacks {
+							<option value={ p.SchemaID } selected?={ p.SchemaID == data.FromID }>{ activePackLabel(p) }</option>
+						}
+					</select>
+					<span class="label-text-alt text-base-content/50">Each active pack re-stamps its objects to its own installed version (from == to).</span>
+				</label>
+			} else {
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+					<label class="form-control">
+						<span class="label-text text-xs font-medium">From schema</span>
+						<select name="from" class="select select-bordered select-sm w-full">
+							for _, g := range schemaOptionGroups(data.History) {
+								<optgroup label={ g.Name }>
+									for _, h := range g.Options {
+										<option value={ h.SchemaID } selected?={ h.SchemaID == data.FromID }>{ schemaOptionLabel(h) }</option>
+									}
+								</optgroup>
+							}
+						</select>
+					</label>
+					<label class="form-control">
+						<span class="label-text text-xs font-medium">To schema</span>
+						<select name="to" class="select select-bordered select-sm w-full">
+							for _, g := range schemaOptionGroups(data.History) {
+								<optgroup label={ g.Name }>
+									for _, h := range g.Options {
+										<option value={ h.SchemaID } selected?={ h.SchemaID == data.ToID }>{ schemaOptionLabel(h) }</option>
+									}
+								</optgroup>
+							}
+						</select>
+					</label>
+				</div>
+			}
+			<label class="flex items-center gap-2">
+				<input type="checkbox" name="force" value="true" class="checkbox checkbox-sm"/>
+				<span class="text-sm">Force (bypass dangerous-migration block)</span>
+			</label>
+			<div class="flex gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--eye",
+					Attrs:   templ.Attributes{"name": "action", "value": "preview"},
+				}) {
+					Preview
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--play",
+					Attrs:   templ.Attributes{"name": "action", "value": "execute"},
+				}) {
+					Execute
+				}
+			</div>
+		</form>
+	}
+}
+
+templ previewSection(data migrationData) {
+	if data.Preview != nil {
+		@ui.Section("Dry-run plan", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<p class="text-base-content/55 text-sm">What the migration will change. Nothing is executed until you press Execute.</p>
+			<div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+				@ui.Badge(ui.BadgeProps{Label: data.Preview.OverallRiskLevel, Variant: riskBadgeVariant(data.Preview.OverallRiskLevel), Size: ui.BadgeSizeSM, Icon: "lucide--shield"})
+				<span class="text-base-content/55 text-sm">Migrates <span class="text-base-content font-medium">{ data.Preview.TotalObjects }</span> objects</span>
+				<div class="grow"></div>
+				if data.Preview.CanProceed {
+					@ui.Badge(ui.BadgeProps{Label: "can proceed", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+				} else {
+					@ui.Badge(ui.BadgeProps{Label: "blocked", Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Dot: true})
+				}
+			</div>
+			if !data.Preview.CanProceed && data.Preview.BlockReason != "" {
+				<div class="mt-3">
+					@ui.Alert(ui.AlertProps{Type: ui.AlertError, Style: ui.AlertStyleOutline, Icon: "lucide--shield-alert", Message: data.Preview.BlockReason})
+				</div>
+			}
+			if data.Preview.Plan != nil {
+				<div class="mt-4 grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
+					if len(data.Preview.Plan.TypeRenames) > 0 {
+						@chipRow("Type renames", "mb-1.5", true) {
+							for _, it := range data.Preview.Plan.TypeRenames {
+								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+									<span class="text-base-content/70">{ it.From }</span>
+									<span class="text-base-content/35"> → </span>
+									<span class="text-base-content">{ it.To }</span>
+								</span>
+							}
+						}
+					}
+					if len(data.Preview.Plan.PropertyRenames) > 0 {
+						@chipRow("Property renames", "mb-1.5", true) {
+							for _, it := range data.Preview.Plan.PropertyRenames {
+								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+									<span class="text-base-content/70">{ it.TypeName }.{ it.From }</span>
+									<span class="text-base-content/35"> → </span>
+									<span class="text-base-content">{ it.To }</span>
+								</span>
+							}
+						}
+					}
+					if len(data.Preview.Plan.RemovedProperties) > 0 {
+						@chipRow("Removed properties", "mb-1.5", true) {
+							for _, it := range data.Preview.Plan.RemovedProperties {
+								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+									<span class="text-base-content/60">{ it.TypeName }.{ it.Name }</span>
+									<span class="text-base-content/40"> archived</span>
+								</span>
+							}
+						}
+					}
+					if len(data.Preview.Plan.AddedTypes) > 0 {
+						@chipRow("Added types", "mb-1.5", true) {
+							for _, t := range data.Preview.Plan.AddedTypes {
+								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+									<span class="text-success">+</span> { t }
+								</span>
+							}
+						}
+					}
+					if len(data.Preview.Plan.AddedProperties) > 0 {
+						@chipRow("Added properties", "mb-1.5", true) {
+							for _, it := range data.Preview.Plan.AddedProperties {
+								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+									<span class="text-success">+</span> { it.TypeName }.{ it.Name }
+								</span>
+							}
+						}
+					}
+				</div>
+				if len(data.Preview.PerTypeResults) > 0 {
+					<div class="mt-5 overflow-x-auto">
+						<table class="table table-sm">
+							<thead>
+								<tr>
+									<th>Type</th>
+									<th class="text-right">Objects</th>
+									<th>Risk</th>
+									<th>Migrated</th>
+									<th>Dropped</th>
+									<th>Added</th>
+									<th>Coerced</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, r := range data.Preview.PerTypeResults {
+									<tr>
+										<td class="font-mono text-xs font-medium">{ r.TypeName }</td>
+										<td class="text-right font-mono text-xs">{ r.ObjectCount }</td>
+										<td>
+											@ui.Badge(ui.BadgeProps{Label: r.RiskLevel, Variant: riskBadgeVariant(r.RiskLevel), Size: ui.BadgeSizeXS})
+										</td>
+										<td class="font-mono text-xs">{ joinOrDash(r.MigratedProps) }</td>
+										<td class="font-mono text-xs">{ joinOrDash(r.DroppedProps) }</td>
+										<td class="font-mono text-xs">{ joinOrDash(r.AddedProps) }</td>
+										<td class="font-mono text-xs">{ joinOrDash(r.CoercedProps) }</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				}
+			}
+		}
+	}
+}
+
+templ rollbackForm() {
+	@ui.CardRaw("card-border", "p-5", nil) {
+		<h2 class="text-base font-semibold">Rollback</h2>
+		<p class="text-base-content/55 mt-1 text-sm">Restore object data to a prior schema version (from the migration archive).</p>
+		<form method="post" action="/blueprints/migrate/rollback" class="mt-4 flex flex-wrap items-end gap-3">
+			<label class="form-control grow">
+				<span class="label-text text-xs font-medium">To version</span>
+				<input type="text" name="toVersion" placeholder="e.g. 1.0.0" class="input input-bordered input-sm w-full"/>
+			</label>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--undo-2",
+			}) {
+				Rollback
+			}
+		</form>
+	}
+}
+
+templ validationSection(data migrationData) {
+	@ui.Section("Schema health", ui.SectionProps{
+		Margin:    "mt-6",
+		Empty:     data.Validation == nil,
+		EmptyIcon: "lucide--stethoscope", EmptyTitle: "No validation data", EmptyDesc: "Validation is unavailable.",
+		Raw: true,
+	}) {
+		if data.Validation.StaleObjects > 0 {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--shield-alert",
+				Message: staleObjectsMessage(data.Validation, migrationCardKindFor(data)),
+			})
+			if len(data.StaleGroups) > 0 {
+				@staleObjectGroups(data.StaleGroups)
+			}
+		} else {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertSuccess,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--shield-check",
+				Message: "All " + strconv.Itoa(data.Validation.TotalObjects) + " objects match the installed schemas.",
+			})
+		}
+	}
+}
+
+// staleObjectGroups renders the per-object drift detail grouped by owning pack
+// then object type: which object/key drifted and why (stamp lag vs NULL stamp
+// vs content write).
+templ staleObjectGroups(groups []stalePackGroup) {
+	<div class="mt-4 flex flex-col gap-4">
+		for _, pg := range groups {
+			<div>
+				<div class="flex flex-wrap items-center gap-2">
+					@ui.IconSpan("lucide--package", "size-4 text-base-content/45")
+					<span class="text-xs font-semibold tracking-wide uppercase">{ packGroupLabel(pg.Pack) }</span>
+					@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(pg.Count) + " stale", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+				</div>
+				<div class="mt-2 overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th>Type</th>
+								<th>Object</th>
+								<th>Issue</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, tg := range pg.Types {
+								for _, it := range tg.Items {
+									<tr>
+										<td class="font-mono text-xs">{ tg.Type }</td>
+										<td class="font-mono text-xs">
+											<span class="font-medium">{ objectRefLabel(it) }</span>
+											if it.Key != "" && it.EntityID != "" {
+												<span class="text-base-content/40"> · { it.EntityID }</span>
+											}
+										</td>
+										<td>
+											<div class="flex flex-wrap items-center gap-1">
+												for _, iss := range it.Issues {
+													@ui.Badge(ui.BadgeProps{Label: staleIssueLabel(iss), Variant: staleIssueVariant(iss), Size: ui.BadgeSizeXS})
+												}
+											</div>
+											if len(it.Issues) > 0 {
+												<span class="text-base-content/45 text-[11px]">{ strings.Join(it.Issues, "; ") }</span>
+											}
+										</td>
+									</tr>
+								}
+							}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		}
+	</div>
+}
+
+templ historySection(data migrationData) {
+	@cardList("Schema install history", cardListProps{
+		Margin:    "mt-6",
+		Empty:     len(data.History) == 0,
+		EmptyIcon: "lucide--history", EmptyTitle: "No history", EmptyDesc: "Schema install/uninstall events will show up here.",
+	}) {
+		for _, h := range data.History {
+				<div class="flex flex-wrap items-center gap-3 px-4 py-3">
+					<div class="min-w-0 grow">
+						<p class="truncate text-sm font-medium">{ h.Name }</p>
+						<p class="text-base-content/50 font-mono text-[11px]">v{ h.Version } · { h.SchemaID }</p>
+					</div>
+					if h.Active {
+						@ui.Badge(ui.BadgeProps{Label: "active", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+					} else {
+						@ui.Badge(ui.BadgeProps{Label: "removed", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
+					}
+				<span class="text-base-content/40 text-xs whitespace-nowrap">{ relTime(h.InstalledAt) }</span>
+			</div>
+		}
+	}
+}

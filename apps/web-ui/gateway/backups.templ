@@ -1,0 +1,571 @@
+package main
+
+import (
+	"net/url"
+	"strings"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Backups ---
+
+// BackupsPage renders the backups browser: an inline create form plus the
+// active project's backups (most recent first). State precedence mirrors the
+// skills page: a real load failure (Memory unreachable, project with no org)
+// renders the whole-page error state; a gated Memory (list 404 → unavailable)
+// degrades to an "unavailable" state instead of an error (design D6); an empty
+// list renders the "no backups" empty state. flashMsg/flashErr surface PRG
+// feedback from the create/download/delete flows.
+templ BackupsPage(backups []Backup, total int, unavailable string, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@backupsHeader(total, loadErr == nil && unavailable == "")
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageError("Failed to load backups", loadErr)
+		} else if unavailable != "" {
+			@backupsUnavailable(unavailable)
+		} else {
+			@backupCreateForm()
+			if len(backups) == 0 {
+				@backupsEmpty()
+			} else {
+				if backupsAnyCreating(backups) {
+					@backupsProgressNote()
+					@templ.Raw(`<script type="text/javascript">(function(){setTimeout(function(){window.location.reload();},4000);})();</script>`)
+				}
+				@backupsTable(backups)
+			}
+		}
+		@restoreUnavailableNote()
+	}
+}
+
+// backupsHeader is the page header. The restore marker stays visible in every
+// state so the "not yet available" truth never disappears (design D5).
+templ backupsHeader(total int, ok bool) {
+	@pageHeader("Memory Browser", "Backups", "Snapshots of the active project's documents, objects, and chat — with integrity checksums.") {
+		<div class="flex flex-wrap items-center gap-2">
+			if ok {
+				@countBadge(total, "backup", "lucide--archive")
+			}
+			@ui.Badge(ui.BadgeProps{
+				Label:   "Restore: later Memory release",
+				Variant: ui.BadgeGhost,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--clock",
+			})
+		</div>
+	}
+}
+
+// restoreUnavailableNote documents that restore is deliberately not wired
+// (design D5): Memory's restore endpoint is a hardcoded 501, so the gateway
+// neither offers nor issues a restore request.
+templ restoreUnavailableNote() {
+	<div class="mt-6">
+		<p class="text-base-content/40 flex items-center gap-1.5 text-xs">
+			@ui.IconSpan("lucide--info", "size-3.5 shrink-0")
+			Restore is not available yet — the Memory service returns "not implemented". It ships in a later Memory release.
+		</p>
+	</div>
+}
+
+// backupCreateForm is the inline create form (PRG → POST /backups). Every
+// gateway-created backup is a full backup (the create endpoint has no type or
+// parent selectors); the toggles cover what the archive includes and how long
+// memory keeps it.
+templ backupCreateForm() {
+	@ui.Section("Create a backup", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<form class="flex flex-col gap-4" method="post" action="/backups">
+			@form.FormControl("backup-retention", "Retention", form.LabelAbove, "How many days to keep the archive before it expires. Default 30, valid 1–365.", "", nil) {
+				<input id="backup-retention" name="retentionDays" type="number" min="1" max="365" value="30" class="input w-full sm:max-w-40"/>
+			}
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+				<label class="bg-base-200/40 flex items-start justify-between gap-3 rounded-lg border border-base-content/10 p-3">
+					<span class="text-sm font-medium">Include deleted items</span>
+					<input name="includeDeleted" type="checkbox" class="checkbox checkbox-sm mt-0.5"/>
+				</label>
+				<label class="bg-base-200/40 flex items-start justify-between gap-3 rounded-lg border border-base-content/10 p-3">
+					<span class="text-sm font-medium">Include chat</span>
+					<input name="includeChat" type="checkbox" class="checkbox checkbox-sm mt-0.5"/>
+				</label>
+			</div>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--archive",
+				}) {
+					Start backup
+				}
+			}
+		</form>
+	}
+}
+
+// backupsProgressNote shows while any backup is still creating, next to the
+// auto-refresh poll.
+templ backupsProgressNote() {
+	@ui.SoftBox(ui.SoftBoxProps{Class: "mb-4 flex items-center gap-2"}) {
+		@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-base-content/40")
+		<p class="text-base-content/55 text-xs">Backup in progress — this page refreshes automatically until it finishes.</p>
+	}
+}
+
+// backupsUnavailable is the feature-gated degrade state (design D6): Memory
+// answered 404 on the list because the backup routes are disabled, so the page
+// shows a disabled/empty state instead of a hard error.
+templ backupsUnavailable(reason string) {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--archive",
+		Title:       "Backups unavailable",
+		Description: reason,
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Badge(ui.BadgeProps{
+			Label:   "disabled in this Memory service",
+			Variant: ui.BadgeWarning,
+			Size:    ui.BadgeSizeXS,
+			Icon:    "lucide--lock",
+		})
+	}
+}
+
+// backupsEmpty is the "no backups yet" empty state (not an error).
+templ backupsEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--archive",
+		Title:       "No backups yet",
+		Description: "Start the first backup — it captures the project's documents, objects, and chat as a downloadable archive.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
+}
+
+// backupsTable lists the backups, most recent first, each row carrying its
+// status, progress, size, creation time, and expiry. The row title links to the
+// full details page; download is offered only for "ready" backups; every row
+// can be deleted via its confirm dialog.
+templ backupsTable(backups []Backup) {
+	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+		@table.TableWithProps(table.TableProps{Bordered: false}) {
+			@table.TableHead() {
+				@table.TableHeadRow() {
+					@table.TableHeadCell("Backup")
+					@table.TableHeadCell("Status")
+					@table.TableHeadCell("Size")
+					@table.TableHeadCell("Created")
+					@table.TableHeadCell("")
+				}
+			}
+			@table.TableBody() {
+				for _, b := range backups {
+					@backupRow(b)
+				}
+			}
+		}
+	}
+}
+
+// backupRow renders one backup row plus its delete-confirm dialog (rendered
+// after the table so the modal never nests inside table markup). The title
+// links to the details page and the action cluster carries view/download/delete.
+templ backupRow(b Backup) {
+	{{ meta := backupMetaLine(b) }}
+	@table.TableRow(b.ID, true, templ.Attributes{"class": "memory-rise"}) {
+		@table.TableCell("", nil) {
+			<div class="flex items-center gap-3">
+				@ui.IconTile("lucide--archive", ui.IconTileProps{Tone: "primary"})
+				<div class="min-w-0">
+					<div class="flex flex-wrap items-center gap-1.5">
+						<a href={ templ.URL("/backups/" + url.PathEscape(b.ID)) } class="block truncate text-sm font-medium hover:text-primary hover:underline">{ backupTitle(b) }</a>
+						@ui.Badge(ui.BadgeProps{
+							Label:   backupTypeLabel(b.BackupType),
+							Variant: backupTypeIntent(b.BackupType),
+							Size:    ui.BadgeSizeXS,
+						})
+					</div>
+					@monoMeta(shortID(b.ID), "text-base-content/40")
+					if meta != "" {
+						<p class="text-base-content/50 line-clamp-1 mt-0.5 max-w-xs text-xs" title={ meta }>
+							{ meta }
+						</p>
+					}
+				</div>
+			</div>
+		}
+		@table.TableCell("", nil) {
+			@ui.Badge(ui.BadgeProps{
+				Label:   backupStatusLabel(b.Status),
+				Variant: backupStatusIntent(b.Status),
+				Size:    ui.BadgeSizeXS,
+				Dot:     true,
+				Animate: backupStatusAnimate(b.Status),
+			})
+			if b.Status == backupStatusCreating {
+				<div class="mt-2 w-28">
+					<progress class="progress progress-info h-1 w-full" value={ b.Progress } max="100"></progress>
+					<p class="text-base-content/50 mt-1 text-[11px]">{ b.Progress }%</p>
+				</div>
+			}
+			if b.ErrorMessage != nil && *b.ErrorMessage != "" && b.Status == backupStatusFailed {
+				<p class="text-error mt-1 max-w-52 truncate text-[11px]" title={ *b.ErrorMessage }>{ *b.ErrorMessage }</p>
+			}
+		}
+		@table.TableCell("", nil) {
+			<span class="text-base-content/80 text-xs whitespace-nowrap">{ backupSizeLabel(b.SizeBytes) }</span>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-base-content/70 text-xs whitespace-nowrap">{ backupCreatedLabel(b.CreatedAt) }</span>
+			if b.Status == backupStatusReady && b.ExpiresAt != nil {
+				<p class="text-base-content/40 text-[11px]">expires { backupDate(b.ExpiresAt) }</p>
+			}
+		}
+		@table.TableCell("text-right", nil) {
+			<div class="flex items-center justify-end gap-1">
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeLink,
+					Href:      "/backups/" + url.PathEscape(b.ID),
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					Shape:     ui.ButtonShapeSquare,
+					Icon:      "lucide--eye",
+					AriaLabel: "View backup " + shortID(b.ID),
+				})
+				if b.Status == backupStatusReady {
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeLink,
+						Href:      "/backups/" + url.PathEscape(b.ID) + "/download",
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--download",
+						AriaLabel: "Download backup " + shortID(b.ID),
+					})
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					Shape:      ui.ButtonShapeSquare,
+					Icon:       "lucide--trash-2",
+					ExtraClass: "text-error hover:text-error",
+					AriaLabel:  "Delete backup " + shortID(b.ID),
+					OnClick:    openBackupDelete(b.ID),
+				})
+			</div>
+		}
+	}
+	@backupDeleteDialog(b)
+}
+
+// backupDeleteDescription is the delete-confirm detail paragraph.
+templ backupDeleteDescription(b Backup) {
+	<p class="text-base-content/55 mt-1 text-sm">
+		This permanently removes the <span class="font-medium text-base-content">{ backupTypeLabel(b.BackupType) }</span> backup of { backupTitle(b) } created { backupCreatedLabel(b.CreatedAt) }. Its stored archive is deleted and cannot be restored.
+	</p>
+}
+
+// backupDeleteDialog confirms deletion before the POST to /backups/:id/delete.
+templ backupDeleteDialog(b Backup) {
+	@confirmDeleteDialog("backup-delete-"+b.ID, "backup", backupDeleteDescription(b)) {
+		<form method="post" action={ templ.URL("/backups/" + url.PathEscape(b.ID) + "/delete") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Delete backup
+				}
+			}
+		</form>
+	}
+}
+
+// openBackupDelete opens one row's delete-confirm dialog.
+script openBackupDelete(id string) {
+	var d = document.getElementById("backup-delete-" + id);
+	if (d) d.showModal();
+}
+
+// backupTitle names a backup row: the project name when known, else a generic
+// "Backup <short id>".
+func backupTitle(b Backup) string {
+	if b.ProjectName != "" {
+		return b.ProjectName
+	}
+	return "Backup " + shortID(b.ID)
+}
+
+// backupMetaLine is the compact second line under a backup's name: the stats
+// summary, then the include flags (chat/deleted) when set. It returns "" when
+// there is nothing to show, so the row can omit the line entirely.
+func backupMetaLine(b Backup) string {
+	parts := make([]string, 0, 2)
+	if s := backupStatsSummary(b.Stats); s != "" {
+		parts = append(parts, s)
+	}
+	if s := backupIncludesLabel(b.Includes); s != "" {
+		parts = append(parts, "includes "+s)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// --- Backup details ---
+
+// BackupDetailPage renders one backup: header actions (back/download/delete),
+// an overview, the contents statistics, the archive settings, a static
+// archive-format explainer, and the integrity checksums. A load failure renders
+// the whole-page error state instead. The page degrades cleanly for creating
+// and failed backups (no checksums, partial stats, no broken layout).
+templ BackupDetailPage(b *Backup, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if loadErr != nil || b == nil {
+			@pageError("Backup unavailable", backupLoadErr(b, loadErr))
+		} else {
+			@backupDetailHeader(b)
+			@backupDetailOverview(b)
+			@backupDetailStats(b)
+			@backupDetailSettings(b)
+			@backupDetailArchiveFormat(b)
+			@backupDetailIntegrity(b)
+			@backupDeleteDialog(*b)
+		}
+	}
+}
+
+// backupDetailHeader is the detail header: title, status/type badges, and the
+// back/download/delete actions. Download is offered only for ready backups.
+templ backupDetailHeader(b *Backup) {
+	@pageHeader("Backups", backupTitle(*b), "A snapshot of the active project's documents, objects, and chat.") {
+		<div class="flex flex-wrap items-center gap-2">
+			@ui.Badge(ui.BadgeProps{
+				Label:   backupStatusLabel(b.Status),
+				Variant: backupStatusIntent(b.Status),
+				Size:    ui.BadgeSizeXS,
+				Dot:     true,
+				Animate: backupStatusAnimate(b.Status),
+			})
+			@ui.Badge(ui.BadgeProps{
+				Label:   backupTypeLabel(b.BackupType),
+				Variant: backupTypeIntent(b.BackupType),
+				Size:    ui.BadgeSizeXS,
+			})
+			<div class="flex flex-wrap items-center gap-1">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/backups",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--arrow-left",
+				}) {
+					Back to backups
+				}
+				if b.Status == backupStatusReady {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/backups/" + url.PathEscape(b.ID) + "/download",
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--download",
+					}) {
+						Download
+					}
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					Icon:       "lucide--trash-2",
+					ExtraClass: "text-error hover:text-error",
+					OnClick:    openBackupDelete(b.ID),
+				}) {
+					Delete
+				}
+			</div>
+		</div>
+	}
+}
+
+// backupDetailField is one label/value cell in a <dl> detail grid.
+templ backupDetailField(label, value string) {
+	<div>
+		<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
+		<dd class="text-base-content/85 mt-1 text-sm break-words">{ value }</dd>
+	</div>
+}
+
+// backupDetailOverview is the identity/metadata grid.
+templ backupDetailOverview(b *Backup) {
+	@ui.Section("Overview", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+		<dl class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+			@backupDetailField("Project", backupTextOrDash(b.ProjectName))
+			@backupDetailField("Backup type", backupTypeLabel(b.BackupType))
+			@backupDetailField("Status", backupStatusLabel(b.Status))
+			@backupDetailField("Size", backupSizeLabel(b.SizeBytes))
+			@backupDetailField("Created", backupCreatedLabel(b.CreatedAt))
+			@backupDetailField("Completed", backupDetailTime(b.CompletedAt))
+			@backupDetailField("Expires", backupDate(b.ExpiresAt))
+			@backupDetailField("Created by", backupCreatedBy(b.CreatedBy))
+			<div>
+				<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Progress</dt>
+				<dd class="text-base-content/85 mt-1 text-sm">
+					if b.Status == backupStatusCreating {
+						<div class="flex items-center gap-2">
+							<progress class="progress progress-info h-1 w-32" value={ b.Progress } max="100"></progress>
+							<span class="text-base-content/70 text-xs">{ b.Progress }%</span>
+						</div>
+					} else {
+						<span>{ b.Progress }%</span>
+					}
+				</dd>
+			</div>
+			<div class="sm:col-span-2 lg:col-span-3">
+				<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Backup id</dt>
+				<dd class="mt-1">
+					<code class="rounded bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.ID }</code>
+				</dd>
+			</div>
+			<div class="sm:col-span-2 lg:col-span-3">
+				<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Storage key</dt>
+				<dd class="mt-1">
+					<code class="rounded bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.StorageKey }</code>
+				</dd>
+			</div>
+		</dl>
+	}
+}
+
+// backupDetailStats is the "what's in the archive" section the details page
+// exists for: one stat card per known Stats key. An empty map (a backup still
+// creating, or one that failed before counting) shows a neutral note.
+templ backupDetailStats(b *Backup) {
+	@ui.Section("Contents", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+		{{ rows := backupStatRows(b.Stats) }}
+		if len(rows) == 0 {
+			@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-center gap-2"}) {
+				@ui.IconSpan("lucide--clock", "size-4 shrink-0 text-base-content/40")
+				<p class="text-base-content/55 text-xs">Content counts are not available yet — they appear once the backup finishes.</p>
+			}
+		} else {
+			<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+				for _, row := range rows {
+					<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
+						<p class="text-base-content/50 text-[11px] font-medium tracking-wide uppercase">{ row.Label }</p>
+						<p class="text-base-content mt-1 text-lg font-semibold">{ row.Value }</p>
+					</div>
+				}
+			</div>
+		}
+	}
+}
+
+// backupDetailSettings shows the archive's include flags as on/off rows, plus
+// the backup type and its expiry.
+templ backupDetailSettings(b *Backup) {
+	@ui.Section("Settings", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+		<p class="text-base-content/60 mb-3 text-sm">What the archive includes:</p>
+		{{ rows := backupIncludeRows(b.Includes) }}
+		<div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+			for _, row := range rows {
+				<div class="flex items-center justify-between gap-3 rounded-lg border border-base-content/10 bg-base-200/40 px-3 py-2">
+					<span class="text-sm">{ row.Label }</span>
+					if row.On {
+						@ui.Badge(ui.BadgeProps{Label: "Included", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+					} else {
+						@ui.Badge(ui.BadgeProps{Label: "Excluded", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--minus"})
+					}
+				</div>
+			}
+		</div>
+		<dl class="mt-4 grid grid-cols-1 gap-x-6 gap-y-4 border-t border-base-content/10 pt-4 sm:grid-cols-2">
+			@backupDetailField("Backup type", backupTypeLabel(b.BackupType))
+			@backupDetailField("Expires", backupDate(b.ExpiresAt))
+		</dl>
+	}
+}
+
+// backupDetailArchiveFormat documents the on-disk archive layout. It is a
+// static explainer: the Memory API exposes the backup entity (settings and
+// stats above), not the manifest contents, so the page cannot list live
+// archive entries.
+templ backupDetailArchiveFormat(b *Backup) {
+	@ui.Section("Archive format", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+		<p class="text-base-content/70 text-sm">
+			The archive is a ZIP stored at <code class="rounded bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all">{ b.StorageKey }</code>. It contains:
+		</p>
+		<ul class="text-base-content/70 mt-3 flex flex-col gap-2 text-sm">
+			<li class="flex gap-2">
+				@ui.IconSpan("lucide--file-json", "mt-0.5 size-4 shrink-0 text-base-content/40")
+				<span><span class="text-base-content font-medium">manifest.json</span> — backup metadata: version, schema version, creation time, backup type, project info, contents stats, the exported files map, and checksums.</span>
+			</li>
+			<li class="flex gap-2">
+				@ui.IconSpan("lucide--database", "mt-0.5 size-4 shrink-0 text-base-content/40")
+				<span><span class="text-base-content font-medium">Database dump</span> — the project's documents, chunks, and graph data.</span>
+			</li>
+			<li class="flex gap-2">
+				@ui.IconSpan("lucide--folder-tree", "mt-0.5 size-4 shrink-0 text-base-content/40")
+				<span><span class="text-base-content font-medium">files/</span> — the exported file tree, keyed by storage key.</span>
+			</li>
+		</ul>
+		@ui.SoftBox(ui.SoftBoxProps{Class: "mt-4 flex items-start gap-2"}) {
+			@ui.IconSpan("lucide--info", "mt-0.5 size-4 shrink-0 text-base-content/40")
+			<p class="text-base-content/55 text-xs">The Memory API exposes the backup entity (the settings and counts above) but not the manifest contents, so this panel documents the archive layout rather than listing its live entries.</p>
+		}
+	}
+}
+
+// backupDetailIntegrity shows the integrity checksums in full. A failed backup
+// surfaces its error prominently and never presents checksums as valid; a
+// backup still creating has no checksums yet.
+templ backupDetailIntegrity(b *Backup) {
+	@ui.Section("Integrity", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+		if b.Status == backupStatusFailed {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: backupErrorMessage(b),
+			})
+			<p class="text-base-content/50 mt-3 text-xs">Checksums are not available for a failed backup.</p>
+		} else if b.Status == backupStatusReady && (backupHasChecksum(b.ManifestChecksum) || backupHasChecksum(b.ContentChecksum)) {
+			<div class="flex flex-col gap-4">
+				if backupHasChecksum(b.ManifestChecksum) {
+					@backupChecksumBlock("Manifest checksum", *b.ManifestChecksum)
+				}
+				if backupHasChecksum(b.ContentChecksum) {
+					@backupChecksumBlock("Content checksum", *b.ContentChecksum)
+				}
+			</div>
+		} else {
+			<p class="text-base-content/55 text-sm">Checksums are recorded once the backup finishes — there is nothing to verify while it is { backupStatusLabel(b.Status) }.</p>
+		}
+	}
+}
+
+// backupChecksumBlock renders one checksum in full: mono, wrapping, and
+// selectable so it can be copied for verification.
+templ backupChecksumBlock(label, value string) {
+	<div>
+		<p class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</p>
+		<code class="rounded-box bg-base-200/60 mt-1 block p-2 font-mono text-xs break-all select-all">{ value }</code>
+	</div>
+}

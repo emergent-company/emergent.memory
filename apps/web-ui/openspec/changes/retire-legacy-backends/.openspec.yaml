@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-26
+goal: Gateway becomes sole client-facing origin; retire admin.py + FastAPI + ui/
+  + legacy bridge

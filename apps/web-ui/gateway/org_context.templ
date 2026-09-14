@@ -1,0 +1,890 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	"github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// projectPendingCount counts the org projects awaiting purge.
+func projectPendingCount(projects []ProjectRef) int {
+	n := 0
+	for _, p := range projects {
+		if p.PendingDeletion() {
+			n++
+		}
+	}
+	return n
+}
+
+// projectDeletableCount counts the org projects still eligible for deletion
+// (anything not already scheduled for purge).
+func projectDeletableCount(projects []ProjectRef) int {
+	n := 0
+	for _, p := range projects {
+		if !p.PendingDeletion() {
+			n++
+		}
+	}
+	return n
+}
+
+// projectDeletionScheduledLabel renders a grounded, nil-safe label for a
+// pending project's scheduled purge time: relative inside the next 24h ("in
+// 58m"), else an absolute "Jan 2, 15:04" stamp. Returns "" when Memory gives
+// no schedule (status-only pending state).
+func projectDeletionScheduledLabel(p ProjectRef) string {
+	if p.DeletionScheduledFor == nil {
+		return ""
+	}
+	t := p.DeletionScheduledFor.Local()
+	d := time.Until(t)
+	switch {
+	case d <= 0:
+		return "any moment"
+	case d < time.Minute:
+		return "in <1m"
+	case d < time.Hour:
+		return "in " + strconv.Itoa(int(d.Minutes())) + "m"
+	case d < 24*time.Hour:
+		return "in " + strconv.Itoa(int(d.Hours())) + "h"
+	default:
+		return t.Format("Jan 2, 15:04")
+	}
+}
+
+// --- Organization context pages ---
+
+// OrgLandingPage renders the active org's projects (GET /orgs/:id): a
+// multi-select data table with a bulk-delete toolbar and per-row action menus
+// (open / delete), or an empty state with a create CTA.
+templ OrgLandingPage(data orgPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Organization unavailable", data.LoadErr)
+		} else {
+			@pageHeader("Organization", data.Org.Name, "Projects in this organization.") {
+				@countBadge(len(data.Projects), "project", "lucide--folder")
+			}
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			if data.CanTransfer {
+				@transferProjectModal(data.Org.ID, data.TransferOrgs)
+			}
+			@ui.PopoverScript()
+			<script>
+			// Transfer destination picker: per-row buttons hand themselves to
+			// openTransferProjectDialog, which copies the row's data-project-id
+			// into the shared dialog's hidden field, names the project in the
+			// heading (textContent — never innerHTML), and shows the modal.
+			// Row action menus are go-daisy ui.Popover components (positioning,
+			// clickaway, Escape and exclusivity handled by the popover runtime).
+			//
+			// The same script drives the shared delete-confirmation dialog and
+			// the restore ("Cancel deletion") action. Everything is scoped to
+			// this page and guarded by one init flag so hx-boost re-runs no-op.
+			if (!window.__orgTransferDialogInit) {
+				window.__orgTransferDialogInit = true;
+
+				function orgClosePopovers() {
+					if (window.goDaisy && window.goDaisy.popover && typeof window.goDaisy.popover.closeAll === 'function') {
+						window.goDaisy.popover.closeAll();
+					}
+				}
+
+				// setBusy flips a button between its idle and busy label spans
+				// (data-busy-idle / data-busy-active) and disables it, so the
+				// POST in flight is visible immediately.
+				function setBusy(btn, busy) {
+					if (!btn) return;
+					btn.disabled = busy;
+					var idle = btn.querySelector('[data-busy-idle]');
+					var active = btn.querySelector('[data-busy-active]');
+					if (idle) idle.hidden = busy;
+					if (active) active.hidden = !busy;
+				}
+				function setProjectDeleteBusy(busy) {
+					var btns = document.querySelectorAll('[data-project-delete-busy]');
+					for (var i = 0; i < btns.length; i++) setBusy(btns[i], busy);
+				}
+
+				function openTransferProjectDialog(btn) {
+					orgClosePopovers();
+					var t = document.activeElement;
+					if (t && typeof t.blur === 'function') t.blur();
+					var hidden = document.getElementById('transfer-project-id');
+					if (hidden) hidden.value = btn.getAttribute('data-project-id') || '';
+					var label = document.getElementById('transfer-project-name');
+					if (label) label.textContent = btn.getAttribute('data-project-name') || 'project';
+					var d = document.getElementById('transfer-project-modal');
+					if (d) d.showModal();
+					var s = document.getElementById('transfer-destination-org');
+					if (s) s.focus();
+				}
+				function closeTransferProjectDialog() {
+					var d = document.getElementById('transfer-project-modal');
+					if (d) d.close();
+				}
+
+				// Rebuild the dialog form's hidden projectId fields (one per
+				// selected project — the same repeated-field shape the bulk
+				// form always posted).
+				function setProjectDeleteIds(ids) {
+					var box = document.getElementById('project-delete-ids');
+					if (!box) return;
+					box.textContent = '';
+					for (var i = 0; i < ids.length; i++) {
+						var input = document.createElement('input');
+						input.type = 'hidden';
+						input.name = 'projectId';
+						input.value = ids[i];
+						box.appendChild(input);
+					}
+				}
+
+				// showProjectDeleteDialog fills the shared dialog (heading via
+				// textContent — never innerHTML) and shows it, focusing the
+				// confirm button so the keyboard can act at once.
+				function showProjectDeleteDialog(heading, detail) {
+					orgClosePopovers();
+					var d = document.getElementById('project-delete-modal');
+					if (!d) return;
+					setProjectDeleteBusy(false);
+					var h = d.querySelector('h3');
+					if (h) {
+						h.textContent = heading;
+						if (!h.id) h.id = 'project-delete-heading';
+						d.setAttribute('aria-labelledby', h.id);
+					}
+					var p = document.getElementById('project-delete-detail');
+					if (p) p.textContent = detail;
+					d.showModal();
+					var confirm = d.querySelector('form [data-project-delete-busy]');
+					if (confirm && typeof confirm.focus === 'function') confirm.focus();
+				}
+
+				function namesSummary(names) {
+					var shown = names.slice(0, 3).join(', ');
+					if (names.length > 3) shown += ', and ' + (names.length - 3) + ' more';
+					return shown + '.';
+				}
+
+				// Row path: one project, straight from the action-menu button.
+				function openProjectDeleteDialog(btn) {
+					setProjectDeleteIds([btn.getAttribute('data-delete-project-id') || '']);
+					var name = btn.getAttribute('data-delete-project-name') || 'this project';
+					showProjectDeleteDialog(
+						'Delete ' + name + '?',
+						'This project moves to a scheduled-deletion state and can be cancelled before it is purged.'
+					);
+				}
+
+				// Bulk path: mirror of the toolbar's checked rows. Pending
+				// projects carry no checkbox, so they can never appear here.
+				function openBulkProjectDeleteDialog(btn) {
+					var form = btn.closest('form');
+					if (!form) return;
+					var boxes = form.querySelectorAll('input[name=projectId]:checked');
+					if (!boxes.length) return;
+					var ids = [];
+					var names = [];
+					for (var i = 0; i < boxes.length; i++) {
+						ids.push(boxes[i].value);
+						names.push(boxes[i].getAttribute('data-project-name') || boxes[i].value);
+					}
+					setProjectDeleteIds(ids);
+					var noun = ids.length === 1 ? 'project' : 'projects';
+					showProjectDeleteDialog(
+						'Delete ' + ids.length + ' selected ' + noun + '?',
+						namesSummary(names) + ' They move to a scheduled-deletion state and can be cancelled before they are purged.'
+					);
+				}
+
+				// onsubmit on the dialog form: busy the submit buttons while
+				// the native POST runs. Cancel uses formmethod="dialog" (the
+				// browser closes the dialog) and must not show delete busy state.
+				function submitProjectDelete(ev) {
+					var submitter = ev && ev.submitter;
+					var method = submitter && submitter.getAttribute('formmethod');
+					if (method && method.toLowerCase() === 'dialog') return true;
+					setProjectDeleteBusy(true);
+					return true;
+				}
+
+				// Restore path: native PRG through the hidden restore form so
+				// the handler's 303 lands back on the org landing with the
+				// "Deletion cancelled." flash.
+				function cancelProjectDeletion(btn) {
+					var form = document.getElementById('project-restore-form');
+					if (!form) return;
+					var input = form.querySelector('input[name=projectId]');
+					if (input) input.value = btn.getAttribute('data-delete-project-id') || '';
+					setBusy(btn, true);
+					orgClosePopovers();
+					form.requestSubmit();
+				}
+			}
+			</script>
+			{{ pendingCount := projectPendingCount(data.Projects) }}
+			{{ deletableCount := projectDeletableCount(data.Projects) }}
+			if len(data.Projects) > 0 {
+				@projectDeleteDialog(data.Org.ID)
+				@projectRestoreForm(data.Org.ID)
+			}
+			if len(data.Projects) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--folder",
+					Title:       "No projects yet",
+					Description: "Create the first project in this organization.",
+					Bordered:    true,
+					Class:       "py-12",
+				}) {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeButton,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--plus",
+						Attrs:   templ.Attributes{"onclick": "openNewProjectModal()"},
+					}) {
+						Create project
+					}
+				}
+			} else {
+				if pendingCount > 0 {
+					@projectsPendingRefreshNote(pendingCount)
+					@templ.Raw(`<script type="text/javascript">(function(){setTimeout(function(){window.location.reload();},4000);})();</script>`)
+				}
+				@ui.Section("Projects", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
+					@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+						<form method="post" action="/projects/delete" x-data="{ count: 0 }">
+							<input type="hidden" name="orgId" value={ data.Org.ID }/>
+							<div class="flex min-h-11 items-center gap-3 border-b border-base-200 px-4">
+								if deletableCount > 0 {
+									<div x-show="count > 0" class="flex items-center">
+										@ui.Button(ui.ButtonProps{
+											Type:    ui.ButtonTypeSubmit,
+											Variant: ui.ButtonError,
+											Size:    ui.ButtonSM,
+											Attrs: templ.Attributes{
+												"data-project-delete-busy": "true",
+												"onclick":                  "openBulkProjectDeleteDialog(this); return false;",
+											},
+										}) {
+											<span data-busy-idle class="inline-flex items-center gap-2">
+												@ui.IconSpan("lucide--trash-2", "size-4")
+												<span>Delete <span x-text="count"></span> selected</span>
+											</span>
+											<span data-busy-active hidden class="inline-flex items-center gap-2">
+												<span class="loading loading-spinner loading-xs"></span>
+												Scheduling deletion…
+											</span>
+										}
+									</div>
+									<span x-show="count == 0" class="text-base-content/50 ml-auto text-xs">Select projects to delete.</span>
+								} else {
+									<span class="text-base-content/50 text-xs">Every project is scheduled for deletion.</span>
+								}
+							</div>
+							@table.TableWithProps(table.TableProps{Bordered: false}) {
+								@table.TableHead() {
+									@table.TableHeadRow() {
+										<th class="w-10 text-xs font-semibold text-base-content/60 uppercase">
+											if deletableCount > 0 {
+												<input
+													type="checkbox"
+													class="checkbox checkbox-sm"
+													aria-label="Select all projects"
+													@change="($el.form.querySelectorAll('input[name=projectId]').forEach(cb => cb.checked = $el.checked), count = $el.checked ? $el.form.querySelectorAll('input[name=projectId]').length : 0)"
+												/>
+											} else {
+												<span class="sr-only">No projects can be selected</span>
+											}
+										</th>
+										@table.TableHeadCell("Project")
+										<th class="text-xs font-semibold text-base-content/60 uppercase text-right"></th>
+									}
+								}
+								@table.TableBody() {
+									for _, p := range data.Projects {
+										@table.TableRow(p.ID, true, nil) {
+											@table.TableCell("w-10", nil) {
+												if p.PendingDeletion() {
+													// Pending projects are never selectable for
+													// deletion, so they carry no named
+													// checkbox — the select-all query and the
+													// bulk count never see them.
+													<input
+														type="checkbox"
+														class="checkbox checkbox-sm"
+														disabled
+														title="Scheduled for deletion"
+														aria-label={ p.Name + " is scheduled for deletion and cannot be selected" }
+													/>
+												} else {
+													<input
+														type="checkbox"
+														name="projectId"
+														value={ p.ID }
+														data-project-name={ p.Name }
+														class="checkbox checkbox-sm"
+														aria-label={ "Select " + p.Name }
+														@change="count += $el.checked ? 1 : -1"
+													/>
+												}
+											}
+											@table.TableCell("", nil) {
+												<div class="min-w-0">
+													<div class="flex flex-wrap items-center gap-2">
+														<span class="truncate text-sm font-medium">{ p.Name }</span>
+														if p.PendingDeletion() {
+															@ui.Badge(ui.BadgeProps{
+																Label:   "Scheduled for deletion",
+																Variant: ui.BadgeWarning,
+																Size:    ui.BadgeSizeXS,
+																Icon:    "lucide--clock",
+															})
+														}
+													</div>
+													if p.PendingDeletion() {
+														{{ when := projectDeletionScheduledLabel(p) }}
+														<p class="text-base-content/50 mt-0.5 text-xs" title="This project will be permanently removed after the scheduled time. You can cancel the deletion until then.">
+															if when != "" {
+																Permanently removed after { when } — you can still cancel.
+															} else {
+																Permanently removed soon — you can still cancel.
+															}
+														</p>
+													}
+												</div>
+											}
+											@table.TableCell("text-right", nil) {
+												@ui.Popover(ui.PopoverRootProps{}) {
+													@ui.PopoverTrigger(ui.PopoverTriggerProps{
+														Class: "btn btn-ghost btn-sm btn-square",
+														Attrs: templ.Attributes{
+															"aria-haspopup": "menu",
+															"aria-expanded": "false",
+															"aria-label":    "Actions for " + p.Name,
+														},
+													}) {
+														@ui.IconSpan("lucide--ellipsis-vertical", "size-5")
+													}
+													@ui.PopoverContent(ui.PopoverContentProps{
+														Placement: ui.PopoverBottomEnd,
+														Offset:    4,
+														Exclusive: true,
+														Class:     "w-44",
+														Attrs:     templ.Attributes{"role": "menu"},
+													}) {
+														<ul class="menu menu-sm p-1">
+															if p.PendingDeletion() {
+																// A pending project cannot be opened or
+																// transferred — it is on its way out. The
+																// only meaningful action is to cancel the
+																// deletion before the purge runs.
+																<li>
+																	<button
+																		type="button"
+																		class="flex items-center gap-2 text-sm"
+																		data-delete-project-id={ p.ID }
+																		data-delete-project-name={ p.Name }
+																		onclick="cancelProjectDeletion(this)"
+																	>
+																		<span data-busy-idle class="inline-flex items-center gap-2">
+																			<span class="iconify size-4 lucide--undo-2"></span>
+																			Cancel deletion
+																		</span>
+																		<span data-busy-active hidden class="inline-flex items-center gap-2">
+																			<span class="loading loading-spinner loading-xs"></span>
+																			Cancelling…
+																		</span>
+																	</button>
+																</li>
+															} else {
+																<li>
+																	<button type="button" class="flex items-center gap-2 text-sm" hx-post={ templ.URL("/projects/activate?projectId=" + p.ID) }>
+																		<span class="iconify size-4 lucide--folder-open"></span>
+																		Open
+																	</button>
+																</li>
+																if data.CanTransfer {
+																	<li>
+																		<button
+																			type="button"
+																			class="flex items-center gap-2 text-sm"
+																			data-project-id={ p.ID }
+																			data-project-name={ p.Name }
+																			onclick="openTransferProjectDialog(this)"
+																		>
+																			<span class="iconify size-4 lucide--arrow-right-left"></span>
+																			Transfer
+																		</button>
+																	</li>
+																}
+																<li>
+																	<button
+																		type="button"
+																		class="flex items-center gap-2 text-sm text-error"
+																		data-delete-project-id={ p.ID }
+																		data-delete-project-name={ p.Name }
+																		onclick="openProjectDeleteDialog(this)"
+																	>
+																		<span class="iconify size-4 lucide--trash-2"></span>
+																		Delete
+																	</button>
+																</li>
+															}
+														</ul>
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						</form>
+					}
+				}
+			}
+		}
+	}
+}
+
+// projectDeleteDialog is the single confirmation dialog behind both the row
+// Delete action and the bulk toolbar. Rendered once per org landing; the page
+// script fills the heading, the detail line and the hidden projectId fields
+// before showing it, so one dialog serves both paths. Cancel uses
+// formmethod="dialog" to close without submitting; Delete submits to
+// /projects/delete (modalShell disables hx-boost, so the handler's PRG
+// redirect lands back with the flash).
+templ projectDeleteDialog(orgID string) {
+	@confirmDeleteDialog("project-delete-modal", "project", projectDeleteDialogDescription()) {
+		<form id="project-delete-form" method="post" action="/projects/delete" onsubmit="return submitProjectDelete(event)">
+			<input type="hidden" name="orgId" value={ orgID }/>
+			<div id="project-delete-ids" hidden></div>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"data-project-delete-busy": "true"},
+				}) {
+					@projectDeleteButtonContent("Delete", "Scheduling deletion…")
+				}
+			}
+		</form>
+	}
+}
+
+// projectDeleteDialogDescription is the empty detail paragraph the page script
+// writes the grounded explanation into (textContent only — never innerHTML).
+templ projectDeleteDialogDescription() {
+	<p id="project-delete-detail" class="text-base-content/55 mt-1 text-sm"></p>
+}
+
+// projectDeleteButtonContent renders the idle/busy label pair shared by every
+// button that schedules a deletion. setBusy toggles the [hidden] attribute and
+// the button's disabled state while the POST is in flight.
+templ projectDeleteButtonContent(idle, busy string) {
+	<span data-busy-idle class="inline-flex items-center gap-2">
+		@ui.IconSpan("lucide--trash-2", "size-4")
+		{ idle }
+	</span>
+	<span data-busy-active hidden class="inline-flex items-center gap-2">
+		<span class="loading loading-spinner loading-xs"></span>
+		{ busy }
+	</span>
+}
+
+// projectRestoreForm is the hidden native PRG form behind the per-row "Cancel
+// deletion" action (POST /projects/restore, fields projectId + orgId).
+// cancelProjectDeletion copies the row's id in and submits it; hx-boost is off
+// so the handler's 303 returns to the org landing with the "Deletion
+// cancelled." flash.
+templ projectRestoreForm(orgID string) {
+	<form id="project-restore-form" method="post" action="/projects/restore" class="hidden" hx-boost="false">
+		<input type="hidden" name="orgId" value={ orgID }/>
+		<input type="hidden" name="projectId" value=""/>
+	</form>
+}
+
+// projectsPendingRefreshNote shows while at least one project is awaiting
+// purge, next to the auto-refresh poll (only rendered when pendingCount > 0,
+// so a clean org landing never reloads on a timer).
+templ projectsPendingRefreshNote(n int) {
+	@ui.SoftBox(ui.SoftBoxProps{Class: "mb-4 flex items-center gap-2"}) {
+		@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-base-content/40")
+		<p class="text-base-content/55 text-xs">
+			{ strconv.Itoa(n) + " project" + plural(n) } scheduled for deletion — this page refreshes automatically until each purge completes.
+		</p>
+	}
+}
+
+// OrgMembersPage renders the active org's members (GET /orgs/:id/members).
+templ OrgMembersPage(data orgMembersPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Members unavailable", data.LoadErr)
+		} else {
+			@pageHeader("Organization", "Members", "People in "+data.Org.Name+".") {
+				@countBadge(len(data.Members), "member", "lucide--users")
+			}
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			if len(data.Members) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--users",
+					Title:       "No members yet",
+					Description: "Members of this organization appear here.",
+					Bordered:    true,
+					Class:       "py-12",
+				})
+			} else {
+				@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+					@table.TableWithProps(table.TableProps{Bordered: false}) {
+						@table.TableHead() {
+							@table.TableHeadRow() {
+								@table.TableHeadCell("Member")
+								@table.TableHeadCell("Role")
+								@table.TableHeadCell("Since")
+							}
+						}
+						@table.TableBody() {
+							for _, m := range data.Members {
+								@orgMemberRow(m)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// orgMemberRow is one org member row: avatar/initials + identity, role badge,
+// joined date.
+templ orgMemberRow(m OrgMemberDto) {
+	@table.TableRow(m.ID, true, nil) {
+		@table.TableCell("", nil) {
+			<div class="flex items-center gap-3">
+				<div class="shrink-0 text-xs">
+					@ui.AvatarFull(ui.AvatarProps{
+						Name:     orgMemberDisplayName(m),
+						Icon:     "lucide--user",
+						Size:     ui.AvatarSM,
+						Tone:     ui.AvatarToneMuted,
+						Fallback: ui.AvatarFallbackInitials,
+					})
+				</div>
+				<div class="min-w-0">
+					<p class="truncate text-sm font-medium">{ orgMemberDisplayName(m) }</p>
+					<p class="text-base-content/50 truncate text-xs">{ m.Email }</p>
+				</div>
+			</div>
+		}
+		@table.TableCell("", nil) {
+			@roleBadge(m.Role)
+		}
+		@table.TableCell("", nil) {
+			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(m.JoinedAt) }</span>
+		}
+	}
+}
+
+// OrgInvitePage renders the standalone invite-to-organization page
+// (GET /orgs/:id/invite): an email field (with live user-search autofill) and
+// the fixed org_admin role, posting to POST /orgs/:id/invite. The invitation
+// is organization-scoped — no projectId is carried. ?err= surfaces PRG
+// feedback from the invite-create flow; a failed org fetch renders the
+// whole-page error state. The form opts out of hx-boost so the browser runs a
+// native POST/PRG.
+templ OrgInvitePage(data orgInvitePageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Organization unavailable", data.LoadErr)
+		} else {
+			{{ subtitle := "An email invitation carrying the org admin role — they join " + data.Org.Name + " once they accept." }}
+			@detailHeader(crumbsActive(nav.Crumbs("Organization", "/orgs/"+url.PathEscape(data.Org.ID), "Invite a member")), "", "Invite a member", subtitle) {}
+			@flashToasts("", data.FlashErr)
+			@ui.CardRaw("card-border", "p-5", nil) {
+				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/invite") } hx-boost="false" class="flex flex-col gap-4">
+					<input type="hidden" name="orgId" value={ data.Org.ID }/>
+					@form.FormControl("org-invite-email", "Email", form.LabelAbove, "Start typing to match a registered user, or type any email address.", "", nil) {
+						<input
+							id="org-invite-email"
+							name="email"
+							type="email"
+							required
+							list="org-invite-email-options"
+							autocomplete="off"
+							placeholder="name@example.com"
+							class="input w-full"
+							hx-get="/partial/invite-user-search"
+							hx-trigger="input changed delay:300ms"
+							hx-target="#org-invite-email-options"
+							hx-swap="innerHTML"
+						/>
+						<datalist id="org-invite-email-options"></datalist>
+					}
+					@form.FormControl("org-invite-role", "Role", form.LabelAbove, "Organization admins manage the organization, its projects, and its people.", "", nil) {
+						<select id="org-invite-role" name="role" class="select w-full">
+							<option value="org_admin" selected>Org admin</option>
+						</select>
+					}
+					@form.FormActions("", "") {
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--mail-plus",
+						}) {
+							Send invitation
+						}
+					}
+				</form>
+			}
+		}
+	}
+}
+
+// orgSettingsSubNav is the vertical sub-navigation rail for the org Settings
+// hub (Tools / Danger zone), mirroring settingsSubNav. It stacks horizontally
+// on small screens and becomes a sticky left rail on desktop.
+templ orgSettingsSubNav(orgID string, active string) {
+	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Organization settings sections">
+		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/general", active == "general", "lucide--building-2", "General")
+		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings", active == "tools", "lucide--sliders-horizontal", "Tools")
+		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", active == "danger-zone", "lucide--shield-alert", "Danger zone")
+	</nav>
+}
+
+// OrgSettingsPage renders the Tools section of the org Settings hub (GET
+// /orgs/:id/settings): the org's tool-setting overrides. A failed org fetch
+// renders the whole-page error state; flashMsg/flashErr surface PRG feedback
+// from the toggle/delete flows.
+templ OrgSettingsPage(data orgSettingsPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageError("Settings unavailable", data.LoadErr)
+		} else {
+			@pageHeader("Organization", "Settings", "Organization-level tool overrides for "+data.Org.Name+".") {}
+			@layout.Rail(orgSettingsSubNav(data.Org.ID, "tools"), nil) {
+			if len(data.Settings) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--sliders-horizontal",
+					Title:       "No tool overrides",
+					Description: "No organization-level tool overrides are set.",
+					Bordered:    true,
+				})
+			} else {
+					@ui.Section("Tools", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
+						@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+							<div class="divide-y divide-base-200">
+								for _, s := range data.Settings {
+									@orgToolSettingRow(data.Org, s)
+								}
+							</div>
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// OrgSettingsGeneralPage renders the General section of the org Settings hub
+// (GET /orgs/:id/settings/general): the rename form. A failed org fetch renders
+// the whole-page error state; flashMsg/flashErr surface PRG feedback from the
+// rename flow. The form opts out of hx-boost so the browser runs a native
+// POST/PRG — the org name is rendered in the shell (outside #main-content), so
+// a boosted swap would leave the topbar stale.
+templ OrgSettingsGeneralPage(data orgSettingsGeneralPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageError("Settings unavailable", data.LoadErr)
+		} else {
+			@pageHeader("Organization", "Settings", "Organization-level settings for "+data.Org.Name+".") {}
+			@layout.Rail(orgSettingsSubNav(data.Org.ID, "general"), nil) {
+				@ui.Section("General", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+					<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/rename") } hx-boost="false" class="flex max-w-md flex-col gap-4">
+						@form.FormControl("org-name", "Organization name", form.LabelAbove, "Renaming updates the organization everywhere it appears.", "", nil) {
+							<input id="org-name" name="name" type="text" required maxlength="120" value={ data.Org.Name } class="input w-full"/>
+						}
+						@form.FormActions("", "") {
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeSubmit,
+								Variant: ui.ButtonPrimary,
+								Size:    ui.ButtonSM,
+								Icon:    "lucide--check",
+							}) {
+								Save name
+							}
+						}
+					</form>
+				}
+			}
+		}
+	}
+}
+
+// orgToolSettingRow is one org tool-setting override: name + enabled state,
+// with enable/disable and delete forms.
+templ orgToolSettingRow(org *Org, s OrgToolSettingDto) {
+	<div class="flex items-center gap-3 px-5 py-3">
+		<div class="min-w-0 grow">
+			<p class="truncate text-sm font-medium">{ s.ToolName }</p>
+			if s.Enabled {
+				@ui.Badge(ui.BadgeProps{Label: "Enabled", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+			} else {
+				@ui.Badge(ui.BadgeProps{Label: "Disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
+			}
+		</div>
+		if s.Enabled {
+			<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName)) }>
+				<input type="hidden" name="enabled" value="false"/>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) {
+					Disable
+				}
+			</form>
+		} else {
+			<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName)) }>
+				<input type="hidden" name="enabled" value="true"/>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) {
+					Enable
+				}
+			</form>
+		}
+		<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(org.ID) + "/tool-settings/" + url.PathEscape(s.ToolName) + "/delete") }>
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeSubmit,
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				Shape:      ui.ButtonShapeSquare,
+				Icon:       "lucide--trash-2",
+				ExtraClass: "text-error hover:text-error",
+				AriaLabel:  "Delete " + s.ToolName,
+			})
+		</form>
+	</div>
+}
+
+// OrgSettingsDangerZonePage renders the Danger zone section of the org
+// Settings hub (GET /orgs/:id/settings/danger-zone): the delete-organization
+// confirm form. A failed org fetch renders the whole-page error state.
+templ OrgSettingsDangerZonePage(data orgSettingsDangerZonePageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Settings unavailable", data.LoadErr)
+		} else {
+			@detailHeader(crumbsActive(nav.Crumbs("Organization", "/orgs/"+url.PathEscape(data.Org.ID), "Danger zone")), "", "Danger zone", "Deleting an organization removes it and its projects permanently. This cannot be undone.", detailHeaderOpts{Margin: "mb-6"}) {}
+			@layout.Rail(orgSettingsSubNav(data.Org.ID, "danger-zone"), nil) {
+				@ui.Section("Danger zone", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div class="flex items-center gap-3">
+							<div class="bg-error/10 text-error grid size-9 shrink-0 place-items-center rounded-lg border border-error/15">
+								@ui.IconSpan("lucide--trash-2", "size-4.5")
+							</div>
+							<div>
+								<p class="text-sm font-medium">Delete organization</p>
+								<p class="text-base-content/50 text-xs">Permanently delete { data.Org.Name } and its projects. This cannot be undone.</p>
+							</div>
+						</div>
+						// Deleting the current org changes the session context
+						// (org/project), which lives in the shell OUTSIDE
+						// #main-content. A boosted submit would swap only the
+						// content and leave the topbar pointing at the deleted
+						// org, so this form opts out of hx-boost: the native
+						// POST runs a true PRG full load that re-renders the
+						// whole shell. The confirmation becomes a plain
+						// window.confirm on submit (hx-confirm only fires when
+						// htmx handles the request).
+						<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/delete") } hx-boost="false" onsubmit="return confirm('Delete this organization? This cannot be undone.');">
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeSubmit,
+								Variant: ui.ButtonError,
+								Style:   ui.ButtonStyleOutline,
+								Size:    ui.ButtonSM,
+								Icon:    "lucide--trash-2",
+							}) {
+								Delete organization
+							}
+						</form>
+					</div>
+				}
+			}
+		}
+	}
+}
+
+// transferProjectModal is the shared destination picker behind the per-project
+// Transfer row action (org landing; rendered once per page when CanTransfer).
+// openTransferProjectDialog(button) copies the clicked row's data-project-id
+// into the hidden projectId field and shows the dialog; the destination
+// <select> lists only orgs the acting user belongs to other than the source
+// (orgPageData.TransferOrgs), so the source can never be selected and exactly
+// one destination is required. The form posts projectId + orgId + destinationOrgId
+// to /projects/transfer — a plain POST: modalShell disables hx-boost (like the
+// new-project dialog), so the browser submits normally and the handler's PRG
+// 303 sends the user back to the source org view with the flash.
+templ transferProjectModal(sourceOrgID string, orgs []Org) {
+	@modalShell("transfer-project-modal", "", "w-full max-w-sm") {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				<h3 class="text-lg font-semibold">Transfer <span id="transfer-project-name" class="text-base-content"></span></h3>
+				<p class="text-base-content/50 mt-0.5 text-sm">Move this project to another organization you belong to. Its history and settings move with it.</p>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"onclick": "closeTransferProjectDialog()"},
+			})
+		</div>
+		<form method="post" action="/projects/transfer" class="flex flex-col gap-4">
+			<input type="hidden" name="orgId" value={ sourceOrgID }/>
+			<input type="hidden" id="transfer-project-id" name="projectId" value=""/>
+			@form.FormControl("transfer-destination-org", "Destination organization", form.LabelAbove, "", "", nil) {
+				<select id="transfer-destination-org" name="destinationOrgId" required class="select w-full">
+					<option value="" disabled selected>Select an organization</option>
+					for _, o := range orgs {
+						<option value={ o.ID }>{ o.Name }</option>
+					}
+				</select>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"onclick": "closeTransferProjectDialog()"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+				}) {
+					Transfer
+				}
+			}
+		</form>
+	}
+}

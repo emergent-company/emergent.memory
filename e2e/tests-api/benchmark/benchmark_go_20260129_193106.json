@@ -1,0 +1,57 @@
+{
+  "server_type": "go",
+  "base_url": "http://localhost:3002",
+  "concurrent_workers": 10,
+  "iterations_per_worker": 100,
+  "timestamp": "2026-01-29T19:31:05.789844973+01:00",
+  "endpoints": [
+    {
+      "endpoint": "/health",
+      "method": "GET",
+      "total_requests": 1000,
+      "success_requests": 1000,
+      "failed_requests": 0,
+      "min_ms": 0.215,
+      "max_ms": 22.269,
+      "avg_ms": 1.498,
+      "p50_ms": 0.33,
+      "p95_ms": 10.417,
+      "p99_ms": 21.15,
+      "total_ms": 152,
+      "requests_per_second": 6570.505090692649
+    },
+    {
+      "endpoint": "/healthz",
+      "method": "GET",
+      "total_requests": 1000,
+      "success_requests": 1000,
+      "failed_requests": 0,
+      "min_ms": 0.137,
+      "max_ms": 20.56,
+      "avg_ms": 0.596,
+      "p50_ms": 0.215,
+      "p95_ms": 0.71,
+      "p99_ms": 12.089,
+      "total_ms": 60,
+      "requests_per_second": 16514.785687626132
+    },
+    {
+      "endpoint": "/ready",
+      "method": "GET",
+      "total_requests": 1000,
+      "success_requests": 1000,
+      "failed_requests": 0,
+      "min_ms": 0.197,
+      "max_ms": 25.922,
+      "avg_ms": 0.63,
+      "p50_ms": 0.307,
+      "p95_ms": 0.397,
+      "p99_ms": 7.082,
+      "total_ms": 64,
+      "requests_per_second": 15559.29286312507
+    }
+  ],
+  "total_benchmark_ms": 278,
+  "total_requests": 3000,
+  "success_rate_percent": 100
+}

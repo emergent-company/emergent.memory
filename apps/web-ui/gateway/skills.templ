@@ -1,0 +1,363 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	"github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Skills ---
+
+// SkillsPage renders the skill browser: a list of skills. A failed list fetch
+// renders the whole-page error state; flashMsg/flashErr surface PRG feedback
+// from the create/delete flows. assistantAgent gates the "Add with assistant"
+// button ("" hides it); usedBy maps each skill name to its agent-usage count.
+templ SkillsPage(skills []Skill, loadErr error, flashMsg string, flashErr error, assistantAgent string, usedBy map[string]int) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@skillsHeader(len(skills), loadErr == nil, assistantAgent)
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageError("Failed to load skills", loadErr)
+		} else {
+			if len(skills) == 0 {
+				@skillsEmpty()
+			} else {
+				@skillsTable(skills, usedBy)
+			}
+		}
+	}
+}
+
+templ skillsHeader(count int, ok bool, assistantAgent string) {
+	@pageHeader("Memory", "Skills", "Reusable capabilities agents can call — write one, attach it to any agent.") {
+		<div class="flex items-center gap-2">
+			if ok {
+				@countBadgeLabel(countLabel(count, "skill", "skills"), "lucide--sparkles")
+			}
+			if assistantAgent != "" {
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeButton,
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					Icon:      "lucide--bot",
+					AriaLabel: "Define a skill with your assistant",
+					OnClick:   seedSkillSidepanel(),
+				}) {
+					Add with assistant
+				}
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/skills/new",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+			}) {
+				Add skill
+			}
+		</div>
+	}
+}
+
+// seedSkillSidepanel opens the global assistant panel and seeds the composer
+// with a starter prompt for defining a skill. The operator reviews and sends.
+script seedSkillSidepanel() {
+	var seed = {
+		prompt: "Help me create a new skill. Let's define it together: first a short lowercase name, then a one-line description, then the full instructions agents will follow."
+	};
+	window.MemorySidepanel && window.MemorySidepanel.seed(seed);
+}
+
+// skillCreateForm is the create form (PRG → POST /skills). Name is a slug;
+// the server enforces the pattern, the hint and pattern attribute steer the
+// user before submit.
+templ skillCreateForm() {
+	@ui.Section("New skill", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<form class="flex flex-col gap-4" method="post" action="/skills">
+			@form.FormControl("skill-name", "Name", form.LabelAbove, "Lowercase letters, numbers, and dashes — e.g. summarize-email.", "", nil) {
+				<input id="skill-name" name="name" type="text" required pattern="[a-z0-9]+(-[a-z0-9]+)*" maxlength="64" placeholder="summarize-email" class="input w-full"/>
+			}
+			@form.FormControl("skill-description", "Description", form.LabelAbove, "One line on what this skill does.", "", nil) {
+				<textarea id="skill-description" name="description" rows="2" required placeholder="Condenses long email threads into a digestible summary." class="textarea w-full resize-none"></textarea>
+			}
+			@form.FormControl("skill-content", "Content", form.LabelAbove, "The full instructions — up to 1 MiB.", "", nil) {
+				<textarea id="skill-content" name="content" rows="8" required placeholder="You summarize email threads. Read every message, then reply with…" class="textarea w-full resize-y"></textarea>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--sparkles",
+				}) {
+					Create skill
+				}
+			}
+		</form>
+	}
+}
+
+// SkillNewPage renders the create form for a new skill: a breadcrumb/title
+// header, an optional error toast, and the create form. flashErr surfaces PRG
+// feedback when memory rejects the values.
+templ SkillNewPage(flashErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", "New skill")), "", "New skill", "A name, what it does, and the instructions that make it work.")
+		if flashErr != nil {
+			@flashToast("error", flashErr.Error())
+		}
+		@skillCreateForm()
+	}
+}
+
+templ skillsEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--sparkles",
+		Title:       "No skills yet",
+		Description: "Create the first skill — a name, a description, and the instructions agents will follow.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
+}
+
+templ skillsTable(skills []Skill, usedBy map[string]int) {
+	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+		@table.TableWithProps(table.TableProps{Bordered: false}) {
+			@table.TableHead() {
+				@table.TableHeadRow() {
+					@table.TableHeadCell("Skill")
+					@table.TableHeadCell("Used by")
+					@table.TableHeadCell("Updated")
+					@table.TableHeadCell("")
+				}
+			}
+			@table.TableBody() {
+				for i, s := range skills {
+					@skillRow(strconv.Itoa(i), s, usedBy[s.Name])
+				}
+			}
+		}
+	}
+}
+
+templ skillRow(rowID string, s Skill, usedBy int) {
+	@table.TableRow(s.ID, true, templ.Attributes{"class": "memory-rise"}) {
+		@table.TableCell("", nil) {
+			<a class="flex items-center gap-3 hover:opacity-80" href={ templ.URL("/skills/" + url.PathEscape(s.ID)) }>
+				@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "primary"})
+				<div class="min-w-0">
+					<p class="truncate text-sm font-medium">{ s.Name }</p>
+					<p class="text-base-content/50 line-clamp-1 text-xs">{ s.Description }</p>
+				</div>
+			</a>
+		}
+		@table.TableCell("", nil) {
+			@ui.Badge(ui.BadgeProps{
+				Label:   usageLabel(usedBy),
+				Variant: usageIntent(usedBy),
+				Size:    ui.BadgeSizeXS,
+				Dot:     true,
+			})
+		}
+		@table.TableCell("", nil) {
+			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(s.UpdatedAt) }</span>
+		}
+		@table.TableCell("text-right", nil) {
+			<a class="flex justify-end" href={ templ.URL("/skills/" + url.PathEscape(s.ID)) } aria-label={ "Open " + s.Name }>
+				@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
+			</a>
+		}
+	}
+}
+
+// --- Skill detail ---
+
+// SkillDetailPage renders one skill: scope + provenance badges, the full
+// content, an edit form (description + content only — name is immutable), and
+// a delete confirm dialog. A failed fetch renders the whole-page error state;
+// flashMsg/flashErr surface PRG feedback from the update flow.
+templ SkillDetailPage(skill *Skill, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if loadErr != nil {
+			@pageError("Skill unavailable", loadErr)
+		} else {
+			@skillDetailHeader(skill)
+			@skillDetailMeta(skill)
+			@flashToasts(flashMsg, flashErr)
+			@skillContentBlock(skill)
+			@skillEditForm(skill)
+			@skillDeleteSection(skill)
+			@skillDeleteDialog(skill)
+		}
+	}
+}
+
+templ skillDetailHeader(s *Skill) {
+	@detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", s.Name)), "", s.Name, s.Description) {
+		@ui.Badge(ui.BadgeProps{
+			Label:   "updated " + relTime(s.UpdatedAt),
+			Variant: ui.BadgeGhost,
+			Size:    ui.BadgeSizeSM,
+			Icon:    "lucide--clock",
+		})
+	}
+}
+
+templ skillDetailMeta(s *Skill) {
+	<div class="mb-6 flex flex-wrap items-center gap-2">
+		@ui.Badge(ui.BadgeProps{
+			Label:   scopeLabel(s.Scope),
+			Variant: scopeIntent(s.Scope),
+			Size:    ui.BadgeSizeXS,
+			Dot:     true,
+		})
+		if s.Metadata != nil {
+			if s.Metadata.Source != "" {
+				@ui.Badge(ui.BadgeProps{Label: s.Metadata.Source, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--book-open"})
+			}
+			if s.Metadata.License != "" {
+				@ui.Badge(ui.BadgeProps{Label: s.Metadata.License, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+			}
+			if s.Metadata.Version != "" {
+				@ui.Badge(ui.BadgeProps{Label: "v" + strings.TrimPrefix(s.Metadata.Version, "v"), Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--tag"})
+			}
+		}
+		if s.HasEmbedding {
+			@ui.Badge(ui.BadgeProps{
+				Label:   "embedded",
+				Variant: ui.BadgeSuccess,
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--check",
+			})
+		}
+		@monoMeta(s.ID, "text-base-content/40")
+	</div>
+}
+
+// skillContentBlock renders the full skill content as markdown (CommonMark +
+// GFM, sanitized via bluemonday) using the shared .memory-md prose styles.
+templ skillContentBlock(s *Skill) {
+	@ui.Section("Content", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="memory-md">
+			@templ.Raw(renderMarkdown(s.Content))
+		</div>
+	}
+}
+
+// skillEditForm is the edit form (PRG → POST /skills/:id/update). Only
+// description and content are editable — the server does not accept name or
+// scope changes.
+templ skillEditForm(s *Skill) {
+	@ui.Section("Edit", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/update") }>
+			@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-wrap items-center gap-2"}) {
+				@ui.IconSpan("lucide--info", "size-4 shrink-0 text-base-content/40")
+				<p class="text-base-content/55 text-xs">The name <span class="font-mono">{ s.Name }</span> can't be changed — skills are referenced by it across agents.</p>
+			}
+			@form.FormControl("edit-description", "Description", form.LabelAbove, "", "", nil) {
+				<textarea id="edit-description" name="description" rows="2" required class="textarea w-full resize-none">{ s.Description }</textarea>
+			}
+			@form.FormControl("edit-content", "Content", form.LabelAbove, "Up to 1 MiB.", "", nil) {
+				<textarea id="edit-content" name="content" rows="10" required class="textarea w-full resize-y">{ s.Content }</textarea>
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--save",
+				}) {
+					Save changes
+				}
+			}
+		</form>
+	}
+}
+
+// skillDeleteSection is the delete affordance; it opens the confirm dialog.
+templ skillDeleteSection(s *Skill) {
+	@ui.Section("Danger zone", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<div class="flex items-center gap-3">
+				<div class="bg-error/10 text-error grid size-9 shrink-0 place-items-center rounded-lg border border-error/15">
+					@ui.IconSpan("lucide--trash-2", "size-4.5")
+				</div>
+				<div>
+					<p class="text-sm font-medium">Delete this skill</p>
+					<p class="text-base-content/50 text-xs">Removes it for every agent that references it. Irreversible.</p>
+				</div>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonError,
+				Style:     ui.ButtonStyleOutline,
+				Size:      ui.ButtonSM,
+				Icon:      "lucide--trash-2",
+				AriaLabel: "Delete " + s.Name,
+				OnClick:   openSkillDelete(),
+			}) {
+				Delete
+			}
+		</div>
+	}
+}
+
+// skillDeleteDescription is the delete-confirm detail paragraph for skills
+// (the name span is filled server-side).
+templ skillDeleteDescription(s *Skill) {
+	<p class="text-base-content/55 mt-1 text-sm">
+		This permanently removes <span class="font-medium text-base-content">{ s.Name }</span> and its content. Agents referencing it lose the capability. Irreversible.
+	</p>
+}
+
+// skillDeleteDialog confirms deletion before the POST to /skills/:id/delete.
+// The action is fixed because the dialog only exists on the detail page for
+// the skill being viewed — no per-skill JS state needed.
+templ skillDeleteDialog(s *Skill) {
+	@confirmDeleteDialog("skill-delete-modal", "skill", skillDeleteDescription(s)) {
+		<form method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/delete") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Delete skill
+				}
+			}
+		</form>
+	}
+}
+
+script openSkillDelete() {
+	var d = document.getElementById("skill-delete-modal");
+	if (d) d.showModal();
+}

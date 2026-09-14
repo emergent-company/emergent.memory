@@ -1,0 +1,27 @@
+# Memory gateway — air hot reload (templ + tailwind + go).
+#
+# `task dev` (from gateway/ or repo root) starts it. On any change to a
+# watched file, air runs `task build` (templ generate → tailwind → go build
+# -o memory .) and restarts ./memory.
+#
+# Watched: .go, .templ, .css, .js. Excluded: node_modules, air's tmp dir,
+# compiled tailwind output (webui/static/css — regenerating it must not
+# re-trigger), and generated/test files (_templ.go, _test.go).
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "task build"
+  entrypoint = ["./memory"]
+  delay = 500
+  exclude_dir = ["node_modules", "tmp", "webui/static/css"]
+  exclude_regex = ["_test.go", "_templ.go"]
+  include_ext = ["go", "templ", "css", "js"]
+  kill_delay = "2s"
+  stop_on_error = false
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = false

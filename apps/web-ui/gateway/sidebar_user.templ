@@ -1,0 +1,120 @@
+package main
+
+import (
+	"strings"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Sidebar ---
+
+// appSidebar is the app's left navigation. It mirrors go-daisy's
+// layout.Sidebar markup element-for-element (same #_layout-sidebar id and the
+// same inner classes: the header/fold button, .sidebar-menu with .menu-label
+// group labels and .menu-item links), so every shared CSS rule — including the
+// <64rem fixed drawer whose toggle relies on
+// #_layout-sidebar-toggle-trigger being a preceding sibling of
+// #_layout-sidebar — keeps working unchanged. Signed-in identity now lives in
+// the topbar account menu, not in a sidebar footer.
+//
+// The script mirrors go-daisy's layout.Sidebar behavior (close the drawer
+// after tapping a link on small screens; keep the active nav item in sync
+// across htmx navigations). It is idempotent via window._sidebarInit.
+//
+// providersMissing surfaces a warning indicator on the "Project" entry
+// (/settings) when the project has no LLM provider configured yet.
+templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
+	<div id="_layout-sidebar" class="flex flex-col bg-base-100">
+		<!-- Header: logo -->
+		<div class="flex h-14 items-center gap-3 px-5 shrink-0">
+			@memoryLogo()
+		</div>
+		<!-- Nav menu (grows + scrolls) -->
+		<div class="sidebar-menu grow overflow-y-auto">
+			<div class="mb-3 space-y-0.5 px-2.5 pt-4">
+				for i, group := range groups {
+					if group.Label != "" {
+						<p class={ "menu-label px-2.5 pb-1.5", templ.KV("pt-5", i > 0), templ.KV("pt-0", i == 0) }>{ group.Label }</p>
+					}
+					for _, item := range group.Items {
+						@sidebarNavRow(item, providersMissing && item.Href == "/settings")
+					}
+				}
+			</div>
+		</div>
+	</div>
+	<script>
+	(function() {
+		if (window._sidebarInit) return;
+		window._sidebarInit = true;
+		var sidebar = document.getElementById('_layout-sidebar');
+		if (!sidebar) return;
+
+		sidebar.addEventListener('click', function(e) {
+			if (window.innerWidth >= 1024) return;
+			var link = e.target.closest('a');
+			if (!link) return;
+			var cb = document.getElementById('_layout-sidebar-toggle-trigger');
+			if (cb) cb.checked = false;
+		});
+
+		function updateActiveSidebarItem(path) {
+			path = path || window.location.pathname;
+			var links = sidebar.querySelectorAll('a.menu-item[href]');
+			var bestMatch = null;
+			var bestLen = 0;
+			links.forEach(function(link) {
+				link.classList.remove('active');
+				var href = link.getAttribute('href');
+				if (href && href !== '/' && path.indexOf(href) === 0 && href.length > bestLen) {
+					bestMatch = link;
+					bestLen = href.length;
+				}
+			});
+			if (bestMatch) bestMatch.classList.add('active');
+		}
+
+		updateActiveSidebarItem();
+		document.addEventListener('htmx:after:history:push', function(e) {
+			updateActiveSidebarItem(e.detail && e.detail.path);
+		});
+		document.addEventListener('htmx:after:history:replace', function(e) {
+			updateActiveSidebarItem(e.detail && e.detail.path);
+		});
+	})();
+	</script>
+}
+
+// sidebarIndicatorID generates a valid HTML id for a nav link's htmx loading
+// spinner (mirrors go-daisy's layout.sidebarIndicatorID).
+func sidebarIndicatorID(href string) string {
+	return "si_" + strings.ReplaceAll(strings.TrimLeft(href, "/"), "/", "_")
+}
+
+// sidebarNavRow renders one flat sidebar nav link (mirrors go-daisy's
+// layout.sidebarNavItem markup so .sidebar-menu CSS applies unchanged). When
+// warn is true the row gains a warning indicator after the label — used to
+// flag that no LLM provider is configured yet and the user should open
+// Project settings.
+templ sidebarNavRow(item layout.SidebarItem, warn bool) {
+	<a
+		{ item.Attrs... }
+		href={ templ.URL(item.Href) }
+		hx-get={ item.Href }
+		hx-target="#main-content"
+		hx-swap="innerHTML"
+		hx-push-url="true"
+		hx-indicator={ "#" + sidebarIndicatorID(item.Href) }
+		class={ "menu-item", templ.KV("active", item.Active) }
+	>
+		if item.Icon != "" {
+			<span class={ "iconify size-4 " + item.Icon }></span>
+		}
+		<span class="grow">{ item.Label }</span>
+		if warn {
+			<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured — open Project settings" title="No provider configured — open Project settings"></span>
+		}
+		@ui.HTMXIndicator(sidebarIndicatorID(item.Href))
+	</a>
+}

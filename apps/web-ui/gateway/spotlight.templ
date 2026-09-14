@@ -1,0 +1,117 @@
+package main
+
+import (
+	"net/url"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// spotlightItemAttrs builds the htmx navigation + dismiss attrs shared by every
+// palette row: swap #main-content (SPA nav) and uncheck the palette toggle on
+// click so the modal closes after navigating.
+func spotlightItemAttrs(href string) templ.Attributes {
+	return templ.Attributes{
+		"hx-get":      href,
+		"hx-target":   "#main-content",
+		"hx-swap":     "innerHTML",
+		"hx-push-url": "true",
+		"onclick":     "document.getElementById('spotlight-toggle').checked = false",
+	}
+}
+
+// spotlightItems builds the palette rows: static navigation + one row per agent.
+func spotlightItems(agents []AgentDefinitionSummary) []ui.CommandPaletteItem {
+	items := []ui.CommandPaletteItem{
+		{Label: "Agents", Description: "Manage personas, models and tools", Icon: "lucide--bot", Href: "/agents", Group: "Navigate"},
+		{Label: "Chat", Description: "Open the chat workspace", Icon: "lucide--messages-square", Href: "/chat", Group: "Navigate"},
+		{Label: "Sessions", Description: "Inspect session timelines and tool calls", Icon: "lucide--history", Href: "/sessions", Group: "Navigate"},
+		{Label: "Usage", Description: "Token usage and session activity", Icon: "lucide--chart-column", Href: "/usage", Group: "Navigate"},
+		{Label: "Documents", Description: "Browse ingested documents", Icon: "lucide--file-text", Href: "/documents", Group: "Navigate"},
+	}
+	for _, a := range agents {
+		items = append(items, ui.CommandPaletteItem{
+			Label:       a.Name,
+			Description: shortID(a.ID),
+			Icon:        "lucide--bot",
+			Href:        "/agents/" + url.PathEscape(a.ID),
+			Group:       "Agents",
+		})
+	}
+	for i := range items {
+		items[i].Attrs = spotlightItemAttrs(items[i].Href)
+	}
+	return items
+}
+
+// spotlightTrigger is the topbar search bar that replaces the logo.
+templ spotlightTrigger() {
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonOutline,
+		Icon:       "lucide--search",
+		AriaLabel:  "Search",
+		ExtraClass: "btn-ghost border-base-content/15 text-base-content/60 h-9 w-9 justify-center gap-2 rounded-box px-0 text-sm font-normal hover:bg-base-200 hover:text-base-content md:w-56 md:justify-start md:px-3",
+		Attrs:      templ.Attributes{"onclick": "var cb = document.getElementById('spotlight-toggle'); if (cb) cb.checked = true; var i = document.getElementById('spotlight-input'); if (i) i.focus();"},
+	}) {
+		<span class="hidden grow text-left md:inline">Search…</span>
+		<kbd class="kbd kbd-xs hidden md:inline">⌘K</kbd>
+	}
+}
+
+// spotlightSearch is the ⌘K command palette modal, rendered once in the shell.
+templ spotlightSearch(agents []AgentDefinitionSummary) {
+	@ui.CommandPalette(ui.CommandPaletteProps{
+		ID:          "spotlight",
+		Placeholder: "Search pages and agents…",
+		Items:       spotlightItems(agents),
+		Groups:      []string{"Navigate", "Agents"},
+	})
+	<style>
+	/* Mobile (< 768px): the toggle input and .modal are siblings, so the
+	   checked state drives the layout. Fill the viewport edge-to-edge while
+	   desktop keeps the centered max-w-lg dialog. */
+	@media (max-width: 767px) {
+	  #spotlight-toggle:checked + .modal {
+	    padding: 0;
+	  }
+	  #spotlight-toggle:checked + .modal .modal-box {
+	    width: 100%;
+	    max-width: none;
+	    height: 100vh;
+	    height: 100dvh;
+	    max-height: 100dvh;
+	    border-radius: 0;
+	    display: flex;
+	    flex-direction: column;
+	    overflow: hidden;
+	  }
+	  /* input row pinned at the top, clear of notches/status bars */
+	  #spotlight-toggle:checked + .modal .modal-box > div:first-child {
+	    flex-shrink: 0;
+	    padding-top: calc(0.75rem + env(safe-area-inset-top));
+	  }
+	  /* results fill the remaining height and scroll inside the sheet */
+	  #spotlight-toggle:checked + .modal #spotlight-results {
+	    flex: 1 1 auto;
+	    min-height: 0;
+	    max-height: none;
+	    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+	  }
+	  /* close affordance: replace the "Esc" label text with a tap-sized X.
+	     font-size:0 keeps the real "Esc" text in the DOM for screen readers;
+	     the ✕ inherits the button's currentColor, so it follows the theme. */
+	  #spotlight-toggle:checked + .modal .modal-box label[for="spotlight-toggle"] {
+	    width: 2rem;
+	    height: 2rem;
+	    min-height: 2rem;
+	    padding: 0;
+	    font-size: 0;
+	  }
+	  #spotlight-toggle:checked + .modal .modal-box label[for="spotlight-toggle"]::after {
+	    content: "✕";
+	    font-size: 0.9375rem;
+	    line-height: 1;
+	  }
+	}
+	</style>
+}

@@ -1,0 +1,109 @@
+package main
+
+import (
+	"fmt"
+	"net/url"
+
+	"github.com/emergent-company/memory.web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Run session ---
+
+// RunPage renders one agent run as a chat session: a server-rendered header
+// (breadcrumb + title, status badge, run metadata, failure/summary lines)
+// above a thin transcript shell — #chat-root[data-run] with an empty
+// #chat-messages that chat.js fills client-side from GET /api/runs/:runId/
+// history (the same renderer the chat workspace uses). A failed fetch renders
+// the whole-page error state.
+templ RunPage(data runPageData) {
+	<div class="h-full">
+		if data.LoadErr != nil {
+			@layout.Container(layout.ContainerMD, nil) {
+				@pageError("Run unavailable", data.LoadErr)
+			}
+		} else if data.Run == nil || data.Run.Run == nil {
+			@layout.Container(layout.ContainerMD, nil) {
+				@pageError("Run unavailable", fmt.Errorf("run not found"))
+			}
+		} else {
+			<div id="chat-root" data-run={ data.Run.Run.ID } class="flex h-full flex-col">
+				<div class="mx-auto w-full max-w-6xl shrink-0 px-4 pt-4 lg:px-6 lg:pt-6">
+					@runPageHeader(data.Run.Run)
+					@runMetaHeader(data.Run, data.Trace)
+				</div>
+				<div id="chat-log" class="min-h-0 grow overflow-y-auto">
+					<div class="mx-auto flex min-h-full max-w-6xl flex-col justify-end gap-3 p-4 lg:p-6">
+						<div id="chat-messages" class="flex flex-col gap-3"></div>
+					</div>
+				</div>
+				<div id="chat-empty" class="hidden"></div>
+				<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
+				<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
+				<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
+				<script src={ templ.SafeURL(webui.AssetPath("/js/chat.js")) }></script>
+			</div>
+		}
+	</div>
+}
+
+templ runPageHeader(run *ScheduledAgentRun) {
+	@detailHeader(crumbsActive(runCrumbTrail(run)), "", "Session", runDescription(run)) {
+		@ui.Badge(ui.BadgeProps{
+			Label:   run.Status,
+			Variant: scheduleStatusIntent(&run.Status),
+			Size:    ui.BadgeSizeSM,
+			Dot:     true,
+		})
+	}
+}
+
+// runMetaHeader renders the run's metadata block below the page header: a
+// wrapping row of ghost badges (started/finished/duration, model, token
+// counts, trigger source, parent-run + trace links, run id), then the failure
+// alert and the summary preview. Every element hides when its data is absent.
+templ runMetaHeader(full *AgentRunFull, trace runTraceMeta) {
+	{{ run := full.Run }}
+	<div class="mb-4 flex flex-wrap items-center gap-2">
+		@ui.Badge(ui.BadgeProps{Label: "started " + relTime(run.StartedAt), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--clock"})
+		if run.CompletedAt != nil && *run.CompletedAt != "" {
+			@ui.Badge(ui.BadgeProps{Label: "finished " + relTime(*run.CompletedAt), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--flag"})
+			@ui.Badge(ui.BadgeProps{Label: formatRunDuration(runDurationSeconds(run)), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+		}
+		if trace.Model != "" {
+			@ui.Badge(ui.BadgeProps{Label: trace.Model, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+		}
+		if trace.InputTokens+trace.OutputTokens > 0 {
+			@ui.Badge(ui.BadgeProps{Label: fmt.Sprintf("%d in · %d out", trace.InputTokens, trace.OutputTokens), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--gauge"})
+		}
+		if run.TriggerSource != nil && *run.TriggerSource != "" {
+			@ui.Badge(ui.BadgeProps{Label: *run.TriggerSource, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--zap"})
+		}
+		if full.ParentRun != nil {
+			<a class="badge badge-ghost badge-xs gap-1 hover:opacity-70" href={ templ.URL("/runs/" + url.PathEscape(full.ParentRun.ID)) }>
+				<span class="iconify lucide--corner-up-left size-3 shrink-0" aria-hidden="true"></span>
+				Resumed from
+			</a>
+		}
+		if trace.TraceID != "" {
+			<a class="badge badge-ghost badge-xs gap-1 hover:opacity-70" href={ templ.URL("/sessions/" + url.PathEscape(run.ID)) }>
+				<span class="iconify lucide--external-link size-3 shrink-0" aria-hidden="true"></span>
+				View trace
+			</a>
+		}
+		@monoMeta(run.ID, "text-base-content/40")
+	</div>
+	if run.ErrorMessage != nil && *run.ErrorMessage != "" {
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertError,
+			Style:   ui.AlertStyleOutline,
+			Icon:    "lucide--circle-x",
+			Message: "This run failed: " + *run.ErrorMessage,
+			Attrs:   templ.Attributes{"class": "mb-4"},
+		})
+	}
+	if s := scheduledRunPreview(*run, run.AgentName); s != "" {
+		<p class="text-base-content/45 mb-4 text-sm">{ s }</p>
+	}
+}

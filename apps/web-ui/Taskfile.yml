@@ -1,0 +1,66 @@
+version: "3"
+
+# Memory — top-level tasks. Gateway-specific tasks live in gateway/Taskfile.yml.
+
+tasks:
+  lint:
+    desc: Run all linters via lefthook (ruff, golangci-lint, go vet/test, templ, gitleaks)
+    cmds:
+      - lefthook run lint
+
+  secrets:scan:
+    desc: Scan entire working tree for leaked secrets (gitleaks)
+    cmds:
+      - gitleaks dir . --config .gitleaks.toml --no-banner
+
+  fmt:
+    desc: Auto-fix Python (ruff) and format Go (gofmt)
+    cmds:
+      - ruff check --fix .
+      - gofmt -w gateway
+
+  connector:build:
+    desc: Build the memory-connector for the host OS into connector/dist/
+    dir: connector
+    cmds:
+      - mkdir -p dist
+      - go build -o dist/memory-connector ./cmd/memory-connector
+
+  connector:build-linux:
+    desc: Cross-compile the memory-connector for linux/amd64 and linux/arm64
+    dir: connector
+    cmds:
+      - mkdir -p dist
+      - GOOS=linux GOARCH=amd64 go build -o dist/memory-connector-linux-amd64 ./cmd/memory-connector
+      - GOOS=linux GOARCH=arm64 go build -o dist/memory-connector-linux-arm64 ./cmd/memory-connector
+
+  dev:
+    desc: Run the gateway with air hot reload (templ + tailwind + go)
+    dir: gateway
+    cmds:
+      - air -env_files ../.env
+
+  e2e:install:
+    desc: Install e2e deps and the Playwright chromium browser
+    dir: tests/e2e
+    cmds:
+      - npm install
+      - npx playwright install chromium
+
+  e2e:test:
+    desc: Run the full Playwright e2e suite (session mode against the running gateway)
+    dir: tests/e2e
+    cmds:
+      - npx playwright test
+
+  e2e:ui:
+    desc: Open the Playwright UI runner (observe + run tests interactively) on https://alfred-dev.tail0358fa.ts.net:8444 — auto-managed via systemd playwright-ui.service + air
+    dir: tests/e2e
+    cmds:
+      - systemctl restart playwright-ui
+
+  e2e:report:
+    desc: Open the Playwright HTML report from the last run
+    dir: tests/e2e
+    cmds:
+      - npx playwright show-report

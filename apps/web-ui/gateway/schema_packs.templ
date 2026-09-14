@@ -1,0 +1,181 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Schema packs list ---
+
+// SchemaPacksPage renders the "Schema packs" list: the project's ACTIVE packs
+// with their owner, type counts, and description. Each row links to the
+// read-only pack detail. "Add schema" is the list-page action (the existing
+// /schema/add install flow). A load error renders the whole-page error state
+// inside the rail.
+templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs")), "", "Schema packs", "Active schema packs contributing object and relationship types to this project.") {
+			<div class="flex flex-wrap items-center gap-2">
+				if loadErr == nil {
+					@countBadgeLabel(countLabel(len(packs), "pack", "packs"), "lucide--library")
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/schema/add",
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plus",
+				}) {
+					Add schema
+				}
+			</div>
+		}
+		@layout.Rail(schemaSubNav("packs"), nil) {
+			if loadErr != nil {
+				@pageError("Failed to load schema packs", loadErr)
+			} else if len(packs) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--library",
+					Title:       "No active schema packs",
+					Description: "Install a schema pack to add object and relationship types to this project.",
+					Bordered:    true,
+					ActionHref:  "/schema/add",
+					ActionLabel: "Add schema",
+					ActionIcon:  "lucide--plus",
+				})
+			} else {
+				@cardList("", cardListProps{}) {
+					for _, p := range packs {
+						@schemaPackRow(p)
+					}
+				}
+			}
+		}
+	}
+}
+
+// schemaPackRow is one active pack: name, version, owner badge, owning
+// blueprint (when one applies), type counts, and description. The whole row is
+// the link to the pack detail.
+templ schemaPackRow(p schemaPackSummary) {
+	<a class="block px-4 py-3 transition-colors hover:bg-base-200/40" href={ templ.URL("/schema/packs/" + url.PathEscape(p.ID)) }>
+		<div class="flex flex-wrap items-center gap-2">
+			<p class="text-sm font-medium">{ p.Name }</p>
+			@ui.Badge(ui.BadgeProps{Label: "v" + p.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			@ownerBadge(p, ui.BadgeSizeXS)
+			if p.Provenance != nil {
+				@ui.Badge(ui.BadgeProps{Label: typeProvenanceLabel(p.Provenance), Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--library"})
+			}
+		</div>
+		<p class="text-base-content/55 mt-1 text-xs">{ p.typeCountLabel() }</p>
+		if p.Description != "" {
+			<p class="text-base-content/55 mt-0.5 text-xs">{ p.Description }</p>
+		}
+	</a>
+}
+
+// --- Schema pack detail (read-only) ---
+
+// SchemaPackPage renders one active pack's read-only detail: a metadata header
+// and two type tables (object types / relationship types). pack == nil with a
+// nil loadErr is the not-found state (unknown or absent pack id); a non-nil
+// loadErr is the whole-page error state. Neither panics.
+templ SchemaPackPage(pack *schemaPackSummary, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if pack == nil {
+			@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", "Schema pack")), "", "Schema pack", "")
+		} else {
+			@schemaPackHeader(pack)
+		}
+		@layout.Rail(schemaSubNav("packs"), nil) {
+			if loadErr != nil {
+				@pageError("Schema pack unavailable", loadErr)
+			} else if pack == nil {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--circle-help",
+					Title:       "Schema pack not found",
+					Description: "This pack is not active in this project. It may have been removed by a blueprint change.",
+					Bordered:    true,
+					ActionHref:  "/schema/packs",
+					ActionLabel: "Back to Schema packs",
+					ActionIcon:  "lucide--arrow-left",
+				})
+			} else {
+				@schemaPackMeta(pack)
+				{{
+					prov := map[string]*ProvenanceInfo{}
+					if pack.Provenance != nil {
+						for _, t := range pack.ObjectTypes {
+							prov[t.Name] = pack.Provenance
+						}
+					}
+				}}
+				@compiledTypesTable("Object types", pack.ObjectTypes, false, "/schema/object-types/", prov)
+				@compiledTypesTable("Relationship types", pack.RelationshipTypes, true, "", nil)
+			}
+		}
+	}
+}
+
+// schemaPackHeader is the pack detail header: breadcrumb, name, description,
+// version, owner, and installed (active) state.
+templ schemaPackHeader(pack *schemaPackSummary) {
+	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "Schema pack", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
+		<div class="flex flex-wrap items-center gap-2">
+			@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
+			@ownerBadge(*pack, ui.BadgeSizeSM)
+			@ui.Badge(ui.BadgeProps{Label: "Active", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeSM, Dot: true})
+		</div>
+	}
+}
+
+// schemaPackMeta is the pack's read-only metadata panel: id, owner, source,
+// type counts, and the owning blueprint link when one applies.
+templ schemaPackMeta(pack *schemaPackSummary) {
+	@ui.Section("Pack details", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+			@schemaPackMetaRow("Pack id", pack.ID, true)
+			@schemaPackMetaRow("Owner", pack.ownerLabel(), false)
+			if pack.Source != "" {
+				@schemaPackMetaRow("Source", pack.Source, false)
+			}
+			@schemaPackMetaRow("Types", pack.typeCountLabel(), false)
+			if pack.Provenance != nil {
+				<div>
+					<dt class="text-base-content/45 text-xs">Owning blueprint</dt>
+					<dd class="mt-0.5 text-sm">
+						<a class="text-primary font-medium hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(pack.Provenance.BlueprintID)) }>{ typeProvenanceLabel(pack.Provenance) }</a>
+					</dd>
+				</div>
+			}
+		</dl>
+	}
+}
+
+templ schemaPackMetaRow(label, value string, mono bool) {
+	<div>
+		<dt class="text-base-content/45 text-xs">{ label }</dt>
+		<dd class="mt-0.5 text-sm">
+			if mono {
+				<span class="font-mono text-xs">{ value }</span>
+			} else {
+				{ value }
+			}
+		</dd>
+	</div>
+}
+
+// ownerBadge is the shared Global / Project marker for pack rows and detail.
+templ ownerBadge(pack schemaPackSummary, size ui.BadgeSize) {
+	if pack.global() {
+		@ui.Badge(ui.BadgeProps{Label: "Global", Variant: ui.BadgeNeutral, Size: size, Dot: true})
+	} else {
+		@ui.Badge(ui.BadgeProps{Label: "Project", Variant: ui.BadgePrimary, Size: size, Dot: true})
+	}
+}

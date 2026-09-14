@@ -1,0 +1,10 @@
+# Exclude the checked-out monorepo from the Docker build context.
+# In CI, emergent.memory/ is checked out as a sibling in the workspace;
+# this prevents it from being copied into the test image and confusing
+# go test ./... with unrelated Go packages.
+emergent.memory/
+
+# Other things that don't belong in the image
+.git/
+test-logs/
+*.log

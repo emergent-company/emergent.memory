@@ -1,0 +1,42 @@
+# Memory app only (D3). LiveKit, memory, LiteLLM, ha-mcp stay external —
+# the container connects to them over the tailnet/LAN.
+#
+#   docker compose up --build
+
+services:
+  memory:
+    build: .
+    environment:
+      # memory (the brain)
+      MEMORY_URL: https://memory.emergent-company.ai
+      MEMORY_TOKEN: ${MEMORY_TOKEN}
+      MEMORY_PROJECT_ID: ${MEMORY_PROJECT_ID}
+      # LiveKit (voice transport)
+      LIVEKIT_URL: ${LIVEKIT_URL}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-}
+      # STT / TTS (cloud)
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY}
+      DEEPGRAM_LANG: ${DEEPGRAM_LANG:-multi}
+      CARTESIA_API_KEY: ${CARTESIA_API_KEY}
+      CARTESIA_VOICE: ${CARTESIA_VOICE:-9626c31c-bec5-4cca-baa8-f8ba9e84c8bc}
+      # browser auth (session-based by default; AUTH_MODE=dev for local dev only)
+      TOKEN_API_KEY: ${TOKEN_API_KEY:-}
+      AUTH_MODE: ${AUTH_MODE:-session}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      ZITADEL_ISSUER: ${ZITADEL_ISSUER:-}
+      ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:-}
+      ZITADEL_REDIRECT_URI: ${ZITADEL_REDIRECT_URI:-}
+      # Sentry observability (empty = disabled / use Go environment-aware defaults)
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-}
+      SENTRY_REPLAY_SESSION_SAMPLE_RATE: ${SENTRY_REPLAY_SESSION_SAMPLE_RATE:-}
+      SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE: ${SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE:-}
+      # prod stays on 8080; app default is 8095 (local dev)
+      MEMORY_PORT: 8080
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

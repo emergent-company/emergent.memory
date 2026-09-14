@@ -1,0 +1,599 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Schema browser ---
+
+// SchemaPage renders the compiled schema: object types and relationship types
+// merged across active blueprint installs, with blueprint provenance on object
+// types. A failed fetch renders the whole-page error state. FlashMsg/FlashErr
+// surface PRG feedback from the install and derive actions.
+templ SchemaPage(view *SchemaListView, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if loadErr != nil {
+			@layout.Rail(schemaSubNav("compiled"), nil) {
+				@pageError("Failed to load schema", loadErr)
+			}
+		} else {
+			{{
+				var compiled *CompiledSchemaTypes
+				var provenance map[string]*ProvenanceInfo
+				var flashMsg string
+				var flashErr error
+				if view != nil {
+					compiled = view.Compiled
+					provenance = view.Provenance
+					flashMsg = view.FlashMsg
+					flashErr = view.FlashErr
+				}
+			}}
+			@schemaHeader(compiled)
+			@flashToasts(flashMsg, flashErr)
+			@layout.Rail(schemaSubNav("compiled"), nil) {
+				if compiled == nil || (len(compiled.ObjectTypes) == 0 && len(compiled.RelationshipTypes) == 0) {
+					@ui.EmptyState(ui.EmptyStateProps{
+						Icon:        "lucide--git-branch",
+						Title:       "No compiled types",
+						Description: "Install and activate a blueprint to see the object and relationship types it contributes, or add a schema pack.",
+						Bordered:    true,
+						ActionHref:  "/schema/add",
+						ActionLabel: "Add schema",
+						ActionIcon:  "lucide--plus",
+					})
+				} else {
+					@compiledTypesTable("Object types", compiled.ObjectTypes, false, "/schema/object-types/", provenance)
+					@compiledTypesTable("Relationship types", compiled.RelationshipTypes, true, "", nil)
+				}
+			}
+		}
+	}
+	@deriveBlueprintDialog()
+}
+
+// schemaHeader is the Schema page header: title, subtitle, and the two primary
+// actions (Add schema, Save as blueprint).
+templ schemaHeader(compiled *CompiledSchemaTypes) {
+	@pageHeader("Knowledge", "Schema", "Compiled object and relationship types from active blueprints.") {
+		<div class="flex flex-wrap items-center gap-2">
+			@countBadgeLabel(compiledTypeCountLabel(compiled), "lucide--git-branch")
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/schema/add",
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+			}) {
+				Add schema
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--save",
+				Attrs:   templ.Attributes{"data-dialog-open": "derive-blueprint-modal"},
+			}) {
+				Save as blueprint
+			}
+		</div>
+	}
+}
+
+// compiledTypesTable lists compiled types in one shared card-list component —
+// used for both object types and relationship types (endpoints only applies to
+// the latter). Object types delegate to objectTypeRow with a detail-page link
+// (linkPrefix); relationship rows stay plain text inline markup. provenance,
+// when set, marks a blueprint-derived object type with its owning blueprint.
+templ compiledTypesTable(title string, types []CompiledType, endpoints bool, linkPrefix string, provenance map[string]*ProvenanceInfo) {
+	@cardList(title, cardListProps{
+		Margin:    "mb-8",
+		Empty:     len(types) == 0,
+		EmptyIcon: "lucide--box", EmptyTitle: "No " + title, EmptyDesc: "None compiled yet.",
+	}) {
+		for _, t := range types {
+			if endpoints {
+				<div class="px-4 py-3">
+					<div class="flex flex-wrap items-center gap-2">
+						<p class="text-sm font-medium">{ compiledTypeLabel(t) }</p>
+						if t.SourceType != "" || t.TargetType != "" {
+							@ui.Badge(ui.BadgeProps{Label: t.SourceType + " → " + t.TargetType, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--git-branch"})
+						}
+					</div>
+					if t.Description != "" {
+						<p class="text-base-content/55 mt-1 text-xs">{ t.Description }</p>
+					}
+					<p class="text-base-content/50 mt-1 font-mono text-[11px]">{ compiledTypeSchemaLabel(t) }</p>
+				</div>
+			} else {
+				@objectTypeRow(t.Name, t.Label, t.Description, compiledProperties(t.Properties), linkPrefix+url.PathEscape(t.Name), compiledTypeSchemaLabel(t), compiledTypeIcon(t), compiledTypeColor(t))
+				if p := provenance[t.Name]; p != nil {
+					<div class="flex flex-wrap items-center gap-2 px-4 pb-3">
+						@provenanceBadge(ui.BadgeSizeXS)
+						<a class="text-xs font-medium text-primary hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(p.BlueprintID)) }>{ typeProvenanceLabel(p) }</a>
+					</div>
+				}
+			}
+		}
+	}
+}
+
+// provenanceBadge is the shared "Blueprint-derived" marker (list rows and the
+// object-type detail origin line).
+templ provenanceBadge(size ui.BadgeSize) {
+	@ui.Badge(ui.BadgeProps{Label: "Blueprint-derived", Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: size, Icon: "lucide--library"})
+}
+
+// --- "Add schema" ---
+
+// SchemaAddPage renders the Schema-area "Add schema" action: the installable
+// pack list with one-action install, or an empty state.
+templ SchemaAddPage(view *SchemaAddView) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Add schema")), "", "Add schema", "Install an available schema pack without leaving the Schema area.")
+		@layout.Rail(schemaSubNav("packs"), nil) {
+			if view != nil && view.Err != nil {
+				@ui.Alert(ui.AlertProps{Type: ui.AlertError, Style: ui.AlertStyleOutline, Icon: "lucide--alert-triangle", Message: view.Err.Error()})
+			}
+			if view == nil || len(view.Available) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--package",
+					Title:       "No schemas available",
+					Description: "Every available schema pack is already installed.",
+					Bordered:    true,
+				}) {
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/schema", Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--arrow-left"}) {
+						Back to Schema
+					}
+				}
+			} else {
+				@cardList("Available schemas", cardListProps{Margin: "mt-4"}) {
+					for _, item := range view.Available {
+						@availableSchemaRow(item)
+					}
+				}
+			}
+		}
+	}
+}
+
+// availableSchemaRow renders one installable pack with its source/version and a
+// one-action install that reuses the existing install handler.
+templ availableSchemaRow(item AvailableSchemaItem) {
+	<div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+		<div class="min-w-0">
+			<div class="flex flex-wrap items-center gap-2">
+				<p class="text-sm font-medium">{ item.Name }</p>
+				@ui.Badge(ui.BadgeProps{Label: "v" + item.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				@ui.Badge(ui.BadgeProps{Label: item.Source, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
+			</div>
+			if item.Description != "" {
+				<p class="text-base-content/55 mt-1 text-xs">{ item.Description }</p>
+			}
+		</div>
+		<form method="post" action="/schema/add" hx-boost="false">
+			if item.Source == "bundled" {
+				<input type="hidden" name="name" value={ item.Name }/>
+			} else {
+				<input type="hidden" name="schemaId" value={ item.ID }/>
+			}
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--plus"}) {
+				Install
+			}
+		</form>
+	</div>
+}
+
+// --- Object type detail ---
+
+// SchemaObjectTypePage renders one compiled object type: its description,
+// properties, blueprint provenance, schema history, and the relationship types
+// that reference it.
+templ SchemaObjectTypePage(view *SchemaObjectTypeView, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if loadErr != nil {
+			@layout.Rail(schemaSubNav("compiled"), nil) {
+				@pageError("Object type unavailable", loadErr)
+			}
+		} else {
+			@schemaObjectTypeHeader(view.Detail, view.Icon, view.Color)
+			@flashToasts(view.FlashMsg, view.FlashErr)
+			@layout.Rail(schemaSubNav("compiled"), nil) {
+				if view.Detail.Description != "" {
+					<p class="text-base-content/55 mt-1 text-xs">{ view.Detail.Description }</p>
+				}
+				@schemaObjectTypeOrigin(view)
+				@schemaObjectTypeProperties(view.Detail)
+				@schemaObjectTypeHistory(view.History, view.HistoryErr)
+				@schemaObjectTypeRelationships(view.Relationships)
+			}
+		}
+	}
+}
+
+templ schemaObjectTypeHeader(detail *ObjectTypeDetail, icon string, color string) {
+	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", objectTypeLabel(detail))), "Object type", objectTypeLabel(detail), "", detailHeaderOpts{Margin: "mb-4"}) {
+		<div class="flex flex-wrap items-center gap-2">
+			@typeNameChip(detail.Name, ui.BadgeGhost, icon, color)
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/schema/object-types/" + url.PathEscape(detail.Name) + "/edit",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--pencil",
+			}) {
+				Edit
+			}
+		</div>
+	}
+}
+
+// schemaObjectTypeOrigin renders the type's origin: for a blueprint-derived
+// type, a "Blueprint-derived" badge plus a link (name/version) to the owning
+// blueprint; otherwise a project-authored marker plus the source schema
+// name/version. The blueprint link already carries the pack name/version, so no
+// separate origin text is repeated for derived types.
+templ schemaObjectTypeOrigin(view *SchemaObjectTypeView) {
+	<div class="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2">
+		if view.Provenance != nil {
+			@provenanceBadge(ui.BadgeSizeSM)
+			<a class="text-primary text-sm font-medium hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(view.Provenance.BlueprintID)) }>{ typeProvenanceLabel(view.Provenance) }</a>
+			if view.Provenance.Ambiguous {
+				@ui.Badge(ui.BadgeProps{Label: "multiple blueprints claim this schema", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS})
+			}
+		} else {
+			@ui.Badge(ui.BadgeProps{Label: "Project-authored", Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeSM, Icon: "lucide--pencil"})
+			<span class="text-base-content/55 text-sm">Not from an installed blueprint.</span>
+			{{ origin := schemaOriginLabel(view.SchemaName, view.SchemaVersion) }}
+			if origin != "" {
+				<span class="text-base-content/30">·</span>
+				<span class="text-base-content/50 font-mono text-[11px]">{ origin }</span>
+			}
+		}
+	</div>
+}
+
+templ schemaObjectTypeProperties(detail *ObjectTypeDetail) {
+	@ui.Section("Properties", ui.SectionProps{
+		Margin:    "mt-6",
+		CardClass: "card-border overflow-hidden",
+		BodyClass: "p-0",
+		Empty:     len(detail.Properties) == 0,
+		EmptyIcon: "lucide--box", EmptyTitle: "No properties", EmptyDesc: "This object type defines no properties.",
+	}) {
+		<div class="px-4 py-3">
+			@objectTypeProperties(detail.Properties, false)
+		</div>
+	}
+}
+
+// schemaObjectTypeHistory renders the assignment history for the type's schema:
+// version label, active marker, and install/remove timestamps. unavailable
+// renders a non-blocking notice when the history call failed.
+templ schemaObjectTypeHistory(history []SchemaHistoryItem, unavailable bool) {
+	@cardList("History", cardListProps{
+		Margin:    "mt-6",
+		Empty:     !unavailable && len(history) == 0,
+		EmptyIcon: "lucide--history", EmptyTitle: "No history", EmptyDesc: "No assignment history is available for this type's schema.",
+	}) {
+		if unavailable {
+			<div class="flex items-start gap-2 px-4 py-3">
+				@ui.IconSpan("lucide--alert-circle", "size-4 shrink-0 text-base-content/40")
+				<p class="text-base-content/55 text-xs">Schema history is unavailable right now. The type is shown as-is.</p>
+			</div>
+		} else {
+			for _, h := range history {
+				<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+					<p class="font-mono text-xs">v{ h.Version }</p>
+					if h.Active {
+						@ui.Badge(ui.BadgeProps{Label: "active", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+					} else {
+						@ui.Badge(ui.BadgeProps{Label: "inactive", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+					}
+					if h.InstalledAt != "" {
+						<span class="text-base-content/50 text-xs">installed { h.InstalledAt }</span>
+					}
+					if h.RemovedAt != "" {
+						<span class="text-base-content/50 text-xs">removed { h.RemovedAt }</span>
+					}
+				</div>
+			}
+		}
+	}
+}
+
+templ schemaObjectTypeRelationships(relationships []RelationshipTypeDetail) {
+	@cardList("Relationships", cardListProps{
+		Margin:    "mt-6",
+		Empty:     len(relationships) == 0,
+		EmptyIcon: "lucide--link", EmptyTitle: "No relationships", EmptyDesc: "This object type is not referenced by any relationship type.",
+	}) {
+		for _, rt := range relationships {
+			@relationshipTypeRow(rt)
+		}
+	}
+}
+
+// --- Object type editor ---
+
+// SchemaObjectTypeEditPage renders the object-type editor: immutable name,
+// editable description, and the typed property rows. A blueprint-derived type
+// arms a confirmation gate on submit (see deriveWarningDialog). A save failure
+// re-renders here with the entered values preserved.
+templ SchemaObjectTypeEditPage(view *SchemaEditView) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if view == nil || view.Detail == nil {
+			@layout.Rail(schemaSubNav("compiled"), nil) {
+				if view != nil && view.Err != nil {
+					@pageError("Object type unavailable", view.Err)
+				} else {
+					@ui.EmptyState(ui.EmptyStateProps{
+						Icon:        "lucide--circle-help",
+						Title:       "Object type not found",
+						Description: "This object type no longer exists. It may have been removed by a blueprint change.",
+						Bordered:    true,
+						ActionHref:  "/schema",
+						ActionLabel: "Back to Schema",
+						ActionIcon:  "lucide--arrow-left",
+					})
+				}
+			}
+		} else {
+			@schemaEditorHeader(view)
+			@layout.Rail(schemaSubNav("compiled"), nil) {
+				if view.SaveErr != nil {
+					@ui.Alert(ui.AlertProps{Type: ui.AlertError, Style: ui.AlertStyleOutline, Icon: "lucide--alert-triangle", Message: view.SaveErr.Error()})
+				}
+				@schemaEditorForm(view)
+				if view.Provenance != nil {
+					@deriveWarningDialog(view)
+				}
+			}
+		}
+	}
+}
+
+templ schemaEditorHeader(view *SchemaEditView) {
+	@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", objectTypeLabel(view.Detail), "Edit")), "", "Edit "+objectTypeLabel(view.Detail), "The type name is immutable; edit the description and typed properties.", detailHeaderOpts{Margin: "mb-4"})
+}
+
+templ schemaEditorForm(view *SchemaEditView) {
+	<form
+		id="object-type-form"
+		method="post"
+		action={ templ.URL("/schema/object-types/" + url.PathEscape(view.Detail.Name)) }
+		hx-boost="false"
+		class="flex flex-col gap-6"
+		if view.Provenance != nil {
+			data-requires-confirm="derive-warning-modal"
+		}
+	>
+		<input type="hidden" name="_ui" value="1"/>
+		@ui.CardRaw("card-border", "p-5", nil) {
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div class="min-w-0">
+					@form.FormControl("object-type-name", "Name", form.LabelAbove, "The type key is immutable after creation.", "", nil) {
+						<div class="flex min-w-0 items-center gap-2">
+							<input id="object-type-name" type="text" class="input w-full" value={ view.Detail.Name } disabled/>
+							@ui.Badge(ui.BadgeProps{Label: "immutable", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--lock"})
+						</div>
+					}
+				</div>
+				<div class="min-w-0 sm:col-span-2">
+					@form.FormControl("object-type-description", "Description", form.LabelAbove, "What this type represents.", "", nil) {
+						<textarea id="object-type-description" name="description" rows="3" placeholder="A short description of this object type." class="textarea w-full resize-none">{ view.Detail.Description }</textarea>
+					}
+				</div>
+			</div>
+		}
+		@ui.CardRaw("card-border", "p-5", nil) {
+			<div class="mb-4">
+				<h2 class="text-lg font-semibold tracking-tight">Appearance</h2>
+				<p class="text-base-content/55 mt-0.5 text-sm">Optional accent used wherever this type is shown.</p>
+			</div>
+			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
+					@form.FormControl("object-type-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the generic box.", "", nil) {
+						@ui.IconPicker(ui.IconPickerProps{
+							ID:           "object-type-icon",
+							Name:         "icon",
+							Value:        view.Icon,
+							Options:      supportedIconPickerOptions(),
+							DefaultValue: "",
+							DefaultLabel: "Default icon",
+							DefaultClass: "lucide--box",
+						})
+					}
+				</div>
+				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
+					@form.FormControl("object-type-color", "Color", form.LabelAbove, "Any CSS color; tints the type tile and chip (e.g. #4F46E5).", "", nil) {
+						@ui.ColorPicker(ui.ColorPickerProps{
+							ID:         "object-type-color",
+							Name:       "color",
+							Value:      view.Color,
+							AllowEmpty: true,
+							Presets:    schemaColorPresets,
+						})
+					}
+				</div>
+			</div>
+		}
+		@ui.CardRaw("card-border", "p-5", nil) {
+			<div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+				<div>
+					<h2 class="text-lg font-semibold tracking-tight">Properties</h2>
+					<p class="text-base-content/55 mt-0.5 text-sm">Each property is a typed field on this object type.</p>
+				</div>
+				<button type="button" class="btn btn-outline btn-sm" data-add-property="property-row-template" data-property-rows="property-rows">
+					@ui.IconSpan("lucide--plus", "size-4")
+					Add property
+				</button>
+			</div>
+			<div class="mb-2 hidden gap-2 text-[11px] font-medium tracking-wide text-base-content/45 uppercase sm:grid sm:grid-cols-[minmax(0,1fr)_7rem_8rem_8rem_minmax(0,1.4fr)_auto]">
+				<span>Name</span>
+				<span>Type</span>
+				<span>Widget</span>
+				<span>Required</span>
+				<span>Description</span>
+				<span></span>
+			</div>
+			<div id="property-rows" class="flex flex-col gap-2">
+				if len(view.Detail.Properties) == 0 {
+					<p id="property-empty" class="text-base-content/45 rounded-box border border-dashed border-base-content/15 px-4 py-6 text-center text-sm">
+						No properties yet. Add one to define the shape of this type.
+					</p>
+				}
+				for _, p := range view.Detail.Properties {
+					@schemaPropertyRow(p)
+				}
+			</div>
+			<template id="property-row-template">
+				@schemaPropertyRow(PropertyDetail{Type: "string"})
+			</template>
+		}
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<a class="btn btn-ghost btn-sm" href={ templ.URL("/schema/object-types/" + url.PathEscape(view.Detail.Name)) }>Cancel</a>
+			<div class="flex items-center gap-2">
+				if view.Provenance != nil {
+					<span class="text-base-content/50 hidden text-xs sm:inline">Derived from a blueprint — a confirmation follows.</span>
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--save",
+				}) {
+					Save changes
+				}
+			</div>
+		</div>
+	</form>
+}
+
+// schemaPropertyRow is one editable property: name, type, required, and
+// description. The parallel field names (property_*) are read positionally by
+// the save handler; the required select always submits a value so the arrays
+// stay aligned (a bare checkbox would not).
+templ schemaPropertyRow(p PropertyDetail) {
+	<div class="property-row grid items-center gap-2 rounded-box border border-base-content/10 bg-base-200/25 p-3 sm:grid-cols-[minmax(0,1fr)_7rem_8rem_8rem_minmax(0,1.4fr)_auto]">
+		<input type="text" name="property_name" value={ p.Name } placeholder="property_name" class="input input-sm w-full font-mono" aria-label="Property name"/>
+		<select name="property_type" class="select select-sm w-full" aria-label="Property type">
+			for _, opt := range propertyTypeOptions() {
+				<option
+					value={ opt }
+					if p.Type == opt {
+						selected
+					}
+				>{ opt }</option>
+			}
+		</select>
+		<select name="property_widget" class="select select-sm w-full" aria-label="Property widget">
+			for _, opt := range propertyWidgetOptions() {
+				<option
+					value={ opt.Value }
+					if p.Widget == opt.Value {
+						selected
+					}
+				>{ opt.Label }</option>
+			}
+		</select>
+		<select name="property_required" class="select select-sm w-full" aria-label="Required or optional">
+			<option
+				value=""
+				if !p.Required {
+					selected
+				}
+			>Optional</option>
+			<option
+				value="1"
+				if p.Required {
+					selected
+				}
+			>Required</option>
+		</select>
+		<input type="text" name="property_description" value={ p.Description } placeholder="Description" class="input input-sm w-full" aria-label="Property description"/>
+		<button type="button" class="btn btn-ghost btn-sm btn-square text-error" data-remove-property="1" aria-label="Remove property" title="Remove property">
+			@ui.IconSpan("lucide--trash-2", "size-4")
+		</button>
+	</div>
+}
+
+// deriveWarningDialog is the blueprint-derived edit gate: a native <dialog>
+// opened by app.js when the editor form is submitted. Confirming submits once;
+// dismissing keeps the entered values and posts nothing.
+templ deriveWarningDialog(view *SchemaEditView) {
+	{{ p := view.Provenance }}
+	<dialog id="derive-warning-modal" class="modal" aria-labelledby="derive-warning-title" aria-describedby="derive-warning-desc">
+		<div class="modal-box max-w-md">
+			<div class="flex items-start gap-3">
+				<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
+					@ui.IconSpan("lucide--alert-triangle", "size-5")
+				</div>
+				<div>
+					<h3 id="derive-warning-title" class="text-lg font-semibold">Save changes to a blueprint-derived type?</h3>
+					<p id="derive-warning-desc" class="text-base-content/60 mt-1 text-sm">
+						<span class="font-mono">{ view.Detail.Name }</span> comes from blueprint <span class="font-medium">{ typeProvenanceLabel(p) }</span>. Saving your edit diverges from that blueprint and may be overwritten when it is updated or reinstalled.
+					</p>
+				</div>
+			</div>
+			<div class="modal-action">
+				<form method="dialog">
+					<button class="btn btn-sm" value="cancel" autofocus>Keep editing</button>
+				</form>
+				<form method="dialog">
+					<button class="btn btn-primary btn-sm" value="confirm">Save anyway</button>
+				</form>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button>close</button>
+		</form>
+	</dialog>
+}
+
+// --- Derive blueprint from current types ---
+
+// deriveBlueprintDialog is the shared "Save as blueprint" modal: create a draft
+// blueprint from the project's current effective object types. Used by the
+// Schema page and the blueprints gallery.
+templ deriveBlueprintDialog() {
+	<dialog id="derive-blueprint-modal" class="modal" aria-labelledby="derive-blueprint-title">
+		<div class="modal-box max-w-md">
+			<div class="flex items-start gap-3">
+				<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
+					@ui.IconSpan("lucide--save", "size-5")
+				</div>
+				<div>
+					<h3 id="derive-blueprint-title" class="text-lg font-semibold">Save as blueprint</h3>
+					<p class="text-base-content/55 mt-0.5 text-sm">Create a draft blueprint from the object types currently in this project.</p>
+				</div>
+			</div>
+			<form method="post" action="/schema/blueprints/derive" hx-boost="false" class="mt-4 flex flex-col gap-4">
+				<input type="hidden" name="_ui" value="1"/>
+				@form.FormControl("derive-name", "Name", form.LabelAbove, "A name for the draft blueprint.", "", nil) {
+					<input id="derive-name" name="name" type="text" required placeholder="project-schema" class="input w-full"/>
+				}
+				@form.FormControl("derive-version", "Version", form.LabelAbove, "A version label for this draft.", "", nil) {
+					<input id="derive-version" name="version" type="text" required placeholder="1.0.0" class="input w-full font-mono"/>
+				}
+				@form.FormControl("derive-description", "Description", form.LabelAbove, "Optional. What this blueprint captures.", "", nil) {
+					<textarea id="derive-description" name="description" rows="2" placeholder="Derived from the current project schema." class="textarea w-full resize-none"></textarea>
+				}
+				@form.FormActions("", "") {
+					<button type="button" class="btn btn-ghost btn-sm" data-dialog-close="derive-blueprint-modal">Cancel</button>
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--save"}) {
+						Create draft
+					}
+				}
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button>close</button>
+		</form>
+	</dialog>
+}

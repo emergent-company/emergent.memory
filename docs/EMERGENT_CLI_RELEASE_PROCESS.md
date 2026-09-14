@@ -2,6 +2,21 @@
 
 This document describes how to create and publish releases for the Emergent CLI tool.
 
+## Channels
+
+- **stable** — `vX.Y.Z` tags (created by the `auto-tag` workflow when `VERSION`
+  bumps on `main`). Immutable, non-prerelease releases. This is what
+  `install.sh` (default) and the `upgrade` command resolve.
+- **dev** — every push to `main` touching `tools/cli/**` publishes a rolling
+  prerelease under the fixed tag `cli-dev`, overwriting the previous dev build.
+  Version embeds the short commit sha (`0.0.0-dev.<sha>`). Install with
+  `install.sh --channel dev`.
+
+Both channels publish a `manifest.json` release asset (app, channel, version,
+per-platform asset URLs + sha256) as the seed for a future channel-aware
+updater. Note: the in-app `upgrade` command currently always targets the stable
+channel.
+
 ## Release Workflow
 
 ### 1. Version Tagging

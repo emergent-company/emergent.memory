@@ -1,0 +1,518 @@
+package main
+
+import (
+	"net/url"
+	"slices"
+
+	fm "github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Objects browser ---
+
+// ObjectsPage renders the objects browser: graph objects, filterable by type
+// and by branch. typeUIByType carries the compiled types' declared ui accents
+// (icon/color) keyed by object type name, so rows can render each type's icon.
+templ ObjectsPage(objects []GraphObject, types []string, typeFilter string, branches []Branch, branchID string, typeUIByType map[string]typeUI, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@objectsHeader(len(objects), loadErr == nil)
+		if loadErr != nil {
+			@pageError("Failed to load objects", loadErr)
+		} else {
+			@objectsFilters(types, typeFilter, branches, branchID)
+			if len(objects) == 0 {
+				@objectsEmpty(typeFilter)
+			} else {
+				@objectsList(objects, typeUIByType)
+			}
+		}
+	}
+}
+
+templ objectsHeader(count int, ok bool) {
+	@pageHeader("Knowledge", "Objects", "Entities in the knowledge graph — people, tasks, notes, and everything else memory stores.") {
+		if ok {
+			@countBadgeLabel(countLabel(count, "object", "objects"), "lucide--box")
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects/new",
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--plus",
+		}) {
+			New object
+		}
+	}
+}
+
+templ objectsFilters(types []string, typeFilter string, branches []Branch, branchID string) {
+	if len(branches) > 0 || len(types) > 0 {
+		<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects">
+			if len(branches) > 0 {
+				<select name="branch" class="select select-bordered select-sm" onchange="this.form.submit()">
+					<option value="" selected?={ branchID == "" }>Main branch</option>
+					for _, b := range branches {
+						<option value={ b.ID } selected?={ b.ID == branchID }>{ b.Name }</option>
+					}
+				</select>
+			}
+			if len(types) > 0 {
+				<select name="type" class="select select-bordered select-sm" onchange="this.form.submit()">
+					<option value="">All types</option>
+					for _, t := range types {
+						<option value={ t } selected?={ t == typeFilter }>{ t }</option>
+					}
+				</select>
+			}
+			<noscript>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Filter }
+			</noscript>
+		</form>
+	}
+}
+
+// objectsEmpty is the Objects page's full-surface empty state (list
+// replacement); py-12 keeps the panel present under the filter bar.
+templ objectsEmpty(typeFilter string) {
+	if typeFilter != "" {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--box",
+			Title:       "No objects of this type",
+			Description: "Nothing stored matches this type.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--box",
+			Title:       "No objects yet",
+			Description: "Entities will show up here once memory stores something.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	}
+}
+
+templ objectsList(objects []GraphObject, typeUIByType map[string]typeUI) {
+	@cardList("", cardListProps{}) {
+		for _, o := range objects {
+			@objectRow(o, typeUIOf(typeUIByType, o.Type))
+		}
+	}
+}
+
+templ objectRow(o GraphObject, tui typeUI) {
+	@listRow(templ.URL("/objects/" + url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(o.CreatedAt)) {
+		@ui.Badge(ui.BadgeProps{
+			Label:   o.Type,
+			Variant: ui.BadgeNeutral,
+			Size:    ui.BadgeSizeXS,
+		})
+		if o.Status != "" {
+			@ui.Badge(ui.BadgeProps{
+				Label:   o.Status,
+				Variant: ui.BadgeGhost,
+				Size:    ui.BadgeSizeXS,
+			})
+		}
+	}
+}
+
+// --- Object creation ---
+
+// ObjectCreatePage renders the create-object form: a type selector constrained
+// to the project's compiled object types, then (once a type is picked) inputs
+// for key, status, labels, and the selected type's schema-defined properties
+// (each rendered with a widget matching its declared data type). Labels and
+// array/object properties use a chip TagList; labelSuggestions feeds the
+// labels input's autocomplete from existing labels in the graph.
+templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef, form objectCreateForm, labelSuggestions []string, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if loadErr != nil {
+			@pageError("Failed to load object types", loadErr)
+		} else if len(objectTypes) == 0 {
+			@ui.Section("New object", ui.SectionProps{
+				Margin:    "mt-6",
+				BodyClass: "p-5",
+			}) {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--box",
+					Title:       "No object types available",
+					Description: "Install a schema pack to define object types before creating objects.",
+					Bordered:    true,
+				})
+			}
+		} else {
+			@pageHeader("Knowledge", "New object", "Manually add an entity to the knowledge graph.")
+			<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects/new">
+				<select name="type" class="select select-bordered select-sm" onchange="this.form.submit()">
+					<option value="" disabled selected?={ form.Type == "" }>Pick a type…</option>
+					for _, t := range objectTypes {
+						<option value={ t.Name } selected?={ t.Name == form.Type }>{ objectTypeDisplayName(t) }</option>
+					}
+				</select>
+				<noscript>
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Continue }
+				</noscript>
+			</form>
+			if form.Error != "" {
+				<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium">{ form.Error }</p>
+			}
+			if form.Type != "" {
+				@ui.Section("Details", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "p-5",
+				}) {
+					<form class="flex flex-col gap-4" method="post" action="/objects">
+						<input type="hidden" name="type" value={ form.Type }/>
+						@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
+							<input id="object-key" name="key" type="text" value={ form.Key } class="input w-full"/>
+						}
+						@fm.FormControl("object-status", "Status", fm.LabelAbove, "", "", nil) {
+							<input id="object-status" name="status" type="text" value={ form.Status } class="input w-full"/>
+						}
+					@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels.", "", nil) {
+						@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
+					}
+					for _, p := range propDefs {
+						@fm.FormControl(p.Name, p.Name, fm.LabelAbove, "", "", nil) {
+							@propertyInput(p, form.Props[p.Name])
+						}
+					}
+						@fm.FormActions("", "") {
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeSubmit,
+								Variant: ui.ButtonPrimary,
+								Size:    ui.ButtonSM,
+								Icon:    "lucide--plus",
+							}) {
+								Create object
+							}
+						}
+					</form>
+				}
+			} else {
+				<p class="text-base-content/50 text-sm">Pick a type to see its fields.</p>
+			}
+		}
+	}
+}
+
+// propertyInput renders a type-appropriate input for one schema property.
+// boolean → hidden false + toggle switch (so unchecked submits explicit false);
+// date → date picker; number/integer → numeric input; array/object → chip
+// TagList (one chip per value); string with a declared enum → native select of
+// the allowed values; string with widget: "input" → single-line input; any
+// other string/unknown → an auto-growing textarea (string properties may hold
+// arbitrarily long text; widget: "textarea" states that intent explicitly).
+// vals carries the property's raw submitted values (indexed for multi-value
+// props).
+templ propertyInput(def objectPropertyDef, vals []string) {
+	{{
+		v := ""
+		if len(vals) > 0 {
+			v = vals[0]
+		}
+	}}
+	if def.Type == "boolean" {
+		<input type="hidden" name={ "prop_" + def.Name } value="false"/>
+		<input type="checkbox" name={ "prop_" + def.Name } value="true" checked?={ v == "true" } class="toggle"/>
+	} else if def.Type == "date" {
+		<input name={ "prop_" + def.Name } type="date" value={ v } class="input w-full"/>
+	} else if def.Type == "number" {
+		<input name={ "prop_" + def.Name } type="number" step="any" value={ v } class="input w-full"/>
+	} else if def.Type == "integer" {
+		<input name={ "prop_" + def.Name } type="number" step="1" value={ v } class="input w-full"/>
+	} else if def.Type == "array" || def.Type == "object" {
+		@fm.TagList(fm.TagListProps{ID: "prop-" + def.Name, Name: "prop_" + def.Name, Values: vals, Placeholder: "Add an item..."})
+	} else if len(def.Enum) > 0 {
+		// enum-declared string → native select of the allowed values. A stored
+		// value outside the enum (agent-written data is not constrained) is
+		// kept as an extra selected option so saving never drops it.
+		<select name={ "prop_" + def.Name } class="select w-full">
+			if v == "" {
+				<option value="" selected>Pick…</option>
+			}
+			for _, opt := range def.Enum {
+				<option value={ opt } selected?={ v == opt }>{ opt }</option>
+			}
+			if v != "" && !slices.Contains(def.Enum, v) {
+				<option value={ v } selected>{ v }</option>
+			}
+		</select>
+	} else if def.Widget == "input" {
+		// explicit single-line override for short string fields
+		<input name={ "prop_" + def.Name } type="text" value={ v } class="input w-full"/>
+	} else {
+		// string/unknown → auto-growing textarea; string values are free-form
+		// and may hold long text (widget: "textarea" is the explicit form).
+		<textarea name={ "prop_" + def.Name } rows="1" data-autogrow class="textarea w-full resize-none min-h-11 max-h-60">{ v }</textarea>
+	}
+}
+
+// --- Object detail ---
+
+// ObjectDetailPage renders one object: its properties and relationships.
+// flashErr surfaces PRG feedback (e.g. the "no agents configured" chat hint)
+// as an auto-dismissing toast. typeUIByType carries the compiled types'
+// declared ui accents (icon/color) so the header chip can render the object
+// type's icon.
+templ ObjectDetailPage(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI) {
+	@flashToasts(flashMsg, flashErr)
+	@layout.Container(layout.ContainerMD, nil) {
+		if loadErr != nil {
+			@pageError("Object unavailable", loadErr)
+		} else {
+			@objectDetailHeader(obj, typeUIByType)
+			@objectPropertiesCard(obj, propDefs, labelSuggestions)
+			@objectRelationships(obj, relTypes, edges, related)
+			@objectSimilarObjects(obj, similar)
+		}
+	}
+}
+
+templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
+	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
+	<div class="mb-6">
+		@nav.Breadcrumbs(crumbsActive(nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj))), nav.BreadcrumbsDividerDefault)
+		<div class="mt-2 flex flex-wrap items-start justify-between gap-4">
+			<div class="min-w-0">
+				<div class="mb-2 flex flex-wrap items-center gap-2">
+					@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
+					if obj.Status != "" {
+						@ui.Badge(ui.BadgeProps{
+							Label:   obj.Status,
+							Variant: ui.BadgeGhost,
+							Size:    ui.BadgeSizeSM,
+						})
+					}
+				</div>
+				<h1 class="text-2xl font-bold tracking-tight">{ graphObjectLabel(*obj) }</h1>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/objects/" + url.PathEscape(obj.ID) + "/chat",
+				Variant: ui.ButtonSecondary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--messages-square",
+			}) {
+				Chat about object
+			}
+		</div>
+	</div>
+}
+
+// objectPropertiesCard renders the editable property form: common fields
+// (key, status, labels) then one input per stored property (prop_<key>).
+// POST /objects/{id} delta-merges the submitted fields.
+templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, labelSuggestions []string) {
+	@ui.Section("Properties", ui.SectionProps{
+		Margin:    "mt-6",
+		BodyClass: "p-5",
+	}) {
+		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) }>
+			@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
+				<input id="object-key" name="key" type="text" value={ obj.Key } class="input w-full"/>
+			}
+			@fm.FormControl("object-status", "Status", fm.LabelAbove, "", "", nil) {
+				<input id="object-status" name="status" type="text" value={ obj.Status } class="input w-full"/>
+			}
+			@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels — replaces the current set.", "", nil) {
+				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
+			}
+			for _, p := range graphObjectProperties(*obj) {
+				if def, ok := objectPropertyDefByName(propDefs, p.Key); ok {
+					@fm.FormControl(p.Key, p.Key, fm.LabelAbove, "", "", nil) {
+						@propertyInput(def, propValues(obj.Properties[p.Key]))
+					}
+				} else {
+					@fm.FormControl(p.Key, p.Key, fm.LabelAbove, "", "", nil) {
+						<textarea name={ "prop_" + p.Key } rows="1" data-autogrow class="textarea w-full resize-none min-h-11 max-h-60">{ p.Value }</textarea>
+					}
+				}
+			}
+			@fm.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--save",
+				}) {
+					Save changes
+				}
+			}
+		</form>
+	}
+}
+
+// objectRelationships lists the relationships touching an object, or — when
+// none exist — an empty state with a Connect CTA that opens the relationship
+// dialog. relTypes carries the schema's compiled relationship types.
+templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject) {
+	@ui.Section("Relationships", ui.SectionProps{
+		Margin:    "mt-6",
+		CardClass: "card-border overflow-hidden",
+		BodyClass: "p-0",
+	}) {
+		if len(edges) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--link",
+				Title:       "No relationships",
+				Description: "This object is not connected to anything yet.",
+			}) {
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeButton,
+					Variant:   ui.ButtonSecondary,
+					Size:      ui.ButtonSM,
+					Icon:      "lucide--link",
+					AriaLabel: "Connect this object to another",
+					OnClick:   openObjectConnect(),
+				}) {
+					Connect
+				}
+			}
+		} else {
+			<div class="divide-y divide-base-200">
+				for _, r := range edges {
+					@objectRelationshipRow(obj, r, related)
+				}
+			</div>
+		}
+	}
+	@objectConnectDialog(obj, relTypes)
+}
+
+// objectConnectDialog is the "add relationship" modal: pick a relationship
+// type, confirm the source object (defaults to the current object), and pick
+// the target via search. Posts to /objects/{id}/relationships.
+templ objectConnectDialog(obj *GraphObject, relTypes []CompiledType) {
+	@modalShell("object-connect-modal", "", "max-w-sm") {
+		<h3 class="text-lg font-semibold">Connect object</h3>
+		<p class="text-base-content/50 mb-4 text-sm">Link this object to another one in the knowledge graph.</p>
+		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/relationships") }>
+			@fm.FormControl("connect-type", "Relationship type", fm.LabelAbove, "", "", nil) {
+				<select id="connect-type" name="type" required class="select w-full">
+					<option value="" disabled selected>Pick a relationship type…</option>
+					for _, rt := range relationshipOptions(relTypes, obj.Type) {
+						<option value={ rt.Name }>{ relTypeDisplayName(rt) }</option>
+					}
+				</select>
+			}
+			@fm.FormControl("connect-src", "Source object", fm.LabelAbove, "Defaults to this object — leave as-is to link from it.", "", nil) {
+				<input id="connect-src" name="src_id" type="text" value={ obj.ID } class="input w-full font-mono"/>
+			}
+			@fm.FormControl("connect-dst", "Target object", fm.LabelAbove, "Start typing to search, or paste an object id.", "", nil) {
+				<input id="connect-dst" name="dst_id" type="text" list="object-search-options" placeholder="Search for an object…" class="input w-full"/>
+				<datalist id="object-search-options"></datalist>
+			}
+			@fm.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--link",
+				}) {
+					Connect
+				}
+			}
+		</form>
+	}
+}
+
+// openObjectConnect opens the relationship dialog and lazily wires the target
+// autocomplete: typing fetches /objects/search and fills the <datalist> with
+// matching object ids (labels shown as option text). Pasting an id straight
+// into the field works without JS.
+script openObjectConnect() {
+	var d = document.getElementById("object-connect-modal");
+	if (!d) { return; }
+	var input = document.getElementById("connect-dst");
+	if (input && !input.dataset.wired) {
+		input.dataset.wired = "1";
+		var list = document.getElementById("object-search-options");
+		input.addEventListener("input", function () {
+			var q = input.value.trim();
+			if (!q || !list) { return; }
+			fetch("/objects/search?q=" + encodeURIComponent(q))
+				.then(function (r) { return r.json(); })
+				.then(function (items) {
+					list.innerHTML = "";
+					(items || []).forEach(function (it) {
+						var o = document.createElement("option");
+						o.value = it.id;
+						o.textContent = it.label;
+						list.appendChild(o);
+					});
+				})
+				.catch(function () { /* autocomplete is best-effort */ });
+		});
+	}
+	d.showModal();
+}
+
+templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []GraphObject) {
+	<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+		@ui.Badge(ui.BadgeProps{
+			Label:   relationshipTypeLabel(r.Type),
+			Variant: ui.BadgeSecondary,
+			Size:    ui.BadgeSizeXS,
+			Icon:    "lucide--link",
+		})
+		<span class="truncate text-sm">{ objectEndpointLabel(obj, related, r.SrcID) }</span>
+		@ui.IconSpan("lucide--arrow-right", "size-4 shrink-0 text-base-content/30")
+		<span class="truncate text-sm">{ objectEndpointLabel(obj, related, r.DstID) }</span>
+	</div>
+}
+
+// objectSimilarObjects lists objects semantically similar to the current one,
+// each with a Merge action that starts a merge session.
+templ objectSimilarObjects(obj *GraphObject, similar []SimilarObject) {
+	@cardList("Similar objects", cardListProps{
+		Margin:    "mt-6",
+		Empty:     len(similar) == 0,
+		EmptyIcon: "lucide--git-merge", EmptyTitle: "No similar objects", EmptyDesc: "No other objects look like this one yet.",
+	}) {
+		for _, so := range similar {
+			@similarObjectRow(obj, so)
+		}
+	}
+}
+
+// similarObjectRow is one similar object: label + type, similarity badge, and
+// a Merge button that deep-links into /chat with the merge instruction.
+templ similarObjectRow(obj *GraphObject, so SimilarObject) {
+	<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "neutral"})
+		<div class="min-w-0 grow">
+			<p class="truncate text-sm font-medium">{ similarObjectLabel(so) }</p>
+			<p class="text-base-content/50 text-xs">{ so.Type }</p>
+		</div>
+		@ui.Badge(ui.BadgeProps{
+			Label:   similarityLabel(so.Distance),
+			Variant: ui.BadgeGhost,
+			Size:    ui.BadgeSizeXS,
+		})
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects/" + url.PathEscape(obj.ID) + "/merge?with=" + url.QueryEscape(so.ID),
+			Variant: ui.ButtonSecondary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--git-merge",
+		}) {
+			Merge
+		}
+	</div>
+}
+
+

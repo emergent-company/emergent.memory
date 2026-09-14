@@ -1,0 +1,63 @@
+package main
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Type-level ui accent rendering ---
+//
+// Compiled object types may declare a per-type ui block (icon + color). These
+// partials render that accent on object and schema surfaces, falling back to
+// the generic box icon when a type declares nothing:
+//   - Lucide names — bare ("FileText", "file-text") or iconify ("lucide--…") —
+//     resolve through the supportedTypeIconClasses catalog and render as the
+//     usual iconify span; a name outside the catalog falls back to the box;
+//   - a raw glyph (emoji, symbol) renders as text at the same size;
+//   - a declared color tints the tile/chip via inline style (arbitrary CSS
+//     color), mirroring the house "primary/10 bg + primary/15 border" tile look.
+
+// typeGlyph renders one type icon value inside a tile or chip. A catalogued
+// Lucide name uses the standard iconify span (iconClass carries the size);
+// anything unresolved is either a text glyph (glyphClass, a text-size class,
+// carries the size — emoji scale with the font, not the utility width/height
+// classes) or the generic box. Decorative either way.
+templ typeGlyph(icon, iconClass, glyphClass string) {
+	if class := typeIconClass(icon); class != "" {
+		<span class={ "iconify shrink-0", class, iconClass } aria-hidden="true"></span>
+	} else {
+		<span class={ "shrink-0 leading-none", glyphClass } aria-hidden="true">{ icon }</span>
+	}
+}
+
+// typeIconTile renders the leading icon tile for an object/type list row:
+// colored rounded square with the type's declared icon. Without a declaration
+// it is the generic primary box tile (identical to today's rows).
+templ typeIconTile(icon string, color string) {
+	if icon == "" && color == "" {
+		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "primary"})
+	} else {
+		<div class={ "grid shrink-0 place-items-center rounded-lg border size-9", templ.KV("bg-primary/10 text-primary border-primary/15", color == "") } style={ typeColorStyle(color) }>
+			@typeGlyph(icon, "size-4.5", "text-lg")
+		</div>
+	}
+}
+
+// typeNameChip renders the type-name chip used on object/type detail headers:
+// the type's name with its declared icon prefix and color accent. Without a
+// declaration it is the same badge with the generic box icon as before
+// (variant carries the badge tone, e.g. primary or ghost).
+templ typeNameChip(label string, variant ui.BadgeIntent, icon string, color string) {
+	if icon == "" && color == "" {
+		@ui.Badge(ui.BadgeProps{
+			Label:   label,
+			Variant: variant,
+			Size:    ui.BadgeSizeSM,
+			Icon:    "lucide--box",
+		})
+	} else {
+		<span class={ "badge gap-1 badge-sm", templ.KV(string(variant), color == "") } style={ typeColorStyle(color) }>
+			@typeGlyph(icon, "size-3", "text-[13px]")
+			<span class={ templ.KV("text-base-content", color != "") }>{ label }</span>
+		</span>
+	}
+}

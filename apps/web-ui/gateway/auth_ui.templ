@@ -1,0 +1,383 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/memory.web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/form"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Sign-in page (task 4.1) ---
+
+// loginPage is the standalone sign-in screen rendered at /auth/login in
+// session mode. It is a full document on purpose (no appShell): a centered
+// brand + card on the app's dark canvas with the same anti-white-flash paint
+// guard the shell uses. The "Sign in" action links to /auth/start, which runs
+// the real OIDC redirect.
+templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark" class="group/html">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="theme-color" content="#171921"/>
+			<meta name="apple-mobile-web-app-capable" content="yes"/>
+			<meta name="mobile-web-app-capable" content="yes"/>
+			<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+			<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"/>
+			<link rel="manifest" href="/assets/manifest.webmanifest"/>
+			@appleSplashLinks()
+			<title>{ pageTitle("Sign in") }</title>
+			<meta name="sentry-dsn" content={ sentryDSN }/>
+			<meta name="sentry-environment" content={ sentryEnvironment }/>
+			<meta name="sentry-traces-sample-rate" content={ sentryTracesSampleRate }/>
+			<meta name="sentry-replay-session-sample-rate" content={ sentryReplaySessionSampleRate }/>
+			<meta name="sentry-replay-on-error-sample-rate" content={ sentryReplayOnErrorSampleRate }/>
+			if sentryDSN != "" {
+				<script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.replay.feedback.min.js" crossorigin="anonymous"></script>
+				<script>
+				(function () {
+					var m = function (n) { var e = document.querySelector('meta[name="' + n + '"]'); return e ? e.content : ""; };
+					Sentry.init({
+						dsn: m("sentry-dsn"),
+						environment: m("sentry-environment"),
+						integrations: [
+							Sentry.browserTracingIntegration(),
+							Sentry.replayIntegration({ maskAllText: true, maskAllInputs: true, blockAllMedia: true })
+						],
+						tracesSampleRate: parseFloat(m("sentry-traces-sample-rate")),
+						replaysSessionSampleRate: parseFloat(m("sentry-replay-session-sample-rate")),
+						replaysOnErrorSampleRate: parseFloat(m("sentry-replay-on-error-sample-rate"))
+					});
+				})();
+				</script>
+			}
+			<!-- Paint the root dark before any stylesheet loads (mirrors the
+			     shell guard): no white flash on first paint or bfcache. -->
+			<style>html{color-scheme:dark;background-color:#0E1017}</style>
+			<style>
+			/* Sign-in stage: full-viewport centered column over a faint
+			   brass/steel aura. Self-contained so the page never depends on
+			   app.css beyond the daisy utilities it already loads. */
+			.login-stage {
+				position: relative;
+				min-height: 100dvh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				overflow: hidden;
+				padding: 2.5rem 1.5rem;
+			}
+			.login-aura {
+				position: absolute;
+				inset: 0;
+				pointer-events: none;
+				background:
+					radial-gradient(640px 360px at 50% -8%, oklch(0.74 0.135 78 / 0.15), transparent 70%),
+					radial-gradient(760px 500px at 88% 112%, oklch(0.64 0.105 240 / 0.09), transparent 70%),
+					radial-gradient(520px 420px at 4% 96%, oklch(0.76 0.15 162 / 0.05), transparent 70%);
+			}
+			.login-card {
+				position: relative;
+				width: 100%;
+				max-width: 24rem;
+				padding: 2.25rem 1.75rem 2rem;
+				text-align: center;
+				border-radius: 1.25rem;
+				border: 1px solid oklch(1 0 0 / 0.07);
+				background: linear-gradient(180deg, oklch(0.225 0.017 274), oklch(0.185 0.014 274));
+				box-shadow:
+					0 32px 90px -28px oklch(0 0 0 / 0.7),
+					inset 0 1px 0 oklch(1 0 0 / 0.05);
+			}
+			.login-brand {
+				display: flex;
+				justify-content: center;
+			}
+			.login-divider {
+				height: 1px;
+				margin: 1.25rem 0 1.5rem;
+				background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.1), transparent);
+			}
+			.login-title {
+				margin: 0;
+				font-size: 1.4rem;
+				line-height: 1.25;
+				font-weight: 700;
+				letter-spacing: -0.015em;
+			}
+			.login-subtitle {
+				margin: 0.4rem auto 0;
+				max-width: 18rem;
+				font-size: 0.85rem;
+				line-height: 1.5;
+				color: var(--color-base-content);
+				opacity: 0.55;
+			}
+			.login-cta {
+				margin-top: 1.75rem;
+			}
+			.login-foot {
+				margin: 1.5rem 0 0;
+				font-size: 0.7rem;
+				letter-spacing: 0.02em;
+				color: var(--color-base-content);
+				opacity: 0.35;
+			}
+			</style>
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+		</head>
+		<body class="bg-base-200">
+			<div class="login-stage">
+				<div class="login-aura" aria-hidden="true"></div>
+				<main class="login-card">
+					<div class="login-brand">
+						@memoryLogo()
+					</div>
+					<div class="login-divider" aria-hidden="true"></div>
+					<h1 class="login-title">Sign in to Memory</h1>
+					<p class="login-subtitle">Continue with your Emergent Memory account</p>
+					<div class="login-cta">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/auth/start",
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonLG,
+							Block:   true,
+							Glow:    true,
+						}) {
+							Sign in
+						}
+					</div>
+				</main>
+			</div>
+		</body>
+	</html>
+}
+
+// --- Project switcher (task 4.2) ---
+
+// projectSwitcher renders the compact "current project" dropdown in the app
+// navbar: it doubles as the org selector. The trigger shows the active
+// project (prefixed with its org name when known), the dropdown lists
+// projects grouped under muted, non-clickable org headers (an unknown/org-less
+// project lands in a trailing "Other" group — it never disappears), and a
+// "New project" footer opens the create dialog. State changes are POSTs (no
+// GET links): switching re-issues the session and redirects back to the page
+// the switch happened on. currentOrgName is the resolved org display name for
+// current ("" when unknown or no current project). orgs feeds the create
+// modal's org <select>.
+//
+// The modal open/close functions live in a raw <script> element at the END of
+// this component (after the dropdown and the dialog), NEVER inside the
+// <ul class="menu">: daisyUI's `.menu li > *` selector applies `display:grid`
+// to any direct li child (including a templ-emitted <script>), which would
+// override the UA `display:none` and paint the JS source as a tall visible
+// blob inside the dropdown. Buttons reference the plain global functions via
+// an `onclick` attribute instead of templ's OnClick (whose script would be
+// emitted at the reference site, i.e. back inside the menu markup).
+templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool) {
+	<div class="dropdown dropdown-end">
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonSM,
+			ExtraClass: "gap-1.5 font-normal",
+			Attrs: templ.Attributes{
+				"tabindex":      "0",
+				"aria-haspopup": "menu",
+				"aria-label":    "Switch project",
+				"data-testid":   "project-switcher",
+			},
+		}) {
+			if current != nil {
+				if currentOrgName != "" {
+					<div class="flex min-w-0 flex-col text-left leading-tight">
+						<span class="max-w-[16rem] truncate text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/60">{ currentOrgName }</span>
+						<span class="max-w-[16rem] truncate text-sm">{ current.Name }</span>
+					</div>
+				} else {
+					<span class="max-w-[12rem] truncate text-sm">{ current.Name }</span>
+				}
+			} else if activeOrg != nil {
+				<div class="flex min-w-0 flex-col text-left leading-tight">
+					<span class="max-w-[16rem] truncate text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/60">{ activeOrg.Name }</span>
+					<span class="max-w-[16rem] truncate text-sm text-base-content/60">Select project</span>
+				</div>
+			} else {
+				<span class="text-sm text-base-content/60">Select project</span>
+			}
+			@ui.IconSpan("lucide--chevron-down", "size-3.5 text-base-content/40")
+		}
+		<ul
+			tabindex="0"
+			role="menu"
+			aria-label="Projects"
+			class="dropdown-content menu menu-sm bg-base-100 rounded-box shadow-lg z-50 w-max min-w-80 max-w-[calc(100vw-2rem)] border border-base-content/10 mt-1 max-h-96 flex-nowrap overflow-x-hidden overflow-y-auto p-1"
+		>
+			if showRecent && len(recentProjects) > 0 {
+				@pickerSectionHeader("Recent")
+				for _, p := range recentProjects {
+					@projectSwitchRow(p, current != nil && current.ID == p.ID)
+				}
+			}
+			if len(projectGroups) == 0 {
+				<li class="pointer-events-none" aria-hidden="true">
+					<span class="text-base-content/40 text-xs">No projects yet</span>
+				</li>
+			} else {
+				for _, g := range projectGroups {
+					@projectGroupHeader(g)
+					for _, p := range g.Projects {
+						@projectSwitchRow(p, current != nil && current.ID == p.ID)
+					}
+				}
+			}
+		<li class="menu-title sticky bottom-0 mt-1.5 border-t border-base-content/10 bg-base-100 px-1 py-1.5">
+			<div class="flex items-center">
+				<a href="#" onclick="openNewProjectModal(); return false;" class="flex flex-1 items-center justify-center gap-1.5 px-3 py-0.5 text-sm font-normal text-base-content/70 transition-colors hover:text-base-content">
+					@ui.IconSpan("lucide--folder-plus", "size-3.5")
+					New project
+				</a>
+				<span class="h-4 w-px shrink-0 bg-base-content/15" aria-hidden="true"></span>
+				<a href="/orgs/new" class="flex flex-1 items-center justify-center gap-1.5 px-3 py-0.5 text-sm font-normal text-base-content/70 transition-colors hover:text-base-content">
+					@ui.IconSpan("lucide--building-2", "size-3.5")
+					New org
+				</a>
+			</div>
+		</li>
+		</ul>
+	</div>
+	@newProjectModal(orgs, activeOrg)
+	<script>
+	function openNewProjectModal() {
+		var t = document.activeElement;
+		if (t && typeof t.blur === "function") t.blur();
+		var d = document.getElementById("new-project-modal");
+		if (d) d.showModal();
+		var i = document.getElementById("new-project-name");
+		if (i) i.focus();
+	}
+	function closeNewProjectModal() {
+		var d = document.getElementById("new-project-modal");
+		if (d) d.close();
+	}
+	</script>
+}
+
+// pickerSectionHeader is a muted, non-interactive section label inside the
+// switcher (used for the "Recent" section above the org-grouped list). px-2.5
+// matches the .menu-sm item padding (.625rem) so labels and rows share the
+// same left edge.
+templ pickerSectionHeader(label string) {
+	<li class="menu-title pointer-events-none px-2.5 pt-3 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/40 select-none">
+		{ label }
+	</li>
+}
+
+// projectGroupHeader is one org section header in the switcher: for a real org
+// the name is a link that opens the org context (landing page) and a cogwheel
+// link opens its Settings hub; the org-less "Other" group stays a muted,
+// non-clickable label. The li is a .menu-title so its children are exempt from
+// daisyUI's .menu li > * grid rule, and px-2.5 keeps it flush with the rows.
+templ projectGroupHeader(g projectGroup) {
+	if g.OrgID != "" {
+		<li class="menu-title px-2.5 pt-3 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/60">
+			<div class="flex w-full items-center gap-1">
+				<a href={ templ.URL("/orgs/" + url.PathEscape(g.OrgID)) } class="min-w-0 flex-1 truncate text-left hover:text-base-content" title={ projectGroupLabel(g) }>
+					{ projectGroupLabel(g) }
+				</a>
+				<a href={ templ.URL("/orgs/" + url.PathEscape(g.OrgID) + "/settings") } class="shrink-0 text-base-content/40 hover:text-base-content" aria-label={ "Manage " + projectGroupLabel(g) } title="Manage organization">
+					@ui.IconSpan("lucide--settings", "size-3.5")
+				</a>
+			</div>
+		</li>
+	} else {
+		@pickerSectionHeader(projectGroupLabel(g))
+	}
+}
+
+// projectSwitchRow is one project in the switcher menu: a POST form whose
+// submit button fills the row. The active project is marked with a check.
+templ projectSwitchRow(p ProjectRef, active bool) {
+	<li>
+		<form method="post" action="/projects/activate" class="flex w-full items-center">
+			<input type="hidden" name="projectId" value={ p.ID }/>
+			<button type="submit" role="menuitem" class="flex w-full min-w-0 cursor-pointer items-center gap-2 text-left">
+				<span class={ "min-w-0 flex-1 truncate text-sm", templ.KV("text-base-content/70", !active) }>{ p.Name }</span>
+				if active {
+					@ui.IconSpan("lucide--check", "size-4 shrink-0 text-primary")
+				}
+			</button>
+		</form>
+	</li>
+}
+
+// newProjectModal is the create-project dialog opened from the switcher
+// footer. It POSTs to /projects (name + orgId); the submit is disabled until
+// the user belongs to an organization.
+templ newProjectModal(orgs []Org, activeOrg *Org) {
+	@modalShell("new-project-modal", "", "w-full max-w-sm") {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				<h3 class="text-lg font-semibold">New project</h3>
+				<p class="text-base-content/50 mt-0.5 text-sm">Projects group the agents, memory, and settings you work on together.</p>
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"onclick": "closeNewProjectModal()"},
+			})
+		</div>
+		<form method="post" action="/projects" class="flex flex-col gap-4">
+			@form.FormControl("new-project-name", "Project name", form.LabelAbove, "", "", nil) {
+				<input id="new-project-name" name="name" type="text" required placeholder="e.g. Home lab" class="input w-full"/>
+			}
+			@form.FormControl("new-project-org", "Organization", form.LabelAbove, "", "", nil) {
+				if len(orgs) == 0 {
+					<p class="text-base-content/45 text-sm">You need an organization first.</p>
+				} else {
+					<select id="new-project-org" name="orgId" required class="select w-full">
+						if activeOrg != nil {
+							<option value={ activeOrg.ID } selected>{ activeOrg.Name }</option>
+						} else {
+							<option value="" disabled selected>Select an organization</option>
+						}
+						for _, o := range orgs {
+							if activeOrg == nil || o.ID != activeOrg.ID {
+								<option value={ o.ID }>{ o.Name }</option>
+							}
+						}
+					</select>
+				}
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"onclick": "closeNewProjectModal()"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Attrs: templ.Attributes{
+						"id":       "new-project-create",
+						"disabled": len(orgs) == 0,
+					},
+				}) {
+					Create
+				}
+			}
+		</form>
+	}
+}

@@ -1,0 +1,143 @@
+package main
+
+import (
+	"strconv"
+
+	"github.com/emergent-company/memory.web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Usage dashboard ---
+
+// UsagePage renders the usage dashboard: summary cards (total tokens, range
+// cost, sessions, current-month spend when available), a daily token chart, a
+// sessions-per-day chart, a per-model table, and a 7/30/90-day range selector.
+// A failed backend fetch renders the whole-page error state (no crash).
+templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, payload usageChartPayload, monthSpend float64, hasMonthSpend bool, days int, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@usageHeader(loadErr == nil, days)
+		if loadErr != nil {
+			@pageError("Failed to load usage", loadErr)
+		} else {
+			@usageRangeSelector(days)
+			if hasUsageData(summary, series) {
+				@usageSummaryCards(summary, payload, monthSpend, hasMonthSpend)
+				@usageCharts(payload)
+				@usageModelSection(summary)
+				if note := usageNote(summary, series); note != "" {
+					<p class="text-base-content/45 mt-6 text-xs">{ note }</p>
+				}
+			} else {
+				@usageEmpty()
+			}
+		}
+	}
+}
+
+templ usageHeader(ok bool, days int) {
+	@pageHeader("Control plane", "Usage", "LLM token consumption and session activity for this project — costs are retail-price estimates.") {
+		if ok {
+			@countBadgeLabel(strconv.Itoa(days)+" day range", "lucide--chart-column")
+		}
+	}
+}
+
+// usageRangeSelector renders the 7/30/90-day links; the active range is
+// highlighted.
+templ usageRangeSelector(days int) {
+	<div class="mb-6 flex items-center gap-3">
+		<span class="text-base-content/45 text-xs">Range</span>
+		<div class="join">
+			@usageRangeLink(days, 7)
+			@usageRangeLink(days, 30)
+			@usageRangeLink(days, 90)
+		</div>
+	</div>
+}
+
+templ usageRangeLink(active, n int) {
+	<a
+		href={ templ.URL("/usage?days=" + strconv.Itoa(n)) }
+		class={ "btn btn-sm join-item", templ.KV("btn-primary", active == n) }
+	>{ strconv.Itoa(n) }d</a>
+}
+
+// usageSummaryCards renders the summary stats. The current-month spend card is
+// omitted when memory does not report it.
+templ usageSummaryCards(summary *UsageSummaryResponse, payload usageChartPayload, monthSpend float64, hasMonthSpend bool) {
+	{{ cards := []ui.StatCardProps{
+		{Label: "Total tokens", Value: compactNum(totalTokens(summary.Data)), Icon: "lucide--braces", IconColor: "bg-primary/15 text-primary", Attrs: templ.Attributes{"data-testid": "stat-total-tokens"}},
+		{Label: "Estimated cost", Value: formatCost(totalCost(summary.Data)), Icon: "lucide--dollar-sign", IconColor: "bg-secondary/15 text-secondary", Attrs: templ.Attributes{"data-testid": "stat-estimated-cost"}},
+		{Label: "Sessions", Value: compactNum(chartSeriesTotal(payload.Sessions)), Icon: "lucide--messages-square", IconColor: "bg-info/15 text-info", Attrs: templ.Attributes{"data-testid": "stat-sessions"}},
+	}
+	if hasMonthSpend {
+		cards = append(cards, ui.StatCardProps{Label: "Current month spend", Value: formatCost(monthSpend), Icon: "lucide--calendar-clock", IconColor: "bg-accent/15 text-accent", Attrs: templ.Attributes{"data-testid": "stat-month-spend"}})
+	} }}
+	@statRow(cards, "mt-6")
+}
+
+// usageCharts renders the two daily charts plus the embedded JSON payload and
+// the dependency-free SVG chart helper (usage-charts.js).
+templ usageCharts(payload usageChartPayload) {
+	<div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+		@ui.Section("Tokens per day", ui.SectionProps{Margin: "", CardClass: "card-border", BodyClass: "p-4"}) {
+			<div id="usage-token-chart" class="w-full" data-testid="usage-token-chart"></div>
+		}
+		@ui.Section("Sessions per day", ui.SectionProps{Margin: "", CardClass: "card-border", BodyClass: "p-4"}) {
+			<div id="usage-session-chart" class="w-full" data-testid="usage-session-chart"></div>
+		}
+	</div>
+	@templ.JSONScript("usage-timeseries", payload)
+	<script src={ templ.SafeURL(webui.AssetPath("/js/usage-charts.js")) }></script>
+}
+
+// usageModelSection lists token usage grouped by model, sorted by cost.
+templ usageModelSection(summary *UsageSummaryResponse) {
+	@ui.Section("Per-model usage", ui.SectionProps{Margin: "mt-6", CardClass: "card-border overflow-hidden", BodyClass: "p-0"}) {
+		@table.TableWithProps(table.TableProps{Bordered: false}) {
+			@table.TableHead() {
+				@table.TableHeadRow() {
+					@table.TableHeadCell("Model")
+					@table.TableHeadCell("Provider")
+					@table.TableHeadCell("Tokens")
+					@table.TableHeadCell("Cost")
+				}
+			}
+			@table.TableBody() {
+				for i, r := range usageModels(summary.Data) {
+					@usageModelRow(strconv.Itoa(i), r)
+				}
+			}
+		}
+	}
+}
+
+templ usageModelRow(rowID string, r UsageSummaryRow) {
+	@table.TableRow(rowID, false, nil) {
+		@table.TableCell("", nil) {
+			<span class="font-mono text-sm">{ r.Model }</span>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-base-content/60 text-sm">{ r.Provider }</span>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-sm">{ compactNum(modelTokenCount(r)) }</span>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-sm">{ formatCost(r.EstimatedCostUSD) }</span>
+		}
+	}
+}
+
+// usageEmpty is the "no usage rows in the selected range" state.
+templ usageEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--chart-column",
+		Title:       "No usage data",
+		Description: "No token usage or sessions recorded in this range. Try a wider range or start a conversation.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
+}

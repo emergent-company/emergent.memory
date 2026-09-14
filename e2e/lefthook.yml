@@ -1,0 +1,50 @@
+# lefthook.yml — git hooks and lint tasks for emergent.memory e2e tests.
+#
+# Install hooks:   lefthook install
+# Run lint only:   lefthook run lint
+# Run pre-commit:  lefthook run pre-commit
+#
+# Override locally in lefthook-local.yml (not committed).
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: gofmt
+      glob: "*.go"
+      run: |
+        files=$(gofmt -l {staged_files})
+        if [ -n "$files" ]; then
+          echo "gofmt: the following files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: go-vet
+      run: go vet ./...
+
+    - name: go-build
+      run: go build ./...
+
+    - name: no-secrets
+      run: gitleaks dir . --config .gitleaks.toml --no-banner
+
+lint:
+  parallel: true
+  jobs:
+    - name: gofmt
+      run: |
+        files=$(gofmt -l $(find . -name "*.go" -not -path "*/vendor/*"))
+        if [ -n "$files" ]; then
+          echo "gofmt: the following files need formatting:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: go-vet
+      run: go vet ./...
+
+    - name: go-build
+      run: go build ./...
+
+    - name: no-secrets
+      run: gitleaks dir . --config .gitleaks.toml --no-banner

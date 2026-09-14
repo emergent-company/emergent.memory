@@ -1,0 +1,19 @@
+logs/
+test-logs/
+.env
+.env.*
+.agents/
+.claude/
+runlog
+/analyze
+.opencode/node_modules/
+.opencode/bun.lock
+
+# auto-added by commit skill — 2026-06-02
+/gen-fixtures
+.runlog/
+
+# Editor / tool artifacts
+@!
+tui.json
+*.tui-migration.bak

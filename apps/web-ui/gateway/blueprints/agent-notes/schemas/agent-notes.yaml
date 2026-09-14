@@ -1,0 +1,157 @@
+name: agent-notes
+version: 2.0.0
+description: >
+  Universal annotation layer for enriching any knowledge graph entity with
+  agent observations. Notes are self-contained observations (preferences,
+  patterns, corrections, facts, instructions, conventions) stored as separate
+  objects with their own embeddings — never mixed with the source entity's
+  structured properties. Notes link to source entities via ANNOTATES
+  relationships. NoteCluster groups semantically related Notes for
+  token-efficient context injection.
+
+objectTypeSchemas:
+
+  - name: Note
+    label: Note
+    description: >
+      A single agent observation — a fact, preference, pattern, correction,
+      or instruction about an entity in the graph. Notes have their own
+      embedding (content field only), keeping the source entity's embedding
+      clean and focused on structured data. Created only by agent tool calls,
+      never extracted from documents.
+    properties:
+      content:
+        type: string
+        widget: textarea
+        required: true
+        description: "The observation in natural language. Self-contained and specific."
+      category:
+        type: string
+        required: true
+        enum:
+          - preference
+          - pattern
+          - correction
+          - fact
+          - instruction
+          - convention
+        description: "Classification of the observation type"
+      source:
+        type: string
+        enum:
+          - explicit
+          - inferred
+          - corrected
+        default: inferred
+        description: "How this observation was obtained — explicit (user said it), inferred (agent noticed), corrected (user corrected agent)"
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+        description: "Confidence score 0.0–1.0. Default: explicit=1.0, corrected=0.9, inferred=0.7"
+      tier:
+        type: string
+        enum:
+          - archival
+          - core
+        default: archival
+        description: "archival (default, retrieved on demand) or core (injected into every session)"
+      event_time:
+        type: string
+        description: "ISO 8601 timestamp of when the described event occurred. Used for temporal contradiction resolution."
+      last_used:
+        type: string
+        description: "ISO 8601 timestamp of last recall. Updated by the retrieval path."
+      use_count:
+        type: number
+        default: 0
+        description: "Number of times this note has been recalled"
+      needs_review:
+        type: boolean
+        default: false
+        description: "Flagged by the confidence decay job when confidence drops below threshold. Cleared on next recall."
+      superseded_by:
+        type: string
+        description: "ID of a newer Note that replaces this one. Enables soft-deletion and version tracking."
+    labels:
+      - note
+      - "{category}"
+      - "{tier}"
+    embedding:
+      mode: field
+      field: content
+      description: "Embedding is computed from the content field only — never mixed with entity properties."
+    extraction:
+      enabled: false
+      description: "Do NOT extract Note objects from documents. Notes are created only by agent tool calls."
+    ui:
+      icon: "📝"
+      color: "#4F46E5"
+
+  - name: NoteCluster
+    label: Note Cluster
+    description: >
+      A synthesised summary of a group of semantically related Notes.
+      Created by the background scheduler job. Used for token-efficient
+      context injection — cluster summaries are injected into the system
+      prompt instead of raw notes.
+    properties:
+      summary:
+        type: string
+        widget: textarea
+        description: "LLM-generated description of the cluster theme. Summarises what the grouped notes have in common."
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+        default: 0.6
+        description: "Confidence in the cluster. Starts at 0.6 (synthesised) and rises as member notes are validated through recall."
+    labels:
+      - note_cluster
+    ui:
+      icon: "📊"
+      color: "#7C3AED"
+
+relationshipTypeSchemas:
+
+  - name: annotates
+    label: Annotates
+    description: >
+      This Note is an observation about the target entity. Target is
+      untyped — any object in the graph, regardless of schema pack,
+      can be annotated. Notes without an ANNOTATES relationship are
+      free-standing (global preferences, cross-cutting instructions).
+    sourceType: Note
+    targetType: "*"
+    properties:
+      description:
+        type: string
+        description: "Optional context about the annotation relationship — why this note applies to this entity"
+
+  - name: belongs_to_cluster
+    label: Belongs To Cluster
+    description: >
+      This Note is grouped under the target NoteCluster. Created by the
+      background clustering job. A Note can belong to at most one cluster
+      at a time (re-clustering reassigns membership).
+    sourceType: Note
+    targetType: NoteCluster
+
+  - name: supersedes
+    label: Supersedes
+    description: >
+      This Note replaces an older one. The older Note's superseded_by
+      field references the new Note's ID. Enables version tracking and
+      soft-deletion without data loss.
+    sourceType: Note
+    targetType: Note
+
+migrations:
+  from_version: "1.0.0"
+  type_renames:
+    - from: ANNOTATES
+      to: annotates
+    - from: BELONGS_TO_CLUSTER
+      to: belongs_to_cluster
+    - from: SUPERSEDES
+      to: supersedes

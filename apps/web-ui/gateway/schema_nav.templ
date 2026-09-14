@@ -1,0 +1,13 @@
+package main
+
+// schemaSubNav is the vertical sub-navigation rail for the Schema area:
+// Compiled schema (/schema) and Schema packs (/schema/packs). It mirrors
+// settingsSubNav/agentSubNav — horizontal on small screens, a sticky left rail
+// on desktop. "Add schema" is NOT a rail item; it is an action on the Schema
+// packs list (linking to the existing /schema/add install flow).
+templ schemaSubNav(active string) {
+	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Schema sections">
+		@subNavItem("/schema", active == "compiled", "lucide--git-branch", "Compiled schema")
+		@subNavItem("/schema/packs", active == "packs", "lucide--library", "Schema packs")
+	</nav>
+}

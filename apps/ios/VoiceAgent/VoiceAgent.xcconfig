@@ -1,0 +1,14 @@
+// Memory iOS client — build configuration.
+//
+// Single source of truth for bundle id, product name, and signing team.
+//
+// MAC OPERATOR — before the first device build:
+//   1. Set DEVELOPMENT_TEAM to your Apple Developer Team ID.
+//      (Empty placeholder below; simulator builds work without it.)
+//   2. Optional: replace the com.emergent.memory placeholder with a bundle id
+//      unique to your Apple Developer account.
+// See client/ios/README.md for the full checklist.
+
+PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory
+PRODUCT_NAME = Memory
+DEVELOPMENT_TEAM = 74LC88G9SC

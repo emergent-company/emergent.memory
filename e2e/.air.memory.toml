@@ -1,0 +1,27 @@
+# .air.memory.toml — hot-reload dev server for memory e2e (port 17432).
+# Usage from /root/emergent.memory.e2e:  air -c .air.memory.toml
+root = "/root/runlog"
+tmp_dir = "/tmp/air-memory"
+
+[build]
+  cmd = "cd /root/runlog && GOCACHE=/tmp/go-cache-runlog templ generate && GOCACHE=/tmp/go-cache-runlog bash scripts/prune-templ-url-imports.sh && GOCACHE=/tmp/go-cache-runlog go build -o /tmp/runlog-air-memory ./cmd/runlog"
+  entrypoint = ["/tmp/runlog-air-memory"]
+  args_bin = ["--daemon", "--db", "/root/emergent.memory.e2e/.runlog/runs.db", "--port", "17432"]
+  include_ext = ["go", "templ"]
+  exclude_dir = ["tmp", "vendor", ".git", "node_modules", "test-results"]
+  exclude_regex = [".*_test.go", ".*_templ.go", ".*tests-result.*"]
+  exclude_file = []
+  delay = 500
+  log = "build-errors.log"
+  send_interrupt = true
+  kill_delay = "2s"
+  stop_on_error = true
+
+[log]
+  time = true
+
+[color]
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"

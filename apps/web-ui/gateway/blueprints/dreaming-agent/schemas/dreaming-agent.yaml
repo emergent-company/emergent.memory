@@ -1,0 +1,50 @@
+name: dreaming-agent
+version: 1.0.0
+description: >
+  Schema for the dreaming agent's memory-consolidation output. Dreams are
+  synthesized insights that connect and summarize related Notes and NoteClusters.
+
+objectTypeSchemas:
+  - name: Dream
+    label: Dream
+    description: >
+      A synthesized insight produced by the dreaming agent during periodic
+      memory consolidation. Connects and summarizes related Notes and Memories
+      into a higher-level understanding.
+    properties:
+      title:
+        type: string
+        description: Short title for the dream
+      content:
+        type: string
+        required: true
+        description: The synthesized insight or summary in natural language
+      theme:
+        type: string
+        description: Thematic category this dream consolidates
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+        default: 0.6
+        description: Confidence in the synthesized insight
+      source_count:
+        type: integer
+        description: Number of source notes this dream consolidates
+    labels:
+      - dream
+
+relationshipTypeSchemas:
+  - name: dreams_about
+    label: Dreams About
+    description: >
+      This Dream consolidates and references the target Note.
+    sourceType: Dream
+    targetType: Note
+
+  - name: derived_from
+    label: Derived From
+    description: >
+      This Dream was derived from the target NoteCluster.
+    sourceType: Dream
+    targetType: NoteCluster

@@ -1,0 +1,102 @@
+name: MemoryConnector
+options:
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    # Manual signing with a stable Apple Development identity (see
+    # MemoryConnector.xcconfig): ad-hoc signing resets TCC Automation grants.
+    ENABLE_HARDENED_RUNTIME: YES
+    GENERATE_INFOPLIST_FILE: NO
+    # Xcode 16+ Debug "debug dylib" splits the app into a thin launcher plus a
+    # Memory.debug.dylib holding the real code. tools/mac-build.sh re-signs the
+    # .app with the stable self-signed identity but leaves that nested dylib
+    # ad-hoc; hardened-runtime library validation then refuses to load it at
+    # launch ("mapping process and mapped file (non-platform) have different
+    # Team IDs"), aborting with SIGABRT / DYLD "Library missing". Disable the
+    # debug dylib so Debug builds are a single normally-signed executable.
+    ENABLE_DEBUG_DYLIB: "NO"
+
+targets:
+  MemoryConnector:
+    type: application
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Sources
+      # The asset catalog MUST be a source entry (not `resources:`) so XcodeGen
+      # routes it through the asset-catalog compiler into Assets.car; a
+      # `resources:` entry would merely copy the folder and the app icon would
+      # never be compiled in.
+      - path: Resources/Assets.xcassets
+    settings:
+      base:
+        # Product/process/bundle name shown by macOS: "Memory". The XcodeGen
+        # target + scheme stay "MemoryConnector", and PRODUCT_MODULE_NAME keeps
+        # the Swift module "MemoryConnector" so `@testable import
+        # MemoryConnector` (and the target identity) are unchanged.
+        PRODUCT_NAME: Memory
+        PRODUCT_MODULE_NAME: MemoryConnector
+        PRODUCT_BUNDLE_IDENTIFIER: com.emergent.memory.connector
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: MemoryConnector.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+      configFiles:
+        Debug: MemoryConnector.xcconfig
+        Release: MemoryConnector.xcconfig
+    entitlements:
+      path: MemoryConnector.entitlements
+    preBuildScripts:
+      - name: Build embedded engine binary
+        path: Scripts/build-engine.sh
+        # Always rebuild the engine: its source lives outside the Xcode
+        # project (connector/ Go module), so Xcode cannot track changes.
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/memory-connector"
+      - name: Build embedded reminders helper
+        path: Scripts/build-reminders-helper.sh
+        # Always rebuild: the Swift source is compiled by the script, not a
+        # normal Xcode target, so Xcode cannot track it.
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/memory-reminders"
+
+  MemoryConnectorTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests
+      # RemindersHelperCore.swift is EventKit-free by design so the pure CLI
+      # parsing/encoding helpers can be compiled into the unit-test bundle.
+      - path: RemindersHelper/RemindersHelperCore.swift
+    dependencies:
+      - target: MemoryConnector
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.emergent.memory.connector.tests
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Memory.app/Contents/MacOS/Memory"
+
+schemes:
+  MemoryConnector:
+    build:
+      targets:
+        MemoryConnector: all
+        MemoryConnectorTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - name: MemoryConnectorTests
+          parallelizable: false

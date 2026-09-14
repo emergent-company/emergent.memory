@@ -1,0 +1,157 @@
+package main
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// sidePanel renders the global assistant conversation drawer. It lives
+// OUTSIDE #main-content in appShell, so HTMX sidebar navigation (which only
+// swaps #main-content) never touches its DOM — the open/closed state and any
+// in-flight conversation survive in-app navigation. sidepanel.js drives
+// open/close, the /api/chat SSE stream, and localStorage persistence.
+// assistantAgent is the configured assistant agent ID; the panel only renders
+// when it is non-empty (see appShell).
+templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
+	<div id="sidepanel-root">
+		<!-- Clicking the backdrop closes the drawer (data-action, handled by
+		     sidepanel.js via document delegation so it survives swaps). -->
+		<div id="sidepanel-backdrop" class="fixed inset-0 z-40 hidden bg-black/40" data-action="close-sidepanel"></div>
+		<aside
+			id="sidepanel-panel"
+			class="bg-base-100 fixed top-0 right-0 z-50 flex h-full w-full max-w-md translate-x-full flex-col shadow-2xl transition-transform duration-300 ease-out"
+			aria-label="Assistant conversation"
+			aria-hidden="true"
+			data-agent-id={ assistantAgent }
+		>
+			<!-- Drag-to-resize grip on the left edge. Width is driven by
+			     sidepanel.js (single source of truth, persisted). -->
+			<div
+				id="sidepanel-resize"
+				class="hidden md:block"
+				role="separator"
+				aria-orientation="vertical"
+				aria-label="Resize assistant panel"
+				title="Drag to resize"
+			></div>
+			<div class="border-base-content/10 flex items-center justify-between gap-2 border-b px-3 py-2.5">
+				<div class="flex min-w-0 items-center gap-2">
+					@ui.IconSpan("lucide--bot", "size-4 text-primary")
+					<div class="min-w-0 leading-tight">
+						<h2 class="truncate text-sm font-semibold">Assistant</h2>
+						<p class="text-base-content/45 truncate text-[11px]">{ agentNameByID(agents, assistantAgent) }</p>
+					</div>
+				</div>
+				<div class="flex shrink-0 items-center gap-1">
+					<!-- Session picker: the assistant agent's past conversations.
+					     The menu is rebuilt by sidepanel.js (New session + recent
+					     sessions, last 3 by default with a "show all" footer). -->
+					<div class="dropdown dropdown-end">
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonGhost,
+							Size:       ui.ButtonXS,
+							AriaLabel:  "Sessions",
+							ExtraClass: "h-6 min-h-6 gap-1 px-1.5 text-[11px] font-normal normal-case",
+							Attrs: templ.Attributes{
+								"tabindex":      "0",
+								"role":          "button",
+								"id":            "sidepanel-session-picker",
+								"aria-haspopup": "menu",
+							},
+						}) {
+							<span class="iconify lucide--messages-square size-3.5 text-base-content/40" aria-hidden="true"></span>
+							<span id="sidepanel-session-label" class="max-w-24 truncate text-base-content/55">New session</span>
+							<span class="iconify lucide--chevron-down size-3 text-base-content/35" aria-hidden="true"></span>
+						}
+						<ul
+							id="sidepanel-session-menu"
+							tabindex="0"
+							role="menu"
+							aria-label="Assistant sessions"
+							class="dropdown-content z-[1] menu menu-sm mt-1 max-h-96 w-64 overflow-y-auto rounded-box border border-base-200 bg-base-100 p-1 shadow-xl"
+						>
+							<!-- populated by sidepanel.js -->
+						</ul>
+					</div>
+					<!-- Double-width toggle (drawer only; hidden below md where the
+					     drawer is already full-width, and hidden in modal mode). -->
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--maximize-2",
+						AriaLabel:  "Toggle double width",
+						ExtraClass: "sidepanel-drawer-only hidden md:inline-flex",
+						Attrs:      templ.Attributes{"id": "sidepanel-width-toggle", "data-action": "sidepanel-toggle-width", "aria-pressed": "false"},
+					})
+					<!-- Promote the drawer to a centered modal window (same DOM,
+					     same conversation state — sidepanel.js moves the aside). -->
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--scan",
+						AriaLabel:  "Open assistant chat in a modal window",
+						ExtraClass: "sidepanel-drawer-only",
+						Attrs:      templ.Attributes{"data-action": "sidepanel-open-modal"},
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeCircle,
+						Icon:      "lucide--x",
+						AriaLabel: "Close assistant panel",
+						Attrs:     templ.Attributes{"data-action": "close-sidepanel"},
+					})
+				</div>
+			</div>
+			<div id="sidepanel-log" class="min-h-0 grow overflow-y-auto">
+				<div class="flex min-h-full flex-col justify-end gap-3 p-4">
+					@chatWelcomeHero("sidepanel-empty", "lucide--bot", "gap-3 py-8", "Chat with your assistant", 3, "text-sm", "Ask anything — your assistant answers from its persona, model, and tools.", "mt-0.5 max-w-60 text-xs")
+					<div id="sidepanel-messages" class="flex flex-col gap-3"></div>
+				</div>
+			</div>
+			<form id="sidepanel-form" class="border-base-content/10 border-t bg-base-100 px-3 py-3">
+				<div class="flex items-end gap-2">
+					<textarea
+						id="sidepanel-input"
+						rows="1"
+						class="textarea textarea-bordered max-h-32 min-h-10 grow resize-none"
+						placeholder={ "Message " + agentNameByID(agents, assistantAgent) + "…" }
+						aria-label="Message"
+					></textarea>
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeSubmit,
+						Variant:    ui.ButtonPrimary,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--arrow-up",
+						AriaLabel:  "Send",
+						ExtraClass: "shrink-0",
+						Attrs:      templ.Attributes{"id": "sidepanel-send", "data-testid": "sidepanel-send"},
+					})
+					<span id="sidepanel-stop" class="hidden shrink-0">
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeButton,
+							Variant:   ui.ButtonNeutral,
+							Size:      ui.ButtonSM,
+							Shape:     ui.ButtonShapeSquare,
+							Icon:      "lucide--square",
+							AriaLabel: "Stop generating",
+						})
+					</span>
+				</div>
+				<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · Escape to close</p>
+			</form>
+		</aside>
+		<!-- Modal window mode: sidepanel.js moves #sidepanel-panel into
+		     #sidepanel-modal-box (same DOM, same conversation state). Closing
+		     via X / Escape / backdrop returns it to the drawer. -->
+		@modalShell("sidepanel-modal", "sidepanel-modal-box", "") {
+			<!-- #sidepanel-panel is appended here by sidepanel.js (openModal) -->
+		}
+	</div>
+}

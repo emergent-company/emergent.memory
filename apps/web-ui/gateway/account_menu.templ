@@ -1,0 +1,117 @@
+package main
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// userAccountMenu renders the topbar account menu: the signed-in user's avatar
+// as a dropdown trigger listing the active account, any other cached accounts
+// (switch via POST /auth/switch), "Add another account" (/auth/add), "My
+// Profile" (/profile, htmx partial swap into #main-content), and "Log out"
+// (POST /auth/logout). Renders nothing when user is nil (dev / API-key mode
+// has no identity).
+templ userAccountMenu(user *currentUser, accounts []currentUser) {
+	if user != nil {
+		<div class="dropdown dropdown-end" data-testid="account-menu">
+			<div
+				tabindex="0"
+				role="button"
+				class="rounded-full p-px outline-none cursor-pointer transition hover:ring-1 hover:ring-base-content/25 focus-visible:ring-1 focus-visible:ring-base-content/45 active:ring-1 active:ring-base-content/30"
+				aria-label="Account"
+				data-testid="account-menu-trigger"
+			>
+				<div class="flex items-center gap-1">
+					@accountAvatar(user.Name, user.Picture, ui.AvatarSize7, "text-xs")
+				</div>
+			</div>
+			<ul
+				tabindex="0"
+				role="menu"
+				aria-label="Account"
+				class="dropdown-content menu menu-sm bg-base-100 rounded-box shadow-lg z-50 w-56 p-1 border border-base-content/10 mt-1"
+			>
+				<li class="menu-title pointer-events-none px-2 pt-2 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/40 select-none">Signed in as</li>
+				@accountMenuActiveRow(user)
+				if len(accounts) > 0 {
+					<li class="menu-title pointer-events-none px-2 pt-3 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/40 select-none">Switch account</li>
+					for _, a := range accounts {
+						@accountMenuSwitchRow(a)
+					}
+				}
+				<li aria-hidden="true"></li>
+				<li>
+					<a href="/auth/add" class="justify-start gap-2">
+						@ui.IconSpan("lucide--user-plus", "size-4")
+						<span>Add another account</span>
+					</a>
+				</li>
+				<li>
+					<a href="/profile" hx-get="/profile" hx-target="#main-content" hx-swap="innerHTML" hx-push-url="true" class="justify-start gap-2">
+						@ui.IconSpan("lucide--user", "size-4")
+						<span>My Profile</span>
+					</a>
+				</li>
+				<li aria-hidden="true"></li>
+				<li>
+					<form method="post" action="/auth/logout" class="flex w-full">
+						<button type="submit" class="text-error hover:bg-error/10 flex w-full cursor-pointer items-center gap-2 text-left">
+							@ui.IconSpan("lucide--log-out", "size-4")
+							<span>Log out</span>
+						</button>
+					</form>
+				</li>
+			</ul>
+		</div>
+	}
+}
+
+// accountAvatar renders a round avatar via go-daisy's AvatarFull: an <img>
+// when a picture URL is present, else an initials badge (falling back to a
+// user icon). size selects the diameter; textClass sizes the initials text
+// (inherited by the inner badge).
+templ accountAvatar(name, picture string, size ui.AvatarSize, textClass string) {
+	<div class={ "shrink-0", textClass }>
+		@ui.AvatarFull(ui.AvatarProps{
+			Name:     name,
+			Src:      picture,
+			Icon:     "lucide--user",
+			Size:     size,
+			Fallback: ui.AvatarFallbackInitials,
+		})
+	</div>
+}
+
+// accountMenuActiveRow is the non-interactive row marking the active account.
+templ accountMenuActiveRow(u *currentUser) {
+	<li class="pointer-events-none">
+		<div class="flex items-center gap-2">
+			@accountAvatar(u.Name, u.Picture, ui.AvatarSize6, "text-[10px]")
+			<div class="min-w-0 grow">
+				<p class="truncate text-sm font-semibold">{ u.Name }</p>
+				if u.Email != "" {
+					<p class="truncate text-xs text-base-content/45">{ u.Email }</p>
+				}
+			</div>
+			@ui.IconSpan("lucide--check", "size-4 text-success")
+		</div>
+	</li>
+}
+
+// accountMenuSwitchRow is one cached account the user can switch to
+// (POST /auth/switch with its sub).
+templ accountMenuSwitchRow(a currentUser) {
+	<li>
+		<form method="post" action="/auth/switch" class="flex w-full">
+			<input type="hidden" name="sub" value={ a.Sub }/>
+			<button type="submit" role="menuitem" class="flex w-full cursor-pointer items-center gap-2 text-left">
+				@accountAvatar(a.Name, a.Picture, ui.AvatarSize6, "text-[10px]")
+				<div class="min-w-0 grow">
+					<p class="truncate text-sm">{ a.Name }</p>
+					if a.Email != "" {
+						<p class="truncate text-xs text-base-content/45">{ a.Email }</p>
+					}
+				</div>
+			</button>
+		</form>
+	</li>
+}

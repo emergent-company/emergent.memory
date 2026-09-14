@@ -1,0 +1,360 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Agent MCP sharing page (/agents/:id/mcp-shares) ---
+//
+// Exposes one agent as a single-tool MCP server (call_agent). The list shows
+// each share's status and timestamps with rotate/revoke actions; create and
+// rotate render the one-time endpoint + key reveal — the raw key lives only in
+// that response and is never stored or logged.
+
+// AgentMCPSharesPage renders one agent's MCP shares: the shared agent header,
+// sub-nav rail, and the shares section. A failed agent fetch (LoadErr) renders
+// the whole-page error state; a list failure (SharesErr) degrades only the
+// section.
+templ AgentMCPSharesPage(data agentMCPSharesPageData) {
+	@layout.Container(layout.ContainerLG, templ.Attributes{"data-agent-mcp-shares-root": ""}) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "MCP")
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			@layout.Rail(agentSubNav(data.Agent.ID, "mcp"), nil) {
+				@agentMCPSharesSection(data)
+			}
+		}
+	}
+}
+
+// agentMCPSharesSection is the card holding the create action, the list (or
+// empty/error state), and — on a create/rotate response — the one-time reveal.
+templ agentMCPSharesSection(data agentMCPSharesPageData) {
+	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+		<div class="flex flex-wrap items-start justify-between gap-3 border-b border-base-200 p-5">
+			<div class="min-w-0">
+				<div class="flex flex-wrap items-center gap-2">
+					@ui.IconSpan("lucide--share-2", "size-4 shrink-0 text-primary/70")
+					<h2 class="text-base font-semibold">MCP tool</h2>
+					if data.SharesErr == nil {
+						@countBadgeLabel(countLabel(len(data.Shares), "share", "shares"), "lucide--share-2")
+					}
+				</div>
+				<p class="text-base-content/55 mt-1 max-w-2xl text-sm">
+					Hand this agent to an outside MCP client as one <code class="font-mono text-xs">call_agent</code> tool. Each share gets its own key you can rotate or revoke at any time.
+				</p>
+			</div>
+			<form method="post" action={ templ.URL(agentMCPSharesBase(data.Agent.ID)) }>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--share-2",
+				}) {
+					Share as MCP tool
+				}
+			</form>
+		</div>
+		if data.SharesErr != nil {
+			<div class="p-5">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: "Failed to load MCP shares: " + data.SharesErr.Error(),
+				})
+			</div>
+		} else if len(data.Shares) == 0 {
+			<div class="p-5">
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--share-2",
+					Title:       "Not shared yet",
+					Description: "Create a share to get an endpoint and key that expose this agent's call_agent tool to an MCP client.",
+					Bordered:    true,
+					Class:       "py-8",
+				}) {
+					<form method="post" action={ templ.URL(agentMCPSharesBase(data.Agent.ID)) }>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--share-2",
+						}) {
+							Share as MCP tool
+						}
+					</form>
+				}
+			</div>
+		} else {
+			<div class="flex flex-col divide-y divide-base-200">
+				for _, sh := range data.Shares {
+					@agentMCPShareRow(data.Agent.ID, sh)
+				}
+			</div>
+		}
+	}
+	if data.Reveal != nil {
+		@agentMCPShareRevealModal(*data.Reveal)
+		@apiTokenCopyScript()
+	}
+}
+
+// agentMCPShareRow is one share: identity + status, creation and last-used
+// timestamps, and the rotate/revoke actions. A revoked share is read-only.
+templ agentMCPShareRow(agentID string, inst AgentMCPShare) {
+	{{ revoked := agentMCPShareIsRevoked(inst.Status)
+	name := inst.Name
+	if name == "" {
+		name = "Untitled share"
+	} }}
+	<div class="flex flex-col gap-3 px-4 py-3.5" data-agent-mcp-share-row={ inst.ID }>
+		<div class="flex flex-wrap items-start justify-between gap-3">
+			<div class="min-w-0">
+				<div class="flex flex-wrap items-center gap-2">
+					@ui.IconSpan("lucide--share-2", "size-4 shrink-0 text-primary/70")
+					<span class="truncate text-sm font-medium">{ name }</span>
+					@agentMCPShareStatusBadge(inst)
+				</div>
+				if inst.Description != "" {
+					<p class="text-base-content/55 mt-1 text-xs">{ inst.Description }</p>
+				}
+			</div>
+			if !revoked {
+				<div class="flex shrink-0 items-center gap-1">
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--refresh-cw",
+						AriaLabel: "Rotate key for " + name,
+						Attrs:     templ.Attributes{"title": "Issue a new key"},
+						OnClick:   agentMCPShareDialog("rotate", inst.ID),
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--trash-2",
+						ExtraClass: "text-error hover:text-error",
+						AriaLabel:  "Revoke " + name,
+						Attrs:      templ.Attributes{"title": "Revoke this share"},
+						OnClick:    agentMCPShareDialog("revoke", inst.ID),
+					})
+				</div>
+			}
+		</div>
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-base-content/50">
+			<span class="inline-flex items-center gap-1">
+				@ui.IconSpan("lucide--calendar-plus", "size-3.5")
+				created { relTime(inst.CreatedAt) }
+			</span>
+			<span class="inline-flex items-center gap-1">
+				@ui.IconSpan("lucide--clock", "size-3.5")
+				last used { agentMCPShareLastUsedLabel(inst) }
+			</span>
+		</div>
+	</div>
+	if !revoked {
+		@agentMCPShareRevokeDialog(agentID, inst.ID, name)
+		@agentMCPShareRotateDialog(agentID, inst.ID, name)
+	}
+}
+
+// agentMCPShareStatusBadge renders the share's status badge.
+templ agentMCPShareStatusBadge(inst AgentMCPShare) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   agentMCPShareStatusLabel(inst.Status),
+		Variant: agentMCPShareStatusIntent(inst.Status),
+		Style:   ui.BadgeStyleSoft,
+		Size:    ui.BadgeSizeXS,
+		Dot:     true,
+	})
+}
+
+// agentMCPShareRevokeDialog confirms revocation before POSTing .../revoke.
+templ agentMCPShareRevokeDialog(agentID, shareID, name string) {
+	@modalShell("agent-mcp-share-revoke-"+shareID, "", "max-w-sm") {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--trash-2", "size-5")
+			</div>
+			<div>
+				<h3 class="text-lg font-semibold">Revoke share?</h3>
+				<p class="text-base-content/55 mt-1 text-sm">
+					This immediately invalidates <span class="text-base-content font-medium">{ name }</span>'s key. Any MCP client using it stops working. This cannot be undone.
+				</p>
+			</div>
+		</div>
+		<form method="post" action={ templ.URL(agentMCPSharesBase(agentID) + "/" + url.PathEscape(shareID) + "/revoke") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Revoke share
+				}
+			}
+		</form>
+	}
+}
+
+// agentMCPShareRotateDialog confirms rotation before POSTing .../rotate.
+templ agentMCPShareRotateDialog(agentID, shareID, name string) {
+	@modalShell("agent-mcp-share-rotate-"+shareID, "", "max-w-sm") {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--refresh-cw", "size-5")
+			</div>
+			<div>
+				<h3 class="text-lg font-semibold">Rotate key?</h3>
+				<p class="text-base-content/55 mt-1 text-sm">
+					A new key is issued for <span class="text-base-content font-medium">{ name }</span> and the current key stops working immediately. The new key is shown once.
+				</p>
+			</div>
+		</div>
+		<form method="post" action={ templ.URL(agentMCPSharesBase(agentID) + "/" + url.PathEscape(shareID) + "/rotate") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+				}) {
+					Rotate key
+				}
+			}
+		</form>
+	}
+}
+
+// agentMCPShareDialog opens one row's rotate/revoke confirmation dialog.
+script agentMCPShareDialog(kind string, id string) {
+	var d = document.getElementById("agent-mcp-share-" + kind + "-" + id);
+	if (d) d.showModal();
+}
+
+// agentMCPShareRevealModal is the one-time reveal: the per-agent endpoint, the
+// raw key, the "won't be shown again" warning, and ready-to-paste client
+// snippets. The key exists only in this response; closing the dialog returns to
+// the list and it is gone for good.
+templ agentMCPShareRevealModal(r agentMCPShareReveal) {
+	<dialog class="modal modal-open" hx-boost="false" data-agent-mcp-share-reveal>
+		<div class="modal-box max-w-2xl">
+			<div class="flex items-center gap-3">
+				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
+				<div class="min-w-0">
+					<h3 class="text-lg font-semibold">{ r.Heading }</h3>
+					<p class="text-base-content/50 mt-0.5 text-xs">
+						if r.Name != "" {
+							{ r.Name } — this key is shown only once. Store it somewhere safe.
+						} else {
+							This key is shown only once. Store it somewhere safe.
+						}
+					</p>
+				</div>
+			</div>
+			<div class="mt-4 flex flex-wrap items-center gap-2">
+				<div id="agent-mcp-share-key" class="rounded-box border-base-content/15 bg-base-200/50 min-w-0 flex-1 border px-3 py-2 font-mono text-xs break-all">{ r.Token }</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--copy",
+					Attrs:   templ.Attributes{"data-copy-target": "#agent-mcp-share-key"},
+				}) {
+					Copy key
+				}
+			</div>
+			if r.MCPURL != "" {
+				<div class="mt-3 flex flex-wrap items-center gap-2">
+					@ui.Eyebrow("Endpoint", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+					<div id="agent-mcp-share-endpoint" class="rounded-box border-base-content/15 bg-base-200/50 min-w-0 flex-1 border px-3 py-2 font-mono text-xs break-all">{ r.MCPURL }</div>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeButton,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--copy",
+						Attrs:   templ.Attributes{"data-copy-target": "#agent-mcp-share-endpoint"},
+					}) {
+						Copy
+					}
+				</div>
+			}
+			<div class="mt-3">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--triangle-alert",
+					Message: "This key will not be shown again. If you lose it, rotate the share to issue a new one.",
+				})
+			</div>
+			<div class="mt-5 flex flex-col gap-3">
+				@ui.Eyebrow("Client setup", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+				<p class="text-base-content/50 -mt-2 text-xs">Paste one of these into your MCP client. Each already contains the endpoint and key.</p>
+				for _, s := range r.Snippets {
+					@agentMCPShareSnippetBlock(s)
+				}
+			</div>
+			<form method="dialog" class="modal-action">
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeSubmit,
+					Variant:    ui.ButtonPrimary,
+					Size:       ui.ButtonSM,
+					Icon:       "lucide--check",
+					ExtraClass: "w-full sm:w-auto",
+				}) {
+					Done — I've saved the key
+				}
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button>close</button>
+		</form>
+	</dialog>
+}
+
+// agentMCPShareSnippetBlock is one client snippet card with a copy button.
+templ agentMCPShareSnippetBlock(s agentMCPShareSnippet) {
+	<div class="rounded-box border-base-content/10 bg-base-200/30 border p-3">
+		<div class="mb-2 flex items-center justify-between gap-2">
+			<span class="text-xs font-semibold">{ s.Label }</span>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonXS,
+				Icon:      "lucide--copy",
+				AriaLabel: "Copy " + s.Label + " config",
+				Attrs:     templ.Attributes{"data-copy-target": "#agent-mcp-share-snippet-" + s.Key},
+			}) {
+				Copy
+			}
+		</div>
+		<pre id={ "agent-mcp-share-snippet-" + s.Key } class="rounded-box bg-base-100 overflow-x-auto p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">{ s.Code }</pre>
+	</div>
+}

@@ -1,0 +1,399 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Sessions (trace viewer) ---
+
+// SessionsPage renders the session list, most recent first. A failed fetch
+// renders the whole-page error state.
+templ SessionsPage(convs []Conversation, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@sessionsHeader(len(convs), loadErr == nil)
+		if loadErr != nil {
+			@pageError("Failed to load sessions", loadErr)
+		} else if len(convs) == 0 {
+			@sessionsEmpty()
+		} else {
+			@sessionsList(convs)
+		}
+	}
+}
+
+templ sessionsHeader(count int, ok bool) {
+	@pageHeader("Control plane", "Sessions", "Recorded agent conversations — open one to inspect its timeline of turns and tool calls.") {
+		if ok {
+			@countBadgeLabel(countLabel(count, "session", "sessions"), "lucide--messages-square")
+		}
+	}
+}
+
+templ sessionsEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--messages-square",
+		Title:       "No sessions",
+		Description: "Chat with an agent and the conversation will appear here.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
+}
+
+templ sessionsList(convs []Conversation) {
+	@cardList("", cardListProps{}) {
+		for _, c := range convs {
+			@sessionRow(c)
+		}
+	}
+}
+
+templ sessionRow(c Conversation) {
+	@listRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
+		if c.AgentDefinitionID != "" {
+			@ui.Badge(ui.BadgeProps{
+				Label:   shortID(c.AgentDefinitionID),
+				Variant: ui.BadgeGhost,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--bot",
+			})
+		}
+	}
+}
+
+// SessionPage renders one session's timeline: user/assistant turns as chat
+// bubbles and tool calls as cards (name, collapsible highlighted JSON input/
+// output, error), grouped by run, with each run's OpenTelemetry trace
+// waterfall in a collapsible section when a trace exists. Per-run token usage
+// is not part of the conversation-history API, so it is omitted rather than
+// fabricated. Unknown sessions render an empty timeline (not an error); other
+// failures render the error state.
+templ SessionPage(detail *ConversationDetail, groups []runGroup, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		if loadErr != nil {
+			@pageError("Session unavailable", loadErr)
+		} else {
+			@sessionDetailHeader(detail)
+			if len(groups) == 0 {
+				@sessionTimelineEmpty()
+			} else {
+				@sessionTimeline(groups)
+			}
+		}
+	}
+}
+
+templ sessionDetailHeader(detail *ConversationDetail) {
+	if detail != nil {
+		@detailHeader(crumbsActive(nav.Crumbs("Sessions", "/sessions", sessionTitle(detail))), "", sessionTitle(detail), "Created "+relTime(detail.CreatedAt), detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel(strconv.Itoa(len(detail.Messages))+" message"+plural(len(detail.Messages)), "lucide--message-square")
+			if detail.AgentDefinitionID != "" {
+				@ui.Badge(ui.BadgeProps{
+					Label:   shortID(detail.AgentDefinitionID),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--bot",
+				})
+			}
+		}
+	} else {
+		@detailHeader(crumbsActive(nav.Crumbs("Sessions", "/sessions", "Session")), "", "Session", "", detailHeaderOpts{Margin: "mb-6"})
+	}
+}
+
+templ sessionTimelineEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--history",
+		Title:       "No timeline",
+		Description: "This session has no recorded messages or tool calls.",
+		Bordered:    true,
+	})
+}
+
+// sessionTimeline renders the timeline grouped by run, in first-seen order.
+templ sessionTimeline(groups []runGroup) {
+	for i, g := range groups {
+		@sessionRunBlock(i+1, g)
+	}
+}
+
+// sessionRunBlock renders one run: a header (model · status · duration), its
+// messages + tool calls in order, and its trace waterfall when one exists.
+// Per-run usage is absent from the conversation-history API and intentionally
+// not shown.
+templ sessionRunBlock(n int, g runGroup) {
+	{{ model, status, dur := g.runMeta() }}
+	<div class="mb-6">
+		<div class="mb-2 flex flex-wrap items-center gap-2">
+			<span class="font-mono text-[11px] font-medium text-base-content/55">run { strconv.Itoa(n) }</span>
+			if model != "" {
+				@ui.Badge(ui.BadgeProps{Label: model, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+			}
+			if status != "" {
+				@runStatusBadge(status)
+			}
+			if dur != "" {
+				@ui.Badge(ui.BadgeProps{Label: dur, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+			}
+		</div>
+		<div class="space-y-3">
+			for _, it := range g.items {
+				if it.Kind == "message" {
+					@sessionMessageItem(it)
+				} else if it.Kind == "tool_call" {
+					@sessionToolItem(it)
+				}
+			}
+		</div>
+		@sessionRunTrace(g)
+	</div>
+}
+
+// sessionMessageItem renders one turn as a daisyUI chat bubble: user turns
+// right-aligned in a primary bubble, every other role left-aligned under the
+// author's name in a neutral bubble. A leading chain-of-thought paragraph
+// (split from the reply) collapses under a "Thinking" disclosure above the
+// answer bubble; a textless planning monologue shows its function calls as
+// ghost badges inside the bubble. A quiet footer carries step number +
+// relative time when the item has them.
+templ sessionMessageItem(it TimelineItem) {
+	{{ role := it.Role
+	if role == "" {
+		role = "assistant"
+	}
+	author := "Alfred"
+	if role == "tool" || role == "function" {
+		author = "Tool"
+	} else if role == "system" {
+		author = "System"
+	} else if role != "assistant" && role != "model" {
+		author = role
+	} }}
+	if role == "user" {
+		@sessionUserMessage(it)
+	} else if it.Content != nil && len(it.Content.FunctionCalls) > 0 {
+		@sessionAssistantBubble(author, it) {
+			<div class="flex flex-wrap gap-1">
+				for _, fc := range it.Content.FunctionCalls {
+					@ui.Badge(ui.BadgeProps{Label: fc.Name, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--wrench"})
+				}
+			</div>
+		}
+	} else {
+		{{ text := ""
+		if it.Content != nil {
+			text = it.Content.Text
+		}
+		reasoning, answer := "", text
+		if text != "" {
+			reasoning, answer = splitLeadingReasoning(text)
+		} }}
+		if reasoning != "" {
+			@sessionThinkingBlock(reasoning)
+		}
+		if answer != "" {
+			@sessionAssistantBubble(author, it) {
+				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(answer))</div>
+			}
+		}
+	}
+}
+
+// sessionUserMessage renders a user turn as a right-aligned primary chat
+// bubble with a user avatar and a "You" header.
+templ sessionUserMessage(it TimelineItem) {
+	{{ text := ""
+	if it.Content != nil {
+		text = it.Content.Text
+	}
+	footer := sessionItemFooter(it) }}
+	<div class="chat chat-end">
+		<div class="chat-image bg-primary/10 text-primary border-primary/20 flex items-center justify-center rounded-full border p-2">
+			@ui.IconSpan("lucide--user", "size-5")
+		</div>
+		<div class="chat-header text-xs text-base-content/50">You</div>
+		<div class="chat-bubble chat-bubble-primary max-w-[85%]">
+			if text != "" {
+				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(text))</div>
+			}
+		</div>
+		if footer != "" {
+			<div class="chat-footer mt-1 font-mono text-[11px] text-base-content/35">{ footer }</div>
+		}
+	</div>
+}
+
+// sessionAssistantBubble renders a non-user turn as a left-aligned neutral
+// chat bubble under the author's name (bot avatar). The bubble body is
+// supplied as children (markdown reply or function-call badges).
+templ sessionAssistantBubble(author string, it TimelineItem) {
+	{{ footer := sessionItemFooter(it) }}
+	<div class="chat chat-start">
+		<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">
+			@ui.IconSpan("lucide--bot", "size-5")
+		</div>
+		<div class="chat-header text-xs text-base-content/50">{ author }</div>
+		<div class="chat-bubble chat-bubble-neutral max-w-[85%]">
+			{ children... }
+		</div>
+		if footer != "" {
+			<div class="chat-footer mt-1 font-mono text-[11px] text-base-content/35">{ footer }</div>
+		}
+	</div>
+}
+
+// sessionThinkingBlock renders a run's chain-of-thought as a quiet, collapsed
+// disclosure sitting in the same column as a chat-start bubble (invisible
+// avatar shell, exactly like the live chat's thinking badges).
+templ sessionThinkingBlock(reasoning string) {
+	<div class="chat chat-start">
+		<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">
+			@ui.IconSpan("lucide--bot", "size-5")
+		</div>
+		<details class="col-start-2 row-start-2 w-full">
+			<summary class="mb-1 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 text-[10px] font-medium text-base-content/50 [&::-webkit-details-marker]:hidden">
+				<span class="iconify lucide--brain size-3" aria-hidden="true"></span>Thinking
+			</summary>
+			<div class="alfred-md text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(reasoning))</div>
+		</details>
+	</div>
+}
+
+// sessionItemFooter builds the quiet "step N · 5m ago" footer label under a
+// message bubble, or "" when the item carries neither step nor timestamp.
+func sessionItemFooter(it TimelineItem) string {
+	footer := ""
+	if it.StepNumber > 0 {
+		footer = "step " + strconv.Itoa(it.StepNumber)
+	}
+	if it.CreatedAt != "" {
+		if footer != "" {
+			footer += " · "
+		}
+		footer += relTime(it.CreatedAt)
+	}
+	return footer
+}
+
+// sessionToolItem renders one tool call: name, status, collapsible
+// syntax-highlighted input/output JSON, and a distinct error line when the
+// call failed. Input/output <details> are collapsed by default so long
+// payloads never form a text wall.
+templ sessionToolItem(it TimelineItem) {
+	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="iconify lucide--wrench size-3.5 text-base-content/40" aria-hidden="true"></span>
+			<span class="font-mono text-xs font-medium">{ it.ToolName }</span>
+			@toolStatusBadge(it.ToolStatus)
+		</div>
+		if len(it.ToolInput) > 0 {
+			{{ inHL, inOK := highlightJSONValue(it.ToolInput) }}
+			<details class="mt-2">
+				<summary class="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-base-content/40 uppercase [&::-webkit-details-marker]:hidden">Input <span class="iconify lucide--chevron-right size-3" aria-hidden="true"></span></summary>
+				<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
+					if inOK {
+						@templ.Raw(inHL)
+					} else {
+						<span>{ string(it.ToolInput) }</span>
+					}
+				</div>
+			</details>
+		}
+		if len(it.ToolOutput) > 0 {
+			{{ outHL, outOK := highlightJSONValue(it.ToolOutput) }}
+			<details class="mt-2">
+				<summary class="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-base-content/40 uppercase [&::-webkit-details-marker]:hidden">Output <span class="iconify lucide--chevron-right size-3" aria-hidden="true"></span></summary>
+				<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
+					if outOK {
+						@templ.Raw(outHL)
+					} else {
+						<span>{ string(it.ToolOutput) }</span>
+					}
+				</div>
+			</details>
+		}
+		if err := toolError(it.ToolStatus, string(it.ToolOutput)); err != "" {
+			<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium">
+				<span class="iconify lucide--circle-alert size-3.5" aria-hidden="true"></span>
+				{ err }
+			</p>
+		}
+	</div>
+}
+
+// runStatusBadge colors a run status.
+templ runStatusBadge(status string) {
+	{{ intent := ui.BadgeNeutral
+	if status == "completed" {
+		intent = ui.BadgeSuccess
+	} else if status == "failed" || status == "error" {
+		intent = ui.BadgeError
+	} else if status == "running" || status == "pending" {
+		intent = ui.BadgeInfo
+	} }}
+	@ui.Badge(ui.BadgeProps{Label: status, Variant: intent, Size: ui.BadgeSizeXS, Dot: true})
+}
+
+// toolStatusBadge colors a tool-call status; an empty status renders a dash.
+templ toolStatusBadge(status string) {
+	if status == "" {
+		@emptyDash()
+	} else {
+		{{ intent := ui.BadgeNeutral
+		if status == "completed" {
+			intent = ui.BadgeSuccess
+		} else if status == "error" || status == "failed" {
+			intent = ui.BadgeError
+		} }}
+		@ui.Badge(ui.BadgeProps{Label: status, Variant: intent, Size: ui.BadgeSizeXS, Dot: true})
+	}
+}
+
+// sessionRunTrace renders one run's trace waterfall as a collapsible section
+// of spans, deepest-first by parentage. Runs whose agent-run DTO carries no
+// spans (tracing disabled/absent) render nothing.
+templ sessionRunTrace(g runGroup) {
+	if len(g.spans) > 0 {
+		<details class="mt-3 rounded-box border border-base-content/10 bg-base-200/30 p-3" open>
+			<summary class="flex cursor-pointer items-center gap-2 list-none select-none [&::-webkit-details-marker]:hidden">
+				<span class="iconify lucide--activity size-3.5 text-base-content/40" aria-hidden="true"></span>
+				<span class="text-[10px] font-semibold tracking-wider text-base-content/45 uppercase">Trace</span>
+				<span class="font-mono text-[11px] text-base-content/50">{ strconv.Itoa(len(g.spans)) } span{ plural(len(g.spans)) }</span>
+			</summary>
+			<div class="mt-2 space-y-0.5 overflow-x-auto">
+				<div class="min-w-max">
+					for _, row := range traceRows(g.spans) {
+						@sessionTraceRow(row)
+					}
+				</div>
+			</div>
+		</details>
+	}
+}
+
+// sessionTraceRow renders one waterfall line: duration, operation name, and
+// input → output token counts for call_llm spans. Children are indented one
+// level per tree depth under their parent.
+templ sessionTraceRow(row traceRow) {
+	{{ name := row.span.Name
+	if name == "" {
+		name = "(unnamed)"
+	}
+	tokenLabel := ""
+	if row.span.Name == "call_llm" {
+		if label, ok := llmTokenLabel(row.span.InputTokens, row.span.OutputTokens); ok {
+			tokenLabel = label
+		}
+	} }}
+	<div class="flex items-baseline gap-2" style={ "padding-left: " + strconv.Itoa(row.depth*16) + "px" }>
+		<span class="shrink-0 font-mono text-[10px] text-base-content/40">{ formatSpanDuration(row.span.StartUnixNano, row.span.EndUnixNano) }</span>
+		<span class="min-w-0 font-mono text-[11px] text-base-content/85">{ name }</span>
+		if tokenLabel != "" {
+			<span class="shrink-0 text-[10px] whitespace-nowrap text-base-content/45">{ tokenLabel }</span>
+		}
+	</div>
+}

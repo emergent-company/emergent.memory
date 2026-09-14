@@ -1,0 +1,556 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- MCP Sharing pages (/settings/mcp-servers/shares) ---
+//
+// A crumb-framed list page plus standalone create (/new) and edit
+// (/:id/edit) pages, nested under the MCP Servers settings area. Create and
+// rotate render the one-time key reveal page — the raw key lives only in that
+// response and is never stored or logged. Revoke and rotate are confirmed in
+// dialogs before posting.
+
+// MCPSharesPage renders the share list. A project with no shares renders the
+// shared EmptyState with a CTA; a failed list fetch renders the error state.
+templ MCPSharesPage(data mcpSharesPageData) {
+	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-shares-root": ""}) {
+		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing")) }}
+		@detailHeader(crumbs, "", "MCP Sharing", "Hand an outside MCP client a scoped key that exposes only the memory tools and agents you choose.", detailHeaderOpts{Margin: "mb-6"}) {
+			if data.LoadErr == nil {
+				@countBadge(len(data.Shares), "share", "lucide--share-2")
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    mcpShareSettingsBase + "/new",
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plus",
+				}) {
+					New share
+				}
+			}
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		if data.LoadErr != nil {
+			@pageError("MCP shares unavailable", data.LoadErr)
+		} else if len(data.Shares) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--share-2",
+				Title:       "No MCP shares yet",
+				Description: "Create a share to expose a chosen set of memory tools and agents to an outside MCP client, with its own API key.",
+				Bordered:    true,
+				Class:       "py-12",
+				ActionHref:  mcpShareSettingsBase + "/new",
+				ActionLabel: "Create a share",
+				ActionIcon:  "lucide--plus",
+			})
+		} else {
+			@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+				<div class="flex flex-col divide-y divide-base-200">
+					for _, inst := range data.Shares {
+						@mcpShareRow(inst)
+					}
+				</div>
+			}
+		}
+		if data.Reveal != nil {
+			@mcpShareRevealModal(*data.Reveal)
+			@apiTokenCopyScript()
+		}
+		@mcpShareScripts()
+	}
+}
+
+// mcpShareRow is one share: identity + status, tool/agent counts, timestamps,
+// and the edit/rotate/revoke actions. Legacy shares render read-only.
+templ mcpShareRow(inst MCPShareInstance) {
+	<div class="flex flex-col gap-3 px-4 py-3.5" data-mcp-share-row={ inst.ID }>
+		<div class="flex flex-wrap items-start justify-between gap-3">
+			<div class="min-w-0">
+				<div class="flex flex-wrap items-center gap-2">
+					@ui.IconSpan("lucide--share-2", "size-4 shrink-0 text-primary/70")
+					<span class="truncate text-sm font-medium">{ inst.Name }</span>
+					@mcpShareStatusBadge(inst)
+					if inst.IsLegacy {
+						@ui.Badge(ui.BadgeProps{Label: "legacy", Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--history"})
+					}
+				</div>
+				if inst.Description != "" {
+					<p class="text-base-content/55 mt-1 text-xs">{ inst.Description }</p>
+				}
+			</div>
+			if !inst.IsLegacy {
+				<div class="flex shrink-0 items-center gap-1">
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeLink,
+						Href:      mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/edit",
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--sliders-horizontal",
+						AriaLabel: "Edit " + inst.Name,
+						Attrs:     templ.Attributes{"title": "Edit tools and agents"},
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--refresh-cw",
+						AriaLabel: "Rotate key for " + inst.Name,
+						Attrs:     templ.Attributes{"title": "Issue a new key"},
+						OnClick:   openMCPShareDialog("rotate", inst.ID),
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--trash-2",
+						ExtraClass: "text-error hover:text-error",
+						AriaLabel: "Revoke " + inst.Name,
+						Attrs:     templ.Attributes{"title": "Revoke this share"},
+						OnClick:   openMCPShareDialog("revoke", inst.ID),
+					})
+				</div>
+			}
+		</div>
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-base-content/50">
+			<span class="inline-flex items-center gap-1">
+				@ui.IconSpan("lucide--wrench", "size-3.5")
+				{ countLabel(inst.ToolCount, "tool", "tools") }
+			</span>
+			<span class="inline-flex items-center gap-1">
+				@ui.IconSpan("lucide--bot", "size-3.5")
+				{ mcpShareAgentsLabel(inst.AgentCount) }
+			</span>
+			<span class="inline-flex items-center gap-1">
+				@ui.IconSpan("lucide--calendar-plus", "size-3.5")
+				created { relTime(inst.CreatedAt) }
+			</span>
+			<span class="inline-flex items-center gap-1">
+				@ui.IconSpan("lucide--clock", "size-3.5")
+				last used { mcpShareLastUsedLabel(inst) }
+			</span>
+		</div>
+	</div>
+	@mcpShareRevokeDialog(inst)
+	@mcpShareRotateDialog(inst)
+}
+
+// mcpShareStatusBadge renders the share's status badge.
+templ mcpShareStatusBadge(inst MCPShareInstance) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   mcpShareStatusLabel(inst.Status),
+		Variant: mcpShareStatusIntent(inst.Status),
+		Style:   ui.BadgeStyleSoft,
+		Size:    ui.BadgeSizeXS,
+		Dot:     true,
+	})
+}
+
+// mcpShareRevokeDialog confirms revocation before POST .../shares/:id/revoke.
+templ mcpShareRevokeDialog(inst MCPShareInstance) {
+	@modalShell("mcp-share-revoke-"+inst.ID, "", "max-w-sm") {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--trash-2", "size-5")
+			</div>
+			<div>
+				<h3 class="text-lg font-semibold">Revoke share?</h3>
+				<p class="text-base-content/55 mt-1 text-sm">
+					This immediately invalidates <span class="font-medium text-base-content">{ inst.Name }</span>'s key. Any MCP client using it stops working. This cannot be undone.
+				</p>
+			</div>
+		</div>
+		<form method="post" action={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/revoke") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Revoke share
+				}
+			}
+		</form>
+	}
+}
+
+// mcpShareRotateDialog confirms rotation before POST .../shares/:id/rotate.
+templ mcpShareRotateDialog(inst MCPShareInstance) {
+	@modalShell("mcp-share-rotate-"+inst.ID, "", "max-w-sm") {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--refresh-cw", "size-5")
+			</div>
+			<div>
+				<h3 class="text-lg font-semibold">Rotate key?</h3>
+				<p class="text-base-content/55 mt-1 text-sm">
+					A new key is issued for <span class="font-medium text-base-content">{ inst.Name }</span> and the current key stops working immediately. The new key is shown once.
+				</p>
+			</div>
+		</div>
+		<form method="post" action={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/rotate") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+				}) {
+					Rotate key
+				}
+			}
+		</form>
+	}
+}
+
+// openMCPShareDialog opens one row's rotate/revoke confirmation dialog.
+script openMCPShareDialog(kind string, id string) {
+	var d = document.getElementById("mcp-share-" + kind + "-" + id);
+	if (d) d.showModal();
+}
+
+// MCPShareNewPage renders the create page (GET .../shares/new).
+templ MCPShareNewPage(data mcpShareFormData) {
+	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-share-form": ""}) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing", mcpShareSettingsBase, "New share")), "", "New MCP share", "Name the share and choose what an outside MCP client can reach.", detailHeaderOpts{Margin: "mb-6"}) {}
+		@flashToasts("", data.FlashErr)
+		if data.LoadErr != nil {
+			@pageError("Tool catalog unavailable", data.LoadErr)
+		} else {
+			@mcpShareFormBody(data, false)
+		}
+		@mcpShareScripts()
+	}
+}
+
+// MCPShareEditPage renders the edit page (GET .../shares/:id/edit).
+templ MCPShareEditPage(data mcpShareFormData) {
+	{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing", mcpShareSettingsBase, "Edit share")) }}
+	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-share-form": ""}) {
+		if data.NotFound {
+			@detailHeader(crumbs, "", "Edit share", "", detailHeaderOpts{Margin: "mb-6"}) {}
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--share-2",
+				Title:       "MCP share not found",
+				Description: "No share with this id.",
+				Bordered:    true,
+			})
+		} else {
+			@detailHeader(crumbs, "", "Edit share", "Changes update what the share can reach. The existing key keeps working.", detailHeaderOpts{Margin: "mb-6"}) {}
+			@flashToasts("", data.FlashErr)
+			if data.LoadErr != nil {
+				@pageError("Tool catalog unavailable", data.LoadErr)
+			} else {
+				@mcpShareFormBody(data, true)
+			}
+		}
+		@mcpShareScripts()
+	}
+}
+
+// mcpShareFormBody is the shared create/edit form card.
+templ mcpShareFormBody(data mcpShareFormData, editing bool) {
+	@ui.CardRaw("card-border", "p-5", nil) {
+		{{ action := mcpShareSettingsBase + "/new"
+		if editing {
+			action = mcpShareSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
+		} }}
+		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-5" data-mcp-share-form-fields>
+			@form.FormControl("mcp-share-name", "Name", form.LabelAbove, "Unique within this project. Shown in your share list.", data.FieldErrs.Name, nil) {
+				<input id="mcp-share-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. research-assistant" class="input w-full"/>
+			}
+			@form.FormControl("mcp-share-description", "Description", form.LabelAbove, "Optional note about who or what this share is for.", "", nil) {
+				<textarea id="mcp-share-description" name="description" rows="2" placeholder="e.g. Read-only access for the analyst bot" class="textarea w-full resize-none">{ data.Description }</textarea>
+			}
+			@mcpShareToolPicker(data)
+			@mcpShareAgentPicker(data)
+			if data.GeneralErr != nil {
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: data.GeneralErr.Error(),
+				})
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    mcpShareSettingsBase,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--x",
+				}) {
+					Cancel
+				}
+				if editing {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--save",
+					}) {
+						Save changes
+					}
+				} else {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--share-2",
+					}) {
+						Create share
+					}
+				}
+			}
+		</form>
+	}
+}
+
+// mcpShareToolPicker is the searchable, category-grouped multi-select of memory
+// tools. At least one tool is required; the inline error renders under the
+// header.
+templ mcpShareToolPicker(data mcpShareFormData) {
+	<div class="flex flex-col gap-2" data-mcp-tool-picker>
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			@ui.Eyebrow("Memory tools", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+			<div class="flex items-center gap-1">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonXS, Attrs: templ.Attributes{"data-mcp-tool-select-all": ""}}) {
+					Select all
+				}
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonXS, Attrs: templ.Attributes{"data-mcp-tool-clear": ""}}) {
+					Clear
+				}
+			</div>
+		</div>
+		<p class="text-base-content/50 -mt-1 text-xs">Only the checked tools are exposed to this share. Pick at least one.</p>
+		<input type="search" data-mcp-tool-search placeholder="Search tools…" aria-label="Search tools" class="input input-sm w-full"/>
+		if data.FieldErrs.Tools != "" {
+			<p class="text-error text-xs">{ data.FieldErrs.Tools }</p>
+		}
+		if len(data.Catalog) == 0 {
+			<p class="text-base-content/45 text-xs">No memory tools are available in the catalog.</p>
+		} else {
+			<div class="flex max-h-96 flex-col gap-3 overflow-y-auto rounded-box border border-base-content/10 bg-base-200/30 p-3">
+				for _, g := range mcpShareToolGroups(data.Catalog) {
+					<div class="flex flex-col gap-1" data-mcp-tool-group>
+						<p class="text-base-content/60 text-[11px] font-semibold tracking-wide uppercase">{ g.Category }</p>
+						for _, t := range g.Tools {
+							<label
+								class="flex cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-base-100"
+								data-mcp-tool-option
+								data-tool-search={ mcpShareToolSearchHay(t) }
+							>
+								<input type="checkbox" name="tools" value={ t.Name } class="checkbox checkbox-sm mt-0.5" checked?={ mcpShareContains(data.Tools, t.Name) }/>
+								<span class="min-w-0">
+									<span class="block font-mono text-xs font-medium">{ t.Name }</span>
+									if t.Description != "" {
+										<span class="text-base-content/50 block text-[11px] leading-snug">{ t.Description }</span>
+									}
+									if t.RequiredScope != "" {
+										<span class="text-base-content/40 mt-0.5 block text-[10px]">requires { t.RequiredScope }</span>
+									}
+								</span>
+							</label>
+						}
+					</div>
+				}
+			</div>
+		}
+	</div>
+}
+
+// mcpShareAgentPicker is the optional agent allowlist. No selection means the
+// share can reach every scope-permitted agent.
+templ mcpShareAgentPicker(data mcpShareFormData) {
+	<div class="flex flex-col gap-2">
+		@ui.Eyebrow("Agents", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+		<p class="text-base-content/50 -mt-1 text-xs">Leave all unchecked to let the share reach every scope-permitted agent. Check specific agents to limit it.</p>
+		if len(data.AgentsList) == 0 {
+			<p class="text-base-content/45 text-xs">No agents in this project yet — the share will use all agents.</p>
+		} else {
+			<div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+				for _, a := range data.AgentsList {
+					<label class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-content/10 bg-base-100 px-3 py-2 transition-colors hover:border-base-content/25">
+						<input type="checkbox" name="agents" value={ a.ID } class="checkbox checkbox-sm mt-0.5" checked?={ mcpShareContains(data.Agents, a.ID) }/>
+						<span class="min-w-0">
+							<span class="block truncate text-xs font-medium">{ a.Name }</span>
+							if a.FlowType != "" {
+								<span class="text-base-content/45 block text-[10px]">{ flowLabel(a.FlowType) }</span>
+							}
+						</span>
+					</label>
+				}
+			</div>
+		}
+	</div>
+}
+
+// mcpShareRevealModal is the one-time key reveal shown, open, on the list page
+// after create/rotate. The raw key exists only in this response; closing the
+// dialog returns to the list and the key is gone for good.
+templ mcpShareRevealModal(r mcpShareReveal) {
+	<dialog class="modal modal-open" hx-boost="false" data-mcp-share-reveal>
+		<div class="modal-box max-w-2xl">
+			<div class="flex items-center gap-3">
+				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
+				<div class="min-w-0">
+					<h3 class="text-lg font-semibold">{ r.Heading }</h3>
+					<p class="text-base-content/50 mt-0.5 text-xs">
+						if r.Name != "" {
+							{ r.Name } — this key is shown only once. Store it somewhere safe.
+						} else {
+							This key is shown only once. Store it somewhere safe.
+						}
+					</p>
+				</div>
+			</div>
+			<div class="mt-4 flex flex-wrap items-center gap-2">
+				<div id="mcp-share-key" class="min-w-0 flex-1 rounded-box border border-base-content/15 bg-base-200/50 px-3 py-2 font-mono text-xs break-all">{ r.Token }</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--copy",
+					Attrs:   templ.Attributes{"data-copy-target": "#mcp-share-key"},
+				}) {
+					Copy key
+				}
+			</div>
+			if r.MCPURL != "" {
+				<div class="mt-3 flex flex-wrap items-center gap-2">
+					@ui.Eyebrow("Endpoint", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+					<div id="mcp-share-endpoint" class="min-w-0 flex-1 rounded-box border border-base-content/15 bg-base-200/50 px-3 py-2 font-mono text-xs break-all">{ r.MCPURL }</div>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeButton,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--copy",
+						Attrs:   templ.Attributes{"data-copy-target": "#mcp-share-endpoint"},
+					}) {
+						Copy
+					}
+				</div>
+			}
+			<div class="mt-3">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--triangle-alert",
+					Message: "This key will not be shown again. If you lose it, rotate the share to issue a new one.",
+				})
+			</div>
+			<div class="mt-5 flex flex-col gap-3">
+				@ui.Eyebrow("Client setup", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+				<p class="text-base-content/50 -mt-2 text-xs">Paste one of these into your MCP client. Each already contains the endpoint and key.</p>
+				for _, s := range r.Snippets {
+					@mcpShareSnippetBlock(s)
+				}
+			</div>
+			<form method="dialog" class="modal-action">
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeSubmit,
+					Variant:    ui.ButtonPrimary,
+					Size:       ui.ButtonSM,
+					Icon:       "lucide--check",
+					ExtraClass: "w-full sm:w-auto",
+				}) {
+					Done — I've saved the key
+				}
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button>close</button>
+		</form>
+	</dialog>
+}
+
+// mcpShareSnippetBlock is one client snippet card with a copy button.
+templ mcpShareSnippetBlock(s mcpShareSnippet) {
+	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
+		<div class="mb-2 flex items-center justify-between gap-2">
+			<span class="text-xs font-semibold">{ s.Label }</span>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonXS,
+				Icon:      "lucide--copy",
+				AriaLabel: "Copy " + s.Label + " config",
+				Attrs:     templ.Attributes{"data-copy-target": "#mcp-share-snippet-" + s.Key},
+			}) {
+				Copy
+			}
+		</div>
+		<pre id={ "mcp-share-snippet-" + s.Key } class="overflow-x-auto whitespace-pre-wrap rounded-box bg-base-100 p-2.5 font-mono text-[11px] leading-relaxed">{ s.Code }</pre>
+	</div>
+}
+
+// mcpShareScripts wires the tool picker's search filter and select-all/clear
+// controls. Listeners attach once to document (delegation survives hx-boost
+// swaps); the wiring flag prevents double-attach on in-page navigation.
+templ mcpShareScripts() {
+	<script type="text/javascript">
+		(function () {
+			if (window.__mcpShareUIWired) return;
+			var root = document.querySelector('[data-mcp-shares-root], [data-mcp-share-form], [data-mcp-share-reveal]');
+			if (!root) return;
+			window.__mcpShareUIWired = true;
+
+			document.addEventListener('input', function (e) {
+				var search = e.target && e.target.closest ? e.target.closest('[data-mcp-tool-search]') : null;
+				if (!search) return;
+				var picker = search.closest('[data-mcp-tool-picker]');
+				if (!picker) return;
+				var q = (search.value || '').toLowerCase().trim();
+				var groups = picker.querySelectorAll('[data-mcp-tool-group]');
+				for (var i = 0; i < groups.length; i++) {
+					var opts = groups[i].querySelectorAll('[data-mcp-tool-option]');
+					var visible = 0;
+					for (var j = 0; j < opts.length; j++) {
+						var hay = opts[j].getAttribute('data-tool-search') || '';
+						var show = q === '' || hay.indexOf(q) !== -1;
+						opts[j].hidden = !show;
+						if (show) visible++;
+					}
+					groups[i].hidden = visible === 0;
+				}
+			});
+
+			document.addEventListener('click', function (e) {
+				var btn = e.target && e.target.closest ? e.target.closest('[data-mcp-tool-select-all], [data-mcp-tool-clear]') : null;
+				if (!btn) return;
+				e.preventDefault();
+				var picker = btn.closest('[data-mcp-tool-picker]');
+				if (!picker) return;
+				var check = btn.hasAttribute('data-mcp-tool-select-all');
+				var boxes = picker.querySelectorAll('[data-mcp-tool-option] input[type="checkbox"]');
+				for (var i = 0; i < boxes.length; i++) { boxes[i].checked = check; }
+			});
+		})();
+	</script>
+}

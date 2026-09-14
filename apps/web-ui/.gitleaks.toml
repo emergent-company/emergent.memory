@@ -1,0 +1,33 @@
+title = "memory gitleaks config"
+
+# Extend the full default ruleset — 150+ secret types out of the box.
+[extend]
+useDefault = true
+
+# ── Custom rules for project-specific secrets ────────────────────────────────
+
+# emergent.memory token — prefix: memt_
+[[rules]]
+id          = "emergent-memory-token"
+description = "emergent.memory project/API token (memt_ prefix)"
+regex       = '''\b(memt_[A-Za-z0-9_\-]{10,})\b'''
+keywords    = ["memt_"]
+entropy     = 2.5
+
+# ── Global allowlist ──────────────────────────────────────────────────────────
+
+[[allowlists]]
+description = "Angle-bracket placeholders are never real keys — e.g. <YOUR_API_KEY>"
+regexes     = ['''<[A-Z][A-Z0-9_]{2,}>''']
+
+[[allowlists]]
+description = "Gitignored local env files — contain real keys intentionally, never committed"
+paths       = ['''(^|[\\/])\.env$''', '''(^|[\\/])\.env\.(google|realtime|local|cloud)$''']
+
+[[allowlists]]
+description = "Go test fixtures use fabricated tokens/keys, not real secrets (manually verified)"
+paths       = [
+  '''gateway/api_tokens_test\.go''',
+  '''gateway/auth_test\.go''',
+  '''gateway/voice_settings_test\.go''',
+]

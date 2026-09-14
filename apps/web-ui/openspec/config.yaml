@@ -1,0 +1,32 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+context: |
+  Testing convention: every feature is built test-driven (TDD). Unit tests are
+  the minimum bar for any feature and must always be written. E2E tests are
+  valuable but typically much more challenging to set up and keep green; they
+  are a complement, not a substitute for unit coverage.
+  Keep the same patterns across features and make behavior as deterministic as
+  possible: avoid flaky, timing-dependent, or environment-dependent tests.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+rules:
+  tasks:
+    - Every feature task must include a corresponding unit-test task (TDD)
+    - Prefer unit tests as the minimum; add e2e tasks only where the payoff is clear
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+operations:
+  apply:
+    guidance:
+      - Build features test-first (TDD); unit tests are the minimum bar, not optional
+      - Keep the same patterns across features and make tests deterministic
+      - Treat e2e as optional/stretch coverage, never a replacement for unit tests
+  archive:
+    guidance:
+      - Summarize the archive outcome before finishing

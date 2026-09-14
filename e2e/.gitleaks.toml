@@ -1,0 +1,31 @@
+title = "emergent.memory.e2e gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id          = "emergent-memory-token"
+description = "emergent.memory project/API token (emt_/memt_ prefix)"
+regex       = '''\b((emt|memt)_[A-Za-z0-9_\-]{10,})\b'''
+keywords    = ["emt_", "memt_"]
+entropy     = 2.5
+
+[[allowlists]]
+description = "Angle-bracket placeholders are never real keys"
+regexes     = ['''<[A-Z][A-Z0-9_]{2,}>''']
+
+[[allowlists]]
+description = "Environment files with test credentials"
+paths       = ['''(^|[\\/])\.env''', '''(^|[\\/])\.env\.\w+$''']
+
+[[allowlists]]
+description = "Claude local settings — test credentials for prompts"
+paths       = ['''(^|[\\/])\.claude[\\/]''']
+
+[[allowlists]]
+description = "Test run log artifacts — contain live token output from test runs"
+paths       = ['''tests[\\/]\w+[\\/]logs[\\/]''']
+
+[[allowlists]]
+description = "Test fixtures with embedded sample tokens"
+paths       = ['''env_vars_test\.go$''', '''env_vars_integration_test\.go$''', '''memory_benchmark_test\.go$''', '''reextraction_test\.go$''']

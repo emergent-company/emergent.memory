@@ -1,0 +1,91 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// ApprovalsPage renders the tool-approval audit trail: every human-in-the-loop
+// approval decision (approve / reject / cancel), newest first, with the tool
+// name, redacted argument summary, decision, and optional reject message.
+templ ApprovalsPage(approvals []ToolApprovalItem, loadErr error) {
+	@layout.Container(layout.ContainerMD, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Approvals")), "", "Approvals", "Human-in-the-loop tool approvals — every approve, reject, and cancel decision.", detailHeaderOpts{Margin: "mb-6", SubtitleFull: true}) {
+			@ui.Badge(ui.BadgeProps{
+				Label:   "audit",
+				Variant: ui.BadgeGhost,
+				Size:    ui.BadgeSizeSM,
+				Icon:    "lucide--shield-check",
+			})
+		}
+		if loadErr != nil {
+			@pageError("Approvals unavailable", loadErr)
+		} else if len(approvals) == 0 {
+			<div class="card card-border bg-base-100">
+				<div class="card-body items-center gap-2 py-10 text-center">
+					<p class="text-sm font-medium">No approval decisions yet.</p>
+					<p class="text-xs text-base-content/50">When an agent asks to run a gated tool, its decision appears here.</p>
+				</div>
+			</div>
+		} else {
+			<div class="flex flex-col gap-2">
+				for _, a := range approvals {
+					@approvalRow(a)
+				}
+			</div>
+		}
+	}
+}
+
+templ approvalRow(a ToolApprovalItem) {
+	<div class="card card-border bg-base-100">
+		<div class="card-body gap-2 p-4">
+			<div class="flex items-start justify-between gap-3">
+				<div class="flex min-w-0 flex-wrap items-center gap-2">
+					<span class="font-mono text-sm font-semibold">{ a.ToolName }</span>
+					@ui.Badge(ui.BadgeProps{
+						Label:   a.Decision,
+						Variant: ui.StatusIntentFor(a.Decision),
+						Size:    ui.BadgeSizeXS,
+					})
+				</div>
+				<div class="flex shrink-0 items-center gap-3">
+					if a.ConversationID != "" {
+						<a href={ templ.URL("/chat?c=" + url.QueryEscape(a.ConversationID)) } class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+							@ui.IconSpan("lucide--messages-square", "size-3.5")
+							<span>Session</span>
+						</a>
+					}
+					<span class="text-xs text-base-content/50">{ a.CreatedAt.Format("Jan 02, 15:04") }</span>
+				</div>
+			</div>
+			if a.Message != "" {
+				<p class="text-sm text-base-content/70">{ a.Message }</p>
+			}
+			if args := formatArgsJSON(a.ArgsSummary); args != "" {
+				<pre class="max-h-32 overflow-y-auto rounded-lg bg-base-200/60 p-2 font-mono text-xs whitespace-pre-wrap break-words">{ args }</pre>
+			}
+			if a.Decision == "pending" {
+				@approvalActions(a.QuestionID)
+			}
+		</div>
+	</div>
+}
+
+templ approvalActions(questionID string) {
+	<div class="flex flex-wrap items-center gap-2 border-t border-base-content/10 pt-3">
+		<input type="text" name="message" form={ "approval-respond-" + questionID } placeholder="Reject reason (optional)" maxlength="500" class="input input-bordered flex-1 min-w-56"/>
+		<div class="flex items-center gap-2">
+			<form method="post" action={ "/settings/approvals/" + questionID + "/cancel" }>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
+			</form>
+			<form id={ "approval-respond-" + questionID } method="post" action={ "/settings/approvals/" + questionID + "/respond" }>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM, ExtraClass: "text-error", Attrs: templ.Attributes{"name": "response", "value": "reject"}}) { Reject }
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Attrs: templ.Attributes{"name": "response", "value": "approve"}}) { Approve }
+			</form>
+		</div>
+	</div>
+}

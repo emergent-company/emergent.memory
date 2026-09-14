@@ -1,0 +1,431 @@
+#!/bin/bash
+# memory — unified control for the whole stack.
+#
+#   Server side (here): LiveKit server + agent worker
+#   Device side (Mac):  voice client, via LaunchAgent over SSH
+#
+#   ./memory status              both sides at a glance
+#   ./memory start   [all|agent|client]
+#   ./memory stop    [all|agent|client]
+#   ./memory restart [all|agent|client]
+#   ./memory logs    <agent|client> [-f|N]
+#   ./memory convo   [N]         conversation transcript w/ latency
+#   ./memory watch               live conversation feed
+#   ./memory health              dependency checks
+#   ./memory config              effective settings
+
+set -uo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MAC="${MEMORY_MAC_HOST:-mcj@mcj-mini-2-1}"
+MACCTL="~/alfred/client/alfredctl"
+AGENT_LOG="/tmp/memory-agent.log"
+CLIENT_LOG="/tmp/memory-client.log"
+
+c_r=$'\033[31m'; c_g=$'\033[32m'; c_y=$'\033[33m'
+c_b=$'\033[34m'; c_d=$'\033[2m';  c_0=$'\033[0m'
+
+_ssh() { ssh -o ConnectTimeout=8 "$MAC" "$@" 2>/dev/null; }
+
+# ------------------------------------------------------------------ status --
+
+cmd_status() {
+    echo "${c_b}=== LiveKit server ===${c_0}"
+    if docker compose -f "$DIR/docker-compose.yml" ps --format '{{.Service}} {{.State}}' 2>/dev/null | grep -q .; then
+        docker compose -f "$DIR/docker-compose.yml" ps \
+            --format '  {{.Service}}: {{.State}}' 2>/dev/null
+    else
+        echo "  ${c_r}not running${c_0}"
+    fi
+
+    echo
+    echo "${c_b}=== Agent worker (server) ===${c_0}"
+    local pidfile="$DIR/.memory-agent.pid"
+    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+        local pid; pid=$(cat "$pidfile")
+        local cpu; cpu=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ')
+        local et;  et=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ')
+        echo "  ${c_g}running${c_0}  pid=$pid  cpu=${cpu}%  uptime=${et}"
+        local nerr; nerr=$(grep -ac "APIStatusError\|Traceback" "$AGENT_LOG" 2>/dev/null | head -1 | tr -cd '0-9')
+        nerr=${nerr:-0}
+        [ "$nerr" -gt 0 ] 2>/dev/null && echo "  ${c_y}$nerr error line(s) in log${c_0}"
+    else
+        echo "  ${c_r}stopped${c_0}"
+    fi
+
+    echo
+    echo "${c_b}=== Voice client (Mac) ===${c_0}"
+    local out; out=$(_ssh "$MACCTL status")
+    if [ -z "$out" ]; then
+        echo "  ${c_r}unreachable: $MAC${c_0}"
+    else
+        echo "$out" | sed 's/^/  /'
+    fi
+}
+
+# ----------------------------------------------------------------- control --
+
+_agent_start()   { "$DIR/agent/start.sh"; }
+_agent_stop()    { "$DIR/agent/stop.sh"; }
+_client_start()  { _ssh "$MACCTL start"; }
+_client_stop()   { _ssh "$MACCTL stop"; }
+_client_restart(){ _ssh "$MACCTL restart"; }
+
+cmd_start() {
+    case "${1:-all}" in
+        agent)  _agent_start ;;
+        client) _client_start ;;
+        all)    _agent_start; echo; _client_start ;;
+        *) echo "usage: memory start [all|agent|client]"; exit 1 ;;
+    esac
+}
+
+cmd_stop() {
+    case "${1:-all}" in
+        agent)  _agent_stop ;;
+        client) _client_stop ;;
+        all)    _client_stop; _agent_stop ;;
+        *) echo "usage: memory stop [all|agent|client]"; exit 1 ;;
+    esac
+}
+
+cmd_restart() {
+    case "${1:-all}" in
+        agent)  _agent_stop 2>/dev/null; sleep 1; _agent_start ;;
+        client) _client_restart ;;
+        all)
+            # agent first so the worker is registered before the client dials in
+            _agent_stop 2>/dev/null; sleep 1; _agent_start
+            echo
+            _client_restart
+            ;;
+        *) echo "usage: memory restart [all|agent|client]"; exit 1 ;;
+    esac
+}
+
+# -------------------------------------------------------------------- logs --
+
+cmd_logs() {
+    local which="${1:-agent}"; shift || true
+    local arg="${1:-60}"
+    case "$which" in
+        agent)
+            if [ "$arg" = "-f" ]; then tail -f "$AGENT_LOG"
+            else tail -n "$arg" "$AGENT_LOG"; fi ;;
+        client)
+            if [ "$arg" = "-f" ]; then ssh "$MAC" "tail -f $CLIENT_LOG"
+            else _ssh "tail -n $arg $CLIENT_LOG"; fi ;;
+        *) echo "usage: memory logs <agent|client> [-f|N]"; exit 1 ;;
+    esac
+}
+
+# ------------------------------------------------------------ conversation --
+
+# Parse agent log -> readable transcript with per-turn latency.
+_convo_parse() {
+    python3 - "$AGENT_LOG" "${1:-40}" <<'PY'
+import sys, re, json
+from datetime import datetime
+
+path, limit = sys.argv[1], int(sys.argv[2])
+TS = re.compile(r'^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d+)')
+ANSI = re.compile(r'\x1b\[[0-9;]*m')
+G, Y, B, C, D, R0 = '\033[32m','\033[33m','\033[34m','\033[36m','\033[2m','\033[0m'
+
+def ts(line):
+    m = TS.match(line)
+    if not m: return None
+    return datetime.strptime(f"{m.group(1)}.{m.group(2)}", "%Y-%m-%d %H:%M:%S.%f")
+
+def payload(line):
+    """Extract the first balanced {...} object, ignoring trailing junk."""
+    start = line.find('{')
+    while start != -1:
+        depth, instr, esc = 0, False, False
+        for j in range(start, len(line)):
+            ch = line[j]
+            if esc:
+                esc = False; continue
+            if ch == '\\':
+                esc = True; continue
+            if ch == '"':
+                instr = not instr; continue
+            if instr:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(line[start:j+1])
+                    except Exception:
+                        break
+        start = line.find('{', start + 1)
+    return None
+
+events = []
+try:
+    fh = open(path, encoding='utf-8', errors='replace')
+except FileNotFoundError:
+    print("no agent log"); sys.exit(0)
+
+with fh:
+    for line in fh:
+        # The structured JSON payload only appears on the ANSI-colored
+        # duplicate line, so strip codes rather than skipping those lines.
+        has_json = '{' in line
+        line = ANSI.sub('', line)
+        t = ts(line)
+        if not t or not has_json: continue
+        if 'conversation_item_added' in line:
+            d = payload(line)
+            if d and d.get('text'):
+                events.append((t, d.get('role','?'), d['text'], None))
+        elif 'executing tool' in line:
+            d = payload(line)
+            if d:
+                events.append((t, 'tool', d.get('function','?'), d.get('arguments','')))
+        elif 'APIStatusError' in line:
+            events.append((t, 'error', line.strip()[:160], None))
+
+events = events[-limit:]
+last_user = None
+for t, role, text, extra in events:
+    clock = t.strftime('%H:%M:%S')
+    if role == 'user':
+        last_user = t
+        print(f"{D}{clock}{R0}  {G}you{R0}    {text}")
+    elif role == 'assistant':
+        lat = ''
+        if last_user:
+            secs = (t - last_user).total_seconds()
+            col = G if secs < 3 else (Y if secs < 6 else '\033[31m')
+            lat = f"  {col}[{secs:.1f}s]{R0}"
+            last_user = None
+        print(f"{D}{clock}{R0}  {B}memory{R0} {text}{lat}")
+    elif role == 'tool':
+        args = (extra or '')[:70]
+        print(f"{D}{clock}{R0}  {C}tool{R0}   {text} {D}{args}{R0}")
+    else:
+        print(f"{D}{clock}{R0}  \033[31merr{R0}    {text}")
+PY
+}
+
+cmd_convo() { _convo_parse "${1:-40}"; }
+
+# ------------------------------------------------------------------- trace --
+
+cmd_trace() {
+    python3 - "$AGENT_LOG" "${1:-20}" <<'PY'
+import sys, re, glob, os
+path, limit = sys.argv[1], int(sys.argv[2])
+# include rotated logs (oldest first) so restarts don't lose history
+paths = sorted(glob.glob(path + '.*'), key=lambda p: os.path.getmtime(p)) + [path]
+ANSI = re.compile(r'\x1b\[[0-9;]*m')
+PAT = re.compile(
+    r'TURN_METRICS eou=([\d.]+) stt=([\d.]+) llm_ttft=([\d.]+) '
+    r'llm_total=([\d.]+) tts_ttfb=([\d.]+) prompt_tok=(\d+) '
+    r'completion_tok=(\d+) perceived=([\d.]+)')
+TS = re.compile(r'^(\d{4}-\d\d-\d\d (\d\d:\d\d:\d\d))')
+G,Y,R,D,B,R0 = '\033[32m','\033[33m','\033[31m','\033[2m','\033[34m','\033[0m'
+
+rows = []
+for p in paths:
+    try: fh = open(p, encoding='utf-8', errors='replace')
+    except OSError: continue
+    with fh:
+        for line in fh:
+            line = ANSI.sub('', line)
+            m = PAT.search(line)
+            if not m: continue
+            t = TS.match(line)
+            rows.append((t.group(2) if t else '--:--:--', *[float(x) for x in m.groups()]))
+if not rows and not any(os.path.exists(p) for p in paths):
+    print('no agent log'); sys.exit(0)
+
+# de-dupe: agent logs each line twice (plain + colored)
+ded = []
+for r in rows:
+    if not ded or ded[-1] != r: ded.append(r)
+rows = ded[-limit:]
+
+if not rows:
+    print('No turn metrics yet — speak to Memory, then re-run.')
+    print(D + '(agent must be running the build with metrics tracing)' + R0)
+    sys.exit(0)
+
+def col(v, warn, bad):
+    return (G if v < warn else (Y if v < bad else R)) + f'{v:5.2f}' + R0
+
+print(f"{B}time      eou    stt   ttft    llm   ttfb   perceived  tokens{R0}")
+print(D + '-'*66 + R0)
+for (ts_, eou, stt, ttft, llm, ttfb, ptok, ctok, perc) in rows:
+    print(f"{D}{ts_}{R0}  {col(eou,.5,1)}  {col(stt,.3,.8)}  "
+          f"{col(ttft,1.5,3)}  {col(llm,3,6)}  {col(ttfb,.4,1)}  "
+          f"   {col(perc,2,4)}    {D}{int(ptok)}/{int(ctok)}{R0}")
+
+n = len(rows)
+avg = lambda i: sum(r[i] for r in rows)/n
+print(D + '-'*66 + R0)
+print(f"{B}avg{R0}       {avg(1):5.2f}  {avg(2):5.2f}  {avg(3):5.2f}  "
+      f"{avg(4):5.2f}  {avg(5):5.2f}     {avg(8):5.2f}    "
+      f"{D}{int(avg(6))}/{int(avg(7))}{R0}   n={n}")
+print()
+print(f"{D}eou=silence->turn detected  ttft=LLM first token  "
+      f"ttfb=TTS first audio{R0}")
+print(f"{D}perceived = eou + ttft + ttfb (what you actually wait){R0}")
+PY
+}
+
+# ---------------------------------------------------------------- sessions --
+
+cmd_sessions() {
+    python3 - "${1:-5}" <<'PY'
+import sys, json, os
+from datetime import datetime
+
+want = sys.argv[1]
+LOG = os.getenv("SESSION_LOG", "/tmp/memory-sessions.jsonl")
+G,B,C,Y,R,D,R0 = ('\033[32m','\033[34m','\033[36m','\033[33m',
+                  '\033[31m','\033[2m','\033[0m')
+
+if not os.path.exists(LOG):
+    print("no session log yet — talk to Memory first"); sys.exit(0)
+
+evs = []
+with open(LOG, encoding="utf-8", errors="replace") as fh:
+    for line in fh:
+        try: evs.append(json.loads(line))
+        except Exception: pass
+if not evs:
+    print("session log empty"); sys.exit(0)
+
+# group by room, preserving order of first appearance
+order, rooms = [], {}
+for e in evs:
+    r = e.get("room", "?")
+    if r not in rooms:
+        rooms[r] = []; order.append(r)
+    rooms[r].append(e)
+
+sel = order if want == "all" else order[-int(want):]
+
+for r in sel:
+    ev = rooms[r]
+    t0 = ev[0]["ts"]
+    dur = ev[-1]["ts"] - t0
+    print(f"\n{B}=== {r} ==={R0}  {D}{ev[0]['clock']}  ({dur:.1f}s){R0}")
+    for e in ev:
+        k = e["kind"]
+        rel = e["ts"] - t0
+        stamp = f"{D}+{rel:5.1f}s{R0}"
+        if k == "message":
+            role = e.get("role", "?")
+            txt = (e.get("text") or "").strip()
+            if not txt: continue
+            col = G if "user" in role else B
+            who = "you" if "user" in role else "memory"
+            print(f"  {stamp}  {col}{who:6s}{R0} {txt}")
+        elif k == "user_state":
+            col = Y if e.get("new") == "away" else D
+            print(f"  {stamp}  {col}state{R0}  user: {e.get('old')} -> {e.get('new')}"
+                  f"{'  (closing)' if e.get('closing') else ''}")
+        elif k == "agent_state":
+            print(f"  {stamp}  {D}state  agent: {e.get('old')} -> {e.get('new')}{R0}")
+        elif k == "tools":
+            print(f"  {stamp}  {C}tool{R0}   {', '.join(e.get('names') or [])}")
+        elif k == "tools_ready":
+            print(f"  {stamp}  {D}tools loaded: {e.get('count')}{R0}")
+        elif k == "session_start":
+            print(f"  {stamp}  {D}session start  model={e.get('model')}{R0}")
+        elif k == "session_end":
+            n = len((e.get("history") or {}).get("items", []))
+            print(f"  {stamp}  {D}session end  (history items: {n}){R0}")
+
+# cross-session gap analysis — the double-greeting question
+print(f"\n{B}=== gaps between sessions ==={R0}")
+starts = [(r, rooms[r][0]["ts"], rooms[r][-1]["ts"]) for r in order]
+if len(starts) < 2:
+    print(f"  {D}only one session so far{R0}")
+def short(r):
+    return r.split("-", 1)[-1] if "-" in r else r
+
+for (r1,_,e1), (r2,s2,_) in zip(starts, starts[1:]):
+    gap = s2 - e1
+    col = R if gap < 3 else (Y if gap < 8 else G)
+    note = "  <-- re-triggered almost immediately" if gap < 3 else ""
+    print(f"  {col}{gap:6.1f}s{R0} between {short(r1)} and {short(r2)}{col}{note}{R0}")
+PY
+}
+
+cmd_watch() {
+    echo "watching conversation (ctrl-c to stop)"
+    local seen=0
+    while true; do
+        local n; n=$(grep -ac 'conversation_item_added' "$AGENT_LOG" 2>/dev/null || echo 0)
+        if [ "$n" != "$seen" ]; then
+            clear
+            echo "${c_b}=== live conversation ===${c_0}"
+            _convo_parse 30
+            seen="$n"
+        fi
+        sleep 1
+    done
+}
+
+# ------------------------------------------------------------------ health --
+
+cmd_health() {
+    echo "${c_b}=== dependencies ===${c_0}"
+
+    printf '  LiveKit ws      '
+    if timeout 3 bash -c ':> /dev/tcp/localhost/7880' 2>/dev/null; then
+        echo "${c_g}reachable${c_0}"; else echo "${c_r}down${c_0}"; fi
+
+    printf '  LiteLLM         '
+    local m; m=$(grep '^LLM_MODEL=' "$DIR/.env" 2>/dev/null | cut -d= -f2)
+    local u; u=$(grep '^LLM_BASE_URL=' "$DIR/.env" 2>/dev/null | cut -d= -f2)
+    local k; k=$(grep '^LLM_API_KEY=' "$DIR/.env" 2>/dev/null | cut -d= -f2)
+    if curl -s --max-time 6 "$u/models" -H "Authorization: Bearer $k" | grep -q "$m"; then
+        echo "${c_g}ok${c_0} ${c_d}($m)${c_0}"; else echo "${c_r}fail${c_0}"; fi
+
+    printf '  Home Assistant  '
+    local h; h=$(grep '^HA_MCP_URL=' "$DIR/.env" 2>/dev/null | cut -d= -f2)
+    if [ -n "$h" ] && curl -s --max-time 6 -o /dev/null -w '%{http_code}' \
+        -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+        "$h" -d '{"jsonrpc":"2.0","id":"h","method":"tools/list","params":{}}' | grep -q 200; then
+        echo "${c_g}ok${c_0}"; else echo "${c_r}fail${c_0}"; fi
+
+    printf '  Deepgram        '
+    local dg; dg=$(grep '^DEEPGRAM_API_KEY=' "$DIR/.env" 2>/dev/null | cut -d= -f2)
+    if curl -s --max-time 6 -H "Authorization: Token $dg" \
+        https://api.deepgram.com/v1/projects | grep -q project_id; then
+        echo "${c_g}ok${c_0}"; else echo "${c_r}fail${c_0}"; fi
+
+    printf '  Mac reachable   '
+    if _ssh 'echo ok' | grep -q ok; then
+        echo "${c_g}ok${c_0}"; else echo "${c_r}fail${c_0}"; fi
+}
+
+cmd_config() {
+    echo "${c_b}=== effective config ===${c_0}"
+    grep -vE '^\s*(#|$)' "$DIR/.env" | sed -E 's/(KEY|SECRET|TOKEN)=(.{0,6}).*/\1=\2…/' | sed 's/^/  /'
+}
+
+case "${1:-status}" in
+    status)  cmd_status ;;
+    start)   shift; cmd_start "${1:-all}" ;;
+    stop)    shift; cmd_stop "${1:-all}" ;;
+    restart) shift; cmd_restart "${1:-all}" ;;
+    logs)    shift; cmd_logs "$@" ;;
+    convo)   shift; cmd_convo "${1:-40}" ;;
+    trace)   shift; cmd_trace "${1:-20}" ;;
+    sessions) shift; cmd_sessions "${1:-5}" ;;
+    watch)   cmd_watch ;;
+    health)  cmd_health ;;
+    config)  cmd_config ;;
+    *)
+        echo "usage: memory {status|start|stop|restart|logs|convo|trace|sessions|watch|health|config}"
+        exit 1 ;;
+esac
