@@ -70,6 +70,7 @@ struct DeviceInfo: Sendable {
     ///
     /// Both parameters are injectable for tests; the defaults read the
     /// running device/app.
+    @MainActor
     init(device: UIDevice = .current, bundle: Bundle = .main) {
         let modelID = Self.hardwareModelIdentifier(device: device)
         manifest = DeviceManifest(
@@ -134,6 +135,7 @@ struct DeviceInfo: Sendable {
     /// Raw hardware identifier via `sysctlbyname("hw.machine")`
     /// (e.g. `"iPhone15,2"`); falls back to `device.model` on failure or when
     /// empty.
+    @MainActor
     static func hardwareModelIdentifier(device: UIDevice = .current) -> String {
         var size = 0
         guard sysctlbyname("hw.machine", nil, &size, nil, 0) == 0, size > 0 else {

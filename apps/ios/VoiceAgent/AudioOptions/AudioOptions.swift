@@ -28,6 +28,7 @@ enum VoiceProcessingMode: CaseIterable, Identifiable {
 /// To guarantee that the very first captured frames already use custom
 /// processing options, pass them as room defaults instead. See the comment
 /// on `RoomOptions` in `VoiceAgentApp`.
+@MainActor
 final class AudioOptions: ObservableObject {
     @Published private(set) var voiceProcessingMode: VoiceProcessingMode = .automatic
 
