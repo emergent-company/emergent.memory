@@ -22,7 +22,7 @@ Retail pricing (`kb.provider_pricing`) is synced and used to cost LLM usage, but
 - `domain/provider/handler.go` — add `ListPricing` handler.
 - `domain/provider/routes.go` — register `GET /api/v1/pricing`.
 - `pkg/sdk/provider/client.go` — add `ListPricing` client method.
-- `tools/cli/internal/cmd/provider.go` — (optional) `memory provider pricing` list action.
+- `apps/cli/internal/cmd/provider.go` — (optional) `memory provider pricing` list action.
 
 ## Non-Goals
 

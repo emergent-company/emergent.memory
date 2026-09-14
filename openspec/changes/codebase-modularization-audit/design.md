@@ -30,7 +30,7 @@ Three months after the original design, the codebase has drifted both directions
 
 **Missing layer:** the `.golangci.yml` blanket-excludes `errcheck`, `staticcheck`, and `unused` via `text: "."` — no enforcement exists, which is *why* the debt grew. See D8.
 
-**Resolved — `pkg/sdk` duplicate types are a legitimate boundary, not debt.** The sdk is a self-contained published module (`.../apps/server/pkg/sdk`) with **zero** imports from the server module, consumed by `tools/cli`, `cmd/swiftbridge`, and external clients. Its 4 DTO definitions (`agents`, `agentdefinitions`, `mcpregistry`, `superadmin`) must stay self-contained so client consumers don't pull in echo/fx/bun. Leave them. The genuine httputil residue is *inside* the server module only: 4 type aliases, duplicated `SuccessResponse`/`ErrorResponse` constructor funcs in `agents` + `mcpregistry` (also named differently from httputil's `NewSuccessResponse`/`NewErrorResponse`), and `superadmin.SuccessResponse`.
+**Resolved — `pkg/sdk` duplicate types are a legitimate boundary, not debt.** The sdk is a self-contained published module (`.../apps/server/pkg/sdk`) with **zero** imports from the server module, consumed by `apps/cli`, `cmd/swiftbridge`, and external clients. Its 4 DTO definitions (`agents`, `agentdefinitions`, `mcpregistry`, `superadmin`) must stay self-contained so client consumers don't pull in echo/fx/bun. Leave them. The genuine httputil residue is *inside* the server module only: 4 type aliases, duplicated `SuccessResponse`/`ErrorResponse` constructor funcs in `agents` + `mcpregistry` (also named differently from httputil's `NewSuccessResponse`/`NewErrorResponse`), and `superadmin.SuccessResponse`.
 
 ## Goals / Non-Goals
 

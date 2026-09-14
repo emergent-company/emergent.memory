@@ -47,7 +47,7 @@ Update `agents/remember_status.go` five `parse*` funcs to read `data.results[].o
 `mcp/entity.go:588-634` (`CreateEntityResult`, `CreatedEntity`, `CreateRelationshipResult`, `CreatedRelationship`) deleted. One coordinated breaking release (envelope restructure is already breaking for external consumers, so a deprecated int `success` buys zero incremental compatibility). Release note + Alfred repo follow-up.
 
 ### D7. Docs + parity surfaces
-Update: swagger annotations on chat/agents handlers if they document affected shapes; `apps/server/domain/mcp/README.md`; `docs/site/` MCP pages (tracked in git — do not skip); verify CLI (`tools/cli`) parses none of these shapes (expected no-op). `mcpHTTPError` already improves error surfacing (#342) — no change.
+Update: swagger annotations on chat/agents handlers if they document affected shapes; `apps/server/domain/mcp/README.md`; `docs/site/` MCP pages (tracked in git — do not skip); verify CLI (`apps/cli`) parses none of these shapes (expected no-op). `mcpHTTPError` already improves error surfacing (#342) — no change.
 
 ## Risks / Trade-offs
 

@@ -64,7 +64,7 @@
 
 ## 10. CLI — provider configure
 
-- [x] 10.1 Add `openai-compatible` to `ValidArgs` and the `switch` in `runProviderConfigure` in `tools/cli/internal/cmd/provider.go` — require `--base-url`, accept `--api-key` (optional) and `--model` (required)
+- [x] 10.1 Add `openai-compatible` to `ValidArgs` and the `switch` in `runProviderConfigure` in `apps/cli/internal/cmd/provider.go` — require `--base-url`, accept `--api-key` (optional) and `--model` (required)
 - [x] 10.2 Add `--base-url` and `--model` flags to `configureCmd`
 - [x] 10.3 Add `openai-compatible` to `ValidArgs` and the `switch` in `runProviderConfigureProject` — same flags
 - [x] 10.4 Update `configureCmd` and `configureProjectCmd` Long descriptions to document the new provider with examples:
@@ -89,7 +89,7 @@
 ## 14. CLI — Installer
 
 - [x] 14.1 Add `OpenAIBaseURL`, `OpenAIAPIKey`, `OpenAIModel` fields to `installer.Config`
-- [x] 14.2 Add `--openai-base-url`, `--openai-api-key`, and `--llm-model` flags to `installCmd` in `tools/cli/internal/cmd/install.go`
+- [x] 14.2 Add `--openai-base-url`, `--openai-api-key`, and `--llm-model` flags to `installCmd` in `apps/cli/internal/cmd/install.go`
 - [x] 14.3 Update `GenerateEnvFile()` to write `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `LLM_MODEL` lines to `.env.local` when set
 - [x] 14.4 Add `PromptLLMProvider()` to `Installer` — when neither Google nor OpenAI provider was supplied, offer a choice: Google AI, OpenAI-compatible, or skip; collect the relevant fields for the chosen option
 - [x] 14.5 Update `Install()` to call `PromptLLMProvider()` instead of `PromptGoogleAPIKey()` when no provider was configured
@@ -97,13 +97,13 @@
 
 ## 15. CLI — config set / config show
 
-- [x] 15.1 Add `"openai_base_url": "OPENAI_BASE_URL"`, `"openai_api_key": "OPENAI_API_KEY"`, and `"llm_model": "LLM_MODEL"` to `standaloneEnvKeys` in `tools/cli/internal/cmd/config.go`
+- [x] 15.1 Add `"openai_base_url": "OPENAI_BASE_URL"`, `"openai_api_key": "OPENAI_API_KEY"`, and `"llm_model": "LLM_MODEL"` to `standaloneEnvKeys` in `apps/cli/internal/cmd/config.go`
 - [x] 15.2 Update `memory config set` help text to document the three new keys with examples
 - [x] 15.3 Update `memory config show` to display `OPENAI_BASE_URL` and `LLM_MODEL` from `.env.local` when set (mask `OPENAI_API_KEY` like the existing API key display)
 
 ## 16. CLI — doctor
 
-- [x] 16.1 Update `checkGoogleAPIKey` in `tools/cli/internal/cmd/doctor.go` to also check for `OPENAI_BASE_URL` — show pass when either is configured, warn when neither is set
+- [x] 16.1 Update `checkGoogleAPIKey` in `apps/cli/internal/cmd/doctor.go` to also check for `OPENAI_BASE_URL` — show pass when either is configured, warn when neither is set
 - [x] 16.2 When `OPENAI_BASE_URL` is set: show `✓ LLM Provider: openai-compatible (base_url=..., model=...)`
 - [x] 16.3 When neither is set: mention both Google AI and OpenAI-compatible as options in the warning message
 

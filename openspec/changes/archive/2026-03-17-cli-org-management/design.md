@@ -1,8 +1,8 @@
 ## Context
 
-The Memory CLI (`tools/cli/`) uses Cobra for command structure and an SDK client (`apps/server/pkg/sdk/`) for API calls. The server already exposes a full CRUD API for organizations at `/api/orgs` (list, get, create, delete) and the SDK client (`c.SDK.Orgs`) already implements all four methods. The `memory projects create` command already calls `c.SDK.Orgs.List()` internally to resolve the org ID. However, there is no dedicated `memory orgs` command, and `memory init` does not check for org existence before entering the project flow.
+The Memory CLI (`apps/cli/`) uses Cobra for command structure and an SDK client (`apps/server/pkg/sdk/`) for API calls. The server already exposes a full CRUD API for organizations at `/api/orgs` (list, get, create, delete) and the SDK client (`c.SDK.Orgs`) already implements all four methods. The `memory projects create` command already calls `c.SDK.Orgs.List()` internally to resolve the org ID. However, there is no dedicated `memory orgs` command, and `memory init` does not check for org existence before entering the project flow.
 
-The CLI follows a consistent pattern: each command group lives in a single file under `tools/cli/internal/cmd/`, self-registers via Go `init()` by calling `rootCmd.AddCommand()`, and uses either `getClient()` (project-scoped) or `getAccountClient()` (account-scoped) for authentication.
+The CLI follows a consistent pattern: each command group lives in a single file under `apps/cli/internal/cmd/`, self-registers via Go `init()` by calling `rootCmd.AddCommand()`, and uses either `getClient()` (project-scoped) or `getAccountClient()` (account-scoped) for authentication.
 
 ## Goals / Non-Goals
 
@@ -21,7 +21,7 @@ The CLI follows a consistent pattern: each command group lives in a single file 
 ## Decisions
 
 ### 1. Single file for all org commands
-All `memory orgs` subcommands will live in `tools/cli/internal/cmd/orgs.go`, matching the pattern of `projects.go`. This keeps the command group cohesive.
+All `memory orgs` subcommands will live in `apps/cli/internal/cmd/orgs.go`, matching the pattern of `projects.go`. This keeps the command group cohesive.
 
 **Alternative**: Separate files per subcommand — rejected because no other command group does this and it adds unnecessary file proliferation.
 

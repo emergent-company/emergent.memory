@@ -1,6 +1,6 @@
 ## 1. CLI — extraction.go scaffold
 
-- [x] 1.1 Create `tools/cli/internal/cmd/extraction.go` with top-level `extractionCmd` (GroupID: "knowledge") and `extractionJobsCmd` subgroup
+- [x] 1.1 Create `apps/cli/internal/cmd/extraction.go` with top-level `extractionCmd` (GroupID: "knowledge") and `extractionJobsCmd` subgroup
 - [x] 1.2 Register `extractionCmd` in `root.go` `init()` alongside other knowledge commands
 - [x] 1.3 Add shared flag vars (`extractionProjectFlag`, `extractionOutputFlag`) and a `getExtractionHTTPClient` helper that returns `(baseURL, apiKey, *http.Client)` from `getClient(cmd)`
 
@@ -17,8 +17,8 @@
 
 ## 3. CLI — build and smoke test
 
-- [x] 3.1 Run `go build ./...` in `tools/cli/` — fix any compile errors
-- [x] 3.2 Run `go vet ./...` in `tools/cli/`
+- [x] 3.1 Run `go build ./...` in `apps/cli/` — fix any compile errors
+- [x] 3.2 Run `go vet ./...` in `apps/cli/`
 - [x] 3.3 Smoke test: `memory extraction jobs --help` shows all subcommands
 - [x] 3.4 Smoke test against local-fixed server — deferred (server-side bugs block full smoke test; CLI commands work correctly)
 

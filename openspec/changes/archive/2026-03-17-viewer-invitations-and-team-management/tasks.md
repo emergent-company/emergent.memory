@@ -52,7 +52,7 @@
 
 ## 8. CLI: Team Subcommands
 
-- [x] 8.1 Created `tools/cli/internal/cmd/team.go` with `teamCmd` (subcommand of `projectsCmd`)
+- [x] 8.1 Created `apps/cli/internal/cmd/team.go` with `teamCmd` (subcommand of `projectsCmd`)
 - [x] 8.2 Implemented `memory projects team list [project]` — calls `SDK.Projects.ListMembers`, formats table output; `--json` flag
 - [x] 8.3 Implemented `memory projects team invite <email> [project]` — `--role` flag (default `project_viewer`), calls `SDK.Invitations.Create`
 - [x] 8.4 Implemented `memory projects team remove <email> [project]` — resolves email → userID, confirms with prompt (`--yes` to skip)

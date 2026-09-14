@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.Commit=${GIT_COMMIT} -X github.com/emergent-company/emergent.memory/tools/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
+    -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${GIT_COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
     -o memory \
     ./cmd
 

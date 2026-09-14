@@ -1,11 +1,11 @@
 ## Context
 
-The Memory CLI (`tools/cli/`) authenticates via three mechanisms, in priority order:
+The Memory CLI (`apps/cli/`) authenticates via three mechanisms, in priority order:
 1. **Project token** (`config.yaml` → `project_token` or `MEMORY_PROJECT_API_KEY` env var) — scoped to a single project
 2. **API key** (`config.yaml` → `api_key` or `MEMORY_ACCOUNT_API_KEY` env var) — account-level
 3. **OAuth credentials** (`~/.memory/credentials.json`) — acquired via `memory login` using OIDC Device Authorization Grant against Zitadel
 
-The current `memory logout` command (in `tools/cli/internal/cmd/auth.go`) only deletes `~/.memory/credentials.json`. It does not revoke tokens server-side, and there is no mechanism to clear API keys or project tokens from `config.yaml`.
+The current `memory logout` command (in `apps/cli/internal/cmd/auth.go`) only deletes `~/.memory/credentials.json`. It does not revoke tokens server-side, and there is no mechanism to clear API keys or project tokens from `config.yaml`.
 
 The OIDC discovery document (`auth.OIDCConfig`) already parses several endpoints but does not include the revocation endpoint. Zitadel exposes a standard RFC 7009 revocation endpoint at `{issuer}/oauth/v2/revoke`.
 
@@ -55,7 +55,7 @@ The OIDC discovery document (`auth.OIDCConfig`) already parses several endpoints
 
 ### 5. Add a Revoke function to the auth package
 
-**Decision**: Create a new `Revoke(issuerURL, clientID, token, tokenTypeHint string) error` function in `tools/cli/internal/auth/` rather than inlining HTTP calls in the command handler.
+**Decision**: Create a new `Revoke(issuerURL, clientID, token, tokenTypeHint string) error` function in `apps/cli/internal/auth/` rather than inlining HTTP calls in the command handler.
 
 **Rationale**: Keeps the `auth` package as the single home for all OIDC interactions. Follows the existing pattern where `DiscoverOIDC` and `DeviceFlow` live in the auth package. Makes the revocation logic independently testable.
 

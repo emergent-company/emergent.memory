@@ -67,7 +67,7 @@ APPS = [
         "description": "Developer CLI tool (`memory`) for managing projects, graph objects, agents, documents, schemas, and server operations.",
         "app_type": "cli",
         "platform": ["linux", "macos"],
-        "root_dir": "tools/cli",
+        "root_dir": "apps/cli",
         "tech_stack": ["go", "cobra"],
     },
 ]
@@ -125,12 +125,12 @@ DOMAIN_MODULES = [
 # ─── CLI sub-modules ──────────────────────────────────────────────────────────
 
 CLI_MODULES = [
-    ("mod-cli-cmd",         "cmd",          "Cobra command definitions for all CLI subcommands",                    "tools/cli/internal/cmd"),
-    ("mod-cli-client",      "client",       "HTTP API client — wraps all server endpoints for CLI consumption",     "tools/cli/internal/client"),
-    ("mod-cli-blueprints",  "blueprints",   "Declarative blueprint parsing and application logic",                  "tools/cli/internal/blueprints"),
-    ("mod-cli-graphexplore","graphexplore", "Interactive terminal graph explorer (TUI)",                            "tools/cli/internal/graphexplore"),
-    ("mod-cli-tui",         "tui",          "Terminal UI components shared across CLI commands",                    "tools/cli/internal/tui"),
-    ("mod-cli-skillsfs",    "skillsfs",     "Filesystem abstraction for reading and installing agent skills",       "tools/cli/internal/skillsfs"),
+    ("mod-cli-cmd",         "cmd",          "Cobra command definitions for all CLI subcommands",                    "apps/cli/internal/cmd"),
+    ("mod-cli-client",      "client",       "HTTP API client — wraps all server endpoints for CLI consumption",     "apps/cli/internal/client"),
+    ("mod-cli-blueprints",  "blueprints",   "Declarative blueprint parsing and application logic",                  "apps/cli/internal/blueprints"),
+    ("mod-cli-graphexplore","graphexplore", "Interactive terminal graph explorer (TUI)",                            "apps/cli/internal/graphexplore"),
+    ("mod-cli-tui",         "tui",          "Terminal UI components shared across CLI commands",                    "apps/cli/internal/tui"),
+    ("mod-cli-skillsfs",    "skillsfs",     "Filesystem abstraction for reading and installing agent skills",       "apps/cli/internal/skillsfs"),
 ]
 
 # ─── Shared server packages ───────────────────────────────────────────────────

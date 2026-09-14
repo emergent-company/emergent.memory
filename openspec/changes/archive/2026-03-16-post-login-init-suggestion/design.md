@@ -2,7 +2,7 @@
 
 After `memory login` completes successfully, the CLI currently prints a static hint: `Run 'memory status' to see your account and available projects.` This message is shown regardless of folder state. The actual next step depends on whether the current directory already has a Memory project initialized (`.env.local` containing `MEMORY_PROJECT_ID`).
 
-The `runLogin` function in `tools/cli/internal/cmd/auth.go` handles the full login flow. Post-login output is at lines ~357–366. The `godotenv` package is already a Go module dependency (used in `init_project.go` in the same package).
+The `runLogin` function in `apps/cli/internal/cmd/auth.go` handles the full login flow. Post-login output is at lines ~357–366. The `godotenv` package is already a Go module dependency (used in `init_project.go` in the same package).
 
 ## Goals / Non-Goals
 

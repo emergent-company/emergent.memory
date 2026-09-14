@@ -31,7 +31,7 @@
 
 - [x] 6.1 Delete unused legacy structs `CreateEntityResult`/`CreatedEntity`/`CreateRelationshipResult`/`CreatedRelationship` (mcp/entity.go ~588-634); verify `go build ./...` passes and grep confirms no references remain
 - [x] 6.2 Update swagger annotations if they document affected response shapes; update `apps/server/domain/mcp/README.md` and `docs/site/` MCP pages to document the `{ok,error,data,meta}` envelope and per-item `ok`; verify grep of docs for old `results[].success`/int-`success` wording returns none
-- [x] 6.3 Verify CLI (`tools/cli`) parses none of the changed result shapes (grep for entity-create/search result decoding); report finding — expected no-op
+- [x] 6.3 Verify CLI (`apps/cli`) parses none of the changed result shapes (grep for entity-create/search result decoding); report finding — expected no-op
 
 ## 7. Full verification
 

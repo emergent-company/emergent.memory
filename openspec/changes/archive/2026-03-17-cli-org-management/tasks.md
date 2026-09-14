@@ -1,10 +1,10 @@
 <!-- Baseline failures (pre-existing, not introduced by this change):
-- None. `go build ./tools/cli/...` passes cleanly.
+- None. `go build ./apps/cli/...` passes cleanly.
 -->
 
 ## 1. Org Commands — `memory orgs` CRUD
 
-- [x] 1.1 Create `tools/cli/internal/cmd/orgs.go` with the `orgs` parent command (GroupID: "account") and register it on `rootCmd`
+- [x] 1.1 Create `apps/cli/internal/cmd/orgs.go` with the `orgs` parent command (GroupID: "account") and register it on `rootCmd`
 - [x] 1.2 Implement `memory orgs list` — call `c.SDK.Orgs.List()`, display numbered list with name and ID, support `--json` output
 - [x] 1.3 Implement `memory orgs get <id>` — call `c.SDK.Orgs.Get()`, display name and ID, support `--json` output
 - [x] 1.4 Implement `memory orgs create --name <name>` — call `c.SDK.Orgs.Create()`, display created org name and ID, `--name` required

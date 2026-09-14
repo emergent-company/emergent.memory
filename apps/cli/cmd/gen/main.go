@@ -29,8 +29,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "gen: could not determine source file path")
 		os.Exit(1)
 	}
-	// file = .../tools/cli/cmd/gen/main.go
-	// skillsfs dir = .../tools/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md
+	// file = .../apps/cli/cmd/gen/main.go
+	// skillsfs dir = .../apps/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md
 	root := filepath.Join(filepath.Dir(file), "..", "..", "internal", "skillsfs", "skills", "memory-cli-reference", "SKILL.md")
 	outFile, err := filepath.Abs(root)
 	if err != nil {

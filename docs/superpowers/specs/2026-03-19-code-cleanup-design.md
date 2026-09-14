@@ -89,7 +89,7 @@ Add `apps/server/.golangci.yml` with a practical baseline that:
 
 If a linter cannot be tuned to zero failures without effectively disabling it, remove it from this config and note it in the commit message as "deferred: <linter>". The linters that flag `panic()` and TODO comments (`godot`, `revive`) are explicitly excluded from this baseline — those are deferred.
 
-**Module scope:** The config lives at `apps/server/.golangci.yml` and covers only the server Go module (the primary module). The CLI tool at `tools/cli/` is a separate module and is out of scope for this change.
+**Module scope:** The config lives at `apps/server/.golangci.yml` and covers only the server Go module (the primary module). The CLI tool at `apps/cli/` is a separate module and is out of scope for this change.
 
 Commit: `chore: add golangci-lint baseline configuration`
 

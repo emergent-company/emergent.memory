@@ -1,5 +1,5 @@
 // Package skillsfs embeds the built-in Agent Skills catalog into the CLI binary.
-// The catalog lives at tools/cli/internal/skillsfs/skills/ in the repository.
+// The catalog lives at apps/cli/internal/skillsfs/skills/ in the repository.
 // The .agents/skills/ directory at the repository root is a symlink to this location.
 package skillsfs
 

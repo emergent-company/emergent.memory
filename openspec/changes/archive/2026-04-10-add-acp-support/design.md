@@ -103,7 +103,7 @@ Key existing infrastructure:
 
 ### 9. CLI: new `memory acp` command group
 
-**Decision:** Add `tools/cli/internal/cmd/acp.go` with subcommands mirroring ACP endpoints. The CLI calls the Go SDK client at `pkg/sdk/acp/client.go`, which makes HTTP calls to `/acp/v1/` endpoints.
+**Decision:** Add `apps/cli/internal/cmd/acp.go` with subcommands mirroring ACP endpoints. The CLI calls the Go SDK client at `pkg/sdk/acp/client.go`, which makes HTTP calls to `/acp/v1/` endpoints.
 
 **Rationale:** The CLI is the primary interface for developers interacting with Memory. ACP CLI commands let developers test agent discovery and runs from the terminal without crafting raw HTTP requests.
 

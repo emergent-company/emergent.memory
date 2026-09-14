@@ -57,7 +57,7 @@ task cli:install        # builds and installs to ~/.memory/bin/memory
 Or without `task`:
 
 ```bash
-cd tools/cli
+cd apps/cli
 go build -o ~/.memory/bin/memory ./cmd/main.go
 ```
 
@@ -156,7 +156,7 @@ my-config/
 ## Development
 
 ```bash
-cd tools/cli
+cd apps/cli
 
 go test ./...
 go test -race ./...

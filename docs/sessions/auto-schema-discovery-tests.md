@@ -197,6 +197,6 @@ apps/server/domain/agents/acp_handler.go
 apps/server/domain/agents/acp_dto.go
 apps/server/pkg/adk/openai_model.go
 apps/server/pkg/sdk/agentdefinitions/client.go
-tools/cli/internal/blueprints/types.go
-tools/cli/internal/blueprints/applier.go
+apps/cli/internal/blueprints/types.go
+apps/cli/internal/blueprints/applier.go
 ```

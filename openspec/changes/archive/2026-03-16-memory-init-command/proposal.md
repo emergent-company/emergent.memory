@@ -21,7 +21,7 @@ There is no unified onboarding command for the Memory CLI. Users must manually r
 
 ## Impact
 
-- **Code**: New file `tools/cli/internal/cmd/init_project.go` registered in `rootCmd`. Reuses existing helpers: `PickProject`, `getClient`, `resolveProviderOrgID`, `godotenv`, `runInstallMemorySkills` logic, and `term.ReadPassword` for masked API key input.
+- **Code**: New file `apps/cli/internal/cmd/init_project.go` registered in `rootCmd`. Reuses existing helpers: `PickProject`, `getClient`, `resolveProviderOrgID`, `godotenv`, `runInstallMemorySkills` logic, and `term.ReadPassword` for masked API key input.
 - **Dependencies**: No new Go module dependencies. Uses `os/exec` for gcloud detection, `golang.org/x/term` (already a dependency) for masked input, `github.com/joho/godotenv` (already a dependency) for `.env.local` management.
 - **APIs**: Calls existing SDK methods (`Projects.List`, `Projects.Create`, `APITokens.Create`, `Provider.ListOrgConfigs`, `Provider.UpsertOrgConfig`, `Provider.TestProvider`). No server-side changes needed.
 - **User-facing**: New top-level CLI command `memory init` with flags `--skip-provider` and `--skip-skills`.

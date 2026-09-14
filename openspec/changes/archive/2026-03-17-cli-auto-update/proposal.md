@@ -21,7 +21,7 @@ Users running the Memory CLI may be on outdated versions without realizing it, m
 
 ## Impact
 
-- **Code**: New package `tools/cli/internal/autoupdate/` plus integration hook in `root.go` `PersistentPostRunE`
+- **Code**: New package `apps/cli/internal/autoupdate/` plus integration hook in `root.go` `PersistentPostRunE`
 - **Config**: New `auto_update` section in `~/.memory/config.yaml`; new `MEMORY_NO_AUTO_UPDATE` / `MEMORY_AUTO_UPDATE_ENABLED` env vars
 - **Filesystem**: New cache file `~/.memory/cache/latest-version.json` for rate-limiting checks
 - **Network**: One HTTPS call to GitHub Releases API per check interval (non-blocking goroutine)

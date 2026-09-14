@@ -3,11 +3,10 @@ module github.com/emergent-company/emergent.memory/e2e
 go 1.25.6
 
 require (
-	github.com/emergent-company/runlog v0.1.6
+	github.com/emergent-company/runlog v0.3.0
 	github.com/google/uuid v1.6.0
+	github.com/lib/pq v1.12.3
 )
-
-replace github.com/emergent-company/runlog => /root/runlog
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -25,7 +24,6 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
 	github.com/googleapis/gax-go/v2 v2.19.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/lib/pq v1.12.3 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

@@ -56,7 +56,7 @@ Currently zero extraction job commands exist in the CLI. E2e tests and operators
 
 ## Migration Plan
 
-1. Add `extraction.go` to `tools/cli/internal/cmd/`
+1. Add `extraction.go` to `apps/cli/internal/cmd/`
 2. Register `extractionCmd` in `root.go` `init()`
 3. Update e2e test helpers: `triggerExtractionJob` → `mustRunCLIInDirWithHome(..., "extraction", "jobs", "create", ...)`, `waitForExtractionJob` → poll loop using `runCLIInDirWithHome(..., "extraction", "jobs", "get", jobID, "--output", "json")`
 4. Add small PDF fixture to `tests/cli/testdata/` and new `TestCLIInstalled_DocumentConversion` test

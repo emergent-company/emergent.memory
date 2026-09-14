@@ -34,7 +34,7 @@ _(none — `agent-skill-catalog` continues to own the injection/catalog-filterin
 - `apps/server/domain/skills/handler.go` — pass provenance into create/update; MCP write path emits description embedding.
 - `apps/server/domain/mcp/skills_tools.go` — `skill-create`/`skill-update` populate embedding + provenance; align validation with spec.
 - `apps/server/domain/agents/executor.go` — verify `AutoLoadSkills` prefix matching matches spec (no behavioral change expected).
-- `tools/cli/internal/cmd/skills.go` + `install_skills.go` + `blueprints/applier.go` — populate provenance (`source`, `license`, `version`, `source_url`) when importing.
+- `apps/cli/internal/cmd/skills.go` + `install_skills.go` + `blueprints/applier.go` — populate provenance (`source`, `license`, `version`, `source_url`) when importing.
 - No new tables — metadata stays jsonb; additive-only, no breaking API change.
 
 ## Non-Goals (explicitly out of scope)

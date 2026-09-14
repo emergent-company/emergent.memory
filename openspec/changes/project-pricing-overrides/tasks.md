@@ -26,7 +26,7 @@
 ## 6. SDK + CLI
 
 - [x] 6.1 Add `ListProjectPricingOverrides`, `UpsertProjectPricingOverride`, `DeleteProjectPricingOverride` to `apps/server/pkg/sdk/provider/client.go`. Verify `go build ./...`.
-- [x] 6.2 Add a `memory provider pricing` subcommand (list/set/delete) in `tools/cli/internal/cmd/provider.go`. Verify `go build ./...` and a manual `memory provider pricing --help` smoke.
+- [x] 6.2 Add a `memory provider pricing` subcommand (list/set/delete) in `apps/cli/internal/cmd/provider.go`. Verify `go build ./...` and a manual `memory provider pricing --help` smoke.
 
 ## 7. Verification
 

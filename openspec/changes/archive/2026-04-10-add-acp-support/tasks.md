@@ -70,7 +70,7 @@
 
 ## 7. CLI Commands
 
-- [x] 7.1 Create `tools/cli/internal/cmd/acp.go` with `memory acp` cobra command group
+- [x] 7.1 Create `apps/cli/internal/cmd/acp.go` with `memory acp` cobra command group
 - [x] 7.2 Implement `memory acp ping` subcommand
 - [x] 7.3 Implement `memory acp agents list` subcommand with table output and `--json` flag
 - [x] 7.4 Implement `memory acp agents get <name>` subcommand with formatted output and `--json` flag

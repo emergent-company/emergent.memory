@@ -30,6 +30,6 @@ Upgrading a schema from one version to another currently requires a manual 5-ste
 - **`schemas/service.go`**: New `PreviewMigration`, `ExecuteMigration`, `RollbackMigration` service methods wrapping `SchemaMigrator`
 - **`schemas/handler.go`**: New HTTP routes: `POST /migrate/preview`, `POST /migrate/execute`, `POST /migrate/rollback`
 - **`mcp/service.go`**: New MCP tools: `schema-migrate-preview`, `schema-migrate-execute`, `schema-migrate-rollback`
-- **`tools/cli/internal/cmd/schemas.go`**: `schemas assign` enhanced; new `schemas migrate preview/execute/rollback` subcommands
+- **`apps/cli/internal/cmd/schemas.go`**: `schemas assign` enhanced; new `schemas migrate preview/execute/rollback` subcommands
 - **`apps/server/domain/graph/migration.go`**: `SchemaMigrator` promoted from internal package to shared service (no logic changes expected)
 - **Migration**: New DB migration to add `migrations` JSONB column to `kb.graph_schemas`

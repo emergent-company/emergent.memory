@@ -30,7 +30,7 @@ External systems and third-party agents need a standard protocol to discover and
 
 ## Impact
 
-- **New files**: `domain/agents/acp_dto.go`, `domain/agents/acp_handler.go`, `domain/agents/acp_routes.go`, `migrations/00082_acp_sessions.sql`, `pkg/sdk/acp/client.go`, `tools/cli/internal/cmd/acp.go`
+- **New files**: `domain/agents/acp_dto.go`, `domain/agents/acp_handler.go`, `domain/agents/acp_routes.go`, `migrations/00082_acp_sessions.sql`, `pkg/sdk/acp/client.go`, `apps/cli/internal/cmd/acp.go`
 - **Modified files**: `domain/agents/entity.go` (ACPConfig expansion, `cancelling` status), `domain/agents/repository.go` (session/event/stats methods), `domain/agents/module.go` (wire ACPHandler + ACP MCP tools), `domain/agents/mcp_tools.go` (3 new ACP tools)
 - **Auth**: Reuses existing `Bearer emt_*` API token auth — no new auth mechanism
 - **No breaking changes**: All existing `/api/projects/:projectId/agents/` routes, CLI commands, and MCP tools are unaffected

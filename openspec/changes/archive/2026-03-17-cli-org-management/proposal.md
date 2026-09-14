@@ -18,7 +18,7 @@ The CLI has no `memory orgs` command despite the server exposing a full CRUD API
 
 ## Impact
 
-- **CLI code**: New file `tools/cli/internal/cmd/orgs.go`; modifications to `tools/cli/internal/cmd/init_project.go`
+- **CLI code**: New file `apps/cli/internal/cmd/orgs.go`; modifications to `apps/cli/internal/cmd/init_project.go`
 - **SDK**: No changes — `apps/server/pkg/sdk/orgs/client.go` already has all needed methods
 - **Server**: No changes — `apps/server/domain/orgs/handler.go` already has all needed endpoints
 - **Dependencies**: No new dependencies; uses existing `cobra`, `client`, `config` packages

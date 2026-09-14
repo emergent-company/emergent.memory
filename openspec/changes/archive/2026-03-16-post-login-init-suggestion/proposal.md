@@ -18,6 +18,6 @@ After `memory login` succeeds, the CLI prints a static message suggesting `memor
 
 ## Impact
 
-- `tools/cli/internal/cmd/auth.go` — `runLogin` function post-login output block (lines ~357–366)
+- `apps/cli/internal/cmd/auth.go` — `runLogin` function post-login output block (lines ~357–366)
 - No API changes, no database changes, no breaking changes
 - `godotenv` is already a dependency (used in `init_project.go`) — just needs importing in `auth.go`

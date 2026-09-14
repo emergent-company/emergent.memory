@@ -21,7 +21,7 @@ The `memory` CLI has no commands for managing extraction jobs. Tests must fall b
 
 ## Impact
 
-- **CLI source**: `tools/cli/internal/cmd/` — new file `extraction.go`; registered in `root.go`
+- **CLI source**: `apps/cli/internal/cmd/` — new file `extraction.go`; registered in `root.go`
 - **Server API**: No changes — all endpoints already exist under `/api/admin/extraction-jobs`
 - **SDK**: May need a thin extraction jobs client in `apps/server/pkg/sdk/` (or call raw HTTP in the CLI, same as other admin commands)
 - **E2e tests**: `tests/cli/documents_test.go` — `triggerExtractionJob()` and `waitForExtractionJob()` replaced with CLI wrappers; new `TestCLIInstalled_DocumentConversion` test added

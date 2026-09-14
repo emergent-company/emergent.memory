@@ -20,7 +20,7 @@ _(none — no existing specs are affected)_
 
 ## Impact
 
-- **Code**: `tools/cli/internal/cmd/auth.go` (logout command), `tools/cli/internal/auth/` (add revocation function), `tools/cli/internal/auth/discovery.go` (add `RevocationEndpoint` to OIDC config)
+- **Code**: `apps/cli/internal/cmd/auth.go` (logout command), `apps/cli/internal/auth/` (add revocation function), `apps/cli/internal/auth/discovery.go` (add `RevocationEndpoint` to OIDC config)
 - **APIs**: Uses standard OIDC revocation endpoint (RFC 7009) on the Zitadel identity provider — no server-side changes needed
 - **Dependencies**: No new dependencies; uses `net/http` and existing `auth` package
 - **Backward compatibility**: Default behavior (no flags) adds revocation but remains non-breaking — if revocation fails, credentials are still deleted locally as before

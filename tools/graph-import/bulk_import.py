@@ -14,7 +14,7 @@ from pathlib import Path
 
 MEMORY = str(Path.home() / ".memory/bin/memory")
 HANDLER_DIR = Path("/root/emergent.memory/apps/server/domain")
-CLI_CMD_DIR = Path("/root/emergent.memory/tools/cli/internal/cmd")
+CLI_CMD_DIR = Path("/root/emergent.memory/apps/cli/internal/cmd")
 
 # ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -422,7 +422,7 @@ def main():
         props = {"name": command, "description": description,
                  "context_type": "cli",
                  "route": command,
-                 "file": f"tools/cli/internal/cmd/{file}"}
+                 "file": f"apps/cli/internal/cmd/{file}"}
         obj_id = create_object(key, "Context", props)
         if obj_id:
             cli_ids[key] = obj_id

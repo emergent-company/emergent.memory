@@ -97,11 +97,11 @@ spec-server-dev-vertex-ai.json
 .gemini/
 
 # Built CLI binaries
-tools/cli/emergent-cli-*
-tools/cli/emergent-darwin-*
-tools/cli/emergent-linux-*
-tools/cli/emergent
-tools/cli/memory
+apps/cli/emergent-cli-*
+apps/cli/emergent-darwin-*
+apps/cli/emergent-linux-*
+apps/cli/emergent
+apps/cli/memory
 bin/
 apps/server/tmp/
 
@@ -168,9 +168,9 @@ tests/
 
 # auto-added by commit skill — 2026-03-01
 /cmd
-tools/cli/test_search
+apps/cli/test_search
 pids/
-tools/cli/.env
+apps/cli/.env
 
 # auto-added by commit skill — 2026-03-06
 vertex-sa-key.json
@@ -191,16 +191,16 @@ apps/server/*.out
 apps/server/migrate
 apps/server/tasks
 apps/server/vm-agent
-tools/cli/emergent
-tools/cli/emergent-cli-*
-tools/cli/emergent-darwin-*
-tools/cli/*.tar.gz
+apps/cli/emergent
+apps/cli/emergent-cli-*
+apps/cli/emergent-darwin-*
+apps/cli/*.tar.gz
 
 # EPF subtree (removed from tracking)
 docs/EPF/
 
 # auto-added by commit skill — 2026-03-14
-tools/cli/main
+apps/cli/main
 
 # Python bytecode
 **/__pycache__/

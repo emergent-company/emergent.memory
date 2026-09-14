@@ -4,7 +4,7 @@
 
 ## 1. Add godotenv import to auth.go
 
-- [x] 1.1 Add `"github.com/joho/godotenv"` to the import block in `tools/cli/internal/cmd/auth.go`
+- [x] 1.1 Add `"github.com/joho/godotenv"` to the import block in `apps/cli/internal/cmd/auth.go`
 
 ## 2. Replace post-login output in runLogin
 

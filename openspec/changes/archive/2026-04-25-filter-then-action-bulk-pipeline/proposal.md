@@ -26,5 +26,5 @@ Production agent memory systems accumulate large object graphs and need lifecycl
 
 - `apps/server/domain/graph/` — new bulk handler, service methods, store queries
 - PostgreSQL `UPDATE ... WHERE` / `DELETE ... WHERE` for efficient execution
-- `tools/cli/` — new `bulk-update` / `bulk-delete` subcommands on `memory graph objects`
+- `apps/cli/` — new `bulk-update` / `bulk-delete` subcommands on `memory graph objects`
 - No breaking changes — new endpoints only

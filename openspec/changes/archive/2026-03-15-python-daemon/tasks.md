@@ -2,7 +2,7 @@
 <!-- Discovery: run_python uses `emergent-memory-python-sdk:latest` NOT `memory-workspace:latest`.
      The image is built from:
        - sdk/python/Dockerfile (local dev)
-       - tools/cli/internal/installer/templates.go GetPythonSDKDockerfile() (production)
+       - apps/cli/internal/installer/templates.go GetPythonSDKDockerfile() (production)
      gvisor_provider.go always overrides CMD with ["sleep", "infinity"] (line 165).
      pyrunner.py must be added to the Python SDK image with an ENTRYPOINT wrapper. -->
 

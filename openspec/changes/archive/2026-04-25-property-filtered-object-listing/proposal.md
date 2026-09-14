@@ -21,7 +21,7 @@
 
 ## Impact
 
-- **CLI**: `tools/cli/internal/cmd/graph.go` — `graphObjectsListCmd` flag parsing and `ListObjectsOptions` wiring
+- **CLI**: `apps/cli/internal/cmd/graph.go` — `graphObjectsListCmd` flag parsing and `ListObjectsOptions` wiring
 - **SDK**: No changes needed — `PropertyFilter` struct and `ListObjects` already handle this
 - **API**: No changes needed — `property_filters` param already implemented in handler and store
-- **Docs**: CLI reference skill (`tools/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md`)
+- **Docs**: CLI reference skill (`apps/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md`)

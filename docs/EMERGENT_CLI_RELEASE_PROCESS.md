@@ -7,7 +7,7 @@ This document describes how to create and publish releases for the Emergent CLI 
 - **stable** — `vX.Y.Z` tags (created by the `auto-tag` workflow when `VERSION`
   bumps on `main`). Immutable, non-prerelease releases. This is what
   `install.sh` (default) and the `upgrade` command resolve.
-- **dev** — every push to `main` touching `tools/cli/**` publishes a rolling
+- **dev** — every push to `main` touching `apps/cli/**` publishes a rolling
   prerelease under the fixed tag `cli-dev`, overwriting the previous dev build.
   Version embeds the short commit sha (`0.0.0-dev.<sha>`). Install with
   `install.sh --channel dev`.

@@ -1,6 +1,6 @@
 ## Context
 
-The Memory CLI (`tools/cli/`) is a Cobra-based Go CLI distributed as a single binary. It already has:
+The Memory CLI (`apps/cli/`) is a Cobra-based Go CLI distributed as a single binary. It already has:
 
 - **Version tracking**: Build-time ldflags set `Version`, `Commit`, `BuildDate` in `internal/cmd/version.go`
 - **Manual upgrade**: `memory upgrade` in `internal/cmd/upgrade.go` — fetches the latest GitHub release, downloads the platform-specific archive, and atomically replaces the binary via rename

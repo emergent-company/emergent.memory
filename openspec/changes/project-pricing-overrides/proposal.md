@@ -31,6 +31,6 @@ LLM usage events are costed at $0 for models served through an OpenAI-compatible
 
 **SDK/CLI:**
 - `apps/server/pkg/sdk/provider/client.go` — add pricing-override read/write methods.
-- `tools/cli/internal/cmd/provider.go` — add a `memory provider pricing` subcommand (list/set/delete).
+- `apps/cli/internal/cmd/provider.go` — add a `memory provider pricing` subcommand (list/set/delete).
 
 **Tests:** unit tests for optimistic matching, project override precedence, and the new endpoints (TDD).

@@ -113,7 +113,7 @@
 
 ## 14. Build Verification and Cleanup
 
-- [x] 14.1 Run `go build ./apps/server/... && go build ./tools/cli/...` — must be clean
+- [x] 14.1 Run `go build ./apps/server/... && go build ./apps/cli/...` — must be clean
 - [x] 14.2 Remove or deprecate `apps/server/cmd/migrate-schema/main.go` standalone binary
 - [x] 14.3 Update `docs/site/developer-guide/schema.md` with async migration flow, chain resolution, commit operation, new endpoints
 - [x] 14.4 Update `.agents/skills/memory-schemas/SKILL.md` with new MCP tools and CLI subcommands

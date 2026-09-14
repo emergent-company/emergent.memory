@@ -27,5 +27,5 @@ AI agent memory systems universally need to store conversations, but the Memory 
 - `apps/server/domain/schemas/` — built-in type registration
 - `apps/server/domain/graph/` — new session handler, service methods
 - `apps/server/domain/embeddingpolicies/` — auto-policy for Message.content
-- `tools/cli/` — new `sessions` subcommand
+- `apps/cli/` — new `sessions` subcommand
 - No breaking changes — purely additive

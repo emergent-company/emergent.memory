@@ -142,7 +142,7 @@ Verification of the SDK (`apps/server/pkg/sdk`, inspected in the local clone) sh
 | Project token lifecycle | `sdk/apitokens` | `Create` / `List` / `Get` / `Revoke` / `UpdateScopes` |
 | Project list / current | `sdk/projects` | `List` / `GetCurrent` |
 
-The Memory CLI's `tools/cli/internal/auth` is a **near-duplicate** of `sdk/auth` (same `Credentials` JSON shape, same 5-minute refresh buffer, same 0600 writes). So **no extraction is needed** — the connector imports the SDK packages directly.
+The Memory CLI's `apps/cli/internal/auth` is a **near-duplicate** of `sdk/auth` (same `Credentials` JSON shape, same 5-minute refresh buffer, same 0600 writes). So **no extraction is needed** — the connector imports the SDK packages directly.
 
 Gaps found, and their treatment:
 
@@ -152,7 +152,7 @@ Gaps found, and their treatment:
 - **Reuse the OAuth client id** the Memory CLI already registers, so Linux needs no new Zitadel application and no redirect URI.
 
 - **Why:** removes an entire class of new, security-sensitive code and its tests; the SDK already tracks server API/request shapes.
-- **Alternative considered:** fork `tools/cli/internal/auth` — rejected; it duplicates a public SDK package and would need ongoing sync.
+- **Alternative considered:** fork `apps/cli/internal/auth` — rejected; it duplicates a public SDK package and would need ongoing sync.
 - **Dependency risk:** the SDK device-flow scope gap must be closed upstream or worked around locally (fallback above); either way the connector stays unblocked.
 
 #### Proposed upstream SDK change

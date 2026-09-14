@@ -19,7 +19,7 @@ After running `memory upgrade` or `memory server upgrade`, users see a success b
 
 ## Impact
 
-- **Code**: `tools/cli/internal/cmd/upgrade.go` — new release-fetching logic, changelog aggregation, display in both `runUpgrade` and `runUpgradeServer`
+- **Code**: `apps/cli/internal/cmd/upgrade.go` — new release-fetching logic, changelog aggregation, display in both `runUpgrade` and `runUpgradeServer`
 - **APIs**: Additional GitHub API calls to `/repos/emergent-company/emergent.memory/releases` (paginated list endpoint, unauthenticated)
 - **Dependencies**: No new dependencies — uses existing `net/http` and `encoding/json`
 - **Risk**: GitHub API rate limits for unauthenticated requests (60/hour) — changelog fetch is best-effort, failure should not block the upgrade

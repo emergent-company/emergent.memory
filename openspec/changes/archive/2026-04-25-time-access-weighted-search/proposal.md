@@ -23,5 +23,5 @@ The hybrid search API fuses FTS and vector scores but ignores two highly relevan
 
 - `apps/server/domain/search/` — scoring logic in hybrid search handler/service
 - `apps/server/domain/graph/` — search endpoint request struct
-- `tools/cli/` — new flags on `memory query`
+- `apps/cli/` — new flags on `memory query`
 - No breaking changes — all new params are optional with zero defaults

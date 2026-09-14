@@ -23,6 +23,6 @@
 
 ## Impact
 
-- **CLI**: `graphObjectsCreateBatchCmd` in `tools/cli/internal/cmd/graph.go` — format detection, new routing branch
+- **CLI**: `graphObjectsCreateBatchCmd` in `apps/cli/internal/cmd/graph.go` — format detection, new routing branch
 - **Server**: No changes — `POST /api/graph/subgraph` (`CreateSubgraph`) already implemented, max 100 objects + 200 relationships per call
-- **Skills**: `memory-graph` SKILL.md updated in `tools/cli/internal/skillsfs/skills/memory-graph/` (synced to `.agents/skills/` and legalplant-api)
+- **Skills**: `memory-graph` SKILL.md updated in `apps/cli/internal/skillsfs/skills/memory-graph/` (synced to `.agents/skills/` and legalplant-api)

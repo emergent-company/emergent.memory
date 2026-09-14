@@ -95,11 +95,11 @@ WORKDIR /build/cli
 COPY apps/server/pkg/sdk/ /apps/server/pkg/sdk/
 
 # Copy go.mod/go.sum for dependency caching
-COPY tools/cli/go.mod tools/cli/go.sum ./
+COPY apps/cli/go.mod apps/cli/go.sum ./
 RUN go mod download
 
 # Copy CLI source
-COPY tools/cli/ ./
+COPY apps/cli/ ./
 
 # Sync go.mod/go.sum — release tags built via `git archive` can be slightly
 # out of sync, causing `go build` to fail with "updates to go.mod needed"

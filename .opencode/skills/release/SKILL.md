@@ -136,7 +136,7 @@ curl -s https://memory.emergent-company.ai/api/health | jq '.version'
 | CI: CLI + Release  | `.github/workflows/cli.yml`                |
 | CI: Docker image   | `.github/workflows/publish-self-hosted-images.yml`      |
 | Dockerfile         | `deploy/self-hosted/Dockerfile.server`                  |
-| Upgrade command    | `tools/cli/internal/cmd/upgrade.go`        |
+| Upgrade command    | `apps/cli/internal/cmd/upgrade.go`        |
 | Versioning docs    | `apps/server/VERSIONING.md`                      |
 | Docker registry    | `ghcr.io/emergent-company/memory-server`            |
 

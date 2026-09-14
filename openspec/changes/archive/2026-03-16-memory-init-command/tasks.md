@@ -1,10 +1,10 @@
 <!-- Baseline failures (pre-existing, not introduced by this change):
-- None. `go build ./tools/cli/...` passes cleanly.
+- None. `go build ./apps/cli/...` passes cleanly.
 -->
 
 ## 1. Command Scaffolding
 
-- [x] 1.1 Create `tools/cli/internal/cmd/init_project.go` with package declaration, imports, cobra command variable (`initProjectCmd`), `--skip-provider` and `--skip-skills` flags, and `init()` function that registers with `rootCmd`
+- [x] 1.1 Create `apps/cli/internal/cmd/init_project.go` with package declaration, imports, cobra command variable (`initProjectCmd`), `--skip-provider` and `--skip-skills` flags, and `init()` function that registers with `rootCmd`
 - [x] 1.2 Add non-interactive terminal guard at the top of `RunE` — check `isInteractiveTerminal()` and return an error if not interactive
 
 ## 2. Idempotent Re-run Detection

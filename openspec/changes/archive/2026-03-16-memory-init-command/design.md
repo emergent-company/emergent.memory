@@ -1,6 +1,6 @@
 ## Context
 
-The Memory CLI (`tools/cli/`) is a Go/Cobra application with an existing set of commands for managing projects (`projects set/create`), provider credentials (`provider configure`), and agent skills (`install-memory-skills`). Users must discover and run these commands independently, which creates friction for first-time setup.
+The Memory CLI (`apps/cli/`) is a Go/Cobra application with an existing set of commands for managing projects (`projects set/create`), provider credentials (`provider configure`), and agent skills (`install-memory-skills`). Users must discover and run these commands independently, which creates friction for first-time setup.
 
 The CLI already has:
 - A Bubbletea-based interactive project picker (`picker.go`) with arrow-key navigation and filter/search
@@ -34,7 +34,7 @@ The new `memory init` command composes these existing pieces into a single guide
 
 ### 1. Single new file: `init_project.go`
 
-All init logic lives in one new file `tools/cli/internal/cmd/init_project.go` registered via `init()` (same pattern as every other command file). No changes to `root.go` needed — cobra auto-discovers via the `init()` function.
+All init logic lives in one new file `apps/cli/internal/cmd/init_project.go` registered via `init()` (same pattern as every other command file). No changes to `root.go` needed — cobra auto-discovers via the `init()` function.
 
 **Rationale:** Keeps the change self-contained. The `init()` function in each Go file runs at import time, so adding `rootCmd.AddCommand(initProjectCmd)` in the new file's `init()` is the standard pattern used by all existing commands (e.g., `install.go`, `projects.go`).
 

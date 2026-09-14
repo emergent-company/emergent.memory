@@ -14,7 +14,7 @@ Each domain: `handler.go` (Echo routes) · `service.go` (business logic) · `sto
 
 **DB:** Postgres on port `5436` (not 5432) · schemas: `kb` (knowledge), `core` (users/orgs) · migrations in `apps/server/migrations/` via Goose
 
-**CLI:** source at `tools/cli/` · install with `task cli:install` → `~/.memory/bin/memory` · defaults to `http://localhost:3012`; override with `--server <url>`
+**CLI:** source at `apps/cli/` · install with `task cli:install` → `~/.memory/bin/memory` · defaults to `http://localhost:3012`; override with `--server <url>`
 
 
 

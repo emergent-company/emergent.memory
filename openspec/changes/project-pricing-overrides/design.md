@@ -48,7 +48,7 @@ See proposal.md - Why. Relevant current state in `apps/server/domain/provider/`:
 
 6. **Pricing-sync parser** maps `openai`→`ProviderOpenAI` and `deepseek`→`ProviderDeepSeek` in `parsePricingEntries`, so a working remote registry can carry those providers. Static fallback unchanged.
 
-7. **SDK + CLI**: add read/write client methods to `pkg/sdk/provider/client.go` and a `memory provider pricing` subcommand (list/set/delete) in `tools/cli`. The CLI/SDK are planned for parity but the server API + resolution are the critical path.
+7. **SDK + CLI**: add read/write client methods to `pkg/sdk/provider/client.go` and a `memory provider pricing` subcommand (list/set/delete) in `apps/cli`. The CLI/SDK are planned for parity but the server API + resolution are the critical path.
 
 ## Risks / Trade-offs
 

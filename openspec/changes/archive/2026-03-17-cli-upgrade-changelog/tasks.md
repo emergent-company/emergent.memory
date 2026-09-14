@@ -1,6 +1,6 @@
 ## 1. Extend Release Types and API
 
-- [x] 1.1 Extend the `Release` struct in `tools/cli/internal/cmd/upgrade.go` to include `Body string`, `Draft bool`, and `Prerelease bool` JSON fields
+- [x] 1.1 Extend the `Release` struct in `apps/cli/internal/cmd/upgrade.go` to include `Body string`, `Draft bool`, and `Prerelease bool` JSON fields
 - [x] 1.2 Add a `fetchReleasesBetween(currentVersion, targetVersion string) ([]Release, error)` function that calls `GET /repos/emergent-company/emergent.memory/releases?per_page=30` (up to 2 pages), filters out drafts/prereleases, and returns releases whose version falls in the range `(currentVersion, targetVersion]`
 - [x] 1.3 Add a `compareVersions(a, b string) int` helper that splits version strings on `.`, compares numeric components, and returns -1/0/1
 

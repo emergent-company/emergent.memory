@@ -52,10 +52,12 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,prefix=sha-
+            # dev channel: rolling `dev` on default-branch push
             type=raw,value=dev,enable={{is_default_branch}}
-            type=raw,value=latest,enable={{is_git_tag}}
-            type=semver,pattern={{raw}},enable={{is_git_tag}}
-            type=semver,pattern={{version}},enable={{is_git_tag}}
+            # stable channel: `latest` + `vX.Y.Z` + `X.Y.Z` on tag push
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{raw}}
+            type=semver,pattern={{version}}
 
       - name: Build and push
         uses: docker/build-push-action@v5

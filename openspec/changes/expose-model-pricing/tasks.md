@@ -13,7 +13,7 @@
 
 - [x] 3.1 Add a `ProviderPricing` type (json tags matching the server's PascalCase keys) and a `ListPricing(ctx) ([]ProviderPricing, error)` method to `apps/server/pkg/sdk/provider/client.go`. Verify `go build ./...` from `apps/server/pkg/sdk`.
 - [x] 3.2 Add a unit test for the SDK `ListPricing` method using a mock server. Verify `go test ./... -run Pricing -count=1` from `apps/server/pkg/sdk`.
-- [x] 3.3 (Optional) Add a `memory provider pricing list` action to `tools/cli/internal/cmd/provider.go`. Verify `go build ./...` from `tools/cli`.
+- [x] 3.3 (Optional) Add a `memory provider pricing list` action to `apps/cli/internal/cmd/provider.go`. Verify `go build ./...` from `apps/cli`.
 
 ## 4. Verification
 

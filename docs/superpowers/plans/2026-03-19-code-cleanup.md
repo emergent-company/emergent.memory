@@ -268,5 +268,5 @@ After all three tasks:
 ## Notes
 
 - Integration and E2E tests require a live database — they are not part of this cleanup validation
-- The CLI module at `tools/cli/` is out of scope for the linting config
+- The CLI module at `apps/cli/` is out of scope for the linting config
 - These three tasks are independent — any one can be shipped without the others
