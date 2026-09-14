@@ -31,7 +31,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
+          cache-dependency-path: apps/server/go.sum
 
       - name: Install golangci-lint
         run: |
@@ -65,7 +65,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
+          cache-dependency-path: apps/server/go.sum
 
       - name: Build
         working-directory: apps/server
@@ -90,7 +90,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
+          cache-dependency-path: apps/server/go.sum
 
       - name: Run unit tests
         working-directory: apps/server
@@ -140,8 +140,8 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
             BUILD_TIME=${{ steps.version.outputs.build_time }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=memory-server-ci
+          cache-to: type=gha,mode=max,scope=memory-server-ci
 
       - name: Get image size
         run: |

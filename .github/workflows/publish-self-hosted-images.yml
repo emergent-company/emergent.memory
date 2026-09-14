@@ -77,8 +77,8 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
             BUILD_TIME=${{ steps.version.outputs.build_time }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=memory-server
+          cache-to: type=gha,mode=max,scope=memory-server
 
       - name: Image digest
         run: echo ${{ steps.meta.outputs.digest }}
