@@ -67,6 +67,12 @@ jobs:
             echo "No Xcode 16 found; available:"; ls -d /Applications/Xcode*.app
           fi
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: apps/connector.linux/go.sum
+
       - name: Install tools
         run: |
           brew list xcodegen &>/dev/null || brew install xcodegen
