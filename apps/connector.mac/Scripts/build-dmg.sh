@@ -61,7 +61,12 @@ APP_PATH="${EXPORT_PATH}/Memory.app"
 # embedded Go engine + reminders helper are produced unsigned by the pre-build
 # scripts, and notarization rejects the app if any Mach-O lacks a hardened
 # runtime signature.
-codesign --deep --force --options runtime --sign "Developer ID Application" "${APP_PATH}"
+# Sign embedded binaries (deepest first), then the app. `codesign --deep` is
+# deprecated and unreliable for notarization.
+for bin in "${APP_PATH}/Contents/Resources/memory-connector" "${APP_PATH}/Contents/Resources/memory-reminders"; do
+  [ -f "$bin" ] && codesign --force --options runtime --sign "Developer ID Application" "$bin"
+done
+codesign --force --options runtime --sign "Developer ID Application" "${APP_PATH}"
 
 # Step 4: Notarize (optional)
 if [[ "${1:-}" == "--notarize" ]]; then
