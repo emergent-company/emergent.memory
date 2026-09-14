@@ -558,3 +558,5 @@ spec:
    ```bash
    curl http://localhost:3002/debug/pprof/goroutine?debug=1
    ```
+
+# review-gate smoke test
