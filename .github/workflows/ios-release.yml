@@ -69,6 +69,20 @@ jobs:
           echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
           chmod 600 /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
 
+      - name: Import signing certificate
+        env:
+          APPLE_DIST_CERT_BASE64: ${{ secrets.APPLE_DIST_CERT_BASE64 }}
+          APPLE_DIST_CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/ios-signing.keychain-db
+          security create-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "temp-keychain-password" "$KEYCHAIN_PATH"
+          echo "$APPLE_DIST_CERT_BASE64" | base64 --decode -o "$RUNNER_TEMP/ios-dist.p12"
+          security import "$RUNNER_TEMP/ios-dist.p12" -P "$APPLE_DIST_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
       - name: Archive
         working-directory: apps/ios
         run: |
@@ -83,6 +97,8 @@ jobs:
             -authenticationKeyID ${{ secrets.APP_STORE_CONNECT_KEY_ID }} \
             -authenticationKeyIssuerID ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }} \
             DEVELOPMENT_TEAM=74LC88G9SC \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="iPhone Distribution" \
             SWIFT_VERSION=5 \
             MARKETING_VERSION=${{ steps.version.outputs.marketing }} \
             CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build_number }}
