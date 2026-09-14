@@ -39,6 +39,18 @@ jobs:
           echo "commit=$COMMIT" >> $GITHUB_OUTPUT
           echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
 
+      # On tag pushes, detect whether apps/server/** changed since the last tag.
+      - name: Check if changed since last tag
+        id: changed
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -n "$PREV" ] && ! git diff --name-only "$PREV" HEAD -- apps/server/ | grep -q .; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -54,6 +66,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
+        if: steps.changed.outputs.changed != 'false'
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}/memory-server
@@ -65,6 +78,7 @@ jobs:
             type=sha
 
       - name: Build and push
+        if: steps.changed.outputs.changed != 'false'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -80,7 +94,26 @@ jobs:
           cache-from: type=gha,scope=memory-server
           cache-to: type=gha,mode=max,scope=memory-server
 
+      # Unchanged tag push: re-tag the previous version's multi-arch manifest list
+      # to the new version tags (no rebuild).
+      - name: Alias unchanged image to new version
+        if: steps.changed.outputs.changed == 'false'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          MAJOR_MINOR="${VERSION%.*}"
+          MAJOR="${VERSION%%.*}"
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | sed 's/^v//')
+          IMG="${{ env.IMAGE_PREFIX }}/memory-server"
+          docker buildx imagetools create \
+            -t "$IMG:$VERSION" \
+            -t "$IMG:$MAJOR_MINOR" \
+            -t "$IMG:$MAJOR" \
+            -t "$IMG:sha-${{ steps.version.outputs.commit }}" \
+            "$IMG:$PREV"
+
       - name: Image digest
+        if: steps.changed.outputs.changed != 'false'
         run: echo ${{ steps.meta.outputs.digest }}
 
       - name: Mark release as ready
@@ -93,7 +126,6 @@ jobs:
           echo "Server image: ghcr.io/${{ github.repository_owner }}/memory-server:${TAG#v}" >> images-ready.txt
           echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> images-ready.txt
 
-          # Wait for the release to exist (it's created by the cli workflow)
           for i in $(seq 1 30); do
             if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
               echo "Release $TAG found, uploading sentinel..."

@@ -447,3 +447,5 @@ jobs:
             org.opencontainers.image.title=Memory CLI
             org.opencontainers.image.description=Command-line interface for Memory Knowledge Base
           platforms: linux/amd64
+          cache-from: type=gha,scope=memory-cli
+          cache-to: type=gha,mode=max,scope=memory-cli
