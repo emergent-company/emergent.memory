@@ -52,6 +52,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select newest Xcode (iOS 26 SDK required)
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "Selecting $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
       - name: Derive version
         id: version
         run: |
