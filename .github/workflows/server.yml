@@ -33,13 +33,21 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: apps/server/go.sum
 
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: golangci-lint (new issues only)
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13.2
-          working-directory: apps/server
-          install-mode: binary
-          only-new-issues: true
+        working-directory: apps/server
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          golangci-lint run --new-from-rev="$BASE" ./...
 
       - name: Architectural debt ratchet
         working-directory: apps/server
