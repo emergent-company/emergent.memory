@@ -214,6 +214,16 @@ jobs:
           echo "commit=$COMMIT" >> $GITHUB_OUTPUT
           echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
 
+      - name: Warm module cache (retry)
+        working-directory: apps/cli
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            go mod download && exit 0
+            echo "go mod download retry $i"
+            sleep 3
+          done
+          exit 1
       - name: Build binary
         working-directory: apps/cli
         env:

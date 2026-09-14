@@ -48,6 +48,17 @@ jobs:
             go-build-${{ runner.os }}-
 
 
+      - name: Warm module cache (retry)
+        working-directory: apps/connector.linux
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            go mod download && exit 0
+            echo "go mod download retry $i"
+            sleep 3
+          done
+          exit 1
+
       - name: Build binary
         working-directory: apps/connector.linux
         env:

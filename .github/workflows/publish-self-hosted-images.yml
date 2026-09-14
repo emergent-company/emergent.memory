@@ -64,9 +64,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check source image exists
+        id: source
+        if: steps.changed.outputs.changed == 'false'
+        shell: bash
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | sed 's/^v//')
+          IMG="${{ env.IMAGE_PREFIX }}/memory-server"
+          if docker buildx imagetools inspect "$IMG:$PREV" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Extract metadata
         id: meta
-        if: steps.changed.outputs.changed != 'false'
+        if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}/memory-server
@@ -78,7 +91,7 @@ jobs:
             type=sha
 
       - name: Build and push
-        if: steps.changed.outputs.changed != 'false'
+        if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -97,7 +110,7 @@ jobs:
       # Unchanged tag push: re-tag the previous version's multi-arch manifest list
       # to the new version tags (no rebuild).
       - name: Alias unchanged image to new version
-        if: steps.changed.outputs.changed == 'false'
+        if: steps.changed.outputs.changed == 'false' && steps.source.outputs.exists == 'true'
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -113,7 +126,7 @@ jobs:
             "$IMG:$PREV"
 
       - name: Image digest
-        if: steps.changed.outputs.changed != 'false'
+        if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
         run: echo ${{ steps.meta.outputs.digest }}
 
       - name: Mark release as ready
