@@ -108,7 +108,11 @@ jobs:
           xcodebuild -exportArchive \
             -archivePath build/VoiceAgent.xcarchive \
             -exportPath build/Export \
-            -exportOptionsPlist ExportOptions.plist
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.APP_STORE_CONNECT_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
