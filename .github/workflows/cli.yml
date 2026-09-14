@@ -72,22 +72,26 @@ jobs:
           fail_ci_if_error: false
 
   build:
-    name: Build (${{ matrix.os }})
+    name: Build (${{ matrix.label }})
     runs-on: ${{ matrix.runs_on }}
     needs: [lint, test]
     strategy:
       matrix:
-        os: [ubuntu-latest, macos]
         include:
-          - os: ubuntu-latest
+          - label: linux-amd64
             runs_on: ubuntu-latest
             goos: linux
             goarch: amd64
             ext: ''
-          - os: macos
+          - label: darwin-amd64
             runs_on: [self-hosted, macOS, ARM64]
             goos: darwin
             goarch: amd64
+            ext: ''
+          - label: darwin-arm64
+            runs_on: [self-hosted, macOS, ARM64]
+            goos: darwin
+            goarch: arm64
             ext: ''
     steps:
       - name: Checkout
