@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GITHUB_REPO="emergent-company/memory.web-ui"
+GITHUB_REPO="emergent-company/emergent.memory"
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases"
 # Base URL for release assets. Override with MEMORY_CONNECTOR_BASE_URL to point
 # the installer at a mirror (or a local HTTP server, for smoke tests). The script
-# appends /connector-v<VERSION>/<asset>.
+# appends /v<VERSION>/<asset>.
 BASE_URL="${MEMORY_CONNECTOR_BASE_URL:-https://github.com/${GITHUB_REPO}/releases/download}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 tmp_dir=""
@@ -32,13 +32,13 @@ Options:
   -h, --help        Show this help
 
 Channels:
-  stable  Install the newest connector-v* release (default).
-  dev     Install the rolling dev build from the 'connector-dev' tag.
+  stable  Install the newest v* release (default).
+  dev     Install the rolling dev build from the 'dev' tag.
 
 Environment:
   INSTALL_DIR                 Same as --dir
   MEMORY_CONNECTOR_BASE_URL   Alternate asset base URL. The script fetches
-                              \${BASE_URL}/connector-v<VERSION>/<asset>. Defaults
+                              \${BASE_URL}/v<VERSION>/<asset>. Defaults
                               to the GitHub release download URL. Useful for
                               mirrors and local smoke tests.
 
@@ -62,15 +62,12 @@ detect_platform() {
 }
 
 resolve_version() {
-    # Newest release whose tag starts with connector-v. The repo also publishes
-    # non-connector releases, so /releases/latest cannot be used.
+    # Newest monorepo release (single vX.Y.Z tag carries all artifacts).
     local version
-    version=$(curl -fsSL "${API_URL}?per_page=100" \
-        | grep -o '"tag_name":[[:space:]]*"connector-v[^"]*"' \
-        | head -1 \
-        | sed -e 's/.*"connector-v//' -e 's/"$//')
-    [ -z "$version" ] && error "No connector-v* release found. Pass --version X.Y.Z."
-    echo "$version"
+    version=$(curl -fsS -o /dev/null -w '%{redirect_url}' "https://github.com/${GITHUB_REPO}/releases/latest")
+    [ -z "$version" ] && error "No release found. Pass --version X.Y.Z."
+    version="${version##*/}"
+    echo "${version#v}"
 }
 
 verify_checksum() {
@@ -117,26 +114,26 @@ main() {
 
     if [ "$channel" = "dev" ]; then
         [ -n "$version" ] && error "--version cannot be combined with --channel dev"
-        log "Resolving newest dev build (tag connector-dev)..."
-        dev_asset=$(curl -fsSL "${API_URL}/tags/connector-dev" \
+        log "Resolving newest dev build (tag dev)..."
+        dev_asset=$(curl -fsSL "${API_URL}/tags/dev" \
             | grep -o '"name":[[:space:]]*"memory-connector_[^"]*_'"${os}"'_'"${arch}"'\.tar\.gz"' \
             | sed -e 's/.*"name":[[:space:]]*"//' -e 's/"$//' \
             | head -1)
-        [ -z "$dev_asset" ] && error "No dev build for ${os}/${arch} (tag connector-dev)."
+        [ -z "$dev_asset" ] && error "No dev build for ${os}/${arch} (tag dev)."
         version=$(printf '%s' "$dev_asset" \
             | sed -e 's/^memory-connector_//' -e 's/_'"${os}"'_'"${arch}"'\.tar\.gz$//')
         asset="$dev_asset"
-        download_url="${BASE_URL}/connector-dev/${asset}"
+        download_url="${BASE_URL}/dev/${asset}"
     else
         if [ -z "$version" ]; then
             log "Resolving newest connector release..."
             version=$(resolve_version)
         fi
-        version="${version#connector-v}"
+        version="${version#v}"
         version="${version#v}"
 
         asset="memory-connector_${version}_${os}_${arch}.tar.gz"
-        download_url="${BASE_URL}/connector-v${version}/${asset}"
+        download_url="${BASE_URL}/v${version}/${asset}"
     fi
 
     log "Installing memory-connector ${version} for ${platform}..."
