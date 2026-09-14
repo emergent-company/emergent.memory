@@ -41,9 +41,8 @@ jobs:
     if: needs.check.outputs.changed == 'true'
     env:
       DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
-      NOTARIZE_APPLE_ID: ${{ secrets.NOTARIZE_APPLE_ID }}
-      NOTARIZE_PASSWORD: ${{ secrets.NOTARIZE_PASSWORD }}
-      NOTARIZE_TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+      NOTARIZE_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      NOTARIZE_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,10 +66,17 @@ jobs:
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
+      - name: Write App Store Connect API key
+        run: |
+          mkdir -p /tmp/private_keys
+          echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+          chmod 600 /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+
       - name: Build, sign, notarize, package
         working-directory: apps/connector.mac
         env:
           VERSION: ${{ github.ref_name }}
+          NOTARIZE_KEY: /tmp/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
         run: |
           chmod +x Scripts/build-dmg.sh
           ./Scripts/build-dmg.sh --notarize

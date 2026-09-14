@@ -8,9 +8,9 @@
 #   VERSION             Marketing version (defaults to Info.plist value)
 #   DEVELOPMENT_TEAM    Apple Developer Team ID (e.g. "XXXXXXXXXX")
 #   APP_CERT_NAME       Certificate name for app signing (e.g. "Developer ID Application: ...")
-#   NOTARIZE_APPLE_ID   Apple ID for notarization
-#   NOTARIZE_PASSWORD   App-specific password for notarization
-#   NOTARIZE_TEAM_ID    Team ID for notarization
+#   NOTARIZE_KEY        Path to App Store Connect API key (.p8)
+#   NOTARIZE_KEY_ID     App Store Connect API key ID
+#   NOTARIZE_ISSUER     App Store Connect API issuer ID
 
 set -euo pipefail
 
@@ -61,9 +61,9 @@ if [[ "${1:-}" == "--notarize" ]]; then
     echo "==> Notarizing..."
     ditto -c -k --keepParent "${APP_PATH}" "${EXPORT_PATH}/Memory.zip"
     xcrun notarytool submit "${EXPORT_PATH}/Memory.zip" \
-        --apple-id "${NOTARIZE_APPLE_ID}" \
-        --password "${NOTARIZE_PASSWORD}" \
-        --team-id "${NOTARIZE_TEAM_ID}" \
+        --key "${NOTARIZE_KEY}" \
+        --key-id "${NOTARIZE_KEY_ID}" \
+        --issuer "${NOTARIZE_ISSUER}" \
         --wait
     xcrun stapler staple "${APP_PATH}"
 fi
