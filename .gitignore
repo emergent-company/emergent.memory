@@ -165,6 +165,9 @@ tools/niezatapialni-scraper/niezatapialni-scraper
 # Test data and e2e suites (live in emergent.memory.e2e)
 test-data/
 tests/
+# ...except the migrated web-ui test suites (Playwright e2e + memory_bridge pytests)
+!apps/web-ui/tests/
+!apps/web-ui/memory_bridge/tests/
 
 # auto-added by commit skill — 2026-03-01
 /cmd
