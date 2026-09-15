@@ -63,6 +63,11 @@ def latest_review_json(pr: str, repo: str):
     except json.JSONDecodeError:
         return None
     for rev in reversed(reviews):
+        # Skip reviews from a prior push (stale diff) — only trust the review
+        # for the current head commit.
+        head_sha = os.environ.get("HEAD_SHA", "")
+        if head_sha and rev.get("commit_id") and rev["commit_id"] != head_sha:
+            continue
         expected = os.environ.get("REVIEW_BOT_LOGIN", "github-actions[bot]")
         user = (rev.get("user") or {}).get("login", "")
         # Only trust the specific bot that our workflow uses; any other GitHub
