@@ -1,0 +1,12 @@
+{
+  "name": "memory-e2e",
+  "private": true,
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^26.4.1",
+    "dotenv": "^17.4.2"
+  }
+}

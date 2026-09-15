@@ -1,0 +1,13 @@
+[Unit]
+Description=Playwright UI (e2e) — hot-reload via air
+After=network.target
+
+[Service]
+WorkingDirectory=/root/alfred/tests/e2e
+ExecStart=/root/go/bin/air -c /root/alfred/tests/e2e/.air.toml
+Restart=always
+RestartSec=3
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target

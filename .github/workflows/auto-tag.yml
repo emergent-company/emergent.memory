@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # required for the `gh workflow run` dispatch fallback below
 
 jobs:
   tag:
@@ -17,6 +18,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Push the tag with a PAT, not GITHUB_TOKEN: events caused by
+          # GITHUB_TOKEN do not create workflow runs, so a GITHUB_TOKEN tag
+          # push silently starts no release pipeline. RELEASE_TOKEN must be a
+          # classic PAT with `repo` + `workflow` scopes.
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Verify GitHub CLI
         run: |
@@ -46,14 +52,14 @@ jobs:
       - name: Check if tag already exists
         id: check
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ steps.version.outputs.version }}"
           if gh release view "$TAG" --repo ${{ github.repository }} > /dev/null 2>&1; then
             echo "Tag $TAG already exists as a release — skipping"
             echo "exists=true" >> $GITHUB_OUTPUT
-          elif git tag -l "$TAG" | grep -q "$TAG"; then
-            echo "Tag $TAG already exists locally — skipping"
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin — skipping"
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "Tag $TAG does not exist — will create"
@@ -74,13 +80,25 @@ jobs:
           git push origin "$TAG"
           echo "Created and pushed tag: $TAG"
 
-      - name: Trigger release workflows
+      - name: Verify tag push triggered release workflows
         if: steps.check.outputs.exists == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ steps.version.outputs.version }}"
-          echo "Triggering release workflows on $TAG..."
-          gh workflow run "Memory CLI & Release" --ref "$TAG" --repo ${{ github.repository }}
-          gh workflow run "Publish Self-Hosted Images" --ref "$TAG" --repo ${{ github.repository }}
-          echo "Workflows dispatched on tag: $TAG"
+          # The tag push should fan out to every `on: push: tags: v*` workflow.
+          # Give the events a moment, then confirm runs appeared for this ref.
+          for i in 1 2 3 4 5 6; do
+            COUNT=$(gh api "repos/${{ github.repository }}/actions/runs?per_page=50" \
+              --jq "[.workflow_runs[] | select(.head_branch == \"$TAG\")] | length")
+            echo "attempt $i: $COUNT run(s) found for $TAG"
+            if [ "$COUNT" -gt 0 ]; then
+              echo "Release workflows triggered by tag push: $COUNT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "ERROR: no workflow runs appeared for tag $TAG." >&2
+          echo "This means the tag push did not trigger any release workflow." >&2
+          echo "Check that RELEASE_TOKEN is set (a GITHUB_TOKEN push cannot trigger runs)." >&2
+          exit 1
