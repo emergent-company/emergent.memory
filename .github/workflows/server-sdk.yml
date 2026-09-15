@@ -49,6 +49,11 @@ jobs:
 
       - name: golangci-lint
         working-directory: apps/server/pkg/sdk
+        env:
+          # Per-job cache dir: the self-hosted runner shares HOME across
+          # concurrent jobs, which makes the default golangci-lint lock
+          # collide ("parallel golangci-lint is running").
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
         run: golangci-lint run ./...
 
   test:

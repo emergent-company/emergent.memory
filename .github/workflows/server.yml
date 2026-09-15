@@ -48,6 +48,11 @@ jobs:
 
       - name: golangci-lint (new issues only)
         working-directory: apps/server
+        env:
+          # Per-job cache dir: the self-hosted runner shares HOME across
+          # concurrent jobs, which makes the default golangci-lint lock
+          # collide ("parallel golangci-lint is running").
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
