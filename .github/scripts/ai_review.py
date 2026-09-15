@@ -102,6 +102,84 @@ def build_body(review: dict) -> str:
     return f"{md}\n\n```{JSON_FENCE}\n{json.dumps(review, indent=2)}\n```\n"
 
 
+def get_head_sha() -> str:
+    r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+    return r.stdout.strip()
+
+
+def locate_span(path: str, old: str):
+    """Return (start, end) 1-based line numbers of `old` in the file, or None."""
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            src = f.read()
+    except OSError:
+        return None
+    old_n = old.replace("\r\n", "\n").rstrip("\n")
+    src_n = src.replace("\r\n", "\n")
+    idx = src_n.find(old_n)
+    if idx == -1:
+        # Fallback: locate by the first non-blank line of `old`.
+        first = (old_n.split("\n") or [""])[0].strip()
+        if not first:
+            return None
+        for i, line in enumerate(src_n.split("\n")):
+            if line.strip() == first:
+                return (i + 1, i + 1)
+        return None
+    start = src_n[:idx].count("\n") + 1
+    end = start + old_n.count("\n")
+    return (start, end)
+
+
+def post_inline_suggestions(repo: str, pr: str, commit_id: str, issues) -> None:
+    """Post each issue as a line-anchored review comment with a ```suggestion
+    block so GitHub renders a one-click 'Commit suggestion', like Copilot."""
+    for it in issues:
+        path = it.get("path")
+        old = it.get("old")
+        new = it.get("new")
+        if (
+            not path
+            or not isinstance(old, str) or not old
+            or not isinstance(new, str) or not new.strip()
+        ):
+            continue
+        span = locate_span(path, old)
+        if not span:
+            continue
+        start, end = span
+        sev = it.get("severity", "should_fix")
+        title = it.get("title", "")
+        note = it.get("note", "")
+        body = f"**[{sev}]** {title}"
+        if note:
+            body += f"\n\n{note}"
+        body += f"\n\n```suggestion\n{new.rstrip(chr(10))}\n```"
+        payload = {
+            "body": body,
+            "path": path,
+            "line": end,
+            "side": "RIGHT",
+            "commit_id": commit_id,
+        }
+        if start != end:
+            payload["start_line"] = start
+            payload["start_side"] = "RIGHT"
+        fd, tmp = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        try:
+            subprocess.run(
+                ["gh", "api", f"repos/{repo}/pulls/{pr}/comments",
+                 "--method", "POST",
+                 "-H", "Content-Type: application/json",
+                 "--input", tmp],
+                check=False,  # 422 if line isn't in the diff — flat review still carries it
+            )
+        finally:
+            os.unlink(tmp)
+
+
 def main() -> None:
     pr_number = get_pr_number()
     base = get_base(pr_number)
@@ -220,6 +298,10 @@ def main() -> None:
         )
     finally:
         os.unlink(tmp)
+
+    # Post line-anchored inline suggestions (one-click 'Commit suggestion'),
+    # like Copilot. Best-effort; a 422 line mismatch just skips that comment.
+    post_inline_suggestions(repo, pr_number, get_head_sha(), issues)
     print(f"Review posted: {event} ({len(issues)} issues)")
 
 
