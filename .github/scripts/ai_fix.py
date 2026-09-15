@@ -50,14 +50,16 @@ def head_branch() -> str:
 def has_label(pr: str, repo: str) -> bool:
     r = run(["gh", "pr", "view", pr, "--json", "labels", "-q", ".labels[].name"])
     if r.returncode != 0:
-        # Fail closed: unknown label state is treated as present to preserve the
-        # loop cap rather than risk a duplicate fix pass.
-        return True
+        # Loud failure, not fail-closed-to-true: a broken `gh` must not be
+        # mistaken for "label present" (which would silently skip the fix).
+        sys.exit(f"gh pr view failed (cannot check label): {r.stderr.strip()}")
     return LABEL in (r.stdout or "").splitlines()
 
 
 def latest_review_json(pr: str, repo: str):
-    r = run(["gh", "api", f"repos/{repo}/pulls/{pr}/reviews"])
+    # --paginate: the reviews endpoint defaults to 30/page; without it the
+    # newest review can fall on a later page and be missed entirely.
+    r = run(["gh", "api", "--paginate", f"repos/{repo}/pulls/{pr}/reviews"])
     try:
         reviews = json.loads(r.stdout or "[]")
     except json.JSONDecodeError:
