@@ -153,12 +153,12 @@ def main() -> None:
     )
 
     payload = {
-        "model": "deepseek-v4-flash",
+        # deepseek-chat is the non-reasoning model. deepseek-v4-pro / -flash are
+        # thinking models that emit into reasoning_content and leave content empty
+        # (see bench/HYPOTHESES.md), which breaks single-shot OpenAI-compat calls.
+        "model": "deepseek-chat",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
-        # DeepSeek thinking mode off — otherwise it emits chain-of-thought into
-        # reasoning_content and leaves content empty. Native toggle per openai_model.go.
-        "thinking": {"type": "disabled"},
     }
     req = urllib.request.Request(
         f"{base_url}/chat/completions",
@@ -173,7 +173,7 @@ def main() -> None:
 
     content = resp["choices"][0]["message"].get("content") or ""
     if not content.strip():
-        sys.exit("review model returned empty content (thinking may still be enabled)")
+        sys.exit("review model returned empty content")
     review = parse_review(content)
     issues = review.get("issues") or []
     verdict = review.get("verdict", "REQUEST_CHANGES")
