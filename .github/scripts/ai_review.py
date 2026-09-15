@@ -3,13 +3,14 @@
 each with an exact old->new suggested edit), posted as a single review whose
 body carries a machine-readable JSON block that the auto-fixer consumes.
 
-Triggered by workflow_run (after CI passes), so it derives the PR number and
-base branch from the workflow_run context instead of the pull_request context.
+Triggered on pull_request events; the PR number and head branch come from the
+workflow's env (PR_NUMBER, HEAD_BRANCH), and the base is resolved via `gh pr view`.
 """
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import urllib.request
 
 # Fence tag around the machine-readable JSON block in the review body.
@@ -155,6 +156,9 @@ def main() -> None:
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
+        # DeepSeek thinking mode off — otherwise it emits chain-of-thought into
+        # reasoning_content and leaves content empty. Native toggle per openai_model.go.
+        "thinking": {"type": "disabled"},
     }
     req = urllib.request.Request(
         f"{base_url}/chat/completions",
@@ -167,10 +171,9 @@ def main() -> None:
     with urllib.request.urlopen(req, timeout=300) as r:
         resp = json.loads(r.read())
 
-    msg = resp["choices"][0]["message"]
-    content = msg.get("content") or msg.get("reasoning_content") or ""
+    content = resp["choices"][0]["message"].get("content") or ""
     if not content.strip():
-        sys.exit("review model returned empty content and reasoning_content")
+        sys.exit("review model returned empty content (thinking may still be enabled)")
     review = parse_review(content)
     issues = review.get("issues") or []
     verdict = review.get("verdict", "REQUEST_CHANGES")
@@ -188,15 +191,23 @@ def main() -> None:
 
     body = build_body(review)
 
-    subprocess.run(
-        [
-            "gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
-            "--method", "POST",
-            "--field", f"event={event}",
-            "--field", f"body={body}",
-        ],
-        check=True,
-    )
+    # Post via a JSON file (--input) instead of --field: large bodies with
+    # special characters break gh's --field type coercion.
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"event": event, "body": body}, f)
+    try:
+        subprocess.run(
+            [
+                "gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
+                "--method", "POST",
+                "-H", "Content-Type: application/json",
+                "--input", tmp,
+            ],
+            check=True,
+        )
+    finally:
+        os.unlink(tmp)
     print(f"Review posted: {event} ({len(issues)} issues)")
 
 

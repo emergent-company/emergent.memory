@@ -3,7 +3,7 @@
 old->new edits for actionable severities, compile-check Go changes, commit,
 push, reply with a summary, and label the PR to cap the loop at one pass.
 
-Runs as the `fix` job of the AI Code Review workflow (workflow_run context),
+Runs as the `fix` job of the AI Code Review workflow (pull_request trigger),
 right after the `review` job posts the review. No LLM needed here — the reviewer
 already supplied the exact edits.
 """
@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 JSON_FENCE = "ai-review-json"
 LABEL = "ai-auto-fixed"
@@ -110,8 +111,12 @@ def apply_edit(path: str, old: str, new: str) -> bool:
         for i, l in enumerate(src_lines):
             if i0 is None and l.strip() == first:
                 i0 = i
-            if l.strip() == last:
+                if first == last:
+                    i1 = i
+                    break
+            elif i0 is not None and l.strip() == last:
                 i1 = i
+                break
         if i0 is not None and i1 is not None and i0 <= i1:
             if new_n.strip():
                 repl = new_n.rstrip("\n").split("\n")
@@ -124,10 +129,16 @@ def apply_edit(path: str, old: str, new: str) -> bool:
 
 
 def post_comment(repo: str, pr: str, body: str) -> None:
-    run(
-        ["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--method", "POST",
-         "--field", f"body={body}"],
-    )
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"body": body}, f)
+    try:
+        run(
+            ["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--method", "POST",
+             "-H", "Content-Type: application/json", "--input", tmp],
+        )
+    finally:
+        os.unlink(tmp)
 
 
 def main() -> None:
@@ -162,6 +173,15 @@ def main() -> None:
         new = it.get("new")
         if not path or not old or old == new:
             skipped.append((it, "empty or no-op edit"))
+            continue
+        norm = os.path.normpath(path)
+        if (
+            os.path.isabs(norm)
+            or norm == ".."
+            or norm.startswith(".." + os.sep)
+            or norm.startswith(".git" + os.sep)
+        ):
+            skipped.append((it, "unsafe path"))
             continue
         if apply_edit(path, old, new):
             applied.append(it)
@@ -198,9 +218,6 @@ def main() -> None:
     # Commit and push to the PR head branch.
     run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
     run(["git", "config", "user.name", "github-actions[bot]"])
-    if token:
-        run(["git", "remote", "set-url", "origin",
-             f"https://x-access-token:{token}@github.com/{repo}.git"])
     run(["git", "add", "-A"])
     r = run(["git", "commit", "-m",
              f"fix: address AI review feedback {COMMIT_MARKER}"])
@@ -208,7 +225,12 @@ def main() -> None:
         # Nothing staged (edits were whitespace-only or already applied).
         print("Nothing to commit; skipping push.")
     else:
-        r = run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"])
+        # Push via explicit URL so the token does not persist in .git/config.
+        push_url = (
+            f"https://x-access-token:{token}@github.com/{repo}.git"
+            if token else "origin"
+        )
+        r = run(["git", "push", push_url, f"HEAD:refs/heads/{branch}"])
         if r.returncode != 0:
             body = (
                 "## AI auto-fix: push failed\n\n"
