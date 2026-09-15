@@ -152,7 +152,7 @@ def main() -> None:
     )
 
     payload = {
-        "model": "deepseek-v4-pro",
+        "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
     }
@@ -167,7 +167,10 @@ def main() -> None:
     with urllib.request.urlopen(req, timeout=300) as r:
         resp = json.loads(r.read())
 
-    content = resp["choices"][0]["message"].get("content") or ""
+    msg = resp["choices"][0]["message"]
+    content = msg.get("content") or msg.get("reasoning_content") or ""
+    if not content.strip():
+        sys.exit("review model returned empty content and reasoning_content")
     review = parse_review(content)
     issues = review.get("issues") or []
     verdict = review.get("verdict", "REQUEST_CHANGES")
