@@ -134,6 +134,14 @@ type agentDirectory interface {
 	// ACP slug (agents.ACPSlugFromName). Used to gate acp-trigger-run, whose
 	// agent_name argument is a slug rather than the raw name.
 	FindAgentIDByNameOrSlug(ctx context.Context, projectID, nameOrSlug string) (string, bool, error)
+	// FindAgentRefsByDefinitionID returns the project runtime agents linked to
+	// an agent definition, either via the agent_definition_id FK or via the
+	// chat-session strategy_type marker. The FK-linked row is ordered first,
+	// then oldest created_at. Returns an empty slice when none exist.
+	FindAgentRefsByDefinitionID(ctx context.Context, projectID, definitionID string) ([]AgentRef, error)
+	// AgentDefinitionExists reports whether a kb.agent_definitions row with the
+	// given id exists in the project.
+	AgentDefinitionExists(ctx context.Context, projectID, definitionID string) (bool, error)
 }
 
 // ============================================================================
@@ -692,6 +700,53 @@ func (d *bunAgentDirectory) FindProjectAgentByID(ctx context.Context, projectID,
 	return ref, nil
 }
 
+// FindAgentRefsByDefinitionID returns the runtime agents linked to an agent
+// definition in the project:
+//   - rows whose agent_definition_id FK points at the definition (authoritative,
+//     ordered first); these are the primary runtime agents.
+//   - FK-less marker rows whose strategy_type is "chat-session:<definitionID>"
+//     (chat dummy agents) or "agent-def:<definitionID>" (OpenAI-compat agents);
+//     those rows are created without the FK.
+//
+// Marker fallbacks are only considered for rows with a NULL FK, so a row linked
+// to a different definition can never match by marker. Ordering puts the
+// FK-linked row first, then oldest created_at with id as a deterministic
+// tie-breaker. Returns an empty slice when none exist.
+func (d *bunAgentDirectory) FindAgentRefsByDefinitionID(ctx context.Context, projectID, definitionID string) ([]AgentRef, error) {
+	var rows []AgentRef
+	err := d.db.NewSelect().
+		TableExpr("kb.agents").
+		Column("id", "name", "enabled").
+		Where("project_id = ?", projectID).
+		Where("(agent_definition_id = ? OR (agent_definition_id IS NULL AND (strategy_type = 'chat-session:' || ? OR strategy_type = 'agent-def:' || ?)))", definitionID, definitionID, definitionID).
+		OrderExpr("(agent_definition_id = ?) DESC, created_at ASC, id ASC", definitionID).
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return rows, nil
+}
+
+// AgentDefinitionExists reports whether the project contains an agent
+// definition with the given id. Returns false (not an error) when absent.
+func (d *bunAgentDirectory) AgentDefinitionExists(ctx context.Context, projectID, definitionID string) (bool, error) {
+	var id string
+	err := d.db.NewSelect().
+		TableExpr("kb.agent_definitions").
+		Column("id").
+		Where("id = ?", definitionID).
+		Where("project_id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return id != "", nil
+}
+
 func (d *bunAgentDirectory) FindAgentIDByName(ctx context.Context, projectID, name string) (string, bool, error) {
 	var id string
 	err := d.db.NewSelect().
@@ -866,8 +921,15 @@ func (s *Service) CreateShareInstance(ctx context.Context, projectID, userID, ba
 	}, nil
 }
 
-// normalizeAgentAllowlist validates agent IDs against the project and
+// normalizeAgentAllowlist validates agent references against the project and
 // de-duplicates. Empty input yields nil (unrestricted).
+//
+// An entry may be either a project runtime-agent ID (kb.agents) or an
+// agent-definition ID (kb.agent_definitions). A definition ID is resolved to
+// the definition's runtime agent(s) and the runtime IDs are stored, so the
+// allowlist always holds runtime agent IDs (the gating semantics are unchanged).
+// A definition that exists but has no runtime agent yet is rejected rather than
+// silently accepted.
 func (s *Service) normalizeAgentAllowlist(ctx context.Context, projectID string, agents []string) ([]uuid.UUID, error) {
 	if len(agents) == 0 {
 		return nil, nil
@@ -891,14 +953,41 @@ func (s *Service) normalizeAgentAllowlist(ctx context.Context, projectID string,
 		if perr != nil {
 			return nil, apperror.NewValidation("invalid agent id: " + raw)
 		}
-		if !known[id.String()] {
-			return nil, apperror.NewValidation("unknown agent: " + id.String())
-		}
-		if seen[id] {
+		if known[id.String()] {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
 			continue
 		}
-		seen[id] = true
-		out = append(out, id)
+		// Not a runtime agent ID: accept an agent-definition ID and store the
+		// runtime agent(s) it resolves to.
+		isDef, derr := dir.AgentDefinitionExists(ctx, projectID, id.String())
+		if derr != nil {
+			return nil, derr
+		}
+		if !isDef {
+			return nil, apperror.NewValidation("unknown agent: " + id.String())
+		}
+		refs, rerr := dir.FindAgentRefsByDefinitionID(ctx, projectID, id.String())
+		if rerr != nil {
+			return nil, rerr
+		}
+		if len(refs) == 0 {
+			return nil, apperror.NewValidation("agent " + id.String() + " has no runtime agent in this project yet")
+		}
+		for _, ref := range refs {
+			rid, rperr := uuid.Parse(ref.ID)
+			if rperr != nil {
+				return nil, apperror.NewValidation("invalid agent id: " + ref.ID)
+			}
+			if seen[rid] {
+				continue
+			}
+			seen[rid] = true
+			out = append(out, rid)
+		}
 	}
 	return out, nil
 }

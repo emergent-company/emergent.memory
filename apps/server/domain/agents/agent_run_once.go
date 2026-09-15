@@ -27,6 +27,12 @@ type agentRunner interface {
 type agentOnceRepository interface {
 	FindByID(ctx context.Context, id string, projectID *string) (*Agent, error)
 	FindDefinitionByID(ctx context.Context, id string, projectID *string) (*AgentDefinition, error)
+	// ResolveDefinitionForAgent resolves the definition backing a runtime agent
+	// via the agent_definition_id FK, the strategy_type marker
+	// (chat-session:<defID> / agent-def:<defID>), or name fallbacks. FK-less
+	// runtime agents (chat / OpenAI-compat dummies) rely on the marker/name
+	// fallbacks, so RunAgentOnce must use this rather than the FK alone.
+	ResolveDefinitionForAgent(ctx context.Context, agent *Agent) (*AgentDefinition, error)
 	FindRunByID(ctx context.Context, runID string) (*AgentRun, error)
 	FindMessagesByRunID(ctx context.Context, runID string) ([]*AgentRunMessage, error)
 	FindPendingQuestionsByRunID(ctx context.Context, runID string) ([]*AgentQuestion, error)
@@ -74,12 +80,9 @@ func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, m
 		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent is disabled"}
 	}
 
-	var def *AgentDefinition
-	if agent.AgentDefinitionID != nil && *agent.AgentDefinitionID != "" {
-		def, err = repo.FindDefinitionByID(ctx, *agent.AgentDefinitionID, &projectID)
-		if err != nil {
-			return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent definition: " + err.Error()}
-		}
+	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
+	if err != nil {
+		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent definition: " + err.Error()}
 	}
 
 	orgID := auth.OrgIDFromContext(ctx)
