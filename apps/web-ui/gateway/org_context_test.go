@@ -125,8 +125,12 @@ func TestUIRootRedirect(t *testing.T) {
 // the org-context sidebar (not the project nav).
 func TestUIOrgLanding(t *testing.T) {
 	f := &fakeMemory{
-		orgs:     []Org{{ID: "o1", Name: "Acme"}},
-		projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}, {ID: "p2", Name: "Lab", OrgID: "o1"}},
+		orgs: []Org{{ID: "o1", Name: "Acme"}},
+		projects: []ProjectRef{
+			{ID: "p1", Name: "Home", OrgID: "o1"},
+			{ID: "p2", Name: "Lab", OrgID: "o1"},
+			{ID: "p3", Name: "Archived", OrgID: "o1", DeletionStatus: "pending_deletion"},
+		},
 	}
 	s := &Server{cfg: sessionCfg(), memory: f}
 	e := orgContextUIServer(s)
@@ -143,10 +147,20 @@ func TestUIOrgLanding(t *testing.T) {
 		t.Fatalf("GET /orgs/o1 = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Acme", "Home", "Lab"} {
+	for _, want := range []string{"Acme", "Home", "Lab", "Archived"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("org landing missing %q", want)
 		}
+	}
+	// Active project names are clickable: an activate button with a title.
+	for _, want := range []string{`hx-post="/projects/activate?projectId=p1"`, `title="Open Home"`, `hx-post="/projects/activate?projectId=p2"`, `title="Open Lab"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org landing active project affordance missing %q", want)
+		}
+	}
+	// Pending-deletion project name is a plain span, never an activate target.
+	if strings.Contains(body, `hx-post="/projects/activate?projectId=p3"`) {
+		t.Errorf("org landing must not render an activate target for pending project p3")
 	}
 	// org-context sidebar renders, project nav does not
 	for _, want := range []string{`href="/orgs/o1/members"`, `href="/orgs/o1/settings"`} {
