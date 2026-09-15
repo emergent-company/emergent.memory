@@ -194,7 +194,7 @@ A: The `go run` and `air` commands don't use ldflags. This is expected. Producti
 A: Build and run the binary:
 
 ```bash
-nx run server-go:build
+task build
 ./apps/server/dist/server
 ```
 

@@ -64,7 +64,7 @@ MEMORY_TEST_ENV=localhost     go test -v ./...   # against local standalone serv
 
 ## Key Conventions
 
-- No external Go dependencies — standard library only
+- Minimal direct Go dependencies: `runlog`, `google/uuid`, `lib/pq`
 - `opencode` binary is installed in the Dockerfile as test infrastructure
 - Go module: `github.com/emergent-company/emergent.memory/e2e`
 - The `runlog` TUI binary has been extracted to [`github.com/emergent-company/runlog`](https://github.com/emergent-company/runlog). Install with `go install github.com/emergent-company/runlog/cmd/runlog@latest`

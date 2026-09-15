@@ -47,10 +47,10 @@ The Go server runs from `apps/server/` and expects docs at `docs/public/` relati
 
 ```bash
 cd apps/server
-ln -s /root/emergent/docs docs
+ln -s ../../docs docs
 ```
 
-This creates `apps/server/docs -> /root/emergent/docs` so the server can access `docs/public/`.
+This creates `apps/server/docs` pointing at the repo-root `docs/` so the server can access `docs/public/`.
 
 ## Cache Behavior
 

@@ -213,7 +213,7 @@ func DiscoverOIDC(serverURL string) (*OIDCConfig, error)
 ## graphutil package
 
 ```go
-import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graphutil"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph/graphutil"
 
 type IDSet          // set of object IDs; methods: Add, Has, Remove, Slice
 type ObjectIndex    // map[canonicalID]GraphObject for deduplication
