@@ -701,19 +701,25 @@ func (d *bunAgentDirectory) FindProjectAgentByID(ctx context.Context, projectID,
 }
 
 // FindAgentRefsByDefinitionID returns the runtime agents linked to an agent
-// definition in the project: rows whose agent_definition_id FK points at the
-// definition, plus chat-session dummy agents whose strategy_type is the
-// "chat-session:<definitionID>" marker (those rows are created without the FK).
-// The FK-linked row is ordered first, then oldest created_at, so the primary
-// runtime agent is stable.
+// definition in the project:
+//   - rows whose agent_definition_id FK points at the definition (authoritative,
+//     ordered first); these are the primary runtime agents.
+//   - FK-less marker rows whose strategy_type is "chat-session:<definitionID>"
+//     (chat dummy agents) or "agent-def:<definitionID>" (OpenAI-compat agents);
+//     those rows are created without the FK.
+//
+// Marker fallbacks are only considered for rows with a NULL FK, so a row linked
+// to a different definition can never match by marker. Ordering puts the
+// FK-linked row first, then oldest created_at with id as a deterministic
+// tie-breaker. Returns an empty slice when none exist.
 func (d *bunAgentDirectory) FindAgentRefsByDefinitionID(ctx context.Context, projectID, definitionID string) ([]AgentRef, error) {
 	var rows []AgentRef
 	err := d.db.NewSelect().
 		TableExpr("kb.agents").
 		Column("id", "name", "enabled").
 		Where("project_id = ?", projectID).
-		Where("(agent_definition_id = ? OR strategy_type = 'chat-session:' || ?)", definitionID, definitionID).
-		OrderExpr("(agent_definition_id = ?) DESC, created_at ASC", definitionID).
+		Where("(agent_definition_id = ? OR (agent_definition_id IS NULL AND (strategy_type = 'chat-session:' || ? OR strategy_type = 'agent-def:' || ?)))", definitionID, definitionID, definitionID).
+		OrderExpr("(agent_definition_id = ?) DESC, created_at ASC, id ASC", definitionID).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)

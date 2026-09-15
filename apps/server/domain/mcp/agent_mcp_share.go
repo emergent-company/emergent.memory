@@ -338,6 +338,9 @@ func (s *Service) CreateAgentShare(ctx context.Context, projectID, userID, baseU
 	}
 	agent, err := s.resolveAgentShareTarget(ctx, projectID, agentID)
 	if err != nil {
+		if errors.Is(err, errDefinitionHasNoRuntimeAgent) {
+			return nil, apperror.NewValidation("agent " + agentID + " has no runtime agent in this project yet")
+		}
 		return nil, err
 	}
 	if agent == nil {
@@ -398,6 +401,12 @@ func (s *Service) CreateAgentShare(ctx context.Context, projectID, userID, baseU
 	}, nil
 }
 
+// errDefinitionHasNoRuntimeAgent marks an agent definition that exists in the
+// project but has no runtime agent yet. It is distinguishable from "unknown
+// agent" so write paths can return 422 (definition exists, not usable yet)
+// while unknown IDs keep returning 404.
+var errDefinitionHasNoRuntimeAgent = errors.New("agent definition has no runtime agent in this project yet")
+
 // resolveProjectAgent returns a project runtime agent reference by ID, or nil
 // when the agent does not exist in the project. Errors propagate storage
 // failures. The read path uses this because a stored share already holds a
@@ -413,16 +422,19 @@ func (s *Service) resolveProjectAgent(ctx context.Context, projectID, agentID st
 // resolveAgentShareTarget resolves an incoming agent reference for the
 // per-agent share surface. It accepts either a runtime agent ID or an
 // agent-definition ID; for a definition ID it returns the definition's primary
-// runtime agent (FK-linked first, then oldest). Returns nil when nothing
-// resolves.
+// runtime agent (FK-linked first, then oldest, then id).
+//
+// It returns (nil, nil) when the ID is neither a project runtime agent nor a
+// project agent definition, and (nil, errDefinitionHasNoRuntimeAgent) when the
+// ID is a known definition that resolves to no runtime agent yet.
 func (s *Service) resolveAgentShareTarget(ctx context.Context, projectID, agentID string) (*AgentRef, error) {
-	agent, err := s.resolveProjectAgent(ctx, projectID, agentID)
-	if err != nil || agent != nil {
-		return agent, err
-	}
 	dir := s.agentDirectorySvc()
 	if dir == nil {
 		return nil, apperror.NewInternal("agent directory unavailable", nil)
+	}
+	agent, err := dir.FindProjectAgentByID(ctx, projectID, agentID)
+	if err != nil || agent != nil {
+		return agent, err
 	}
 	isDef, err := dir.AgentDefinitionExists(ctx, projectID, agentID)
 	if err != nil {
@@ -436,7 +448,7 @@ func (s *Service) resolveAgentShareTarget(ctx context.Context, projectID, agentI
 		return nil, err
 	}
 	if len(refs) == 0 {
-		return nil, nil
+		return nil, errDefinitionHasNoRuntimeAgent
 	}
 	ref := refs[0]
 	return &ref, nil
@@ -457,7 +469,9 @@ func (s *Service) ListAgentShares(ctx context.Context, projectID, userID, agentI
 	if trimmed := strings.TrimSpace(agentID); trimmed != "" {
 		if _, perr := uuid.Parse(trimmed); perr == nil {
 			resolved, rerr := s.resolveAgentShareTarget(ctx, projectID, trimmed)
-			if rerr != nil {
+			// A definition with no runtime agent is "no such agent" for listing:
+			// fall through with the original id and return the (empty) list.
+			if rerr != nil && !errors.Is(rerr, errDefinitionHasNoRuntimeAgent) {
 				return nil, rerr
 			}
 			if resolved != nil {

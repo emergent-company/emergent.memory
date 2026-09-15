@@ -44,7 +44,7 @@ A tool that invokes an agent (for example agent-run or agent-exec) SHALL reject 
 
 ### Requirement: Agent allowlist entries are validated on write
 
-An agent allowlist supplied when creating or updating an instance SHALL be validated against the project's agents. Agent IDs that do not belong to the project MUST be rejected, and the allowlist MUST be de-duplicated. An entry MAY be an agent-definition ID; such an entry SHALL be resolved to the definition's runtime agent(s) and SHALL be stored as runtime agent IDs. A definition that exists in the project but has no runtime agent SHALL be rejected with an unprocessable-entity error.
+An agent allowlist supplied when creating or updating an instance SHALL be validated against the project's agents. Agent IDs that do not belong to the project MUST be rejected, and the allowlist MUST be de-duplicated. An entry MAY be an agent-definition ID; such an entry SHALL be resolved to the definition's runtime agent(s) — either via the `agent_definition_id` foreign key or via a definition strategy marker (`chat-session:<definitionID>`, `agent-def:<definitionID>`) — and SHALL be stored as runtime agent IDs. A definition that exists in the project but has no resolvable runtime agent SHALL be rejected with an unprocessable-entity error.
 
 #### Scenario: Unknown agent ID rejected
 
