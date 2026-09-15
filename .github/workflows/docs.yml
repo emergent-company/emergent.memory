@@ -1,5 +1,9 @@
 name: Docs
 
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
 on:
   push:
     branches:
