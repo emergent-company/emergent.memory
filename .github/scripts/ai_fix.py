@@ -7,7 +7,6 @@ Runs as the `fix` job of the AI Code Review workflow (pull_request trigger),
 right after the `review` job posts the review. No LLM needed here — the reviewer
 already supplied the exact edits.
 """
-import base64
 import json
 import os
 import re
@@ -50,6 +49,10 @@ def head_branch() -> str:
 
 def has_label(pr: str, repo: str) -> bool:
     r = run(["gh", "pr", "view", pr, "--json", "labels", "-q", ".labels[].name"])
+    if r.returncode != 0:
+        # Fail closed: unknown label state is treated as present to preserve the
+        # loop cap rather than risk a duplicate fix pass.
+        return True
     return LABEL in (r.stdout or "").splitlines()
 
 
@@ -265,8 +268,10 @@ def main() -> None:
 
     # Compile-check before committing.
     if changed_go:
-        with tempfile.TemporaryDirectory() as td:
-            r = run(["go", "build", "-o", os.path.join(td, "out"), "./..."])
+        # `go build -o <file> ./...` fails on multi-package builds; build with
+        # no -o (binaries land in package dirs, not staged since we `git add`
+        # only the edited paths).
+        r = run(["go", "build", "./..."])
         if r.returncode != 0:
             body = (
                 "## AI auto-fix: build failed\n\n"
@@ -290,19 +295,27 @@ def main() -> None:
         # Nothing staged (edits were whitespace-only or already applied).
         print("Nothing to commit; skipping push.")
     else:
-        # Push via credential header injected into git config for the push
-        # duration only; never embed the token in argv or remote URLs.
+        # Push via an askpass helper so the token is never exposed in argv
+        # (git config --extraheader would put it in /proc/<pid>/cmdline).
         env = dict(os.environ)
-        env["GIT_ASKPASS"] = "true"
         env["GIT_TERMINAL_PROMPT"] = "0"
+        askpass = None
         if token:
-            header = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-            run(["git", "config", "--local", "http.https://github.com/.extraheader",
-                 f"AUTHORIZATION: basic {header}"])
+            fd, askpass = tempfile.mkstemp(prefix="gh-askpass-")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\necho \"$GH_ASKPASS_TOKEN\"\n")
+            os.chmod(askpass, 0o700)
+            env["GIT_ASKPASS"] = askpass
+            env["GH_ASKPASS_TOKEN"] = token
         try:
-            r = run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], env=env)
+            r = run(["git", "push", f"https://x-access-token@github.com/{repo}.git",
+                     f"HEAD:refs/heads/{branch}"], env=env)
         finally:
-            run(["git", "config", "--local", "--unset", "http.https://github.com/.extraheader"])
+            if askpass:
+                try:
+                    os.unlink(askpass)
+                except OSError:
+                    pass
         if r.returncode != 0:
             out = (r.stderr or r.stdout)[-4000:]
             if token:

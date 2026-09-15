@@ -100,6 +100,8 @@ def build_body(review: dict) -> str:
 
 def get_head_sha() -> str:
     r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("could not determine head SHA")
     return r.stdout.strip()
 
 
