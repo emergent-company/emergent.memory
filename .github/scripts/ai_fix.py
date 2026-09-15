@@ -50,7 +50,7 @@ def head_branch() -> str:
 
 def has_label(pr: str, repo: str) -> bool:
     r = run(["gh", "pr", "view", pr, "--json", "labels", "-q", ".labels[].name"])
-    return LABEL in r.stdout.split()
+    return LABEL in (r.stdout or "").splitlines()
 
 
 def latest_review_json(pr: str, repo: str):
@@ -60,10 +60,12 @@ def latest_review_json(pr: str, repo: str):
     except json.JSONDecodeError:
         return None
     for rev in reversed(reviews):
+        expected = os.environ.get("REVIEW_BOT_LOGIN", "github-actions[bot]")
         user = (rev.get("user") or {}).get("login", "")
-        # Only trust bot-authored reviews; a human can otherwise paste a fenced
-        # ai-review-json block to make the fixer apply arbitrary edits.
-        if not user.endswith("[bot]"):
+        # Only trust the specific bot that our workflow uses; any other GitHub
+        # App installed on the repo can also end with [bot] and could inject
+        # edits.
+        if user != expected:
             continue
         body = rev.get("body") or ""
         data = extract_json(body)
@@ -97,8 +99,18 @@ def apply_edit(path: str, old: str, new: str) -> bool:
 
     def write(out_n: str) -> None:
         out = out_n.replace("\n", "\r\n") if crlf else out_n
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            f.write(out)
+        dirn = os.path.dirname(os.path.abspath(path)) or "."
+        fd, tmp = tempfile.mkstemp(dir=dirn, prefix=".ai_fix.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                f.write(out)
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     # 1. Exact match (line-ending normalized).
     if old_n in src_n:
@@ -169,6 +181,11 @@ def main() -> None:
     if claim.returncode != 0:
         print("could not claim label; aborting to avoid duplicate pushes")
         return
+    # Re-check after adding: if the label was already present before our add,
+    # another run beat us; bail out to avoid duplicate pushes.
+    if has_label(pr, repo) and claim.returncode == 0:
+        # Cannot distinguish pre-existing from our add here; rely on workflow-level concurrency.
+        pass
 
     review = latest_review_json(pr, repo)
     if review is None:
@@ -201,6 +218,9 @@ def main() -> None:
             skipped.append((it, "invalid or empty edit"))
             continue
         norm = os.path.normpath(path)
+        if os.path.isabs(norm) or norm in ("..", ".") or norm.split(os.sep, 1)[0] == "..":
+            skipped.append((it, "unsafe path"))
+            continue
         real_root = os.path.realpath(os.getcwd())
         real_target = os.path.realpath(os.path.join(real_root, norm))
         if (
@@ -236,7 +256,8 @@ def main() -> None:
 
     # Compile-check before committing.
     if changed_go:
-        r = run(["go", "build", "-o", os.devnull, "./..."])
+        with tempfile.TemporaryDirectory() as td:
+            r = run(["go", "build", "-o", os.path.join(td, "out"), "./..."])
         if r.returncode != 0:
             body = (
                 "## AI auto-fix: build failed\n\n"
@@ -251,7 +272,9 @@ def main() -> None:
     run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
     run(["git", "config", "user.name", "github-actions[bot]"])
     for it in applied:
-        run(["git", "add", "--", it.get("path")])
+        p = it.get("path")
+        if isinstance(p, str) and p:
+            run(["git", "add", "--", p])
     r = run(["git", "commit", "-m",
              f"fix: address AI review feedback {COMMIT_MARKER}"])
     if r.returncode != 0:

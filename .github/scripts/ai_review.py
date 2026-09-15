@@ -85,9 +85,12 @@ def build_body(review: dict) -> str:
             title = it.get("title", "issue")
             path = it.get("path", "?")
             note = it.get("note", "")
-            lines.append(f"- **[{sev}]** `{path}` — {title}")
-            if note:
-                lines.append(f"  - {note}")
+            safe_title = str(title).replace("`", "\\`").replace("\n", " ")
+            safe_note = str(note).replace("\n", " ")
+            safe_path = str(path).replace("`", "\\`")
+            lines.append(f"- **[{sev}]** `{safe_path}` — {safe_title}")
+            if safe_note:
+                lines.append(f"  - {safe_note}")
             old = it.get("old")
             new = it.get("new")
             if old and new:
@@ -99,7 +102,10 @@ def build_body(review: dict) -> str:
                     lines.append(f"    + {ln}")
                 lines.append("    ```")
         md = "\n".join(lines)
-    return f"{md}\n\n```{JSON_FENCE}\n{json.dumps(review, indent=2)}\n```\n"
+    payload = json.dumps(review, indent=2)
+    # Guard against the payload containing a closing fence sequence.
+    payload = payload.replace("```", "``\\u200b``")
+    return f"{md}\n\n```{JSON_FENCE}\n{payload}\n```\n"
 
 
 def get_head_sha() -> str:
@@ -118,13 +124,6 @@ def locate_span(path: str, old: str):
     src_n = src.replace("\r\n", "\n")
     idx = src_n.find(old_n)
     if idx == -1:
-        # Fallback: locate by the first non-blank line of `old`.
-        first = (old_n.split("\n") or [""])[0].strip()
-        if not first:
-            return None
-        for i, line in enumerate(src_n.split("\n")):
-            if line.strip() == first:
-                return (i + 1, i + 1)
         return None
     start = src_n[:idx].count("\n") + 1
     end = start + old_n.count("\n")
@@ -146,6 +145,7 @@ def post_inline_suggestions(repo: str, pr: str, commit_id: str, issues) -> None:
             continue
         span = locate_span(path, old)
         if not span:
+            print(f"skip inline suggestion for {path}: anchor not found", file=sys.stderr)
             continue
         start, end = span
         sev = it.get("severity", "should_fix")
