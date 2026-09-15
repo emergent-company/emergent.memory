@@ -15,8 +15,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mint:
+    name: Mint token
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.mint.outputs.token }}
+    steps:
+      - name: Checkout base (trusted script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - name: Mint
+        id: mint
+        env:
+          GH_APP_ID: ${{ secrets.GH_APP_ID }}
+          GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          GH_APP_INSTALLATION_ID: ${{ secrets.GH_APP_INSTALLATION_ID }}
+        run: |
+          # Use the App identity (emergent-code-reviewer) when the key is
+          # configured; otherwise fall back to github-actions[bot].
+          if [ -n "$GH_APP_PRIVATE_KEY" ]; then
+            echo "token=$(python3 .github/scripts/gh_app_token.py)" >> "$GITHUB_OUTPUT"
+          else
+            echo "token=$GITHUB_TOKEN" >> "$GITHUB_OUTPUT"
+          fi
+
   review:
     name: Review
+    needs: mint
     permissions:
       contents: read
       pull-requests: write
@@ -34,7 +60,7 @@ jobs:
 
       - name: Review
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ needs.mint.outputs.token }}
           LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
           LITELLM_BASE_URL: http://litellm.tail0358fa.ts.net:4000/v1
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -44,7 +70,7 @@ jobs:
 
   fix:
     name: Auto-fix
-    needs: review
+    needs: [mint, review]
     permissions:
       contents: write
       pull-requests: write
@@ -69,7 +95,7 @@ jobs:
 
       - name: Auto-fix
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ needs.mint.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
