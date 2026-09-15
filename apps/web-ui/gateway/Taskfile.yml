@@ -22,7 +22,9 @@ tasks:
       # vendor go-daisy (and the blank-imported css package) so webui/css/app.css
       # can @source its components and @import its co-located custom.css from the
       # stable ./vendor path (see gateway/godaisy_css.go).
-      - test -e vendor/github.com/emergent-company/go-daisy || go mod vendor
+      # GOWORK=off: this module lives in the repo-root go.work workspace, where
+      # `go mod vendor` is rejected; vendor the gateway module by itself.
+      - test -e vendor/github.com/emergent-company/go-daisy || GOWORK=off go mod vendor
       - "{{.TAILWIND_BIN}} -i {{.CSS_IN}} -o {{.CSS_OUT}} --minify"
 
   generate:
