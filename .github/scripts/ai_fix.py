@@ -60,6 +60,11 @@ def latest_review_json(pr: str, repo: str):
     except json.JSONDecodeError:
         return None
     for rev in reversed(reviews):
+        user = (rev.get("user") or {}).get("login", "")
+        # Only trust bot-authored reviews; a human can otherwise paste a fenced
+        # ai-review-json block to make the fixer apply arbitrary edits.
+        if not user.endswith("[bot]"):
+            continue
         body = rev.get("body") or ""
         data = extract_json(body)
         if data is not None:
@@ -152,18 +157,17 @@ def main() -> None:
     pr = pr_number()
     branch = head_branch()
 
+    # Ensure the label exists — gh pr edit --add-label does NOT auto-create it.
+    run(["gh", "label", "create", LABEL, "--color", "0366d6", "--force"])
+    # Loop cap: a prior run already auto-fixed this PR.
     if has_label(pr, repo):
         print(f"Label {LABEL} present; skipping auto-fix (loop cap).")
         return
-    # Ensure the label exists — gh pr edit --add-label does NOT auto-create it.
-    run(["gh", "label", "create", LABEL, "--color", "0366d6", "--force"])
     # Claim the loop cap before doing work so concurrent runs cannot both push.
+    # (Best-effort; the workflow-level concurrency group is the real mutex.)
     claim = run(["gh", "pr", "edit", pr, "--add-label", LABEL])
     if claim.returncode != 0:
         print("could not claim label; aborting to avoid duplicate pushes")
-        return
-    if has_label(pr, repo):
-        print("lost label race; skipping auto-fix.")
         return
 
     review = latest_review_json(pr, repo)
@@ -186,8 +190,15 @@ def main() -> None:
         path = it.get("path")
         old = it.get("old")
         new = it.get("new")
-        if not path or not old or old == new:
-            skipped.append((it, "empty or no-op edit"))
+        if (
+            not isinstance(path, str)
+            or not isinstance(old, str)
+            or not isinstance(new, str)
+            or not path
+            or not old
+            or old == new
+        ):
+            skipped.append((it, "invalid or empty edit"))
             continue
         norm = os.path.normpath(path)
         real_root = os.path.realpath(os.getcwd())
@@ -247,17 +258,15 @@ def main() -> None:
         # Nothing staged (edits were whitespace-only or already applied).
         print("Nothing to commit; skipping push.")
     else:
-        # Push via explicit URL so the token does not persist in .git/config.
-        push_url = (
-            f"https://x-access-token:{token}@github.com/{repo}.git"
-            if token else "origin"
-        )
-        # Push via credential env, never embedding the token in argv.
+        # Push via credential header injected into git config for the push
+        # duration only; never embed the token in argv or remote URLs.
         env = dict(os.environ)
         env["GIT_ASKPASS"] = "true"
         env["GIT_TERMINAL_PROMPT"] = "0"
-        run(["git", "config", "--local", "http.https://github.com/.extraheader",
-             f"AUTHORIZATION: basic {base64.b64encode(f'x-access-token:{token}'.encode()).decode()}"])
+        if token:
+            header = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+            run(["git", "config", "--local", "http.https://github.com/.extraheader",
+                 f"AUTHORIZATION: basic {header}"])
         try:
             r = run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], env=env)
         finally:
