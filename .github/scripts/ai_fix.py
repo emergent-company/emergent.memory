@@ -80,7 +80,9 @@ def extract_json(body: str):
     if not m:
         return None
     try:
-        return json.loads(m.group(1))
+        # Reverse ai_review.build_body's backtick sanitization (``` -> ``\u200b``)
+        # so code snippets containing backticks survive the round-trip.
+        return json.loads(m.group(1).replace("``\u200b``", "```"))
     except json.JSONDecodeError:
         return None
 

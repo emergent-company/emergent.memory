@@ -91,20 +91,10 @@ def build_body(review: dict) -> str:
             lines.append(f"- **[{sev}]** `{safe_path}` — {safe_title}")
             if safe_note:
                 lines.append(f"  - {safe_note}")
-            old = it.get("old")
-            new = it.get("new")
-            if old and new:
-                lines.append("  - Suggested change:")
-                lines.append("    ```diff")
-                for ln in old.rstrip("\n").split("\n"):
-                    lines.append(f"    - {ln}")
-                for ln in new.rstrip("\n").split("\n"):
-                    lines.append(f"    + {ln}")
-                lines.append("    ```")
         md = "\n".join(lines)
     payload = json.dumps(review, indent=2)
     # Guard against the payload containing a closing fence sequence.
-    payload = payload.replace("```", "``\\u200b``")
+    payload = payload.replace("```", "``\u200b``")
     return f"{md}\n\n```{JSON_FENCE}\n{payload}\n```\n"
 
 
