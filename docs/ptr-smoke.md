@@ -12,7 +12,7 @@ This guide walks through running the Memory server locally for development.
 From the repository root, run:
 
 ```
-task stop
+task start
 ```
 
 The server listens on `http://localhost:3012` by default.
