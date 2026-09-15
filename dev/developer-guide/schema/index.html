@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Official documentation for the Memory Go SDK and Swift SDK">
+        <meta name="description" content="Official documentation for the Memory platform, Go SDK, Python SDK, and Swift SDK">
       
       
         <meta name="author" content="Emergent Company">
@@ -15,6 +15,10 @@
         <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/dev/developer-guide/schema/">
       
       
+        <link rel="prev" href="../mcp-relay/">
+      
+      
+        <link rel="next" href="../schema-registry/">
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
@@ -22,7 +26,7 @@
     
     
       
-        <title>Schemas - Memory SDK Documentation</title>
+        <title>Schema - Memory SDK Documentation</title>
       
     
     
@@ -114,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Schemas
+              Schema
             
           </span>
         </div>
@@ -230,10 +234,12 @@
         
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../" class="md-tabs__link">
           
   
@@ -399,6 +405,8 @@
       
   
   
+    
+  
   
   
     
@@ -422,21 +430,32 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           
@@ -452,13 +471,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             Developer Guide
@@ -614,6 +633,529 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI Reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sandbox/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Sandbox
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp-relay/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    MCP Relay
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Schema
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Schema
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Concepts
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema lifecycle
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-schemas-admin" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing schemas (admin)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing schemas (admin)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#create-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Create a schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Get a schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Update a schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Delete a schema
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-field-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field reference
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assigning-schemas-to-projects" class="md-nav__link">
+    <span class="md-ellipsis">
+      Assigning schemas to projects
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Assigning schemas to projects">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#browse-available-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      Browse available schemas
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list-installed-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      List installed schemas
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assign-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Assign a schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enable-disable-an-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enable / disable an assignment
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remove-an-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Remove an assignment
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compiled-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiled types
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema history
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pack-blueprint-claims" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pack blueprint claims
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema migrations
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema migrations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#migrations-block-yaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      migrations block (YAML)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-auto-migration-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      How auto-migration works
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrating-types-system-b-sql-renames" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migrating types (System B — SQL renames)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migration-rest-api-system-a-async-schema-version-aware" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migration REST API (System A — async, schema-version aware)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Migration REST API (System A — async, schema-version aware)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#preview-a-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Preview a migration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execute-a-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Execute a migration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rollback-a-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rollback a migration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#commit-prune-migration-archive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Commit (prune) migration archive
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-migration-job-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      Get migration job status
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      CLI reference
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CLI reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#yaml-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      YAML support
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diff-two-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diff two schemas
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-a-schema-with-auto-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Install a schema (with auto-migration)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-history_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema history
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrate-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migrate types
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Migrate types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#system-b-sql-renames-no-version-tracking" class="md-nav__link">
+    <span class="md-ellipsis">
+      System B — SQL renames (no version tracking)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#system-a-schema-version-aware-migration-subcommands" class="md-nav__link">
+    <span class="md-ellipsis">
+      System A — Schema-version-aware migration subcommands
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bulk-uninstall" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bulk uninstall
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      MCP tools
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#blueprints" class="md-nav__link">
+    <span class="md-ellipsis">
+      Blueprints
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schema-registry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Schema Registry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -632,6 +1174,8 @@
       
         
           
+        
+      
         
       
         
@@ -955,6 +1499,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/model-setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Model Setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1168,6 +1733,12 @@
   
     
     
+      
+        
+      
+        
+      
+        
       
         
       
@@ -1467,6 +2038,69 @@
   
   <span class="md-ellipsis">
     chunking
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/schemas/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    schemas
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/schemaregistry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    schemaregistry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/skills/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    skills
   </span>
   
 

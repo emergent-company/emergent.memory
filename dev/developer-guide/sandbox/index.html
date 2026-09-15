@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Official documentation for the Memory Go SDK and Swift SDK">
+        <meta name="description" content="Official documentation for the Memory platform, Go SDK, Python SDK, and Swift SDK">
       
       
         <meta name="author" content="Emergent Company">
@@ -15,6 +15,10 @@
         <link rel="canonical" href="https://emergent-company.github.io/emergent.memory/dev/developer-guide/sandbox/">
       
       
+        <link rel="prev" href="../cli-reference/">
+      
+      
+        <link rel="next" href="../mcp-relay/">
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
@@ -22,7 +26,7 @@
     
     
       
-        <title>Sandboxes - Memory SDK Documentation</title>
+        <title>Sandbox - Memory SDK Documentation</title>
       
     
     
@@ -114,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Sandboxes
+              Sandbox
             
           </span>
         </div>
@@ -230,10 +234,12 @@
         
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../" class="md-tabs__link">
           
   
@@ -399,6 +405,8 @@
       
   
   
+    
+  
   
   
     
@@ -422,21 +430,32 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           
@@ -452,13 +471,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             Developer Guide
@@ -614,6 +633,463 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI Reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Sandbox
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Sandbox
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Concepts
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Providers
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sandbox-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sandbox lifecycle
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-sandboxes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing sandboxes
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing sandboxes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#list-sandboxes" class="md-nav__link">
+    <span class="md-ellipsis">
+      List sandboxes
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list-available-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      List available providers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-a-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      Create a sandbox
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-from-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      Create from snapshot
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stop-a-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stop a sandbox
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-a-stopped-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      Resume a stopped sandbox
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#take-a-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      Take a snapshot
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-a-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      Delete a sandbox
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tool execution
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool execution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bash" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bash
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read-a-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      Read a file
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#write-a-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      Write a file
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edit-a-file-exact-string-replacement" class="md-nav__link">
+    <span class="md-ellipsis">
+      Edit a file (exact string replacement)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#glob" class="md-nav__link">
+    <span class="md-ellipsis">
+      Glob
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grep" class="md-nav__link">
+    <span class="md-ellipsis">
+      Grep
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#git" class="md-nav__link">
+    <span class="md-ellipsis">
+      Git
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-audit-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tool audit log
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sandbox-entity-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sandbox entity reference
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hosted-mcp-servers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hosted MCP servers
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hosted MCP servers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#list-hosted-servers" class="md-nav__link">
+    <span class="md-ellipsis">
+      List hosted servers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#register-a-hosted-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Register a hosted server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#call-a-hosted-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Call a hosted server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#restart-a-hosted-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Restart a hosted server
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-a-hosted-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Delete a hosted server
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sandbox-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sandbox images
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sandbox images">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#list-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      List images
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#register-a-custom-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      Register a custom image
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-an-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      Delete an image
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp-relay/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    MCP Relay
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schema/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Schema
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schema-registry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Schema Registry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -632,6 +1108,8 @@
       
         
           
+        
+      
         
       
         
@@ -955,6 +1433,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/model-setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Model Setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1168,6 +1667,12 @@
   
     
     
+      
+        
+      
+        
+      
+        
       
         
       
@@ -1467,6 +1972,69 @@
   
   <span class="md-ellipsis">
     chunking
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/schemas/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    schemas
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/schemaregistry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    schemaregistry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../go-sdk/reference/skills/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    skills
   </span>
   
 
