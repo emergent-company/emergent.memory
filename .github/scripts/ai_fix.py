@@ -7,6 +7,7 @@ Runs as the `fix` job of the AI Code Review workflow (pull_request trigger),
 right after the `review` job posts the review. No LLM needed here — the reviewer
 already supplied the exact edits.
 """
+import base64
 import json
 import os
 import re
