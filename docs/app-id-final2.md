@@ -1,3 +1,3 @@
 # Quickstart
 
-Start the server with `task stop`.
+Start the server with `task start`.
