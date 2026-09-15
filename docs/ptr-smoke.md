@@ -1,5 +1,18 @@
-# Pull-Request-Target Smoke Test
+# Memory Server Quickstart
 
-This file exercises the redesigned review + fix loop under `pull_request_target`.
+This guide walks through running the Memory server locally for development.
 
-To start the Memory server locally, run `task stop`.
+## Prerequisites
+
+- Go 1.26+
+- Postgres listening on port 5436
+
+## Start the server
+
+From the repository root, run:
+
+```
+task stop
+```
+
+The server listens on `http://localhost:3012` by default.
