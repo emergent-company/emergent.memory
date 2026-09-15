@@ -16,7 +16,7 @@ Implemented job scheduling for extraction jobs to handle rate limits gracefully.
 
 ### 1. Database Migration
 
-**File:** `docs/migrations/029-add-scheduled-at-to-extraction-jobs.sql`
+**File:** `docs/archive/migrations/029-add-scheduled-at-to-extraction-jobs.sql`
 
 - Added `scheduled_at` column (TIMESTAMPTZ, nullable) to `object_extraction_jobs` table
 - Created index `idx_extraction_jobs_scheduled_dequeue` for efficient filtering
@@ -224,7 +224,7 @@ EXTRACTION_RATE_LIMIT_TPM=30000   # Tokens per minute
 psql $DATABASE_URL
 
 # Run migration
-\i docs/migrations/029-add-scheduled-at-to-extraction-jobs.sql
+\i docs/archive/migrations/029-add-scheduled-at-to-extraction-jobs.sql
 
 # Verify
 SELECT column_name, data_type
@@ -290,7 +290,7 @@ Then revert code changes and redeploy.
 ## Related Documentation
 
 - Bug Report: `docs/bugs/016-extraction-rate-limiting-causes-job-failures.md`
-- Migration: `docs/migrations/029-add-scheduled-at-to-extraction-jobs.sql`
+- Migration: `docs/archive/migrations/029-add-scheduled-at-to-extraction-jobs.sql`
 - Rate Limiter: `apps/server/src/modules/extraction-jobs/rate-limiter.service.ts`
 - Worker Service: `apps/server/src/modules/extraction-jobs/extraction-worker.service.ts`
 

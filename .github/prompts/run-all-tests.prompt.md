@@ -5,14 +5,16 @@ mode: agent
 
 # Run All Tests in Spec Server Project
 
-Execute the complete test suite across all applications in this monorepo. This prompt guides you through running unit tests, E2E tests, and generating coverage reports for both frontend and backend.
+> **LEGACY**: This prompt predates the monorepo migration. The React/Vite admin, nx workspace, and npm workspace commands were removed. Testable apps are now `apps/server` (Go) and `apps/web-ui` (Go templ + HTMX gateway + Playwright). Current commands: `task test`, `task test:integration`, `task test:e2e` (API e2e in `e2e/tests-api/`), `task lint`, and `cd apps/web-ui && task e2e:test`. See root `AGENTS.md`, `apps/server/AGENT.md`, `e2e/AGENTS.md`, and `apps/web-ui/tests/e2e/README.md`.
+
+Execute the complete test suite across all applications in this monorepo. This prompt guides you through running unit tests, E2E tests, and generating coverage reports for backend and web UI.
 
 ## Project Structure
 
 This is a monorepo with the following testable applications:
 
-1. **Admin Frontend** (`apps/admin/`) - React + Vite + Vitest (unit) + Playwright (E2E)
-2. **Server Backend** (`apps/server/`) - Go + testify (unit & E2E)
+1. **Web UI** (`apps/web-ui/`) - Go templ + HTMX gateway + Playwright (E2E)
+2. **Server Backend** (`apps/server/`) - Go (unit & integration tests), plus API e2e suites in `e2e/tests-api/`
 
 ## Test Execution Order
 
@@ -23,81 +25,63 @@ Follow this sequence to run all tests:
 #### Unit Tests
 
 ```bash
-nx run server-go:test
+task test
 ```
 
-#### E2E Tests
+#### Integration Tests
 
 ```bash
-nx run server-go:test-e2e
+task test:integration
 ```
 
-#### E2E Tests
+#### API E2E Suites (separate Go module)
 
 ```bash
-npm --prefix apps/server run test:e2e
-```
-
-#### Coverage Report
-
-```bash
-npm --prefix apps/server run test:coverage
-```
-
-### 2. Admin Frontend Tests
-
-#### Unit Tests
-
-```bash
-npm --prefix apps/admin run test
-```
-
-#### E2E Tests
-
-```bash
-npm --prefix apps/admin run e2e
-# Or target specific suites
-npm --prefix apps/admin run e2e:clickup
-npm --prefix apps/admin run e2e:chat
+task test:e2e
+# Target a specific suite
+task test:e2e -- -run TestGraphSuite
 ```
 
 #### Coverage Report
 
 ```bash
-npm --prefix apps/admin run test:coverage
+task server:test:coverage
+```
+
+### 2. Web UI Tests
+
+#### Playwright E2E
+
+```bash
+cd apps/web-ui
+task e2e:test
 ```
 
 ## Prerequisites
 
 Before running E2E tests, ensure these services are running:
 
-- **PostgreSQL** (port 5432) - Database
+- **PostgreSQL** (port 5432) - Database (dev default; the e2e Docker stack uses 5436)
 - **Zitadel** (port 8080) - Auth server
-- **Backend Server** (port 3001) - API
-- **Admin Dev Server** (port 5175) - Frontend
+- **API server** - local direct `http://localhost:3012`, or `http://localhost:3002` via SSH tunnel to the remote test server
+- **Web UI gateway** - `task dev` from `apps/web-ui`
 
 ### Check Service Status
 
 ```bash
-npm run workspace:status
+task status
 ```
-
-This command aggregates Docker, PM2-managed processes, and port usage for the API, Admin SPA, and shared dependencies.
 
 ### Start Required Services
 
 ```bash
-npm run workspace:deps:start   # Postgres + Zitadel + login portal
-npm run workspace:start        # API + Admin SPA under PM2
+task dev                       # Start API server with hot reload
+cd apps/web-ui && task dev     # Start web UI gateway with hot reload
 ```
 
-To validate dependencies manually (or before ad-hoc Playwright runs), execute:
+### API E2E Dependencies
 
-```bash
-node scripts/ensure-e2e-deps.mjs
-```
-
-It checks container health, verifies ports, and seeds auth tokens expected by the E2E suites.
+The API e2e suites (`e2e/tests-api/`) bring up their own Docker stack; no npm dependency script is required.
 
 ## Full Test Suite Script
 
@@ -110,26 +94,24 @@ echo "🧪 Starting Complete Test Suite..."
 echo ""
 
 echo "1️⃣ Running Server Unit Tests..."
-nx run server-go:test
+task test
 echo "✅ Server unit tests passed"
 echo ""
 
-echo "2️⃣ Running Server E2E Tests..."
-nx run server-go:test-e2e
-echo "✅ Server E2E tests passed"
+echo "2️⃣ Running Server Integration Tests..."
+task test:integration
+echo "✅ Server integration tests passed"
 echo ""
 
-echo "3️⃣ Running Admin Unit Tests..."
-npm --prefix apps/admin run test
-echo "✅ Admin unit tests passed"
-cd apps/admin && E2E_FORCE_TOKEN=1 npx playwright test --config=e2e/playwright.config.ts --project=chromium
+echo "3️⃣ Running API E2E Suites..."
+task test:e2e
+echo "✅ API e2e tests passed"
+echo ""
+
+echo "4️⃣ Running Web UI Playwright E2E..."
+cd apps/web-ui && task e2e:test
 cd ../..
-echo "✅ Admin E2E tests passed"
-echo ""
-
-echo "5️⃣ Running Coverage Reports..."
-npm --prefix apps/admin run test:coverage
-echo "✅ Coverage reports generated"
+echo "✅ Web UI E2E tests passed"
 echo ""
 
 echo "🎉 All tests passed successfully!"
@@ -142,33 +124,25 @@ After running tests with coverage, view the HTML reports:
 ### Server Coverage
 
 ```bash
-# Go coverage is generated inline during test runs
-nx run server-go:test  # Coverage included in output
-```
-
-### Admin Coverage
-
-```bash
-open apps/admin/coverage/lcov-report/index.html
+task server:test:coverage   # Outputs apps/server/coverage.html
 ```
 
 ## Debugging Failed Tests
 
 ### Playwright E2E Failures
 
-When Playwright tests fail, check these artifacts in `apps/admin/test-results/<test-name>/`:
-
-1. **error-context.md** - Page URL, console errors, accessibility snapshot
-2. **test-failed-\*.png** - Screenshot at failure
-3. **video.webm** - Video recording of the test
+When Playwright tests fail, check the HTML report via `task e2e:report` from `apps/web-ui` (see `apps/web-ui/tests/e2e/README.md`).
 
 ### Go Test Failures
 
 Run failed tests with verbose output:
 
 ```bash
-# Server (Go)
-cd apps/server-go && go test ./... -v -run "TestFailingName"
+# Server (Go), from apps/server
+go test ./... -v -run "TestFailingName"
+
+# API e2e, from repo root
+task test:e2e -- -run TestGraphSuite -v
 ```
 
 ## Quick Commands
@@ -176,44 +150,27 @@ cd apps/server-go && go test ./... -v -run "TestFailingName"
 ### Run Only Unit Tests
 
 ```bash
-nx run server-go:test
-npm --prefix apps/admin run test
+task test
 ```
 
 ### Run Only E2E Tests
 
 ```bash
-nx run server-go:test-e2e
-npm --prefix apps/admin run e2e
+task test:e2e                              # API e2e suites
+cd apps/web-ui && task e2e:test            # Web UI Playwright e2e
 ```
 
 ### Generate All Coverage Reports
 
 ```bash
-npm --prefix apps/admin run test:coverage
-```
-
-### Run Only E2E Tests
-
-```bash
-npm --prefix apps/server run test:e2e
-npm --prefix apps/admin run e2e
-```
-
-### Generate All Coverage Reports
-
-```bash
-npm --prefix apps/server run test:coverage
-npm --prefix apps/admin run test:coverage
+task server:test:coverage
 ```
 
 ## Important Notes
 
-⚠️ **Always use the scripted npm/Nx targets** – they wrap dependency checks and invoke shared tooling like `ensure-e2e-deps.mjs`.
+⚠️ **Always use the scripted `task` targets** – they wrap dependency checks and environment setup.
 
 ⚠️ **Don't run E2E tests in parallel** - They share database state and can interfere with each other.
-
-⚠️ **Set E2E_FORCE_TOKEN=1** - Required environment variable for Playwright tests to skip interactive auth flow.
 
 ✅ **Sequential execution recommended** - Run tests in the order specified above for best results.
 
@@ -221,6 +178,8 @@ npm --prefix apps/admin run test:coverage
 
 For more details, see:
 
-- [Testing Infrastructure Instructions](../../.github/instructions/testing.instructions.md)
-- [Admin Build & Test Loop](../../.github/instructions/admin.instructions.md)
-- [E2E Dependency Checker](../../docs/E2E_DEPENDENCY_CHECKER.md)
+- [Testing Infrastructure Instructions](../instructions/testing.instructions.md)
+- [Server agent guide](../../apps/server/AGENT.md)
+- [E2E agent guide](../../e2e/AGENTS.md)
+- [Web UI gateway guide](../../apps/web-ui/gateway/AGENTS.md)
+- [Web UI e2e README](../../apps/web-ui/tests/e2e/README.md)

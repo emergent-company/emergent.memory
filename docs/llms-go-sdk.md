@@ -3,17 +3,17 @@
 ## Module
 
 ```
-github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk
+github.com/emergent-company/emergent.memory/apps/server/pkg/sdk
 ```
 
 Install (supports both `@latest` and path-qualified version tags):
 
 ```bash
 # Latest version
-go get github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@latest
+go get github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@latest
 
 # Specific version (monorepo path-qualified tag)
-go get github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@apps/server-go/pkg/sdk/v0.1.0
+go get github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@apps/server/pkg/sdk/v0.1.0
 ```
 
 ---
@@ -156,7 +156,7 @@ func (c *Client) Close()
 ## errors package
 
 ```go
-import "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/errors"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 
 type Error struct {
     StatusCode int                    `json:"status_code"`
@@ -185,7 +185,7 @@ if errors.IsBadRequest(err) { /* 400 */ }
 ## auth package
 
 ```go
-import "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/auth"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
 
 type Provider interface {
     Authenticate(req *http.Request) error
@@ -213,7 +213,7 @@ func DiscoverOIDC(serverURL string) (*OIDCConfig, error)
 ## graphutil package
 
 ```go
-import "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/graphutil"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph/graphutil"
 
 type IDSet          // set of object IDs; methods: Add, Has, Remove, Slice
 type ObjectIndex    // map[canonicalID]GraphObject for deduplication
@@ -225,7 +225,7 @@ func UniqueByEntity(objects []GraphObject) []GraphObject
 ## testutil package
 
 ```go
-import "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk/testutil"
+import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/testutil"
 
 type MockServer      // httptest.Server wrapper with assertion helpers
 func AssertHeader(t *testing.T, r *http.Request, key, expected string)

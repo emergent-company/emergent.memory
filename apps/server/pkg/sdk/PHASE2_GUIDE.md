@@ -10,7 +10,7 @@
 - ✅ Error handling
 - ✅ README and CHANGELOG
 
-**Location:** `apps/server-go/pkg/sdk/`
+**Location:** `apps/server/pkg/sdk/`
 
 ## Phase 2 Requirements
 
@@ -117,15 +117,15 @@ To continue implementation, run:
 ```bash
 # Create OAuth provider
 # Reference: tools/emergent-cli/internal/auth/
-# Target: apps/server-go/pkg/sdk/auth/oauth.go
+# Target: apps/server/pkg/sdk/auth/oauth.go
 
 # Then Graph service
-# Reference: apps/server-go/docs/swagger/swagger.json (graph endpoints)
-# Target: apps/server-go/pkg/sdk/graph/
+# Reference: apps/server/docs/swagger/swagger.json (graph endpoints)
+# Target: apps/server/pkg/sdk/graph/
 
 # Then Chat with streaming
 # Reference: SSE implementation in server
-# Target: apps/server-go/pkg/sdk/chat/
+# Target: apps/server/pkg/sdk/chat/
 ```
 
 ## Estimated Effort

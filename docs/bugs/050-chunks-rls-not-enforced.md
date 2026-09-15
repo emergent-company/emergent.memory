@@ -162,7 +162,7 @@ The chunks table was created without RLS policies, and the application code didn
 - `apps/server/src/modules/chunks/chunks.controller.ts:47-60` - Controller (no header requirement)
 - `apps/server/src/modules/chunks/chunks.service.ts:26-50` - Service (TypeORM usage)
 - `apps/server/src/common/database/database.service.ts:488-530` - Tenant-scoped query wrapper
-- `docs/migrations/012-enable-rls-on-chunks-table.sql` - NEW migration with RLS policies
+- `docs/archive/migrations/012-enable-rls-on-chunks-table.sql` - NEW migration with RLS policies
 
 ---
 
@@ -212,7 +212,7 @@ The chunks table was created without RLS policies, and the application code didn
 
 **Date:** 2025-11-19  
 **Implemented by:** AI Agent  
-**Action Plan:** `docs/plans/020-fix-chunks-rls-security.md`
+**Action Plan:** `docs/archive/plans/020-fix-chunks-rls-security.md`
 
 ### Fix Applied
 
@@ -260,7 +260,7 @@ Implemented **multi-layered security** approach with both application and databa
 
 **Phase 2: Database Migration**
 
-Created `docs/migrations/012-enable-rls-on-chunks-table.sql` with 4 policies:
+Created `docs/archive/migrations/012-enable-rls-on-chunks-table.sql` with 4 policies:
 
 ```sql
 -- Enable RLS on chunks table

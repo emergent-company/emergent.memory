@@ -12,7 +12,7 @@ Client reported runs getting "stuck" in `running` state for 1+ hours with no app
 
 ### 1. Timeout Configuration Exists
 
-**Code:** `apps/server-go/domain/agents/executor.go:187-192`
+**Code:** `apps/server/domain/agents/executor.go:187-192`
 
 ```go
 // Apply timeout if specified
@@ -31,7 +31,7 @@ if req.Timeout != nil && *req.Timeout > 0 {
 
 ### 2. Potential Issue: Context Cancellation Not Detected
 
-**Code:** `apps/server-go/domain/agents/executor.go:376-401`
+**Code:** `apps/server/domain/agents/executor.go:376-401`
 
 ```go
 for event, eventErr := range r.Run(ctx, "system", sess.ID(), userContent, agent.RunConfig{}) {
@@ -128,7 +128,7 @@ To confirm the root cause, we need:
 
 ### Fix 1: Add Explicit Context Check (Immediate)
 
-**File:** `apps/server-go/domain/agents/executor.go:401`
+**File:** `apps/server/domain/agents/executor.go:401`
 
 ```go
 for event, eventErr := range r.Run(ctx, "system", sess.ID(), userContent, agent.RunConfig{}) {
@@ -172,7 +172,7 @@ if ctx.Err() != nil {
 
 ### Fix 2: Add Periodic Context Check in Callbacks (Medium Priority)
 
-**File:** `apps/server-go/domain/agents/executor.go:252-275`
+**File:** `apps/server/domain/agents/executor.go:252-275`
 
 ```go
 beforeModelCb := func(cbCtx agent.CallbackContext, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
@@ -207,7 +207,7 @@ Create a background job that:
 2. Marks them as `error` with message "exceeded maximum runtime"
 3. Runs every 15 minutes
 
-**File:** `apps/server-go/domain/agents/cleanup.go` (new file)
+**File:** `apps/server/domain/agents/cleanup.go` (new file)
 
 ```go
 package agents

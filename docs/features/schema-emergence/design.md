@@ -2,7 +2,7 @@
 
 **Status:** Design
 **Date:** 2026-03-18
-**Supersedes:** `docs/features/agent-notes/design.md`
+**Supersedes:** `docs/archive/features/agent-notes/design.md`
 
 ---
 
@@ -310,8 +310,8 @@ A ninth metric is worth adding:
 
 ## What This Replaces
 
-- `docs/features/agent-notes/design.md` — the intermediate design. Superseded by this document.
-- `docs/features/agent-memory-design.md` — the original design. Already superseded.
+- `docs/archive/features/agent-notes/design.md` — the intermediate design. Superseded by this document.
+- `docs/archive/features/agent-memory-design.md` — the original design. Already superseded.
 - The `Note`, `NoteCluster`, `ANNOTATES`, `BELONGS_TO_CLUSTER` types from agent-notes — replaced by `Candidate`, `SchemaProposal`, typed entities, typed relationships.
 - `save_note` / `recall_notes` / `manage_notes` MCP tools — replaced by the generalized Store API and the Janitor process.
 - `tier=core` on a generic Note — replaced by Standing Instructions (`Instruction` type, always injected).

@@ -18,6 +18,19 @@ Thank you for your interest in contributing to Memory! This guide will help you 
 
 ## Getting Started
 
+### Repository layout
+
+This is a monorepo:
+
+| App | Contents |
+|---|---|
+| `apps/server` | Go server (Echo + Bun ORM + fx, Zitadel auth) |
+| `apps/web-ui` | Web UI (Go templ + HTMX gateway) |
+| `apps/cli` | `memory` CLI |
+| `apps/connector.linux` | Linux connector |
+| `apps/connector.mac` | macOS connector |
+| `apps/ios` | iOS app |
+
 ### Prerequisites
 
 - Go 1.25+
@@ -46,7 +59,7 @@ Thank you for your interest in contributing to Memory! This guide will help you 
 
    ```bash
    # Start Docker dependencies (PostgreSQL, Zitadel)
-   docker compose -f docker/docker-compose.dev.yml up -d
+   docker compose -f docker-compose.dev.yml up -d
    ```
 
 4. **Verify setup:**
@@ -83,7 +96,7 @@ task test:integration
 
 ### Database Migrations
 
-We use `bun` for migrations within the Go server:
+We use Goose for migrations (see `apps/server/migrations/README.md`):
 
 ```bash
 # Run pending migrations
@@ -139,7 +152,7 @@ Integration tests run against a real PostgreSQL instance. Ensure your local DB i
 
 ## Documentation
 
-Keep documentation in the `/docs` directory and update `README.md` or `GEMINI.md` when introducing major architectural changes.
+Keep documentation in the `/docs` directory and update `README.md` or `AGENTS.md` when introducing major architectural changes. Layout: `docs/` holds internal docs; `docs/site/` is the source for published docs, built via `mkdocs.yml`.
 
 ---
 
@@ -149,7 +162,7 @@ Keep documentation in the `/docs` directory and update `README.md` or `GEMINI.md
 
 1. **Run linter**: `task lint`
 2. **Run tests**: `task test`
-3. **Format code**: `task fmt`
+3. **Format code**: `cd apps/web-ui && task fmt`
 4. **Update documentation**: If you changed APIs or patterns.
 
 ### PR Guidelines

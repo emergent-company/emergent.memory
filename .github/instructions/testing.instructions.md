@@ -6,7 +6,7 @@ applyTo: '**'
 
 ## Overview
 
-The backend is a pure Go server (`apps/server-go`). The React admin frontend lives in a separate repo at `/root/memory.web-ui`. Use `task` (Taskfile) for backend commands and `pnpm` for frontend commands.
+The backend is a pure Go server (`apps/server`). The web UI is the Go templ + HTMX gateway at `apps/web-ui`. Use `task` (Taskfile) for all backend and web UI commands.
 
 **For detailed testing guidance and templates, see `docs/testing/AI_AGENT_GUIDE.md`** which provides:
 
@@ -17,21 +17,19 @@ The backend is a pure Go server (`apps/server-go`). The React admin frontend liv
 
 ## Test Directory Structure
 
-### Server (`apps/server-go`)
+### Server (`apps/server`)
 
 ```
-tests/
-  ├── unit/               # Go unit tests
-  ├── integration/        # Go integration tests
-  └── e2e/                # Go API e2e tests
+apps/server/tests/
+  └── integration/        # Go integration tests (also *_test.go next to source)
 ```
 
-### Admin (repo: `/root/memory.web-ui`)
+API e2e suites live in a separate Go module: `e2e/tests-api/`.
+
+### Web UI (`apps/web-ui`)
 
 ```
-tests/
-  ├── unit/               # Vitest unit tests
-  └── e2e/                # Playwright browser e2e tests
+apps/web-ui/tests/e2e/    # Playwright browser e2e tests
 ```
 
 ## Running Tests
@@ -39,20 +37,18 @@ tests/
 ### Backend (Go)
 
 ```bash
-# From repo root or apps/server-go
-task test                          # Unit tests
-task test:e2e                      # All E2E tests
-task test:e2e -- -run GraphSuite   # Specific suite
-task test:integration              # Integration tests
-task test:coverage                 # With coverage report
+# From repo root
+task test                              # Unit tests
+task test:e2e                          # API e2e suites (e2e/tests-api)
+task test:e2e -- -run TestGraphSuite   # Specific API e2e suite
+task test:integration                  # Integration tests
 ```
 
-### Frontend (memory.web-ui)
+### Web UI (`apps/web-ui`)
 
 ```bash
-# cd /root/memory.web-ui
-pnpm run test                      # Unit tests (Vitest)
-pnpm run test:coverage             # With coverage
+cd apps/web-ui
+task e2e:test                      # Playwright e2e (session mode against running gateway)
 ```
 
 ### Combined Regression
@@ -61,9 +57,10 @@ pnpm run test:coverage             # With coverage
 # Backend
 task test
 task test:e2e
+task test:integration
 
-# Frontend (cd /root/memory.web-ui)
-pnpm run test
+# Web UI (cd apps/web-ui)
+task e2e:test
 ```
 
 ## Dependency Management for Tests
@@ -85,22 +82,21 @@ Ports: Postgres 5432, Zitadel 8080, API 3002.
 
 ## Coverage Reports
 
-- **Backend:** `task test:coverage` → `apps/server/coverage.html`
-- **Frontend:** `cd /root/memory.web-ui && pnpm run test:coverage`
+- **Backend:** `task server:test:coverage` → `apps/server/coverage.html`
 
 ## CI Alignment
 
-GitHub Actions under `.github/workflows/` use task commands for backend tests. Frontend CI is in the `memory.web-ui` repo.
+GitHub Actions under `.github/workflows/` use task commands for backend and web UI tests.
 
 ## Debugging Failures
 
-### Playwright (Frontend repo)
+### Playwright (Web UI)
 
 **ALWAYS check Playwright logs and reports after test runs.**
 
 ```bash
-# Open the interactive HTML report in browser
-npx playwright show-report tests/e2e/test-results/html-report
+# Web UI Playwright reports (cd apps/web-ui)
+task e2e:report
 ```
 
 The HTML report contains screenshots, traces, network calls, and console logs.
@@ -117,14 +113,14 @@ After any Playwright test run, IMMEDIATELY check the HTML report:
 ### Go Tests
 
 - Use `-run TestName` to filter: `task test -- -run TestMyFunction`
-- Add `-v` for verbose: `task test:e2e -- -v`
+- Add `-v` for verbose: `task test:e2e -- -v` (API e2e suites are named `TestGraphSuite`, `TestSearchSuite`, `TestDocumentsSuite`, `TestChunksSuite`, `TestHealthSuite`, `TestOrgsSuite`, `TestProjectsSuite`)
 - Check `.go` test files for lingering database handles; close in `TestMain` or `TearDownSuite`
 
 ## Best Practices
 
 ### AI Assistants
 
-1. Default to task commands for backend, pnpm for frontend.
+1. Default to `task` commands for backend and web UI.
 2. Confirm Docker deps are running before advising E2E test runs.
 3. **ALWAYS check test output and artifacts** before asking the user what went wrong.
 4. Never parallelize Playwright specs unless suites are explicitly isolated.
@@ -134,29 +130,28 @@ After any Playwright test run, IMMEDIATELY check the HTML report:
 
 1. Run unit tests + lint before every commit.
 2. Keep E2E runs deterministic: seed data or stub network responses inside tests.
-3. Use `scripts/validate-story-duplicates.mjs` before Storybook work (frontend repo).
+3. For web UI e2e, follow the conventions in `apps/web-ui/tests/e2e/README.md`.
 4. Document non-trivial test data builders in `docs/` for future contributors.
 
 ## Locating Tests
 
 | Area               | Pattern                                         |
 | ------------------ | ----------------------------------------------- |
-| Server unit (Go)   | `apps/server/tests/**/*_test.go`             |
-| Server integration | `apps/server/tests/integration/**/*_test.go` |
-| Server e2e (Go)    | `apps/server/tests/e2e/**/*_test.go`         |
-| Admin unit         | `/root/memory.web-ui/tests/unit/**/*.test.{ts,tsx}` |
-| Admin e2e          | `/root/memory.web-ui/tests/e2e/specs/**/*.spec.ts`  |
+| Server unit (Go)   | `apps/server/**/*_test.go`                      |
+| Server integration | `apps/server/tests/integration/**/*_test.go`    |
+| API e2e (Go)       | `e2e/tests-api/suites/*_test.go`                |
+| Web UI e2e         | `apps/web-ui/tests/e2e/**/*.spec.ts`            |
 
 ## Quick Reference
 
-| Task              | Command                                         | Notes                                    |
-| ----------------- | ----------------------------------------------- | ---------------------------------------- |
-| Server unit tests | `task test`                                     | Use `-- -run TestName` to filter         |
-| Server E2E        | `task test:e2e`                                 | Requires Postgres + Zitadel running      |
-| Server integration| `task test:integration`                         |                                          |
-| Server coverage   | `task test:coverage`                            | Outputs coverage.html                    |
-| Admin unit tests  | `cd /root/memory.web-ui && pnpm run test`  | Append `-- -t "name"` for focused run    |
-| Server status     | `task status`                                   | Check if server is running               |
+| Task               | Command                      | Notes                                                       |
+| ------------------ | ---------------------------- | ----------------------------------------------------------- |
+| Server unit tests  | `task test`                  | Use `-- -run TestName` to filter                            |
+| API e2e suites     | `task test:e2e`              | Runs `e2e/tests-api` (separate Go module)                   |
+| Server integration | `task test:integration`      | `apps/server/tests/integration/`                            |
+| Server coverage    | `task server:test:coverage`  | Outputs coverage.html                                       |
+| Web UI e2e         | `cd apps/web-ui && task e2e:test` | Playwright, session mode against running gateway        |
+| Server status      | `task status`                | Check if server is running                                  |
 
 ## Troubleshooting
 
@@ -177,8 +172,7 @@ task status
 ### Playwright Browser Missing
 
 ```bash
-npx playwright install chromium
-npx playwright install-deps
+cd apps/web-ui && task e2e:install
 ```
 
 ## Related Documentation

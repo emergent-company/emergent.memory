@@ -18,7 +18,7 @@ Review and update AGENT.md documentation files to ensure they stay synchronized 
 
 | File                      | Lines | Domain    | Key Patterns                       |
 | ------------------------- | ----- | --------- | ---------------------------------- |
-| `apps/server-go/AGENT.md` | ~500  | Go Server | fx modules, Echo handlers, Bun ORM |
+| `apps/server/AGENT.md` | ~500  | Go Server | fx modules, Echo handlers, Bun ORM |
 
 ## Review Procedure
 
@@ -36,7 +36,7 @@ ls apps/admin/src/components/organisms/
 ls apps/admin/src/hooks/
 
 # Example: Check if documented modules exist
-ls apps/server-go/domain/
+ls apps/server/domain/
 ```
 
 ### Step 2: Review Checklist
@@ -108,7 +108,7 @@ find . -name "AGENT.md" -type f | sort
 # Check git history for recent changes to documented directories
 git log --oneline -10 -- apps/admin/src/components/
 git log --oneline -10 -- apps/admin/src/hooks/
-git log --oneline -10 -- apps/server-go/domain/
+git log --oneline -10 -- apps/server/domain/
 ```
 
 ## When to Run This Command

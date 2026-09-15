@@ -571,7 +571,7 @@ For each table with new RLS policies:
 
 ## Migration File
 
-Create `docs/migrations/013-comprehensive-rls-policies.sql` with all policies from Phase 1.
+Create `docs/archive/migrations/013-comprehensive-rls-policies.sql` with all policies from Phase 1.
 
 ---
 

@@ -181,7 +181,7 @@ docker logs emergent-server
 ## Support Resources
 
 - **CLI Source**: `/root/emergent/tools/emergent-cli/`
-- **Server Source**: `/root/emergent/apps/server-go/`
+- **Server Source**: `/root/emergent/apps/server/`
 - **GitHub Issues**: https://github.com/emergent-company/emergent.memory/issues
 - **Main Docs**: `/root/emergent/docs/`
 

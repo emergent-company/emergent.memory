@@ -749,7 +749,7 @@ DELETE /api/schemas/projects/:projectId/:schemaId
 
 - **[MCP Quick Reference](../api-reference/mcp-quick-reference.md)** - Complete MCP tool documentation
 - **[Schema Examples](../examples/schema-examples.md)** - Real-world schema examples
-- **[MCP Tools Documentation](/root/emergent/apps/server-go/domain/mcp/MCP_TOOLS.md)** - Detailed tool specifications
+- **[MCP Tools Documentation](/root/emergent/apps/server/domain/mcp/MCP_TOOLS.md)** - Detailed tool specifications
 
 ---
 

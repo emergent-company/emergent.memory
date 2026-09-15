@@ -17,7 +17,7 @@ The Go server uses **unified versioning** aligned with CLI and Docker images.
 
 ```bash
 # Running with go run or Air
-cd apps/server-go
+cd apps/server
 go run ./cmd/server
 # or
 air
@@ -95,14 +95,14 @@ Git tag v0.4.9
 ### Step 2: Regenerate Swagger Docs
 
 ```bash
-cd apps/server-go
+cd apps/server
 nx run server-go:swagger
 ```
 
 ### Step 3: Commit Changes
 
 ```bash
-git add apps/server-go/cmd/server/main.go apps/server-go/docs/swagger/
+git add apps/server/cmd/server/main.go apps/server/docs/swagger/
 git commit -m "chore(api): Update OpenAPI spec version to 0.5.0"
 ```
 
@@ -194,8 +194,8 @@ A: The `go run` and `air` commands don't use ldflags. This is expected. Producti
 A: Build and run the binary:
 
 ```bash
-nx run server-go:build
-./apps/server-go/dist/server
+task build
+./apps/server/dist/server
 ```
 
 **Q: Can I automate the OpenAPI version update?**
@@ -204,7 +204,7 @@ A: Yes, but it requires parsing/modifying Go source:
 
 ```bash
 # Example (would need testing):
-sed -i 's/@version [0-9.]\\+/@version 0.5.0/' apps/server-go/cmd/server/main.go
+sed -i 's/@version [0-9.]\\+/@version 0.5.0/' apps/server/cmd/server/main.go
 ```
 
 However, manual update ensures you review the change.

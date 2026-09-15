@@ -4,12 +4,12 @@ This document describes the database migration workflow using [Goose](https://pr
 
 ## Overview
 
-The Go server uses Goose for database migrations. Migrations are stored in `apps/server-go/migrations/` as SQL files and are embedded in the binary using Go's `embed` package.
+The Go server uses Goose for database migrations. Migrations are stored in `apps/server/migrations/` as SQL files and are embedded in the binary using Go's `embed` package.
 
 ## Directory Structure
 
 ```
-apps/server-go/
+apps/server/
 ├── migrations/
 │   ├── embed.go              # Go embed directive for SQL files
 │   ├── 00001_baseline.sql    # Baseline schema (full export)
@@ -25,7 +25,7 @@ apps/server-go/
 ### Using the CLI Tool
 
 ```bash
-cd apps/server-go
+cd apps/server
 
 # Check migration status
 POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c status
@@ -166,7 +166,7 @@ POSTGRES_PASSWORD=... go run ./cmd/migrate -c up
 
 ## Migrating Existing Databases
 
-For databases that already have the schema (e.g., migrating from TypeORM):
+For databases that already have the schema (e.g., an existing production database):
 
 ```bash
 # 1. Ensure goose_db_version table exists
@@ -186,7 +186,7 @@ The `internal/migrate` package provides a programmatic API:
 ```go
 import (
     "context"
-    "github.com/emergent/emergent-core/internal/migrate"
+    "github.com/emergent-company/emergent.memory/internal/migrate"
 )
 
 func runMigrations(migrator *migrate.Migrator) error {
@@ -211,21 +211,6 @@ func runMigrations(migrator *migrate.Migrator) error {
     return nil
 }
 ```
-
-## Transition from TypeORM
-
-The Go server now owns database migrations. The legacy NestJS server's TypeORM migrations have been removed as part of the NestJS backend removal.
-
-### Migration Ownership
-
-- **Before**: TypeORM (NestJS) owned migrations
-- **After**: Goose (Go) owns migrations
-
-### Sync Workflow (During Transition)
-
-1. Schema changes are made via Goose migrations in `apps/server-go/migrations/`
-2. The test schema at `apps/server-go/internal/testutil/schema.sql` must be kept in sync
-3. TypeORM entities in NestJS may need updates for compatibility (if NestJS is still in use)
 
 ## Troubleshooting
 
