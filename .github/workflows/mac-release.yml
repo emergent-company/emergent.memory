@@ -46,7 +46,7 @@ jobs:
 
   build:
     name: Build, sign, notarize, package
-    runs-on: macos-14
+    runs-on: macos-15
     needs: check
     if: needs.check.outputs.changed == 'true'
     env:
@@ -57,14 +57,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16
+      - name: Select newest Xcode (project format 77 requires Xcode 16+)
         run: |
-          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | head -1)
-          if [ -n "$XCODE" ]; then
-            sudo xcode-select -s "$XCODE"
-            xcodebuild -version
-          else
-            echo "No Xcode 16 found; available:"; ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode found in /Applications"
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 1
+          fi
+          echo "Selecting $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          MAJOR=$(xcodebuild -version | awk 'NR==1 {split($2,v,"."); print v[1]}')
+          if [ -z "$MAJOR" ] || [ "$MAJOR" -lt 16 ]; then
+            echo "::error::Xcode 16 or newer is required (project format 77); selected $XCODE"
+            exit 1
           fi
 
       - name: Setup Go

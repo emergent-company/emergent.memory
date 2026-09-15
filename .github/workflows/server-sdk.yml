@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.26'
 
 jobs:
   lint:
@@ -49,6 +49,11 @@ jobs:
 
       - name: golangci-lint
         working-directory: apps/server/pkg/sdk
+        env:
+          # Per-job cache dir: the self-hosted runner shares HOME across
+          # concurrent jobs, which makes the default golangci-lint lock
+          # collide ("parallel golangci-lint is running").
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
         run: golangci-lint run ./...
 
   test:
@@ -145,6 +150,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # RELEASE_TOKEN must be a PAT (classic) with `repo` + `workflow` scope,
+          # or the GitHub App must be granted the `workflows` permission; otherwise
+          # the fallback GITHUB_TOKEN push will still be rejected for modifying .github/workflows/.
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Create SDK module tag
         run: |

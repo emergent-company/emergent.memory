@@ -58,6 +58,7 @@ type CreateBackupOptions struct {
 // zipCreationResult carries the ZIP artifact outcome from the worker goroutine.
 type zipCreationResult struct {
 	checksums Checksums
+	stats     *BackupStats
 	err       error
 }
 
@@ -77,8 +78,8 @@ func (c *Creator) CreateBackup(ctx context.Context, opts CreateBackupOptions) er
 	// Start ZIP creation in goroutine
 	go func() {
 		defer pw.Close()
-		checksums, err := c.createZIPArchive(ctx, pw, opts)
-		errChan <- zipCreationResult{checksums: checksums, err: err}
+		checksums, stats, err := c.createZIPArchive(ctx, pw, opts)
+		errChan <- zipCreationResult{checksums: checksums, stats: stats, err: err}
 	}()
 
 	// Upload to MinIO while ZIP is being created
@@ -132,6 +133,9 @@ func (c *Creator) CreateBackup(ctx context.Context, opts CreateBackupOptions) er
 	backup.Progress = 100
 	backup.ManifestChecksum = &zipRes.checksums.Manifest
 	backup.ContentChecksum = &zipRes.checksums.Database
+	if zipRes.stats != nil {
+		backup.Stats = backupStatsToMap(zipRes.stats)
+	}
 	now := time.Now()
 	backup.CompletedAt = &now
 
@@ -143,8 +147,10 @@ func (c *Creator) CreateBackup(ctx context.Context, opts CreateBackupOptions) er
 }
 
 // createZIPArchive creates the ZIP archive structure and returns the checksums
-// recorded in the manifest so they can be persisted on the backup record.
-func (c *Creator) createZIPArchive(ctx context.Context, w io.Writer, opts CreateBackupOptions) (Checksums, error) {
+// recorded in the manifest (so they can be persisted on the backup record)
+// together with the per-table contents stats (so they can be surfaced on the
+// backup detail page).
+func (c *Creator) createZIPArchive(ctx context.Context, w io.Writer, opts CreateBackupOptions) (Checksums, *BackupStats, error) {
 	zipWriter := zip.NewWriter(w)
 	defer zipWriter.Close()
 
@@ -157,21 +163,21 @@ func (c *Creator) createZIPArchive(ctx context.Context, w io.Writer, opts Create
 
 	// 1. Export project configuration
 	if err := c.exportProjectConfig(ctx, zipWriter, opts.ProjectID); err != nil {
-		return Checksums{}, fmt.Errorf("export project config: %w", err)
+		return Checksums{}, nil, fmt.Errorf("export project config: %w", err)
 	}
 
 	// 2. Export database tables as NDJSON (checksum covers the concatenated NDJSON bytes)
 	dbHash := sha256.New()
 	stats, err := c.exportDatabaseTables(ctx, zipWriter, exportOpts, dbHash)
 	if err != nil {
-		return Checksums{}, err
+		return Checksums{}, nil, err
 	}
 
 	// 3. Export files from MinIO (checksum covers the concatenated file payloads)
 	filesHash := sha256.New()
 	files, totalSize, err := c.exportFiles(ctx, zipWriter, opts.ProjectID, filesHash)
 	if err != nil {
-		return Checksums{}, fmt.Errorf("export files: %w", err)
+		return Checksums{}, nil, fmt.Errorf("export files: %w", err)
 	}
 	stats.Files = len(files)
 	stats.TotalSizeBytes = totalSize
@@ -181,7 +187,7 @@ func (c *Creator) createZIPArchive(ctx context.Context, w io.Writer, opts Create
 	filesChecksum := hex.EncodeToString(filesHash.Sum(nil))
 	manifestChecksum, err := c.createManifest(ctx, zipWriter, opts, stats, files, dbChecksum, filesChecksum)
 	if err != nil {
-		return Checksums{}, err
+		return Checksums{}, nil, err
 	}
 
 	c.log.Info("ZIP archive created",
@@ -194,7 +200,7 @@ func (c *Creator) createZIPArchive(ctx context.Context, w io.Writer, opts Create
 		Manifest: manifestChecksum,
 		Database: dbChecksum,
 		Files:    filesChecksum,
-	}, nil
+	}, stats, nil
 }
 
 // exportProjectConfig exports project configuration to project/config.json.

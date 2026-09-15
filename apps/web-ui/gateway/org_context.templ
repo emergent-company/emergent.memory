@@ -256,8 +256,7 @@ templ OrgLandingPage(data orgPageData) {
 				}
 			} else {
 				if pendingCount > 0 {
-					@projectsPendingRefreshNote(pendingCount)
-					@templ.Raw(`<script type="text/javascript">(function(){setTimeout(function(){window.location.reload();},4000);})();</script>`)
+					@projectsPendingRefreshNote(data.Org.ID, pendingCount)
 				}
 				@ui.Section("Projects", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
 					@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
@@ -522,15 +521,27 @@ templ projectRestoreForm(orgID string) {
 }
 
 // projectsPendingRefreshNote shows while at least one project is awaiting
-// purge, next to the auto-refresh poll (only rendered when pendingCount > 0,
-// so a clean org landing never reloads on a timer).
-templ projectsPendingRefreshNote(n int) {
-	@ui.SoftBox(ui.SoftBoxProps{Class: "mb-4 flex items-center gap-2"}) {
-		@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-base-content/40")
-		<p class="text-base-content/55 text-xs">
-			{ strconv.Itoa(n) + " project" + plural(n) } scheduled for deletion — this page refreshes automatically until each purge completes.
-		</p>
-	}
+// purge and drives the background poll: an HTMX partial request that re-fetches
+// the org landing and swaps only #main-content (no full reload), so the PRG
+// flash toast is not re-triggered and the shell/scroll survive. It is only
+// rendered when pendingCount > 0, so a clean org landing never polls, and it
+// self-terminates: once nothing is pending the note (and its hx-trigger) is
+// gone, so htmx schedules no further interval.
+templ projectsPendingRefreshNote(orgID string, n int) {
+	<div
+		hx-get={ templ.URL("/orgs/" + url.PathEscape(orgID)) }
+		hx-trigger="every 4s"
+		hx-target="#main-content"
+		hx-swap="innerHTML"
+		class="mb-4"
+	>
+		@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-center gap-2"}) {
+			@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-base-content/40")
+			<p class="text-base-content/55 text-xs">
+				{ strconv.Itoa(n) + " project" + plural(n) } scheduled for deletion — this list updates automatically until each purge completes.
+			</p>
+		}
+	</div>
 }
 
 // OrgMembersPage renders the active org's members (GET /orgs/:id/members).

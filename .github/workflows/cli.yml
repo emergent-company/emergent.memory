@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.26'
 
 jobs:
   lint:
@@ -100,12 +100,12 @@ jobs:
             goarch: amd64
             ext: ''
           - label: darwin-amd64
-            runs_on: [self-hosted, macOS, ARM64]
+            runs_on: macos-15
             goos: darwin
             goarch: amd64
             ext: ''
           - label: darwin-arm64
-            runs_on: [self-hosted, macOS, ARM64]
+            runs_on: macos-15
             goos: darwin
             goarch: arm64
             ext: ''

@@ -156,6 +156,27 @@ type BackupStats struct {
 	TotalSizeBytes     int64 `json:"totalSizeBytes"`
 }
 
+// backupStatsToMap flattens a BackupStats into the map shape persisted on the
+// backup record (Backup.Stats, jsonb). Keys mirror the BackupStats JSON tags so
+// the gateway's detail page can render them by the same names.
+func backupStatsToMap(s *BackupStats) map[string]any {
+	if s == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"documents":          s.Documents,
+		"chunks":             s.Chunks,
+		"graphObjects":       s.GraphObjects,
+		"graphRelationships": s.GraphRelationships,
+		"chatConversations":  s.ChatConversations,
+		"chatMessages":       s.ChatMessages,
+		"extractionJobs":     s.ExtractionJobs,
+		"projectMemberships": s.ProjectMemberships,
+		"files":              s.Files,
+		"totalSizeBytes":     s.TotalSizeBytes,
+	}
+}
+
 // Manifest represents the manifest.json file inside a backup ZIP
 type Manifest struct {
 	Version       string               `json:"version"`
