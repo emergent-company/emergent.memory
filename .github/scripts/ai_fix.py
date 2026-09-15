@@ -10,6 +10,7 @@ already supplied the exact edits.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -152,16 +153,12 @@ def apply_edit(path: str, old: str, new: str) -> bool:
         if len(matches) != 1:
             return False
         i0, i1 = matches[0]
-        # Verify inner lines: every non-blank line of `old` must appear in order
-        # within the matched span; otherwise the first/last anchors are
-        # coincidental and we'd silently rewrite the wrong block.
+        # Verify the span's non-blank lines exactly equal `old`'s non-blank lines;
+        # a lenient subsequence match tolerates stray lines between the anchors
+        # and could delete unrelated code.
         inner = [l.strip() for l in old_lines if l.strip()]
-        span = [l.strip() for l in src_lines[i0 : i1 + 1]]
-        j = 0
-        for l in span:
-            if j < len(inner) and l == inner[j]:
-                j += 1
-        if j != len(inner):
+        span_non_blank = [l.strip() for l in src_lines[i0 : i1 + 1] if l.strip()]
+        if span_non_blank != inner:
             return False
         if i0 <= i1:
             if new_n.strip():
@@ -199,14 +196,10 @@ def main() -> None:
     if has_label(pr, repo):
         print(f"Label {LABEL} present; skipping auto-fix (loop cap).")
         return
-    # Claim the loop cap before doing work so concurrent runs cannot both push.
-    # (Best-effort; the workflow-level concurrency group is the real mutex.)
-    claim = run(["gh", "pr", "edit", pr, "--add-label", LABEL])
-    if claim.returncode != 0:
-        print("could not claim label; aborting to avoid duplicate pushes")
-        return
-    # The label is the loop cap (one fix pass), not a mutex. Real mutual
-    # exclusion comes from the workflow-level concurrency group (one run/PR).
+    # No early label claim: the label is added only after a successful push
+    # (below), so early returns (no review, no edits, build/push failure) leave
+    # the cap off and a corrected run can retry. Mutual exclusion is the
+    # workflow-level concurrency group (one run per PR).
 
     review = latest_review_json(pr, repo)
     if review is None:
@@ -254,9 +247,10 @@ def main() -> None:
         ):
             skipped.append((it, "unsafe path"))
             continue
-        if apply_edit(path, old, new):
+        it["path"] = norm  # canonical value used for write, stage, and summary
+        if apply_edit(norm, old, new):
             applied.append(it)
-            if path.endswith(".go"):
+            if norm.endswith(".go"):
                 changed_go = True
         else:
             skipped.append((it, "old text not found in current file"))
@@ -302,18 +296,17 @@ def main() -> None:
         # Nothing staged (edits were whitespace-only or already applied).
         print("Nothing to commit; skipping push.")
     else:
-        # Push via an askpass helper so the token is never exposed in argv
-        # (git config --extraheader would put it in /proc/<pid>/cmdline).
+        # Push via an askpass helper so the token is never exposed in argv or
+        # the child env (git config --extraheader would put it in cmdline).
         env = dict(os.environ)
         env["GIT_TERMINAL_PROMPT"] = "0"
         askpass = None
         if token:
             fd, askpass = tempfile.mkstemp(prefix="gh-askpass-")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write("#!/bin/sh\necho \"$GH_ASKPASS_TOKEN\"\n")
+                f.write("#!/bin/sh\necho " + shlex.quote(token) + "\n")
             os.chmod(askpass, 0o700)
             env["GIT_ASKPASS"] = askpass
-            env["GH_ASKPASS_TOKEN"] = token
         try:
             r = run(["git", "push", f"https://x-access-token@github.com/{repo}.git",
                      f"HEAD:refs/heads/{branch}"], env=env)
@@ -326,6 +319,7 @@ def main() -> None:
         if r.returncode != 0:
             out = (r.stderr or r.stdout)[-4000:]
             if token:
+                out = out.replace(f"x-access-token:{token}", "***")
                 out = out.replace(token, "***")
             body = (
                 "## AI auto-fix: push failed\n\n"

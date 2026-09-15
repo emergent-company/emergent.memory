@@ -185,7 +185,8 @@ def main() -> None:
         return
 
     max_diff = 15000
-    if len(diff) > max_diff:
+    truncated = len(diff) > max_diff
+    if truncated:
         diff = diff[:max_diff] + "\n...(truncated)..."
 
     prompt = (
@@ -272,6 +273,8 @@ def main() -> None:
         event = "COMMENT"
 
     body = build_body(review)
+    if truncated:
+        body += f"\n> ⚠️ Diff truncated at {max_diff} chars — files beyond this limit were not reviewed.\n"
 
     # Post via a JSON file (--input) instead of --field: large bodies with
     # special characters break gh's --field type coercion.
