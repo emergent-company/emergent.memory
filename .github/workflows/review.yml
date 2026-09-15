@@ -90,5 +90,8 @@ jobs:
         run: |
           if [ -n "$GH_APP_PRIVATE_KEY" ]; then
             export GH_TOKEN="$(python3 /tmp/gh_app_token_trusted.py)"
+            export REVIEW_BOT_LOGIN="emergent-code-reviewer[bot]"
+          else
+            export REVIEW_BOT_LOGIN="github-actions[bot]"
           fi
           python3 /tmp/ai_fix_trusted.py
