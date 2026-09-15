@@ -5,31 +5,29 @@ mode: agent
 
 # Test Execution & Analysis Prompt
 
+> **LEGACY**: This prompt predates the monorepo migration. The React/Vite admin, nx workspace, and npm workspace commands were removed. Current commands: `task test`, `task test:integration`, `task test:e2e` (API e2e in `e2e/tests-api/`), `task lint`, and `cd apps/web-ui && task e2e:test`. See root `AGENTS.md`, `apps/server/AGENT.md`, `e2e/AGENTS.md`, and `apps/web-ui/tests/e2e/README.md`.
+
 ## Objective
 
-Run the scripted test targets (npm/Nx), analyze the results, suggest fixes, and document findings in the dev journal.
+Run the scripted `task` test targets, analyze the results, suggest fixes, and document findings in the dev journal.
 
 ## Step 1: Run Tests Using Workspace Scripts
 
-Always use the checked-in npm targets so that required environment setup and logging hooks run consistently. Prefer `run_in_terminal` for execution (or Nx MCP utilities when available) instead of ad-hoc commands.
+Always use the checked-in `task` targets so that required environment setup and logging hooks run consistently. Prefer `run_in_terminal` for execution instead of ad-hoc commands.
 
-### Admin (Frontend)
+### Web UI (Playwright e2e)
 
 ```bash
-npm --prefix apps/admin run test
-npm --prefix apps/admin run test:coverage
-npm --prefix apps/admin run e2e
-npm --prefix apps/admin run e2e:clickup
-npm --prefix apps/admin run e2e:chat
+cd apps/web-ui && task e2e:test
 ```
-
-> For Playwright runs that rely on token seeding, export `E2E_FORCE_TOKEN=1` before invoking the command.
 
 ### Server (Backend - Go)
 
 ```bash
-nx run server-go:test
-nx run server-go:test-e2e
+task test                 # Unit tests
+task test:integration     # Integration tests
+task test:e2e             # API e2e suites (e2e/tests-api)
+task test:e2e -- -run TestGraphSuite
 ```
 
 Use headed/debug E2E flows only when triaging failures and note any manual steps performed.
@@ -47,31 +45,16 @@ Review the test execution output for:
 
 ### Verify Logs in Case of Errors
 
-**Admin E2E Test Logs:**
+**Web UI Playwright E2E Logs:**
 
-- **Test artifacts**: `apps/admin/test-results/`
-
-  - `test-results.json` - Structured test results
-  - `html-report/` - Visual HTML report
-  - `<test-name>/` - Per-test screenshots, videos, error context
-
-- **E2E run logs**: `logs/e2e-tests/`
-
-  - `e2e-YYYY-MM-DD_HH-MM-SS_<test-name>_stdout.log` - Test output
-  - `e2e-YYYY-MM-DD_HH-MM-SS_<test-name>_stderr.log` - Error output
-  - `e2e-YYYY-MM-DD_HH-MM-SS_<test-name>_summary.json` - Summary with error delta
-
-- **Error context files**: For each failed test:
-  ```
-  apps/admin/test-results/<test-slug>/error-context.md
-  ```
-  Contains: Page URL, console errors, page snapshot, network requests
+- **Test artifacts**: `apps/web-ui/tests/e2e/test-results/`
+- **HTML report**: open with `task e2e:report` from `apps/web-ui`
+- Per-test screenshots, videos, and `error-context.md` are written under the Playwright output directory (see `apps/web-ui/tests/e2e/README.md`)
 
 **Backend Logs:**
 
-- **Application logs**: `logs/app.log` - All log levels (verbose, debug, log, warn, error)
-- **Error logs**: `logs/errors.log` - Error and fatal messages only
-- **Debug logs**: `logs/debug.log` - Debug/verbose messages (development only)
+- **Application logs**: `logs/server/server.log`
+- **Error logs**: `logs/server/server.error.log`
 
 **Server E2E Logs:**
 
@@ -89,8 +72,8 @@ Review the test execution output for:
 
 **For Backend errors:**
 
-1. Check `logs/errors.log` for 500+ errors with full context
-2. Review `logs/app.log` for request lifecycle
+1. Check `logs/server/server.error.log` for 500+ errors with full context
+2. Review `logs/server/server.log` for request lifecycle
 3. Look for SQL errors, permission issues, missing data
 
 **For Unit test failures:**
@@ -108,14 +91,14 @@ Based on the error analysis, provide **specific, actionable fixes**:
 
 **Authentication Errors (401 Unauthorized):**
 
-- ✅ Verify E2E_FORCE_TOKEN=1 is set
+- ✅ Check auth setup / storage state in Playwright (see `apps/web-ui/tests/e2e/README.md`)
 - ✅ Check auth token generation in E2E setup
 - ✅ Ensure AuthGuard is properly configured
 - ✅ Verify JWT secret and expiration
 
 **API Errors (500 Internal Server Error):**
 
-- ✅ Check logs/errors.log for actual error
+- ✅ Check `logs/server/server.error.log` for actual error
 - ✅ Look for SQL syntax errors
 - ✅ Verify database schema matches queries
 - ✅ Check for null/undefined handling
@@ -207,9 +190,9 @@ After completing the test cycle, create or append to the dev journal:
 
 **Log Files**:
 
-- Stdout: `logs/e2e-tests/...`
-- Errors: `logs/errors.log`
-- Summary: `logs/e2e-tests/..._summary.json`
+- Stdout: `logs/server/server.log`
+- Errors: `logs/server/server.error.log`
+- Playwright report: `apps/web-ui/tests/e2e/test-results/`
 
 ---
 ```
@@ -217,9 +200,9 @@ After completing the test cycle, create or append to the dev journal:
 ### Example Dev Journal Entry:
 
 ```markdown
-### [2025-10-08 11:43] - Admin E2E Console Errors Test Run
+### [2025-10-08 11:43] - Web UI E2E Console Errors Test Run
 
-**Command**: `npm --prefix apps/admin run e2e`
+**Command**: `cd apps/web-ui && task e2e:test`
 
 **Results**:
 
@@ -254,9 +237,9 @@ After completing the test cycle, create or append to the dev journal:
 
 **Log Files**:
 
-- Stdout: `logs/e2e-tests/e2e-2025-10-08_09-43-05_console-errors.all-pages_stdout.log`
-- Errors: `logs/errors.log`
-- Summary: `logs/e2e-tests/e2e-2025-10-08_09-43-05_console-errors.all-pages_summary.json`
+- Stdout: `logs/server/server.log`
+- Errors: `logs/server/server.error.log`
+- Playwright report: `apps/web-ui/tests/e2e/test-results/`
 
 ---
 ```
@@ -265,16 +248,15 @@ After completing the test cycle, create or append to the dev journal:
 
 ### Preferred Command Patterns
 
-- `nx run server-go:test` and `nx run server-go:test-e2e` for backend
-- `npm --prefix apps/admin run <script>` for frontend unit/E2E targets
-- `npm run workspace:<target>` for cross-cutting orchestration (deps, status, logs)
+- `task test`, `task test:integration`, and `task test:e2e` for backend
+- `cd apps/web-ui && task e2e:test` for web UI Playwright e2e
+- `task status` for cross-cutting orchestration (deps, status, logs)
 
 ### Log File Priority:
 
-1. **First**: `test-results/<test-name>/error-context.md` (Playwright)
-2. **Second**: `logs/errors.log` (Backend errors)
-3. **Third**: `logs/e2e-tests/*_summary.json` (E2E summary)
-4. **Fourth**: `logs/app.log` (Full backend trace)
+1. **First**: Playwright `error-context.md` / HTML report (web UI e2e)
+2. **Second**: `logs/server/server.error.log` (Backend errors)
+3. **Third**: `logs/server/server.log` (Full backend trace)
 
 ### Never Do:
 
@@ -286,7 +268,7 @@ After completing the test cycle, create or append to the dev journal:
 
 ### Always Do:
 
-- ✅ Use the provided npm/Nx scripts for repeatability
+- ✅ Use the provided `task` scripts for repeatability
 - ✅ Read error context files before suggesting fixes
 - ✅ Provide specific, actionable remediation steps
 - ✅ Document test results in the dev journal
@@ -297,7 +279,7 @@ After completing the test cycle, create or append to the dev journal:
 
 A successful test cycle includes:
 
-1. ✅ Tests executed via the documented npm/Nx scripts
+1. ✅ Tests executed via the documented `task` scripts
 2. ✅ All logs reviewed and analyzed
 3. ✅ Root causes identified with evidence
 4. ✅ Specific fixes suggested or applied

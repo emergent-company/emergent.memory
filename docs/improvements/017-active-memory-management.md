@@ -17,7 +17,7 @@ Upgrade the planned agent memory system from passive (LLM-instructed) to active 
 
 ## Current State
 
-The existing `docs/features/agent-memory-design.md` describes a v1 passive memory system:
+The existing `docs/archive/features/agent-memory-design.md` describes a v1 passive memory system:
 
 - `save_memory` uses a fixed **0.85 cosine similarity threshold** for dedup — binary pass/fail, no nuance
 - `recall_memories` is **LLM-initiated only** — the agent must follow system prompt instructions to call it; if it doesn't, no memories are injected
@@ -194,11 +194,11 @@ Metrics to expose:
 
 ## Risks & Considerations
 
-- **Breaking Changes**: No — additive to existing `agent-memory-design.md` design. Existing `save_memory` behavior is preserved with the merge step added.
+- **Breaking Changes**: No — additive to existing `docs/archive/features/agent-memory-design.md` design. Existing `save_memory` behavior is preserved with the merge step added.
 - **Performance Impact**: Negative (1 extra LLM call per `save_memory` for the merge decision). Mitigated: only triggers when cosine similarity > 0.70 (threshold to even run the merge call).
 - **LLM Cost**: Each merge decision call is a small prompt (~500 tokens). At scale, could add up. Mitigation: cache merge decisions for identical content pairs (TTL 1h).
 - **Security Impact**: Neutral — merge LLM call uses the same model/credentials as extraction pipeline.
-- **Dependencies**: Requires `agent-memory-design.md` base implementation to exist first. This is an extension, not a replacement.
+- **Dependencies**: Requires `docs/archive/features/agent-memory-design.md` base implementation to exist first. This is an extension, not a replacement.
 - **Migration Required**: No — schema fields already accommodate all proposed additions.
 
 ---
@@ -228,7 +228,7 @@ Metrics to expose:
 
 ## Related Items
 
-- Related to `docs/features/agent-memory-design.md` (base design, prerequisite)
+- Related to `docs/archive/features/agent-memory-design.md` (base design, prerequisite)
 - Depends on `agent-memory` template pack implementation
 - Related to improvement #006 (chat-context-management)
 - Research: `docs/features/active-memory-management/research/active-memory-management-research.md`

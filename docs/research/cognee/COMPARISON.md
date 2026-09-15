@@ -221,7 +221,7 @@ async def extract_content_graph(
 **Workflow:**
 
 ```go
-// apps/server-go/domain/extraction/object_extraction_jobs.go
+// apps/server/domain/extraction/object_extraction_jobs.go
 func (s *ObjectExtractionJobsService) CreateJob(ctx context.Context, opts CreateObjectExtractionJobOptions) (*ObjectExtractionJob, error) {
     // 1. Create job in database (pending status)
     job := &ObjectExtractionJob{
@@ -390,7 +390,7 @@ class GraphCompletionRetriever(BaseRetriever):
 Emergent has **unified search service** combining FTS + vector:
 
 ```go
-// apps/server-go/domain/search/service.go
+// apps/server/domain/search/service.go
 type Service struct {
     repo *Repository
     log  *slog.Logger

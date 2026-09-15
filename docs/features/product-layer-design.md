@@ -471,7 +471,7 @@ The `min_core_version` field in the manifest ensures products aren't installed o
 ### New Domain Module: `products`
 
 ```
-apps/server-go/domain/
+apps/server/domain/
     products/                    ← NEW module
         entity.go               # ProductManifest, InstalledProduct structs
         store.go                # CRUD for kb.installed_products

@@ -4,7 +4,7 @@ This document explains why certain Snyk security findings for the agent workspac
 
 ## 1. Command Injection in vm-agent (HIGH)
 
-**File**: `apps/server-go/cmd/vm-agent/main.go:153`  
+**File**: `apps/server/cmd/vm-agent/main.go:153`  
 **Finding**: User input passed to `/bin/sh -c`  
 **Snyk Severity**: HIGH
 
@@ -43,7 +43,7 @@ The `vm-agent` runs **inside the untrusted sandbox** (Firecracker microVM). The 
 
 ## 2. Cleartext Credentials in checkout.go (HIGH)
 
-**File**: `apps/server-go/domain/workspace/checkout.go:157-171`  
+**File**: `apps/server/domain/workspace/checkout.go:157-171`  
 **Finding**: GitHub token interpolated into shell script  
 **Snyk Severity**: HIGH
 
@@ -80,7 +80,7 @@ script := fmt.Sprintf(`
 
 ## 3. Path Traversal in githubapp/service.go (MEDIUM) - ✅ FIXED
 
-**File**: `apps/server-go/domain/githubapp/service.go:103`  
+**File**: `apps/server/domain/githubapp/service.go:103`  
 **Original**: `callbackURL + "/../webhook"`  
 **Fixed**: `url.Parse()` + `path.Join()`
 

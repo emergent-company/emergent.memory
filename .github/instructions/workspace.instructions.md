@@ -68,11 +68,11 @@ task migrate:up         # Run migrations
 task migrate:status     # Check migration status
 ```
 
-For frontend tasks, use `pnpm` in `/root/memory.web-ui`:
+For web UI tasks, use `task` in `apps/web-ui` (Go templ + HTMX gateway):
 
 ```bash
-cd /root/memory.web-ui
-pnpm run dev            # Start Vite dev server
-pnpm run build          # Build for production
-pnpm run test           # Unit tests
+cd apps/web-ui
+task dev                # Run the gateway with air hot reload (templ + tailwind + go)
+task lint               # ruff + golangci-lint + go vet/test + templ + gitleaks
+task e2e:test           # Playwright e2e against the running gateway
 ```

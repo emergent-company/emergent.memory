@@ -22,7 +22,7 @@ Implemented database-level RLS policies on the documents table, bringing it in l
 
 ### 1. Database Migration
 
-**File:** `docs/migrations/011-enable-rls-on-documents-table.sql`
+**File:** `docs/archive/migrations/011-enable-rls-on-documents-table.sql`
 
 ```sql
 -- Enable RLS
@@ -148,7 +148,7 @@ nx run server:test-e2e --testPathPattern=documents.rls-isolation
 
 ```bash
 docker exec <postgres-container> psql -U <user> -d <database> < \
-  docs/migrations/011-enable-rls-on-documents-table.sql
+  docs/archive/migrations/011-enable-rls-on-documents-table.sql
 ```
 
 **Verification:**

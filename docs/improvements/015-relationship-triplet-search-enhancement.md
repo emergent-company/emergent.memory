@@ -181,12 +181,12 @@ Emergent's template pack system is **more mature** than FalkorDB's ontology in e
 
 **Affected Components:**
 
-- `apps/server-go/domain/search/service.go` — unified search orchestrator
-- `apps/server-go/domain/search/repository.go` — relationship search queries
-- `apps/server-go/domain/graph/repository.go` — ExpandGraph, vector search functions
-- `apps/server-go/domain/graph/service.go` — hybrid search fusion
-- `apps/server-go/domain/graph/dto.go` — new parameters
-- `apps/server-go/domain/mcp/service.go` — MCP tool updates
+- `apps/server/domain/search/service.go` — unified search orchestrator
+- `apps/server/domain/search/repository.go` — relationship search queries
+- `apps/server/domain/graph/repository.go` — ExpandGraph, vector search functions
+- `apps/server/domain/graph/service.go` — hybrid search fusion
+- `apps/server/domain/graph/dto.go` — new parameters
+- `apps/server/domain/mcp/service.go` — MCP tool updates
 
 **Estimated Effort:** Small (Phase 1) + Medium (Phase 2)
 
@@ -226,7 +226,7 @@ Emergent's template pack system is **more mature** than FalkorDB's ontology in e
 - Related to schema evolution / ontology discovery (template pack `source: 'discovered'` infrastructure)
 - Relationship triplet embedding generation (`graph/service.go:577`)
 - Migrations `00011`, `00012`, `00013` (relationship embedding infrastructure)
-- Backfill tool: `apps/server-go/cmd/backfill-embeddings/main.go`
+- Backfill tool: `apps/server/cmd/backfill-embeddings/main.go`
 
 ---
 

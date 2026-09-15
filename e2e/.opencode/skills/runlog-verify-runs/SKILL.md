@@ -120,7 +120,7 @@ For each issue found:
 After making changes, run the verify-e2e-changes skill to ensure compilation succeeds:
 
 ```bash
-cd /root/emergent.memory.e2e
+cd /root/emergent.memory/e2e
 go build ./...
 go vet ./...
 ```

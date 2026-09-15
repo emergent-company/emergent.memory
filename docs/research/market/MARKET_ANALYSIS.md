@@ -711,7 +711,7 @@ While Emergent focuses on **Document-Centric RAG**, the "Agent Memory" market of
 
 ### Direct Comparisons
 
-- Emergent codebase: `apps/server-go/` (Go backend) + PostgreSQL schema
+- Emergent codebase: `apps/server/` (Go backend) + PostgreSQL schema
 - Cognee codebase: `cognee/` (Python) + multi-backend adapters
 - GraphRAG patterns: Community detection, hierarchical summarization, DRIFT search
 

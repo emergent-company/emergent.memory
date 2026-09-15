@@ -7,7 +7,7 @@ metadata:
   version: "1.0"
 ---
 
-Run e2e tests using the `test` script in `/root/emergent.memory.e2e/`. All env vars,
+Run e2e tests using the `test` script in `/root/emergent.memory/e2e/`. All env vars,
 server URLs, auth tokens, and API keys are wired via env overlay files —
 no manual variable setup needed.
 
@@ -34,7 +34,7 @@ bash .opencode/skills/run-e2e-test/scripts/run.sh localhost TestCLIInstalled_Ver
 
 ## How It Works
 
-The `test` script in `/root/emergent.memory.e2e/test`:
+The `test` script in `/root/emergent.memory/e2e/test`:
 1. Loads `.env` as base config
 2. Merges the named env overlay (e.g. `.env.your-server`) on top
 3. Shell-exported variables always win over file values
@@ -57,4 +57,4 @@ The `run.sh` wrapper:
 - Do NOT manually export `MEMORY_TEST_SERVER`, `MEMORY_TEST_TOKEN`, etc. — the overlay files handle this
 - The AI news blueprint test creates and deletes ephemeral projects — it is safe to re-run at any time
 - If a test SKIPs, check the skip message — it usually means a required env var or API key is missing
-- Logs for each run are saved to `/root/emergent.memory.e2e/logs/<timestamp>-<TestName>/run.log`
+- Logs for each run are saved to `/root/emergent.memory/e2e/logs/<timestamp>-<TestName>/run.log`

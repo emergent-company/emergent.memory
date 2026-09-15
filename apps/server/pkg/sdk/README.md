@@ -9,7 +9,7 @@ Official Go client library for the Memory API.
 ## Installation
 
 ```bash
-go get github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@latest
+go get github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@latest
 ```
 
 ## Features
@@ -35,7 +35,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk"
+    "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
 )
 
 func main() {
@@ -253,7 +253,7 @@ See the `examples/` directory for complete working examples:
 - `examples/projects/` - Project CRUD operations
 
 ```bash
-cd apps/server-go/pkg/sdk/examples/basic
+cd apps/server/pkg/sdk/examples/basic
 export MEMORY_ACCOUNT_API_KEY="your_api_key"
 go run main.go
 ```

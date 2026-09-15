@@ -56,7 +56,7 @@ This is **good engineering practice** but shouldn't be necessary due to lack of 
 
 ### What Backend Has (But Frontend Doesn't Expose)
 
-✅ **Step Limits** (`apps/server-go/domain/agents/executor.go:255-267`):
+✅ **Step Limits** (`apps/server/domain/agents/executor.go:255-267`):
 
 - Global default: 500 steps
 - Per-definition `maxSteps` configuration
@@ -273,7 +273,7 @@ export interface AgentRunToolCall {
 
 #### 1.2 Add Messages & Tool Calls Endpoints
 
-**File:** `apps/server-go/domain/agents/handler.go`
+**File:** `apps/server/domain/agents/handler.go`
 
 Add handlers for:
 
@@ -284,7 +284,7 @@ Add handlers for:
 
 #### 1.3 Add Run Cancellation Endpoint
 
-**File:** `apps/server-go/domain/agents/handler.go`
+**File:** `apps/server/domain/agents/handler.go`
 
 ```go
 // POST /api/admin/agents/:id/runs/:runId/cancel
@@ -515,7 +515,7 @@ From client's investigation section:
 
 ## References
 
-- Backend executor: `apps/server-go/domain/agents/executor.go`
-- Backend DTOs: `apps/server-go/domain/agents/dto.go`
+- Backend executor: `apps/server/domain/agents/executor.go`
+- Backend DTOs: `apps/server/domain/agents/dto.go`
 - Frontend types: `apps/admin/src/api/agents.ts`
-- Database schema: `apps/server-go/migrations/00018_create_agents.sql`
+- Database schema: `apps/server/migrations/00018_create_agents.sql`

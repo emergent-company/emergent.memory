@@ -86,9 +86,9 @@ Or use inline comments (limited support):
 
 | Directory                  | What to Check                                    |
 | -------------------------- | ------------------------------------------------ |
-| `apps/server-go/domain/`   | Duplicate service methods, similar CRUD patterns |
-| `apps/server-go/internal/` | Duplicate utilities, middleware patterns         |
-| `apps/server-go/tests/`    | Duplicate test setup, similar test patterns      |
+| `apps/server/domain/`   | Duplicate service methods, similar CRUD patterns |
+| `apps/server/internal/` | Duplicate utilities, middleware patterns         |
+| `apps/server/tests/`    | Duplicate test setup, similar test patterns      |
 
 ### Shared Patterns
 

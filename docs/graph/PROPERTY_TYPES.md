@@ -292,10 +292,10 @@ Return validated properties or error
 
 ### Code Structure
 
-- **Validation logic**: `/apps/server-go/domain/graph/validation.go`
-- **Service integration**: `/apps/server-go/domain/graph/service.go`
-- **Schema provider**: `/apps/server-go/domain/graph/module.go`
-- **Template packs**: `/apps/server-go/domain/extraction/template_pack_schema_provider.go`
+- **Validation logic**: `/apps/server/domain/graph/validation.go`
+- **Service integration**: `/apps/server/domain/graph/service.go`
+- **Schema provider**: `/apps/server/domain/graph/module.go`
+- **Template packs**: `/apps/server/domain/extraction/template_pack_schema_provider.go`
 
 ## Performance Considerations
 

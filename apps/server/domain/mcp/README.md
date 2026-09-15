@@ -1008,7 +1008,7 @@ tail -f logs/mcp.log | grep -E "(RESOURCE|PROMPT|TOOL)"
 Run E2E tests:
 
 ```bash
-cd apps/server-go
+cd apps/server
 POSTGRES_PASSWORD=... /usr/local/go/bin/go test ./tests/e2e/... -run "TestMCP" -v
 ```
 

@@ -21,7 +21,7 @@ The most significant finding: **natural language querying of the knowledge graph
 
 ### The Current Design (MCP Chat Integration)
 
-`docs/integrations/mcp/MCP_CHAT_INTEGRATION_DESIGN.md` envisions a custom TypeScript pipeline:
+`docs/archive/integrations/mcp/MCP_CHAT_INTEGRATION_DESIGN.md` envisions a custom TypeScript pipeline:
 
 ```
 User Question → MCP Tool Detector → Tool Router → MCP Schema/Data Tools
@@ -260,7 +260,7 @@ The strategic positioning statement remains valid: **"GraphRAG performance with 
 
 | Source Document                                                                     | Suggestions Extracted                                                                                 | Addressed by Multi-Agent                         |
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `docs/integrations/mcp/MCP_CHAT_INTEGRATION_DESIGN.md`                              | 5 (NL→graph, multi-turn, intent detection, graph query translator, schema caching)                    | 4 of 5 (all except caching)                      |
+| `docs/archive/integrations/mcp/MCP_CHAT_INTEGRATION_DESIGN.md`                              | 5 (NL→graph, multi-turn, intent detection, graph query translator, schema caching)                    | 4 of 5 (all except caching)                      |
 | `docs/research/cognee/SUGGESTIONS.md`                                               | 5 (access tracking, conversation history, triplet embedding, pluggable retrievers, ontology resolver) | 2 of 5                                           |
 | `docs/research/market/MARKET_ANALYSIS.md`                                           | 5 (GraphRAG summarization, Apache AGE, pluggable retrieval, LangChain connectors, temporal edges)     | 2 of 5 (partially: GraphRAG, temporal)           |
 | `docs/improvements/016-rag-search-optimizations-from-oss-research.md`               | 14 (A1-A6, B1-B2, C1-C3, D1-D2, E1)                                                                   | 3 of 14 (multi-query, fan-out, adaptive retries) |

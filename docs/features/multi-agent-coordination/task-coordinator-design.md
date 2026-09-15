@@ -668,7 +668,7 @@ The progression from v1 to v5 can happen incrementally. Each version works stand
 The hybrid coordinator becomes a new `domain/coordination/` module:
 
 ```
-apps/server-go/domain/coordination/
+apps/server/domain/coordination/
 ├── module.go           # fx module registration
 ├── dispatcher.go       # TaskDispatcher — the Go polling loop
 ├── selector.go         # AgentSelector — code + LLM hybrid

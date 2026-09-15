@@ -3,7 +3,7 @@
 Emergent is an AI memory and knowledge graph platform. It stores objects and relationships in a graph, chunks and embeds documents, and exposes a REST API for queries, agent orchestration, and LLM tracing.
 
 There are three client SDKs:
-- **Go SDK** — full-featured server-side client (`github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk`)
+- **Go SDK** — full-featured server-side client (`github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`)
 - **Swift SDK** — lightweight Mac app client (`emergent-company/emergent.memory.mac`)
 - **Python SDK** — full-featured REST client (`emergent-memory` on PyPI, `sdk/python/`)
 
@@ -15,11 +15,11 @@ Full docs site: https://emergent-company.github.io/emergent.memory/
 
 Full reference: [docs/llms-go-sdk.md](llms-go-sdk.md)
 
-**Module:** `github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk`
+**Module:** `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`
 
 **Install:**
 ```bash
-go get github.com/emergent-company/emergent.memory/apps/server-go/pkg/sdk@latest
+go get github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@latest
 ```
 
 **Quick start:**

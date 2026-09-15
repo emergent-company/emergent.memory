@@ -15,7 +15,7 @@ This repository describes a system that ingests all “facts” about a potentia
 - 10-roadmap.md — Phased delivery plan
 - 11-open-questions.md — Assumptions and decisions needed
 - 13-routing-and-urls.md — URL namespaces, conventions, and redirects
-- 15-passkey-auth.md — Passkey-based authentication flows
+- [15-passkey-auth.md](../archive/spec/15-passkey-auth.md) — (Removed) Passkey-based authentication flows
 - 16-user-profile.md — User profile data model & operations
 - 17-server-e2e-testing.md — Backend E2E testing strategy
 - 18-authorization-model.md — Authorization & RBAC model

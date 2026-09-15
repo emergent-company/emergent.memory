@@ -96,7 +96,7 @@ The server already resolves both forms, so this is semantically identical to `Ge
 When querying objects (e.g., via `ListObjects` or search), results may include multiple versions of the same entity. Use the `graphutil` package to deduplicate:
 
 ```go
-import "github.com/emergent-company/emergent/apps/server-go/pkg/sdk/graph/graphutil"
+import "github.com/emergent-company/emergent/apps/server/pkg/sdk/graph/graphutil"
 
 // Deduplicate by entity, keeping the latest version
 unique := graphutil.UniqueByEntity(results)

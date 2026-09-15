@@ -305,7 +305,7 @@ mutation {
 ...
 
 ### Resolved (outdated, no fix needed)
-- [x] [coderabbitai] apps/server-go/pkg/sdk/... — outdated after prior commit
+- [x] [coderabbitai] apps/server/pkg/sdk/... — outdated after prior commit
 
 ### Skipped (nitpick, deferred per user)
 - [ ] [gemini] docs/llms.md:42 — minor suggestion

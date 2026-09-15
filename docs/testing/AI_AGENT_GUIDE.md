@@ -1,3 +1,5 @@
+> **⚠️ LEGACY / SUPERSEDED.** This guide targets the removed NestJS/nx/TypeScript stack (`apps/admin`, `apps/server`). It is inaccurate for the current Go monorepo. Canonical testing guidance: `apps/server/AGENT.md` (Go server unit + integration), `e2e/tests-api/` (API e2e suites), `e2e/AGENTS.md` (CLI e2e via runlog), `apps/web-ui/tests/e2e/README.md` (Playwright).
+
 # AI Agent Testing Guide
 
 **Purpose**: Quick reference for AI coding agents to write correct tests. Optimized for copy-paste and pattern matching.
@@ -373,7 +375,7 @@ nx test server --coverage   # With coverage
 nx run server-go:test            # Unit tests
 nx run server-go:test-e2e        # E2E tests (HTTP API, 23 suites)
 nx run server-go:test-integration # Integration tests (Service + DB, 8 suites)
-task test:e2e                    # Alternative: run from apps/server-go/
+task test:e2e                    # Alternative: run from apps/server/
 
 # Admin
 nx test admin               # Unit tests
@@ -384,7 +386,7 @@ nx test-e2e admin --headed  # See browser
 
 ## Go Server Testing
 
-The Go server (`apps/server-go/`) is the **primary backend**. Tests are organized into two categories:
+The Go server (`apps/server/`) is the **primary backend**. Tests are organized into two categories:
 
 | Directory            | Purpose                       | Can Run Against External Server |
 | -------------------- | ----------------------------- | ------------------------------- |
@@ -398,14 +400,14 @@ The Go server (`apps/server-go/`) is the **primary backend**. Tests are organize
 ### Go E2E Test Template
 
 ```go
-// apps/server-go/tests/e2e/my_feature_test.go
+// apps/server/tests/e2e/my_feature_test.go
 package e2e
 
 import (
     "net/http"
     "testing"
 
-    "github.com/anomalyco/emergent/apps/server-go/internal/testutil"
+    "github.com/anomalyco/emergent/apps/server/internal/testutil"
     "github.com/stretchr/testify/suite"
 )
 
@@ -473,7 +475,7 @@ func TestMyFeatureSuite(t *testing.T) {
 
 ### Go Test Utilities
 
-Located in `apps/server-go/internal/testutil/`:
+Located in `apps/server/internal/testutil/`:
 
 ```go
 // TestDB - Isolated database with transaction rollback
@@ -560,7 +562,7 @@ func (s *ChatSuite) TestStreamChat_Success() {
 ### Running Go Tests
 
 ```bash
-cd apps/server-go
+cd apps/server
 
 # Run all E2E tests (HTTP API)
 nx run server-go:test-e2e
@@ -637,7 +639,7 @@ go tool cover -html=coverage.out
 | `graph_embedding_worker_test.go` | Graph embedding worker       |
 | `object_extraction_jobs_test.go` | Object extraction job queue  |
 
-See `apps/server-go/AGENT.md` for the complete list.
+See `apps/server/AGENT.md` for the complete list.
 
 ## Common Patterns
 

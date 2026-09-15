@@ -6,20 +6,21 @@ This document provides instructions for interacting with the workspace, includin
 
 Before implementing new features, **always check** these domain-specific AGENT.md files to understand existing patterns and avoid recreating functionality:
 
-| File                                                      | Domain              | Key Topics                                                                          |
-| --------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------- |
-| `/root/memory.web-ui/src/components/AGENT.md`        | Frontend Components | Atomic design (atoms/molecules/organisms), DaisyUI + Tailwind, available components |
-| `/root/memory.web-ui/src/hooks/AGENT.md`             | Frontend Hooks      | `useApi` (MUST use for all API calls), all 33+ hooks categorized                    |
-| `apps/server/AGENT.md`                                 | Go Backend          | fx modules, Echo handlers, Bun ORM, job queues                                      |
+| File                                  | Domain          | Key Topics                                                          |
+| ------------------------------------- | --------------- | ------------------------------------------------------------------- |
+| `apps/server/AGENT.md`                | Go Backend      | fx modules, Echo handlers, Bun ORM, job queues                      |
+| `apps/web-ui/gateway/AGENTS.md`       | Web UI (Go/HTMX)| Go templ + HTMX gateway guidelines, verify commands                |
+| `apps/web-ui/tests/e2e/README.md`     | Web UI E2E      | Playwright projects, auth, helpers, test-id convention              |
+| `e2e/AGENTS.md`                       | CLI / API E2E   | Go API e2e suites (`e2e/tests-api/`) and CLI runlog suite           |
 
-> **Frontend repo**: The React admin lives at `/root/memory.web-ui` (remote: `emergent-company/memory.web-ui`). It is a standalone Vite project — not in this monorepo.
+> **Monorepo layout**: The Go API lives in `apps/server/`; the web UI (Go templ + HTMX gateway + Playwright e2e) lives in `apps/web-ui/`; the CLI in `apps/cli/`; connectors in `apps/connector.linux` and `apps/connector.mac`; iOS in `apps/ios/`. The old React/Vite admin and NestJS server are gone.
 
 **When to read these files:**
 
-- Before creating new components → Read `components/AGENT.md`
-- Before creating new hooks → Read `hooks/AGENT.md`
-- Before creating new API endpoints → Read `modules/AGENT.md`
-- Before creating new database entities → Read `entities/AGENT.md`
+- Before creating new UI pages/components → Read `apps/web-ui/gateway/AGENTS.md`
+- Before writing Playwright e2e → Read `apps/web-ui/tests/e2e/README.md`
+- Before adding API e2e suites → Read `e2e/AGENTS.md`
+- Before creating new API endpoints or database entities → Read `apps/server/AGENT.md`
 
 ## Primary References
 
@@ -68,17 +69,18 @@ task build              # Build server binary
 task test               # Unit tests
 task test:e2e           # API e2e tests
 task test:integration   # Integration tests
-task test:coverage      # Tests with coverage
+task server:test:coverage # Tests with coverage
 task lint               # Go linter
 task migrate:up         # Run migrations
 ```
 
-For frontend tasks, use `pnpm` in `/root/memory.web-ui`:
+For web UI tasks, use `task` in `apps/web-ui` (Go templ + HTMX gateway, Playwright e2e):
 
 ```bash
-cd /root/memory.web-ui
-pnpm run test           # Unit tests
-pnpm run build          # Production build
+cd apps/web-ui
+task dev                # Gateway with air hot reload
+task lint               # ruff + golangci-lint + go vet/test + templ + gitleaks
+task e2e:test           # Playwright e2e against the running gateway
 ```
 
 For comprehensive testing guidance, refer to **`docs/testing/AI_AGENT_GUIDE.md`**.

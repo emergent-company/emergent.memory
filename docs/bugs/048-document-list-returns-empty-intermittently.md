@@ -19,7 +19,7 @@
 
 **Files Changed:**
 
-- `docs/migrations/011-enable-rls-on-documents-table.sql` - RLS migration
+- `docs/archive/migrations/011-enable-rls-on-documents-table.sql` - RLS migration
 - `apps/server/src/modules/documents/documents.service.ts` - Removed redundant WHERE clauses
 - `apps/server/tests/e2e/documents.rls-isolation.e2e.spec.ts` - RLS isolation test
 

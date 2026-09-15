@@ -22,7 +22,7 @@ Enhanced the Emergent standalone deployment to include the `emergent-cli` binary
 
 **Build stages**:
 
-1. `server-builder` - Compiles Go server from `apps/server-go/`
+1. `server-builder` - Compiles Go server from `apps/server/`
 2. `cli-builder` - Compiles CLI from `tools/emergent-cli/`
 3. `runtime` - Alpine image with both binaries + tools
 

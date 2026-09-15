@@ -21,9 +21,9 @@ tasks:
       - task: server:test
 
   test:e2e:
-    desc: Run backend e2e tests
+    desc: Run API e2e suites (e2e/tests-api, separate Go module)
     cmds:
-      - task: server:test:e2e
+      - cd e2e/tests-api && GOWORK=off go test ./... -v -count=1 {{.CLI_ARGS}}
 
   test:integration:
     desc: Run backend integration tests

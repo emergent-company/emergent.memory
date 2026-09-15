@@ -1,3 +1,5 @@
+> **LEGACY**: This template targets the removed React/Vite admin (`apps/admin`) and Storybook, which no longer applies. The current UI is the Go templ + HTMX gateway at `apps/web-ui` (see `apps/web-ui/gateway/AGENTS.md`) and its Playwright e2e suite. Do not use this checklist.
+
 ## Summary
 Describe the change, the user impact, and the primary components touched.
 

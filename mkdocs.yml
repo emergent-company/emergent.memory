@@ -1,6 +1,6 @@
 site_name: Memory SDK Documentation
 site_url: https://emergent-company.github.io/emergent.memory/
-site_description: Official documentation for the Memory Go SDK and Swift SDK
+site_description: Official documentation for the Memory platform, Go SDK, Python SDK, and Swift SDK
 site_author: Emergent Company
 repo_url: https://github.com/emergent-company/emergent.memory
 repo_name: emergent-company/emergent.memory
@@ -73,6 +73,11 @@ nav:
     - Health & Ops: developer-guide/health-ops.md
     - Security Scopes: developer-guide/security-scopes.md
     - Background Scheduler: developer-guide/scheduler.md
+    - CLI Reference: developer-guide/cli-reference.md
+    - Sandbox: developer-guide/sandbox.md
+    - MCP Relay: developer-guide/mcp-relay.md
+    - Schema: developer-guide/schema.md
+    - Schema Registry: developer-guide/schema-registry.md
   - User Guide:
     - Overview: user-guide/index.md
     - Getting Started: user-guide/getting-started.md
@@ -87,6 +92,7 @@ nav:
     - Notifications: user-guide/notifications.md
     - Tasks: user-guide/tasks.md
     - Integrations: user-guide/integrations.md
+    - Model Setup: user-guide/model-setup.md
   - Go SDK:
     - Overview: go-sdk/index.md
     - Authentication: go-sdk/authentication.md
@@ -106,6 +112,9 @@ nav:
       - chat: go-sdk/reference/chat.md
       - chunks: go-sdk/reference/chunks.md
       - chunking: go-sdk/reference/chunking.md
+      - schemas: go-sdk/reference/schemas.md
+      - schemaregistry: go-sdk/reference/schemaregistry.md
+      - skills: go-sdk/reference/skills.md
       - agents: go-sdk/reference/agents.md
       - agentdefinitions: go-sdk/reference/agentdefinitions.md
       - branches: go-sdk/reference/branches.md
