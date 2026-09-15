@@ -27,9 +27,10 @@ paths no workflow matches never produces `ci` and is **unmergeable** until cover
 |---|---|---|
 | `apps/server/**` | `.github/workflows/server.yml` (`Server Go CI`) | `Lint`, `Build`, `Test`, `Migration guard` → gate job `ci` |
 | `apps/web-ui/**` | `.github/workflows/web-ui.yml` (`Web UI CI`) | `Gateway` (`templ generate`, `go build`, `go vet`, `go test`, `golangci-lint run`) → gate job `ci` |
+| `.github/**` | `.github/workflows/ci.yml` (`Meta CI`) | `py_compile` of `.github/scripts/*.py` → gate job `ci` |
 
-Both workflows name their gate job `ci` deliberately. A PR touching both trees runs both and must
-pass both.
+These workflows name their gate job `ci` deliberately. A PR touching multiple trees runs all
+matching workflows and must pass each `ci` gate.
 
 ### Auto-merge and stale reviews
 
@@ -38,9 +39,12 @@ synchronized, so an approving review is normally the last thing needed. Branch p
 strict with `dismiss_stale_reviews`: **any push to a reviewed head dismisses the approval**, so a
 fix commit requires a fresh approving review.
 
-`.github/workflows/review.yml` runs the in-repo AI reviewer (`ai_review.py`) after `Server Go CI`
-succeeds, but it posts **COMMENT** reviews only — it never satisfies the approving-review
-requirement. The App bot (or a human admin) is the approving identity.
+`.github/workflows/review.yml` runs the in-repo AI reviewer (`ai_review.py` + `ai_fix.py`) on
+every `pull_request` (opened/synchronize/reopened). It posts a `REQUEST_CHANGES` review with
+line-anchored `suggestion` comments (one-click "Commit suggestion"), and an `ai_fix.py` job
+auto-applies `must_fix`/`should_fix` edits (commit + push) capped by the `ai-auto-fixed` label
+(one pass). It runs as `github-actions[bot]` — it does **not** satisfy the approving-review
+requirement; the App bot (or a human admin) is the approving identity.
 
 ## Pipeline
 
