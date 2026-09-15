@@ -44,7 +44,7 @@ A tool that invokes an agent (for example agent-run or agent-exec) SHALL reject 
 
 ### Requirement: Agent allowlist entries are validated on write
 
-An agent allowlist supplied when creating or updating an instance SHALL be validated against the project's agents. Agent IDs that do not belong to the project MUST be rejected, and the allowlist MUST be de-duplicated.
+An agent allowlist supplied when creating or updating an instance SHALL be validated against the project's agents. Agent IDs that do not belong to the project MUST be rejected, and the allowlist MUST be de-duplicated. An entry MAY be an agent-definition ID; such an entry SHALL be resolved to the definition's runtime agent(s) and SHALL be stored as runtime agent IDs. A definition that exists in the project but has no runtime agent SHALL be rejected with an unprocessable-entity error.
 
 #### Scenario: Unknown agent ID rejected
 
@@ -55,6 +55,16 @@ An agent allowlist supplied when creating or updating an instance SHALL be valid
 
 - **WHEN** a request supplies the same agent ID twice
 - **THEN** the stored allowlist contains that agent exactly once
+
+#### Scenario: Agent-definition ID resolves to runtime agent
+
+- **WHEN** a create or update request supplies an agent-definition ID that resolves to one or more runtime agents in the project
+- **THEN** the request is accepted and the stored allowlist contains those runtime agent IDs (de-duplicated), not the definition ID
+
+#### Scenario: Agent definition without a runtime agent rejected
+
+- **WHEN** a create or update request supplies an agent-definition ID that exists in the project but resolves to no runtime agent
+- **THEN** the request is rejected with an unprocessable-entity error and the instance is unchanged
 
 ### Requirement: Shares degrade safely when an allowed agent is removed
 
