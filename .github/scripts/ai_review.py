@@ -153,10 +153,10 @@ def main() -> None:
     )
 
     payload = {
-        # deepseek-v4-flash is a thinking model. Disable thinking via extra_body —
+        # deepseek-flash is a thinking model. Disable thinking via extra_body —
         # LiteLLM filters top-level `thinking` when the deployment isn't a native
         # deepseek provider (drop_params), but extra_body is merged verbatim.
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
         "extra_body": {"thinking": {"type": "disabled"}},
