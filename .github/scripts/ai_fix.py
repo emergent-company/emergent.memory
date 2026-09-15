@@ -49,7 +49,8 @@ def head_branch() -> str:
 
 
 def has_label(pr: str, repo: str) -> bool:
-    r = run(["gh", "pr", "view", pr, "--json", "labels", "-q", ".labels[].name"])
+    r = run(["gh", "pr", "view", pr, "-R", repo,
+             "--json", "labels", "-q", ".labels[].name"])
     if r.returncode != 0:
         # Loud failure, not fail-closed-to-true: a broken `gh` must not be
         # mistaken for "label present" (which would silently skip the fix).
@@ -305,6 +306,8 @@ def main() -> None:
         # Nothing staged (edits were whitespace-only or already applied).
         print("Nothing to commit; skipping push.")
     else:
+        if not token:
+            sys.exit("no GH token available; cannot push")
         # Push via an askpass helper so the token is never exposed in argv or
         # the child env (git config --extraheader would put it in cmdline).
         env = dict(os.environ)
