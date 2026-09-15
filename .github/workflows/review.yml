@@ -1,7 +1,10 @@
 name: AI Code Review
 
 on:
-  pull_request:
+  # pull_request_target: the workflow (and the review/fix scripts) load from the
+  # BASE branch, so a PR cannot rewrite them to exfiltrate GH_TOKEN/LITELLM_API_KEY.
+  # Only the PR *diff* (untrusted data) is ever read, never executed as code.
+  pull_request_target:
     types: [opened, synchronize, reopened]
 
 # Permissions are scoped per-job below (review only reads; fix writes).
@@ -20,11 +23,14 @@ jobs:
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 15
     steps:
-      - name: Checkout PR head
+      - name: Checkout base (trusted scripts)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+
+      - name: Fetch PR head
+        run: git fetch --no-tags origin "+pull/${{ github.event.pull_request.number }}/head:refs/heads/pr-head"
 
       - name: Review
         env:
@@ -33,6 +39,7 @@ jobs:
           LITELLM_BASE_URL: http://litellm.tail0358fa.ts.net:4000/v1
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 .github/scripts/ai_review.py
 
   fix:
@@ -47,12 +54,18 @@ jobs:
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 45
     steps:
-      - name: Checkout PR head
+      - name: Checkout base (trusted scripts)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Stash trusted script + checkout PR head
+        run: |
+          cp .github/scripts/ai_fix.py /tmp/ai_fix_trusted.py
+          git fetch --no-tags origin "+pull/${{ github.event.pull_request.number }}/head:refs/heads/pr-head"
+          git checkout pr-head
 
       - name: Auto-fix
         env:
@@ -60,4 +73,4 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 .github/scripts/ai_fix.py
+        run: python3 /tmp/ai_fix_trusted.py

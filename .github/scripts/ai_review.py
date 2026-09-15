@@ -45,13 +45,14 @@ def get_base(pr: str) -> str:
 
 
 def get_diff(base: str) -> str:
-    # Ensure the base branch ref is present, then diff base...HEAD.
+    # Base branch ref, then diff base...pr-head (pr-head is fetched by the
+    # workflow from pull/{n}/head — the working tree stays on the trusted base).
     subprocess.run(
         ["git", "fetch", "--no-tags", "origin", base],
         capture_output=True,
     )
     r = subprocess.run(
-        ["git", "diff", f"origin/{base}...HEAD"],
+        ["git", "diff", f"origin/{base}...pr-head"],
         capture_output=True, text=True,
     )
     if r.returncode != 0:
@@ -99,19 +100,24 @@ def build_body(review: dict) -> str:
 
 
 def get_head_sha() -> str:
-    r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+    # HEAD_SHA is set by the workflow (the PR head). Fall back to the fetched ref.
+    if os.environ.get("HEAD_SHA"):
+        return os.environ["HEAD_SHA"]
+    r = subprocess.run(["git", "rev-parse", "pr-head"], capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit("could not determine head SHA")
     return r.stdout.strip()
 
 
 def locate_span(path: str, old: str):
-    """Return (start, end) 1-based line numbers of `old` in the file, or None."""
-    try:
-        with open(path, encoding="utf-8", newline="") as f:
-            src = f.read()
-    except OSError:
+    """Return (start, end) 1-based line numbers of `old` in the PR-head file, or None."""
+    r = subprocess.run(
+        ["git", "show", f"pr-head:{path}"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
         return None
+    src = r.stdout
     old_n = old.replace("\r\n", "\n").rstrip("\n")
     src_n = src.replace("\r\n", "\n")
     idx = src_n.find(old_n)
