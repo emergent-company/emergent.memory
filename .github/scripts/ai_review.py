@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""AI code review: PR diff -> litellm -> pull_request_review (verdict + body).
+"""AI code review: PR diff -> litellm -> structured review (verdict + issues,
+each with an exact old->new suggested edit), posted as a single review whose
+body carries a machine-readable JSON block that the auto-fixer consumes.
 
 Triggered by workflow_run (after CI passes), so it derives the PR number and
 base branch from the workflow_run context instead of the pull_request context.
@@ -9,6 +11,11 @@ import os
 import subprocess
 import sys
 import urllib.request
+
+# Fence tag around the machine-readable JSON block in the review body.
+JSON_FENCE = "ai-review-json"
+# Severities the auto-fixer acts on. "nit" is left for humans.
+FIX_SEVERITIES = ("must_fix", "should_fix")
 
 
 def get_pr_number() -> str:
@@ -66,6 +73,34 @@ def parse_review(content: str) -> dict:
         return {"verdict": "COMMENT", "body": s}
 
 
+def build_body(review: dict) -> str:
+    issues = review.get("issues") or []
+    if not issues:
+        md = "No actionable issues found."
+    else:
+        lines = []
+        for it in issues:
+            sev = it.get("severity", "should_fix")
+            title = it.get("title", "issue")
+            path = it.get("path", "?")
+            note = it.get("note", "")
+            lines.append(f"- **[{sev}]** `{path}` — {title}")
+            if note:
+                lines.append(f"  - {note}")
+            old = it.get("old")
+            new = it.get("new")
+            if old and new:
+                lines.append("  - Suggested change:")
+                lines.append("    ```diff")
+                for ln in old.rstrip("\n").split("\n"):
+                    lines.append(f"    - {ln}")
+                for ln in new.rstrip("\n").split("\n"):
+                    lines.append(f"    + {ln}")
+                lines.append("    ```")
+        md = "\n".join(lines)
+    return f"{md}\n\n```{JSON_FENCE}\n{json.dumps(review, indent=2)}\n```\n"
+
+
 def main() -> None:
     pr_number = get_pr_number()
     base = get_base(pr_number)
@@ -86,9 +121,33 @@ def main() -> None:
         "You are a senior software engineer performing a rigorous code review.\n"
         "Review the PR diff for: correctness bugs, security issues, performance "
         "problems, error-handling gaps, race conditions, and missing tests.\n"
-        "Be specific and actionable; reference file names and line numbers.\n"
-        "Respond with ONLY a JSON object (no markdown fences, no prose):\n"
-        '{"verdict": "APPROVE" or "REQUEST_CHANGES", "body": "concise markdown review"}\n\n'
+        "Respond with ONLY a JSON object (no markdown fences, no prose).\n"
+        "JSON schema:\n"
+        '{\n'
+        '  "verdict": "APPROVE" or "REQUEST_CHANGES",\n'
+        '  "issues": [\n'
+        '    {\n'
+        '      "path": "<relative file path, e.g. apps/server/domain/.../foo.go>",\n'
+        '      "severity": "must_fix" | "should_fix" | "nit",\n'
+        '      "title": "<one-line summary>",\n'
+        '      "old": "<EXACT verbatim contiguous lines from the CURRENT file, '
+        "copied character-for-character, preserving indentation>\",\n"
+        '      "new": "<corrected replacement lines>",\n'
+        '      "note": "<why this matters>"\n'
+        '    }\n'
+        '  ]\n'
+        '}\n'
+        "Rules:\n"
+        '- "old" is the current code to replace. Keep it minimal: the shortest '
+        'unambiguous snippet (1-3 lines) copied verbatim from the diff, preserving '
+        'indentation exactly. The fixer locates it by first+last line, so leading '
+        'whitespace must match. If you cannot reproduce it exactly, set "old" to "" '
+        '(the fixer will skip it).\n'
+        '- "new" is the exact replacement text. If "new" equals "old", omit the issue.\n'
+        '- "severity": "must_fix" for correctness/security/breakage, "should_fix" for '
+        'logic/error-handling/perf, "nit" for style.\n'
+        "Only report real issues; if none, return an empty issues array and verdict "
+        '"APPROVE".\n\n'
         f"DIFF:\n{diff}"
     )
 
@@ -110,16 +169,21 @@ def main() -> None:
 
     content = resp["choices"][0]["message"].get("content") or ""
     review = parse_review(content)
+    issues = review.get("issues") or []
     verdict = review.get("verdict", "REQUEST_CHANGES")
-    body = review.get("body") or "(no review body)"
 
     # GITHUB_TOKEN cannot submit an APPROVE review (GitHub blocks bot approvals).
-    # Request changes when issues are found; otherwise post a non-blocking
+    # Request changes when actionable issues exist; otherwise post a non-blocking
     # comment. The required human review remains the final merge gate.
-    if verdict == "REQUEST_CHANGES":
+    actionable = any(
+        i.get("severity") in FIX_SEVERITIES and i.get("old") for i in issues
+    )
+    if actionable or verdict == "REQUEST_CHANGES":
         event = "REQUEST_CHANGES"
     else:
         event = "COMMENT"
+
+    body = build_body(review)
 
     subprocess.run(
         [
@@ -130,7 +194,7 @@ def main() -> None:
         ],
         check=True,
     )
-    print(f"Review posted: {event}")
+    print(f"Review posted: {event} ({len(issues)} issues)")
 
 
 if __name__ == "__main__":
