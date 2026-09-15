@@ -153,12 +153,13 @@ def main() -> None:
     )
 
     payload = {
-        # deepseek-chat is the non-reasoning model. deepseek-v4-pro / -flash are
-        # thinking models that emit into reasoning_content and leave content empty
-        # (see bench/HYPOTHESES.md), which breaks single-shot OpenAI-compat calls.
-        "model": "deepseek-chat",
+        # deepseek-v4-flash is a thinking model. Disable thinking via extra_body —
+        # LiteLLM filters top-level `thinking` when the deployment isn't a native
+        # deepseek provider (drop_params), but extra_body is merged verbatim.
+        "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
+        "extra_body": {"thinking": {"type": "disabled"}},
     }
     req = urllib.request.Request(
         f"{base_url}/chat/completions",
@@ -171,7 +172,8 @@ def main() -> None:
     with urllib.request.urlopen(req, timeout=300) as r:
         resp = json.loads(r.read())
 
-    content = resp["choices"][0]["message"].get("content") or ""
+    msg = resp["choices"][0]["message"]
+    content = msg.get("content") or msg.get("reasoning_content") or ""
     if not content.strip():
         sys.exit("review model returned empty content")
     review = parse_review(content)
