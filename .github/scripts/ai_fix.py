@@ -75,7 +75,8 @@ def latest_review_json(pr: str, repo: str):
 
 
 def extract_json(body: str):
-    m = re.search(rf"```{JSON_FENCE}\n(.*?)\n```", body, re.S)
+    body = body.replace("\r\n", "\n")
+    m = re.search(rf"```{JSON_FENCE}\s*\n(.*?)\n```", body, re.S)
     if not m:
         return None
     try:
@@ -139,6 +140,17 @@ def apply_edit(path: str, old: str, new: str) -> bool:
         if len(matches) != 1:
             return False
         i0, i1 = matches[0]
+        # Verify inner lines: every non-blank line of `old` must appear in order
+        # within the matched span; otherwise the first/last anchors are
+        # coincidental and we'd silently rewrite the wrong block.
+        inner = [l.strip() for l in old_lines if l.strip()]
+        span = [l.strip() for l in src_lines[i0 : i1 + 1]]
+        j = 0
+        for l in span:
+            if j < len(inner) and l == inner[j]:
+                j += 1
+        if j != len(inner):
+            return False
         if i0 <= i1:
             if new_n.strip():
                 repl = new_n.rstrip("\n").split("\n")
@@ -181,11 +193,8 @@ def main() -> None:
     if claim.returncode != 0:
         print("could not claim label; aborting to avoid duplicate pushes")
         return
-    # Re-check after adding: if the label was already present before our add,
-    # another run beat us; bail out to avoid duplicate pushes.
-    if has_label(pr, repo) and claim.returncode == 0:
-        # Cannot distinguish pre-existing from our add here; rely on workflow-level concurrency.
-        pass
+    # The label is the loop cap (one fix pass), not a mutex. Real mutual
+    # exclusion comes from the workflow-level concurrency group (one run/PR).
 
     review = latest_review_json(pr, repo)
     if review is None:
@@ -218,18 +227,16 @@ def main() -> None:
             skipped.append((it, "invalid or empty edit"))
             continue
         norm = os.path.normpath(path)
-        if os.path.isabs(norm) or norm in ("..", ".") or norm.split(os.sep, 1)[0] == "..":
-            skipped.append((it, "unsafe path"))
-            continue
         real_root = os.path.realpath(os.getcwd())
         real_target = os.path.realpath(os.path.join(real_root, norm))
         if (
-            os.path.isabs(path)
-            or path != norm
+            os.path.isabs(norm)
             or norm in ("..", ".")
-            or norm.startswith(".." + os.sep)
+            or norm.split(os.sep, 1)[0] == ".."
             or norm == ".git"
             or norm.startswith(".git" + os.sep)
+            or norm == ".github"
+            or norm.startswith(".github" + os.sep)  # refuse to self-edit workflow/scripts
             or not (real_target == real_root
                     or real_target.startswith(real_root + os.sep))
         ):
