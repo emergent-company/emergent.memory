@@ -40,11 +40,13 @@ strict with `dismiss_stale_reviews`: **any push to a reviewed head dismisses the
 fix commit requires a fresh approving review.
 
 `.github/workflows/review.yml` runs the in-repo AI reviewer (`ai_review.py` + `ai_fix.py`) on
-every `pull_request` (opened/synchronize/reopened). It posts a `REQUEST_CHANGES` review with
-line-anchored `suggestion` comments (one-click "Commit suggestion"), and an `ai_fix.py` job
+every `pull_request_target` (opened/synchronize/reopened), loading trusted base-branch scripts
+and reading only the PR diff (never executing PR-head code). It posts a `REQUEST_CHANGES` review
+with line-anchored `suggestion` comments (one-click "Commit suggestion"), and an `ai_fix.py` job
 auto-applies `must_fix`/`should_fix` edits (commit + push) capped by the `ai-auto-fixed` label
-(one pass). It runs as `github-actions[bot]` — it does **not** satisfy the approving-review
-requirement; the App bot (or a human admin) is the approving identity.
+(one pass). It runs as `emergent-code-reviewer[bot]` (the App identity) — it flags issues and
+auto-fixes but does **not** self-approve; a separate approving review (App bot or human admin)
+remains the merge gate.
 
 ## Pipeline
 
