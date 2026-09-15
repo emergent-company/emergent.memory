@@ -174,7 +174,7 @@ await queryRunner.query(
 - `apps/server/src/common/database/database.service.ts:1236-1288` - runWithTenantContext() wrapper
 - `apps/server/src/modules/documents/documents.service.ts:42-110` - list() method uses runWithTenantContext
 - `apps/server/src/modules/documents/documents.controller.ts:91-113` - controller passes project ID from header
-- `docs/migrations/011-enable-rls-on-documents-table.sql` - Migration that created RLS policies
+- `docs/archive/migrations/011-enable-rls-on-documents-table.sql` - Migration that created RLS policies
 
 ---
 

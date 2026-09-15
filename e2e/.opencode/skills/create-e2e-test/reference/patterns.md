@@ -210,7 +210,7 @@ for _, item := range []string{"multi-agent-task-pack", "orchestrator", "web-rese
 ## Pattern 8: Bookstore fixture (opencode integration tests)
 
 ```go
-import fixtures "github.com/emergent-company/emergent.memory.e2e/fixtures"
+import fixtures "github.com/emergent-company/emergent.memory/e2e/fixtures"
 
 func TestMyFeature_WithBookstore(t *testing.T) {
     ws := fixtures.NewBookstoreWorkspace(t)

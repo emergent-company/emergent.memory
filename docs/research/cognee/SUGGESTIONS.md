@@ -69,7 +69,7 @@ CREATE INDEX idx_graph_objects_last_accessed
 **Step 2: Update SearchService (15 minutes)**
 
 ```go
-// apps/server-go/domain/search/service.go
+// apps/server/domain/search/service.go
 func (s *Service) Search(ctx context.Context, params SearchParams) (*SearchResponse, error) {
     // Existing search logic...
     results, err := s.repo.Search(ctx, params)
@@ -206,7 +206,7 @@ CREATE INDEX idx_chat_messages_conversation
 **Step 2: Update ChatService (20 minutes)**
 
 ```go
-// apps/server-go/domain/chat/service.go
+// apps/server/domain/chat/service.go
 func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (*StreamResponse, error) {
     // NEW: Load conversation history (last 5 turns)
     history, err := s.repo.GetConversationHistory(ctx, req.ConversationID, 5)
@@ -245,7 +245,7 @@ func (s *Service) buildPromptWithHistory(currentQuery string, history []Message)
 **Step 3: Repository Method (15 minutes)**
 
 ```go
-// apps/server-go/domain/chat/repository.go
+// apps/server/domain/chat/repository.go
 func (r *Repository) GetConversationHistory(ctx context.Context, conversationID uuid.UUID, limit int) ([]Message, error) {
     query := `
         SELECT id, role, content, context_summary, created_at
@@ -362,7 +362,7 @@ CREATE INDEX idx_graph_relationships_embedding
 **Step 2: Generate Triplet Text (10 minutes)**
 
 ```go
-// apps/server-go/domain/graph/service.go
+// apps/server/domain/graph/service.go
 func (s *Service) generateTripletText(rel *GraphRelationship) string {
     // Load source and target objects
     source, _ := s.repo.GetByID(ctx, rel.SourceID)
@@ -385,7 +385,7 @@ func humanizeRelationship(relType string) string {
 **Step 3: Embed on Creation (15 minutes)**
 
 ```go
-// apps/server-go/domain/graph/service.go
+// apps/server/domain/graph/service.go
 func (s *Service) CreateRelationship(ctx context.Context, req CreateRelationshipRequest) (*GraphRelationship, error) {
     // Existing validation...
 
@@ -413,7 +413,7 @@ func (s *Service) CreateRelationship(ctx context.Context, req CreateRelationship
 **Step 4: Update Search (20 minutes)**
 
 ```go
-// apps/server-go/domain/search/repository.go
+// apps/server/domain/search/repository.go
 func (r *Repository) SearchWithTriplets(ctx context.Context, params SearchParams) ([]*SearchResult, error) {
     // Existing node search...
     nodeResults := r.searchNodes(ctx, params)
@@ -519,7 +519,7 @@ class BaseRetriever(ABC):
 **Step 1: Define Retriever Interface (30 minutes)**
 
 ```go
-// apps/server-go/domain/search/retriever.go
+// apps/server/domain/search/retriever.go
 package search
 
 import (
@@ -565,7 +565,7 @@ func (b *BaseRetriever) GetCompletion(ctx context.Context, query string, project
 **Step 2: Implement Hybrid Retriever (Current Logic) (45 minutes)**
 
 ```go
-// apps/server-go/domain/search/hybrid_retriever.go
+// apps/server/domain/search/hybrid_retriever.go
 package search
 
 import (
@@ -629,7 +629,7 @@ func (h *HybridRetriever) GetCompletionFromContext(ctx context.Context, query st
 **Step 3: Implement Graph Traversal Retriever (New Strategy) (1 hour)**
 
 ```go
-// apps/server-go/domain/search/graph_traversal_retriever.go
+// apps/server/domain/search/graph_traversal_retriever.go
 package search
 
 import (
@@ -693,7 +693,7 @@ func (g *GraphTraversalRetriever) GetContextFromObjects(ctx context.Context, que
 **Step 4: Update SearchService to Use Retriever (20 minutes)**
 
 ```go
-// apps/server-go/domain/search/service.go
+// apps/server/domain/search/service.go
 func (s *Service) Search(ctx context.Context, params SearchParams) (*SearchResponse, error) {
     // Select retriever based on query type or user preference
     retriever := s.selectRetriever(params)
@@ -722,7 +722,7 @@ func (s *Service) selectRetriever(params SearchParams) Retriever {
 **Step 5: Add Retriever Strategy Parameter to API (15 minutes)**
 
 ```go
-// apps/server-go/domain/search/dto.go
+// apps/server/domain/search/dto.go
 type SearchRequest struct {
     Query    string  `json:"query"`
     Strategy *string `json:"strategy,omitempty"` // "hybrid", "graph", "temporal", etc.
@@ -831,7 +831,7 @@ entity_types:
 **Step 1: Define Ontology Schema Format (30 minutes)**
 
 ```yaml
-# apps/server-go/config/ontologies/medical.yaml
+# apps/server/config/ontologies/medical.yaml
 name: Medical Ontology
 version: 1.0
 entity_types:
@@ -867,7 +867,7 @@ entity_types:
 **Step 2: Create OntologyResolver Interface (45 minutes)**
 
 ```go
-// apps/server-go/domain/graph/ontology.go
+// apps/server/domain/graph/ontology.go
 package graph
 
 import (
@@ -993,7 +993,7 @@ func (r *YAMLOntologyResolver) validatePropertyValue(name string, value interfac
 **Step 3: Integrate with GraphService (30 minutes)**
 
 ```go
-// apps/server-go/domain/graph/service.go
+// apps/server/domain/graph/service.go
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest) (*GraphObjectResponse, error) {
     // Load project's ontology (if configured)
     ontology, err := s.schemaProvider.GetOntologyResolver(ctx, projectID.String())

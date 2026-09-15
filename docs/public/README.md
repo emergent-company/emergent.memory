@@ -37,20 +37,20 @@ related: [doc-id-1, doc-id-2]
 1. Create markdown file in appropriate category directory
 2. Add YAML frontmatter with required fields
 3. Update `index.json` with document metadata
-4. Restart Go server to clear cache: `cd apps/server-go && make run`
+4. Restart Go server to clear cache: `cd apps/server && make run`
 
 ## Important: Symlink Requirement
 
-The Go server runs from `apps/server-go/` and expects docs at `docs/public/` relative to its working directory.
+The Go server runs from `apps/server/` and expects docs at `docs/public/` relative to its working directory.
 
 **Setup symlink** (required):
 
 ```bash
-cd apps/server-go
+cd apps/server
 ln -s /root/emergent/docs docs
 ```
 
-This creates `apps/server-go/docs -> /root/emergent/docs` so the server can access `docs/public/`.
+This creates `apps/server/docs -> /root/emergent/docs` so the server can access `docs/public/`.
 
 ## Cache Behavior
 
@@ -58,7 +58,7 @@ The Go documentation service caches parsed documents in memory for performance. 
 
 ```bash
 # Restart Go server
-cd /root/emergent/apps/server-go
+cd /root/emergent/apps/server
 make run
 ```
 

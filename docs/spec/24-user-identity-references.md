@@ -404,7 +404,7 @@ Priority migration queue:
 
 - [User Profile Spec](./16-user-profile.md) - User profile system design
 - [Authorization Model](./18-authorization-model.md) - Permission system
-- [Migration 007](../docs/migrations/007-extraction-jobs-foreign-key.md) - Extraction jobs fix
+- [Migration 007](../archive/migrations/007-extraction-jobs-foreign-key.md) - Extraction jobs fix
 - [Auth Service](../apps/server/src/modules/auth/auth.service.ts) - JWT claim mapping
 
 ## Questions & Answers

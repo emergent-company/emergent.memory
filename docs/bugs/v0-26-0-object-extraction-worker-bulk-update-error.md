@@ -64,7 +64,7 @@ The worker should successfully dequeue pending jobs, update their status to "pro
 
 ## Root Cause Analysis
 
-The issue is in `apps/server-go/domain/extraction/object_extraction_jobs.go:196-200`.
+The issue is in `apps/server/domain/extraction/object_extraction_jobs.go:196-200`.
 
 **Problematic Code (lines 196-200):**
 
@@ -82,7 +82,7 @@ Bun ORM does not support bulk updates using `Model(&slice)`. When you pass a sli
 
 **Related Files:**
 
-- `apps/server-go/domain/extraction/object_extraction_jobs.go:160-213` - DequeueBatch method
+- `apps/server/domain/extraction/object_extraction_jobs.go:160-213` - DequeueBatch method
 
 ---
 

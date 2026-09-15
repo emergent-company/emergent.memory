@@ -2,7 +2,7 @@
 
 ## Description
 
-Guide for creating a new experiment in `emergent.memory.e2e` — a named group of test runs that compare variants (e.g. different models, blueprints, or configurations) on the same task. Experiments appear grouped in the **Experiments** tab of the runlog TUI.
+Guide for creating a new experiment in `emergent.memory/e2e` — a named group of test runs that compare variants (e.g. different models, blueprints, or configurations) on the same task. Experiments appear grouped in the **Experiments** tab of the runlog TUI.
 
 ## Trigger
 

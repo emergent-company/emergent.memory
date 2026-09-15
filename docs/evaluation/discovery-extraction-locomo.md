@@ -1,7 +1,7 @@
 # Discovery, Extraction & LoCoMo Evaluation
 
 **Status:** Living document — updated after each evaluation run  
-**Supersedes:** `docs/improvements/014-extraction-evaluation-enhancements.md`  
+**Supersedes:** `docs/archive/improvements/014-extraction-evaluation-enhancements.md`  
 **Last updated:** 2026-05-26
 
 ---

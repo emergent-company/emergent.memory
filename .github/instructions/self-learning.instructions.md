@@ -4,6 +4,8 @@ applyTo: "**"
 
 # AI Assistant Self-Learning Log
 
+> **LEGACY ENTRIES**: Entries below are historical records from before the monorepo migration. Many reference the removed NestJS/nx/React stack — `apps/admin`, `apps/server`, `apps/server/tests/e2e/`, `nx run ...`, and `npm --prefix ...`. Current commands are `task build|test|test:integration|test:e2e|lint|migrate:up|migrate:status`; the server is `apps/server` (Go), the UI is `apps/web-ui`, the CLI is `apps/cli`, and API e2e suites live in `e2e/tests-api/`. See root `AGENTS.md`, `apps/server/AGENT.md`, `e2e/AGENTS.md`, and `apps/web-ui/gateway/AGENTS.md`.
+
 This file tracks mistakes, lessons learned, and important discoveries made during development sessions. The goal is to continuously improve by documenting errors and their solutions.
 
 ## Format

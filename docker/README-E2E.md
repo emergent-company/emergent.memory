@@ -49,7 +49,7 @@ npm run db:e2e:down
 npm run db:e2e:up
 
 # Run specific test
-npx nx run server-go:test-e2e --testFile=apps/server-go/tests/e2e/document-ingestion.spec.ts
+npx nx run server-go:test-e2e --testFile=apps/server/tests/e2e/document-ingestion.spec.ts
 
 # Clean up
 npm run db:e2e:down

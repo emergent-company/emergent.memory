@@ -2,6 +2,8 @@
 applyTo: "**"
 ---
 
+> **LEGACY**: The React/Vite admin app (`apps/admin`) and the nx workspace were removed. The current UI is the Go templ + HTMX gateway at `apps/web-ui`. Everything below is historical context for the old app; the `nx run admin:*` commands and `apps/admin/**` paths no longer exist. For current guidance see root `AGENTS.md`, `apps/web-ui/gateway/AGENTS.md`, and `apps/web-ui/tests/e2e/README.md`.
+
 # Admin Frontend - AI Assistant development instructions 
 
 ## Admin (React) – Mandatory Build & Test Loop Addendum
@@ -21,7 +23,7 @@ Whenever you add a new feature OR make any fix/refactor that can affect runtime 
 ### 3. Build (ALWAYS before committing)
 - Run Admin type check/build: `nx run admin:build`.
 	- Treat any TypeScript error as a blocker.
-- If shared types changed (used by server) re-run server build too (`nx run server-go:build`).
+- If server code changed, re-run the server build too (`cd apps/server && go build ./...`).
 
 ### 4. Playwright E2E Tests
 - Run targeted spec you touched first: `nx run admin:e2e -- e2e/specs/<spec>.spec.ts --project=chromium`.

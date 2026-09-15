@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is the Go implementation of the Emergent backend server, which has fully replaced the NestJS/TypeScript server. It uses:
+This is the Go backend server for the Emergent platform. It uses:
 
 - **Echo** - HTTP framework
 - **Bun** - ORM with pgx driver for PostgreSQL
@@ -10,7 +10,7 @@ This is the Go implementation of the Emergent backend server, which has fully re
 - **Zitadel** - OAuth2/OIDC authentication
 - **Google ADK-Go** - AI extraction pipeline orchestration
 
-**Status**: **Production Ready** - 609 E2E tests passing, full feature parity with NestJS.
+**Status**: **Production Ready**. There is no server-local e2e suite. The integration suite lives in `apps/server/tests/integration` (17 files, run in-process against a test DB). HTTP API e2e suites live in the separate `e2e/tests-api` Go module (run via the root `task test:e2e`); CLI e2e lives in the `e2e/` module (run with `runlog test`).
 
 ## Quick Commands (Tasks CLI)
 
@@ -27,11 +27,13 @@ go run ./cmd/tasks health          # Quick check
 go run ./cmd/tasks health -v       # Verbose (show response bodies)
 go run ./cmd/tasks health -v -db   # Also check database connectivity
 
-# Run tests
-go run ./cmd/tasks test:e2e                         # All E2E tests against running server
-go run ./cmd/tasks test:e2e -run TestDocumentsSuite # Specific test suite
-go run ./cmd/tasks test:e2e -run "TestDocumentsSuite/TestCreate"  # Specific test
-go run ./cmd/tasks test:unit                        # Unit tests only
+# Run tests (from repo root)
+task test:integration                # Integration tests (apps/server/tests/integration)
+task test:e2e                        # API e2e suites (e2e/tests-api)
+go run ./cmd/tasks test:unit         # Unit tests only
+
+# NOTE: `cmd/tasks test:e2e` is stale — it targets the removed apps/server/tests/e2e/.
+# Use the root `task test:e2e` target instead.
 
 # Lint and format
 go run ./cmd/tasks lint            # Run golangci-lint
@@ -72,50 +74,87 @@ apps/server/
 │   │   └── main.go       # fx.New() composition root
 │   ├── migrate/          # Migration CLI tool
 │   └── tasks/            # Development tasks CLI (health, test, build)
-├── domain/               # Business logic modules (19 domains)
-│   ├── agents/           # Reaction agent management
-│   ├── apitoken/         # API token CRUD
-│   ├── branches/         # Branch CRUD (for graph versioning)
-│   ├── chat/             # Chat conversations + streaming
-│   ├── chunks/           # Document chunks with embeddings
-│   ├── datasource/       # External data sources (ClickUp)
-│   ├── devtools/         # Development utilities
-│   ├── documents/        # Document CRUD + file upload
-│   ├── email/            # Email jobs + Mailgun
-│   ├── embeddingpolicies/ # Embedding policy configuration
-│   ├── extraction/       # Object extraction pipeline (ADK-Go)
-│   ├── graph/            # Graph objects + relationships + search + analytics
-│   ├── health/           # Health check endpoints
-│   ├── mcp/              # Model Context Protocol endpoints
-│   ├── orgs/             # Organizations CRUD
-│   ├── projects/         # Projects CRUD
-│   ├── scheduler/        # Cron-based scheduled tasks
-│   ├── search/           # Unified search (FTS + vector)
-│   ├── superadmin/       # Superadmin management API
-│   ├── userprofile/      # User profile management
-│   └── users/            # User search
+├── domain/               # Business logic modules — one package per domain (48)
+│   ├── agentcompat/
+│   ├── agents/
+│   ├── apitoken/
+│   ├── authinfo/
+│   ├── autoprovision/
+│   ├── backups/
+│   ├── blueprints/
+│   ├── branches/
+│   ├── chat/
+│   ├── chunking/
+│   ├── chunks/
+│   ├── devtools/
+│   ├── discoveryjobs/
+│   ├── docs/
+│   ├── documents/
+│   ├── email/
+│   ├── embeddingpolicies/
+│   ├── events/
+│   ├── extraction/
+│   ├── graph/
+│   ├── health/
+│   ├── invites/
+│   ├── journal/
+│   ├── mcp/
+│   ├── mcpregistry/
+│   ├── mcprelay/
+│   ├── modelconfig/
+│   ├── monitoring/
+│   ├── notifications/
+│   ├── orgs/
+│   ├── projects/
+│   ├── provider/
+│   ├── sandbox/
+│   ├── sandboximages/
+│   ├── scheduler/
+│   ├── schemaregistry/
+│   ├── schemas/
+│   ├── search/
+│   ├── sessiontodos/
+│   ├── skills/
+│   ├── standalone/
+│   ├── superadmin/
+│   ├── tasks/
+│   ├── tracing/
+│   ├── useraccess/
+│   ├── useractivity/
+│   ├── userprofile/
+│   └── users/
 ├── internal/             # Private packages
-│   ├── auth/             # Authentication middleware
 │   ├── config/           # Environment configuration
 │   ├── database/         # Bun + pgx database setup
 │   ├── jobs/             # Job queue base patterns
-│   ├── middleware/       # RLS, logging middleware
 │   ├── migrate/          # Goose migration API
 │   ├── server/           # Echo HTTP server setup
 │   ├── storage/          # MinIO/S3 storage client
-│   └── testutil/         # E2E test utilities
+│   ├── testutil/         # Test DB/server/token helpers
+│   └── version/          # Build version info
 ├── migrations/           # Goose SQL migrations
 ├── pkg/                  # Public packages
+│   ├── acpslug/
 │   ├── adk/              # Google ADK-Go agents (extraction)
 │   ├── apperror/         # Application error types
-│   ├── clickup/          # ClickUp API client
+│   ├── auth/             # Authentication (JWT/API-token middleware)
+│   ├── crypto/
 │   ├── embeddings/       # Vertex AI embeddings
+│   ├── encryption/
+│   ├── httputil/
 │   ├── kreuzberg/        # Document parsing client
+│   ├── llm/
 │   ├── logger/           # Structured logging
-│   └── mailgun/          # Mailgun email client
+│   ├── mathutil/
+│   ├── pgutils/
+│   ├── sdk/
+│   ├── sse/
+│   ├── syshealth/
+│   ├── textsplitter/
+│   ├── tracing/
+│   └── whisper/
 └── tests/
-    ├── e2e/              # End-to-end HTTP API tests (23 suites)
-    └── integration/      # Service + DB integration tests (8 suites)
+    └── integration/      # Service + DB integration tests (17 files, in-process)
 ```
 
 ## Key Patterns
@@ -253,7 +292,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMw *auth.Middleware) {
 Use `pkg/apperror` for all application errors:
 
 ```go
-import "github.com/anomalyco/emergent/apps/server/pkg/apperror"
+import "github.com/emergent-company/emergent.memory/pkg/apperror"
 
 // Predefined errors
 return apperror.ErrNotFound                              // 404
@@ -376,103 +415,50 @@ pipeline := adk.NewSequentialAgent(
 
 Tests are organized into two categories:
 
-| Directory            | Purpose                       | Can Run Against External Server |
-| -------------------- | ----------------------------- | ------------------------------- |
-| `tests/e2e/`         | HTTP API tests (23 suites)    | ✅ Yes                          |
-| `tests/integration/` | Service + DB tests (8 suites) | ❌ No (always in-process)       |
+| Location                              | Module                                | Can Run Against External Server |
+| ------------------------------------- | ------------------------------------- | ------------------------------- |
+| `e2e/tests-api/`                      | `github.com/emergent/api-tests`       | ✅ Yes                          |
+| `apps/server/tests/integration/`      | `github.com/emergent-company/emergent.memory` | ❌ No (always in-process) |
 
-**E2E tests** validate HTTP API behavior through the full request/response cycle. They can run against either an in-process test server or an external running server.
+**API e2e tests** live in the separate `e2e/tests-api/` Go module and validate HTTP API behavior through the full request/response cycle against a running server. Run them via the root `task test:e2e` (or directly: `cd e2e/tests-api && GOWORK=off go test ./...`). CLI e2e tests live in the `e2e/` module and are driven by `runlog test`.
 
-**Integration tests** test internal services that require direct database access (job queues, workers, schedulers). These always run in-process with a test database.
+**Integration tests** live in `apps/server/tests/integration/` (17 files) and test internal services that require direct database access (job queues, workers, schedulers). These always run in-process with a test database.
 
 ### Recommended Workflow
 
 ```bash
-cd apps/server
-
 # 1. Build first - catch compile errors (~2s)
+cd apps/server
 go run ./cmd/tasks build
 
 # 2. Check server health
 go run ./cmd/tasks health
 
-# 3. Run tests
-go run ./cmd/tasks test:e2e -run TestYourSuite
+# 3. Run the API e2e suites for your change (root Taskfile)
+task test:e2e -- -run TestYourSuite
 ```
 
-### Running Tests (Tasks CLI)
-
-The easiest way to run tests is using the tasks CLI:
+### Running Tests (Root Task Commands)
 
 ```bash
-cd apps/server
+# API e2e suites (e2e/tests-api, separate Go module)
+task test:e2e                                         # All API e2e suites
+task test:e2e -- -run TestDocumentsSuite              # Specific suite
+task test:e2e -- -v                                   # Verbose
 
-# Run E2E tests against running server (recommended)
-go run ./cmd/tasks test:e2e                              # All E2E tests
-go run ./cmd/tasks test:e2e -run TestDocumentsSuite      # Specific suite
-go run ./cmd/tasks test:e2e -run "TestGraphObjectsSuite/TestCreate"  # Specific test
-
-# Run unit tests only
-go run ./cmd/tasks test:unit
-```
-
-### Running Tests via nx (Recommended)
-
-Use task commands for running tests:
-
-```bash
-# E2E tests - shows summary only (fast to read)
-task test:e2e                                         # All E2E tests
-task test:e2e -- -run GraphSuite                      # Specific suite
-
-# E2E tests - verbose output (shows all test names)
-task test:e2e -- -v                                   # Verbose mode
-
-# Integration tests
+# Backend integration tests (apps/server/tests/integration)
 task test:integration                                 # All integration tests
+
+# Unit tests
+cd apps/server && go run ./cmd/tasks test:unit
 ```
 
-**Default output (summary only - shows failing tests if any):**
-
-```
-Running E2E tests...
-========================================
-========================================
-TEST SUMMARY
-========================================
-Passed:   609
-Failed:   0
-Skipped:  9
-Total:    618
-Duration: 57.763s
-
-RESULT: PASSED
-```
-
-**On failure, automatically shows failed test details without -v flag.**
-
-### Running Tests (Manual)
-
-Only use manual commands if you need specific go test flags:
-
-```bash
-cd apps/server
-
-# Build first!
-go build ./...
-
-# E2E tests via script (includes summary)
-./scripts/run-e2e-tests.sh                   # Summary only
-./scripts/run-e2e-tests.sh -v                # Verbose
-./scripts/run-e2e-tests.sh TestDocumentsSuite # Specific suite
-./scripts/run-e2e-tests.sh -v TestDocumentsSuite # Verbose + specific
-```
+`task test:e2e` runs `cd e2e/tests-api && GOWORK=off go test ./... -v -count=1`.
 
 **IMPORTANT for AI Agents:**
 
-- Never run tests twice to get counts - use nx or the script
-- Default mode shows summary + failing tests only (efficient)
-- Use `-v` only when you need to see all test names
+- Prefer `task test:e2e` / `task test:integration` over ad-hoc `go test` invocations.
+- Use `-v` only when you need to see all test names.
 
 ### Test Utilities
 
@@ -527,65 +513,54 @@ func TestDocumentsSuite(t *testing.T) {
 }
 ```
 
-### E2E Test Files (tests/e2e/)
+### API E2E Test Suites (e2e/tests-api/suites/)
 
-HTTP API tests that can run against an external server:
+HTTP API suites in the `github.com/emergent/api-tests` module that run against an external server:
 
-| Test File                    | Suite                    | Coverage                                             |
-| ---------------------------- | ------------------------ | ---------------------------------------------------- |
-| `auth_test.go`               | `AuthSuite`              | JWT/API token validation, auth error responses       |
-| `security_scopes_test.go`    | `SecurityScopesSuite`    | Scope enforcement for all endpoints                  |
-| `tenant_isolation_test.go`   | `TenantIsolationSuite`   | RLS, cross-project isolation, header validation      |
-| `documents_test.go`          | `DocumentsSuite`         | CRUD, pagination, deduplication                      |
-| `documents_upload_test.go`   | `DocumentsUploadSuite`   | File upload auth/scope/project validation            |
-| `chunks_test.go`             | `ChunksSuite`            | Chunk listing, pagination, bulk delete               |
-| `graph_test.go`              | `GraphObjectsSuite`      | Objects, relationships, history, soft delete, search |
-| `graph_search_test.go`       | `GraphSearchSuite`       | Graph search with debug mode                         |
-| `search_test.go`             | `SearchSuite`            | Unified search, fusion strategies, debug mode        |
-| `chat_test.go`               | `ChatSuite`              | Conversations, SSE streaming, CRUD                   |
-| `mcp_test.go`                | `MCPSuite`               | MCP RPC/SSE authentication                           |
-| `orgs_test.go`               | `OrgsSuite`              | Organization CRUD, cascade delete                    |
-| `projects_test.go`           | `ProjectsSuite`          | Project CRUD, members, cascade delete                |
-| `users_test.go`              | `UsersSuite`             | User search                                          |
-| `userprofile_test.go`        | `UserProfileSuite`       | Profile get/update                                   |
-| `useraccess_test.go`         | `UserAccessSuite`        | Access tree                                          |
-| `apitoken_test.go`           | `APITokenSuite`          | Token CRUD                                           |
-| `health_test.go`             | `HealthSuite`            | Health/ready/debug endpoints                         |
-| `invites_test.go`            | `InvitesSuite`           | Invite CRUD                                          |
-| `events_test.go`             | `EventsSuite`            | Event listing                                        |
-| `email_jobs_test.go`         | `EmailJobsSuite`         | Email queue (HTTP endpoints)                         |
-| `embedding_policies_test.go` | `EmbeddingPoliciesSuite` | Embedding policy CRUD                                |
-| `branches_test.go`           | `BranchesSuite`          | Branch CRUD for graph versioning                     |
-| `superadmin_test.go`         | `SuperadminSuite`        | Superadmin user/org/project/job management           |
-| `templatepacks_test.go`      | `TemplatePacksSuite`     | Template pack management                             |
-| `tasks_test.go`              | `TasksSuite`             | Task management                                      |
-| `notifications_test.go`      | `NotificationsSuite`     | Notification management                              |
-| `useractivity_test.go`       | `UserActivitySuite`      | User activity tracking                               |
+| Test File           | Suite                  |
+| ------------------- | ---------------------- |
+| `chunks_test.go`    | `TestChunksSuite`      |
+| `documents_test.go` | `TestDocumentsSuite`   |
+| `graph_test.go`     | `TestGraphSuite`       |
+| `health_test.go`    | `TestHealthSuite`      |
+| `orgs_test.go`      | `TestOrgsSuite`        |
+| `projects_test.go`  | `TestProjectsSuite`    |
+| `search_test.go`    | `TestSearchSuite`      |
 
 ### Integration Test Files (tests/integration/)
 
-Service + DB tests that always run in-process:
+Service + DB tests that always run in-process (17 files):
 
-| Test File                        | Suite                       | Coverage                           |
-| -------------------------------- | --------------------------- | ---------------------------------- |
-| `scheduler_test.go`              | `SchedulerSuite`            | Cron task execution, cleanup tasks |
-| `datasource_deadletter_test.go`  | `DatasourceDeadletterSuite` | Dead letter handling               |
-| `document_parsing_jobs_test.go`  | `DocumentParsingJobsSuite`  | Document parsing job queue         |
-| `chunk_embedding_jobs_test.go`   | `ChunkEmbeddingJobsSuite`   | Embedding job queue                |
-| `chunk_embedding_worker_test.go` | `ChunkEmbeddingWorkerSuite` | Embedding worker processing        |
-| `graph_embedding_jobs_test.go`   | `GraphEmbeddingJobsSuite`   | Graph embedding job queue          |
-| `graph_embedding_worker_test.go` | `GraphEmbeddingWorkerSuite` | Graph embedding worker             |
-| `object_extraction_jobs_test.go` | `ObjectExtractionJobsSuite` | Object extraction job queue        |
+| Test File                          | Test / Suite                    |
+| ---------------------------------- | ------------------------------- |
+| `agentcompat_test.go`              | `TestAgentCompatSuite`          |
+| `chunk_embedding_jobs_test.go`     | `TestChunkEmbeddingJobsSuite`   |
+| `chunk_embedding_worker_test.go`   | `TestChunkEmbeddingWorkerSuite` |
+| `compiled_types_ui_test.go`        | `TestCompiledTypesUISuite`      |
+| `discoveryjobs_test.go`            | `TestDiscoveryJobsSuite`        |
+| `document_parsing_jobs_test.go`    | `TestDocumentParsingJobsSuite`  |
+| `extraction_fixed_schema_test.go`  | `TestExtractionFixedSchema`     |
+| `forget_agent_test.go`             | `TestForgetAgentSuite`          |
+| `graph_embedding_jobs_test.go`     | `TestGraphEmbeddingJobsSuite`   |
+| `graph_embedding_worker_test.go`   | `TestGraphEmbeddingWorkerSuite` |
+| `merge_enrichment_e2e_test.go`     | `TestMergeEnrichmentE2E`        |
+| `merge_policy_test.go`             | `TestMergePolicySuite`          |
+| `object_extraction_jobs_test.go`   | `TestObjectExtractionJobsSuite` |
+| `personal_kb_agent_test.go`        | `TestPersonalKBAgentSuite`      |
+| `remember_agent_test.go`           | `TestRememberAgentSuite`        |
+| `remember_experiments_test.go`     | `TestRememberExperiments`       |
+| `scheduler_test.go`                | `TestSchedulerSuite`            |
 
 ### Running Specific Suites
 
 ```bash
-# E2E tests (using tasks CLI)
-go run ./cmd/tasks test:e2e -run TestDocumentsSuite
-go run ./cmd/tasks test:e2e -run "TestDocumentsSuite/TestCreateDocument_Success"
-go run ./cmd/tasks test:e2e -run "Test(Auth|Security|Tenant)"
+# API e2e suites (root Taskfile -> e2e/tests-api)
+task test:e2e -- -run TestDocumentsSuite
+task test:e2e -- -run "TestDocumentsSuite/TestCreateDocument_Success"
+task test:e2e -- -run "Test(Chunks|Documents|Search)"
 
-# Integration tests (manual)
+# Integration tests (apps/server)
+cd apps/server
 POSTGRES_PASSWORD=emergent-dev-password go test ./tests/integration/... -v -run TestSchedulerSuite
 ```
 
@@ -604,7 +579,7 @@ go run ./cmd/migrate -c up
 go run ./cmd/migrate -c down
 
 # Create new migration
-go run ./cmd/migrate -c create add_new_table sql
+go run ./cmd/migrate -c create add_new_table
 ```
 
 See `migrations/README.md` for detailed workflow.
@@ -631,12 +606,11 @@ See `migrations/README.md` for detailed workflow.
 | MCP                 | Tools `/api/mcp`                          | Pass  |
 | Extraction          | Background workers                           | Pass  |
 | Email               | Background workers                           | Pass  |
-| Data Sources        | ClickUp sync                                 | Pass  |
 | Scheduler           | Cron tasks                                   | Pass  |
 | Superadmin          | User/Org/Project/Job management              | Pass  |
 | Agents              | Reaction agent management                    | Pass  |
 
-**Total: 609 E2E tests passing**
+There is no longer a server-local e2e suite or a single "total passing" figure. API-level coverage is provided by the 7 suites in `e2e/tests-api/` (run via `task test:e2e`) and in-process service/DB coverage by the 17 files in `apps/server/tests/integration/` (run via `task test:integration`).
 
 ### Superadmin API
 
@@ -812,7 +786,6 @@ Log levels controlled by `LOG_LEVEL` env var.
 - [fx documentation](https://uber-go.github.io/fx/)
 - [Goose documentation](https://pressly.github.io/goose/)
 - [Google ADK-Go](https://github.com/google/adk-go)
-- [Migration spec](../../openspec/changes/port-server-to-golang/design.md)
 - [Retrospective](./RETROSPECTIVE.md)
 - [Benchmark Results](./BENCHMARK_RESULTS.md)
 

@@ -132,10 +132,10 @@ Graph relationships are now embedded as natural language triplets (e.g., "Elon M
 
 ### Source Code
 
-- `apps/server-go/domain/graph/service.go:546` — `humanizeRelationType()`
-- `apps/server-go/domain/graph/service.go:552` — `getDisplayName()`
-- `apps/server-go/domain/graph/service.go:567` — `generateTripletText()`
-- `apps/server-go/domain/graph/service.go:576` — `embedTripletText()`
+- `apps/server/domain/graph/service.go:546` — `humanizeRelationType()`
+- `apps/server/domain/graph/service.go:552` — `getDisplayName()`
+- `apps/server/domain/graph/service.go:567` — `generateTripletText()`
+- `apps/server/domain/graph/service.go:576` — `embedTripletText()`
 
 ## Search Response Format
 
@@ -266,7 +266,7 @@ WITH (lists = 100);
 1. **Apply migration 00011** (adds nullable `embedding` + `embedding_updated_at` columns):
 
    ```bash
-   cd apps/server-go
+   cd apps/server
    /usr/local/go/bin/go run ./cmd/migrate -- up
    ```
 
@@ -282,7 +282,7 @@ WITH (lists = 100);
 4. **Run backfill** (optional — embeds existing relationships):
 
    ```bash
-   cd apps/server-go
+   cd apps/server
 
    # Dry run first
    /usr/local/go/bin/go run ./cmd/backfill-embeddings \
@@ -303,7 +303,7 @@ WITH (lists = 100);
 
 ### Backfill Script
 
-**Location**: `apps/server-go/cmd/backfill-embeddings/main.go`
+**Location**: `apps/server/cmd/backfill-embeddings/main.go`
 
 **Flags**:
 

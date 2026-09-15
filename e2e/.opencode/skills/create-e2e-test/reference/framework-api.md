@@ -469,7 +469,7 @@ func VerifySkillInstalled(t *testing.T, rl *RunLog, skillsDir, skillName string)
 ## Fixtures (`fixtures/bookstore.go`)
 
 ```go
-// Package e2efixtures — import as fixtures "github.com/emergent-company/emergent.memory.e2e/fixtures"
+// Package e2efixtures — import as fixtures "github.com/emergent-company/emergent.memory/e2e/fixtures"
 
 // NewBookstoreWorkspace creates a temp directory with a minimal bookstore project.
 // Returns *BookstoreWorkspace with fields: Dir string, t *testing.T.

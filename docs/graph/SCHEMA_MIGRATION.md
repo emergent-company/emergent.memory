@@ -726,7 +726,7 @@ WHERE id IN (
 Built automatically with the server:
 
 ```bash
-cd apps/server-go
+cd apps/server
 go build -o ./bin/migrate-schema ./cmd/migrate-schema
 ```
 
@@ -1141,4 +1141,4 @@ WHERE schema_version = '1.0.0'
 
 ## API Reference
 
-See `apps/server-go/domain/graph/migration.go` for full API documentation.
+See `apps/server/domain/graph/migration.go` for full API documentation.

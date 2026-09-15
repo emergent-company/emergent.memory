@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-17
 **Status:** Complete
-**Related feature:** `docs/features/agent-memory-design.md`
+**Related feature:** `docs/archive/features/agent-memory-design.md`
 
 ---
 
@@ -10,7 +10,7 @@
 
 This document surveys open-source projects and academic publications on **active memory management** for AI agents — where the system participates in deciding what gets stored, merged, promoted, or discarded rather than passively accumulating everything it encounters.
 
-The existing `agent-memory-design.md` describes a passive approach: the LLM is instructed when to call `save_memory` / `recall_memories`, and dedup is handled by a fixed cosine similarity threshold. Active memory management replaces or augments this with LLM-in-the-loop decision making, multi-tier promotion, proactive reflection, and decay.
+The existing `docs/archive/features/agent-memory-design.md` describes a passive approach: the LLM is instructed when to call `save_memory` / `recall_memories`, and dedup is handled by a fixed cosine similarity threshold. Active memory management replaces or augments this with LLM-in-the-loop decision making, multi-tier promotion, proactive reflection, and decay.
 
 ---
 
@@ -403,7 +403,7 @@ Query intent types:
 
 ## 10. Synthesis: Active vs Passive Memory Management
 
-### Passive Memory (current `agent-memory-design.md`)
+### Passive Memory (current `docs/archive/features/agent-memory-design.md`)
 
 ```
 User message → LLM decides to call save_memory → Threshold-based dedup → Store
@@ -439,7 +439,7 @@ Decay job     → Confidence decays for non-recalled memories → Low-confidence
 
 ## 10. Implementation Recommendations for Emergent
 
-Based on this research, the following additions to the base `agent-memory-design.md` are recommended:
+Based on this research, the following additions to the base `docs/archive/features/agent-memory-design.md` are recommended:
 
 ### Priority 1: LLM-Assisted Merge in `save_memory`
 

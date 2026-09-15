@@ -1,10 +1,10 @@
-# emergent.memory.e2e
+# emergent.memory/e2e
 
 End-to-end tests for the [Memory](https://github.com/emergent-company/emergent.memory) CLI.
 
 These tests run inside a Docker container where the `memory` binary is installed from the GitHub release via `install.sh` — exactly as a real end-user would. They exercise the full install path (download, extract, PATH setup) and validate CLI behaviour against a live Memory server.
 
-[![E2E Tests](https://github.com/emergent-company/emergent.memory.e2e/actions/workflows/e2e.yml/badge.svg)](https://github.com/emergent-company/emergent.memory.e2e/actions/workflows/e2e.yml)
+[![E2E Tests](https://github.com/emergent-company/emergent.memory/e2e/actions/workflows/e2e.yml/badge.svg)](https://github.com/emergent-company/emergent.memory/e2e/actions/workflows/e2e.yml)
 
 ## Environment variables
 

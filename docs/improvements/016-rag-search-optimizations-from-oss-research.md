@@ -71,8 +71,8 @@ Cache hit:   query → cache lookup (< 1ms) → return
 
 **Affected Components:**
 
-- `apps/server-go/pkg/embeddings/module.go`
-- `apps/server-go/pkg/embeddings/client.go`
+- `apps/server/pkg/embeddings/module.go`
+- `apps/server/pkg/embeddings/client.go`
 
 **Estimated Effort:** Small (half day)
 
@@ -111,7 +111,7 @@ Algorithm: Alternate placing items at the front and back of the reordered list.
 
 **Affected Components:**
 
-- `apps/server-go/domain/search/service.go`
+- `apps/server/domain/search/service.go`
 
 **Estimated Effort:** Small (2-3 hours)
 
@@ -150,8 +150,8 @@ Then: final_score = Σ(weight_i × normalized_score_i) / Σ(weight_i)
 
 **Affected Components:**
 
-- `apps/server-go/domain/search/repository.go`
-- `apps/server-go/domain/search/dto.go`
+- `apps/server/domain/search/repository.go`
+- `apps/server/domain/search/dto.go`
 
 **Estimated Effort:** Small (half day)
 
@@ -196,8 +196,8 @@ Fan-out: 3 parallel retrievals → deduplicate by doc ID → keep highest score
 
 **Affected Components:**
 
-- `apps/server-go/domain/search/service.go` (new query expansion step)
-- `apps/server-go/pkg/embeddings/module.go` (batch embed multiple queries)
+- `apps/server/domain/search/service.go` (new query expansion step)
+- `apps/server/pkg/embeddings/module.go` (batch embed multiple queries)
 
 **Estimated Effort:** Medium (1-2 days)
 
@@ -236,8 +236,8 @@ Expanded window: [chunk 4 | chunk 5 | chunk 6] of document X (merged, overlaps r
 
 **Affected Components:**
 
-- `apps/server-go/domain/chunks/repository.go`
-- `apps/server-go/domain/search/service.go`
+- `apps/server/domain/chunks/repository.go`
+- `apps/server/domain/search/service.go`
 
 **Estimated Effort:** Medium (1-2 days)
 
@@ -276,7 +276,7 @@ Where `λ` controls the relevance/diversity tradeoff (default 0.7 = favor releva
 
 **Affected Components:**
 
-- `apps/server-go/domain/search/service.go`
+- `apps/server/domain/search/service.go`
 
 **Estimated Effort:** Small (half day)
 
@@ -328,7 +328,7 @@ Additionally, extract tables separately and preserve their column headers as con
 
 **Affected Components:**
 
-- `apps/server-go/domain/chunking/service.go`
+- `apps/server/domain/chunking/service.go`
 
 **Estimated Effort:** Medium (1-2 days)
 
@@ -370,8 +370,8 @@ Split documents at semantic boundaries by:
 
 **Affected Components:**
 
-- `apps/server-go/domain/chunking/service.go`
-- `apps/server-go/pkg/embeddings/module.go` (batch embed sentence groups)
+- `apps/server/domain/chunking/service.go`
+- `apps/server/pkg/embeddings/module.go` (batch embed sentence groups)
 
 **Estimated Effort:** Medium (2-3 days)
 
@@ -416,8 +416,8 @@ Proposed:  chunk1 → extract ─┐
 
 **Affected Components:**
 
-- `apps/server-go/domain/extraction/agents/pipeline.go`
-- `apps/server-go/domain/extraction/object_extraction_worker.go`
+- `apps/server/domain/extraction/agents/pipeline.go`
+- `apps/server/domain/extraction/object_extraction_worker.go`
 
 **Estimated Effort:** Medium (2-3 days)
 
@@ -457,9 +457,9 @@ Adapt the retry strategy based on iteration count:
 
 **Affected Components:**
 
-- `apps/server-go/domain/extraction/agents/quality_checker.go`
-- `apps/server-go/domain/extraction/agents/relationship_builder.go`
-- `apps/server-go/domain/extraction/agents/prompts.go`
+- `apps/server/domain/extraction/agents/quality_checker.go`
+- `apps/server/domain/extraction/agents/relationship_builder.go`
+- `apps/server/domain/extraction/agents/prompts.go`
 
 **Estimated Effort:** Small (half day)
 
@@ -497,7 +497,7 @@ Add a `/api/extraction/estimate` endpoint that:
 
 **Affected Components:**
 
-- `apps/server-go/domain/extraction/` (new estimate handler)
+- `apps/server/domain/extraction/` (new estimate handler)
 - `apps/admin/src/` (UI to display estimates before confirming)
 
 **Estimated Effort:** Medium (1-2 days)
@@ -548,7 +548,7 @@ Implement two evaluation layers:
 
 **Affected Components:**
 
-- New package: `apps/server-go/domain/evaluation/` (or `pkg/evaluation/`)
+- New package: `apps/server/domain/evaluation/` (or `pkg/evaluation/`)
 - LangFuse dataset: `golden-rag` (new)
 - CI pipeline (optional — run evaluations on search changes)
 
@@ -606,9 +606,9 @@ func (a *Action[In, Out]) Run(ctx context.Context, in In) (Out, error) {
 
 **Affected Components:**
 
-- New package: `apps/server-go/pkg/action/`
-- `apps/server-go/pkg/embeddings/` (wrap as Actions)
-- `apps/server-go/domain/extraction/agents/` (wrap as Actions)
+- New package: `apps/server/pkg/action/`
+- `apps/server/pkg/embeddings/` (wrap as Actions)
+- `apps/server/domain/extraction/agents/` (wrap as Actions)
 
 **Estimated Effort:** Medium (2-3 days)
 
@@ -658,8 +658,8 @@ for chunk, err := range stream {
 
 **Affected Components:**
 
-- `apps/server-go/domain/chat/` (streaming interfaces)
-- `apps/server-go/pkg/` (streaming utilities)
+- `apps/server/domain/chat/` (streaming interfaces)
+- `apps/server/pkg/` (streaming utilities)
 
 **Estimated Effort:** Medium (1-2 days)
 

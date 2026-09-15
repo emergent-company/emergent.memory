@@ -19,7 +19,7 @@ After making changes to the e2e test suite, always compile and smoke-test using 
 ### 1. Build all packages
 
 ```bash
-cd /root/emergent.memory.e2e
+cd /root/emergent.memory/e2e
 go build ./...
 ```
 

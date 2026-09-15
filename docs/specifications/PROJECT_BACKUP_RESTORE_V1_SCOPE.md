@@ -338,7 +338,7 @@ wss://api.emergent.ai/ws/backups/{backupId}
 
 ### Go Implementation
 
-- **Module:** `apps/server-go/domain/backup`
+- **Module:** `apps/server/domain/backup`
 - **Dependencies:**
   - `archive/zip` (standard library)
   - `storage.Service` (MinIO client)
@@ -418,4 +418,4 @@ wss://api.emergent.ai/ws/backups/{backupId}
 - **Full Specification:** `PROJECT_BACKUP_RESTORE_SPEC.md`
 - **Incremental Design:** See Section 6 of full spec
 - **Database Schema:** `docs/database/schema-context.md`
-- **Storage Service:** `apps/server-go/internal/storage/storage.go`
+- **Storage Service:** `apps/server/internal/storage/storage.go`

@@ -31,7 +31,7 @@ This document provides comprehensive guidance for developing, deploying, and deb
 pnpm run workspace:status
 
 # 2. Build the server
-cd apps/server-go
+cd apps/server
 /usr/local/go/bin/go build ./...
 
 # 3. Run the server
@@ -44,7 +44,7 @@ curl http://localhost:3002/health
 ## Project Structure
 
 ```
-apps/server-go/
+apps/server/
 ├── cmd/
 │   ├── server/           # Main server entry point
 │   │   └── main.go       # fx.New() composition
@@ -115,7 +115,7 @@ domain/example/
 go install github.com/air-verse/air@latest
 
 # Run with hot reload
-cd apps/server-go
+cd apps/server
 air
 ```
 
@@ -144,7 +144,7 @@ golangci-lint run
 ### Development Mode
 
 ```bash
-cd apps/server-go
+cd apps/server
 
 # Run directly with go run
 POSTGRES_PASSWORD=your-password /usr/local/go/bin/go run ./cmd/server
@@ -182,7 +182,7 @@ pnpm run workspace:status
 ### Running Tests
 
 ```bash
-cd apps/server-go
+cd apps/server
 
 # Run all E2E tests
 POSTGRES_PASSWORD=your-password /usr/local/go/bin/go test ./tests/e2e/... -v -count=1
@@ -238,7 +238,7 @@ The `testutil.E2EContext` provides:
 ### Creating a Migration
 
 ```bash
-cd apps/server-go
+cd apps/server
 
 # Using the CLI
 POSTGRES_PASSWORD=your-password /usr/local/go/bin/go run ./cmd/migrate -c create add_new_feature
@@ -305,8 +305,8 @@ See `migrations/README.md` for detailed documentation.
 
 The server loads environment variables from:
 
-1. `apps/server-go/.env`
-2. `apps/server-go/.env.local` (for secrets)
+1. `apps/server/.env`
+2. `apps/server/.env.local` (for secrets)
 3. System environment
 
 ## API Documentation (Swagger/OpenAPI)
@@ -334,7 +334,7 @@ func (h *Handler) Create(c echo.Context) error {
 **Generate specification:**
 
 ```bash
-cd apps/server-go
+cd apps/server
 /root/go/bin/swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
 ```
 

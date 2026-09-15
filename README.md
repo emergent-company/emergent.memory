@@ -13,6 +13,17 @@ Knowledge graph platform for ingesting, storing, and querying structured knowled
 - **CLI:** Go (memory-cli)
 - **Automation:** Taskfile
 
+## Repository Layout
+
+This is a monorepo:
+
+- `apps/server` — Go server (Echo + Bun ORM + fx, Zitadel auth)
+- `apps/web-ui` — Web UI (Go templ + HTMX gateway)
+- `apps/cli` — `memory` CLI
+- `apps/connector.linux` — Linux connector
+- `apps/connector.mac` — macOS connector
+- `apps/ios` — iOS app
+
 ## Quick Installation
 
 ### Server + CLI (Recommended)
@@ -48,7 +59,7 @@ memory upgrade
 ## Getting Started
 
 - **[Environment Setup Guide](docs/guides/ENVIRONMENT_SETUP.md)** - Comprehensive guide for local, dev, staging, and production environments.
-- **[Runbook](RUNBOOK.md)** - Operational details and daily workflows.
+- **[Deployment docs](docs/deployment/)** - Deployment and operational details.
 
 ## Key Commands
 
@@ -84,7 +95,7 @@ The chat system integrates with the Model Context Protocol (MCP) to provide inte
 ## Observability
 
 The system supports integration with:
-- **Grafana Tempo**: For OpenTelemetry tracing (opt-in via `OTEL_ENABLED=true`).
+- **Grafana Tempo**: For OpenTelemetry tracing (opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`).
 
 ## Production Deployment
 
@@ -110,3 +121,4 @@ Additional in-repo documentation is located in the `/docs` directory:
 - **/docs/features**: Detailed documentation on specific features.
 - **/docs/technical**: Deep dives into the architecture and technical implementation details.
 - **/docs/database**: Database schema documentation.
+- **/docs/site**: Source for the published documentation, built via `mkdocs.yml`.

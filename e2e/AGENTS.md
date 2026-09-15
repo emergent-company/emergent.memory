@@ -1,4 +1,4 @@
-# emergent.memory.e2e
+# emergent.memory/e2e
 
 End-to-end test suite for the `memory` CLI (`github.com/emergent-company/emergent.memory`).
 
@@ -24,11 +24,12 @@ MEMORY_TEST_SERVER=http://custom:9000 runlog test mcj-emergent
 ### Docker runner (CI / full stack with ephemeral server)
 
 ```bash
-./run_tests.sh                              # full stack (server + tests) — Docker standalone
-./run_tests.sh --tests-only                 # tests only against MEMORY_TEST_SERVER
-./run_tests.sh --build-only                 # build Docker image only
-TEST_RUN=TestCLIInstalled_Version ./run_tests.sh --tests-only  # single test
+task -d e2e test:docker                     # full stack (server + tests) — Docker standalone
+task -d e2e test:docker:tests-only          # tests only against MEMORY_TEST_SERVER
+TEST_RUN=TestCLIInstalled_Version task -d e2e test:docker:tests-only  # single test
 ```
+
+Note: the legacy `e2e/run_tests.sh` wrapper no longer exists — Docker runs go through `e2e/Taskfile.yml` targets (`test:docker`, `test:docker:tests-only`).
 
 ### Raw go test (memory binary must be on PATH)
 
@@ -65,7 +66,7 @@ MEMORY_TEST_ENV=localhost     go test -v ./...   # against local standalone serv
 
 - No external Go dependencies — standard library only
 - `opencode` binary is installed in the Dockerfile as test infrastructure
-- Go module: `github.com/emergent-company/emergent.memory.e2e`
+- Go module: `github.com/emergent-company/emergent.memory/e2e`
 - The `runlog` TUI binary has been extracted to [`github.com/emergent-company/runlog`](https://github.com/emergent-company/runlog). Install with `go install github.com/emergent-company/runlog/cmd/runlog@latest`
 
 ## Install Skills
@@ -107,7 +108,7 @@ Detected tools are identified by the presence of their config directory (e.g. `.
 
 ### `github.com/emergent-company/runlog` — `package runlog`
 
-Standalone Go module containing the full framework library. All test files
+Standalone Go module containing the full framework library. New tests should
 import it directly with the alias `framework`:
 
 ```go
@@ -118,6 +119,12 @@ The library provides `RunLog`, `TestContext`, `Step`, CLI runners, HTTP helpers,
 project/agent helpers, SQLite DB layer, LLM analyzer, and more. See
 `.opencode/skills/create-e2e-test/reference/framework-api.md` for the full API.
 
+### `framework/` — `package e2eframework` (deprecated)
+
+Thin re-export wrapper around `github.com/emergent-company/runlog`, kept only for
+backwards compatibility and being phased out. Do not add new tests against it —
+prefer importing `github.com/emergent-company/runlog` directly (alias `framework`).
+
 ### `fixtures/` — `package e2efixtures`
 
 Reusable test workspace setup.
@@ -126,4 +133,4 @@ Reusable test workspace setup.
 |---|---|
 | `bookstore.go` | `NewBookstoreWorkspace`, `BookstoreWorkspace` |
 
-Import alias: `fixtures "github.com/emergent-company/emergent.memory.e2e/fixtures"`
+Import alias: `fixtures "github.com/emergent-company/emergent.memory/e2e/fixtures"`

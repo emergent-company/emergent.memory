@@ -19,12 +19,12 @@ For detailed patterns, framework API, anti-patterns, and the complete test desig
 
 ## Pre-requisites
 
-- Go module: `github.com/emergent-company/emergent.memory.e2e`
+- Go module: `github.com/emergent-company/emergent.memory/e2e`
 - No external Go dependencies — standard library only (except `framework/analyzer.go` which uses Google AI)
 - Tests live in subdirectories under `tests/`: `tests/cli/`, `tests/blueprints/`, `tests/tools/`, `tests/experiments/`, `tests/production/`
 - Each test package has its own `testmain_test.go` and `helpers_test.go` (thin wrappers around `framework.*`)
 - Framework: `github.com/emergent-company/runlog` (package `runlog`, imported as `framework`)
-- Fixtures: `github.com/emergent-company/emergent.memory.e2e/fixtures` (package `e2efixtures`)
+- Fixtures: `github.com/emergent-company/emergent.memory/e2e/fixtures` (package `e2efixtures`)
 
 ## Workflow
 

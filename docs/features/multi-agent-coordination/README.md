@@ -258,11 +258,11 @@ See `todo.md` for the detailed implementation checklist with per-task tracking.
 
 ## Source Code Locations (in emergent)
 
-- `apps/server-go/domain/agents/` — Agent entity, CRUD, runs, processing log
-- `apps/server-go/domain/graph/` — Knowledge graph service
-- `apps/server-go/domain/mcp/service.go` — MCP tools (graph operations)
-- `apps/server-go/domain/extraction/agents/pipeline.go` — ADK-Go pipeline pattern
-- `apps/server-go/pkg/adk/model.go` — Vertex AI model factory
-- `apps/server-go/internal/jobs/queue.go` — PostgreSQL job queue
-- `apps/server-go/domain/templatepacks/` — Template pack definitions
-- `apps/server-go/domain/scheduler/` — Cron scheduler
+- `apps/server/domain/agents/` — Agent entity, CRUD, runs, processing log
+- `apps/server/domain/graph/` — Knowledge graph service
+- `apps/server/domain/mcp/service.go` — MCP tools (graph operations)
+- `apps/server/domain/extraction/agents/pipeline.go` — ADK-Go pipeline pattern
+- `apps/server/pkg/adk/model.go` — Vertex AI model factory
+- `apps/server/internal/jobs/queue.go` — PostgreSQL job queue
+- `apps/server/domain/templatepacks/` — Template pack definitions
+- `apps/server/domain/scheduler/` — Cron scheduler

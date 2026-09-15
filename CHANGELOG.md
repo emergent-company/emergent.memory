@@ -153,7 +153,7 @@ curl -H "X-Org-ID: abc123" -H "X-Project-ID: xyz789" /api/documents
 curl -H "X-Project-ID: xyz789" /api/documents
 ```
 
-See [Migration Guide](./docs/migrations/remove-org-id-header-migration.md) for complete migration instructions.
+See [Migration Guide](./docs/archive/migrations/remove-org-id-header-migration.md) for complete migration instructions.
 
 ---
 
@@ -305,7 +305,7 @@ cp .env .env.backup
 
 - Removed Passkey / WebAuthn custom flow (frontend helpers, backend routes, env vars). Consolidated on Zitadel hosted OIDC only.
 - Stubbed then scheduled deletion of legacy `src/zitadel/passwordless.ts` (no runtime imports remain).
-- Added tombstone note in `docs/spec/15-passkey-auth.md`.
+- Added tombstone note in `docs/archive/spec/15-passkey-auth.md`.
 
 ### 2025-08 (Earlier)
 

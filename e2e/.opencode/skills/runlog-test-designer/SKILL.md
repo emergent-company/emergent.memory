@@ -59,7 +59,7 @@ package <name>_test
 import (
     "os"
     "testing"
-    framework "github.com/emergent-company/emergent.memory.e2e/framework"
+    framework "github.com/emergent-company/emergent.memory/e2e/framework"
 )
 
 func TestMain(m *testing.M) {

@@ -2,7 +2,7 @@
 
 **Date**: October 20, 2025  
 **Status**: Design Approved - Implementation Starting  
-**Previous Version**: MCP_CHAT_INTEGRATION_DESIGN.md (REST-based, now superseded)
+**Previous Version**: docs/archive/integrations/mcp/MCP_CHAT_INTEGRATION_DESIGN.md (REST-based, now superseded)
 
 ## Executive Summary
 

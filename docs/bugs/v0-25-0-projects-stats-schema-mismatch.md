@@ -68,15 +68,15 @@ The database schema has a `chunking_config` column in the `kb.projects` table, b
 The issue occurs because:
 
 1. The database schema includes `chunking_config` column in `kb.projects` table
-2. The Go struct in `apps/server-go/domain/projects/entity.go` has a comment acknowledging `chunking_config` exists but states it should be "added when needed"
+2. The Go struct in `apps/server/domain/projects/entity.go` has a comment acknowledging `chunking_config` exists but states it should be "added when needed"
 3. When `--stats` is used, the query selects all columns including `chunking_config`
 4. Bun ORM attempts to scan the result into a struct that doesn't have the `chunking_config` field
 5. The scan fails with the error
 
 **Related Files:**
 
-- `apps/server-go/domain/projects/entity.go` - Project struct definition (missing chunking_config field)
-- `apps/server-go/domain/projects/repository.go` - Query logic for projects with stats
+- `apps/server/domain/projects/entity.go` - Project struct definition (missing chunking_config field)
+- `apps/server/domain/projects/repository.go` - Query logic for projects with stats
 - Database: `kb.projects` table (has chunking_config column)
 
 **Additional Issue:**
@@ -109,7 +109,7 @@ Modify the repository query to explicitly select only the columns that exist in 
 
 **Changes Required:**
 
-1. Update `apps/server-go/domain/projects/entity.go` to include all current schema columns
+1. Update `apps/server/domain/projects/entity.go` to include all current schema columns
 2. Add migration check or version compatibility handling if needed
 3. Fix `schedule_at` issue in object extraction jobs
 4. Create regression test for `--stats` functionality

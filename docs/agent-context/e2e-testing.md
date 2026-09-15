@@ -22,7 +22,7 @@ Always set `POSTGRES_PORT=5436` locally — the dev stack uses a non-standard po
 
 **All E2E tests (in-process server):**
 ```bash
-cd apps/server-go
+cd apps/server
 POSTGRES_PORT=5436 POSTGRES_PASSWORD=local-test-password go test ./tests/e2e/...
 ```
 
@@ -67,7 +67,7 @@ POSTGRES_PORT=5436 POSTGRES_PASSWORD=local-test-password go test ./tests/integra
 ## Goose Migrations
 
 ```bash
-# Run from apps/server-go
+# Run from apps/server
 export POSTGRES_PORT=5436 POSTGRES_PASSWORD=local-test-password
 
 # Status
