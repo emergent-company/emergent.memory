@@ -177,3 +177,76 @@ func TestListShareInstancesLegacyDB(t *testing.T) {
 	assert.Equal(t, 1, resp.Total)
 	assert.False(t, resp.Instances[0].IsLegacy)
 }
+
+// requireAgentsTables skips the test when kb.agents / kb.agent_definitions are
+// absent.
+func requireAgentsTables(t *testing.T, db bun.IDB) {
+	t.Helper()
+	var exists bool
+	err := db.NewRaw(`SELECT to_regclass('kb.agents') IS NOT NULL AND to_regclass('kb.agent_definitions') IS NOT NULL`).
+		Scan(context.Background(), &exists)
+	if err != nil || !exists {
+		t.Skip("kb.agents / kb.agent_definitions not present; run migrations first")
+	}
+}
+
+// TestFindAgentRefsByDefinitionIDMarkers exercises the definition->runtime-agent
+// query against a real database. For one project and one definition it seeds:
+// an FK-linked runtime agent, an FK-less "chat-session:<defID>" agent, an
+// FK-less "agent-def:<defID>" agent, an unrelated agent, and a marker row for a
+// different definition. It asserts only the definition's three rows are
+// returned, with the FK-linked row first.
+func TestFindAgentRefsByDefinitionIDMarkers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database integration test in short mode")
+	}
+	db := connectTestDB(t)
+	requireAgentsTables(t, db)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+
+	defID := uuid.NewString()
+	otherDefID := uuid.NewString()
+	fkAgentID := uuid.NewString()
+	chatAgentID := uuid.NewString()
+	agentDefAgentID := uuid.NewString()
+	unrelatedAgentID := uuid.NewString()
+	otherDefAgentID := uuid.NewString()
+
+	_, err := db.NewRaw(`
+		INSERT INTO kb.agent_definitions (id, project_id, name)
+		VALUES (?, ?, ?), (?, ?, ?)
+	`, defID, projectID, "def-"+defID, otherDefID, projectID, "def-"+otherDefID).Exec(ctx)
+	require.NoError(t, err)
+
+	insertAgent := func(id, name, strategyType string, linkDef *string) {
+		t.Helper()
+		_, ierr := db.NewRaw(`
+			INSERT INTO kb.agents (id, project_id, name, strategy_type, cron_schedule, trigger_type, enabled, agent_definition_id)
+			VALUES (?, ?, ?, ?, '0 0 * * *', 'manual', true, ?)
+		`, id, projectID, name, strategyType, linkDef).Exec(ctx)
+		require.NoError(t, ierr)
+	}
+	insertAgent(fkAgentID, "fk-agent", "manual", &defID)
+	insertAgent(chatAgentID, "chat-agent", "chat-session:"+defID, nil)
+	insertAgent(agentDefAgentID, "agent-def-agent", "agent-def:"+defID, nil)
+	insertAgent(unrelatedAgentID, "unrelated-agent", "manual", nil)
+	insertAgent(otherDefAgentID, "other-def-agent", "chat-session:"+otherDefID, nil)
+
+	t.Cleanup(func() {
+		_, _ = db.NewRaw(`DELETE FROM kb.agents WHERE project_id = ?`, projectID).Exec(context.Background())
+		_, _ = db.NewRaw(`DELETE FROM kb.agent_definitions WHERE project_id = ?`, projectID).Exec(context.Background())
+	})
+
+	dir := newAgentDirectory(db)
+	refs, err := dir.FindAgentRefsByDefinitionID(ctx, projectID, defID)
+	require.NoError(t, err)
+	require.Len(t, refs, 3)
+	assert.Equal(t, fkAgentID, refs[0].ID, "FK-linked runtime agent must be first")
+
+	got := map[string]bool{refs[0].ID: true, refs[1].ID: true, refs[2].ID: true}
+	assert.True(t, got[chatAgentID], "chat-session marker row included")
+	assert.True(t, got[agentDefAgentID], "agent-def marker row included")
+	assert.False(t, got[unrelatedAgentID], "unrelated agent excluded")
+	assert.False(t, got[otherDefAgentID], "other definition marker excluded")
+}

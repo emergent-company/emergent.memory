@@ -32,6 +32,12 @@ func (f *fakeOnceRepo) FindByID(_ context.Context, _ string, _ *string) (*Agent,
 func (f *fakeOnceRepo) FindDefinitionByID(_ context.Context, _ string, _ *string) (*AgentDefinition, error) {
 	return f.def, nil
 }
+
+// ResolveDefinitionForAgent mirrors the real repository's FK/marker/name
+// resolution; the fake simply returns the configured definition.
+func (f *fakeOnceRepo) ResolveDefinitionForAgent(_ context.Context, _ *Agent) (*AgentDefinition, error) {
+	return f.def, nil
+}
 func (f *fakeOnceRepo) FindRunByID(_ context.Context, _ string) (*AgentRun, error) {
 	return f.run, nil
 }
@@ -97,6 +103,42 @@ func TestRunAgentOnceSuccess(t *testing.T) {
 	require.NotNil(t, runner.gotReq.Timeout)
 	assert.Equal(t, defaultAgentOnceTimeout, *runner.gotReq.Timeout)
 	assert.Equal(t, "ping", runner.gotReq.UserMessage)
+}
+
+// B1: FK-less runtime agents (chat dummies and OpenAI-compat rows carry no
+// agent_definition_id) must still have their backing definition resolved and
+// attached to the execute request, exactly like FK-linked agents.
+func TestRunAgentOnceResolvesDefinitionForFKLessAgent(t *testing.T) {
+	definition := &AgentDefinition{ID: "def-1", ProjectID: "proj-1", Name: "Shared"}
+	tests := []struct {
+		name  string
+		agent *Agent
+	}{
+		{
+			name:  "FK-linked agent",
+			agent: &Agent{ID: "agent-1", ProjectID: "proj-1", Name: "Alpha", Enabled: true, AgentDefinitionID: strPtr("def-1")},
+		},
+		{
+			name:  "FK-less chat marker agent",
+			agent: &Agent{ID: "agent-2", ProjectID: "proj-1", Name: "Chat session for Shared", Enabled: true, StrategyType: "chat-session:def-1"},
+		},
+		{
+			name:  "FK-less agent-def marker agent",
+			agent: &Agent{ID: "agent-3", ProjectID: "proj-1", Name: "Shared", Enabled: true, StrategyType: "agent-def:def-1"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeOnceRepo{agent: tt.agent, def: definition, msgs: assistantMessages("ok")}
+			runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
+			h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+			_, _, err := h.RunAgentOnce(context.Background(), "proj-1", tt.agent.ID, "ping", mcp.AgentRunBudget{})
+			require.NoError(t, err)
+			require.NotNil(t, runner.gotReq.AgentDefinition, "definition must be attached to the execute request")
+			assert.Equal(t, "def-1", runner.gotReq.AgentDefinition.ID)
+		})
+	}
 }
 
 // H1: the reply MUST come from the agent-authored turn and MUST NOT leak

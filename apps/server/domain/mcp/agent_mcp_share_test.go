@@ -231,6 +231,74 @@ func TestCreateAgentShareDuplicateName(t *testing.T) {
 	assertAppError(t, err, 409)
 }
 
+// CreateAgentShare accepts an agent-definition ID and binds the share to the
+// definition's resolved runtime agent.
+func TestCreateAgentShareAcceptsDefinitionID(t *testing.T) {
+	store, tok, dir := agentShareFakes()
+	dir.definitions = map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "Beta", Enabled: true}}}
+	svc := newAgentShareService(store, tok, dir, nil)
+
+	resp, err := svc.CreateAgentShare(context.Background(), "proj-1", "user-1", "http://h", agentDefA, CreateAgentMCPShareRequest{Name: "From Def"})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, agentB, resp.AgentID)
+	assert.Equal(t, "http://h/api/mcp/agents/"+agentB, resp.MCPURL)
+
+	share := store.byID[resp.ID]
+	require.NotNil(t, share)
+	assert.Equal(t, agentB, share.AgentID)
+}
+
+// An ID that is neither a runtime agent nor a project definition is not found.
+func TestCreateAgentShareUnresolvableIDNotFound(t *testing.T) {
+	store, tok, dir := agentShareFakes()
+	svc := newAgentShareService(store, tok, dir, nil)
+
+	_, err := svc.CreateAgentShare(context.Background(), "proj-1", "user-1", "", agentDefUnknown, CreateAgentMCPShareRequest{Name: "X"})
+	assertAppError(t, err, 404)
+	assert.Empty(t, store.byID)
+}
+
+// A definition that exists but has no runtime agent yet is a validation error
+// on the write path (422), distinct from an unknown id (404).
+func TestCreateAgentShareDefinitionWithoutRuntimeAgentRejected(t *testing.T) {
+	store, tok, dir := agentShareFakes()
+	dir.definitions = map[string][]AgentRef{agentDefEmpty: nil}
+	svc := newAgentShareService(store, tok, dir, nil)
+
+	_, err := svc.CreateAgentShare(context.Background(), "proj-1", "user-1", "", agentDefEmpty, CreateAgentMCPShareRequest{Name: "X"})
+	assertAppError(t, err, 422)
+	assert.Empty(t, store.byID)
+}
+
+// The same definition is simply "no such agent" for listing: an empty list, not
+// an error.
+func TestListAgentSharesDefinitionWithoutRuntimeAgentIsEmpty(t *testing.T) {
+	store, tok, dir := agentShareFakes()
+	dir.definitions = map[string][]AgentRef{agentDefEmpty: nil}
+	store.byID["s1"] = &AgentMCPShare{ID: "s1", ProjectID: "proj-1", AgentID: agentB, Name: "Team B", TokenID: "tok-1"}
+	svc := newAgentShareService(store, tok, dir, nil)
+
+	resp, err := svc.ListAgentShares(context.Background(), "proj-1", "user-1", agentDefEmpty)
+	require.NoError(t, err)
+	assert.Zero(t, resp.Total)
+}
+
+// ListAgentShares accepts an agent-definition ID and lists the shares stored
+// under the resolved runtime agent.
+func TestListAgentSharesResolvesDefinitionID(t *testing.T) {
+	store, tok, dir := agentShareFakes()
+	dir.definitions = map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "Beta", Enabled: true}}}
+	store.byID["s1"] = &AgentMCPShare{ID: "s1", ProjectID: "proj-1", AgentID: agentB, Name: "Team B", TokenID: "tok-1"}
+	svc := newAgentShareService(store, tok, dir, nil)
+
+	resp, err := svc.ListAgentShares(context.Background(), "proj-1", "user-1", agentDefA)
+	require.NoError(t, err)
+	require.Len(t, resp.Shares, 1)
+	assert.Equal(t, "s1", resp.Shares[0].ID)
+	assert.Equal(t, agentB, resp.Shares[0].AgentID)
+}
+
 func TestListAgentSharesOmitsToken(t *testing.T) {
 	store, tok, dir := agentShareFakes()
 	store.byID["s1"] = &AgentMCPShare{ID: "s1", ProjectID: "proj-1", AgentID: agentA, Name: "Team A", TokenID: "tok-1"}

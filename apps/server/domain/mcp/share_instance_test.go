@@ -24,6 +24,11 @@ const (
 	agentB       = "00000000-0000-0000-0000-0000000000b1"
 	agentC       = "00000000-0000-0000-0000-0000000000c1"
 	agentDeleted = "00000000-0000-0000-0000-00000000dead"
+	// Valid-UUID agent-definition IDs (kb.agent_definitions).
+	agentDefA       = "00000000-0000-0000-0000-0000000000d1"
+	agentDefB       = "00000000-0000-0000-0000-0000000000d2"
+	agentDefEmpty   = "00000000-0000-0000-0000-0000000000d3"
+	agentDefUnknown = "00000000-0000-0000-0000-0000000000d4"
 )
 
 // ============================================================================
@@ -200,6 +205,11 @@ func (f *fakeTokenSvc) GetUserProjectRole(_ context.Context, _, _ string) (strin
 
 type fakeAgentDir struct {
 	agents []AgentRef
+	// definitions maps an agent-definition ID (kb.agent_definitions) to the
+	// runtime agents it resolves to. A definition with no runtime agent is
+	// represented by an empty/nil slice so AgentDefinitionExists still reports
+	// it as existing.
+	definitions map[string][]AgentRef
 }
 
 func (f *fakeAgentDir) ListProjectAgents(_ context.Context, _ string) ([]AgentRef, error) {
@@ -214,6 +224,21 @@ func (f *fakeAgentDir) FindProjectAgentByID(_ context.Context, _, id string) (*A
 		}
 	}
 	return nil, nil
+}
+
+func (f *fakeAgentDir) FindAgentRefsByDefinitionID(_ context.Context, _, definitionID string) ([]AgentRef, error) {
+	refs, ok := f.definitions[definitionID]
+	if !ok {
+		return nil, nil
+	}
+	out := make([]AgentRef, len(refs))
+	copy(out, refs)
+	return out, nil
+}
+
+func (f *fakeAgentDir) AgentDefinitionExists(_ context.Context, _, definitionID string) (bool, error) {
+	_, ok := f.definitions[definitionID]
+	return ok, nil
 }
 
 func (f *fakeAgentDir) FindAgentIDByName(_ context.Context, _, name string) (string, bool, error) {
@@ -889,6 +914,114 @@ func TestCreateShareInstanceAgentsDeduped(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp.Agents)
 	assert.Equal(t, []string{agentA}, *resp.Agents)
+}
+
+// TestNormalizeAgentAllowlistResolvesDefinitionIDs covers the fix: an allowlist
+// entry may be an agent-definition ID, which resolves to the definition's
+// runtime agent(s) and is stored as runtime IDs. A definition with no runtime
+// agent, and a truly unknown ID, are both rejected.
+func TestNormalizeAgentAllowlistResolvesDefinitionIDs(t *testing.T) {
+	tests := []struct {
+		name    string
+		dir     *fakeAgentDir
+		agents  []string
+		want    []uuid.UUID
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:   "runtime agent accepted",
+			dir:    &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "alpha"}}},
+			agents: []string{agentA},
+			want:   []uuid.UUID{uuid.MustParse(agentA)},
+		},
+		{
+			name:   "definition resolves to one runtime agent",
+			dir:    &fakeAgentDir{definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}}}},
+			agents: []string{agentDefA},
+			want:   []uuid.UUID{uuid.MustParse(agentB)},
+		},
+		{
+			name:   "definition resolves to several runtime agents",
+			dir:    &fakeAgentDir{definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}, {ID: agentC, Name: "gamma"}}}},
+			agents: []string{agentDefA},
+			want:   []uuid.UUID{uuid.MustParse(agentB), uuid.MustParse(agentC)},
+		},
+		{
+			name: "definition and runtime agent deduped",
+			dir: &fakeAgentDir{
+				agents:      []AgentRef{{ID: agentB, Name: "beta"}},
+				definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}}},
+			},
+			agents: []string{agentB, agentDefA},
+			want:   []uuid.UUID{uuid.MustParse(agentB)},
+		},
+		{
+			name:    "definition with no runtime agent rejected",
+			dir:     &fakeAgentDir{definitions: map[string][]AgentRef{agentDefEmpty: nil}},
+			agents:  []string{agentDefEmpty},
+			wantErr: true,
+			errMsg:  "has no runtime agent",
+		},
+		{
+			name:    "unknown id rejected",
+			dir:     &fakeAgentDir{},
+			agents:  []string{agentDefUnknown},
+			wantErr: true,
+			errMsg:  "unknown agent",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &Service{agentDir: tt.dir}
+			got, err := svc.normalizeAgentAllowlist(context.Background(), "proj", tt.agents)
+			if tt.wantErr {
+				require.Error(t, err)
+				var appErr *apperror.Error
+				require.ErrorAs(t, err, &appErr)
+				assert.Equal(t, 422, appErr.HTTPStatus)
+				assert.Equal(t, "validation_error", appErr.Code)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCreateShareInstanceDefinitionIDPersistsRuntimeAgent(t *testing.T) {
+	store := newFakeShareStore()
+	tok := &fakeTokenSvc{createToken: "emt", createID: "tok-1"}
+	dir := &fakeAgentDir{definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}}}}
+	svc := newTestService(store, tok, dir)
+
+	resp, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{
+		Name:   "X",
+		Agents: []string{agentDefA},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Agents)
+	assert.Equal(t, []string{agentB}, *resp.Agents)
+	inst := store.byID[resp.ID]
+	require.NotNil(t, inst)
+	assert.Equal(t, []uuid.UUID{uuid.MustParse(agentB)}, inst.AllowedAgents)
+}
+
+func TestUpdateShareInstanceDefinitionIDPersistsRuntimeAgent(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1"}
+	dir := &fakeAgentDir{definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}, {ID: agentC, Name: "gamma"}}}}
+	svc := newTestService(store, &fakeTokenSvc{}, dir)
+
+	agents := []string{agentDefA}
+	dto, err := svc.UpdateShareInstance(context.Background(), "proj", "user", "i1", UpdateShareInstanceRequest{Agents: &agents})
+	require.NoError(t, err)
+	require.NotNil(t, dto.Agents)
+	assert.ElementsMatch(t, []string{agentB, agentC}, *dto.Agents)
+	assert.ElementsMatch(t, []uuid.UUID{uuid.MustParse(agentB), uuid.MustParse(agentC)}, store.byID["i1"].AllowedAgents)
 }
 
 func TestResolveInstanceScopeRevokedIsNil(t *testing.T) {
