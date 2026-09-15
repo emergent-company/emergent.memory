@@ -155,6 +155,8 @@ def main() -> None:
     if has_label(pr, repo):
         print(f"Label {LABEL} present; skipping auto-fix (loop cap).")
         return
+    # Ensure the label exists — gh pr edit --add-label does NOT auto-create it.
+    run(["gh", "label", "create", LABEL, "--color", "0366d6", "--force"])
     # Claim the loop cap before doing work so concurrent runs cannot both push.
     claim = run(["gh", "pr", "edit", pr, "--add-label", LABEL])
     if claim.returncode != 0:
