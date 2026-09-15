@@ -339,7 +339,16 @@ templ OrgLandingPage(data orgPageData) {
 											@table.TableCell("", nil) {
 												<div class="min-w-0">
 													<div class="flex flex-wrap items-center gap-2">
-														<span class="truncate text-sm font-medium">{ p.Name }</span>
+														if p.PendingDeletion() {
+															<span class="truncate text-sm font-medium">{ p.Name }</span>
+														} else {
+															<button
+																type="button"
+																class="truncate text-left text-sm font-medium hover:text-primary hover:underline"
+																title={ "Open " + p.Name }
+																hx-post={ templ.URL("/projects/activate?projectId=" + p.ID) }
+															>{ p.Name }</button>
+														}
 														if p.PendingDeletion() {
 															@ui.Badge(ui.BadgeProps{
 																Label:   "Scheduled for deletion",
