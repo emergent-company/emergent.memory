@@ -100,7 +100,10 @@ def extract_json(body: str):
 
 def apply_edit(path: str, old: str, new: str) -> bool:
     try:
-        with open(path, encoding="utf-8", newline="") as f:
+        # O_NOFOLLOW: refuse to read through a symlink (the write path uses
+        # os.replace which does not follow symlinks, so the target is protected).
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "r", encoding="utf-8", newline="") as f:
             src = f.read()
     except OSError:
         return False
@@ -189,6 +192,12 @@ def main() -> None:
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     pr = pr_number()
     branch = head_branch()
+
+    # Guard: never push to a protected/base branch (supply-chain risk).
+    base = run(["gh", "pr", "view", pr, "--json", "baseRefName",
+                "-q", ".baseRefName"]).stdout.strip()
+    if branch in ("main", "master") or (base and branch == base):
+        sys.exit(f"refusing to push to protected branch: {branch}")
 
     # Ensure the label exists — gh pr edit --add-label does NOT auto-create it.
     run(["gh", "label", "create", LABEL, "--color", "0366d6", "--force"])
