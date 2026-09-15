@@ -156,7 +156,7 @@ def main() -> None:
         # deepseek-flash is a thinking model. Disable thinking via extra_body —
         # LiteLLM filters top-level `thinking` when the deployment isn't a native
         # deepseek provider (drop_params), but extra_body is merged verbatim.
-        "model": "deepseek-flash",
+        "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
         "extra_body": {"thinking": {"type": "disabled"}},
