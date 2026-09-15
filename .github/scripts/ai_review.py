@@ -173,11 +173,21 @@ def main() -> None:
         resp = json.loads(r.read())
 
     msg = resp["choices"][0]["message"]
-    content = msg.get("content") or msg.get("reasoning_content") or ""
+    content = msg.get("content") or ""
     if not content.strip():
         sys.exit("review model returned empty content")
     review = parse_review(content)
-    issues = review.get("issues") or []
+    # Only keep issues whose path appears in the diff; the fixer will otherwise
+    # happily edit unrelated files based on a hallucinated path.
+    changed = set()
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            changed.add(line[6:].strip())
+    issues = [
+        i for i in (review.get("issues") or [])
+        if i.get("path") in changed
+    ]
+    review["issues"] = issues
     verdict = review.get("verdict", "REQUEST_CHANGES")
 
     # GITHUB_TOKEN cannot submit an APPROVE review (GitHub blocks bot approvals).

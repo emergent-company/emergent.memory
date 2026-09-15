@@ -108,16 +108,20 @@ def apply_edit(path: str, old: str, new: str) -> bool:
         first, last = anchors[0], anchors[-1]
         src_lines = src_n.split("\n")
         i0 = i1 = None
+        matches = []
         for i, l in enumerate(src_lines):
-            if i0 is None and l.strip() == first:
-                i0 = i
+            if l.strip() == first:
                 if first == last:
-                    i1 = i
-                    break
-            elif i0 is not None and l.strip() == last:
-                i1 = i
-                break
-        if i0 is not None and i1 is not None and i0 <= i1:
+                    matches.append((i, i))
+                    continue
+                for j in range(i + 1, len(src_lines)):
+                    if src_lines[j].strip() == last:
+                        matches.append((i, j))
+                        break
+        if len(matches) != 1:
+            return False
+        i0, i1 = matches[0]
+        if i0 <= i1:
             if new_n.strip():
                 repl = new_n.rstrip("\n").split("\n")
             else:
@@ -150,6 +154,14 @@ def main() -> None:
     if has_label(pr, repo):
         print(f"Label {LABEL} present; skipping auto-fix (loop cap).")
         return
+    # Claim the loop cap before doing work so concurrent runs cannot both push.
+    claim = run(["gh", "pr", "edit", pr, "--add-label", LABEL])
+    if claim.returncode != 0:
+        print("could not claim label; aborting to avoid duplicate pushes")
+        return
+    if has_label(pr, repo):
+        print("lost label race; skipping auto-fix.")
+        return
 
     review = latest_review_json(pr, repo)
     if review is None:
@@ -175,11 +187,17 @@ def main() -> None:
             skipped.append((it, "empty or no-op edit"))
             continue
         norm = os.path.normpath(path)
+        real_root = os.path.realpath(os.getcwd())
+        real_target = os.path.realpath(os.path.join(real_root, norm))
         if (
-            os.path.isabs(norm)
-            or norm == ".."
+            os.path.isabs(path)
+            or path != norm
+            or norm in ("..", ".")
             or norm.startswith(".." + os.sep)
+            or norm == ".git"
             or norm.startswith(".git" + os.sep)
+            or not (real_target == real_root
+                    or real_target.startswith(real_root + os.sep))
         ):
             skipped.append((it, "unsafe path"))
             continue
@@ -204,7 +222,7 @@ def main() -> None:
 
     # Compile-check before committing.
     if changed_go:
-        r = run(["go", "build", "./..."])
+        r = run(["go", "build", "-o", os.devnull, "./..."])
         if r.returncode != 0:
             body = (
                 "## AI auto-fix: build failed\n\n"
@@ -218,7 +236,8 @@ def main() -> None:
     # Commit and push to the PR head branch.
     run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
     run(["git", "config", "user.name", "github-actions[bot]"])
-    run(["git", "add", "-A"])
+    for it in applied:
+        run(["git", "add", "--", it.get("path")])
     r = run(["git", "commit", "-m",
              f"fix: address AI review feedback {COMMIT_MARKER}"])
     if r.returncode != 0:
@@ -230,11 +249,23 @@ def main() -> None:
             f"https://x-access-token:{token}@github.com/{repo}.git"
             if token else "origin"
         )
-        r = run(["git", "push", push_url, f"HEAD:refs/heads/{branch}"])
+        # Push via credential env, never embedding the token in argv.
+        env = dict(os.environ)
+        env["GIT_ASKPASS"] = "true"
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        run(["git", "config", "--local", "http.https://github.com/.extraheader",
+             f"AUTHORIZATION: basic {base64.b64encode(f'x-access-token:{token}'.encode()).decode()}"])
+        try:
+            r = run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], env=env)
+        finally:
+            run(["git", "config", "--local", "--unset", "http.https://github.com/.extraheader"])
         if r.returncode != 0:
+            out = (r.stderr or r.stdout)[-4000:]
+            if token:
+                out = out.replace(token, "***")
             body = (
                 "## AI auto-fix: push failed\n\n"
-                "```\n" + (r.stderr or r.stdout)[-4000:] + "\n```\n"
+                "```\n" + out + "\n```\n"
             )
             post_comment(repo, pr, body)
             print("git push failed.")
