@@ -16,7 +16,8 @@ import sys
 import tempfile
 
 JSON_FENCE = "ai-review-json"
-LABEL = "ai-auto-fixed"
+# Loop cap: number of auto-fix passes allowed per PR (counted by [ai-fix] commits).
+MAX_PASSES = int(os.environ.get("MAX_FIX_PASSES", "3"))
 FIX_SEVERITIES = ("must_fix", "should_fix")
 COMMIT_MARKER = "[ai-fix]"
 
@@ -48,14 +49,14 @@ def head_branch() -> str:
     return r.stdout.strip() or "main"
 
 
-def has_label(pr: str, repo: str) -> bool:
+def fix_pass_count(repo: str, pr: str) -> int:
+    """Count how many auto-fix commits are already on the PR."""
     r = run(["gh", "pr", "view", pr, "-R", repo,
-             "--json", "labels", "-q", ".labels[].name"])
+             "--json", "commits", "-q", "[.commits[].messageHeadline]"])
     if r.returncode != 0:
-        # Loud failure, not fail-closed-to-true: a broken `gh` must not be
-        # mistaken for "label present" (which would silently skip the fix).
-        sys.exit(f"gh pr view failed (cannot check label): {r.stderr.strip()}")
-    return LABEL in (r.stdout or "").splitlines()
+        # Fail closed: treat as already at the cap rather than risk a runaway loop.
+        return MAX_PASSES
+    return sum(1 for c in (r.stdout or "").splitlines() if COMMIT_MARKER in c)
 
 
 def latest_review_json(pr: str, repo: str):
@@ -200,16 +201,12 @@ def main() -> None:
     if branch in ("main", "master") or (base and branch == base):
         sys.exit(f"refusing to push to protected branch: {branch}")
 
-    # Ensure the label exists — gh pr edit --add-label does NOT auto-create it.
-    run(["gh", "label", "create", LABEL, "--color", "0366d6", "--force"])
-    # Loop cap: a prior run already auto-fixed this PR.
-    if has_label(pr, repo):
-        print(f"Label {LABEL} present; skipping auto-fix (loop cap).")
+    # Loop cap: allow at most MAX_PASSES auto-fix passes (counted by [ai-fix]
+    # commits already on the PR), then hand off to a human. Mutual exclusion is
+    # the workflow-level concurrency group (one run per PR).
+    if fix_pass_count(repo, pr) >= MAX_PASSES:
+        print(f"{MAX_PASSES} auto-fix passes already applied; skipping (loop cap).")
         return
-    # No early label claim: the label is added only after a successful push
-    # (below), so early returns (no review, no edits, build/push failure) leave
-    # the cap off and a corrected run can retry. Mutual exclusion is the
-    # workflow-level concurrency group (one run per PR).
 
     review = latest_review_json(pr, repo)
     if review is None:
@@ -341,15 +338,14 @@ def main() -> None:
             print("git push failed.")
             sys.exit(1)
 
-    # Summary comment + loop-cap label.
+    # Summary comment.
     lines = ["## AI auto-fix applied", ""]
     for it in applied:
         lines.append(f"- ✅ `{it.get('path','?')}` — {it.get('title','')}")
     for it, why in skipped:
         lines.append(f"- ⏭️ `{it.get('path','?')}` — {it.get('title','')} ({why})")
     post_comment(repo, pr, "\n".join(lines))
-    run(["gh", "pr", "edit", pr, "--add-label", LABEL])
-    print(f"Applied {len(applied)} edits, skipped {len(skipped)}, labeled {LABEL}.")
+    print(f"Applied {len(applied)} edits, skipped {len(skipped)}.")
 
 
 if __name__ == "__main__":
