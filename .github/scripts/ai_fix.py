@@ -59,6 +59,22 @@ def fix_pass_count(repo: str, pr: str) -> int:
     return sum(1 for c in (r.stdout or "").splitlines() if COMMIT_MARKER in c)
 
 
+def module_roots(paths):
+    """Return the set of Go module roots (nearest go.mod ancestor) for paths."""
+    roots = set()
+    for p in paths:
+        d = os.path.dirname(p) or "."
+        while True:
+            if os.path.exists(os.path.join(d, "go.mod")):
+                roots.add(d)
+                break
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+    return roots
+
+
 def latest_review_json(pr: str, repo: str):
     # --paginate: the reviews endpoint defaults to 30/page; without it the
     # newest review can fall on a later page and be missed entirely.
@@ -223,7 +239,7 @@ def main() -> None:
 
     applied = []
     skipped = []
-    changed_go = False
+    changed_go_paths = []
     for it in issues:
         path = it.get("path")
         old = it.get("old")
@@ -258,7 +274,7 @@ def main() -> None:
         if apply_edit(norm, old, new):
             applied.append(it)
             if norm.endswith(".go"):
-                changed_go = True
+                changed_go_paths.append(norm)
         else:
             skipped.append((it, "old text not found in current file"))
 
@@ -274,21 +290,21 @@ def main() -> None:
         print("No edits applied; left for human.")
         return
 
-    # Compile-check before committing.
-    if changed_go:
-        # `go build -o <file> ./...` fails on multi-package builds; build with
-        # no -o (binaries land in package dirs, not staged since we `git add`
-        # only the edited paths).
-        r = run(["go", "build", "./..."])
-        if r.returncode != 0:
-            body = (
-                "## AI auto-fix: build failed\n\n"
-                "Edits applied but `go build ./...` failed. Changes NOT committed.\n\n"
-                "```\n" + (r.stderr or r.stdout)[-4000:] + "\n```\n"
-            )
-            post_comment(repo, pr, body)
-            print("go build failed; not committing.")
-            sys.exit(1)
+    # Compile-check before committing: build each affected Go module root (the
+    # repo root is not itself a module, so a root-level `go build ./...` fails).
+    if changed_go_paths:
+        for root in sorted(module_roots(changed_go_paths)):
+            r = run(["go", "build", "./..."], cwd=root)
+            if r.returncode != 0:
+                body = (
+                    "## AI auto-fix: build failed\n\n"
+                    f"Edits applied but `go build ./...` failed in `{root}`. "
+                    "Changes NOT committed.\n\n"
+                    "```\n" + (r.stderr or r.stdout)[-4000:] + "\n```\n"
+                )
+                post_comment(repo, pr, body)
+                print(f"go build failed in {root}; not committing.")
+                sys.exit(1)
 
     # Commit and push to the PR head branch.
     run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
