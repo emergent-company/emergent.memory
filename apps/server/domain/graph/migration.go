@@ -355,7 +355,10 @@ func (m *SchemaMigrator) RollbackObject(
 		result.RestoredProps = append(result.RestoredProps, propName)
 	}
 
-	obj.MigrationArchive = obj.MigrationArchive[:archiveIndex]
+	// Splice out only the matched entry, preserving any newer archive entries.
+	// Truncating at archiveIndex (the old behaviour) silently dropped newer
+	// entries, which is exactly the multi-hop case the archive exists to support.
+	obj.MigrationArchive = append(obj.MigrationArchive[:archiveIndex], obj.MigrationArchive[archiveIndex+1:]...)
 
 	result.Success = true
 	result.ToVersion = targetArchive["from_version"].(string)

@@ -650,3 +650,44 @@ func TestSchemaMigration_RollbackRejectsUUIDArchiveKey(t *testing.T) {
 	assert.Nil(t, obj.Properties["old_field"], "nothing should have been restored")
 	assert.Len(t, obj.MigrationArchive, 1, "archive entry must be left untouched")
 }
+
+// TestSchemaMigration_RollbackPreservesNewerArchiveEntries guards issue #522:
+// rolling back an out-of-order hop must splice out only the matched entry and
+// keep newer archive entries, not truncate the archive and silently discard
+// them. Archive [1.0.0 → 2.0.0, 2.0.0 → 3.0.0]; rollback to 2.0.0 must leave
+// the 2.0.0 → 3.0.0 entry intact.
+func TestSchemaMigration_RollbackPreservesNewerArchiveEntries(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	migrator := NewSchemaMigrator(NewPropertyValidator(), logger)
+
+	obj := &GraphObject{
+		ID:            uuid.New(),
+		Type:          "Person",
+		SchemaVersion: stringPtr("3.0.0"),
+		Properties:    map[string]any{"name": "John Doe"},
+		MigrationArchive: []map[string]any{
+			{
+				"from_version": "1.0.0",
+				"to_version":   "2.0.0",
+				"dropped_data": map[string]any{"v1_field": "dropped going 1→2"},
+			},
+			{
+				"from_version": "2.0.0",
+				"to_version":   "3.0.0",
+				"dropped_data": map[string]any{"v2_field": "dropped going 2→3"},
+			},
+		},
+	}
+
+	rbRes := migrator.RollbackObject(obj, "2.0.0")
+	require.True(t, rbRes.Success, "rollback should match the 2.0.0 archive: %s", rbRes.Error)
+	assert.Equal(t, "1.0.0", rbRes.ToVersion, "rollback reports the restored from_version")
+	assert.Contains(t, rbRes.RestoredProps, "v1_field")
+	assert.Equal(t, "dropped going 1→2", obj.Properties["v1_field"], "matched entry data restored")
+
+	require.Len(t, obj.MigrationArchive, 1, "only the matched entry is consumed")
+	survivor := obj.MigrationArchive[0]
+	assert.Equal(t, "3.0.0", survivor["to_version"], "newer archive entry survives the rollback")
+	assert.Equal(t, "2.0.0", survivor["from_version"], "surviving entry keeps its from_version")
+	assert.Equal(t, map[string]any{"v2_field": "dropped going 2→3"}, survivor["dropped_data"], "surviving entry keeps its dropped_data")
+}
