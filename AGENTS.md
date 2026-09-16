@@ -105,6 +105,7 @@ Single OpenSpec root: `./openspec` (specs, changes, archive, config). Run all `o
 
 - **Placement**: a cross-app feature (e.g. backend + UI) is ONE change under `./openspec/changes/`; capability specs live at `./openspec/specs/<capability>/spec.md`.
 - **Capability naming**: app-specific capabilities are prefixed — `web-*`, `ios-*`, `mac-*`, `cli-*`, `e2e-*`, `mcp-*`; unprefixed names only for genuinely cross-cutting capabilities.
+- **Legacy spec-kit artifacts** (`specs/001-004`) were removed in favor of this single root — recoverable from git history.
 
 ## Hot Reload — DO NOT restart after code changes
 
