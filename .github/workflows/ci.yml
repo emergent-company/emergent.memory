@@ -5,10 +5,42 @@ on:
     branches: [main]
     paths:
       - '.github/**'
+      - 'docs/**'
+      - 'openspec/**'
+      - 'sdk/**'
+      - 'swift/**'
+      - 'site/**'
+      - 'tools/**'
+      - 'pkg/**'
+      - 'bench/**'
+      - '*.md'
+      - '*.yml'
+      - '*.yaml'
+      - '*.py'
+      - '*.sh'
+      - 'go.mod'
+      - 'go.work'
+      - 'go.work.sum'
   pull_request:
     branches: [main]
     paths:
       - '.github/**'
+      - 'docs/**'
+      - 'openspec/**'
+      - 'sdk/**'
+      - 'swift/**'
+      - 'site/**'
+      - 'tools/**'
+      - 'pkg/**'
+      - 'bench/**'
+      - '*.md'
+      - '*.yml'
+      - '*.yaml'
+      - '*.py'
+      - '*.sh'
+      - 'go.mod'
+      - 'go.work'
+      - 'go.work.sum'
 
 permissions:
   contents: read
