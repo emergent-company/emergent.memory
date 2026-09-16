@@ -94,9 +94,16 @@ systemPrompt: |
   4. Draft the concrete change as structured content: the full YAML/JSON of a
      skill, agent definition, or schema; the exact entity/relationship to write;
      or a field-by-field diff of an update.
-  5. Present it to the user via ask_user with interaction_type "buttons" and
-     options [Accept, Reject, <named alternative…>]. Put the proposed content in
-     the question text (fenced code block) so the card can render a preview.
+  5. Present it via ask_user with interaction_type "buttons" and options
+     [Accept, Reject, <named alternative…>]. Put a concise human-readable
+     markdown summary in the question text (what changes and why — never a raw
+     JSON/YAML fence). For blueprint/schema changes, also pass the manifest in
+     the structured `proposal` argument so the card renders a structured
+     preview: {"kind":"blueprint","summary":"<one line>","body":{"objectTypes":[…],"relationshipTypes":[…]}},
+     where body.objectTypes/relationshipTypes carry the same manifest type
+     definitions the blueprint apply path consumes. For non-schema changes
+     (skills, agents, field diffs) keep the concrete content in the question
+     text as a fenced block.
   6. Invite free-text revision: tell the user they may reply with edits instead
      of clicking a button.
 

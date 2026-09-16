@@ -92,14 +92,17 @@ type AskUserToolDeps struct {
 
 // CreateQuestionParams holds parameters for creating and emitting an AgentQuestion.
 type CreateQuestionParams struct {
-	Repo            *Repository
-	Logger          *slog.Logger
-	ProjectID       string
-	AgentID         string
-	RunID           string
-	UserID          string
-	EventsSvc       *events.Service
-	Question        string
+	Repo      *Repository
+	Logger    *slog.Logger
+	ProjectID string
+	AgentID   string
+	RunID     string
+	UserID    string
+	EventsSvc *events.Service
+	Question  string
+	// Proposal is the optional structured proposal envelope {kind, summary, body}
+	// attached to the question. Nil for plain-text questions.
+	Proposal        map[string]any
 	Options         []AgentQuestionOption
 	InteractionType AgentQuestionInteractionType
 	Placeholder     string
@@ -129,6 +132,7 @@ func CreateAndEmitQuestion(ctx context.Context, p CreateQuestionParams) (*AgentQ
 		AgentID:         p.AgentID,
 		ProjectID:       p.ProjectID,
 		Question:        p.Question,
+		Proposal:        p.Proposal,
 		Options:         p.Options,
 		InteractionType: p.InteractionType,
 		Placeholder:     p.Placeholder,
@@ -250,6 +254,16 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 				}
 			}
 
+			// Parse proposal (optional structured envelope {kind, summary, body}).
+			// An invalid proposal is dropped silently so the question degrades to
+			// plain text — the run must not hard-error on a malformed proposal.
+			proposal := parseProposal(args)
+			if _, present := args["proposal"]; present && proposal == nil {
+				deps.Logger.Warn("ask_user: invalid proposal dropped, proceeding with plain-text question",
+					slog.Any("proposal", args["proposal"]),
+				)
+			}
+
 			q, err := CreateAndEmitQuestion(ctx, CreateQuestionParams{
 				Repo:            deps.Repo,
 				Logger:          deps.Logger,
@@ -259,6 +273,7 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 				UserID:          deps.UserID,
 				EventsSvc:       deps.EventsSvc,
 				Question:        question,
+				Proposal:        proposal,
 				Options:         options,
 				InteractionType: interactionType,
 				Placeholder:     placeholder,
@@ -348,22 +363,26 @@ func emitQuestionSSEEventDirect(eventsSvc *events.Service, projectID string, q *
 	if eventsSvc == nil {
 		return
 	}
+	data := map[string]any{
+		"type":             "agent_question",
+		"question_id":      q.ID,
+		"run_id":           q.RunID,
+		"question":         q.Question,
+		"options":          q.Options,
+		"interaction_type": q.InteractionType,
+		"placeholder":      q.Placeholder,
+		"max_length":       q.MaxLength,
+		"status":           "pending",
+	}
+	if q.Proposal != nil {
+		data["proposal"] = q.Proposal
+	}
 	eventsSvc.EmitCreated(
 		events.EntityNotification,
 		q.ID,
 		projectID,
 		&events.EmitOptions{
-			Data: map[string]any{
-				"type":             "agent_question",
-				"question_id":      q.ID,
-				"run_id":           q.RunID,
-				"question":         q.Question,
-				"options":          q.Options,
-				"interaction_type": q.InteractionType,
-				"placeholder":      q.Placeholder,
-				"max_length":       q.MaxLength,
-				"status":           "pending",
-			},
+			Data: data,
 		},
 	)
 }
@@ -402,6 +421,44 @@ func parseQuestionOptions(args map[string]any) []AgentQuestionOption {
 	}
 
 	return options
+}
+
+// parseProposal extracts and validates the optional "proposal" argument on
+// ask_user. It returns the validated envelope when present and well-formed, or
+// nil when the proposal is absent or invalid. Validation only checks the
+// envelope shape {kind: string, summary: string, body: object}; the body's
+// kind-specific contents are the gateway's concern. Invalid proposals are
+// dropped by the caller so the question proceeds as plain text (no tool error).
+func parseProposal(args map[string]any) map[string]any {
+	raw, ok := args["proposal"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	kind, _ := m["kind"].(string)
+	if kind == "" {
+		return nil
+	}
+
+	summary, _ := m["summary"].(string)
+	if summary == "" {
+		return nil
+	}
+
+	body, ok := m["body"]
+	if !ok {
+		return nil
+	}
+	if _, isObject := body.(map[string]any); !isObject {
+		return nil
+	}
+
+	return m
 }
 
 // CreateNotification inserts a notification record directly into kb.notifications.

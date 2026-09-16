@@ -563,11 +563,14 @@ type WebhookTriggerPayloadDTO struct {
 
 // AgentQuestionDTO is the API response format for an agent question.
 type AgentQuestionDTO struct {
-	ID              string                       `json:"id"`
-	RunID           string                       `json:"runId"`
-	AgentID         string                       `json:"agentId"`
-	ProjectID       string                       `json:"projectId"`
-	Question        string                       `json:"question"`
+	ID        string `json:"id"`
+	RunID     string `json:"runId"`
+	AgentID   string `json:"agentId"`
+	ProjectID string `json:"projectId"`
+	Question  string `json:"question"`
+	// Proposal is the optional structured proposal envelope {kind, summary, body}
+	// attached to the question. Nil/omitted for plain-text questions.
+	Proposal        map[string]any               `json:"proposal,omitempty"`
 	Options         []AgentQuestionOption        `json:"options"`
 	InteractionType AgentQuestionInteractionType `json:"interactionType"`
 	Placeholder     string                       `json:"placeholder,omitempty"`
@@ -590,6 +593,7 @@ func (q *AgentQuestion) ToDTO() *AgentQuestionDTO {
 		AgentID:         q.AgentID,
 		ProjectID:       q.ProjectID,
 		Question:        q.Question,
+		Proposal:        q.Proposal,
 		Options:         q.Options,
 		InteractionType: q.InteractionType,
 		Placeholder:     q.Placeholder,

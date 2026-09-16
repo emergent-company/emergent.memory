@@ -467,6 +467,7 @@
       card.innerHTML =
         '<div class="card-body gap-3 p-4">' +
         '<div class="q-body memory-md text-base leading-snug break-words">' + (evt.questionHtml || escapeHTML(q)) + '</div>' +
+        (evt.proposalHtml || "") +
         (hint ? '<p class="mt-0.5 text-xs text-base-content/50">' + escapeHTML(hint) + '</p>' : "") +
         '<div class="q-options flex flex-col gap-2"></div>' +
         (answered
@@ -682,6 +683,7 @@
         questionId: questionId,
         question: input.question || "Question",
         questionHtml: input.question_html,
+        proposalHtml: input.proposal_html,
         interactionType: input.interaction_type || "buttons",
         options: opts,
         placeholder: input.placeholder,
