@@ -22,7 +22,11 @@
      classification lives in the shared MemoryChatHost helper (chat-host.js is
      loaded globally in ui.templ alongside this file). */
   function reportError(err, context) {
-    if (window.MemoryChatHost && MemoryChatHost.isTransientError && MemoryChatHost.isTransientError(err)) {
+    var transient = false;
+    if (window.MemoryChatHost && typeof MemoryChatHost.isTransientError === "function") {
+      transient = !!MemoryChatHost.isTransientError(err);
+    }
+    if (transient) {
       console.warn("chat: " + context + " (transient, not reported):", err);
       return;
     }
@@ -923,7 +927,7 @@
       // result.network === true is a fetch transport failure; postJSON has
       // already discarded the original error, so rebuild it as the TypeError
       // fetch rejects with so reportError classifies it as transient.
-      if (result.network) reportError(new TypeError(result.error), "answer send failed");
+      if (result.network) reportError(new TypeError(result.error || "Failed to fetch"), "answer send failed");
       failStream("Could not send answer: " + result.error);
       return;
     }
