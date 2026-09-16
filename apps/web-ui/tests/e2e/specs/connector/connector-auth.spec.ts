@@ -24,8 +24,8 @@ const CLIENT_ID = process.env.E2E_CONNECTOR_CLIENT_ID || '390138928478289930';
 const REDIRECT_URI =
   process.env.E2E_CONNECTOR_REDIRECT || 'com.emergent.memory.connector://callback';
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
-const CONNECTOR_DIR = path.join(REPO_ROOT, 'connector');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..', '..');
+const CONNECTOR_DIR = path.join(REPO_ROOT, 'apps', 'connector.linux');
 
 interface RunResult {
   status: number | null;
@@ -59,19 +59,31 @@ function runCliJson<T>(bin: string, configPath: string, args: string[]): T {
   }
 }
 
-/** Build the connector once into the temp dir unless MEMORY_CONNECTOR_BIN is set. */
-function resolveConnectorBinary(tmpDir: string): string {
+/**
+ * Resolve the connector binary: `MEMORY_CONNECTOR_BIN` wins, else reuse a
+ * cached build across runs, else build once into the cache dir. The binary is
+ * cached outside the per-test temp dir so concurrent/serial suites don't each
+ * pay for a cold `go build`.
+ */
+function resolveConnectorBinary(): string {
   if (process.env.MEMORY_CONNECTOR_BIN) return process.env.MEMORY_CONNECTOR_BIN;
   const name = process.platform === 'win32' ? 'memory-connector-bin.exe' : 'memory-connector-bin';
-  const bin = path.join(tmpDir, name);
+  const bin = path.join(os.tmpdir(), 'memory-e2e', name);
+  if (fs.existsSync(bin)) return bin;
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
   const res = spawnSync('go', ['build', '-o', bin, './cmd/memory-connector'], {
     cwd: CONNECTOR_DIR,
     encoding: 'utf8',
-    timeout: 180_000,
+    timeout: 600_000,
   });
   if (res.status !== 0) {
+    const detail = res.signal
+      ? `killed by ${res.signal}`
+      : res.error?.message
+        ? `spawn error: ${res.error.message}`
+        : res.stderr || res.stdout;
     throw new Error(
-      `go build ./cmd/memory-connector failed (exit ${res.status}): ${res.stderr || res.stdout}`,
+      `go build ./cmd/memory-connector failed (exit ${res.status}): ${detail}`,
     );
   }
   return bin;
@@ -109,7 +121,7 @@ test.describe('memory-connector auth', () => {
     let bin = '';
 
     try {
-      bin = resolveConnectorBinary(tmpDir);
+      bin = resolveConnectorBinary();
 
       const start = runCliJson<AuthStartDoc>(bin, configPath, [
         'auth',
