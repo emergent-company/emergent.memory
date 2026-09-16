@@ -142,9 +142,13 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			//  - attribute inheritance was made explicit (:inherited suffix)
 			//  - 4xx/5xx responses now swap by default
 			//  - defaultTimeout became 60000 (was 0)
-			htmx.config.implicitInheritance = true;
-			htmx.config.noSwap = [204, 304, "4xx", "5xx"];
-			htmx.config.defaultTimeout = 0;
+			// Guarded: if the htmx asset fails to load, the inline script would
+			// otherwise throw "ReferenceError: htmx is not defined" (MEMORY-UI-1R).
+			if (window.htmx) {
+				htmx.config.implicitInheritance = true;
+				htmx.config.noSwap = [204, 304, "4xx", "5xx"];
+				htmx.config.defaultTimeout = 0;
+			}
 		</script>
 			<script>
 			// aria-busy while an htmx request is in flight (v4 event names)

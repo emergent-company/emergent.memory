@@ -37,6 +37,33 @@
     return 0;
   }
 
+  // True for failures expected during a brief memory outage / restart, which
+  // should not be reported to Sentry: fetch transport failures (fetch rejects
+  // with a TypeError, e.g. "Failed to fetch") and gateway-unavailable
+  // responses (502/503/504 — either attached as err.status by the caller or
+  // thrown as new Error("HTTP " + status), e.g. the gateway's
+  // {"error":"memory service unavailable"} 502 body). Client errors (4xx) and
+  // logic bugs (other error types/messages) remain reportable. Shared by
+  // chat.js and app.js via window.MemoryChatHost.
+  function isTransientError(err) {
+    if (!err) return false;
+    // Explicit marker callers set for a known transport failure (e.g. the
+    // gateway POST helper's network flag). Preferred over message heuristics:
+    // it does not depend on browser/vendor error wording.
+    if (err.transient === true) return true;
+    // A user-initiated abort (stop button, navigating away, superseding a
+    // request) is deliberate, not a bug worth reporting.
+    if (err.name === "AbortError") return true;
+    if (err.name === "TypeError" && /failed to fetch|failed fetch|network\s?error|network request failed|load failed|the network connection was lost/i.test(String(err.message || ""))) return true;
+    if (err.status === 502 || err.status === 503 || err.status === 504) return true;
+    // Only a bare "HTTP 502" (exactly what callers throw) counts — anchoring
+    // avoids matching unrelated messages that merely mention an HTTP status.
+    var m = /^HTTP\s+(\d{3})$/.exec(String(err.message || ""));
+    if (!m) return false;
+    var code = parseInt(m[1], 10);
+    return code === 502 || code === 503 || code === 504;
+  }
+
   // POST a JSON body to a gateway endpoint and resolve {ok, data}. Network
   // failures and non-ok JSON responses resolve {ok:false, error:message}; the
   // `network` flag distinguishes a transport failure (for captureError) from an
@@ -130,12 +157,20 @@
     // cursor leaves the handle.
     function onPointerDown(e) {
       if (e.button !== 0) return;
+      // The configured handle can be null when the grip was re-rendered away
+      // between binding and the drag (shell HTMX swaps), or when the caller
+      // wired the listener before assigning .handle. Fall back to the event
+      // target so the drag still works, and bail safely if neither exists
+      // instead of dereferencing null (MEMORY-UI-F/R).
+      var handle = cfg.handle || e.currentTarget;
+      if (!handle) return;
+      // capture the element reference; e.currentTarget is only valid during dispatch
       e.preventDefault();
       var startX = e.clientX;
       var startW = width;
       var limit = maxW();
-      if (cfg.handle && cfg.handle.setPointerCapture) {
-        try { cfg.handle.setPointerCapture(e.pointerId); } catch (err) {}
+      if (handle.setPointerCapture) {
+        try { handle.setPointerCapture(e.pointerId); } catch (err) {}
       }
       function move(ev) {
         var w = startW + cfg.direction * (ev.clientX - startX);
@@ -144,14 +179,14 @@
         if (cfg.onWidthSet) cfg.onWidthSet();
       }
       function up() {
-        cfg.handle.removeEventListener("pointermove", move);
-        cfg.handle.removeEventListener("pointerup", up);
-        cfg.handle.removeEventListener("pointercancel", up);
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
         persist();
       }
-      cfg.handle.addEventListener("pointermove", move);
-      cfg.handle.addEventListener("pointerup", up);
-      cfg.handle.addEventListener("pointercancel", up);
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
     }
 
     // Viewport shrunk below the current width (or grew past md): re-clamp.
@@ -226,6 +261,7 @@
 
   window.MemoryChatHost = {
     sortTimeline: sortTimeline,
+    isTransientError: isTransientError,
     postJSON: postJSON,
     createComposer: createComposer,
     createResizeGrip: createResizeGrip,

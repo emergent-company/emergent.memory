@@ -16,6 +16,24 @@
     if (window.Sentry && err) window.Sentry.captureException(err);
   }
 
+  /* Report an unexpected failure, but stay quiet for expected transient
+     memory outages (brief restart / 502-504): those still surface as an error
+     toast and a local console.warn, just not as Sentry events. The
+     classification lives in the shared MemoryChatHost helper (chat-host.js is
+     loaded globally in ui.templ alongside this file). */
+  function reportError(err, context) {
+    var transient = false;
+    var host = window.MemoryChatHost;
+    if (host && typeof host.isTransientError === "function") {
+      transient = !!host.isTransientError(err);
+    }
+    if (transient) {
+      console.warn("chat: " + context + " (transient, not reported):", err);
+      return;
+    }
+    captureError(err || new Error(context || "unknown error"));
+  }
+
   var root = null, log = null, messages = null, empty = null;
   var input = null, sendBtn = null, stopBtn = null, agentSelect = null;
   var agentFilterSelect = null;
@@ -446,7 +464,7 @@
       railList.innerHTML = await res.text();
       applyAgentFilter();
     } catch (err) {
-      captureError(err);
+      reportError(err, "session rail refresh failed");
       // keep the stale list; the next refresh retries
     }
   }
@@ -463,7 +481,7 @@
       if (!r.ok) throw new Error("HTTP " + r.status);
       detail = await r.json();
     } catch (err) {
-      captureError(err);
+      reportError(err, "conversation load failed");
       notify("error", "Could not load conversation: " + err.message);
       return;
     }
@@ -539,7 +557,7 @@
       if (!r.ok) throw new Error("HTTP " + r.status);
       return await r.json();
     } catch (err) {
-      captureError(err);
+      reportError(err, "transcript load failed");
       notify("error", "Could not load transcript: " + err.message);
       return null;
     }
@@ -907,7 +925,14 @@
 
     var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/respond", { response: answerValue });
     if (!result.ok) {
-      if (result.network) captureError(new Error(result.error));
+      // result.network === true is a fetch transport failure; postJSON has
+      // already discarded the original error, so mark the rebuilt error
+      // explicitly as transient instead of relying on message heuristics.
+      if (result.network) {
+        var netErr = new Error(result.error || "Failed to fetch");
+        netErr.transient = true;
+        reportError(netErr, "answer send failed");
+      }
       failStream("Could not send answer: " + result.error);
       return;
     }
@@ -931,7 +956,12 @@
     var action = payload ? "respond" : "cancel";
     var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/" + action, payload);
     if (!result.ok) {
-      if (result.network) captureError(new Error(result.error));
+      // see answerQuestion: result.network is a transient fetch transport failure.
+      if (result.network) {
+        var netErr = new Error(result.error || "Failed to fetch");
+        netErr.transient = true;
+        reportError(netErr, "decision send failed");
+      }
       failStream("Could not send decision: " + result.error);
       return;
     }
@@ -957,7 +987,7 @@
       }
       return n;
     } catch (e) {
-      captureError(e);
+      reportError(e, "run ends count failed");
       return -1;
     }
   }

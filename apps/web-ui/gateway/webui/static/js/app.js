@@ -13,6 +13,15 @@
     if (window.Sentry && err) window.Sentry.captureException(err);
   }
 
+  /* True for expected transient memory failures (brief restart / 502-504),
+     which must not reach Sentry. Delegates the classification to the shared
+     MemoryChatHost helper (chat-host.js is loaded globally in ui.templ on the
+     same pages as this file); degrades safely if that script is unavailable. */
+  function isTransientError(err) {
+    var host = window.MemoryChatHost;
+    return !!(host && typeof host.isTransientError === "function" && host.isTransientError(err));
+  }
+
   /* ---------- PWA standalone detection ---------- */
   /* iOS reports installed standalone web apps as (display-mode: fullscreen)
      (WebKit bug 264218) and never matches (display-mode: standalone), so trust
@@ -110,8 +119,12 @@
           hydrateSkills(a);
         })
         .catch(function (err) {
-          captureError(err);
-          toast("error", "Could not load agent: " + err.message);
+          if (isTransientError(err)) {
+            console.warn("app: agent load failed (transient, not reported):", err);
+          } else {
+            captureError(err);
+          }
+          toast("error", "Could not load agent: " + (err && err.message ? err.message : "unknown error"));
           closeFormDialog();
         });
     }
@@ -264,7 +277,11 @@
       .then(function (r) {
         if (r.status === 204) return null;
         return r.json().catch(function () { return null; }).then(function (j) {
-          if (!r.ok) throw new Error((j && (j.error || j.message)) || "HTTP " + r.status);
+          if (!r.ok) {
+            var e = new Error((j && (j.error || j.message)) || "HTTP " + r.status);
+            e.status = r.status;
+            throw e;
+          }
           return j;
         });
       })
@@ -274,8 +291,12 @@
       })
       .catch(function (err) {
         setFormBusy(false);
-        captureError(err);
-        toast("error", "Save failed: " + err.message);
+        if (isTransientError(err)) {
+          console.warn("app: agent save failed (transient, not reported):", err);
+        } else {
+          captureError(err);
+        }
+        toast("error", "Save failed: " + ((err && err.message) || String(err)));
       });
   }
 
@@ -299,7 +320,9 @@
       .then(function (r) {
         if (r.status !== 204) {
           return r.json().catch(function () { return null; }).then(function (j) {
-            throw new Error((j && (j.error || j.message)) || "HTTP " + r.status);
+            var e = new Error((j && (j.error || j.message)) || "HTTP " + r.status);
+            e.status = r.status;
+            throw e;
           });
         }
       })
@@ -310,8 +333,12 @@
       .catch(function (err) {
         btn.classList.remove("loading");
         btn.disabled = false;
-        captureError(err);
-        toast("error", "Delete failed: " + err.message);
+        if (isTransientError(err)) {
+          console.warn("app: agent delete failed (transient, not reported):", err);
+        } else {
+          captureError(err);
+        }
+        toast("error", "Delete failed: " + ((err && err.message) || String(err)));
       });
   }
 
