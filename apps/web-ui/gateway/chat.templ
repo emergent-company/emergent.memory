@@ -134,7 +134,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 				     width + padding — the same ContainerLG every other page uses. -->
 				<div class="flex min-h-full flex-col justify-end">
 					@layout.Container(layout.ContainerLG, nil) {
-						<div class="flex flex-col gap-3">
+						<div class="mx-auto flex w-full flex-col gap-3">
 							@chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything — Memory answers from the selected agent's persona, using its model and tools.", "mt-1 max-w-sm text-sm") {
 								<div class="flex w-full max-w-xs flex-col items-center gap-1.5">
 									<label for="chat-agent" class="text-base-content/45 text-xs font-semibold tracking-wider uppercase">Agent</label>
