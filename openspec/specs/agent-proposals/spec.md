@@ -1,7 +1,7 @@
 # agent-proposals Specification
 
 ## Purpose
-Defines the structured proposal payload an agent attaches to its `ask_user` checkpoint, and how the conversation UI renders it as a reviewable proposal card (side-effect summary + object/relationship previews + accept/reject/edit) instead of a raw JSON code fence.
+Defines the structured proposal payload an agent attaches to its `ask_user` checkpoint, and how the conversation UI renders it as a reviewable proposal card (side-effect summary + object/relationship previews + accept/reject actions) instead of a raw JSON code fence.
 
 ## Requirements
 
@@ -41,24 +41,23 @@ When a question carries a `proposal`, the conversation UI SHALL render it as a p
 
 ### Requirement: Proposal card shows a side-effect summary
 
-The proposal card SHALL surface a concise summary of what applying the proposal would add, change, or remove, computed against the project's current state where that state is available.
+The proposal card SHALL surface a concise summary of what applying the proposal adds, derived from the proposal body (for example "Adds 2 object types, 3 relationship types").
 
-#### Scenario: Diff against current types
-- **WHEN** a proposal's object/relationship types can be compared against the project's currently compiled types
-- **THEN** the card header SHALL indicate the added / changed / removed counts (for example "adds 2 object types, 3 relationship types")
-
-#### Scenario: No prior state
-- **WHEN** the project has no current types to diff against
-- **THEN** the summary SHALL describe the additions from the proposal body alone
+#### Scenario: Additions are summarized
+- **WHEN** a question carries a `blueprint` proposal with object or relationship types
+- **THEN** the card header SHALL indicate the counts of object types and relationship types the proposal adds
 
 ### Requirement: Proposal actions reuse the question respond path
 
-The proposal card SHALL present Accept, Reject, and Edit actions that use the existing question respond/cancel flow (`questionId` + `/respond`); Edit SHALL feed the user's free-text reply back into the run.
+The proposal card SHALL present Accept and Reject actions that use the existing question respond/cancel flow (`questionId` + `/respond`). Free-text revision is provided via a question with `interaction_type` `text` rather than a dedicated edit action on a buttons card.
 
-#### Scenario: Accept / Reject / Edit
-- **WHEN** a user acts on a proposal card
+#### Scenario: Accept / Reject
+- **WHEN** a user accepts or rejects a proposal card
 - **THEN** the action SHALL be delivered through the same question respond path as a plain-text question
-- **THEN** choosing Edit SHALL allow a free-text response that resumes the run
+
+#### Scenario: Free-text revision uses a text question
+- **WHEN** a proposal requires free-form input from the user
+- **THEN** the agent SHALL use a question with `interaction_type` `text` so the reply flows through the same respond path
 
 ### Requirement: Backward compatibility
 
