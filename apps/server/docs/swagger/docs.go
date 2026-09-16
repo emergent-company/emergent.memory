@@ -10150,6 +10150,71 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/projects/{projectId}/agent-mcp-endpoints/{id}/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns session metadata (owning key label, status, turn/step counters, activity and expiry timestamps) for one agent MCP endpoint. Message content and credentials are never returned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "List an agent MCP endpoint's sessions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Endpoint ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by session status (active, running, interrupted, expired)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.AgentMCPSessionListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid status filter",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Project admin required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Endpoint not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/agent-questions": {
             "get": {
                 "security": [
@@ -26432,6 +26497,49 @@ const docTemplate = `{
                 },
                 "updatedAt": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_mcp.AgentMCPSessionListResponse": {
+            "type": "object",
+            "properties": {
+                "sessions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_mcp.AgentMCPSessionView"
+                    }
+                }
+            }
+        },
+        "domain_mcp.AgentMCPSessionView": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "key_id": {
+                    "type": "string"
+                },
+                "key_label": {
+                    "type": "string"
+                },
+                "last_active_at": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "total_steps": {
+                    "type": "integer"
+                },
+                "turn_count": {
+                    "type": "integer"
                 }
             }
         },

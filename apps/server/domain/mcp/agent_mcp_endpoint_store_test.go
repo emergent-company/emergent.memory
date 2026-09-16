@@ -516,3 +516,59 @@ func TestAgentMCPSessionStoreTableDriven(t *testing.T) {
 		})
 	}
 }
+
+// TestAgentMCPSessionStoreListByEndpoint covers the endpoint-scoped session list
+// behind the admin sessions endpoint: ordering, status filter, the owner key
+// label join, and the empty result for an unknown endpoint.
+func TestAgentMCPSessionStoreListByEndpoint(t *testing.T) {
+	db := connectTestDB(t)
+	requireAgentMCPEndpointTables(t, db)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+	agentID := seedAgent(t, db, projectID)
+
+	epStore := newAgentMCPEndpointStore(db)
+	keyStore := newAgentMCPKeyStore(db)
+	sessStore := newAgentMCPSessionStore(db)
+
+	ep := &AgentMCPEndpoint{ID: uuid.NewString(), ProjectID: projectID, AgentID: agentID}
+	require.NoError(t, epStore.CreateEndpoint(ctx, ep))
+	tokenID := seedShareUserAndToken(t, db, projectID, "lbe-"+uuid.NewString())
+	key := &AgentMCPKey{
+		ID: uuid.NewString(), EndpointID: ep.ID, TokenID: tokenID,
+		Label: "ci-runner-" + uuid.NewString(),
+	}
+	require.NoError(t, keyStore.CreateKey(ctx, key))
+
+	now := time.Now().UTC()
+	older := &AgentMCPSession{
+		ID: uuid.NewString(), EndpointID: ep.ID, KeyID: key.ID, SessionRef: uuid.NewString(),
+		Status: AgentMCPSessionStatusActive, TurnCount: 1, TotalSteps: 5,
+		CreatedAt: now.Add(-2 * time.Hour), LastActiveAt: now.Add(-2 * time.Hour),
+	}
+	newer := &AgentMCPSession{
+		ID: uuid.NewString(), EndpointID: ep.ID, KeyID: key.ID, SessionRef: uuid.NewString(),
+		Status: AgentMCPSessionStatusExpired, TurnCount: 3, TotalSteps: 42,
+		CreatedAt: now.Add(-time.Hour), LastActiveAt: now,
+	}
+	require.NoError(t, sessStore.CreateSession(ctx, older))
+	require.NoError(t, sessStore.CreateSession(ctx, newer))
+
+	all, err := sessStore.ListSessionsByEndpoint(ctx, ep.ID, "")
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	assert.Equal(t, newer.SessionRef, all[0].SessionRef, "ordered by last_active_at DESC")
+	assert.Equal(t, older.SessionRef, all[1].SessionRef)
+	assert.Equal(t, key.Label, all[0].KeyLabel, "owner key label is joined")
+	assert.Equal(t, 3, all[0].TurnCount)
+	assert.Equal(t, 42, all[0].TotalSteps)
+
+	filtered, err := sessStore.ListSessionsByEndpoint(ctx, ep.ID, AgentMCPSessionStatusActive)
+	require.NoError(t, err)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, older.SessionRef, filtered[0].SessionRef)
+
+	unknown, err := sessStore.ListSessionsByEndpoint(ctx, uuid.NewString(), "")
+	require.NoError(t, err)
+	assert.Empty(t, unknown)
+}

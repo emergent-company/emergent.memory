@@ -53,6 +53,28 @@ type AgentMCPSession struct {
 	ExpiresAt    *time.Time `bun:"expires_at"`
 }
 
+// AgentMCPSessionDetail is the admin read model for listing an endpoint's
+// sessions: the session metadata joined with its owning key's label. It carries
+// no message content and no credential material.
+type AgentMCPSessionDetail struct {
+	bun.BaseModel `bun:"table:core.agent_mcp_sessions,alias:amsess"`
+
+	ID           string     `bun:"id"`
+	EndpointID   string     `bun:"endpoint_id"`
+	KeyID        string     `bun:"key_id"`
+	SessionRef   string     `bun:"session_ref"`
+	Status       string     `bun:"status"`
+	TurnCount    int        `bun:"turn_count"`
+	TotalSteps   int        `bun:"total_steps"`
+	CreatedAt    time.Time  `bun:"created_at"`
+	LastActiveAt time.Time  `bun:"last_active_at"`
+	ExpiresAt    *time.Time `bun:"expires_at"`
+
+	// KeyLabel is the owning key's label, populated by the join. A session whose
+	// key row is missing still lists, with an empty label.
+	KeyLabel string `bun:"key_label,scanonly"`
+}
+
 // ============================================================================
 // Store interface
 // ============================================================================
@@ -65,6 +87,10 @@ type agentMCPSessionStore interface {
 	GetSessionByRef(ctx context.Context, sessionRef string) (*AgentMCPSession, error)
 	// ListSessionsByKey returns a key's sessions, most recently active first.
 	ListSessionsByKey(ctx context.Context, keyID string) ([]*AgentMCPSession, error)
+	// ListSessionsByEndpoint returns every session for an endpoint, joined with
+	// its owning key's label, most recently active first. An empty status lists
+	// all lifecycle states; a non-empty status filters to that exact state.
+	ListSessionsByEndpoint(ctx context.Context, endpointID, status string) ([]*AgentMCPSessionDetail, error)
 	SetSessionStatus(ctx context.Context, id, status string) error
 	// TouchSession records one more turn in a single update: it increments
 	// turn_count, adds steps to total_steps, and sets last_run_id/last_active_at.
@@ -156,6 +182,30 @@ func (r *bunAgentMCPSessionStore) ListSessionsByKey(ctx context.Context, keyID s
 		Order("last_active_at DESC").
 		Scan(ctx)
 	if err != nil {
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return rows, nil
+}
+
+// agentMCPSessionDetailSelect joins a session with its owning key so the admin
+// list can render the key's label without a second query.
+const agentMCPSessionDetailSelect = `SELECT amsess.id, amsess.endpoint_id, amsess.key_id, amsess.session_ref,
+	amsess.status, amsess.turn_count, amsess.total_steps, amsess.created_at, amsess.last_active_at, amsess.expires_at,
+	amk.label AS key_label
+FROM core.agent_mcp_sessions amsess
+LEFT JOIN core.agent_mcp_keys amk ON amk.id = amsess.key_id`
+
+func (r *bunAgentMCPSessionStore) ListSessionsByEndpoint(ctx context.Context, endpointID, status string) ([]*AgentMCPSessionDetail, error) {
+	query := agentMCPSessionDetailSelect + ` WHERE amsess.endpoint_id = ?`
+	args := []any{endpointID}
+	if status != "" {
+		query += ` AND amsess.status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY amsess.last_active_at DESC`
+
+	var rows []*AgentMCPSessionDetail
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
 		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return rows, nil

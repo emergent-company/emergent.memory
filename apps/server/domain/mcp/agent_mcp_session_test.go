@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -24,10 +25,13 @@ import (
 type fakeSessionStore struct {
 	mu   sync.Mutex
 	byID map[string]*AgentMCPSession
+	// labels maps a key id to its label, standing in for the join the real
+	// ListSessionsByEndpoint performs.
+	labels map[string]string
 }
 
 func newFakeSessionStore() *fakeSessionStore {
-	return &fakeSessionStore{byID: map[string]*AgentMCPSession{}}
+	return &fakeSessionStore{byID: map[string]*AgentMCPSession{}, labels: map[string]string{}}
 }
 
 func (f *fakeSessionStore) byRef(ref string) *AgentMCPSession {
@@ -90,6 +94,35 @@ func (f *fakeSessionStore) ListSessionsByKey(_ context.Context, keyID string) ([
 			out = append(out, s)
 		}
 	}
+	return out, nil
+}
+
+func (f *fakeSessionStore) ListSessionsByEndpoint(_ context.Context, endpointID, status string) ([]*AgentMCPSessionDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []*AgentMCPSessionDetail{}
+	for _, s := range f.byID {
+		if s.EndpointID != endpointID {
+			continue
+		}
+		if status != "" && s.Status != status {
+			continue
+		}
+		out = append(out, &AgentMCPSessionDetail{
+			ID:           s.ID,
+			EndpointID:   s.EndpointID,
+			KeyID:        s.KeyID,
+			SessionRef:   s.SessionRef,
+			Status:       s.Status,
+			TurnCount:    s.TurnCount,
+			TotalSteps:   s.TotalSteps,
+			CreatedAt:    s.CreatedAt,
+			LastActiveAt: s.LastActiveAt,
+			ExpiresAt:    s.ExpiresAt,
+			KeyLabel:     f.labels[s.KeyID],
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LastActiveAt.After(out[j].LastActiveAt) })
 	return out, nil
 }
 

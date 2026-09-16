@@ -4060,6 +4060,34 @@ definitions:
       updatedAt:
         type: string
     type: object
+  domain_mcp.AgentMCPSessionListResponse:
+    properties:
+      sessions:
+        items:
+          $ref: '#/definitions/domain_mcp.AgentMCPSessionView'
+        type: array
+    type: object
+  domain_mcp.AgentMCPSessionView:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      key_id:
+        type: string
+      key_label:
+        type: string
+      last_active_at:
+        type: string
+      session_id:
+        type: string
+      status:
+        type: string
+      total_steps:
+        type: integer
+      turn_count:
+        type: integer
+    type: object
   domain_mcp.CatalogResponse:
     properties:
       tools:
@@ -14843,6 +14871,50 @@ paths:
       security:
       - bearerAuth: []
       summary: Create a labeled key on an agent MCP endpoint
+      tags:
+      - mcp
+  /api/projects/{projectId}/agent-mcp-endpoints/{id}/sessions:
+    get:
+      description: Returns session metadata (owning key label, status, turn/step counters,
+        activity and expiry timestamps) for one agent MCP endpoint. Message content
+        and credentials are never returned.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Endpoint ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Filter by session status (active, running, interrupted, expired)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcp.AgentMCPSessionListResponse'
+        "400":
+          description: Invalid status filter
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Endpoint not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List an agent MCP endpoint's sessions
       tags:
       - mcp
   /api/projects/{projectId}/agent-questions:
