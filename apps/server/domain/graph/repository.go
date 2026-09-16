@@ -350,9 +350,36 @@ func (r *Repository) buildObjectBaseQuery(params ListParams) *bun.SelectQuery {
 	return q
 }
 
+// objectListColumns is the projection shared by List and
+// ListWithMigrationArchive. It deliberately omits migration_archive (a JSONB
+// blob only needed by the rollback path) so the hot listing path does not pay
+// to fetch it.
+var objectListColumns = []string{
+	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
+	"type", "key", "status", "properties", "labels", "change_summary",
+	"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
+	"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
+	"content_hash",
+}
+
 // List returns graph objects matching the given parameters.
 // Returns only HEAD versions (latest version per canonical_id).
+// The migration_archive column is NOT populated; use ListWithMigrationArchive
+// when the archive is required.
 func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+	return r.listObjects(ctx, params, false)
+}
+
+// ListWithMigrationArchive behaves exactly like List but also selects the
+// migration_archive JSONB column. Schema rollback needs the archive payload to
+// restore dropped properties; List omits it, which previously left every
+// object's MigrationArchive at its zero value and made rollback a silent
+// no-op.
+func (r *Repository) ListWithMigrationArchive(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+	return r.listObjects(ctx, params, true)
+}
+
+func (r *Repository) listObjects(ctx context.Context, params ListParams, withMigrationArchive bool) ([]*GraphObject, error) {
 	if params.Limit <= 0 {
 		params.Limit = 50
 	}
@@ -363,12 +390,12 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 		params.Order = "desc"
 	}
 
-	q := r.buildObjectBaseQuery(params).
-		Column("id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-			"type", "key", "status", "properties", "labels", "change_summary",
-			"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
-			"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
-			"content_hash")
+	columns := objectListColumns
+	if withMigrationArchive {
+		columns = append(append([]string{}, objectListColumns...), "migration_archive")
+	}
+
+	q := r.buildObjectBaseQuery(params).Column(columns...)
 
 	// Property-based ordering: ORDER BY the JSONB property accessor with id as a
 	// tiebreaker. Keyset cursor pagination encodes (created_at, id), which is

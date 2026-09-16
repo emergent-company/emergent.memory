@@ -804,8 +804,11 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		}
 	}
 
-	// Fetch all objects that have a migration_archive entry for toVersion
-	objs, listErr := s.graphSvc.GetRepository().List(ctx, graph.ListParams{
+	// Fetch all objects that have a migration_archive entry for toVersion.
+	// Use ListWithMigrationArchive: List omits the migration_archive JSONB
+	// column, which left every object's archive empty and made this rollback a
+	// silent no-op.
+	objs, listErr := s.graphSvc.GetRepository().ListWithMigrationArchive(ctx, graph.ListParams{
 		ProjectID: projectUUID,
 	})
 	if listErr != nil {
