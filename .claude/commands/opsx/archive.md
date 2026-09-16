@@ -71,7 +71,7 @@ Archive a completed change in the experimental workflow.
 
 3. **Check task completion status**
 
-   Read the tasks file (typically `tasks.md`) to check for incomplete tasks.
+   Read every task file path in `artifactPaths.tasks.existingOutputPaths` from the step 2 status JSON — do not hard-code `tasks.md`, because a custom schema or a store-backed planning home can place task files elsewhere. If the `tasks` entry is missing or `existingOutputPaths` is empty, treat it as "no tasks".
 
    Count tasks marked with `- [ ]` (incomplete) vs `- [x]` (complete).
 

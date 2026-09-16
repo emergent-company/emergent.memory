@@ -210,9 +210,15 @@ This skill allows you to batch-archive changes, handling spec conflicts intellig
 
       Target name: follow the canonical archive-target rule from the archive workflow step 5 — use the change name as-is only when it already starts with a full `YYYY-MM-DD-` date prefix (four-digit year, two-digit month, two-digit day); otherwise prepend the current date as `YYYY-MM-DD-<change-name>`. Never stack a second date, and never treat a partial prefix such as `2026-1-5-foo` as already dated.
 
+      Before moving, check whether the target already exists. If `<planningHome.changesDir>/archive/<target-name>` exists, do not move: record "Failed: archive directory already exists" for that change (step 8d) and continue with the remaining changes. `mv` into an existing directory nests the source inside it instead of failing, so this check is mandatory.
+
       ```bash
       mkdir -p "<planningHome.changesDir>/archive"
-      mv "<changeRoot>" "<planningHome.changesDir>/archive/<target-name>"
+      if [ -e "<planningHome.changesDir>/archive/<target-name>" ]; then
+        echo "archive target already exists: <planningHome.changesDir>/archive/<target-name>" >&2
+      else
+        mv "<changeRoot>" "<planningHome.changesDir>/archive/<target-name>"
+      fi
       ```
 
    d. **Track outcome** for each change:

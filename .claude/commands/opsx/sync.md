@@ -139,6 +139,7 @@ This is an **agent-driven** operation - you will read delta specs and directly e
         (this is what `openspec archive` does; it warns and moves on)
 
    d. **Create new main spec** if capability doesn't exist yet:
+      - If the delta also carries MODIFIED, REMOVED, or RENAMED requirements, there is no existing base for them. Do not silently drop them: stop the sync for that capability and report that a not-yet-existing capability can only ADD requirements, so those deltas need an existing main spec
       - Create `<planningHome.root>/openspec/specs/<capability-path>/spec.md`
       - Add Purpose section: copy the delta's `## Purpose` body verbatim when it has one
         (this is what `openspec archive` does); only write a brief TBD placeholder when it does not

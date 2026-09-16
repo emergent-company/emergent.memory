@@ -270,7 +270,7 @@ For a small task like this, we might only need one spec file.
 **DO:** Resolve where the spec file should be created:
 ```bash
 openspec instructions specs --change "<name>" --json
-# Use resolvedOutputPath from the JSON. If it is a glob, choose the concrete file path using the schema instruction and the change's context.
+# Write to the concrete resolvedOutputPath from the JSON. Only if the schema instruction explicitly documents a glob expansion may resolvedOutputPath be a glob; expand it by exactly that rule, otherwise stop and report the ambiguity.
 ```
 
 Draft the spec content:
@@ -429,10 +429,8 @@ When a change is complete, we archive it. The archive path is derived from `plan
 Archived changes become your project's decision history—you can always find them later to understand why something was built a certain way.
 ```
 
-**DO:** Archive the change (`--yes` answers the confirmation prompts, which you cannot answer from a tool call):
-```bash
-openspec archive "<name>" --yes
-```
+**DO:** Archive the change by running the archive workflow (the archive command or the `openspec-archive-change` skill): it checks artifact and task status, syncs the change's delta specs into the main specs, verifies the sync, and only then moves the change. If you can only invoke it as a tool call and cannot answer its prompts, run it inline and answer the prompts on the user's behalf.
+Do NOT call `openspec archive "<name>" --yes` here: Phase 6 creates a delta spec, and `--yes` skips the status/instructions checks and the verified spec sync, so the change would move while the main specs stay stale.
 
 **SHOW:**
 ```
