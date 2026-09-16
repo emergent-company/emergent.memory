@@ -149,7 +149,7 @@ func TestFindDefinitionByID_ValidUUIDPresentReturnsRow(t *testing.T) {
 // TestFindDefinitionByID_ValidUUIDAbsentReturnsNilNil verifies a valid UUID that
 // does not exist still resolves as (nil, nil).
 func TestFindDefinitionByID_ValidUUIDAbsentReturnsNilNil(t *testing.T) {
-	repo := newNoRowsRepository(t)
+	repo := newUUIDSyntaxRepository(t)
 
 	def, err := repo.FindDefinitionByID(context.Background(), uuid.NewString(), nil)
 
