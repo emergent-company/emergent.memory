@@ -216,6 +216,11 @@ status and the blocked items recorded in `tasks.md`).
   worktree has no generated templates and the gateway will **not** compile until you
   run `PATH="/root/go/bin:$PATH" templ generate` (or `-f <file>.templ` for one file).
   Run it before `go build ./...` in any worktree-based lane.
+- **One suite at a time per tenant.** All runs share the same bootstrap `E2E Main`
+  tenant and the same running gateway. Two suites running concurrently (e.g. another
+  session, or a worktree lane) produce scattered, unrelated failures across documents/
+  objects/backups/agents. Those specs pass in isolation and on a clean re-run — confirm
+  no other run is active before treating a batch of failures as real.
 - Legacy mock harness (`mock-memory.mjs`, `run-e2e.sh`) still exists for the
   dev-mode (no-auth) smoke path; this suite is the primary, session-mode path.
 - Voice/LiveKit/STT and the iOS client are not browser-testable and are out of scope.
