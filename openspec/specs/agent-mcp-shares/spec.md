@@ -1,8 +1,9 @@
-## Purpose
+# agent-mcp-shares Specification
 
+## Purpose
 Defines how a project admin manages the credentials of an agent's own MCP endpoint: many labeled keys on one endpoint, each individually created, listed, revoked, and rotated, superseding the former single-credential `core.agent_mcp_shares` share.
 
-## MODIFIED Requirements
+## Requirements
 
 ### Requirement: Create a per-agent MCP share credential
 
@@ -33,6 +34,16 @@ A project admin SHALL be able to create a key on an agent's MCP endpoint. The re
 - **WHEN** an admin creates a key whose label matches an active key's label on the same endpoint, ignoring case
 - **THEN** the system rejects the request with a conflict error
 
+#### Scenario: Default name when omitted
+
+- **WHEN** an admin creates a key without a label
+- **THEN** the system rejects the request with a validation error because a label is required
+
+#### Scenario: Duplicate name rejected
+
+- **WHEN** an admin creates a key whose label matches an active key's label on the same endpoint, ignoring case
+- **THEN** the system rejects the request with a conflict error
+
 ### Requirement: List an agent's share credentials
 
 The system SHALL expose a list of an endpoint's keys returning each key's label, status, creation time, and last-used time. List representations MUST NOT include the token secret. A project-wide view MAY list endpoints with their keys.
@@ -43,6 +54,16 @@ The system SHALL expose a list of an endpoint's keys returning each key's label,
 - **THEN** each active key is returned with its label, status, and timestamps and no raw token
 
 #### Scenario: Revoked keys are marked
+
+- **WHEN** a key has been revoked
+- **THEN** it is listed with a revoked status
+
+#### Scenario: List returns shares without secrets
+
+- **WHEN** an admin lists keys for an endpoint
+- **THEN** each active key is returned with its label, status, and timestamps and no raw token
+
+#### Scenario: Revoked shares are marked
 
 - **WHEN** a key has been revoked
 - **THEN** it is listed with a revoked status
@@ -85,7 +106,23 @@ A project admin SHALL be able to rotate one key's token. Rotation MUST invalidat
 - **WHEN** a key with existing sessions is rotated
 - **THEN** those sessions remain continuable with the new token
 
-## ADDED Requirements
+### Requirement: Share status reflects token lifecycle
+
+A share SHALL report an active or revoked status derived from its bound token, and MUST NOT authorize requests once its token is revoked or expired.
+
+#### Scenario: Expired token is not active
+
+- **WHEN** a share's bound token has expired
+- **THEN** the share reports a non-active status and requests using it are rejected
+
+### Requirement: Shares are project-scoped
+
+A share SHALL belong to exactly one project and one agent. A user MUST NOT read, revoke, or rotate a share belonging to another project.
+
+#### Scenario: Cross-project access denied
+
+- **WHEN** a user requests or mutates a share id from a different project
+- **THEN** the system returns not-found/forbidden and reveals nothing about the other project
 
 ### Requirement: core.agent_mcp_shares is superseded and backfilled
 
