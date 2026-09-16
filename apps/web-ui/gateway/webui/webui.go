@@ -23,6 +23,15 @@ import (
 //go:embed all:static
 var files embed.FS
 
+// cssGuard embeds app.css a second time purely as a compile-time assertion:
+// `all:static` above silently omits a missing file (it only errors when the
+// pattern matches nothing), so a build without `task css` would ship a binary
+// with no stylesheet. A single-file embed fails the build with "no matching
+// files found" when webui/static/css/app.css is absent.
+//
+//go:embed static/css/app.css
+var cssGuard []byte
+
 // assetHash caches a content hash of the embedded static/ tree, computed
 // lazily and once per process.
 var (
