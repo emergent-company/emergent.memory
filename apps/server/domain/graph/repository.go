@@ -363,7 +363,9 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 	if params.Limit <= 0 {
 		params.Limit = 50
 	}
-	if params.Limit > r.maxListLimit {
+	// Only clamp when a positive cap is configured; an unset/non-positive
+	// maxListLimit must not collapse the page size to zero.
+	if r.maxListLimit > 0 && params.Limit > r.maxListLimit {
 		params.Limit = r.maxListLimit
 	}
 	if params.Order == "" {
@@ -445,11 +447,13 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 // incompatible with the (created_at, id) keyset cursor.
 func (r *Repository) ListAll(ctx context.Context, params ListParams) ([]*GraphObject, error) {
 	if params.PropertyOrder != nil {
-		return nil, apperror.ErrBadRequest.WithMessage("property ordering is not supported for full list scans")
+		return nil, apperror.NewBadRequest("property ordering is not supported for full list scans")
 	}
 	if params.Order == "" {
 		params.Order = "desc"
 	}
+	// Mirror List's own default so an unconfigured (non-positive) maxListLimit
+	// does not collapse the page size.
 	pageSize := r.maxListLimit
 	if pageSize <= 0 {
 		pageSize = 50
