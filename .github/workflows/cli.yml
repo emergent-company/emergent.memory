@@ -5,7 +5,7 @@ on:
     branches: [master, main]
     paths:
       - 'apps/cli/**'
-      - '.github/**'
+      - '.github/workflows/cli.yml'
       - 'deploy/**'
       - 'VERSION'
     tags:
@@ -14,7 +14,7 @@ on:
     branches: [master, main]
     paths:
       - 'apps/cli/**'
-      - '.github/**'
+      - '.github/workflows/cli.yml'
       - 'deploy/**'
       - 'VERSION'
   workflow_dispatch:
@@ -497,7 +497,23 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
+    # always() so the required `ci` context always reports a result instead of
+    # silently being skipped when a dependency fails. Tag-guarded because the
+    # lint/test jobs do not run for tag pushes.
+    if: ${{ always() && !startsWith(github.ref, 'refs/tags/') }}
     needs: [lint, test, build]
     steps:
       - name: CI gate
-        run: echo "CI passed"
+        run: |
+          failed=0
+          for result in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.build.result }}"; do
+            echo "dependency result: ${result}"
+            if [ "${result}" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "CI passed"
