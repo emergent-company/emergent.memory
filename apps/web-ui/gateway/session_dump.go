@@ -32,19 +32,22 @@ type FunctionCallItem struct {
 // JSON output otherwise. tool_input/tool_output are raw JSON objects (not
 // strings) in the live API, so they stay as json.RawMessage.
 type TimelineItem struct {
-	Kind        string          `json:"kind"`
-	RunID       string          `json:"run_id,omitempty"`
-	StepNumber  int             `json:"step_number"`
-	CreatedAt   string          `json:"created_at,omitempty"`
-	RunStatus   string          `json:"run_status,omitempty"`
-	RunModel    string          `json:"run_model,omitempty"`
-	CompletedAt string          `json:"completed_at,omitempty"`
-	Role        string          `json:"role,omitempty"`
-	Content     *MessageContent `json:"content,omitempty"`
-	ToolName    string          `json:"tool_name,omitempty"`
-	ToolInput   json.RawMessage `json:"tool_input,omitempty"`
-	ToolOutput  json.RawMessage `json:"tool_output,omitempty"`
-	ToolStatus  string          `json:"tool_status,omitempty"`
+	Kind        string `json:"kind"`
+	RunID       string `json:"run_id,omitempty"`
+	StepNumber  int    `json:"step_number"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	RunStatus   string `json:"run_status,omitempty"`
+	RunModel    string `json:"run_model,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+	// ErrorMessage is the failure reason the server attaches to a failed run's
+	// run_start/run_end item; empty for every other status.
+	ErrorMessage string          `json:"error_message,omitempty"`
+	Role         string          `json:"role,omitempty"`
+	Content      *MessageContent `json:"content,omitempty"`
+	ToolName     string          `json:"tool_name,omitempty"`
+	ToolInput    json.RawMessage `json:"tool_input,omitempty"`
+	ToolOutput   json.RawMessage `json:"tool_output,omitempty"`
+	ToolStatus   string          `json:"tool_status,omitempty"`
 }
 
 // parseTimeline unmarshals raw timeline items into typed items, skipping any
@@ -221,6 +224,27 @@ func (g runGroup) runMeta() (model, status, dur string) {
 	d := e.Sub(s).Seconds()
 	dur = formatRunDuration(d)
 	return model, status, dur
+}
+
+// runError returns the failure reason for a run whose status is failed/error,
+// or "" when the run did not fail (or the server sent no message). The status
+// follows the same first-non-empty rule as runMeta so run_start and run_end
+// agree; the message is the first non-empty error_message on any item.
+func (g runGroup) runError() string {
+	status := ""
+	msg := ""
+	for _, it := range g.items {
+		if status == "" && it.RunStatus != "" {
+			status = it.RunStatus
+		}
+		if msg == "" && it.ErrorMessage != "" {
+			msg = it.ErrorMessage
+		}
+	}
+	if status != "failed" && status != "error" {
+		return ""
+	}
+	return msg
 }
 
 // formatRunDuration renders a wall-clock duration in seconds as a compact
