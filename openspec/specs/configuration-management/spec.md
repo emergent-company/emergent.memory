@@ -1,7 +1,8 @@
 # configuration-management Specification
 
 ## Purpose
-TBD - created by archiving change integrate-infisical-secrets-management. Update Purpose after archive.
+Defines how the application components (server, admin frontend, and workspace CLI) load their configuration and secrets: Infisical is the source of truth, reached with per-application/per-environment Universal Auth machine identities, with an encrypted in-memory and file cache, background refresh, and a `.env` fallback permitted only in local development. It also covers the minimal bootstrap credentials for reaching Infisical, migration/validation/rollback tooling from `.env` files, secret-fetch logging and audit, and the lowest-priority LLM-provider environment-variable fallback along with the encryption-key requirement and post-install provider prompts.
+
 ## Requirements
 ### Requirement: Infisical SDK Integration
 

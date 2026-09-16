@@ -1,7 +1,8 @@
 # trigger-agent-cli-helper Specification
 
 ## Purpose
-TBD - created by archiving change trigger-agent-cli-helper. Update Purpose after archive.
+Defines a shared end-to-end test framework helper, `TriggerAgent` in `framework/agents.go`, that runs `memory agents trigger <agentID> --project <projectID>`, logs the CLI output to the run log, and returns it. It replaces the repeated inline trigger calls in the blueprint orchestrator and task-CLI tests with one helper that fails the test fatally on CLI error.
+
 ## Requirements
 ### Requirement: TriggerAgent framework helper
 The framework SHALL export a `TriggerAgent` function in `framework/agents.go` that triggers an agent via `memory agents trigger <agentID> --project <projectID>` and returns the CLI output.

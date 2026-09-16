@@ -1,7 +1,7 @@
 # retrieval-performance-config Specification
 
 ## Purpose
-TBD - created by archiving change search-retrieval-performance. Update Purpose after archive.
+Exposes retrieval/search performance knobs as environment configuration: `ivfflat.probes`, the RRF constant and fusion weights, chunk size/overlap (with a project's `chunking_config` taking precedence), embedding worker concurrency and adaptive scaling, pgx pool sizing, and unified-search result limits. Every knob keeps its documented default when unset, so retrieval behavior is unchanged unless an operator opts in.
 
 ## Requirements
 
