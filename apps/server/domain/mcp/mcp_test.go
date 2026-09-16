@@ -488,6 +488,7 @@ func TestGetToolDefinitions(t *testing.T) {
 		"schema-get",
 		"schema-list-available",
 		"schema-list-installed",
+		"schema-icon-list",
 		"schema-assign",
 		"schema-assignment-update",
 		"schema-uninstall",
@@ -537,6 +538,60 @@ func TestGetToolDefinitions(t *testing.T) {
 		if !toolNames[expectedName] {
 			t.Errorf("Expected tool %q not found in GetToolDefinitions()", expectedName)
 		}
+	}
+}
+
+func TestSchemaIconListTool(t *testing.T) {
+	svc := &Service{}
+	defs := svc.GetToolDefinitions()
+
+	var tool *ToolDefinition
+	for i := range defs {
+		if defs[i].Name == "schema-icon-list" {
+			tool = &defs[i]
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatal("schema-icon-list tool not found in GetToolDefinitions()")
+	}
+	if tool.Description == "" {
+		t.Error("schema-icon-list tool has empty description")
+	}
+	if tool.RequiredScope != "schema:read" {
+		t.Errorf("schema-icon-list RequiredScope = %q, want %q", tool.RequiredScope, "schema:read")
+	}
+
+	result, err := svc.executeSchemaIconList(context.Background(), "")
+	if err != nil {
+		t.Fatalf("executeSchemaIconList error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("executeSchemaIconList returned nil result")
+	}
+	if len(result.Content) != 1 || result.Content[0].Text == "" {
+		t.Fatal("executeSchemaIconList returned empty content")
+	}
+
+	var parsed SchemaIconListResult
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &parsed); err != nil {
+		t.Fatalf("unmarshal SchemaIconListResult: %v", err)
+	}
+	if parsed.Count != len(schemaIconCatalog) {
+		t.Errorf("Count = %d, want %d", parsed.Count, len(schemaIconCatalog))
+	}
+	if parsed.Count != 65 {
+		t.Errorf("Count = %d, want 65", parsed.Count)
+	}
+	found := map[string]bool{}
+	for _, icon := range parsed.Icons {
+		found[icon] = true
+	}
+	if !found["file-text"] {
+		t.Error("Icons does not contain \"file-text\"")
+	}
+	if !found["user"] {
+		t.Error("Icons does not contain \"user\"")
 	}
 }
 

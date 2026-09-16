@@ -41,6 +41,31 @@ type TemplateInfo struct {
 	Source      string `json:"source"`
 }
 
+// schemaIconCatalog is the closed set of Lucide icon names the UI renders for
+// schema object types (mirrors apps/web-ui/gateway/type_icons.go). Values
+// outside this set silently fall back to a generic box, so schema authors and
+// agents must pick from here. Names are bare Lucide kebab-case.
+var schemaIconCatalog = []string{
+	"box", "file-text", "file", "git-branch", "git-commit", "git-merge",
+	"git-pull-request", "shield", "shield-check", "zap", "layers", "tag",
+	"star", "heart", "alert-triangle", "bell", "book", "book-open",
+	"briefcase", "calendar", "camera", "check", "check-circle", "circle",
+	"clock", "cloud", "code", "cog", "settings", "database", "edit", "eye",
+	"folder", "globe", "hash", "home", "image", "info", "key", "link",
+	"list", "lock", "mail", "map", "map-pin", "message-circle", "monitor",
+	"package", "paperclip", "pen", "phone", "play", "plus", "puzzle",
+	"search", "send", "server", "share", "sparkles", "terminal", "trash",
+	"user", "users", "wrench", "x",
+}
+
+// SchemaIconListResult is the response of the schema-icon-list MCP tool.
+type SchemaIconListResult struct {
+	Icons     []string `json:"icons"`
+	Count     int      `json:"count"`
+	Format    string   `json:"format"`
+	ColorNote string   `json:"color_note"`
+}
+
 func (s *Service) getSchemaVersion(ctx context.Context, projectID string) (string, error) {
 	type packInfo struct {
 		ID        string    `bun:"id"`
@@ -102,6 +127,18 @@ func (s *Service) executeSchemaVersion(ctx context.Context, projectID string) (*
 	}
 
 	return s.wrapResult(result)
+}
+
+// executeSchemaIconList returns the closed catalog of Lucide icon names valid
+// for schema object-type UI configs. Static — requires no project context.
+func (s *Service) executeSchemaIconList(_ context.Context, _ string) (*ToolResult, error) {
+	return s.wrapResult(SchemaIconListResult{
+		Icons: schemaIconCatalog,
+		Count: len(schemaIconCatalog),
+		Format: "Use the bare Lucide kebab-case name as the value of ui_configs.<type>.icon " +
+			"(e.g. \"file-text\"). PascalCase (\"FileText\") and \"lucide--file-text\" are also accepted.",
+		ColorNote: "ui_configs.<type>.color accepts any hex color, e.g. \"#3B82F6\".",
+	})
 }
 
 func (s *Service) executeListSchemas(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {

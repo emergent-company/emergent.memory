@@ -100,7 +100,7 @@ relationshipTypes:              # optional
     sourceType: Person          # optional — source object type name
     targetType: Company         # optional — target object type name
 
-uiConfigs: {}                   # optional — arbitrary shape, passed through to API
+uiConfigs: {}                   # optional — per-type UI, e.g. { Person: { icon: user, color: "#3B82F6" } }; icon is a Lucide name from the closed catalog (call the schema-icon-list MCP tool / see the schema-creation guide), color is hex
 extractionPrompts: {}           # optional — arbitrary shape, passed through to API
 ```
 

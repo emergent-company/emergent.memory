@@ -257,12 +257,28 @@ Control how entities are displayed in the UI.
 
 | Field              | Type   | Description                            |
 | ------------------ | ------ | -------------------------------------- |
-| `icon`             | string | Icon name (Iconify or custom)          |
-| `color`            | string | Hex color code for entity type         |
+| `icon`             | string | Lucide icon name from the closed catalog (kebab-case, e.g. `file-text`; PascalCase `FileText` and `lucide--file-text` also accepted) |
+| `color`            | string | Hex color code for entity type, e.g. `"#3B82F6"` |
 | `display_template` | string | Handlebars template for entity display |
 | `summary_fields`   | array  | Fields to show in summary view         |
 | `card_layout`      | object | Configuration for card view            |
 | `list_view`        | object | Configuration for list view            |
+
+### Available Icons
+
+Icons are a **closed catalog** of 65 Lucide names. A name outside the catalog silently falls back to a generic box, so always pick from this list:
+
+```text
+box, file-text, file, git-branch, git-commit, git-merge, git-pull-request,
+shield, shield-check, zap, layers, tag, star, heart, alert-triangle, bell,
+book, book-open, briefcase, calendar, camera, check, check-circle, circle,
+clock, cloud, code, cog, settings, database, edit, eye, folder, globe, hash,
+home, image, info, key, link, list, lock, mail, map, map-pin,
+message-circle, monitor, package, paperclip, pen, phone, play, plus, puzzle,
+search, send, server, share, sparkles, terminal, trash, user, users, wrench, x
+```
+
+Values may be written in kebab-case (`file-text`), PascalCase (`FileText`), or iconify form (`lucide--file-text`). MCP agents can call the `schema-icon-list` tool to fetch the current list at runtime.
 
 ---
 
