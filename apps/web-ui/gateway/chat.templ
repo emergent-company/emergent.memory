@@ -19,7 +19,7 @@ import (
 templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string) {
 	<div class="h-full">
 		if loadErr != nil {
-			@layout.Container(layout.ContainerLG, nil) {
+			@layout.Container(layout.ContainerMD, nil) {
 				@pageError("Agents unavailable", loadErr)
 			}
 		} else if len(agents) == 0 {
