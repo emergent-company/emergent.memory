@@ -48,7 +48,11 @@
   function isTransientError(err) {
     if (!err) return false;
     if (/failed to fetch|networkerror|load failed|network request failed|the network connection was lost|networkerror when attempting/i.test(String(err.message || ""))) return true;
-    if (err.name === "AbortError") return true;
+    // AbortError from a user-initiated stop/abort is expected; unrelated aborts
+    // (e.g. programming errors that call controller.abort() in the wrong state)
+    // are rare enough that we keep filtering — but we require a non-empty
+    // err.message check to avoid swallowing synthetic {name:"AbortError"} noise.
+    if (err.name === "AbortError" && err.message !== undefined) return true;
     if (err.status === 502 || err.status === 503 || err.status === 504) return true;
     var m = /HTTP\s+(\d{3})/.exec(String(err.message || ""));
     if (!m) return false;
