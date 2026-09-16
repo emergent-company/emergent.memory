@@ -96,7 +96,13 @@ def build_body(review: dict) -> str:
     payload = json.dumps(review, indent=2)
     # Guard against the payload containing a closing fence sequence.
     payload = payload.replace("```", "``\u200b``")
-    return f"{md}\n\n```{JSON_FENCE}\n{payload}\n```\n"
+    # Collapse the machine-readable block so it's not shown as raw JSON to humans.
+    return (
+        f"{md}\n\n"
+        f"<details><summary>Review payload (for auto-fix)</summary>\n\n"
+        f"```{JSON_FENCE}\n{payload}\n```\n"
+        f"</details>\n"
+    )
 
 
 def get_head_sha() -> str:
