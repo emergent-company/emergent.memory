@@ -15,7 +15,7 @@ import (
 // plus an upload form. A failed list fetch renders the whole-page error state;
 // a failed upload surfaces as flashErr, a successful one as flashMsg.
 templ DocumentsPage(documents []Document, nextCursor string, loadErr error, flashMsg string, flashErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@documentsHeader(len(documents), loadErr == nil)
 		if loadErr != nil {
 			@pageError("Failed to load documents", loadErr)
@@ -133,7 +133,7 @@ templ documentStatusBadge(status string) {
 // and a chunk preview. A failed document fetch renders the whole-page error
 // state.
 templ DocumentDetailPage(doc *Document, chunks []Chunk, results extractionResults, loadErr error, flashMsg string, flashErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Document unavailable", loadErr)
 		} else {

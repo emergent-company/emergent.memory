@@ -116,7 +116,7 @@ func staleIssueVariant(issue string) ui.BadgeIntent {
 
 // --- Schema migrations ---
 templ MigrationsPage(data migrationData) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@migrationsHeader()
 		if data.Err != "" {
 			@flashToast("error", data.Err)

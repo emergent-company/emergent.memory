@@ -184,7 +184,7 @@ func scheduleCountLabel(n int) string {
 // agent fetch renders the whole-page error state; FlashMsg/FlashErr surface
 // PRG feedback from the update flow.
 templ ScheduleDetailPage(data scheduleDetailData) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
 			@pageError("Schedule unavailable", data.LoadErr)
 		} else {
@@ -369,7 +369,7 @@ templ scheduleDeleteDialog(a *ScheduledAgent) {
 // SchedulesNewPage renders the create form for a new schedule: a
 // breadcrumb/title header, an optional error toast, and the create form.
 templ SchedulesNewPage(defs []AgentDefinitionSummary, flashErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Schedules", "/schedules", "New schedule")), "", "New schedule", "A name, a prompt, and a cron expression — the linked agent definition supplies the model and tools.")
 		if flashErr != nil {
 			@flashToast("error", flashErr.Error())

@@ -110,7 +110,7 @@ templ skillCreateForm() {
 // header, an optional error toast, and the create form. flashErr surfaces PRG
 // feedback when memory rejects the values.
 templ SkillNewPage(flashErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", "New skill")), "", "New skill", "A name, what it does, and the instructions that make it work.")
 		if flashErr != nil {
 			@flashToast("error", flashErr.Error())
@@ -186,7 +186,7 @@ templ skillRow(rowID string, s Skill, usedBy int) {
 // a delete confirm dialog. A failed fetch renders the whole-page error state;
 // flashMsg/flashErr surface PRG feedback from the update flow.
 templ SkillDetailPage(skill *Skill, loadErr error, flashMsg string, flashErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Skill unavailable", loadErr)
 		} else {

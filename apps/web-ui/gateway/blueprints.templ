@@ -17,7 +17,7 @@ import (
 // A failed applied fetch renders the whole-page error state; flashMsg/flashErr
 // surface PRG feedback.
 templ BlueprintsPage(applied []AppliedBlueprint, upgrades []AvailableSchemaItem, available []AvailableSchemaItem, drafts []BlueprintRecord, loadErr error, flashMsg string, flashErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@blueprintsHeader(len(applied), loadErr == nil)
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
@@ -205,7 +205,7 @@ templ availableRow(b AvailableSchemaItem) {
 // object types (with properties), relationship types, and any agent definitions
 // the blueprint carries.
 templ BlueprintDetailPage(detail *BlueprintDetail, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Blueprint unavailable", loadErr)
 		} else {

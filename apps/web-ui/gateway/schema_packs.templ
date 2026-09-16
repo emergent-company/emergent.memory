@@ -16,7 +16,7 @@ import (
 // /schema/add install flow). A load error renders the whole-page error state
 // inside the rail.
 templ SchemaPacksPage(packs []schemaPackSummary, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs")), "", "Schema packs", "Active schema packs contributing object and relationship types to this project.") {
 			<div class="flex flex-wrap items-center gap-2">
 				if loadErr == nil {
@@ -84,7 +84,7 @@ templ schemaPackRow(p schemaPackSummary) {
 // nil loadErr is the not-found state (unknown or absent pack id); a non-nil
 // loadErr is the whole-page error state. Neither panics.
 templ SchemaPackPage(pack *schemaPackSummary, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if pack == nil {
 			@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", "Schema pack")), "", "Schema pack", "")
 		} else {

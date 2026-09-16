@@ -819,7 +819,7 @@ templ AgentSessionsPage(data agentSessionsData) {
 // selected is non-nil. Mirrors the iOS memory browser semantics: empty query
 // lists all, a query searches.
 templ MemoriesPage(id string, name string, query string, memories []Memory, selected *Memory, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Agents", "/agents", name, "/agents/"+url.PathEscape(id), "Memories")), "", "Memories for "+name, "", detailHeaderOpts{Margin: "mb-6"}) {
 			if loadErr == nil {
 				@countBadgeLabel(countLabel(len(memories), "memory", "memories"), "lucide--brain")

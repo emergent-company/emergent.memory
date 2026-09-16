@@ -16,7 +16,7 @@ import (
 // types. A failed fetch renders the whole-page error state. FlashMsg/FlashErr
 // surface PRG feedback from the install and derive actions.
 templ SchemaPage(view *SchemaListView, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@layout.Rail(schemaSubNav("compiled"), nil) {
 				@pageError("Failed to load schema", loadErr)
@@ -134,7 +134,7 @@ templ provenanceBadge(size ui.BadgeSize) {
 // SchemaAddPage renders the Schema-area "Add schema" action: the installable
 // pack list with one-action install, or an empty state.
 templ SchemaAddPage(view *SchemaAddView) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Add schema")), "", "Add schema", "Install an available schema pack without leaving the Schema area.")
 		@layout.Rail(schemaSubNav("packs"), nil) {
 			if view != nil && view.Err != nil {
@@ -195,7 +195,7 @@ templ availableSchemaRow(item AvailableSchemaItem) {
 // properties, blueprint provenance, schema history, and the relationship types
 // that reference it.
 templ SchemaObjectTypePage(view *SchemaObjectTypeView, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@layout.Rail(schemaSubNav("compiled"), nil) {
 				@pageError("Object type unavailable", loadErr)
@@ -326,7 +326,7 @@ templ schemaObjectTypeRelationships(relationships []RelationshipTypeDetail) {
 // arms a confirmation gate on submit (see deriveWarningDialog). A save failure
 // re-renders here with the entered values preserved.
 templ SchemaObjectTypeEditPage(view *SchemaEditView) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if view == nil || view.Detail == nil {
 			@layout.Rail(schemaSubNav("compiled"), nil) {
 				if view != nil && view.Err != nil {

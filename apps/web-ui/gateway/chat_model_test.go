@@ -89,7 +89,7 @@ func TestChatModelWarningBannerRender(t *testing.T) {
 
 	// default agent (a1) warned → visible banner + data-warn on its option
 	html := renderHTML(t, ChatPage(agents, nil, nil, nil, "", "", "", nil, false, map[string]string{"a1": msg}))
-	if !strings.Contains(html, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline mx-auto w-full max-w-6xl px-4 pt-3 lg:px-6"`) {
+	if !strings.Contains(html, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline mx-auto w-full max-w-6xl px-6 pt-3 lg:px-8"`) {
 		t.Error("warned agent must render a visible (non-hidden) error banner")
 	}
 	for _, want := range []string{
@@ -107,7 +107,7 @@ func TestChatModelWarningBannerRender(t *testing.T) {
 
 	// no warnings → banner hidden, empty text span, options carry empty data-warn
 	htmlClean := renderHTML(t, ChatPage(agents, nil, nil, nil, "", "", "", nil, false, nil))
-	if !strings.Contains(htmlClean, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline mx-auto w-full max-w-6xl px-4 pt-3 lg:px-6 hidden"`) {
+	if !strings.Contains(htmlClean, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline mx-auto w-full max-w-6xl px-6 pt-3 lg:px-8 hidden"`) {
 		t.Error("alert-free chat page must render the banner hidden")
 	}
 	if !strings.Contains(htmlClean, `id="chat-model-warning-text"></span>`) {
@@ -120,7 +120,7 @@ func TestChatModelWarningBannerRender(t *testing.T) {
 	// a warning for a non-selected agent stays hidden server-side (chat.js
 	// reveals it only once that agent is picked)
 	htmlOther := renderHTML(t, ChatPage(agents, nil, nil, nil, "", "", "", nil, false, map[string]string{"a2": msg}))
-	if !strings.Contains(htmlOther, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline mx-auto w-full max-w-6xl px-4 pt-3 lg:px-6 hidden"`) {
+	if !strings.Contains(htmlOther, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline mx-auto w-full max-w-6xl px-6 pt-3 lg:px-8 hidden"`) {
 		t.Error("non-selected agent's warning must not pre-open the banner")
 	}
 	if !strings.Contains(htmlOther, `value="a2" data-warn="`) {

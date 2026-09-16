@@ -12,7 +12,7 @@ import (
 // approval decision (approve / reject / cancel), newest first, with the tool
 // name, redacted argument summary, decision, and optional reject message.
 templ ApprovalsPage(approvals []ToolApprovalItem, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Approvals")), "", "Approvals", "Human-in-the-loop tool approvals — every approve, reject, and cancel decision.", detailHeaderOpts{Margin: "mb-6", SubtitleFull: true}) {
 			@ui.Badge(ui.BadgeProps{
 				Label:   "audit",

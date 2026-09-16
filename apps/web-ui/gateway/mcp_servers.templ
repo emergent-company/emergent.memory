@@ -312,7 +312,7 @@ script openMCPDelete(serverID string) {
 // ?err= surfaces PRG feedback from the create flow; FieldErrs render inline
 // under the offending field groups on validation re-renders.
 templ MCPServerNewPage(data mcpServerFormData) {
-	@layout.Container(layout.ContainerMD, templ.Attributes{"data-mcp-form": ""}) {
+	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-form": ""}) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "New server")), "", "New MCP server", "Name the server and pick a transport — stdio runs a command on the memory host, sse/http dial a remote endpoint.", detailHeaderOpts{Margin: "mb-6"}) {}
 		@flashToasts("", data.FlashErr)
 		@mcpServerFormBody(data, false)
@@ -325,7 +325,7 @@ templ MCPServerNewPage(data mcpServerFormData) {
 // LoadErr / NotFound render their own states; ?err= surfaces PRG feedback.
 templ MCPServerEditPage(data mcpServerFormData) {
 	{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Edit server")) }}
-	@layout.Container(layout.ContainerMD, templ.Attributes{"data-mcp-form": ""}) {
+	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-form": ""}) {
 		if data.LoadErr != nil {
 			@detailHeader(crumbs, "", "Edit server", "", detailHeaderOpts{Margin: "mb-6"}) {}
 			@pageError("Server unavailable", data.LoadErr)
