@@ -155,80 +155,81 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 					}
 				</div>
 			</div>
-			<div class="border-base-content/5 border-t bg-base-100 py-3">
-				<!-- The pinned composer keeps its own compact vertical bar padding;
-				     the form carries ContainerLG's width + horizontal gutter so the
-				     input lines up with the message column above. -->
-				<form id="chat-form" class="mx-auto max-w-6xl px-6 lg:px-8" style="box-sizing:border-box" hx-boost="false">
-					<div class="flex flex-wrap items-stretch gap-2">
-						<textarea
-							id="chat-input"
-							data-testid="chat-input"
-							rows="1"
-							class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow basis-48 resize-none"
-							placeholder={ chatPlaceholder(agents, preselect) }
-							aria-label="Message"
-						></textarea>
-						<div class="flex shrink-0 flex-wrap items-stretch gap-1.5 sm:gap-2">
-							if voiceEnabled {
-								<div class="flex h-9 shrink-0 items-center gap-2 self-center rounded-full border border-base-content/10 bg-base-200/50 px-2.5">
-									<span id="voice-status" class="text-base-content/45 text-xs whitespace-nowrap" aria-live="polite">idle</span>
-									<span class="bg-base-content/10 h-3.5 w-px" aria-hidden="true"></span>
-									<div id="voice-level" class="voice-level" aria-hidden="true">
-										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
-										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
-										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
-										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
-										<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+			<div class="border-base-content/5 border-t bg-base-100">
+				<form id="chat-form" hx-boost="false">
+					<!-- Width + gutter come from the shared Container, so the composer
+					     can never drift from the message column above. -->
+					@layout.Container(layout.ContainerLG, nil) {
+						<div class="flex flex-wrap items-stretch gap-2">
+							<textarea
+								id="chat-input"
+								data-testid="chat-input"
+								rows="1"
+								class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow basis-48 resize-none"
+								placeholder={ chatPlaceholder(agents, preselect) }
+								aria-label="Message"
+							></textarea>
+							<div class="flex shrink-0 flex-wrap items-stretch gap-1.5 sm:gap-2">
+								if voiceEnabled {
+									<div class="flex h-9 shrink-0 items-center gap-2 self-center rounded-full border border-base-content/10 bg-base-200/50 px-2.5">
+										<span id="voice-status" class="text-base-content/45 text-xs whitespace-nowrap" aria-live="polite">idle</span>
+										<span class="bg-base-content/10 h-3.5 w-px" aria-hidden="true"></span>
+										<div id="voice-level" class="voice-level" aria-hidden="true">
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+											<span class="voice-level-bar"><span class="voice-level-fill"></span></span>
+										</div>
 									</div>
-								</div>
+									@ui.Button(ui.ButtonProps{
+										Type:       ui.ButtonTypeButton,
+										Variant:    ui.ButtonGhost,
+										Size:       ui.ButtonSM,
+										Shape:      ui.ButtonShapeSquare,
+										Icon:       "lucide--mic",
+										AriaLabel:  "Mute microphone",
+										ExtraClass: "hidden h-full min-h-11 w-11 shrink-0",
+										Attrs:      templ.Attributes{"id": "voice-mute-btn"},
+									})
+									@ui.Button(ui.ButtonProps{
+										Type:       ui.ButtonTypeButton,
+										Variant:    ui.ButtonPrimary,
+										Size:       ui.ButtonSM,
+										Icon:       "lucide--phone",
+										AriaLabel:  "Start voice call",
+										ExtraClass: "h-full min-h-11 shrink-0",
+										Attrs:      templ.Attributes{"id": "voice-call-btn"},
+									}) {
+										<span class="voice-call-label voice-call-start">Call</span>
+										<span class="voice-call-label voice-call-stop hidden">Hang up</span>
+									}
+								}
 								@ui.Button(ui.ButtonProps{
-									Type:       ui.ButtonTypeButton,
-									Variant:    ui.ButtonGhost,
-									Size:       ui.ButtonSM,
-									Shape:      ui.ButtonShapeSquare,
-									Icon:       "lucide--mic",
-									AriaLabel:  "Mute microphone",
-									ExtraClass: "hidden h-full min-h-11 w-11 shrink-0",
-									Attrs:      templ.Attributes{"id": "voice-mute-btn"},
-								})
-								@ui.Button(ui.ButtonProps{
-									Type:       ui.ButtonTypeButton,
+									Type:       ui.ButtonTypeSubmit,
 									Variant:    ui.ButtonPrimary,
 									Size:       ui.ButtonSM,
-									Icon:       "lucide--phone",
-									AriaLabel:  "Start voice call",
-									ExtraClass: "h-full min-h-11 shrink-0",
-									Attrs:      templ.Attributes{"id": "voice-call-btn"},
-								}) {
-									<span class="voice-call-label voice-call-start">Call</span>
-									<span class="voice-call-label voice-call-stop hidden">Hang up</span>
-								}
-							}
-							@ui.Button(ui.ButtonProps{
-								Type:       ui.ButtonTypeSubmit,
-								Variant:    ui.ButtonPrimary,
-								Size:       ui.ButtonSM,
-								Shape:      ui.ButtonShapeSquare,
-								Icon:       "lucide--arrow-up",
-								AriaLabel:  "Send",
-								ExtraClass: "h-full min-h-11 w-11 shrink-0",
-								Attrs:      templ.Attributes{"id": "chat-send", "data-testid": "chat-send"},
-							})
-							<span id="chat-stop" class="hidden shrink-0">
-								@ui.Button(ui.ButtonProps{
-									Type:       ui.ButtonTypeButton,
-									Variant:    ui.ButtonNeutral,
-									Size:       ui.ButtonSM,
 									Shape:      ui.ButtonShapeSquare,
-									Icon:       "lucide--square",
-									AriaLabel:  "Stop generating",
-									ExtraClass: "h-full min-h-11 w-11",
+									Icon:       "lucide--arrow-up",
+									AriaLabel:  "Send",
+									ExtraClass: "h-full min-h-11 w-11 shrink-0",
+									Attrs:      templ.Attributes{"id": "chat-send", "data-testid": "chat-send"},
 								})
-							</span>
+								<span id="chat-stop" class="hidden shrink-0">
+									@ui.Button(ui.ButtonProps{
+										Type:       ui.ButtonTypeButton,
+										Variant:    ui.ButtonNeutral,
+										Size:       ui.ButtonSM,
+										Shape:      ui.ButtonShapeSquare,
+										Icon:       "lucide--square",
+										AriaLabel:  "Stop generating",
+										ExtraClass: "h-full min-h-11 w-11",
+									})
+								</span>
+							</div>
 						</div>
-					</div>
-					<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+						<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+					}
 				</form>
 			</div>
 		</div>
@@ -236,6 +237,14 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 			<audio id="agent-audio" class="hidden" autoplay playsinline></audio>
 		}
 		<style>
+			/* The model-availability banner sits between the chat header and the
+			   transcript. Its layout.Container supplies width + gutter, but when
+			   there is no warning the alert is .hidden and the Container's own
+			   block padding would leave an empty band — collapse it so the slot
+			   takes no vertical space until chat.js reveals the alert. */
+			div:has(> #chat-model-warning.hidden) {
+				padding-block: 0;
+			}
 			/* Voice controls — meter + button states driven by voice.js.
 			   voice.js sets --level (0.0–1.0) on #voice-level every animation
 			   frame and toggles .voice-speaking while the mic is above
@@ -427,22 +436,24 @@ templ chatRailEmpty(hasRows bool) {
 // the hidden class when the #chat-agent picker changes; the text itself always
 // comes from the server-computed map (never duplicated client-side).
 templ chatModelWarningBanner(message string) {
-	<div id="chat-model-warning" role="alert" class={ "alert alert-error alert-outline mx-auto w-full max-w-6xl px-6 pt-3 lg:px-8", templ.KV("hidden", message == "") }>
-		@ui.IconSpan("lucide--alert-triangle", "size-5")
-		<div class="flex min-w-0 items-center gap-3">
-			<span class="min-w-0 grow" id="chat-model-warning-text">{ message }</span>
-			@ui.Button(ui.ButtonProps{
-				Type:       ui.ButtonTypeLink,
-				Href:       "/settings/providers",
-				Variant:    ui.ButtonOutline,
-				Size:       ui.ButtonXS,
-				Icon:       "lucide--server",
-				ExtraClass: "shrink-0 h-auto",
-			}) {
-				Configure a provider
-			}
+	@layout.Container(layout.ContainerLG, nil) {
+		<div id="chat-model-warning" role="alert" class={ "alert alert-error alert-outline", templ.KV("hidden", message == "") }>
+			@ui.IconSpan("lucide--alert-triangle", "size-5")
+			<div class="flex min-w-0 items-center gap-3">
+				<span class="min-w-0 grow" id="chat-model-warning-text">{ message }</span>
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeLink,
+					Href:       "/settings/providers",
+					Variant:    ui.ButtonOutline,
+					Size:       ui.ButtonXS,
+					Icon:       "lucide--server",
+					ExtraClass: "shrink-0 h-auto",
+				}) {
+					Configure a provider
+				}
+			</div>
 		</div>
-	</div>
+	}
 }
 
 // chatSuggestion renders a tappable prompt chip for the welcome state.

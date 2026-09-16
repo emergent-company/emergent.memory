@@ -23,11 +23,19 @@ const pageContainerClass = "mx-auto p-6 lg:p-8 max-w-6xl"
 // mirror them and are skipped by the glob.
 //
 // Out of scope on purpose: modal/dialog/popover widths and inner
-// text/card widths (max-w-xs/sm/md/lg/2xl), the shared 6xl container width,
-// and any non-centered width. The rule is about *page* content width only, so
-// only a page-level `mx-auto … max-w-3xl/4xl/5xl/7xl` wrapper is flagged. A
-// page that genuinely needs its own wrapper encodes an exemption with a
-// `page-width-exempt: <reason>` comment on that line.
+// text/card widths (max-w-xs/sm/md/lg/2xl) and any non-centered width. The
+// rule is about *page* content width, i.e. a centered `mx-auto … max-w-…`
+// wrapper, which must come from layout.Container rather than be hand-rolled.
+//
+// max-w-6xl is guarded alongside the narrower widths *because* it is exactly
+// layout.ContainerLG's width: a hand-rolled `mx-auto … max-w-6xl` duplicates
+// the container instead of reusing it and silently drifts if ContainerLG ever
+// changes (the composer/banner did precisely this before review). A bare
+// max-w-6xl without mx-auto — e.g. a `modal-box max-w-6xl` — is not a page
+// wrapper and is not flagged.
+//
+// A line that genuinely needs its own centered wrapper opts out with a
+// `page-width-exempt: <reason>` comment so the exception is explicit.
 func TestPageWidthConsistency(t *testing.T) {
 	files, err := filepath.Glob("*.templ")
 	if err != nil {
@@ -37,7 +45,7 @@ func TestPageWidthConsistency(t *testing.T) {
 		t.Fatal("no *.templ sources found in gateway root")
 	}
 
-	bannedWidths := []string{"max-w-3xl", "max-w-4xl", "max-w-5xl", "max-w-7xl"}
+	guardedWidths := []string{"max-w-3xl", "max-w-4xl", "max-w-5xl", "max-w-6xl", "max-w-7xl"}
 	for _, file := range files {
 		b, err := os.ReadFile(file)
 		if err != nil {
@@ -52,7 +60,7 @@ func TestPageWidthConsistency(t *testing.T) {
 			if !strings.Contains(line, "mx-auto") || strings.Contains(line, "page-width-exempt:") {
 				continue
 			}
-			for _, w := range bannedWidths {
+			for _, w := range guardedWidths {
 				if strings.Contains(line, w) {
 					t.Errorf("%s:%d hardcodes a page-level %q wrapper instead of layout.Container: %s", file, lineNo, w, strings.TrimSpace(line))
 				}
@@ -135,9 +143,32 @@ func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 		}
 	}
 
-	// The pinned composer carries the shared horizontal gutter so its input
-	// lines up with the message column above.
-	if !strings.Contains(html, `class="mx-auto max-w-6xl px-6 lg:px-8"`) {
-		t.Error("chat composer must carry the shared container gutter")
+	// The composer reuses the very same Container as the transcript column
+	// rather than repeating its width/gutter classes, so the two cannot drift:
+	// the form itself carries no width/padding and its input sits inside a real
+	// layout.Container.
+	const formTag = `<form id="chat-form" hx-boost="false">`
+	formStart := strings.Index(html, formTag)
+	if formStart < 0 {
+		t.Error("chat composer form must carry no width/padding of its own (want the bare form tag)")
+	} else {
+		textareaStart := strings.Index(html[formStart:], "<textarea")
+		if textareaStart < 0 {
+			t.Fatal("chat composer textarea missing")
+		}
+		composerHead := html[formStart : formStart+textareaStart]
+		if !strings.Contains(composerHead, `class="`+pageContainerClass+`"`) {
+			t.Errorf("chat composer input must sit inside the shared container %q", pageContainerClass)
+		}
+	}
+
+	// Same for the model-warning banner: its width/gutter come from the shared
+	// container, not from the alert's own classes.
+	if i := strings.Index(html, `id="chat-model-warning"`); i >= 0 {
+		before := html[:i]
+		j := strings.LastIndex(before, `<div class="`)
+		if j < 0 || !strings.Contains(before[j:], pageContainerClass) {
+			t.Error("chat model-warning banner must sit inside the shared container")
+		}
 	}
 }
