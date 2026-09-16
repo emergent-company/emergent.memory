@@ -33,9 +33,12 @@ func schemaJSONPost(e *echo.Echo, target, body string) *httptest.ResponseRecorde
 // --- task 2.1: edit handlers ---
 
 func TestUISchemaObjectTypeUpdateProjectAuthored(t *testing.T) {
-	f := &fakeMemory{compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{
-		{Name: "person", SchemaID: "pack-1"},
-	}}}
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+			{Name: "person", SchemaID: "pack-1"},
+		}},
+		schemas: []SchemaInfo{{ID: "pack-1", ProjectID: "proj"}},
+	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate)
@@ -60,6 +63,76 @@ func TestUISchemaObjectTypeUpdateProjectAuthored(t *testing.T) {
 	}
 	if _, ok := f.updatedSchemaPackEdit.Properties["name"]; !ok {
 		t.Errorf("properties = %v", f.updatedSchemaPackEdit.Properties)
+	}
+}
+
+func TestUISchemaObjectTypeUpdateBuiltinTypeCopiesToOverride(t *testing.T) {
+	// A builtin type (e.g. Message from session-message-types, source="builtin",
+	// project_id NULL) is not project-owned, so its pack id never appears in the
+	// project-scoped catalog. Editing it must copy into the override pack, never
+	// mutate the builtin pack in place.
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+			{Name: "Message", SchemaID: "builtin-session-message", SchemaName: "session-message-types", SchemaVersion: "1.0.0"},
+		}},
+		// No project-owned schemas yet, so the override pack is created on the
+		// first edit and then assigned.
+		createdSchemaPackRes: &BlueprintSchema{ID: "pack-new"},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate)
+
+	form := url.Values{}
+	form.Set("description", "edited")
+	form.Set("icon", "message-circle")
+	form.Set("color", "#10B981")
+	rec := schemaFormPost(e, "/schema/object-types/Message", form)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if f.updatedSchemaPackID != "" {
+		t.Errorf("builtin pack must not be updated in place, got %q", f.updatedSchemaPackID)
+	}
+	if f.createdSchemaPack == nil || f.createdSchemaPack.Name != overridePackName {
+		t.Errorf("expected override pack creation, got %+v", f.createdSchemaPack)
+	}
+	if len(f.assignedSchemaPacks) != 1 || f.assignedSchemaPacks[0] != "pack-new" {
+		t.Errorf("override pack not assigned: %v", f.assignedSchemaPacks)
+	}
+}
+
+func TestUISchemaObjectTypeUpdateBuiltinTypeReusesOverride(t *testing.T) {
+	// On repeat edits the existing project-owned override pack is updated, and
+	// the builtin pack is left alone.
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+			{Name: "Message", SchemaID: "builtin-session-message", SchemaName: "session-message-types", SchemaVersion: "1.0.0"},
+		}},
+		schemas: []SchemaInfo{
+			{ID: "pack-override", Name: overridePackName, Version: overridePackVersion, ProjectID: "proj"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate)
+
+	form := url.Values{}
+	form.Set("description", "edited again")
+	rec := schemaFormPost(e, "/schema/object-types/Message", form)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if f.updatedSchemaPackID != "pack-override" {
+		t.Errorf("updated pack = %q, want pack-override", f.updatedSchemaPackID)
+	}
+	if f.createdSchemaPack != nil {
+		t.Errorf("unexpected override pack creation: %+v", f.createdSchemaPack)
+	}
+	if f.updatedSchemaPackEdit == nil || f.updatedSchemaPackEdit.Description != "edited again" {
+		t.Errorf("edit = %+v", f.updatedSchemaPackEdit)
 	}
 }
 
@@ -387,7 +460,10 @@ func TestRequireSchemaWriteDeniesWithoutCapability(t *testing.T) {
 }
 
 func TestRequireSchemaWriteAllowsWithCapability(t *testing.T) {
-	f := &fakeMemory{compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", SchemaID: "pack-1"}}}}
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", SchemaID: "pack-1"}}},
+		schemas:  []SchemaInfo{{ID: "pack-1", ProjectID: "proj"}},
+	}
 	s := &Server{memory: f, schemaWritePolicy: func(echo.Context) bool { return true }}
 	e := echo.New()
 	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate, s.requireSchemaWrite)
