@@ -174,6 +174,20 @@ detail → delete → gone, chunk view reports the document as unavailable),
 full reload, with the original values restored afterwards) and **project overrides**
 (create → delete, each asserted across reloads, plus a no-leftovers guard).
 
+Agent-scoped MCP endpoints: `specs/agents/agent-mcp-keys-ui.spec.ts` drives the
+"MCP endpoint" section on an agent's own Settings page — create the endpoint and
+verify its URL (readable and actually copied), the sessions panel's empty state,
+a labeled key's one-time secret reveal, the secret never reappearing after a
+navigate-away + reload, a duplicate label's readable 409 error, rotation (new
+secret once, same key identity), revoking one key while another stays active,
+and revoking the endpoint back to its not-enabled state, plus a guard that the
+project shares page (`/settings/mcp-servers/shares`) offers no agent picker. It
+uses one dedicated `E2E MCP Agent` and revokes every key plus the endpoint in
+`afterAll`. The spec probes the upstream memory backend once and skips the
+endpoint-dependent tests with an annotated reason when that backend does not yet
+expose `POST /api/projects/:projectId/agents/:agentId/mcp-endpoint` (the UI ships
+ahead of the memory deploy); the section-render and shares-guard tests always run.
+
 Note on `data-testid`: none of the four flows above needed one — semantic locators
 sufficed. Anchors are added only where an element has no stable accessible name (so
 far: three in `api_tokens.templ`, for the token row, the revoked badge and the
