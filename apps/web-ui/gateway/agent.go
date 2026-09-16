@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -155,6 +156,26 @@ type agentSettingsData struct {
 	// ProviderNames holds the configured provider keys of the project, e.g.
 	// "openai" (drives the pinned-model unservable warning).
 	ProviderNames []string
+
+	// MCPEndpoint is the agent's own MCP endpoint (agent-scoped-mcp-endpoint);
+	// nil means the agent has none yet. MCPKeys are its labeled credentials,
+	// MCPSessions the external client sessions those keys created.
+	MCPAgentID       string
+	MCPEndpoint      *AgentMCPEndpoint
+	MCPKeys          []AgentMCPKey
+	MCPSessions      []AgentMCPSession
+	MCPSessionStatus string
+	// MCPKeyDraft preserves a typed-but-rejected key label across a re-render.
+	MCPKeyDraft string
+	// MCPEndpointErr / MCPKeysErr / MCPSessionsErr degrade only their own MCP
+	// block; MCPActionErr is a create/revoke/rotate failure shown inline.
+	MCPEndpointErr error
+	MCPKeysErr     error
+	MCPSessionsErr error
+	MCPActionErr   error
+	// MCPReveal carries a just-created/rotated one-time secret. It is non-nil on
+	// that one response only.
+	MCPReveal *agentMCPReveal
 }
 
 // agentSessionsData is the payload for AgentSessionsPage: the agent plus its
@@ -181,22 +202,46 @@ type agentSandboxData struct {
 }
 
 // uiAgentSettings renders the in-page agent edit form (moved out of the
-// create/edit modal). ?updated=1 / ?err=1 surface PRG feedback from the
-// update flow, mirroring uiSkill.
+// create/edit modal) plus the agent's own MCP endpoint section. ?updated=1 /
+// ?err=1 surface PRG feedback from the update flow, mirroring uiSkill; the
+// mcp* flags surface MCP create/revoke feedback; ?sessions= preselects the MCP
+// session status filter.
 func (s *Server) uiAgentSettings(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 
 	data := agentSettingsData{}
-	if c.QueryParam("updated") != "" {
+	switch {
+	case c.QueryParam("updated") != "":
 		data.FlashMsg = "Agent updated."
+	case c.QueryParam("mcpCreated") != "":
+		data.FlashMsg = "MCP endpoint created."
+	case c.QueryParam("mcpRevoked") != "":
+		data.FlashMsg = "MCP endpoint revoked."
+	case c.QueryParam("keyRevoked") != "":
+		data.FlashMsg = "Key revoked."
 	}
 	data.FlashErr = flashError(c)
+	data.MCPSessionStatus = normalizeAgentMCPSessionStatus(c.QueryParam("sessions"))
 
-	agent, err := s.memory.GetAgentDefinition(ctx, id)
-	if err != nil {
+	if err := s.loadAgentSettings(ctx, id, &data); err != nil {
 		data.LoadErr = err
 		return s.page(c, pageTitle("Agent settings"), AgentSettingsPage(data))
+	}
+	s.loadAgentMCP(ctx, id, &data)
+
+	return s.page(c, pageTitle(data.Agent.Name, "Settings"), AgentSettingsPage(data))
+}
+
+// loadAgentSettings assembles the agent settings payload: the agent being
+// edited, the model catalog, the MCP servers + their tools (the tools picker),
+// the skill list, and every other agent (the delegation-target picker). The MCP
+// section is loaded separately (see loadAgentMCP). A failed agent fetch is
+// returned so the caller renders the whole-page error state.
+func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSettingsData) error {
+	agent, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		return err
 	}
 	deriveDelegation(agent) // reconstruct Delegation for the form's prefill
 	data.Agent = agent
@@ -236,7 +281,7 @@ func (s *Server) uiAgentSettings(c echo.Context) error {
 	captureError(err)
 	data.Skills = skills
 
-	return s.page(c, pageTitle(agent.Name, "Settings"), AgentSettingsPage(data))
+	return nil
 }
 
 // uiAgentUpdate handles the Settings edit form (PRG). It maps form fields onto

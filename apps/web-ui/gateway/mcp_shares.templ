@@ -25,6 +25,17 @@ templ MCPSharesPage(data mcpSharesPageData) {
 		@detailHeader(crumbs, "", "MCP Sharing", "Hand an outside MCP client a scoped key that exposes only the memory tools you choose. To share one agent, use that agent's own MCP endpoint instead.", detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil {
 				@countBadge(len(data.Shares), "share", "lucide--share-2")
+				// Agent sharing lives on the agent's own configuration surface:
+				// each agent's Settings page owns its MCP endpoint and keys.
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/agents",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--bot",
+				}) {
+					Manage an agent endpoint
+				}
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    mcpShareSettingsBase + "/new",
