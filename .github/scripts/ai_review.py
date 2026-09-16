@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""AI code review: PR diff -> litellm -> structured review (verdict + issues,
-each with an exact old->new suggested edit), posted as a single review whose
-body carries a machine-readable JSON block that the auto-fixer consumes.
+"""AI code review: PR diff -> litellm -> a single review (verdict + findings).
 
-Triggered on pull_request events; the PR number and head branch come from the
-workflow's env (PR_NUMBER, HEAD_BRANCH), and the base is resolved via `gh pr view`.
+Triggered by pull_request_target; loads from the base branch (trusted) and reads
+only the PR diff. This is intentionally simple: a readable review for humans.
+No auto-fix, no machine-readable payload, no inline-suggestion machinery.
 """
 import json
 import os
@@ -13,10 +12,8 @@ import sys
 import tempfile
 import urllib.request
 
-# Fence tag around the machine-readable JSON block in the review body.
-JSON_FENCE = "ai-review-json"
-# Severities the auto-fixer acts on. "nit" is left for humans.
-FIX_SEVERITIES = ("must_fix", "should_fix")
+# Severities that flip the review to REQUEST_CHANGES (nits stay non-blocking).
+BLOCKING_SEVERITIES = ("must_fix", "should_fix")
 
 
 def get_pr_number() -> str:
@@ -45,15 +42,10 @@ def get_base(pr: str) -> str:
 
 
 def get_diff(base: str) -> str:
-    # Base branch ref, then diff base...pr-head (pr-head is fetched by the
-    # workflow from pull/{n}/head — the working tree stays on the trusted base).
-    subprocess.run(
-        ["git", "fetch", "--no-tags", "origin", base],
-        capture_output=True,
-    )
+    # pr-head is fetched by the workflow from pull/{n}/head.
+    subprocess.run(["git", "fetch", "--no-tags", "origin", base], capture_output=True)
     r = subprocess.run(
-        ["git", "diff", f"origin/{base}...pr-head"],
-        capture_output=True, text=True,
+        ["git", "diff", f"origin/{base}...pr-head"], capture_output=True, text=True,
     )
     if r.returncode != 0:
         sys.exit(f"git diff failed: {r.stderr}")
@@ -72,116 +64,23 @@ def parse_review(content: str) -> dict:
     try:
         return json.loads(s)
     except json.JSONDecodeError:
-        return {"verdict": "COMMENT", "body": s}
+        return {"verdict": "COMMENT", "issues": [], "body": s}
 
 
 def build_body(review: dict) -> str:
     issues = review.get("issues") or []
     if not issues:
-        md = "No actionable issues found."
-    else:
-        lines = []
-        for it in issues:
-            sev = it.get("severity", "should_fix")
-            title = it.get("title", "issue")
-            path = it.get("path", "?")
-            note = it.get("note", "")
-            safe_title = str(title).replace("`", "\\`").replace("\n", " ")
-            safe_note = str(note).replace("\n", " ")
-            safe_path = str(path).replace("`", "\\`")
-            lines.append(f"- **[{sev}]** `{safe_path}` — {safe_title}")
-            if safe_note:
-                lines.append(f"  - {safe_note}")
-        md = "\n".join(lines)
-    payload = json.dumps(review, indent=2)
-    # Guard against the payload containing a closing fence sequence.
-    payload = payload.replace("```", "``\u200b``")
-    # Collapse the machine-readable block so it's not shown as raw JSON to humans.
-    return (
-        f"{md}\n\n"
-        f"<details><summary>Review payload (for auto-fix)</summary>\n\n"
-        f"```{JSON_FENCE}\n{payload}\n```\n"
-        f"</details>\n"
-    )
-
-
-def get_head_sha() -> str:
-    # HEAD_SHA is set by the workflow (the PR head). Fall back to the fetched ref.
-    if os.environ.get("HEAD_SHA"):
-        return os.environ["HEAD_SHA"]
-    r = subprocess.run(["git", "rev-parse", "pr-head"], capture_output=True, text=True)
-    if r.returncode != 0:
-        sys.exit("could not determine head SHA")
-    return r.stdout.strip()
-
-
-def locate_span(path: str, old: str):
-    """Return (start, end) 1-based line numbers of `old` in the PR-head file, or None."""
-    r = subprocess.run(
-        ["git", "show", f"pr-head:{path}"],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        return None
-    src = r.stdout
-    old_n = old.replace("\r\n", "\n").rstrip("\n")
-    src_n = src.replace("\r\n", "\n")
-    idx = src_n.find(old_n)
-    if idx == -1:
-        return None
-    start = src_n[:idx].count("\n") + 1
-    end = start + old_n.count("\n")
-    return (start, end)
-
-
-def post_inline_suggestions(repo: str, pr: str, commit_id: str, issues) -> None:
-    """Post each issue as a line-anchored review comment with a ```suggestion
-    block so GitHub renders a one-click 'Commit suggestion', like Copilot."""
+        return "No issues found."
+    lines = []
     for it in issues:
-        path = it.get("path")
-        old = it.get("old")
-        new = it.get("new")
-        if (
-            not path
-            or not isinstance(old, str) or not old
-            or not isinstance(new, str) or not new.strip()
-        ):
-            continue
-        span = locate_span(path, old)
-        if not span:
-            print(f"skip inline suggestion for {path}: anchor not found", file=sys.stderr)
-            continue
-        start, end = span
         sev = it.get("severity", "should_fix")
-        title = it.get("title", "")
+        title = it.get("title", "issue")
+        path = it.get("path", "?")
         note = it.get("note", "")
-        body = f"**[{sev}]** {title}"
+        lines.append(f"- **[{sev}]** `{path}` — {title}")
         if note:
-            body += f"\n\n{note}"
-        body += f"\n\n```suggestion\n{new.rstrip(chr(10))}\n```"
-        payload = {
-            "body": body,
-            "path": path,
-            "line": end,
-            "side": "RIGHT",
-            "commit_id": commit_id,
-        }
-        if start != end:
-            payload["start_line"] = start
-            payload["start_side"] = "RIGHT"
-        fd, tmp = tempfile.mkstemp(suffix=".json")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        try:
-            subprocess.run(
-                ["gh", "api", f"repos/{repo}/pulls/{pr}/comments",
-                 "--method", "POST",
-                 "-H", "Content-Type: application/json",
-                 "--input", tmp],
-                check=False,  # 422 if line isn't in the diff — flat review still carries it
-            )
-        finally:
-            os.unlink(tmp)
+            lines.append(f"  - {note}")
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -205,40 +104,23 @@ def main() -> None:
         "You are a senior software engineer performing a rigorous code review.\n"
         "Review the PR diff for: correctness bugs, security issues, performance "
         "problems, error-handling gaps, race conditions, and missing tests.\n"
-        "Respond with ONLY a JSON object (no markdown fences, no prose).\n"
-        "JSON schema:\n"
-        '{\n'
-        '  "verdict": "APPROVE" or "REQUEST_CHANGES",\n'
-        '  "issues": [\n'
-        '    {\n'
-        '      "path": "<relative file path, e.g. apps/server/domain/.../foo.go>",\n'
-        '      "severity": "must_fix" | "should_fix" | "nit",\n'
-        '      "title": "<one-line summary>",\n'
-        '      "old": "<EXACT verbatim contiguous lines from the CURRENT file, '
-        "copied character-for-character, preserving indentation>\",\n"
-        '      "new": "<corrected replacement lines>",\n'
-        '      "note": "<why this matters>"\n'
-        '    }\n'
-        '  ]\n'
-        '}\n'
+        "Respond with ONLY a JSON object (no markdown fences, no prose):\n"
+        '{"verdict": "APPROVE" or "REQUEST_CHANGES", "issues": ['
+        '{"path": "<relative file path>", "severity": "must_fix"|"should_fix"|"nit", '
+        '"title": "<one-line summary>", "note": "<what is wrong and where>"}]}\n'
         "Rules:\n"
-        '- "old" is the current code to replace. Keep it minimal: the shortest '
-        'unambiguous snippet (1-3 lines) copied verbatim from the diff, preserving '
-        'indentation exactly. The fixer locates it by first+last line, so leading '
-        'whitespace must match. If you cannot reproduce it exactly, set "old" to "" '
-        '(the fixer will skip it).\n'
-        '- "new" is the exact replacement text. If "new" equals "old", omit the issue.\n'
-        '- "severity": "must_fix" for correctness/security/breakage, "should_fix" for '
-        'logic/error-handling/perf, "nit" for style.\n'
+        '- "note" must be specific and actionable: cite the file and the affected '
+        "line(s)/behavior, and say what a correct fix would look like.\n"
+        '- "severity": "must_fix" for correctness/security/breakage, "should_fix" '
+        'for logic/error-handling/perf, "nit" for style.\n'
         "Only report real issues; if none, return an empty issues array and verdict "
         '"APPROVE".\n\n'
         f"DIFF:\n{diff}"
     )
 
     payload = {
-        # deepseek-flash is a thinking model. Disable thinking via extra_body —
-        # LiteLLM filters top-level `thinking` when the deployment isn't a native
-        # deepseek provider (drop_params), but extra_body is merged verbatim.
+        # deepseek-v4-flash is a thinking model; disable thinking via extra_body
+        # (LiteLLM drops a top-level `thinking` field for non-deepseek providers).
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
@@ -247,68 +129,42 @@ def main() -> None:
     req = urllib.request.Request(
         f"{base_url}/chat/completions",
         data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=300) as r:
         resp = json.loads(r.read())
 
-    msg = resp["choices"][0]["message"]
-    content = msg.get("content") or ""
+    content = resp["choices"][0]["message"].get("content") or ""
     if not content.strip():
         sys.exit("review model returned empty content")
     review = parse_review(content)
-    # Only keep issues whose path appears in the diff; the fixer will otherwise
-    # happily edit unrelated files based on a hallucinated path.
+
+    # Keep only issues whose path appears in the diff (avoid hallucinated paths).
     changed = set()
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             changed.add(line[6:].strip())
-    issues = [
-        i for i in (review.get("issues") or [])
-        if i.get("path") in changed
-    ]
+    issues = [i for i in (review.get("issues") or []) if i.get("path") in changed]
     review["issues"] = issues
-    verdict = review.get("verdict", "REQUEST_CHANGES")
 
-    # GITHUB_TOKEN cannot submit an APPROVE review (GitHub blocks bot approvals).
-    # Request changes when actionable issues exist; otherwise post a non-blocking
-    # comment. The required human review remains the final merge gate.
-    actionable = any(
-        i.get("severity") in FIX_SEVERITIES and i.get("old") for i in issues
-    )
-    if actionable or verdict == "REQUEST_CHANGES":
-        event = "REQUEST_CHANGES"
-    else:
-        event = "COMMENT"
+    blocking = any(i.get("severity") in BLOCKING_SEVERITIES for i in issues)
+    event = "REQUEST_CHANGES" if blocking else "COMMENT"
 
     body = build_body(review)
     if truncated:
-        body += f"\n> ⚠️ Diff truncated at {max_diff} chars — files beyond this limit were not reviewed.\n"
+        body += f"\n\n> ⚠️ Diff truncated at {max_diff} chars — files beyond this limit were not reviewed.\n"
 
-    # Post via a JSON file (--input) instead of --field: large bodies with
-    # special characters break gh's --field type coercion.
     fd, tmp = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump({"event": event, "body": body}, f)
     try:
         subprocess.run(
-            [
-                "gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
-                "--method", "POST",
-                "-H", "Content-Type: application/json",
-                "--input", tmp,
-            ],
+            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
+             "--method", "POST", "-H", "Content-Type: application/json", "--input", tmp],
             check=True,
         )
     finally:
         os.unlink(tmp)
-
-    # Post line-anchored inline suggestions (one-click 'Commit suggestion'),
-    # like Copilot. Best-effort; a 422 line mismatch just skips that comment.
-    post_inline_suggestions(repo, pr_number, get_head_sha(), issues)
     print(f"Review posted: {event} ({len(issues)} issues)")
 
 

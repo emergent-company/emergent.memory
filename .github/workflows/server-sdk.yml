@@ -33,14 +33,10 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: apps/server/pkg/sdk/go.sum
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
-
+          # Persistent self-hosted runner: GOMODCACHE/GOCACHE already survive
+          # between jobs on disk, so setup-go's GH cache is redundant — it tries
+          # to upload ~10GB and always exceeds the 10GB cache limit.
+          cache: false
 
       - name: Install golangci-lint
         run: |
@@ -70,14 +66,10 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: apps/server/pkg/sdk/go.sum
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
-
+          # Persistent self-hosted runner: GOMODCACHE/GOCACHE already survive
+          # between jobs on disk, so setup-go's GH cache is redundant — it tries
+          # to upload ~10GB and always exceeds the 10GB cache limit.
+          cache: false
 
       - name: Run tests
         working-directory: apps/server/pkg/sdk
@@ -114,14 +106,10 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: apps/server/pkg/sdk/go.sum
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
-
+          # Persistent self-hosted runner: GOMODCACHE/GOCACHE already survive
+          # between jobs on disk, so setup-go's GH cache is redundant — it tries
+          # to upload ~10GB and always exceeds the 10GB cache limit.
+          cache: false
 
       - name: Build basic example
         working-directory: apps/server/pkg/sdk/examples/basic

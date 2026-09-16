@@ -1,0 +1,73 @@
+name: Runner Cache Hygiene
+
+# Persistent self-hosted runners (actions-runner-memory-*) keep Go's build cache
+# on local disk between jobs, so GOCACHE grows without bound (measured at ~30G;
+# GOMODCACHE ~14G). This workflow caps that growth by pruning ONLY the build
+# cache once it crosses a size threshold. It never touches the module cache
+# (re-downloading ~14G is the exact cost we are avoiding) and uses no GitHub
+# Actions cache layer at all.
+#
+# Scheduler note: the three memory runners share a single `memory` label (no
+# per-runner labels), so one job run can only land on one of them. A daily
+# schedule therefore covers the pool over time as the scheduler picks whichever
+# runner is idle; `workflow_dispatch` triggers an on-demand prune.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 04:00 UTC — see scheduler note above (shared `memory` label).
+    - cron: '0 4 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  prune-go-build-cache:
+    name: Prune Go build cache
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/server/go.mod
+          cache: false
+
+      - name: Report cache usage
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          GOMODCACHE="$(go env GOMODCACHE)"
+          echo "GOCACHE=$GOCACHE"
+          echo "GOMODCACHE=$GOMODCACHE"
+          df -h "$GOCACHE" "$GOMODCACHE"
+          du -sh "$GOCACHE" "$GOMODCACHE"
+
+      - name: Prune Go build cache when oversized
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          if [ ! -d "$GOCACHE" ]; then
+            echo "GOCACHE ($GOCACHE) does not exist — nothing to prune."
+            exit 0
+          fi
+          SIZE_MB=$(du -sm "$GOCACHE" | cut -f1)
+          echo "GOCACHE=$GOCACHE is ${SIZE_MB} MB (threshold 20000 MB)"
+          if [ "$SIZE_MB" -gt 20000 ]; then
+            echo "Over threshold — running 'go clean -cache'."
+            go clean -cache
+          else
+            echo "Under threshold — skipping prune."
+          fi
+          # NOTE: never add `go clean -modcache` here. GOMODCACHE is the shared
+          # module cache; deleting it forces a ~14G re-download, which is exactly
+          # the overhead this workflow exists to avoid.
+          exit 0
+
+      - name: Report post-prune cache usage
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          GOMODCACHE="$(go env GOMODCACHE)"
+          df -h "$GOCACHE" "$GOMODCACHE"
+          du -sh "$GOCACHE" "$GOMODCACHE"
