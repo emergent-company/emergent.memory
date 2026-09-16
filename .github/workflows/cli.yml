@@ -522,8 +522,11 @@ jobs:
             org.opencontainers.image.title=Memory CLI
             org.opencontainers.image.description=Command-line interface for Memory Knowledge Base
           platforms: linux/amd64
+          # Verified single-stage (apps/cli/Dockerfile.prebuilt): min already
+          # exports every layer of the image, so max would add nothing. Export
+          # errors stay fatal here so a broken cache stays visible on releases.
           cache-from: type=gha,scope=memory-cli
-          cache-to: type=gha,mode=max,scope=memory-cli
+          cache-to: type=gha,scope=memory-cli,mode=min
 
   ci:
     name: ci
