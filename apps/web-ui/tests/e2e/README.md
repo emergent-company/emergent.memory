@@ -179,6 +179,27 @@ sufficed. Anchors are added only where an element has no stable accessible name 
 far: three in `api_tokens.templ`, for the token row, the revoked badge and the
 one-time secret reveal panel).
 
+Objects and schema: **object relationships** (edge created from the Connect dialog is
+visible from both objects), **object search** (`/objects/search` filters to the created
+object, and the `#connect-dst` datalist surfaces it), **object merge** (asserts the
+route's deterministic contract only — see below), **blueprint enable + unapply**
+(installed types appear and are removed again, on a scratch project) and **blueprint
+migration + rollback** (forced migration drops an archived property; the rollback
+assertion is skipped pending the defect below).
+
+Three limitations worth knowing before extending these:
+
+- **Object merge has no deterministic endpoint.** `GET /objects/:id/merge?with=` only
+  303-redirects to `/chat` with an agent and a prompt; the fusion is LLM work. Outcome
+  assertions belong in the env-gated `scenarios` suite.
+- **The gateway has no object-delete route**, so object specs clean up through the
+  memory API using the signed-in session token (`memory_session` cookie) + `X-Project-ID`.
+- **`POST /blueprints/migrate/rollback` restores zero objects** — a server defect:
+  `Repository.List` does not select `migration_archive`, so `RollbackSchemaMigration`
+  skips every object. The spec drives the route and asserts its response, with the
+  restoration assertion behind `test.skip(true, …)` that reverts to a hard assertion
+  once fixed.
+
 Scenarios: one full journey on a fresh scratch project —
 provider add via the settings UI (live-validated by the memory backend, so a
 real key is needed), agent with an explicit model, bundled `personal-memory`

@@ -98,3 +98,19 @@ No migration or data change. Rollout is per-phase PRs to `main`; each phase is a
 - Phase 6 streaming assertions: assert on transcript DOM only, or also capture the raw SSE frames for a contract-level check? (Current lean: DOM by default, raw frames only for the ask-user question-card path, where the DOM is insufficient.)
 - **Second test identity (blocks Phase 2 tasks 2.1-2.3).** Member role change, member removal, member detail, and invite accept/decline all require a *second* member in the org. The suite has one Zitadel test user, so these routes cannot be covered behaviorally today. Options: provision a second interactive test user (second `storageState`) or have `setup` seed a second member into the bootstrap org through the API. (Current lean: seed a second member in `setup` — no second interactive login required.) Until this is settled, those tasks stay blocked rather than being weakened into page-load assertions.
 - Where should the per-area coverage inventory live — `tests/e2e/README.md` (current) or a sibling `COVERAGE.md`? The README is already ~200 lines and now carries conventions, prerequisites and coverage.
+
+## Findings discovered during implementation
+
+Product observations the coverage work surfaced. None are fixed by this change; each needs its own decision and its own PR.
+
+1. **`POST /blueprints/migrate/rollback` restores nothing — confirmed defect.**
+   `apps/server/domain/schemas/service.go:808-827` lists objects via `graphSvc.GetRepository().List(...)` and skips every object whose `MigrationArchive` is empty. `apps/server/domain/graph/repository.go:367-371` — `List`'s explicit `Column(...)` projection does **not** include `migration_archive`, so `MigrationArchive` is always empty and every object is skipped by construction.
+   Observed live on a scratch project: `303 …migrateMsg=Rolled back to 2.0.0: 0 objects restored`, with the dropped property still dropped. The `restore_type_registry` path is unaffected (it re-installs types and fails loudly when packs are unresolvable) — it is the *data* restoration that silently no-ops.
+   Impact: the endpoint reports success while restoring nothing. The e2e assertion for this is already written and holds `test.skip(true, …)`; it auto-reverts to a hard assertion once the projection is fixed.
+   Suggested fix: select `migration_archive` in `Repository.List`, or give the rollback path a dedicated query that does — plus a DB-level regression test.
+
+2. **Object merge is not a deterministic endpoint.** `uiObjectMerge` only redirects to a chat session; the fusion itself is agent/LLM work through memory tools. Any assertion about merge *outcomes* belongs in the env-gated live-LLM `scenarios` suite, not in `mutations`.
+
+3. **The gateway exposes no object-delete route.** Object specs cannot clean up through the UI; they authenticate to the memory API with the signed-in user's own session token (from the `memory_session` cookie) plus `X-Project-ID`. Relevant to every future object spec.
+
+4. **The migrations form cannot be exercised as rendered** for a freshly created scratch project: bundled packs ship a single version (no upgrade path) and new objects are stamped with the current `schema_version` (no drift), so `StaleObjects == 0` and the form never renders. `/blueprints/migrate` and `/blueprints/migrate/rollback` are therefore driven as direct requests with the resulting data state asserted on the object page. UI-level migration coverage would need a seeded stale-schema fixture.
