@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"runtime/debug"
 	"strconv"
+	"strings"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/labstack/echo/v4"
@@ -45,8 +47,70 @@ func captureError(err error) {
 	}
 }
 
+var (
+	// uuidSegment matches a canonical UUID path segment.
+	uuidSegment = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	// hexSegment matches a long (>=16 hex chars) opaque identifier.
+	hexSegment = regexp.MustCompile(`^[0-9a-fA-F]{16,}$`)
+	// numericSegment matches an all-digit identifier.
+	numericSegment = regexp.MustCompile(`^[0-9]+$`)
+)
+
+// normalizePathTemplate replaces per-entity path segments (UUIDs, long hex ids
+// and pure-numeric ids) with a stable {id} placeholder, so
+// /api/chat/1d47dbf5-c4fd-4d28-8e3a-f9fa122d56bb/history becomes
+// /api/chat/{id}/history. Used as part of the Sentry fingerprint so identical
+// failures across many entities collapse into one issue.
+func normalizePathTemplate(path string) string {
+	if path == "" {
+		return path
+	}
+	segments := strings.Split(path, "/")
+	for i, seg := range segments {
+		// Collapse exactly three kinds of per-entity segment: canonical UUIDs,
+		// all-hex ids of length >= 16, and all-numeric ids. Note that the
+		// numeric rule matches only all-DIGIT segments, so a version segment
+		// like "v2" is left alone while "2" becomes "{id}".
+		if uuidSegment.MatchString(seg) || hexSegment.MatchString(seg) || numericSegment.MatchString(seg) {
+			segments[i] = "{id}"
+		}
+	}
+	return strings.Join(segments, "/")
+}
+
+// memoryErrorDisposition decides how a memory REST API failure should be
+// reported to Sentry:
+//
+//   - status 0 (transport error) is captured at error level;
+//   - 401/403 (bad/missing credentials) at warning level;
+//   - any 5xx at error level;
+//   - every other 4xx is a client input/config error, not a gateway defect,
+//     and is not captured (the caller still logs it).
+func memoryErrorDisposition(status int) (capture bool, level sentry.Level) {
+	switch {
+	case status == 0:
+		return true, sentry.LevelError
+	case status == http.StatusUnauthorized, status == http.StatusForbidden:
+		return true, sentry.LevelWarning
+	case status >= 500:
+		return true, sentry.LevelError
+	default:
+		return false, sentry.LevelInfo
+	}
+}
+
 // captureMemoryError reports a memory REST API failure to Sentry, tagging the
 // event with the request context (method, path, HTTP status).
+//
+// Reporting policy (keeps Sentry signal high and issue count low):
+//   - 4xx other than 401/403 are client data/config errors, not gateway
+//     defects: callers log them, but they are NOT captured.
+//   - 401/403 are captured at warning level (usually a bad key or config).
+//   - 5xx and transport errors (status 0) are captured at error level.
+//
+// Captured events carry a stable fingerprint keyed by the normalized path
+// template, so the same failure across many entities/instances groups into a
+// single issue instead of one issue per concrete path.
 func captureMemoryError(method, path string, status int, err error) {
 	if err == nil {
 		return
@@ -55,10 +119,47 @@ func captureMemoryError(method, path string, status int, err error) {
 	if hub.Client() == nil {
 		return
 	}
+	capture, level := memoryErrorDisposition(status)
+	if !capture {
+		return
+	}
+	fingerprintStatus := strconv.Itoa(status)
+	if status == 0 {
+		fingerprintStatus = "transport"
+	}
+	template := normalizePathTemplate(path)
 	hub.WithScope(func(scope *sentry.Scope) {
+		scope.SetLevel(level)
+		scope.SetFingerprint([]string{"memory", fingerprintStatus, template})
 		scope.SetTag("memory_method", method)
 		scope.SetTag("memory_path", path)
+		scope.SetTag("memory_path_template", template)
 		scope.SetTag("memory_status", strconv.Itoa(status))
+		if attemptErr, ok := errors.AsType[*memoryAttemptError](err); ok {
+			scope.SetTag("memory_retried", strconv.FormatBool(attemptErr.attempts > 1))
+		}
+		hub.CaptureException(err)
+	})
+}
+
+// capturePollFailure reports a sustained background conversation-poll failure
+// to Sentry. The 1.5s poll loop is self-healing, so callers rate-limit this to
+// the start of a failure streak and then at most once per 5 minutes. It is
+// availability signal, not a gateway defect: captured at warning level and
+// under a single stable fingerprint so every background poll failure groups
+// into one issue.
+func capturePollFailure(err error) {
+	if err == nil {
+		return
+	}
+	hub := sentry.CurrentHub()
+	if hub.Client() == nil {
+		return
+	}
+	hub.WithScope(func(scope *sentry.Scope) {
+		scope.SetLevel(sentry.LevelWarning)
+		scope.SetFingerprint([]string{"memory", "conversation-poll"})
+		scope.SetTag("memory_poll", "true")
 		hub.CaptureException(err)
 	})
 }

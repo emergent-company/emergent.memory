@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // hubRecordingMemory wraps fakeMemory and records the contexts the hub poller's
@@ -229,5 +231,63 @@ func TestHubSubscribeFirstSessionWins(t *testing.T) {
 	convs := h.subscribedConvs()
 	if got := convs["c1"]; got != scA {
 		t.Errorf("stored session = %+v, want the first subscriber's %+v", got, scA)
+	}
+}
+
+// TestPollFailureCaptureLimiter asserts a failure streak captures once when it
+// starts, then at most once per pollFailureCaptureInterval, and that a success
+// resets the streak.
+func TestPollFailureCaptureLimiter(t *testing.T) {
+	h := newConversationHub(nil)
+	base := time.Now()
+	const key = "group-1"
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want bool
+	}{
+		{name: "first failure of a new streak", now: base, want: true},
+		{name: "second failure within window", now: base.Add(time.Second), want: false},
+		{name: "still within window", now: base.Add(pollFailureCaptureInterval - time.Second), want: false},
+		{name: "window elapsed", now: base.Add(pollFailureCaptureInterval), want: true},
+		{name: "within next window", now: base.Add(pollFailureCaptureInterval + time.Second), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := h.shouldCapturePollFailure(key, tt.now); got != tt.want {
+				t.Fatalf("shouldCapturePollFailure(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+		})
+	}
+
+	// A success clears the streak, so the next failure reports immediately.
+	h.resetPollFailure(key)
+	if !h.shouldCapturePollFailure(key, base.Add(pollFailureCaptureInterval+time.Second)) {
+		t.Fatal("failure after reset should capture immediately")
+	}
+
+	// Distinct session groups have independent streaks.
+	if !h.shouldCapturePollFailure("group-2", base) {
+		t.Fatal("first failure of a different group should capture")
+	}
+	if h.shouldCapturePollFailure("group-2", base.Add(time.Second)) {
+		t.Fatal("second failure of a different group within window should not capture")
+	}
+}
+
+// TestPollFailureKeyExcludesToken asserts the limiter/log key never embeds the
+// session bearer token.
+func TestPollFailureKeyExcludesToken(t *testing.T) {
+	sc := &sessionContext{Token: "super-secret-token", Sub: "user-1", ProjectID: "proj-1"}
+	key := pollFailureKey(sc)
+	if key == "" || key == "no-session" {
+		t.Fatalf("pollFailureKey = %q, want a session-group key", key)
+	}
+	if strings.Contains(key, "super-secret-token") {
+		t.Fatalf("pollFailureKey leaked the bearer token: %q", key)
+	}
+	if got := pollFailureKey(nil); got != "no-session" {
+		t.Fatalf("pollFailureKey(nil) = %q, want %q", got, "no-session")
 	}
 }

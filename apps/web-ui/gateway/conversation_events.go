@@ -3,14 +3,20 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
 )
+
+// pollFailureCaptureInterval is the minimum gap between Sentry captures while a
+// background poll failure streak continues.
+const pollFailureCaptureInterval = 5 * time.Minute
 
 // convSub is one subscribed conversation: the subscriber channels plus the
 // session context captured when the first subscriber subscribed (nil when the
@@ -33,14 +39,75 @@ type conversationHub struct {
 	pollerCancel  context.CancelFunc
 	pollerRunning bool
 	srv           *Server // for conversation-state polling
+	// pollFailures tracks each session group's consecutive poll failures so a
+	// sustained outage is reported once at the start and then at most once per
+	// pollFailureCaptureInterval. Keyed by a non-secret session identifier.
+	pollFailures map[string]*pollFailureState
 }
 
 func newConversationHub(srv *Server) *conversationHub {
 	return &conversationHub{
-		subs: make(map[string]*convSub),
-		last: make(map[string]string),
-		srv:  srv,
+		subs:         make(map[string]*convSub),
+		last:         make(map[string]string),
+		srv:          srv,
+		pollFailures: make(map[string]*pollFailureState),
 	}
+}
+
+// pollFailureState tracks one session group's consecutive background poll
+// failures.
+type pollFailureState struct {
+	streakActive bool
+	lastCapture  time.Time
+}
+
+// pollFailureKey is a non-secret session-group identifier for the poll failure
+// limiter. The bearer token is deliberately excluded so it never ends up in a
+// map key, log line or Sentry event.
+func pollFailureKey(sc *sessionContext) string {
+	if sc == nil {
+		return "no-session"
+	}
+	return sc.Sub + "\x00" + sc.ProjectID
+}
+
+// pollLogContext renders a non-secret triage label (conversation id + active
+// project) for background poll logs. It never includes the bearer token.
+func pollLogContext(conversationID string, sc *sessionContext) string {
+	project := ""
+	if sc != nil {
+		project = sc.ProjectID
+	}
+	return fmt.Sprintf("conversation=%s project=%s", conversationID, project)
+}
+
+// shouldCapturePollFailure reports whether a poll failure for key should be
+// reported to Sentry now, and records the capture. The first failure of a new
+// streak is always reported; while the streak continues, reports are limited to
+// one per pollFailureCaptureInterval. now is a parameter so tests can advance
+// time without sleeping.
+func (h *conversationHub) shouldCapturePollFailure(key string, now time.Time) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.pollFailures[key]
+	if st == nil {
+		st = &pollFailureState{}
+		h.pollFailures[key] = st
+	}
+	if st.streakActive && now.Sub(st.lastCapture) < pollFailureCaptureInterval {
+		return false
+	}
+	st.streakActive = true
+	st.lastCapture = now
+	return true
+}
+
+// resetPollFailure clears key's failure streak after a fully successful poll,
+// so the next failure is reported immediately again.
+func (h *conversationHub) resetPollFailure(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.pollFailures, key)
 }
 
 // subscribe registers a subscriber channel for a conversation. sc is the
@@ -195,17 +262,36 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 		if sc != nil {
 			cctx = withSessionContext(ctx, sc)
 		}
-		questions, err := s.memory.ListAgentQuestions(cctx)
-		captureError(err)
-		approvals, err := s.memory.ListToolApprovals(cctx)
-		captureError(err)
+		// The poll loop is a 1.5s self-healing tick, so a failed snapshot is
+		// logged and retried on the next tick. A sustained failure is still
+		// reported (rate-limited) so a multi-hour outage is observable.
+		questions, qErr := s.memory.ListAgentQuestions(cctx)
+		if qErr != nil {
+			log.Printf("conversation poll: list agent questions (%s): %v", pollLogContext(ids[0], sc), qErr)
+		}
+		approvals, aErr := s.memory.ListToolApprovals(cctx)
+		if aErr != nil {
+			log.Printf("conversation poll: list tool approvals (%s): %v", pollLogContext(ids[0], sc), aErr)
+		}
+		key := pollFailureKey(sc)
+		if pollErr := errors.Join(qErr, aErr); pollErr != nil {
+			if s.hub.shouldCapturePollFailure(key, time.Now()) {
+				capturePollFailure(pollErr)
+			}
+		} else {
+			s.hub.resetPollFailure(key)
+		}
 		for _, id := range ids {
 			cc := ctx
-			if sc := convs[id]; sc != nil {
-				cc = withSessionContext(ctx, sc)
+			groupSC := convs[id]
+			if groupSC != nil {
+				cc = withSessionContext(ctx, groupSC)
 			}
 			runEndCount, pendingApprovals, pendingQuestions, err := s.conversationState(cc, id, approvals, questions)
 			if err != nil {
+				// Per-conversation failures are expected (deleted/not-yet-visible
+				// conversation) and are skipped; log for triage, never capture.
+				log.Printf("conversation poll: conversation state (%s): %v", pollLogContext(id, groupSC), err)
 				continue
 			}
 			fp := fmt.Sprintf("%d|%v|%v", runEndCount, pendingApprovals, pendingQuestions)
