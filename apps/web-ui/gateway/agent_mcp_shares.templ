@@ -264,8 +264,8 @@ script agentMCPShareDialog(kind string, id string) {
 // snippets. The key exists only in this response; closing the dialog returns to
 // the list and it is gone for good.
 templ agentMCPShareRevealModal(r agentMCPShareReveal) {
-	<dialog class="modal modal-open" hx-boost="false" data-agent-mcp-share-reveal>
-		<div class="modal-box max-w-2xl">
+	<dialog id="agent-mcp-share-reveal-modal" class="modal" hx-boost="false" data-agent-mcp-share-reveal>
+		<div class="modal-box max-w-[63rem]">
 			<div class="flex items-center gap-3">
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
 				<div class="min-w-0">
@@ -337,6 +337,13 @@ templ agentMCPShareRevealModal(r agentMCPShareReveal) {
 			<button>close</button>
 		</form>
 	</dialog>
+	<script type="text/javascript">
+		(function () {
+			var d = document.getElementById('agent-mcp-share-reveal-modal');
+			if (!d || typeof d.showModal !== 'function' || d.open) return;
+			d.showModal();
+		})();
+	</script>
 }
 
 // agentMCPShareSnippetBlock is one client snippet card with a copy button.
@@ -355,6 +362,11 @@ templ agentMCPShareSnippetBlock(s agentMCPShareSnippet) {
 				Copy
 			}
 		</div>
-		<pre id={ "agent-mcp-share-snippet-" + s.Key } class="rounded-box bg-base-100 overflow-x-auto p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">{ s.Code }</pre>
+		{{ hl, ok := highlightJSONSnippet(s.Code) }}
+		<pre id={ "agent-mcp-share-snippet-" + s.Key } class="rounded-box bg-base-100 overflow-x-auto p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">if ok {
+			@templ.Raw(hl)
+		} else {
+			{ s.Code }
+		}</pre>
 	</div>
 }
