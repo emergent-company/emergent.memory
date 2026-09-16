@@ -1,6 +1,6 @@
 ## Purpose
 
-ACP sessions are thin containers that group related runs for an agent. The server exposes create and get endpoints, persists sessions in the `acp_sessions` schema with an `agent_runs.acp_session_id` link, and guards both endpoints with `agents:read`/`agents:write` scopes.
+ACP sessions are thin containers that group related runs for an agent. The server exposes create and get endpoints, persists sessions in the `kb.acp_sessions` table with a `kb.agent_runs.acp_session_id` link, and guards both endpoints with `agents:read`/`agents:write` scopes.
 
 ## Requirements
 
