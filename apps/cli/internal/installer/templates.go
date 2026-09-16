@@ -20,6 +20,12 @@ const (
 	// WorkspaceBaseImage is the default agent sandbox base image (alpine + dev tools).
 	// Must match docker/workspace-base.Dockerfile, which the publish workflow builds.
 	WorkspaceBaseImage = "memory-workspace:latest"
+
+	// KreuzbergImage is the pinned image for the Kreuzberg document extraction service.
+	// Bumping this constant is the single source of truth for the Kreuzberg version.
+	// Note: the static copies in deploy/self-hosted/*.yml and install-online.sh must be
+	// bumped together with this constant.
+	KreuzbergImage = "ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3"
 )
 
 // GetDockerComposeTemplate returns the docker-compose template with :latest tag.
@@ -87,7 +93,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
 
   kreuzberg:
     # Pinned: Kreuzberg v4 LTS (GHCR). Do not revert to the old floating :latest tag (frozen at 4.0.7).
-    image: ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3
+    image: ` + KreuzbergImage + `
     container_name: memory-kreuzberg
     restart: unless-stopped
     ports:

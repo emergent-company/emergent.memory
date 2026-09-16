@@ -2,7 +2,7 @@
 //
 // Kreuzberg is a document parsing service that extracts text, tables, and images
 // from various document formats (PDF, DOCX, images with OCR, etc.).
-// See: https://github.com/Goldziher/kreuzberg
+// See: https://kreuzberg.dev
 package kreuzberg
 
 import (

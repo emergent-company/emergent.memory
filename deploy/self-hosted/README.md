@@ -498,5 +498,5 @@ For issues specific to:
 
 - **Tailscale**: https://tailscale.com/contact/support
 - **Emergent**: GitHub issues or documentation
-- **Kreuzberg (v4 LTS)**: https://github.com/kreuzberg-dev/kreuzberg-lts
+- **Kreuzberg (v4 LTS)**: https://kreuzberg.dev
 - **MinIO**: https://min.io/docs/minio/linux/
