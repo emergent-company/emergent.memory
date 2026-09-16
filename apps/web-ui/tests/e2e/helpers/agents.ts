@@ -48,7 +48,10 @@ export async function createAgentViaModal(page: Page, name: string, model?: stri
   // the visible target is the table-row link — read the id from its href.
   // (The mobile card's only <a> is the "Chat with <name>" affordance,
   // /chat?agent=<id>, which never matches the /agents/ prefix.)
-  const rowLink = page.locator('a[href^="/agents/"]').filter({ hasText: name }).first();
+  // Scope to #main-content: the spotlight/command palette renders its own
+  // a[href^="/agents/<id>"] rows earlier in DOM order, so an unscoped .first()
+  // can pick a hidden palette row instead of the visible list row.
+  const rowLink = page.locator('#main-content a[href^="/agents/"]').filter({ hasText: name }).first();
   await expect(rowLink).toBeVisible();
   const href = await rowLink.getAttribute('href');
   if (!href) {
