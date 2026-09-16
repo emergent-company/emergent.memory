@@ -127,7 +127,7 @@
           } else {
             captureError(err);
           }
-          toast("error", "Could not load agent: " + err.message);
+          toast("error", "Could not load agent: " + (err && err.message ? err.message : "unknown error"));
           closeFormDialog();
         });
     }

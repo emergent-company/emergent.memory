@@ -47,7 +47,8 @@
   // chat.js and app.js via window.MemoryChatHost.
   function isTransientError(err) {
     if (!err) return false;
-    if (err.name === "TypeError" && /failed to fetch|networkerror|load failed/i.test(String(err.message || ""))) return true;
+    if (err.name === "TypeError" && /failed to fetch|networkerror|load failed|network request failed/i.test(String(err.message || ""))) return true;
+    if (err.name === "AbortError") return true;
     if (err.status === 502 || err.status === 503 || err.status === 504) return true;
     var m = /HTTP\s+(\d{3})/.exec(String(err.message || ""));
     if (!m) return false;
@@ -155,6 +156,7 @@
       // instead of dereferencing null (MEMORY-UI-F/R).
       var handle = cfg.handle || e.currentTarget;
       if (!handle) return;
+      // capture the element reference; e.currentTarget is only valid during dispatch
       e.preventDefault();
       var startX = e.clientX;
       var startW = width;
