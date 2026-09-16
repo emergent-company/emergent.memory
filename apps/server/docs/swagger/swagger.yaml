@@ -4041,6 +4041,25 @@ definitions:
       total:
         type: integer
     type: object
+  domain_mcp.AgentMCPEndpointDTO:
+    properties:
+      agentId:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      mcpUrl:
+        type: string
+      projectId:
+        type: string
+      revokedAt:
+        type: string
+      status:
+        type: string
+      updatedAt:
+        type: string
+    type: object
   domain_mcp.CatalogResponse:
     properties:
       tools:
@@ -4061,30 +4080,30 @@ definitions:
       requiredScope:
         type: string
     type: object
-  domain_mcp.CreateAgentMCPShareRequest:
+  domain_mcp.CreateAgentMCPKeyRequest:
     properties:
-      description:
+      expiresAt:
         type: string
-      name:
+      label:
         type: string
     type: object
-  domain_mcp.CreateAgentMCPShareResponse:
+  domain_mcp.CreateAgentMCPKeyResponse:
     properties:
       agentId:
         type: string
       createdAt:
         type: string
-      description:
+      endpointId:
+        type: string
+      expiresAt:
         type: string
       id:
+        type: string
+      label:
         type: string
       lastUsedAt:
         type: string
       mcpUrl:
-        type: string
-      name:
-        type: string
-      projectId:
         type: string
       status:
         type: string
@@ -4110,10 +4129,6 @@ definitions:
     type: object
   domain_mcp.CreateShareInstanceResponse:
     properties:
-      agents:
-        items:
-          type: string
-        type: array
       createdAt:
         type: string
       description:
@@ -4275,6 +4290,17 @@ definitions:
         type: object
       name:
         type: string
+      secretEnvKeys:
+        description: |-
+          SecretEnvKeys/SecretHeadersKeys name the entries in Env/Headers whose
+          values must be encrypted at rest instead of stored in plaintext.
+        items:
+          type: string
+        type: array
+      secretHeadersKeys:
+        items:
+          type: string
+        type: array
       type:
         allOf:
         - $ref: '#/definitions/domain_mcpregistry.MCPServerType'
@@ -4314,6 +4340,17 @@ definitions:
         type: string
       projectId:
         type: string
+      secretEnvKeys:
+        description: |-
+          SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.
+          The corresponding values are never returned by the API.
+        items:
+          type: string
+        type: array
+      secretHeadersKeys:
+        items:
+          type: string
+        type: array
       toolCount:
         type: integer
       tools:
@@ -4353,6 +4390,17 @@ definitions:
         type: string
       projectId:
         type: string
+      secretEnvKeys:
+        description: |-
+          SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.
+          The corresponding values are never returned by the API.
+        items:
+          type: string
+        type: array
+      secretHeadersKeys:
+        items:
+          type: string
+        type: array
       toolCount:
         type: integer
       tools:
@@ -4426,6 +4474,19 @@ definitions:
         type: object
       name:
         type: string
+      secretEnvKeys:
+        description: |-
+          SecretEnvKeys/SecretHeadersKeys name the entries in Env/Headers whose
+          values must be encrypted at rest. A key listed with an empty/omitted
+          value keeps its previously stored ciphertext; keys no longer listed are
+          removed.
+        items:
+          type: string
+        type: array
+      secretHeadersKeys:
+        items:
+          type: string
+        type: array
       url:
         type: string
     type: object
@@ -8319,7 +8380,7 @@ paths:
           schema:
             $ref: '#/definitions/domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig'
         "400":
-          description: Invalid definition ID
+          description: Missing definition ID
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
@@ -8327,7 +8388,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
-          description: Agent definition not found
+          description: Agent definition not found (invalid or unknown definition ID)
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "500":
@@ -8363,7 +8424,8 @@ paths:
           schema:
             $ref: '#/definitions/domain_agents.APIResponse-github_com_emergent-company_emergent_memory_domain_sandbox_AgentSandboxConfig'
         "400":
-          description: Invalid definition ID, request body, or validation error
+          description: Missing definition ID, invalid request body, or validation
+            error
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
@@ -8371,7 +8433,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
-          description: Agent definition not found
+          description: Agent definition not found (invalid or unknown definition ID)
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "500":
@@ -14716,7 +14778,7 @@ paths:
           schema:
             $ref: '#/definitions/domain_agents.APIResponse-domain_agents_AgentDefinitionDTO'
         "400":
-          description: Invalid project ID or definition ID
+          description: Missing definition ID
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "401":
@@ -14724,7 +14786,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
-          description: Agent definition not found
+          description: Agent definition not found (invalid or unknown definition ID)
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "500":
@@ -14736,6 +14798,53 @@ paths:
       summary: Get agent definition by ID
       tags:
       - agent-definitions
+  /api/projects/{projectId}/agent-mcp-endpoints/{id}/keys:
+    post:
+      consumes:
+      - application/json
+      description: Mints a project API token bound to the endpoint as a labeled key.
+        Returns the raw token exactly once.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Endpoint ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Key
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcp.CreateAgentMCPKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_mcp.CreateAgentMCPKeyResponse'
+        "403":
+          description: Project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Endpoint not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Duplicate label
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create a labeled key on an agent MCP endpoint
+      tags:
+      - mcp
   /api/projects/{projectId}/agent-questions:
     get:
       consumes:
@@ -14921,6 +15030,47 @@ paths:
       summary: Get remember-status for a run
       tags:
       - agents
+  /api/projects/{projectId}/agents/{agentId}/mcp-endpoint:
+    post:
+      consumes:
+      - application/json
+      description: Establishes the single active MCP endpoint owned by an agent. Returns
+        409 when an active endpoint already exists.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Agent ID (UUID)
+        in: path
+        name: agentId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain_mcp.AgentMCPEndpointDTO'
+        "403":
+          description: Project admin required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Agent not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Active endpoint already exists
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create an agent's MCP endpoint
+      tags:
+      - mcp
   /api/projects/{projectId}/agents/{id}/enable:
     post:
       consumes:
@@ -14966,58 +15116,6 @@ paths:
       summary: Enable an agent
       tags:
       - agents
-  /api/projects/{projectId}/agents/{id}/mcp-share:
-    post:
-      consumes:
-      - application/json
-      description: Creates a share credential binding a new project API token to one
-        agent, exposing it as a single-tool MCP server. Returns the raw token exactly
-        once.
-      parameters:
-      - description: Project ID (UUID)
-        in: path
-        name: projectId
-        required: true
-        type: string
-      - description: Agent ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Share
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/domain_mcp.CreateAgentMCPShareRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/domain_mcp.CreateAgentMCPShareResponse'
-        "403":
-          description: Project admin required
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Agent not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "409":
-          description: Duplicate name
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "422":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Create a per-agent MCP share
-      tags:
-      - mcp
   /api/projects/{projectId}/invites:
     get:
       description: Returns all invitations (pending, accepted, declined, revoked)

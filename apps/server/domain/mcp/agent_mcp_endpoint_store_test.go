@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -283,6 +285,124 @@ func TestAgentMCPSessionStoreCRUD(t *testing.T) {
 	byKey, err := sessStore.ListSessionsByKey(ctx, key.ID)
 	require.NoError(t, err)
 	assert.Len(t, byKey, 1)
+}
+
+// TestAgentMCPKeyStoreRejectsDuplicateTokenBinding proves the global
+// core.agent_mcp_keys.token_id uniqueness: one credential cannot be bound to a
+// second key, on the same or a different endpoint.
+func TestAgentMCPKeyStoreRejectsDuplicateTokenBinding(t *testing.T) {
+	db := connectTestDB(t)
+	requireAgentMCPEndpointTables(t, db)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+
+	epStore := newAgentMCPEndpointStore(db)
+	keyStore := newAgentMCPKeyStore(db)
+
+	ep1 := &AgentMCPEndpoint{ID: uuid.NewString(), ProjectID: projectID, AgentID: seedAgent(t, db, projectID)}
+	require.NoError(t, epStore.CreateEndpoint(ctx, ep1))
+	ep2 := &AgentMCPEndpoint{ID: uuid.NewString(), ProjectID: projectID, AgentID: seedAgent(t, db, projectID)}
+	require.NoError(t, epStore.CreateEndpoint(ctx, ep2))
+
+	tokenID := seedShareUserAndToken(t, db, projectID, "bind-"+uuid.NewString())
+	require.NoError(t, keyStore.CreateKey(ctx, &AgentMCPKey{
+		ID: uuid.NewString(), EndpointID: ep1.ID, TokenID: tokenID, Label: "first-" + uuid.NewString(),
+	}))
+
+	// Same credential, different endpoint, different label: token_id UNIQUE wins.
+	dupErr := keyStore.CreateKey(ctx, &AgentMCPKey{
+		ID: uuid.NewString(), EndpointID: ep2.ID, TokenID: tokenID, Label: "second-" + uuid.NewString(),
+	})
+	require.Error(t, dupErr)
+	var appErr *apperror.Error
+	require.True(t, errors.As(dupErr, &appErr))
+	assert.Equal(t, 409, appErr.HTTPStatus)
+	assert.Equal(t, "agent_mcp_key_token_exists", appErr.Code)
+}
+
+// seedProjectAdmin inserts a user_profile plus a kb.project_memberships
+// project_admin row, matching what apitoken.Repository.GetUserProjectRole reads.
+func seedProjectAdmin(t *testing.T, db bun.IDB, projectID string) string {
+	t.Helper()
+	ctx := context.Background()
+	userID := uuid.NewString()
+	_, err := db.NewRaw(`
+		INSERT INTO core.user_profiles (id, zitadel_user_id, created_at, updated_at)
+		VALUES (?, ?, NOW(), NOW())
+	`, userID, "zitadel-"+userID).Exec(ctx)
+	require.NoError(t, err)
+	_, err = db.NewRaw(`
+		INSERT INTO kb.project_memberships (project_id, user_id, role)
+		VALUES (?, ?, 'project_admin')
+	`, projectID, userID).Exec(ctx)
+	require.NoError(t, err)
+	return userID
+}
+
+// TestRotateAgentKeyRealRegenerate drives key rotation through the real
+// apitoken.Service.RegenerateWith path (not the SetKeyToken store shortcut):
+// key.id is preserved, the previous credential stops authenticating the
+// endpoint, and the replacement credential authenticates it.
+func TestRotateAgentKeyRealRegenerate(t *testing.T) {
+	db := connectTestDB(t)
+	requireAgentMCPEndpointTables(t, db)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+	adminUserID := seedProjectAdmin(t, db, projectID)
+	agentID := seedAgent(t, db, projectID)
+
+	epStore := newAgentMCPEndpointStore(db)
+	keyStore := newAgentMCPKeyStore(db)
+	ep := &AgentMCPEndpoint{ID: uuid.NewString(), ProjectID: projectID, AgentID: agentID}
+	require.NoError(t, epStore.CreateEndpoint(ctx, ep))
+
+	oldTokenID := seedShareUserAndToken(t, db, projectID, "rotate-"+uuid.NewString())
+	key := &AgentMCPKey{
+		ID:         uuid.NewString(),
+		EndpointID: ep.ID,
+		TokenID:    oldTokenID,
+		Label:      "rotate-" + uuid.NewString(),
+	}
+	require.NoError(t, keyStore.CreateKey(ctx, key))
+
+	realTokenSvc := apitoken.NewService(db, apitoken.NewRepository(db, slog.Default()), nil, slog.Default())
+	svc := &Service{
+		db:             db,
+		agentEndpoints: epStore,
+		agentKeys:      keyStore,
+		shareTokens:    realTokenSvc,
+	}
+
+	// The old credential authenticates before rotation.
+	_, _, err := svc.AuthorizeAgentEndpoint(ctx, oldTokenID, agentID)
+	require.NoError(t, err)
+
+	resp, err := svc.RotateAgentKey(ctx, projectID, adminUserID, "", key.ID)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, key.ID, resp.ID, "rotation preserves the key id")
+	require.NotEmpty(t, resp.Token, "rotation returns the new raw secret once")
+
+	detail, err := keyStore.GetKeyByID(ctx, key.ID)
+	require.NoError(t, err)
+	require.NotNil(t, detail)
+	assert.Equal(t, key.ID, detail.ID, "key identity preserved")
+	require.NotEqual(t, oldTokenID, detail.TokenID, "token_id repointed")
+
+	// Old credential revoked in core.api_tokens.
+	var oldRevokedAt *time.Time
+	require.NoError(t, db.NewRaw(`SELECT revoked_at FROM core.api_tokens WHERE id = ?`, oldTokenID).Scan(ctx, &oldRevokedAt))
+	require.NotNil(t, oldRevokedAt, "old token is revoked")
+
+	// New credential active, old one rejected by the endpoint authorizer.
+	var newRevokedAt *time.Time
+	require.NoError(t, db.NewRaw(`SELECT revoked_at FROM core.api_tokens WHERE id = ?`, detail.TokenID).Scan(ctx, &newRevokedAt))
+	assert.Nil(t, newRevokedAt, "replacement token is active")
+
+	_, _, err = svc.AuthorizeAgentEndpoint(ctx, detail.TokenID, agentID)
+	require.NoError(t, err, "rotated credential authorizes the endpoint")
+	_, _, err = svc.AuthorizeAgentEndpoint(ctx, oldTokenID, agentID)
+	assertAppError(t, err, 403)
 }
 
 // TestAgentMCPSessionStoreTableDriven covers simple lookup branches in a table.

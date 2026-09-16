@@ -665,7 +665,12 @@ func (d *bunAgentDirectory) FindAgentRefsByDefinitionID(ctx context.Context, pro
 		Column("id", "name", "enabled").
 		Where("project_id = ?", projectID).
 		Where("(agent_definition_id = ? OR (agent_definition_id IS NULL AND (strategy_type = 'chat-session:' || ? OR strategy_type = 'agent-def:' || ?)))", definitionID, definitionID, definitionID).
-		OrderExpr("(agent_definition_id = ?) DESC, created_at ASC, id ASC", definitionID).
+		// NULLS LAST keeps the FK-linked agent first: without it, the NULL
+		// result of (agent_definition_id = ?) for marker rows sorts first under
+		// DESC (Postgres defaults DESC to NULLS FIRST), so marker rows would
+		// precede the FK-linked row and resolveAgentShareTarget would pick the
+		// wrong primary runtime agent.
+		OrderExpr("(agent_definition_id = ?) DESC NULLS LAST, created_at ASC, id ASC", definitionID).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
