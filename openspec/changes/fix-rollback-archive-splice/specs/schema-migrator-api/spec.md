@@ -8,9 +8,3 @@ The rollback operation SHALL remove only the archive entry it matches for the re
 - **WHEN** rollback is requested with `to_version: "2.0.0"`
 - **THEN** the `to_version: "2.0.0"` entry SHALL be removed from `migration_archive`
 - **THEN** the `to_version: "3.0.0"` entry SHALL remain, including its `dropped_data`
-
-#### Scenario: Single-hop rollback still fully consumes the archive
-- **GIVEN** an object with a single archive entry for `to_version: "X"`
-- **WHEN** rollback is requested with `to_version: "X"`
-- **THEN** `migration_archive` SHALL become empty
-- **THEN** a subsequent rollback to the same version SHALL be a no-op for that object

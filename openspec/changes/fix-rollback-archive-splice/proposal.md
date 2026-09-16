@@ -24,7 +24,7 @@ Matching semantics are unchanged: the search still walks newest-first and consum
 
 ### Modified Capabilities
 
-- `schema-migrator-api`: the rollback consume contract is tightened — a rollback SHALL remove only the entry it matches, never newer entries.
+- `schema-migrator-api`: the rollback consume contract is tightened — a rollback SHALL remove only the entry it matches, never newer entries. Note: this capability currently exists only as deltas in the active `schema-migration-hints` and `fix-schema-migration-archive-projection` changes, not yet under `openspec/specs/`, so this change contributes `## ADDED Requirements` to the same capability.
 
 ## Impact
 

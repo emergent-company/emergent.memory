@@ -5,7 +5,9 @@
 
 ## 2. Verification
 
+All Go commands run from `apps/server/`; `openspec` runs from the repository root.
+
 - [x] 2.1 `go build ./...` clean
 - [x] 2.2 `go vet ./domain/graph/` clean
 - [x] 2.3 `go test ./domain/graph/ -run TestSchemaMigration_Rollback -count=1` passes
-- [x] 2.4 `openspec validate fix-rollback-archive-splice` passes
+- [x] 2.4 `openspec validate fix-rollback-archive-splice` passes (repository root)
