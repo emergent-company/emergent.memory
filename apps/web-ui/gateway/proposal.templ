@@ -5,15 +5,15 @@ import (
 )
 
 // proposalCard renders a structured proposal card for a question that carries a
-// proposal: a scope header (kind badge + side-effect summary) and read-only
-// object/relationship previews reusing the blueprint/schema browser components.
+// proposal: a scope header (kind badge + side-effect summary) and a read-only,
+// kind-specific preview reusing the blueprint/schema browser components.
 // Injected server-side into the question card, above the options.
 templ proposalCard(c *ProposalCard) {
 	<div class="proposal-card mt-0.5 overflow-x-auto [overflow-wrap:anywhere] rounded-box border border-base-content/10 bg-base-200/30">
 		<div class="flex flex-wrap items-center gap-2 border-b border-base-content/10 bg-base-200/40 px-4 py-2.5">
 			<span class="iconify lucide--package text-primary size-4" aria-hidden="true"></span>
 			<p class="text-sm font-semibold">Proposed changes</p>
-			@ui.Badge(ui.BadgeProps{Label: c.Kind, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--library"})
+			@ui.Badge(ui.BadgeProps{Label: c.Kind, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: proposalKindIcon(c.Kind)})
 			if summary := proposalSummaryLabel(c); summary != "" {
 				<span class="text-xs text-base-content/60">{ summary }</span>
 			}
@@ -21,25 +21,199 @@ templ proposalCard(c *ProposalCard) {
 		if c.Summary != "" {
 			<p class="text-base-content/70 px-4 py-2.5 text-xs">{ c.Summary }</p>
 		}
-		if len(c.ObjectTypes) > 0 {
-			<div class="mt-2 px-4">
-				@ui.Eyebrow("Object types", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
-			</div>
-			<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
-				for _, ot := range c.ObjectTypes {
-					@objectTypeRow(ot.Name, ot.Label, ot.Description, ot.Properties, "", "", "", "")
-				}
-			</div>
+		switch c.Kind {
+		case "blueprint":
+			@proposalBlueprintSection(c)
+		case "skill":
+			@proposalSkillSection(c.Skill)
+		case "agent":
+			@proposalAgentSection(c.Agent)
+		case "mcp_server":
+			@proposalMCPServerSection(c.MCPServer)
+		case "provider":
+			@proposalProviderSection(c.Provider)
+		case "object":
+			@proposalObjectSection(c)
 		}
-		if len(c.RelationshipTypes) > 0 {
-			<div class="mt-2 px-4">
-				@ui.Eyebrow("Relationship types", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
-			</div>
-			<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
-				for _, rt := range c.RelationshipTypes {
-					@relationshipTypeRow(rt)
-				}
-			</div>
+	</div>
+}
+
+// proposalBlueprintSection renders the schema-pack preview: object/relationship
+// type rows reusing the blueprint/schema browser components.
+templ proposalBlueprintSection(c *ProposalCard) {
+	if len(c.ObjectTypes) > 0 {
+		<div class="mt-2 px-4">
+			@ui.Eyebrow("Object types", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
+		</div>
+		<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
+			for _, ot := range c.ObjectTypes {
+				@objectTypeRow(ot.Name, ot.Label, ot.Description, ot.Properties, "", "", "", "")
+			}
+		</div>
+	}
+	if len(c.RelationshipTypes) > 0 {
+		<div class="mt-2 px-4">
+			@ui.Eyebrow("Relationship types", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
+		</div>
+		<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
+			for _, rt := range c.RelationshipTypes {
+				@relationshipTypeRow(rt)
+			}
+		</div>
+	}
+}
+
+// proposalSkillSection renders a `skill` proposal: name, description, prompt,
+// and tool/banned-tool lists.
+templ proposalSkillSection(s *SkillProposal) {
+	<div class="px-4 py-3">
+		<div class="flex flex-wrap items-center gap-2">
+			<p class="text-sm font-medium">{ s.Name }</p>
+		</div>
+		if s.Description != "" {
+			<p class="text-base-content/55 mt-1 text-xs">{ s.Description }</p>
 		}
+		if s.Prompt != "" {
+			@proposalMonoBlock("Prompt", s.Prompt)
+		}
+		@proposalChipRow("Tools", s.Tools)
+		@proposalChipRow("Banned tools", s.BannedTools)
+	</div>
+}
+
+// proposalAgentSection renders an `agent` proposal: name, model, description,
+// system prompt, and tool/skill/banned-tool lists.
+templ proposalAgentSection(a *AgentProposal) {
+	<div class="px-4 py-3">
+		<div class="flex flex-wrap items-center gap-2">
+			<p class="text-sm font-medium">{ a.Name }</p>
+			if a.Model != "" {
+				@ui.Badge(ui.BadgeProps{Label: a.Model, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+			}
+			if a.FlowType != "" {
+				@ui.Badge(ui.BadgeProps{Label: a.FlowType, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			}
+			if a.Visibility != "" {
+				@ui.Badge(ui.BadgeProps{Label: a.Visibility, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+			}
+		</div>
+		if a.Description != "" {
+			<p class="text-base-content/55 mt-1 text-xs">{ a.Description }</p>
+		}
+		if a.SystemPrompt != "" {
+			@proposalMonoBlock("System prompt", a.SystemPrompt)
+		}
+		@proposalChipRow("Tools", a.Tools)
+		@proposalChipRow("Skills", a.Skills)
+		@proposalChipRow("Banned tools", a.BannedTools)
+	</div>
+}
+
+// proposalMCPServerSection renders an `mcp_server` proposal: name, type, URL,
+// enabled state, and per-tool toggles.
+templ proposalMCPServerSection(m *MCPServerProposal) {
+	<div class="px-4 py-3">
+		<div class="flex flex-wrap items-center gap-2">
+			<p class="text-sm font-medium">{ m.Name }</p>
+			if m.Type != "" {
+				@ui.Badge(ui.BadgeProps{Label: m.Type, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+			}
+			if m.Enabled {
+				@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS})
+			}
+		</div>
+		if m.URL != "" {
+			@proposalMonoBlock("URL", m.URL)
+		}
+		@proposalChipRow("Enabled tools", m.EnabledTools)
+		@proposalChipRow("Disabled tools", m.DisabledTools)
+	</div>
+}
+
+// proposalProviderSection renders a `provider` proposal: slug, base URL, and
+// models. The API key is never rendered.
+templ proposalProviderSection(p *ProviderProposal) {
+	<div class="px-4 py-3">
+		<div class="flex flex-wrap items-center gap-2">
+			<p class="text-sm font-medium">{ p.Provider }</p>
+			@ui.Badge(ui.BadgeProps{Label: "provider", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+		</div>
+		if p.BaseURL != "" {
+			@proposalMonoBlock("Base URL", p.BaseURL)
+		}
+		@proposalChipRow("Models", p.Models)
+	</div>
+}
+
+// proposalObjectSection renders an `object` proposal: proposed graph entities
+// (type + key + properties + tags) and relationships (type source → target).
+templ proposalObjectSection(c *ProposalCard) {
+	if len(c.Entities) > 0 {
+		<div class="mt-2 px-4">
+			@ui.Eyebrow("Entities", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
+		</div>
+		<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
+			for _, e := range c.Entities {
+				<div class="px-4 py-3">
+					<div class="flex flex-wrap items-center gap-2">
+						if e.Type != "" {
+							@ui.Badge(ui.BadgeProps{Label: e.Type, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+						}
+						if e.Key != "" {
+							<p class="font-mono text-sm text-base-content/80">{ e.Key }</p>
+						}
+					</div>
+					for k, v := range e.Properties {
+						<div class="mt-1 flex flex-wrap items-baseline gap-2">
+							<span class="font-mono text-xs text-base-content/60">{ k }</span>
+							<span class="text-xs text-base-content/80">{ v }</span>
+						</div>
+					}
+					@proposalChipRow("Tags", e.Tags)
+				</div>
+			}
+		</div>
+	}
+	if len(c.Relationships) > 0 {
+		<div class="mt-2 px-4">
+			@ui.Eyebrow("Relationships", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
+		</div>
+		<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
+			for _, r := range c.Relationships {
+				<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+					if r.Type != "" {
+						<p class="text-sm font-medium">{ r.Type }</p>
+					}
+					if r.Source != "" || r.Target != "" {
+						@ui.Badge(ui.BadgeProps{Label: r.Source + " → " + r.Target, Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--git-branch"})
+					}
+				</div>
+			}
+		</div>
+	}
+}
+
+// proposalChipRow renders a titled row of badge chips; omitted entirely when
+// the list is empty.
+templ proposalChipRow(title string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	<div class="mt-2">
+		@ui.Eyebrow(title, ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
+		<div class="flex flex-wrap gap-1">
+			for _, item := range items {
+				@ui.Badge(ui.BadgeProps{Label: item, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+			}
+		</div>
+	</div>
+}
+
+// proposalMonoBlock renders a titled, scrollable monospace block (prompt, URL,
+// etc.).
+templ proposalMonoBlock(title string, content string) {
+	<div class="mt-2">
+		@ui.Eyebrow(title, ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
+		<pre class="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md bg-base-200/60 p-2 font-mono text-xs text-base-content/80">{ content }</pre>
 	</div>
 }

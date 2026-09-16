@@ -14,22 +14,6 @@ When a question carries a `proposal`, the conversation UI SHALL render it as a p
 - **THEN** the card SHALL show the kind and the proposal `summary`
 - **THEN** the question SHALL still be answerable and SHALL NOT error
 
-### Requirement: Proposal card shows a side-effect summary
-
-The proposal card SHALL surface a concise summary of what applying the proposal adds, changes, or removes, computed against the project's current state for the kinds that carry a current state (schema types, agent definitions, skills, MCP servers).
-
-#### Scenario: Additions are summarized
-- **WHEN** a question carries a `blueprint` proposal with object or relationship types
-- **THEN** the card header SHALL indicate the counts of object types and relationship types the proposal adds
-
-#### Scenario: Diff against current state
-- **WHEN** a proposal's contents can be compared against the project's current state
-- **THEN** the card header SHALL indicate the added / changed / removed counts (for example "adds 2 object types, changes 1 agent")
-
-#### Scenario: No prior state
-- **WHEN** the project has no current state to diff against
-- **THEN** the summary SHALL describe the additions from the proposal body alone
-
 ## ADDED Requirements
 
 ### Requirement: Proposal kinds are extensible via a kind registry
