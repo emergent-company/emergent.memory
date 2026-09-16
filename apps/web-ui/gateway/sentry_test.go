@@ -35,6 +35,21 @@ func TestNormalizePathTemplate(t *testing.T) {
 			want: "/api/chat/{id}/messages/{id}",
 		},
 		{
+			name: "version segment with a letter is kept",
+			path: "/api/v2",
+			want: "/api/v2",
+		},
+		{
+			name: "version segment path with a letter is kept",
+			path: "/api/v2/objects",
+			want: "/api/v2/objects",
+		},
+		{
+			name: "all-digit segment is collapsed",
+			path: "/api/2",
+			want: "/api/{id}",
+		},
+		{
 			name: "already templated",
 			path: "/api/chat/{id}/history",
 			want: "/api/chat/{id}/history",
@@ -110,4 +125,5 @@ func TestCaptureHelpersNoClientWithNoDSN(t *testing.T) {
 
 	captureError(errors.New("boom"))
 	captureMemoryError(http.MethodGet, "/api/chat/123/history", http.StatusInternalServerError, errors.New("boom"))
+	capturePollFailure(errors.New("boom"))
 }

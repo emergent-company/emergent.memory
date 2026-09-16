@@ -116,8 +116,13 @@ func (e *memoryAttemptError) Unwrap() error { return e.err }
 // idempotent request.
 const maxMemoryAttempts = 3
 
-// retryBackoff holds the base delay before retry i (0-based), before jitter.
-var retryBackoff = [...]time.Duration{200 * time.Millisecond, 600 * time.Millisecond}
+// retryBackoff holds one base delay per retry, in order. Its length MUST equal
+// maxMemoryAttempts-1; the compile-time assertion below fails to build if
+// maxMemoryAttempts grows without a matching entry, so a new retry can never
+// silently reuse the last delay or index out of bounds.
+var retryBackoff = [2]time.Duration{200 * time.Millisecond, 600 * time.Millisecond}
+
+const _ = uint(len(retryBackoff) - (maxMemoryAttempts - 1))
 
 // retryableMemoryStatus reports whether a memory response status is a transient
 // upstream failure worth retrying for an idempotent request.
@@ -134,22 +139,36 @@ func retryableMemoryStatus(status int) bool {
 // base for the attempt just made plus up to 100ms of jitter, so concurrent
 // clients do not retry in lockstep.
 func retryBackoffDelay(attempt int) time.Duration {
-	base := retryBackoff[min(attempt, len(retryBackoff))-1]
+	// attempt is 1-based; clamp both ends so a bad caller can never panic.
+	base := retryBackoff[min(max(attempt, 1), len(retryBackoff))-1]
+	// math/rand/v2's rand.N is auto-seeded and safe for concurrent use. It is
+	// used for jitter only (not security-sensitive): do NOT swap it for a
+	// seeded math/rand source or wrap it in a mutex.
 	return base + rand.N(100*time.Millisecond)
 }
 
-// retryAfterDelay parses a Retry-After header value as delta-seconds, capped at
-// 5s. It returns 0 when the header is absent or not a valid delta-seconds value
-// (e.g. an HTTP-date), so the caller falls back to its own backoff.
+// retryAfterDelay parses a Retry-After header in either RFC 7231 form: a
+// non-negative delta-seconds value, or an HTTP-date (parsed with
+// http.ParseTime). The resulting delay is capped at 5s. It returns 0 when the
+// header is absent, unparseable, or already in the past, so the caller falls
+// back to its own backoff.
 func retryAfterDelay(header string) time.Duration {
+	header = strings.TrimSpace(header)
 	if header == "" {
 		return 0
 	}
-	secs, err := strconv.Atoi(strings.TrimSpace(header))
-	if err != nil || secs < 0 {
-		return 0
+	if secs, err := strconv.Atoi(header); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return min(time.Duration(secs)*time.Second, 5*time.Second)
 	}
-	return min(time.Duration(secs)*time.Second, 5*time.Second)
+	if t, err := http.ParseTime(header); err == nil {
+		if d := time.Until(t); d > 0 {
+			return min(d, 5*time.Second)
+		}
+	}
+	return 0
 }
 
 // waitRetry sleeps for d, reporting false when ctx is cancelled first so the
@@ -222,18 +241,22 @@ func (m *MemoryClient) do(ctx context.Context, method, path string, body any, ou
 // doH is do with extra request headers (e.g. the Accept header the MCP
 // endpoint needs).
 //
-// Transient upstream failures (502/503/504) are retried up to maxMemoryAttempts
+// Transient upstream failures — 502/503/504 responses and transport errors
+// (connection reset, EOF, TLS handshake) — are retried up to maxMemoryAttempts
 // times for idempotent requests only (GET/HEAD without a body); non-idempotent
 // requests are never replayed. The returned error is wrapped in
 // memoryAttemptError so callers can report how many attempts were made.
 func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, hdrs map[string]string, out any) error {
-	var rd io.Reader
+	// Marshal the body once; a fresh reader is rebuilt per attempt in doOnce so
+	// a *bytes.Reader consumed by an earlier attempt can never be replayed
+	// empty.
+	var rdBuf []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		rd = bytes.NewReader(b)
+		rdBuf = b
 	}
 	// Only requests without a body may be replayed: re-sending a
 	// POST/PUT/PATCH/DELETE could duplicate a side effect, and a consumed
@@ -249,16 +272,25 @@ func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, h
 	for attempt := range maxMemoryAttempts {
 		attempts = attempt + 1
 		var retryAfter time.Duration
-		status, raw, retryAfter, lastErr = m.doOnce(ctx, method, path, rd, body != nil, hdrs)
+		status, raw, retryAfter, lastErr = m.doOnce(ctx, method, path, rdBuf, body != nil, hdrs)
 		if lastErr != nil {
-			break
+			// A transport error is transient: retry it for an idempotent
+			// request on the same terms as a 5xx status, but fail fast for
+			// non-idempotent requests and abort immediately on cancellation.
+			if !retryable || attempts == maxMemoryAttempts || ctx.Err() != nil {
+				break
+			}
+			if !waitRetry(ctx, retryBackoffDelay(attempts)) {
+				break
+			}
+			continue
 		}
 		if !retryable || attempts == maxMemoryAttempts || !retryableMemoryStatus(status) {
 			break
 		}
-		// Honour an upstream Retry-After (valid delta-seconds, capped at 5s)
-		// over the default exponential backoff with jitter. Abort immediately
-		// when the caller's context is done.
+		// Honour an upstream Retry-After (delta-seconds or HTTP-date, capped at
+		// 5s) over the default exponential backoff with jitter. Abort
+		// immediately when the caller's context is done.
 		delay := retryAfter
 		if delay == 0 {
 			delay = retryBackoffDelay(attempts)
@@ -297,7 +329,15 @@ func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, h
 // doOnce performs one HTTP attempt and returns the response status, body and
 // any Retry-After delay. The response body is always closed before returning,
 // so retries never leak connections.
-func (m *MemoryClient) doOnce(ctx context.Context, method, path string, rd io.Reader, hasBody bool, hdrs map[string]string) (status int, raw []byte, retryAfter time.Duration, err error) {
+//
+// body is the already-marshalled request payload (nil when the request has
+// none); a fresh bytes.Reader is built here for every call, so each retry
+// attempt sends the complete payload rather than a consumed one.
+func (m *MemoryClient) doOnce(ctx context.Context, method, path string, body []byte, hasBody bool, hdrs map[string]string) (status int, raw []byte, retryAfter time.Duration, err error) {
+	var rd io.Reader
+	if hasBody {
+		rd = bytes.NewReader(body)
+	}
 	req, err := http.NewRequestWithContext(ctx, method, m.baseURL+path, rd)
 	if err != nil {
 		return 0, nil, 0, err

@@ -67,6 +67,10 @@ func normalizePathTemplate(path string) string {
 	}
 	segments := strings.Split(path, "/")
 	for i, seg := range segments {
+		// Collapse exactly three kinds of per-entity segment: canonical UUIDs,
+		// all-hex ids of length >= 16, and all-numeric ids. Note that the
+		// numeric rule matches only all-DIGIT segments, so a version segment
+		// like "v2" is left alone while "2" becomes "{id}".
 		if uuidSegment.MatchString(seg) || hexSegment.MatchString(seg) || numericSegment.MatchString(seg) {
 			segments[i] = "{id}"
 		}
@@ -134,6 +138,28 @@ func captureMemoryError(method, path string, status int, err error) {
 		if attemptErr, ok := errors.AsType[*memoryAttemptError](err); ok {
 			scope.SetTag("memory_retried", strconv.FormatBool(attemptErr.attempts > 1))
 		}
+		hub.CaptureException(err)
+	})
+}
+
+// capturePollFailure reports a sustained background conversation-poll failure
+// to Sentry. The 1.5s poll loop is self-healing, so callers rate-limit this to
+// the start of a failure streak and then at most once per 5 minutes. It is
+// availability signal, not a gateway defect: captured at warning level and
+// under a single stable fingerprint so every background poll failure groups
+// into one issue.
+func capturePollFailure(err error) {
+	if err == nil {
+		return
+	}
+	hub := sentry.CurrentHub()
+	if hub.Client() == nil {
+		return
+	}
+	hub.WithScope(func(scope *sentry.Scope) {
+		scope.SetLevel(sentry.LevelWarning)
+		scope.SetFingerprint([]string{"memory", "conversation-poll"})
+		scope.SetTag("memory_poll", "true")
 		hub.CaptureException(err)
 	})
 }
