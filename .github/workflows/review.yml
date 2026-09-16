@@ -1,11 +1,9 @@
 name: AI Code Review
 
 on:
-  # pull_request_target: the workflow (and the review script) load from the BASE
-  # branch, so a PR cannot rewrite it to exfiltrate GH_TOKEN/LITELLM_API_KEY.
-  # Only the PR diff (untrusted data) is ever read, never executed as code.
-  pull_request_target:
-    types: [opened, synchronize, reopened]
+  # Reviewer bot is OFF: manual trigger only. To re-enable auto-review, restore
+  # `pull_request_target` (base-branch scripts + diff-only) below.
+  workflow_dispatch:
 
 # One review run per PR at a time; cancel stale runs on new push.
 concurrency:
