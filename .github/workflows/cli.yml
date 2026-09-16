@@ -6,6 +6,7 @@ on:
     paths:
       - 'apps/cli/**'
       - '.github/workflows/cli.yml'
+      - 'deploy/**'
       - 'VERSION'
     tags:
       - 'v*'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'apps/cli/**'
       - '.github/workflows/cli.yml'
+      - 'deploy/**'
       - 'VERSION'
   workflow_dispatch:
 
@@ -54,6 +56,25 @@ jobs:
           install-mode: goinstall
         env:
           GOWORK: off
+
+      - name: Verify Kreuzberg image pin is in sync
+        working-directory: apps/cli
+        run: |
+          PIN=$(grep -oP 'KreuzbergImage\s*=\s*"\K[^"]+' internal/installer/templates.go)
+          if [ -z "${PIN}" ]; then
+            echo "ERROR: could not read KreuzbergImage from internal/installer/templates.go"
+            exit 1
+          fi
+          echo "KreuzbergImage pin: ${PIN}"
+          for f in ../../deploy/self-hosted/docker-compose.yml \
+                   ../../deploy/self-hosted/docker-compose.local.yml \
+                   ../../deploy/self-hosted/install-online.sh; do
+            if ! grep -q "${PIN}" "${f}"; then
+              echo "ERROR: ${f} does not reference ${PIN}; bump it together with KreuzbergImage"
+              exit 1
+            fi
+          done
+          echo "OK: all self-hosted static copies match KreuzbergImage"
 
   test:
     name: Test
@@ -503,3 +524,29 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=memory-cli
           cache-to: type=gha,mode=max,scope=memory-cli
+
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    # always() so the required `ci` context always reports a real result instead
+    # of being skipped when a dependency fails. The tag-guarded lint/test jobs
+    # are legitimately skipped on tag pushes; the gate treats 'skipped' as
+    # acceptable and fails only on 'failure'/'cancelled'.
+    if: ${{ always() }}
+    needs: [lint, test, build]
+    steps:
+      - name: CI gate
+        run: |
+          failed=0
+          for result in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.build.result }}"; do
+            echo "dependency result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "CI passed"
