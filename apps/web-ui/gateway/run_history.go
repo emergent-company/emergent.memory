@@ -341,6 +341,9 @@ func questionToolInput(q AgentQuestionItem) map[string]any {
 		interactionType = q.InteractionType
 	}
 	in["interaction_type"] = interactionType
+	if len(q.Proposal) > 0 {
+		in["proposal"] = q.Proposal
+	}
 	return in
 }
 

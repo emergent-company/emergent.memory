@@ -1,5 +1,5 @@
 name: operator
-version: 1.0.0
+version: 1.0.1
 description: >
   The general assistant for Memory. Reads and changes every setting — agents,
   skills, blueprints/schema, MCP servers, documents, and graph objects — through

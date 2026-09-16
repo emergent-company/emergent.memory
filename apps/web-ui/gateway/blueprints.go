@@ -804,6 +804,20 @@ func relationshipTypesFromRaw(raw json.RawMessage) []RelationshipTypeDetail {
 	if json.Unmarshal(raw, &arr) == nil {
 		return relationshipTypesFromMaps(arr)
 	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) == nil {
+		arr = arr[:0]
+		for name, v := range m {
+			vm, _ := v.(map[string]any)
+			if vm == nil {
+				vm = map[string]any{}
+			}
+			vm["name"] = name
+			arr = append(arr, vm)
+		}
+		sort.Slice(arr, func(i, j int) bool { return strAny(arr[i]["name"]) < strAny(arr[j]["name"]) })
+		return relationshipTypesFromMaps(arr)
+	}
 	return nil
 }
 
