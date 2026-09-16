@@ -95,7 +95,7 @@ def main() -> None:
         print("No diff to review; skipping.")
         return
 
-    max_diff = 15000
+    max_diff = 60000
     truncated = len(diff) > max_diff
     if truncated:
         diff = diff[:max_diff] + "\n...(truncated)..."
@@ -109,11 +109,18 @@ def main() -> None:
         '{"path": "<relative file path>", "severity": "must_fix"|"should_fix"|"nit", '
         '"title": "<one-line summary>", "note": "<what is wrong and where>"}]}\n'
         "Rules:\n"
-        '- "note" must be specific and actionable: cite the file and the affected '
-        "line(s)/behavior, and say what a correct fix would look like.\n"
-        '- "severity": "must_fix" for correctness/security/breakage, "should_fix" '
-        'for logic/error-handling/perf, "nit" for style.\n'
-        "Only report real issues; if none, return an empty issues array and verdict "
+        '- Only report a finding when the code is actually wrong or clearly risky. '
+        'If a pattern is acceptable or "correct but could be nicer", do NOT report '
+        'it — noise erodes trust.\n'
+        '- "note" must cite the specific line(s) or behavior, state what is wrong, '
+        'and give a concrete correct fix. Avoid hedge words ("may", "consider", '
+        '"verify") unless the finding is genuinely uncertain.\n'
+        '- "severity": "must_fix" = definite bug/security/breakage that ships broken; '
+        '"should_fix" = a clear, worthwhile improvement; "nit" = minor style. When in '
+        'doubt, downgrade or drop the finding.\n'
+        '- Report at most 6 issues, ordered by severity then impact. Quality over '
+        'quantity.\n'
+        "If nothing is actually wrong, return an empty issues array and verdict "
         '"APPROVE".\n\n'
         f"DIFF:\n{diff}"
     )
