@@ -23,8 +23,9 @@ const (
 
 	// KreuzbergImage is the pinned image for the Kreuzberg document extraction service.
 	// Bumping this constant is the single source of truth for the Kreuzberg version.
-	// Note: the static copies in deploy/self-hosted/*.yml and install-online.sh must be
-	// bumped together with this constant.
+	// The static copies in deploy/self-hosted/*.yml and install-online.sh MUST be bumped
+	// together with this constant; installer_test.go asserts the constant matches the
+	// rendered template so drift is caught in CI.
 	KreuzbergImage = "ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3"
 )
 
