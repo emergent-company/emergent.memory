@@ -195,7 +195,10 @@ func TestRenderSchemaObjectTypeOriginStates(t *testing.T) {
 // --- task 3.2/3.4: editor handler interaction ---
 
 func TestUISchemaObjectTypeUpdateUIFormSuccess(t *testing.T) {
-	f := &fakeMemory{compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", SchemaID: "pack-1"}}}}
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", SchemaID: "pack-1"}}},
+		schemas:  []SchemaInfo{{ID: "pack-1", ProjectID: "proj"}},
+	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate)
@@ -276,7 +279,10 @@ func TestUISchemaObjectTypeUpdateUIFormValidation(t *testing.T) {
 func TestUISchemaObjectTypeUpdateRemovedPropertyPersistsExactSet(t *testing.T) {
 	// Submitting only the surviving rows (as the browser does after removing a
 	// row) must persist exactly those properties.
-	f := &fakeMemory{compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", SchemaID: "pack-1"}}}}
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", SchemaID: "pack-1"}}},
+		schemas:  []SchemaInfo{{ID: "pack-1", ProjectID: "proj"}},
+	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate)
