@@ -232,6 +232,31 @@ func TestUIAgentMCPShareCreateRendersReveal(t *testing.T) {
 			t.Errorf("create reveal missing %q", want)
 		}
 	}
+	// the reveal is 50% wider than the old max-w-2xl (42rem -> 63rem)
+	if !strings.Contains(body, `modal-box max-w-[63rem]`) {
+		t.Error("reveal modal width not widened to 63rem")
+	}
+	// JSON client configs render as syntax-highlighted chroma spans (inline
+	// styles); the shell snippet stays plain, escaped text.
+	if !strings.Contains(body, `style="color:`) {
+		t.Error("JSON snippet not syntax-highlighted")
+	}
+	if i := strings.Index(body, `<pre id="agent-mcp-share-snippet-claudeCode"`); i < 0 {
+		t.Error("claudeCode snippet block missing")
+	} else if seg, _, ok := strings.Cut(body[i:], "</pre>"); ok && strings.Contains(seg, `style="color:`) {
+		t.Error("shell snippet must not be syntax-highlighted")
+	}
+	// the reveal is a native <dialog> opened via showModal(): the modal-open
+	// class alone leaves method="dialog" submits (Done / backdrop) inert.
+	if !strings.Contains(body, `id="agent-mcp-share-reveal-modal" class="modal"`) {
+		t.Error("reveal dialog must use the native modal shell")
+	}
+	if strings.Contains(body, "modal modal-open") {
+		t.Error("reveal dialog must not use the modal-open class")
+	}
+	if !strings.Contains(body, "getElementById('agent-mcp-share-reveal-modal')") || !strings.Contains(body, "d.showModal();") {
+		t.Error("reveal dialog must be opened via showModal()")
+	}
 }
 
 // TestUIAgentMCPShareListRendersShares asserts the list shows status,

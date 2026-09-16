@@ -415,8 +415,8 @@ templ mcpShareAgentPicker(data mcpShareFormData) {
 // after create/rotate. The raw key exists only in this response; closing the
 // dialog returns to the list and the key is gone for good.
 templ mcpShareRevealModal(r mcpShareReveal) {
-	<dialog class="modal modal-open" hx-boost="false" data-mcp-share-reveal>
-		<div class="modal-box max-w-2xl">
+	<dialog id="mcp-share-reveal-modal" class="modal" hx-boost="false" data-mcp-share-reveal>
+		<div class="modal-box max-w-[63rem]">
 			<div class="flex items-center gap-3">
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
 				<div class="min-w-0">
@@ -488,6 +488,13 @@ templ mcpShareRevealModal(r mcpShareReveal) {
 			<button>close</button>
 		</form>
 	</dialog>
+	<script type="text/javascript">
+		(function () {
+			var d = document.getElementById('mcp-share-reveal-modal');
+			if (!d || typeof d.showModal !== 'function' || d.open) return;
+			d.showModal();
+		})();
+	</script>
 }
 
 // mcpShareSnippetBlock is one client snippet card with a copy button.
@@ -506,7 +513,12 @@ templ mcpShareSnippetBlock(s mcpShareSnippet) {
 				Copy
 			}
 		</div>
-		<pre id={ "mcp-share-snippet-" + s.Key } class="overflow-x-auto whitespace-pre-wrap rounded-box bg-base-100 p-2.5 font-mono text-[11px] leading-relaxed">{ s.Code }</pre>
+		{{ hl, ok := highlightJSONSnippet(s.Code) }}
+		<pre id={ "mcp-share-snippet-" + s.Key } class="overflow-x-auto whitespace-pre-wrap rounded-box bg-base-100 p-2.5 font-mono text-[11px] leading-relaxed">if ok {
+			@templ.Raw(hl)
+		} else {
+			{ s.Code }
+		}</pre>
 	</div>
 }
 

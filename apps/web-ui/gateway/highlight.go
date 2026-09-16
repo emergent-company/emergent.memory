@@ -45,6 +45,25 @@ func highlightJSONValue(raw json.RawMessage) (string, bool) {
 	return highlightJSON(string(pretty)), true
 }
 
+// highlightJSONSnippet syntax-highlights a client-config snippet when it is a
+// JSON object or array, returning bare inline-styled <span> tokens (no <pre>
+// wrapper) and true. The source is highlighted exactly as given — never
+// re-indented — so the DOM text stays byte-identical to the copy-button
+// payload. Non-JSON snippets (e.g. the shell command) and inputs that fail to
+// unmarshal return ("", false) so callers render the raw, escaped text. Snippet
+// text can come from the backend and may be arbitrary, so this always degrades
+// to plain text rather than erroring.
+func highlightJSONSnippet(src string) (string, bool) {
+	trimmed := strings.TrimSpace(src)
+	if trimmed == "" || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return "", false
+	}
+	if err := json.Unmarshal([]byte(src), new(any)); err != nil {
+		return "", false
+	}
+	return highlightJSON(src), true
+}
+
 // highlightJSON syntax-highlights JSON source into bare inline-styled <span>
 // tokens (no <pre> wrapper). Falls back to HTML-escaped plain text on failure.
 func highlightJSON(src string) string {
