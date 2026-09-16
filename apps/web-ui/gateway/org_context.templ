@@ -228,6 +228,21 @@ templ OrgLandingPage(data orgPageData) {
 					orgClosePopovers();
 					form.requestSubmit();
 				}
+
+				// Whole-row activation: a click anywhere on a row that carries
+				// data-activate-url POSTs /projects/activate (htmx, so the
+				// handler's HX-Redirect lands on the newly active project).
+				// Clicks on the row's own controls — the select checkbox, the
+				// action menu and its items, the name button — keep their own
+				// behaviour and never reach here. Delegated on document so it
+				// survives hx-boost swaps; the init flag keeps it single.
+				document.addEventListener('click', function (ev) {
+					var row = ev.target.closest('[data-activate-url]');
+					if (!row) return;
+					if (ev.target.closest('a, button, input, label, select, textarea, [role="menu"]')) return;
+					if (!window.htmx || typeof window.htmx.ajax !== 'function') return;
+					window.htmx.ajax('POST', row.getAttribute('data-activate-url'), { swap: 'none' });
+				});
 			}
 			</script>
 			{{ pendingCount := projectPendingCount(data.Projects) }}
@@ -310,7 +325,19 @@ templ OrgLandingPage(data orgPageData) {
 								}
 								@table.TableBody() {
 									for _, p := range data.Projects {
-										@table.TableRow(p.ID, true, nil) {
+										// Non-pending rows are whole-row clickable:
+										// data-activate-url lets the page script POST
+										// /projects/activate from a click anywhere that is
+										// not one of the row's own controls. Pending rows
+										// carry no target and no pointer affordance — they
+										// cannot be opened.
+										<tr
+											id={ p.ID }
+											if !p.PendingDeletion() {
+												class="cursor-pointer transition-colors hover:bg-base-200"
+												data-activate-url={ templ.URL("/projects/activate?projectId=" + p.ID) }
+											}
+										>
 											@table.TableCell("w-10", nil) {
 												if p.PendingDeletion() {
 													// Pending projects are never selectable for
@@ -451,7 +478,7 @@ templ OrgLandingPage(data orgPageData) {
 													}
 												}
 											}
-										}
+										</tr>
 									}
 								}
 							}
