@@ -185,8 +185,10 @@ func TestDecodeMCPShareListUnrecognizedWrapper(t *testing.T) {
 	}
 }
 
-// TestDecodeMCPShareListDerivesCounts asserts zero counts are filled from the
-// allowlist arrays and that an empty agent allowlist stays 0 ("all agents").
+// TestDecodeMCPShareListDerivesCounts asserts counts are derived from the
+// allowlist arrays only when the backend omitted the count field: an explicit
+// backend count (including an explicit 0) always wins, and an empty agent
+// allowlist stays 0 ("all agents").
 func TestDecodeMCPShareListDerivesCounts(t *testing.T) {
 	tests := map[string]struct {
 		raw            string
@@ -207,6 +209,36 @@ func TestDecodeMCPShareListDerivesCounts(t *testing.T) {
 			raw:            `{"instances":[{"id":"s1","tools":["a"],"agents":["x"],"toolCount":9,"agentCount":4}],"total":1}`,
 			wantToolCount:  9,
 			wantAgentCount: 4,
+		},
+		"explicit-zero-counts-win": {
+			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":["x","y"],"toolCount":0,"agentCount":0}],"total":1}`,
+			wantToolCount:  0,
+			wantAgentCount: 0,
+		},
+		"explicit-zero-tool-derives-agent": {
+			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":["x","y"],"toolCount":0}],"total":1}`,
+			wantToolCount:  0,
+			wantAgentCount: 2,
+		},
+		"explicit-zero-agent-derives-tool": {
+			raw:            `{"instances":[{"id":"s1","tools":["a","b","c"],"agents":["x"],"agentCount":0}],"total":1}`,
+			wantToolCount:  3,
+			wantAgentCount: 0,
+		},
+		"null-counts-derive": {
+			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":["x"],"toolCount":null,"agentCount":null}],"total":1}`,
+			wantToolCount:  2,
+			wantAgentCount: 1,
+		},
+		"shares-wrapper-explicit-zero-wins": {
+			raw:            `{"shares":[{"id":"s1","tools":["a","b"],"agents":["x"],"toolCount":0,"agentCount":0}]}`,
+			wantToolCount:  0,
+			wantAgentCount: 0,
+		},
+		"bare-array-derives": {
+			raw:            `[{"id":"s1","tools":["a"],"agents":["x"]}]`,
+			wantToolCount:  1,
+			wantAgentCount: 1,
 		},
 	}
 	for name, tc := range tests {

@@ -110,9 +110,9 @@ func (m *MemoryClient) shareRaw(ctx context.Context, method, path string, body a
 // (memory's ShareInstanceListResponse). Any other object shape is an error so
 // the page renders its error state instead of a false empty list.
 func decodeMCPShareList(raw json.RawMessage) ([]MCPShareInstance, error) {
-	var list []MCPShareInstance
-	if err := json.Unmarshal(raw, &list); err == nil {
-		return mcpShareDeriveCounts(list), nil
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err == nil {
+		return decodeMCPShareItems(items)
 	}
 	var wrap map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &wrap); err != nil {
@@ -123,28 +123,60 @@ func decodeMCPShareList(raw json.RawMessage) ([]MCPShareInstance, error) {
 		if !ok {
 			continue
 		}
-		var wrapped []MCPShareInstance
+		var wrapped []json.RawMessage
 		if err := json.Unmarshal(payload, &wrapped); err != nil {
 			return nil, fmt.Errorf("decode mcp share list %q: %w", key, err)
 		}
-		return mcpShareDeriveCounts(wrapped), nil
+		return decodeMCPShareItems(wrapped)
 	}
 	return nil, fmt.Errorf("decode mcp share list: unrecognized payload shape (want array, \"shares\" or \"instances\")")
 }
 
-// mcpShareDeriveCounts fills zero tool/agent counts from the allowlist arrays so
-// list rows show real numbers when the backend omits explicit counts. Counts the
-// backend provides win; a nil/empty agent allowlist stays 0 ("all agents").
-func mcpShareDeriveCounts(shares []MCPShareInstance) []MCPShareInstance {
-	for i := range shares {
-		if shares[i].ToolCount == 0 && len(shares[i].Tools) > 0 {
-			shares[i].ToolCount = len(shares[i].Tools)
+// mcpShareCountsPresent records which count fields the backend actually sent.
+// MCPShareInstance carries plain int counts, so after decoding an omitted count
+// is indistinguishable from an explicit zero; these pointers preserve that
+// presence bit so a backend-supplied 0 is never overwritten by the allowlist
+// length. A JSON null counts as absent.
+type mcpShareCountsPresent struct {
+	ToolCount  *int `json:"toolCount"`
+	AgentCount *int `json:"agentCount"`
+}
+
+// decodeMCPShareItems decodes every list element, preserving count-field
+// presence per element.
+func decodeMCPShareItems(items []json.RawMessage) ([]MCPShareInstance, error) {
+	out := make([]MCPShareInstance, 0, len(items))
+	for i, item := range items {
+		inst, err := decodeMCPShareItem(item)
+		if err != nil {
+			return nil, fmt.Errorf("decode mcp share list item %d: %w", i, err)
 		}
-		if shares[i].AgentCount == 0 && len(shares[i].Agents) > 0 {
-			shares[i].AgentCount = len(shares[i].Agents)
-		}
+		out = append(out, inst)
 	}
-	return shares
+	return out, nil
+}
+
+// decodeMCPShareItem fills tool/agent counts from the allowlist arrays so list
+// rows show real numbers when the backend omits explicit counts. Only an
+// omitted (or null) count is derived: an explicit backend count — including an
+// explicit 0 — always wins, and a nil/empty agent allowlist stays 0 ("all
+// agents").
+func decodeMCPShareItem(raw json.RawMessage) (MCPShareInstance, error) {
+	var inst MCPShareInstance
+	if err := json.Unmarshal(raw, &inst); err != nil {
+		return MCPShareInstance{}, err
+	}
+	var present mcpShareCountsPresent
+	if err := json.Unmarshal(raw, &present); err != nil {
+		return MCPShareInstance{}, err
+	}
+	if present.ToolCount == nil && len(inst.Tools) > 0 {
+		inst.ToolCount = len(inst.Tools)
+	}
+	if present.AgentCount == nil && len(inst.Agents) > 0 {
+		inst.AgentCount = len(inst.Agents)
+	}
+	return inst, nil
 }
 
 // decodeMCPShareTools accepts a bare array or a {"tools":[...]} wrapper.
