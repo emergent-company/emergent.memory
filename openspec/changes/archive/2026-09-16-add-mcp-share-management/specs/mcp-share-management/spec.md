@@ -1,17 +1,17 @@
 ## Purpose
 
-Lets a project admin create and manage named MCP share instances from the web app — choosing which memory tools and agents an outside agent may access — and hand out the instance's API key and client config snippets.
+Lets a project admin create and manage named MCP share instances from the web app — choosing which memory tools an outside agent may access — and hand out the instance's API key and client config snippets.
 
 ## ADDED Requirements
 
 ### Requirement: List MCP share instances
 
-The gateway SHALL render an MCP Sharing page listing every share instance for the active project, showing each instance's name, description, tool count, agent count, status, creation time, and last-used time, most recently created first. The page SHALL be reachable from the MCP Servers settings area and SHALL follow the same page-title and test-id conventions as other settings pages. A project with no instances SHALL show an empty state with a call-to-action to create one.
+The gateway SHALL render an MCP Sharing page listing every share instance for the active project, showing each instance's name, description, tool count, status, creation time, and last-used time, most recently created first. The page SHALL be reachable from the MCP Servers settings area and SHALL follow the same page-title and test-id conventions as other settings pages. A project with no instances SHALL show an empty state with a call-to-action to create one.
 
 #### Scenario: Page renders instances
 
 - **WHEN** an admin opens the MCP Sharing page for a project with instances
-- **THEN** each instance is listed with name, tool count, agent count, status, and timestamps, and offers edit, rotate, and revoke actions
+- **THEN** each instance is listed with name, tool count, status, and timestamps, and offers edit, rotate, and revoke actions
 
 #### Scenario: Empty project
 
@@ -26,11 +26,11 @@ The gateway SHALL render an MCP Sharing page listing every share instance for th
 #### Scenario: Legacy instances shown read-only
 
 - **WHEN** the project has an instance created through the backend's legacy share endpoint
-- **THEN** it is listed and marked as legacy with no tool/agent allowlist editing
+- **THEN** it is listed and marked as legacy with no tool allowlist editing
 
 ### Requirement: Create an MCP share instance
 
-The gateway SHALL provide a create form with a required unique name, an optional description, a memory-tool picker, and an agent picker. The tool picker SHALL be populated from the backend tool catalog, grouped by category, searchable, and support select-all/clear, and MUST require at least one selected tool. The agent picker SHALL default to no agents (meaning all scope-permitted agents) and let the admin select specific agents. Submitting SHALL validate required fields, reject duplicate names and empty tool selections inline with no partial save, and on success SHALL return the admin to the list.
+The gateway SHALL provide a create form with a required unique name, an optional description, and a memory-tool picker. The tool picker SHALL be populated from the backend tool catalog, grouped by category, searchable, and support select-all/clear, and MUST require at least one selected tool. Submitting SHALL validate required fields, reject duplicate names and empty tool selections inline with no partial save, and on success SHALL return the admin to the list.
 
 #### Scenario: Create with selected tools
 
@@ -46,11 +46,6 @@ The gateway SHALL provide a create form with a required unique name, an optional
 
 - **WHEN** an admin submits a name that matches an existing instance
 - **THEN** the form shows an inline error naming the conflict and no instance is created
-
-#### Scenario: Agent preselected from an agent
-
-- **WHEN** an admin starts creation from an agent's "Share via MCP" action
-- **THEN** the create form opens with that agent preselected in the agent picker
 
 ### Requirement: Reveal the instance API key once
 
@@ -73,7 +68,7 @@ After creating an instance or rotating its key, the gateway SHALL reveal the raw
 
 ### Requirement: Edit an instance
 
-The gateway SHALL provide an edit form pre-filled with the instance's name, description, tool allowlist, and agent allowlist, and SHALL persist changes. Editing the tool allowlist SHALL update the instance's scoping in the backend without changing the instance's existing key. Legacy instances SHALL NOT be editable.
+The gateway SHALL provide an edit form pre-filled with the instance's name, description, and tool allowlist, and SHALL persist changes. Editing the tool allowlist SHALL update the instance's scoping in the backend without changing the instance's existing key. Legacy instances SHALL NOT be editable.
 
 #### Scenario: Change the tool allowlist
 
