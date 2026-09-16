@@ -194,6 +194,9 @@ Three limitations worth knowing before extending these:
   assertions belong in the env-gated `scenarios` suite.
 - **The gateway has no object-delete route**, so object specs clean up through the
   memory API using the signed-in session token (`memory_session` cookie) + `X-Project-ID`.
+  Those deletes are soft (`POST /api/graph/objects/:id/restore`): cleanup removes the
+  objects and their edges from live listings, but the soft-deleted rows remain
+  restorable in the archive.
 - **`POST /blueprints/migrate/rollback` restores zero objects** — a server defect:
   `Repository.List` does not select `migration_archive`, so `RollbackSchemaMigration`
   skips every object. The spec drives the route and asserts its response, with the

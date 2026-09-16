@@ -1,6 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
-import { openObjectForm, submitObjectForm } from '../../helpers/objects';
-import { readBootstrap } from '../../helpers/bootstrap';
+import {
+  createTypedObject,
+  memoryAuthHeaders,
+  edgeIdsOf,
+  cleanupObjects,
+} from '../../helpers/objects';
 import { MEMORY_API_URL } from '../../helpers/tokens';
 
 // Object merge — GET /objects/:id/merge (uiObjectMerge).
@@ -22,48 +26,6 @@ import { MEMORY_API_URL } from '../../helpers/tokens';
 // signed-in user's own Zitadel access token — the gateway exposes no
 // object-delete route.
 
-async function createTypedObject(page: Page, type: string, key: string): Promise<string> {
-  await openObjectForm(page, type);
-  await page.locator('#object-key').fill(key);
-  return submitObjectForm(page);
-}
-
-/** Auth headers for the memory API (see the relationships spec for the why). */
-async function memoryAuthHeaders(page: Page): Promise<Record<string, string>> {
-  const cookies = await page.context().cookies();
-  const session = cookies.find((c) => c.name === 'memory_session');
-  if (!session) throw new Error('memory_session cookie missing from the browser context');
-  const payload = JSON.parse(
-    Buffer.from(session.value.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString(
-      'utf8',
-    ),
-  ) as { access_token?: string };
-  if (!payload.access_token) throw new Error('memory_session cookie carries no access_token');
-  const bootstrap = readBootstrap();
-  return {
-    Authorization: `Bearer ${payload.access_token}`,
-    'X-Project-ID': bootstrap?.projectId ?? '',
-  };
-}
-
-async function edgeIdsOf(
-  page: Page,
-  headers: Record<string, string>,
-  objectId: string,
-): Promise<string[]> {
-  const resp = await page.request
-    .get(`${MEMORY_API_URL}/api/graph/objects/${encodeURIComponent(objectId)}/edges`, { headers })
-    .catch(() => null);
-  if (!resp || !resp.ok()) return [];
-  const body = (await resp.json().catch(() => ({}))) as {
-    incoming?: Array<{ id?: string }>;
-    outgoing?: Array<{ id?: string }>;
-  };
-  return [...(body.incoming ?? []), ...(body.outgoing ?? [])]
-    .map((r) => r.id)
-    .filter((id): id is string => Boolean(id));
-}
-
 /** True when the memory graph still lists the object (soft-deleted ones drop out). */
 async function objectStillListed(page: Page, objectId: string): Promise<boolean> {
   const headers = await memoryAuthHeaders(page);
@@ -74,38 +36,6 @@ async function objectStillListed(page: Page, objectId: string): Promise<boolean>
   if (!resp.ok()) return false;
   const body = (await resp.json().catch(() => ({}))) as { items?: Array<{ id?: string }> };
   return (body.items ?? []).some((o) => o.id === objectId);
-}
-
-async function cleanupMergeRun(
-  page: Page,
-  agentId: string,
-  objectIds: string[],
-): Promise<void> {
-  try {
-    const headers = await memoryAuthHeaders(page);
-    const ids = objectIds.filter(Boolean);
-    for (const id of ids) {
-      for (const edgeId of await edgeIdsOf(page, headers, id)) {
-        await page.request
-          .delete(`${MEMORY_API_URL}/api/graph/relationships/${encodeURIComponent(edgeId)}`, {
-            headers,
-            failOnStatusCode: false,
-          })
-          .catch(() => undefined);
-      }
-    }
-    for (const id of ids) {
-      await page.request
-        .delete(`${MEMORY_API_URL}/api/graph/objects/${encodeURIComponent(id)}`, {
-          headers,
-          failOnStatusCode: false,
-        })
-        .catch(() => undefined);
-    }
-    if (agentId) await page.request.delete(`/api/agents/${agentId}`).catch(() => undefined);
-  } catch {
-    // Best-effort only — never mask the spec's real failure.
-  }
 }
 
 test('object merge: starts a merge session naming both objects and leaves the graph untouched', async ({
@@ -188,7 +118,7 @@ test('object merge: starts a merge session naming both objects and leaves the gr
       'target must still expose the original edge after the merge session starts',
     ).toEqual(expect.arrayContaining(sharedEdgeIds));
   } finally {
-    await cleanupMergeRun(page, agentId, [sourceId, targetId]);
+    await cleanupObjects(page, [sourceId, targetId], agentId);
   }
 });
 
@@ -225,6 +155,6 @@ test('object merge: missing or unknown merge target redirects back to the object
     await expect(page.getByRole('heading', { name: key })).toBeVisible();
     await expect(page.locator('#object-key')).toHaveValue(key);
   } finally {
-    await cleanupMergeRun(page, '', [objectId]);
+    await cleanupObjects(page, [objectId]);
   }
 });
