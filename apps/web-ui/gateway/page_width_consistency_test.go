@@ -89,6 +89,22 @@ func firstClass(html string) string {
 	return rest[:j]
 }
 
+// firstClassContaining returns the first class attribute value in html that
+// contains needle, or "" when none does. Use it to assert the members of a
+// wrapper whose exact class list may gain unrelated utilities over time.
+func firstClassContaining(html, needle string) string {
+	for chunk := range strings.SplitSeq(html, `class="`) {
+		end := strings.IndexByte(chunk, '"')
+		if end < 0 {
+			continue
+		}
+		if cls := chunk[:end]; strings.Contains(cls, needle) {
+			return cls
+		}
+	}
+	return ""
+}
+
 // TestAgentsAndObjectsSharePageContainer covers the reported bug directly:
 // /agents and /objects must render the same outermost page container class
 // (width + gutter), so the two pages no longer disagree on content width.
@@ -127,9 +143,19 @@ func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 		nil, nil, nil, "", "", "", nil, false, nil,
 	))
 
-	const scrollFill = `class="flex min-h-full flex-col justify-end"`
-	if !strings.Contains(html, scrollFill) {
-		t.Errorf("chat transcript lost its scroll-fill wrapper (%s)", scrollFill)
+	// The scroll-fill wrapper keeps min-h-full + flex-col + justify-end so a
+	// short transcript rests on the composer. Assert the required members
+	// rather than the exact class string — unrelated utilities (e.g. min-w-0)
+	// legitimately join the wrapper without changing its behaviour.
+	scrollFill := firstClassContaining(html, "min-h-full")
+	if scrollFill == "" {
+		t.Error("chat transcript lost its scroll-fill wrapper (no min-h-full class)")
+	} else {
+		for _, want := range []string{"flex", "min-h-full", "flex-col", "justify-end"} {
+			if !strings.Contains(scrollFill, want) {
+				t.Errorf("chat scroll-fill wrapper %q missing %q", scrollFill, want)
+			}
+		}
 	}
 	if !strings.Contains(html, `"`+pageContainerClass+`"`) {
 		t.Errorf("chat transcript column must use the shared container %q", pageContainerClass)
