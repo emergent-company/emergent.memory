@@ -55,7 +55,8 @@ attach the wrong body (this has happened — a PR shipped with another PR's body
 while the title/head ref were correct).
 
 ```bash
-cat > /tmp/pr-body-$(date +%s).md <<'EOF'
+body_file="$(mktemp /tmp/pr-body.XXXXXX.md)"
+cat > "$body_file" <<'EOF'
 ## What
 
 ...
@@ -76,7 +77,7 @@ EOF
 ### 4. Create the PR
 
 ```bash
-gh pr create --base main --head <branch> --title "<title>" --body-file /tmp/pr-body-<unique>.md
+gh pr create --base main --head <branch> --title "<title>" --body-file "$body_file"
 ```
 
 - Base is `main` (the default branch).
