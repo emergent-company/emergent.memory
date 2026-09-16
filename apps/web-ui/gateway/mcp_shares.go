@@ -21,8 +21,10 @@ import (
 //
 // The response decoding is tolerant: admin routes wrap payloads in the
 // {success,data} envelope while some project routes return plain JSON, and a
-// list may arrive as a bare array or under a {"shares":[...]} key. shareDecode
-// accepts all of these so the UI keeps working across backend versions.
+// list may arrive as a bare array or under a {"shares":[...]} or
+// {"instances":[...]} key. shareRaw/decodeMCPShareList accept all of these so
+// the UI keeps working across backend versions; an unrecognized object wrapper
+// is surfaced as an error rather than a false empty list.
 
 // MCPShareInstance is one named MCP share instance: an API-key grant exposing a
 // chosen subset of memory tools and agents to outside MCP clients. Tools and
@@ -103,19 +105,78 @@ func (m *MemoryClient) shareRaw(ctx context.Context, method, path string, body a
 	return raw, nil
 }
 
-// decodeMCPShareList accepts a bare array or a {"shares":[...]} wrapper.
+// decodeMCPShareList accepts a bare array or an object wrapping the list under
+// either the "shares" (gateway/agent-share convention) or "instances" key
+// (memory's ShareInstanceListResponse). Any other object shape is an error so
+// the page renders its error state instead of a false empty list.
 func decodeMCPShareList(raw json.RawMessage) ([]MCPShareInstance, error) {
-	var list []MCPShareInstance
-	if err := json.Unmarshal(raw, &list); err == nil {
-		return list, nil
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err == nil {
+		return decodeMCPShareItems(items)
 	}
-	var wrap struct {
-		Shares []MCPShareInstance `json:"shares"`
-	}
+	var wrap map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &wrap); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode mcp share list: %w", err)
 	}
-	return wrap.Shares, nil
+	for _, key := range []string{"instances", "shares"} {
+		payload, ok := wrap[key]
+		if !ok {
+			continue
+		}
+		var wrapped []json.RawMessage
+		if err := json.Unmarshal(payload, &wrapped); err != nil {
+			return nil, fmt.Errorf("decode mcp share list %q: %w", key, err)
+		}
+		return decodeMCPShareItems(wrapped)
+	}
+	return nil, fmt.Errorf("decode mcp share list: unrecognized payload shape (want array, \"shares\" or \"instances\")")
+}
+
+// mcpShareCountsPresent records which count fields the backend actually sent.
+// MCPShareInstance carries plain int counts, so after decoding an omitted count
+// is indistinguishable from an explicit zero; these pointers preserve that
+// presence bit so a backend-supplied 0 is never overwritten by the allowlist
+// length. A JSON null counts as absent.
+type mcpShareCountsPresent struct {
+	ToolCount  *int `json:"toolCount"`
+	AgentCount *int `json:"agentCount"`
+}
+
+// decodeMCPShareItems decodes every list element, preserving count-field
+// presence per element.
+func decodeMCPShareItems(items []json.RawMessage) ([]MCPShareInstance, error) {
+	out := make([]MCPShareInstance, 0, len(items))
+	for i, item := range items {
+		inst, err := decodeMCPShareItem(item)
+		if err != nil {
+			return nil, fmt.Errorf("decode mcp share list item %d: %w", i, err)
+		}
+		out = append(out, inst)
+	}
+	return out, nil
+}
+
+// decodeMCPShareItem fills tool/agent counts from the allowlist arrays so list
+// rows show real numbers when the backend omits explicit counts. Only an
+// omitted (or null) count is derived: an explicit backend count — including an
+// explicit 0 — always wins, and a nil/empty agent allowlist stays 0 ("all
+// agents").
+func decodeMCPShareItem(raw json.RawMessage) (MCPShareInstance, error) {
+	var inst MCPShareInstance
+	if err := json.Unmarshal(raw, &inst); err != nil {
+		return MCPShareInstance{}, err
+	}
+	var present mcpShareCountsPresent
+	if err := json.Unmarshal(raw, &present); err != nil {
+		return MCPShareInstance{}, err
+	}
+	if present.ToolCount == nil && len(inst.Tools) > 0 {
+		inst.ToolCount = len(inst.Tools)
+	}
+	if present.AgentCount == nil && len(inst.Agents) > 0 {
+		inst.AgentCount = len(inst.Agents)
+	}
+	return inst, nil
 }
 
 // decodeMCPShareTools accepts a bare array or a {"tools":[...]} wrapper.
