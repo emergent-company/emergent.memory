@@ -158,9 +158,28 @@ func TestUIOrgLanding(t *testing.T) {
 			t.Errorf("org landing active project affordance missing %q", want)
 		}
 	}
+	// The whole row for an active project is clickable too: a row-level
+	// activate target plus the pointer/hover affordance.
+	for _, want := range []string{
+		`data-activate-url="/projects/activate?projectId=p1"`,
+		`data-activate-url="/projects/activate?projectId=p2"`,
+		`class="cursor-pointer transition-colors hover:bg-base-200"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org landing clickable row affordance missing %q", want)
+		}
+	}
 	// Pending-deletion project name is a plain span, never an activate target.
 	if strings.Contains(body, `hx-post="/projects/activate?projectId=p3"`) {
 		t.Errorf("org landing must not render an activate target for pending project p3")
+	}
+	// ...and its row is not clickable either: no row-level target and no
+	// pointer affordance.
+	if strings.Contains(body, `data-activate-url="/projects/activate?projectId=p3"`) {
+		t.Errorf("org landing must not render a clickable row for pending project p3")
+	}
+	if !strings.Contains(body, `<tr id="p3">`) {
+		t.Errorf("pending project row must render without clickable affordances, want <tr id=\"p3\">")
 	}
 	// org-context sidebar renders, project nav does not
 	for _, want := range []string{`href="/orgs/o1/members"`, `href="/orgs/o1/settings"`} {
