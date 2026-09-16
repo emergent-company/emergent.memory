@@ -130,6 +130,15 @@ test('object merge: starts a merge session naming both objects and leaves the gr
     });
     expect(edge.status(), 'POST /objects/:id/relationships should PRG (303)').toBe(303);
 
+    // Snapshot the edge from BOTH endpoints before the merge: the post-merge
+    // check must prove the graph is unchanged, and "both objects still exist"
+    // alone would pass even if the relationship were dropped.
+    const preHeaders = await memoryAuthHeaders(page);
+    const sourceEdgesBefore = await edgeIdsOf(page, preHeaders, sourceId);
+    const targetEdgesBefore = await edgeIdsOf(page, preHeaders, targetId);
+    const sharedEdgeIds = sourceEdgesBefore.filter((id) => targetEdgesBefore.includes(id));
+    expect(sharedEdgeIds.length, 'the new edge must be visible from both endpoints').toBeGreaterThan(0);
+
     // An agent must exist or uiObjectMerge bails back to the source object (a
     // scratch agent guarantees the merge-session branch is exercised).
     const agentResp = await page.request.post('/api/agents', {
@@ -165,6 +174,19 @@ test('object merge: starts a merge session naming both objects and leaves the gr
     // The route starts a session; it must not silently remove either object.
     expect(await objectStillListed(page, sourceId), 'source must still exist').toBe(true);
     expect(await objectStillListed(page, targetId), 'target must still exist').toBe(true);
+
+    // ...nor the relationship between them: starting a merge session only
+    // composes a prompt, so the exact same edge must still be attached to both
+    // endpoints (same edge id, not merely "some edge").
+    const postHeaders = await memoryAuthHeaders(page);
+    expect(
+      await edgeIdsOf(page, postHeaders, sourceId),
+      'source must still expose the original edge after the merge session starts',
+    ).toEqual(expect.arrayContaining(sharedEdgeIds));
+    expect(
+      await edgeIdsOf(page, postHeaders, targetId),
+      'target must still expose the original edge after the merge session starts',
+    ).toEqual(expect.arrayContaining(sharedEdgeIds));
   } finally {
     await cleanupMergeRun(page, agentId, [sourceId, targetId]);
   }
