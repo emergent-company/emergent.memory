@@ -47,7 +47,7 @@
   // chat.js and app.js via window.MemoryChatHost.
   function isTransientError(err) {
     if (!err) return false;
-    if (err.name === "TypeError") return true;
+    if (err.name === "TypeError" && /failed to fetch|networkerror|load failed/i.test(String(err.message || ""))) return true;
     if (err.status === 502 || err.status === 503 || err.status === 504) return true;
     var m = /HTTP\s+(\d{3})/.exec(String(err.message || ""));
     if (!m) return false;

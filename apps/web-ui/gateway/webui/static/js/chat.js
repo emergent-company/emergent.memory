@@ -22,7 +22,7 @@
      classification lives in the shared MemoryChatHost helper (chat-host.js is
      loaded globally in ui.templ alongside this file). */
   function reportError(err, context) {
-    if (MemoryChatHost.isTransientError(err)) {
+    if (window.MemoryChatHost && MemoryChatHost.isTransientError && MemoryChatHost.isTransientError(err)) {
       console.warn("chat: " + context + " (transient, not reported):", err);
       return;
     }
