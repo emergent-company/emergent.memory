@@ -59,22 +59,6 @@ def fix_pass_count(repo: str, pr: str) -> int:
     return sum(1 for c in (r.stdout or "").splitlines() if COMMIT_MARKER in c)
 
 
-def module_roots(paths):
-    """Return the set of Go module roots (nearest go.mod ancestor) for paths."""
-    roots = set()
-    for p in paths:
-        d = os.path.dirname(p) or "."
-        while True:
-            if os.path.exists(os.path.join(d, "go.mod")):
-                roots.add(d)
-                break
-            parent = os.path.dirname(d)
-            if parent == d:
-                break
-            d = parent
-    return roots
-
-
 def latest_review_json(pr: str, repo: str):
     # --paginate: the reviews endpoint defaults to 30/page; without it the
     # newest review can fall on a later page and be missed entirely.
@@ -290,20 +274,20 @@ def main() -> None:
         print("No edits applied; left for human.")
         return
 
-    # Compile-check before committing: build each affected Go module root (the
-    # repo root is not itself a module, so a root-level `go build ./...` fails).
+    # Syntax-check changed .go files before committing. gofmt -e catches parse
+    # errors from a bad edit without requiring templ generation or a full module
+    # build (the gateway needs `templ generate`, which CI already runs).
     if changed_go_paths:
-        for root in sorted(module_roots(changed_go_paths)):
-            r = run(["go", "build", "./..."], cwd=root)
+        for path in changed_go_paths:
+            r = run(["gofmt", "-e", path])
             if r.returncode != 0:
                 body = (
-                    "## AI auto-fix: build failed\n\n"
-                    f"Edits applied but `go build ./...` failed in `{root}`. "
-                    "Changes NOT committed.\n\n"
+                    "## AI auto-fix: syntax check failed\n\n"
+                    f"Edit in `{path}` broke Go syntax. Changes NOT committed.\n\n"
                     "```\n" + (r.stderr or r.stdout)[-4000:] + "\n```\n"
                 )
                 post_comment(repo, pr, body)
-                print(f"go build failed in {root}; not committing.")
+                print(f"gofmt syntax error in {path}; not committing.")
                 sys.exit(1)
 
     # Commit and push to the PR head branch.
