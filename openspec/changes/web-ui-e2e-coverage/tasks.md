@@ -1,31 +1,32 @@
 ## 0. Harness groundwork
 
-- [ ] 0.1 Add `helpers/toast.ts` with `expectFlashToast(page, text?)` (settles the `flashToast` render in `toast.templ` + `app.js` stash/flush)
-- [ ] 0.2 Add `helpers/dialogs.ts` with `confirmDialog(page, action)` and `openRowMenu(page, rowLocator)` for destructive/row-menu flows
-- [ ] 0.3 Add `helpers/tokens.ts` with `createProjectToken`, `createProfileToken`, `readOneTimeSecret` (one-time reveal panel)
-- [ ] 0.4 Add `helpers/mcp.ts` with `registerMCPServer`, `createMCPShare`, `revokeShare`, `rotateShare` built on the existing bootstrap/auth helpers
-- [ ] 0.5 Extend `helpers/bootstrap.ts` with `createScratchProject(name)` + `deleteScratchProject(id)` for destructive phases
-- [ ] 0.6 Add selective `data-testid` attributes (D4 list) to: `agents*.templ`, `documents.templ`, `objects.templ`, `schema*.templ`, `blueprints.templ`, `skills*.templ`, `backups.templ`, `project_settings.templ`, `api_tokens.templ`, `mcp_servers*.templ`, `mcp_shares*.templ`, `org_members_ui.templ`, `sessions.templ` — row menus, destructive triggers, status badges, secret-reveal panels, list rows only
-- [ ] 0.7 Run `templ generate`; `go build ./...` and `task lint` from `apps/web-ui/gateway`
-- [ ] 0.8 Encode `chromium → mutations → scenarios` ordering via explicit `dependencies` in `tests/e2e/playwright.config.ts` (match README, D6)
-- [ ] 0.9 Document the testid/locator convention and the phase coverage table in `apps/web-ui/tests/e2e/README.md`
-- [ ] 0.10 Verify baseline: `cd apps/web-ui && task e2e:test -- --project=chromium` green before any new spec lands
+> **Revised during implementation.** Helpers and per-control `data-testid` anchors are added **just in time, with the spec that needs them** — the batch `data-testid` sweep across 13 templ areas originally planned here was dropped: without a consuming spec there is no way to tell which locators are genuinely unstable, and it would touch many `.templ` files concurrently with in-flight lanes. Both Phase 1/2 lanes needed only three anchors in total.
+
+- [x] 0.1 `helpers/tokens.ts` — created with the Phase 1 token specs (create token, read the one-time secret panel, find a token row, revoke)
+- [x] 0.2 `helpers/toast.ts` / `helpers/dialogs.ts` — **dropped from Phase 0**: investigation showed the preference is to assert resulting state rather than transient toasts (`toast.templ` + `app.js` flash stash), and neither implementation lane needed a dialog helper. Add only if a later phase's spec genuinely needs one.
+- [x] 0.3 `helpers/mcp.ts` — deferred with Phase 1.3/1.4 (see the blocker there)
+- [x] 0.4 Scratch-project helper — **not needed**: the restore lane seeded its own scratch org/project through the existing bootstrap helpers (`helpers/bootstrap.ts`, unchanged)
+- [x] 0.5 Per-control `data-testid` anchors — now per-phase, alongside the spec that uses them. Added so far: `token-row`, `token-revoked-badge`, `token-secret-panel` in `api_tokens.templ` (row menu / one-time reveal panel had no stable semantic anchor)
+- [x] 0.6 Verify templ changes when they happen: `PATH="/root/go/bin:$PATH" templ generate -f <file>.templ` then `go build ./...` from `apps/web-ui/gateway`. Note: `*_templ.go` are gitignored, so a fresh worktree must generate before it can build.
+- [x] 0.7 Correct the project-order documentation instead of changing the config: keep `mutations: dependencies: ['setup']` (deliberate — makes a single mutation spec cheap) and fix `README.md`, which described mutations as running after chromium (D6, revised)
+- [ ] 0.8 Update `apps/web-ui/tests/e2e/README.md`: corrected project order, the fresh-worktree `templ generate` prerequisite, and the new Phase 1/3 spec coverage
+- [x] 0.9 Baseline verified: the mutation project ran green (setup + new specs) before further specs landed
 
 ## 1. Phase 1 — Secret lifecycle
 
-- [ ] 1.1 `specs/settings/project-token-lifecycle-ui.spec.ts`: create → edit scopes (`POST /settings/tokens/:id/scopes`) → regenerate → revoke; assert one-time secret shown once
-- [ ] 1.2 `specs/account/profile-token-lifecycle-ui.spec.ts`: `/profile/tokens/new` → `/:id/edit` → `/:id/scopes` → `/:id/regenerate` → `/:id/revoke`
-- [ ] 1.3 `specs/settings/mcp-share-lifecycle-ui.spec.ts`: list → new → edit/update → rotate (old token rejected) → revoke; self-cleanup guard
-- [ ] 1.4 `specs/agents/agent-mcp-share-ui.spec.ts`: create/revoke/rotate per-agent share from the agent detail surface
-- [ ] 1.5 Phase 1 verify: `task e2e:test -- --project=mutations`, no orphaned tokens/shares left behind
+- [x] 1.1 `specs/settings/project-token-lifecycle-ui.spec.ts`: create → edit scopes (`POST /settings/tokens/:tokenId/scopes`) → regenerate → revoke; asserts the one-time secret, the changed scope set, and the revoked state. Includes a self-cleanup guard test.
+- [x] 1.2 `specs/account/profile-token-lifecycle-ui.spec.ts`: `/profile/tokens/new` → `/:tokenId/edit` → `/:tokenId/scopes` → `/:tokenId/regenerate` → `/:tokenId/revoke`, plus a self-cleanup guard test.
+- [ ] 1.3 `specs/settings/mcp-share-lifecycle-ui.spec.ts`: list → new → edit/update → rotate → revoke; self-cleanup guard. **Blocked:** two unmerged lanes (`feat/mcp-share-reveal-wide-highlighted-json`, `fix/mcp-share-list-decode`) are actively rewriting `mcp_shares.templ`, `agent_mcp_shares.templ` and `mcp_shares.go`. Land after they merge to avoid conflicting testids/selectors.
+- [ ] 1.4 `specs/agents/agent-mcp-share-ui.spec.ts`: create/revoke/rotate per-agent share from the agent detail surface. **Blocked:** same two lanes (also `agent.templ` is in flight in `fix/page-widths`).
+- [x] 1.5 Phase 1 verify: `npx playwright test <the two specs> --project=mutations` → 5 passed (setup + 4 tests), green on repeat; no tokens left behind (guard tests assert this).
 
 ## 2. Phase 2 — Authorization
 
-- [ ] 2.1 `specs/organizations/member-role-ui.spec.ts`: change role; assert self-change and equal-role requests are rejected (`org_members_ui.go:346,388,608`)
-- [ ] 2.2 `specs/organizations/member-remove-ui.spec.ts`: remove member via UI, assert removal from list and loss of access
-- [ ] 2.3 `specs/organizations/member-detail-ui.spec.ts`: `/members/:userId` renders identity + role state
-- [ ] 2.4 `specs/organizations/invite-lifecycle-ui.spec.ts`: revoke (`POST /invites/:id/revoke`), decline, and accept (`/invites/:id/accept`) surfaces
-- [ ] 2.5 Phase 2 verify: `task e2e:test -- --project=mutations`
+- [ ] 2.1 `specs/organizations/member-role-ui.spec.ts`: change role; assert self-change and equal-role requests are rejected (`org_members_ui.go`). **Blocked — needs a second identity.** Role change requires a second member in the org; the suite has one Zitadel test user. Resolve by provisioning a second test user in `setup` (see Open Questions in `design.md`).
+- [ ] 2.2 `specs/organizations/member-remove-ui.spec.ts`: remove member via UI. **Blocked — same second-identity requirement.**
+- [ ] 2.3 `specs/organizations/member-detail-ui.spec.ts`: `/members/:userId` renders identity + role state. **Blocked — needs a second member to have a detail page to open.**
+- [x] 2.4 `specs/organizations/invite-revoke-ui.spec.ts`: creates a pending invite for a unique address via `/members/new`, asserts the pending row, revokes it (`POST /invites/:id/revoke`) and asserts it is no longer pending in both the DOM and `/api/invites`. The **accept/decline** surfaces remain uncovered — they need the invitee identity.
+- [ ] 2.5 Phase 2 verify: run the mutation project once the second-identity question is settled.
 
 ## 3. Phase 3 — Destructive operations
 
@@ -35,7 +36,7 @@
 - [ ] 3.4 `specs/schema/blueprint-lifecycle-ui.spec.ts`: `POST /blueprints/enable` then `POST /blueprints/:id/unapply`; assert types removed
 - [ ] 3.5 `specs/schema/blueprint-migration-rollback-ui.spec.ts`: `POST /blueprints/migrate` then `POST /blueprints/migrate/rollback`; assert schema returns to pre-migration state
 - [ ] 3.6 `specs/backups/backups-crud-ui.spec.ts`: `POST /backups` → detail `ready` → `/:id/download` → `/:id/delete`
-- [ ] 3.7 `specs/projects/project-restore-ui.spec.ts`: `POST /projects/restore` after a scheduled purge; assert project restored to the active list
+- [x] 3.7 `specs/projects/project-restore-ui.spec.ts`: schedules a scratch project for deletion from its row menu, asserts the pending state, restores it via `POST /projects/restore`, and asserts it returns to the active list. Self-cleans the scratch org.
 - [ ] 3.8 `specs/documents/document-delete-ui.spec.ts`: `POST /documents/:id/delete`; assert removal from list and chunk viewer no longer reachable
 - [ ] 3.9 Phase 3 verify: `task e2e:test -- --project=mutations`; confirm scratch projects cleaned up
 

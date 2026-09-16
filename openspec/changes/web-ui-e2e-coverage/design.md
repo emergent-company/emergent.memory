@@ -58,11 +58,13 @@ Secret lifecycle → authorization → destructive → CRUD → interaction dept
 
 *Rationale:* a single 30-spec PR is unreviewable and will block on one flaky test. Risk ordering means the highest-value coverage lands first even if later phases slip.
 
-### D6 — Encode project ordering, do not rely on documentation
+### D6 — Keep the mutation project's `setup`-only dependency; fix the docs to match
 
-`playwright.config.ts` gains explicit `dependencies` so `mutations` follows `chromium`, matching what `README.md` already describes. `setup` remains the root dependency.
+**Revised during implementation.** `playwright.config.ts:51-55` deliberately declares `mutations: dependencies: ['setup']` — *not* `chromium` — so that running a single mutation spec runs login/bootstrap plus that spec, instead of the whole read surface. That decision is correct and stays. The actual defect was documentation drift: `README.md` described mutations as running "AFTER chromium".
 
-*Rationale:* the ordering is currently a documentation invariant with no enforcement — a silent divergence between README and config. Phases 3-5 add many more mutation specs, which raises the cost of getting this wrong.
+*Rationale:* adding `chromium` as a dependency would multiply the cost of every single mutation run for no isolation benefit — mutation specs already self-clean and the project is serialized (`workers: 1`). Enforcing an ordering the config intentionally avoids would be a regression. The fix is to make the docs describe the real graph.
+
+*Supersedes:* the original proposal asked for the `chromium → mutations` dependency to be added. It is not added.
 
 ### D7 — Live-dependency tests stay env-gated and skip, never fail
 
@@ -81,7 +83,8 @@ For `POST /api/chat`, prefer asserting on rendered transcript DOM plus the termi
 - **Added runtime.** Phases 1-6 add ~30 specs; `mutations` is `workers: 1`, so wall-clock grows roughly linearly. *Mitigation:* keep each spec to one flow, reuse the bootstrap org, avoid per-spec login (shared `storageState`), and do not add live-LLM specs outside `scenarios`.
 - **Templ churn.** Adding testids touches many `.templ` files and requires `templ generate`. *Mitigation:* attributes are additive and mechanical; Phase 0 does them in one commit so later phases only touch specs. Every phase that changes `.templ` runs `templ generate` + `task lint` + the gateway `go build` (rules in `apps/web-ui/gateway/AGENTS.md`).
 - **Destructive-spec blast radius.** Object merge, blueprint unapply, migration rollback, and backup delete operate on real state. *Mitigation:* each runs against scratch entities in the bootstrap project created within the spec; blueprint/migration tests use a scratch project where the bootstrap and bundled packs are not required to survive.
-- **Ordering dependency.** Encoding `chromium → mutations` in config makes the read surface a prerequisite for writers; a failing read spec will now block mutation specs. *Accepted:* that is the intended signal, and matches the documented workflow.
+- **Mutating specs share one tenant.** The mutation project runs `workers: 1` against the shared bootstrap tenant, so every spec must assert on the entities it created rather than on absolute list contents. *Enforced via D3 and by writing locators that target own-created names; both implementation lanes were green on repeat runs.*
+- **Fresh worktree builds.** `*_templ.go` are gitignored, so a new worktree contains no generated templates and the gateway will not compile until `templ generate` runs. Any lane verifying a Go/templ change must generate first. *Mitigation: documented in `tests/e2e/README.md` and in lane instructions.*
 - **Selector drift on new testids.** Newly added testids become a contract. *Mitigation:* D4 limits them to elements with no stable semantic alternative, and the README documents the convention so reviewers can push back.
 
 ## Migration Plan
@@ -93,3 +96,5 @@ No migration or data change. Rollout is per-phase PRs to `main`; each phase is a
 - Should the per-area coverage table live in `tests/e2e/README.md` or in a sibling `COVERAGE.md`? (Current lean: README, since it already documents projects and conventions.)
 - Is a CI job for `mutations` in scope for this change, or does the current manual/environment-dependent run stay as-is? (Current lean: out of scope — the suite needs a pre-running session-mode gateway and secrets.)
 - Phase 6 streaming assertions: assert on transcript DOM only, or also capture the raw SSE frames for a contract-level check? (Current lean: DOM by default, raw frames only for the ask-user question-card path, where the DOM is insufficient.)
+- **Second test identity (blocks Phase 2 tasks 2.1-2.3).** Member role change, member removal, member detail, and invite accept/decline all require a *second* member in the org. The suite has one Zitadel test user, so these routes cannot be covered behaviorally today. Options: provision a second interactive test user (second `storageState`) or have `setup` seed a second member into the bootstrap org through the API. (Current lean: seed a second member in `setup` — no second interactive login required.) Until this is settled, those tasks stay blocked rather than being weakened into page-load assertions.
+- Where should the per-area coverage inventory live — `tests/e2e/README.md` (current) or a sibling `COVERAGE.md`? The README is already ~200 lines and now carries conventions, prerequisites and coverage.

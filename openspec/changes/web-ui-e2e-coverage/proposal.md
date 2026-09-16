@@ -14,7 +14,7 @@ The consequence is that regressions in secret lifecycle, authorization changes, 
 
 Six independently mergeable phases, ordered by risk:
 
-- **Phase 0 — Harness**: shared toast/dialog/cleanup helpers, the missing `data-testid` attributes across the 13 templ areas that lack them (plus `templ generate`), the `chromium → mutations` ordering in `playwright.config.ts`, and a README update documenting the testid convention.
+- **Phase 0 — Harness**: shared helpers and per-control `data-testid` anchors added **just in time, with the spec that needs them** (see the revision note in `design.md` D6 and `tasks.md` §0); plus a README correction so the documented project order matches the config's deliberate `mutations: dependencies: ['setup']`.
 - **Phase 1 — Secret lifecycle** (highest risk): project API tokens (`edit`/`scopes`/`regenerate`/`revoke`), profile API tokens (full family), MCP share lifecycle (list/new/edit/update/revoke/rotate + one-time token reveal), per-agent MCP shares.
 - **Phase 2 — Authorization**: member role change (including the self-change and equal-role guards), member removal, `/members/:userId` detail, invite revoke/accept/decline.
 - **Phase 3 — Destructive operations**: object merge, relationship creation, object search typeahead, blueprint enable/unapply, blueprint migration apply + rollback, backup create/download/delete, project restore, document delete.

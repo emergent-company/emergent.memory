@@ -45,16 +45,20 @@ The suite SHALL provide helpers for the interaction primitives that new specs ne
 - **WHEN** a destructive spec needs an isolated project
 - **THEN** it creates and deletes a scratch project through a shared bootstrap helper
 
-### Requirement: Test execution order is enforced, not documented
-The Playwright configuration SHALL declare the project dependency graph so that read-surface specs run before mutation specs and mutation specs run before scenario specs.
+### Requirement: The project execution graph is declared and documented consistently
+The Playwright configuration SHALL declare the project dependency graph, and the suite documentation SHALL describe that graph accurately — including the deliberate choice that the mutation project depends on `setup` only.
 
 #### Scenario: Dependency graph declared
 - **WHEN** the suite is executed
-- **THEN** `setup` runs first, `chromium` follows `setup`, `mutations` follows `chromium`, and `scenarios` follows `mutations`
+- **THEN** `setup` runs first, and `chromium`, `mutations` and `scenarios` each declare `setup` as their dependency
 
-#### Scenario: Documentation and configuration agree
+#### Scenario: A single mutation spec stays cheap to run
+- **WHEN** one mutation spec is run on its own
+- **THEN** only `setup` and that spec execute, because the mutation project does not depend on the read surface
+
+#### Scenario: Documentation matches configuration
 - **WHEN** `tests/e2e/README.md` describes the project order
-- **THEN** the description matches the declared dependencies in `playwright.config.ts`
+- **THEN** it matches the declared dependencies in `playwright.config.ts`, including that the mutation project does not wait for the read surface
 
 ### Requirement: Mutation specs isolate and clean up their state
 Specs that create or mutate state SHALL confine themselves to entities they create, and SHALL remove them on completion.
