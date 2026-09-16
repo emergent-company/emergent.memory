@@ -40,14 +40,14 @@
 
 ## 6. Gateway UI
 
-- [ ] 6.1 Register the currently-unreachable agent-share routes in the gateway `main.go` (mirroring the registered project-share routes) and run `templ generate`; verify the pages load and `go build ./...` passes from `gateway/`.
-- [ ] 6.2 Add key management UI on the agent's own configuration surface: list keys, create a labeled key with a one-time secret reveal, revoke, and rotate; verify HTMX flows and that the secret is shown exactly once.
-- [ ] 6.3 Add session visibility (list sessions per endpoint/key with status, turn count, last active); verify the view renders for an endpoint with and without sessions.
+- [x] 6.1 Register the currently-unreachable agent-share routes in the gateway `main.go` (mirroring the registered project-share routes) and run `templ generate`; verify the pages load and `go build ./...` passes from `gateway/`.
+- [x] 6.2 Add key management UI on the agent's own configuration surface: list keys, create a labeled key with a one-time secret reveal, revoke, and rotate; verify HTMX flows and that the secret is shown exactly once.
+- [x] 6.3 Add session visibility (list sessions per endpoint/key with status, turn count, last active); verify the view renders for an endpoint with and without sessions.
 
 ## 7. Verification
 
-- [ ] 7.1 Run `gofmt -l .`, `go build ./...`, and `go test ./domain/mcp/... ./domain/agents/... ./internal/... -short` from `apps/server`; all green.
-- [ ] 7.2 Run `golangci-lint run ./domain/mcp/... ./domain/agents/...` and resolve new findings.
-- [ ] 7.3 Run the gateway checks (`templ generate`, `go build ./...`, `task lint`) from `apps/web-ui`; all green.
-- [ ] 7.4 Add a domain-level end-to-end test: create an endpoint key → connect to `/api/mcp/agents/:agentId` → `tools/list` shows the five session tools → `call_agent` returns bare text → `start_session` then `continue_session` shares context → `get_session`/`list_sessions` reflect the session → revoke the key → the key is rejected.
-- [ ] 7.5 Add a concurrency regression test that two simultaneous `continue_session` calls on one session yield one success and one `session busy`, and a budget test that a session exceeding `max_total_steps` returns `budget_exceeded`.
+- [x] 7.1 Run `gofmt -l .`, `go build ./...`, and `go test ./domain/mcp/... ./domain/agents/... ./internal/... -short` from `apps/server`; all green.
+- [x] 7.2 Run `golangci-lint run ./domain/mcp/... ./domain/agents/...` and resolve new findings.
+- [x] 7.3 Run the gateway checks (`templ generate`, `go build ./...`, `task lint`) from `apps/web-ui`; all green.
+- [x] 7.4 Add a domain-level end-to-end test: create an endpoint key → connect to `/api/mcp/agents/:agentId` → `tools/list` shows the five session tools → `call_agent` returns bare text → `start_session` then `continue_session` shares context → `get_session`/`list_sessions` reflect the session → revoke the key → the key is rejected.
+- [x] 7.5 Add a concurrency regression test that two simultaneous `continue_session` calls on one session yield one success and one `session busy`, and a budget test that a session exceeding `max_total_steps` returns `budget_exceeded`.

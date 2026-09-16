@@ -1,0 +1,658 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Agent MCP endpoint section (on the agent Settings page) ---
+//
+// The agent owns its endpoint: this section creates or revokes it, lists its
+// labeled keys, mints a key with a one-time secret reveal, and shows the
+// external client sessions those keys produced. The secret is rendered exactly
+// once — on the create/rotate response — and never appears on a list or reload.
+
+// agentMCPSection renders the whole MCP block: the endpoint, its keys, and its
+// sessions, or a first-step prompt when the agent has no endpoint yet.
+templ agentMCPSection(data agentSettingsData) {
+	<div id="mcp" class="scroll-mt-24" data-testid="agent-mcp-section">
+		@ui.Section("MCP endpoint", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="flex items-start gap-3">
+				@ui.IconTile("lucide--plug", ui.IconTileProps{Tone: "primary", Size: "size-9"})
+				<p class="text-base-content/55 max-w-3xl text-sm">
+					Let an outside MCP client use this agent. The endpoint is the URL a client connects to; each key is a separate credential for that endpoint, so you can hand one out, rotate it, or revoke it without touching the others.
+				</p>
+			</div>
+			if data.MCPActionErr != nil {
+				<div class="mt-4">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertError,
+						Style:   ui.AlertStyleOutline,
+						Icon:    "lucide--alert-triangle",
+						Message: data.MCPActionErr.Error(),
+						Attrs:   templ.Attributes{"data-testid": "agent-mcp-action-error"},
+					})
+				</div>
+			}
+			if data.MCPEndpointErr != nil {
+				<div class="mt-4">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertError,
+						Style:   ui.AlertStyleOutline,
+						Icon:    "lucide--alert-triangle",
+						Message: "Failed to load this agent's MCP endpoint: " + agentMCPErrText(data.MCPEndpointErr),
+					})
+				</div>
+			} else if data.MCPEndpoint == nil {
+				@agentMCPEndpointEmpty(data.Agent.ID)
+			} else {
+				@agentMCPEndpointBody(data)
+				@agentMCPKeysBlock(data)
+				@agentMCPSessionsBlock(data)
+			}
+		}
+	</div>
+	if data.MCPReveal != nil {
+		@agentMCPRevealModal(*data.MCPReveal)
+	}
+}
+
+// agentMCPEndpointEmpty is the first-step state: no endpoint exists yet, so the
+// only action is to create one.
+templ agentMCPEndpointEmpty(agentID string) {
+	<div class="mt-4">
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--plug-zap",
+			Title:       "No MCP endpoint yet",
+			Description: "Create the endpoint to get a URL an outside client can connect to. You can then add a labeled key for each client.",
+			Bordered:    true,
+			Class:       "py-8",
+		}) {
+			<form method="post" action={ templ.URL("/agents/" + url.PathEscape(agentID) + "/mcp-endpoint") } data-testid="agent-mcp-create-endpoint">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plug-zap",
+				}) {
+					Create MCP endpoint
+				}
+			</form>
+		}
+	</div>
+}
+
+// agentMCPEndpointBody shows a live endpoint: its status, its URL (what a
+// client connects to), and the revoke action.
+templ agentMCPEndpointBody(data agentSettingsData) {
+	{{ ep := data.MCPEndpoint }}
+	<div class="mt-4 flex flex-col gap-4" data-testid="agent-mcp-endpoint">
+		<div class="flex flex-wrap items-center gap-2">
+			@ui.Badge(ui.BadgeProps{
+				Label:   agentMCPEndpointStatusLabel(ep.Status),
+				Variant: agentMCPStatusIntent(ep.Status),
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeSM,
+				Dot:     true,
+				Attrs:   templ.Attributes{"data-testid": "agent-mcp-endpoint-status"},
+			})
+			<span class="text-base-content/45 inline-flex items-center gap-1 text-xs">
+				@ui.IconSpan("lucide--calendar-plus", "size-3.5")
+				created { relTime(ep.CreatedAt) }
+			</span>
+			<form class="ms-auto" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.MCPAgentID) + "/mcp-endpoint/revoke") }>
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					Icon:       "lucide--trash-2",
+					ExtraClass: "text-error hover:text-error",
+					AriaLabel:  "Revoke this agent's MCP endpoint",
+					OnClick:    agentMCPOpenDialog("endpoint-revoke-dialog"),
+				}) {
+					Revoke endpoint
+				}
+			</form>
+		</div>
+		<div>
+			@ui.Eyebrow("Endpoint URL", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+			<p class="text-base-content/50 mt-0.5 text-xs">This is what an external MCP client connects to.</p>
+			if ep.MCPURL != "" {
+				<div class="mt-2 flex flex-wrap items-center gap-2">
+					<div id="agent-mcp-endpoint-url" class="rounded-box border-base-content/15 bg-base-200/50 min-w-0 flex-1 border px-3 py-2 font-mono text-xs break-all">{ ep.MCPURL }</div>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Icon:      "lucide--copy",
+						AriaLabel: "Copy endpoint URL",
+						Attrs:     templ.Attributes{"data-copy-target": "#agent-mcp-endpoint-url"},
+					}) {
+						Copy
+					}
+				</div>
+			} else {
+				<p class="text-base-content/50 mt-2 text-xs">The backend did not report a URL for this endpoint.</p>
+			}
+		</div>
+		@agentMCPEndpointRevokeDialog(data.MCPAgentID)
+		@apiTokenCopyScript()
+	</div>
+}
+
+// agentMCPEndpointRevokeDialog confirms endpoint revocation before POSTing.
+templ agentMCPEndpointRevokeDialog(agentID string) {
+	@modalShell("agent-mcp-endpoint-revoke-dialog", "", "max-w-sm") {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--trash-2", "size-5")
+			</div>
+			<div>
+				<h3 class="text-lg font-semibold">Revoke MCP endpoint?</h3>
+				<p class="text-base-content/55 mt-1 text-sm">
+					This immediately invalidates every key on the endpoint. Any MCP client connected with those keys stops working. You can create a new endpoint afterwards.
+				</p>
+			</div>
+		</div>
+		<form method="post" action={ templ.URL("/agents/" + url.PathEscape(agentID) + "/mcp-endpoint/revoke") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Revoke endpoint
+				}
+			}
+		</form>
+	}
+}
+
+// agentMCPKeysBlock is the keys panel: the create form, the list (or its
+// empty/error state), and the per-key rotate/revoke confirmation dialogs.
+templ agentMCPKeysBlock(data agentSettingsData) {
+	<div class="mt-6 border-t border-base-200 pt-5" data-testid="agent-mcp-keys">
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="inline-flex items-center gap-2">
+				@ui.IconSpan("lucide--key-round", "size-4 shrink-0 text-primary/70")
+				<h3 class="text-sm font-semibold">Keys</h3>
+			</span>
+			if data.MCPKeysErr == nil {
+				@countBadgeLabel(countLabel(len(data.MCPKeys), "key", "keys"), "lucide--key-round")
+			}
+		</div>
+		<p class="text-base-content/55 mt-1 max-w-3xl text-sm">
+			A key is a credential a client authenticates with. Its secret is shown once, when you create or rotate it, and never again.
+		</p>
+		if data.MCPKeysErr != nil {
+			<div class="mt-3">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: "Failed to load keys: " + agentMCPErrText(data.MCPKeysErr),
+				})
+			</div>
+		} else {
+			<form class="mt-3 flex flex-wrap items-end gap-2" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.MCPAgentID) + "/mcp-endpoint/keys") } data-testid="agent-mcp-create-key">
+				<label class="flex min-w-0 flex-1 flex-col gap-1" for="agent-mcp-key-label">
+					<span class="text-xs font-medium">New key label</span>
+					<input id="agent-mcp-key-label" name="label" type="text" required value={ data.MCPKeyDraft } placeholder="e.g. Laptop Claude" class="input input-sm w-full"/>
+				</label>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plus",
+				}) {
+					Create key
+				}
+			</form>
+			if len(data.MCPKeys) == 0 {
+				<div class="mt-4">
+					@ui.EmptyState(ui.EmptyStateProps{
+						Icon:        "lucide--key-round",
+						Title:       "No keys yet",
+						Description: "Create a labeled key above to get a secret an MCP client can use.",
+						Bordered:    true,
+						Class:       "py-6",
+					})
+				</div>
+			} else {
+				<div class="rounded-box border-base-200 mt-4 border" data-testid="agent-mcp-key-list">
+					<div class="overflow-x-auto">
+						<table class="table table-sm">
+							<thead>
+								<tr>
+									<th>Label</th>
+									<th>Created</th>
+									<th>Last used</th>
+									<th class="text-right">Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, k := range data.MCPKeys {
+									@agentMCPKeyRow(k)
+								}
+							</tbody>
+						</table>
+					</div>
+				</div>
+				for _, k := range data.MCPKeys {
+					if agentMCPKeyIsUsable(k.Status) {
+						@agentMCPKeyRevokeDialog(data.MCPAgentID, k)
+						@agentMCPKeyRotateDialog(data.MCPAgentID, k)
+					}
+				}
+			}
+		}
+	</div>
+}
+
+// agentMCPKeyRow is one key: label + status, creation and last-use times, and
+// the rotate/revoke actions. A revoked or expired key is read-only.
+templ agentMCPKeyRow(k AgentMCPKey) {
+	{{ usable := agentMCPKeyIsUsable(k.Status)
+	label := k.Label
+	if label == "" {
+		label = "Untitled key"
+	} }}
+	<tr data-testid="agent-mcp-key-row">
+		<td>
+			<div class="flex flex-wrap items-center gap-2">
+				<span class="font-medium">{ label }</span>
+				@ui.Badge(ui.BadgeProps{
+					Label:   agentMCPEndpointStatusLabel(k.Status),
+					Variant: agentMCPStatusIntent(k.Status),
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+					Dot:     true,
+				})
+			</div>
+		</td>
+		<td>
+			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(k.CreatedAt) }</span>
+		</td>
+		<td>
+			<span class="text-base-content/50 text-xs whitespace-nowrap">{ agentMCPKeyLastUsedLabel(k) }</span>
+		</td>
+		<td class="text-right">
+			if !usable {
+				<span class="text-base-content/30 text-sm">—</span>
+			} else {
+				<div class="flex items-center justify-end gap-1">
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--refresh-cw",
+						AriaLabel: "Rotate key " + label,
+						Attrs:     templ.Attributes{"title": "Issue a new secret for this key"},
+						OnClick:   agentMCPOpenDialog("key-rotate-" + k.ID),
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--trash-2",
+						ExtraClass: "text-error hover:text-error",
+						AriaLabel:  "Revoke key " + label,
+						Attrs:      templ.Attributes{"title": "Revoke this key"},
+						OnClick:    agentMCPOpenDialog("key-revoke-" + k.ID),
+					})
+				</div>
+			}
+		</td>
+	</tr>
+}
+
+// agentMCPKeyRevokeDialog confirms revoking one key without affecting the
+// endpoint or its other keys.
+templ agentMCPKeyRevokeDialog(agentID string, k AgentMCPKey) {
+	{{ label := k.Label
+	if label == "" {
+		label = "this key"
+	} }}
+	@modalShell("agent-mcp-key-revoke-"+k.ID, "", "max-w-sm") {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--trash-2", "size-5")
+			</div>
+			<div>
+				<h3 class="text-lg font-semibold">Revoke key?</h3>
+				<p class="text-base-content/55 mt-1 text-sm">
+					This immediately invalidates the secret for <span class="text-base-content font-medium">{ label }</span>. Other keys on this endpoint keep working. This cannot be undone.
+				</p>
+			</div>
+		</div>
+		<form method="post" action={ templ.URL("/agents/" + url.PathEscape(agentID) + "/mcp-endpoint/keys/" + url.PathEscape(k.ID) + "/revoke") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Revoke key
+				}
+			}
+		</form>
+	}
+}
+
+// agentMCPKeyRotateDialog confirms rotation and explains that sessions survive.
+templ agentMCPKeyRotateDialog(agentID string, k AgentMCPKey) {
+	{{ label := k.Label
+	if label == "" {
+		label = "this key"
+	} }}
+	@modalShell("agent-mcp-key-rotate-"+k.ID, "", "max-w-sm") {
+		<div class="mb-4 flex items-start gap-3">
+			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--refresh-cw", "size-5")
+			</div>
+			<div>
+				<h3 class="text-lg font-semibold">Rotate key?</h3>
+				<p class="text-base-content/55 mt-1 text-sm">
+					A new secret is issued for <span class="text-base-content font-medium">{ label }</span> and the current secret stops working immediately. The new secret is shown once. Existing sessions on this key keep working.
+				</p>
+			</div>
+		</div>
+		<form method="post" action={ templ.URL("/agents/" + url.PathEscape(agentID) + "/mcp-endpoint/keys/" + url.PathEscape(k.ID) + "/rotate") }>
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+				}) {
+					Rotate key
+				}
+			}
+		</form>
+	}
+}
+
+// agentMCPOpenDialog opens one row's rotate/revoke confirmation dialog.
+script agentMCPOpenDialog(id string) {
+	var d = document.getElementById("agent-mcp-" + id);
+	if (d) d.showModal();
+}
+
+// --- sessions ---
+
+// agentMCPSessionsBlock wraps the sessions panel with its HTMX status filter.
+// The filter swaps only #agent-mcp-sessions-body (see uiAgentMCPSessions), so
+// filtering never shifts the rest of the page.
+templ agentMCPSessionsBlock(data agentSettingsData) {
+	<div class="mt-6 border-t border-base-200 pt-5" data-testid="agent-mcp-sessions">
+		<div class="flex items-start gap-3">
+			@ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-primary/70 mt-0.5")
+			<div>
+				<h3 class="text-sm font-semibold">Sessions</h3>
+				<p class="text-base-content/55 mt-1 max-w-3xl text-sm">
+					Conversations an external client started with this agent. Each session belongs to the key that opened it and stops being continuable once it expires.
+				</p>
+			</div>
+		</div>
+		<div id="agent-mcp-sessions-body">
+			@agentMCPSessionsBody(data)
+		</div>
+	</div>
+}
+
+// agentMCPSessionsBody is the swappable sessions content: the status filter,
+// then the list (or its empty/error state). It is also the HTMX partial body.
+templ agentMCPSessionsBody(data agentSettingsData) {
+	<div class="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter sessions by status">
+		for _, f := range agentMCPSessionFilters {
+			<a
+				class={ "btn btn-xs", templ.KV("btn-primary", agentMCPSessionFilterActive(data.MCPSessionStatus, f.Value)), templ.KV("btn-ghost", !agentMCPSessionFilterActive(data.MCPSessionStatus, f.Value)) }
+				href={ templ.URL(agentMCPSettingsPath(data.MCPAgentID) + sessionFilterQuery(f.Value) + "#mcp") }
+				hx-get={ templ.URL("/agents/" + url.PathEscape(data.MCPAgentID) + "/mcp-endpoint/sessions" + sessionFilterQuery(f.Value)) }
+				hx-target="#agent-mcp-sessions-body"
+				hx-swap="innerHTML"
+				if agentMCPSessionFilterActive(data.MCPSessionStatus, f.Value) {
+					aria-current="true"
+				}
+			>{ f.Label }</a>
+		}
+	</div>
+	if data.MCPSessionsErr != nil {
+		<div class="mt-3">
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: "Failed to load sessions: " + agentMCPErrText(data.MCPSessionsErr),
+			})
+		</div>
+	} else if len(data.MCPSessions) == 0 {
+		<div class="mt-3" data-testid="agent-mcp-sessions-empty">
+			if data.MCPSessionStatus == "" {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--messages-square",
+					Title:       "No sessions yet",
+					Description: "When a client connects with a key and starts a session, it appears here.",
+					Bordered:    true,
+					Class:       "py-6",
+				})
+			} else {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--messages-square",
+					Title:       "No " + data.MCPSessionStatus + " sessions",
+					Description: "No sessions match this filter. Choose All to see every session.",
+					Bordered:    true,
+					Class:       "py-6",
+				})
+			}
+		</div>
+	} else {
+		<div class="rounded-box border-base-200 mt-3 border" data-testid="agent-mcp-session-list">
+			<div class="overflow-x-auto">
+				<table class="table table-sm">
+					<thead>
+						<tr>
+							<th>Key</th>
+							<th>Status</th>
+							<th>Turns</th>
+							<th>Last active</th>
+							<th class="hidden sm:table-cell">Created</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, s := range data.MCPSessions {
+							@agentMCPSessionRow(s)
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	}
+}
+
+// agentMCPSessionRow is one external client session: the key that opened it,
+// its status, accumulated turns, and activity times.
+templ agentMCPSessionRow(s AgentMCPSession) {
+	<tr data-testid="agent-mcp-session-row">
+		<td>
+			<span class="inline-flex items-center gap-1.5">
+				@ui.IconSpan("lucide--key-round", "size-3.5 shrink-0 text-base-content/40")
+				<span class="text-xs">{ agentMCPSessionKeyLabel(s) }</span>
+			</span>
+		</td>
+		<td>
+			@ui.Badge(ui.BadgeProps{
+				Label:   agentMCPEndpointStatusLabel(s.Status),
+				Variant: agentMCPStatusIntent(s.Status),
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeXS,
+				Dot:     true,
+			})
+		</td>
+		<td>
+			<span class="text-base-content/60 text-xs whitespace-nowrap">{ countLabel(s.TurnCount, "turn", "turns") }</span>
+		</td>
+		<td>
+			<span class="text-base-content/50 text-xs whitespace-nowrap">{ agentMCPSessionLastActiveLabel(s) }</span>
+		</td>
+		<td class="hidden sm:table-cell">
+			<span class="text-base-content/50 text-xs whitespace-nowrap">{ relTime(s.CreatedAt) }</span>
+		</td>
+	</tr>
+}
+
+// sessionFilterQuery renders the ?sessions= query for a filter value ("" for
+// All).
+func sessionFilterQuery(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "?sessions=" + url.QueryEscape(value)
+}
+
+// --- one-time secret reveal ---
+
+// agentMCPRevealModal is the one-time reveal: the raw key, the endpoint URL, the
+// "shown only once" warning, and ready-to-paste client snippets. The secret
+// exists only in this response; closing the dialog returns to the section and it
+// is gone for good.
+templ agentMCPRevealModal(r agentMCPReveal) {
+	<dialog id="agent-mcp-reveal-modal" class="modal" hx-boost="false" data-agent-mcp-reveal>
+		<div class="modal-box max-w-[63rem]">
+			<div class="flex items-center gap-3">
+				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
+				<div class="min-w-0">
+					<h3 class="text-lg font-semibold">{ r.Heading }</h3>
+					<p class="text-base-content/50 mt-0.5 text-xs">
+						if r.Label != "" {
+							{ r.Label } — this key is shown only once. Store it somewhere safe.
+						} else {
+							This key is shown only once. Store it somewhere safe.
+						}
+					</p>
+				</div>
+			</div>
+			<div class="mt-4 flex flex-wrap items-center gap-2">
+				<div id="agent-mcp-key-secret" class="rounded-box border-base-content/15 bg-base-200/50 min-w-0 flex-1 border px-3 py-2 font-mono text-xs break-all" data-testid="agent-mcp-key-secret">{ r.Token }</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--copy",
+					Attrs:   templ.Attributes{"data-copy-target": "#agent-mcp-key-secret"},
+				}) {
+					Copy key
+				}
+			</div>
+			if r.MCPURL != "" {
+				<div class="mt-3 flex flex-wrap items-center gap-2">
+					@ui.Eyebrow("Endpoint", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+					<div id="agent-mcp-reveal-endpoint" class="rounded-box border-base-content/15 bg-base-200/50 min-w-0 flex-1 border px-3 py-2 font-mono text-xs break-all">{ r.MCPURL }</div>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeButton,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--copy",
+						Attrs:   templ.Attributes{"data-copy-target": "#agent-mcp-reveal-endpoint"},
+					}) {
+						Copy
+					}
+				</div>
+			}
+			<div class="mt-3">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--triangle-alert",
+					Message: "This secret will not be shown again. If you lose it, rotate the key to issue a new one.",
+				})
+			</div>
+			<div class="mt-5 flex flex-col gap-3">
+				@ui.Eyebrow("Client setup", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+				<p class="text-base-content/50 -mt-2 text-xs">Paste one of these into your MCP client. Each already contains the endpoint and key.</p>
+				for _, s := range r.Snippets {
+					@agentMCPKeySnippetBlock(s)
+				}
+			</div>
+			<form method="dialog" class="modal-action">
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeSubmit,
+					Variant:    ui.ButtonPrimary,
+					Size:       ui.ButtonSM,
+					Icon:       "lucide--check",
+					ExtraClass: "w-full sm:w-auto",
+				}) {
+					Done — I've saved the key
+				}
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button>close</button>
+		</form>
+	</dialog>
+	<script type="text/javascript">
+		(function () {
+			var d = document.getElementById('agent-mcp-reveal-modal');
+			if (!d || typeof d.showModal !== 'function' || d.open) return;
+			d.showModal();
+		})();
+	</script>
+}
+
+// agentMCPKeySnippetBlock is one client snippet card with a copy button.
+templ agentMCPKeySnippetBlock(s agentMCPKeySnippet) {
+	<div class="rounded-box border-base-content/10 bg-base-200/30 border p-3">
+		<div class="mb-2 flex items-center justify-between gap-2">
+			<span class="text-xs font-semibold">{ s.Label }</span>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonXS,
+				Icon:      "lucide--copy",
+				AriaLabel: "Copy " + s.Label + " config",
+				Attrs:     templ.Attributes{"data-copy-target": "#agent-mcp-key-snippet-" + s.Key},
+			}) {
+				Copy
+			}
+		</div>
+		{{ hl, ok := highlightJSONSnippet(s.Code) }}
+		<pre id={ "agent-mcp-key-snippet-" + s.Key } class="rounded-box bg-base-100 overflow-x-auto p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">if ok {
+			@templ.Raw(hl)
+		} else {
+			{ s.Code }
+		}</pre>
+	</div>
+}

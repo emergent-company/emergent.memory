@@ -123,6 +123,17 @@ func main() {
 	api.PATCH("/mcp-shares/:id", s.updateMCPShare)
 	api.DELETE("/mcp-shares/:id", s.deleteMCPShare)
 	api.POST("/mcp-shares/:id/rotate", s.rotateMCPShare)
+	// Agent-owned MCP endpoint + labeled keys + sessions
+	// (agent-scoped-mcp-endpoint; see agent_mcp_endpoint_handlers.go). The raw
+	// key secret is returned by create-key and rotate-key only.
+	api.GET("/agents/:id/mcp-endpoint", s.jsonAgentMCPEndpoint)
+	api.POST("/agents/:id/mcp-endpoint", s.jsonCreateAgentMCPEndpoint)
+	api.DELETE("/agent-mcp-endpoints/:id", s.jsonDeleteAgentMCPEndpoint)
+	api.GET("/agent-mcp-endpoints/:id/keys", s.jsonListAgentMCPKeys)
+	api.POST("/agent-mcp-endpoints/:id/keys", s.jsonCreateAgentMCPKey)
+	api.GET("/agent-mcp-endpoints/:id/sessions", s.jsonListAgentMCPSessions)
+	api.DELETE("/agent-mcp-keys/:id", s.jsonDeleteAgentMCPKey)
+	api.POST("/agent-mcp-keys/:id/rotate", s.jsonRotateAgentMCPKey)
 	api.GET("/models", s.listModels)
 	api.POST("/token", s.mintToken)
 	api.GET("/sessions", s.listSessions)
@@ -205,6 +216,16 @@ func main() {
 	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
 	e.GET("/agents/:id/sessions", s.uiAgentSessions)
 	e.GET("/agents/:id/memories", s.uiAgentMemories)
+	// Agent-owned MCP endpoint, its labeled keys, and its external sessions —
+	// all on the agent's own Settings surface (see agent_mcp_endpoint_handlers.go).
+	// Create-key and rotate-key render the one-time secret reveal directly (no
+	// redirect); the sessions route is the in-place HTMX status-filter target.
+	e.POST("/agents/:id/mcp-endpoint", s.uiAgentMCPEndpointCreate)
+	e.POST("/agents/:id/mcp-endpoint/revoke", s.uiAgentMCPEndpointRevoke)
+	e.POST("/agents/:id/mcp-endpoint/keys", s.uiAgentMCPKeyCreate)
+	e.POST("/agents/:id/mcp-endpoint/keys/:keyId/revoke", s.uiAgentMCPKeyRevoke)
+	e.POST("/agents/:id/mcp-endpoint/keys/:keyId/rotate", s.uiAgentMCPKeyRotate)
+	e.GET("/agents/:id/mcp-endpoint/sessions", s.uiAgentMCPSessions)
 	e.GET("/chat", s.uiChat)
 	e.GET("/partial/chat-rail", s.uiChatRail)
 	e.GET("/documents", s.uiDocuments)

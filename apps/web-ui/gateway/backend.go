@@ -58,14 +58,17 @@ type MemoryBackend interface {
 	RevokeMCPShareInstance(ctx context.Context, id string) error
 	RotateMCPShareInstance(ctx context.Context, id string) (*MCPShareCreated, error)
 	ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error)
-	// Per-agent MCP shares (a single agent exposed as one MCP tool; see
-	// agent_mcp_shares.go). The raw key is only ever present on Create/Rotate
-	// results.
-	ListAgentMCPShares(ctx context.Context, agentID string) ([]AgentMCPShare, error)
-	ListProjectAgentMCPShares(ctx context.Context) ([]AgentMCPShare, error)
-	CreateAgentMCPShare(ctx context.Context, agentID string, in *AgentMCPShareInput) (*AgentMCPShareCreated, error)
-	RevokeAgentMCPShare(ctx context.Context, id string) error
-	RotateAgentMCPShare(ctx context.Context, id string) (*AgentMCPShareCreated, error)
+	// Agent-owned MCP endpoint + labeled keys (agent-scoped-mcp-endpoint; see
+	// agent_mcp_endpoint.go). The raw key secret is only ever present on
+	// Create/Rotate results; Get/List carry metadata only.
+	GetAgentMCPEndpoint(ctx context.Context, agentID string) (*AgentMCPEndpoint, error)
+	CreateAgentMCPEndpoint(ctx context.Context, agentID string) (*AgentMCPEndpoint, error)
+	RevokeAgentMCPEndpoint(ctx context.Context, endpointID string) error
+	ListAgentMCPKeys(ctx context.Context, endpointID string) ([]AgentMCPKey, error)
+	CreateAgentMCPKey(ctx context.Context, endpointID, label string) (*AgentMCPKeySecret, error)
+	RevokeAgentMCPKey(ctx context.Context, keyID string) error
+	RotateAgentMCPKey(ctx context.Context, keyID string) (*AgentMCPKeySecret, error)
+	ListAgentMCPSessions(ctx context.Context, endpointID, status string) ([]AgentMCPSession, error)
 	// MCP relay (external nodes). Unlike the admin registry routes above these
 	// are project-scoped read endpoints that return PLAIN JSON (no
 	// successEnvelope wrapper). Sessions are in-memory on the backend: a node

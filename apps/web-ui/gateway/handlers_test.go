@@ -282,19 +282,27 @@ type fakeMemory struct {
 	lastAccountAPITokenScopes []string          // scopes of the last account create/update/regenerate
 	accountAPITokenSeq        int               // account token id counter
 
-	// Per-agent MCP shares: agentShares is returned by the list methods;
-	// agentShareErr / agentShareCreateErr drive read / create failures;
-	// agentShareToken / agentShareMCPURL are the one-time secret returned by
-	// create and rotate. The last* fields record what the handlers forwarded.
-	agentShares           []AgentMCPShare
-	agentShareErr         error // ListAgentMCPShares / ListProjectAgentMCPShares failure
-	agentShareCreateErr   error // CreateAgentMCPShare failure
-	agentShareToken       string
-	agentShareMCPURL      string
-	lastAgentShareAgent   string
-	lastAgentShareInput   *AgentMCPShareInput
-	lastRotatedAgentShare string
-	lastRevokedAgentShare string
+	// Agent-owned MCP endpoint + labeled keys + external sessions
+	// (agent-scoped-mcp-endpoint): mcpEndpoint is returned by
+	// GetAgentMCPEndpoint (nil = none); the *Err fields drive read/mutation
+	// failures; mcpToken / mcpURL are the one-time secret returned by key
+	// create/rotate. The last* fields record what the handlers forwarded.
+	mcpEndpoint          *AgentMCPEndpoint
+	mcpEndpointErr       error
+	mcpEndpointCreateErr error
+	mcpKeys              []AgentMCPKey
+	mcpKeyErr            error
+	mcpKeyCreateErr      error
+	mcpKeyRotateErr      error
+	mcpSessions          []AgentMCPSession
+	mcpSessionErr        error
+	mcpToken             string
+	mcpURL               string
+	lastMCPAgentID       string
+	lastMCPEndpointID    string
+	lastMCPLabel         string
+	lastMCPKeyID         string
+	lastMCPSessionStatus string
 }
 
 // projectSettingWrite records one SetProjectSetting call on the fake.
@@ -612,61 +620,117 @@ func (f *fakeMemory) RotateMCPShareInstance(ctx context.Context, id string) (*MC
 
 func (f *fakeMemory) ListMCPShareTools(ctx context.Context) ([]MCPShareTool, error) { return nil, nil }
 
-// Per-agent MCP shares: stateful fake used by the agent MCP share handler
-// tests (agent_mcp_shares_handlers_test.go). The list methods return the
-// seeded agentShares; create/rotate carry the configured one-time secret.
-func (f *fakeMemory) ListAgentMCPShares(ctx context.Context, agentID string) ([]AgentMCPShare, error) {
-	if f.agentShareErr != nil {
-		return nil, f.agentShareErr
+// Agent-owned MCP endpoint: stateful fake used by the MCP handler tests
+// (agent_mcp_endpoint_handlers_test.go). Get returns the seeded endpoint (or
+// nil), create/rotate carry the configured one-time secret, and the list
+// methods return the seeded keys/sessions.
+func (f *fakeMemory) GetAgentMCPEndpoint(ctx context.Context, agentID string) (*AgentMCPEndpoint, error) {
+	f.lastMCPAgentID = agentID
+	if f.mcpEndpointErr != nil {
+		return nil, f.mcpEndpointErr
 	}
-	return append([]AgentMCPShare(nil), f.agentShares...), nil
+	if f.mcpEndpoint == nil {
+		return nil, nil
+	}
+	ep := *f.mcpEndpoint
+	return &ep, nil
 }
 
-func (f *fakeMemory) ListProjectAgentMCPShares(ctx context.Context) ([]AgentMCPShare, error) {
-	if f.agentShareErr != nil {
-		return nil, f.agentShareErr
+func (f *fakeMemory) CreateAgentMCPEndpoint(ctx context.Context, agentID string) (*AgentMCPEndpoint, error) {
+	f.lastMCPAgentID = agentID
+	if f.mcpEndpointCreateErr != nil {
+		return nil, f.mcpEndpointCreateErr
 	}
-	return append([]AgentMCPShare(nil), f.agentShares...), nil
+	ep := AgentMCPEndpoint{ID: "ep_new", AgentID: agentID, Status: "active", CreatedAt: "2026-08-01T10:00:00Z", MCPURL: f.mcpURLValue(agentID)}
+	f.mcpEndpoint = &ep
+	return &ep, nil
 }
 
-func (f *fakeMemory) CreateAgentMCPShare(ctx context.Context, agentID string, in *AgentMCPShareInput) (*AgentMCPShareCreated, error) {
-	f.lastAgentShareAgent = agentID
-	f.lastAgentShareInput = in
-	if f.agentShareCreateErr != nil {
-		return nil, f.agentShareCreateErr
-	}
-	name := ""
-	if in != nil {
-		name = in.Name
-	}
-	return &AgentMCPShareCreated{
-		Share:  AgentMCPShare{ID: "sh_new", AgentID: agentID, Name: name, Status: "active"},
-		Secret: f.agentShareSecret(),
-	}, nil
-}
-
-func (f *fakeMemory) RevokeAgentMCPShare(ctx context.Context, id string) error {
-	f.lastRevokedAgentShare = id
+func (f *fakeMemory) RevokeAgentMCPEndpoint(ctx context.Context, endpointID string) error {
+	f.lastMCPEndpointID = endpointID
+	f.mcpEndpoint = nil
+	f.mcpKeys = nil
 	return nil
 }
 
-func (f *fakeMemory) RotateAgentMCPShare(ctx context.Context, id string) (*AgentMCPShareCreated, error) {
-	f.lastRotatedAgentShare = id
-	share := AgentMCPShare{ID: id, Status: "active"}
-	if sh := agentMCPShareFindByID(f.agentShares, id); sh != nil {
-		share = *sh
+func (f *fakeMemory) ListAgentMCPKeys(ctx context.Context, endpointID string) ([]AgentMCPKey, error) {
+	f.lastMCPEndpointID = endpointID
+	if f.mcpKeyErr != nil {
+		return nil, f.mcpKeyErr
 	}
-	return &AgentMCPShareCreated{Share: share, Secret: f.agentShareSecret()}, nil
+	return append([]AgentMCPKey(nil), f.mcpKeys...), nil
 }
 
-// agentShareSecret is the one-time secret the fake hands back: the configured
-// token/URL, or a stable default token so tests need not set it.
-func (f *fakeMemory) agentShareSecret() AgentMCPShareSecret {
-	token := f.agentShareToken
-	if token == "" {
-		token = "tok_agent"
+func (f *fakeMemory) CreateAgentMCPKey(ctx context.Context, endpointID, label string) (*AgentMCPKeySecret, error) {
+	f.lastMCPEndpointID = endpointID
+	f.lastMCPLabel = label
+	if f.mcpKeyCreateErr != nil {
+		return nil, f.mcpKeyCreateErr
 	}
-	return AgentMCPShareSecret{Token: token, MCPURL: f.agentShareMCPURL}
+	key := AgentMCPKey{ID: "key_new", EndpointID: endpointID, Label: label, Status: "active", CreatedAt: "2026-08-01T10:00:00Z"}
+	f.mcpKeys = append(f.mcpKeys, key)
+	return f.mcpSecret(key), nil
+}
+
+func (f *fakeMemory) RevokeAgentMCPKey(ctx context.Context, keyID string) error {
+	f.lastMCPKeyID = keyID
+	for i := range f.mcpKeys {
+		if f.mcpKeys[i].ID == keyID {
+			f.mcpKeys[i].Status = "revoked"
+		}
+	}
+	return nil
+}
+
+func (f *fakeMemory) RotateAgentMCPKey(ctx context.Context, keyID string) (*AgentMCPKeySecret, error) {
+	f.lastMCPKeyID = keyID
+	if f.mcpKeyRotateErr != nil {
+		return nil, f.mcpKeyRotateErr
+	}
+	key := AgentMCPKey{ID: keyID, Status: "active"}
+	for _, k := range f.mcpKeys {
+		if k.ID == keyID {
+			key = k
+		}
+	}
+	return f.mcpSecret(key), nil
+}
+
+func (f *fakeMemory) ListAgentMCPSessions(ctx context.Context, endpointID, status string) ([]AgentMCPSession, error) {
+	f.lastMCPEndpointID = endpointID
+	f.lastMCPSessionStatus = status
+	if f.mcpSessionErr != nil {
+		return nil, f.mcpSessionErr
+	}
+	if status == "" {
+		return append([]AgentMCPSession(nil), f.mcpSessions...), nil
+	}
+	out := make([]AgentMCPSession, 0, len(f.mcpSessions))
+	for _, s := range f.mcpSessions {
+		if s.Status == status {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// mcpSecret builds a create/rotate response carrying the configured one-time
+// token (or a stable default) and endpoint URL.
+func (f *fakeMemory) mcpSecret(key AgentMCPKey) *AgentMCPKeySecret {
+	token := f.mcpToken
+	if token == "" {
+		token = "emt_key"
+	}
+	return &AgentMCPKeySecret{AgentMCPKey: key, Token: token, MCPURL: f.mcpURLValue(key.AgentID)}
+}
+
+// mcpURLValue is the endpoint URL the fake reports, or a stable default derived
+// from the agent id.
+func (f *fakeMemory) mcpURLValue(agentID string) string {
+	if f.mcpURL != "" {
+		return f.mcpURL
+	}
+	return "https://mem.example/api/mcp/agents/" + agentID
 }
 
 func (f *fakeMemory) ListRelaySessions(ctx context.Context) ([]RelaySession, error) {

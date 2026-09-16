@@ -147,7 +147,7 @@ templ agentSummaryCard(data agentDashboardData) {
 			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
-				Href:    mcpShareSettingsBase + "/new?agent=" + url.QueryEscape(data.Agent.ID),
+				Href:    "/agents/" + url.PathEscape(data.Agent.ID) + "/settings#mcp",
 				Variant: ui.ButtonGhost,
 				Size:    ui.ButtonSM,
 				Icon:    "lucide--share-2",
@@ -314,6 +314,7 @@ templ AgentSettingsPage(data agentSettingsData) {
 			@flashToasts(data.FlashMsg, data.FlashErr)
 			@layout.Rail(agentSubNav(data.Agent.ID, "settings"), nil) {
 				@agentSettingsForm(data)
+				@agentMCPSection(data)
 			}
 		}
 	}
