@@ -1340,9 +1340,9 @@ func (h *Handler) ListDefinitions(c echo.Context) error {
 // @Param        projectId path string true "Project ID (UUID)"
 // @Param        id path string true "Agent Definition ID (UUID)"
 // @Success      200 {object} APIResponse[AgentDefinitionDTO] "Agent definition details"
-// @Failure      400 {object} apperror.Error "Invalid project ID or definition ID"
+// @Failure      400 {object} apperror.Error "Missing definition ID"
 // @Failure      401 {object} apperror.Error "Unauthorized"
-// @Failure      404 {object} apperror.Error "Agent definition not found"
+// @Failure      404 {object} apperror.Error "Agent definition not found (invalid or unknown definition ID)"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/projects/{projectId}/agent-definitions/{id} [get]
 // @Security     bearerAuth
@@ -2494,9 +2494,9 @@ func (h *Handler) GetSession(c echo.Context) error {
 // @Produce      json
 // @Param        id path string true "Agent Definition ID (UUID)"
 // @Success      200 {object} APIResponse[sandbox.AgentSandboxConfig] "Workspace config"
-// @Failure      400 {object} apperror.Error "Invalid definition ID"
+// @Failure      400 {object} apperror.Error "Missing definition ID"
 // @Failure      401 {object} apperror.Error "Unauthorized"
-// @Failure      404 {object} apperror.Error "Agent definition not found"
+// @Failure      404 {object} apperror.Error "Agent definition not found (invalid or unknown definition ID)"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/admin/agent-definitions/{id}/sandbox-config [get]
 // @Security     bearerAuth
@@ -2544,9 +2544,9 @@ func (h *Handler) GetSandboxConfig(c echo.Context) error {
 // @Param        id path string true "Agent Definition ID (UUID)"
 // @Param        request body sandbox.AgentSandboxConfig true "Workspace configuration"
 // @Success      200 {object} APIResponse[sandbox.AgentSandboxConfig] "Updated workspace config"
-// @Failure      400 {object} apperror.Error "Invalid definition ID, request body, or validation error"
+// @Failure      400 {object} apperror.Error "Missing definition ID, invalid request body, or validation error"
 // @Failure      401 {object} apperror.Error "Unauthorized"
-// @Failure      404 {object} apperror.Error "Agent definition not found"
+// @Failure      404 {object} apperror.Error "Agent definition not found (invalid or unknown definition ID)"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/admin/agent-definitions/{id}/sandbox-config [put]
 // @Security     bearerAuth
