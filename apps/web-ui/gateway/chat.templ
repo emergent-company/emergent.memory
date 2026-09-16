@@ -159,7 +159,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 				<!-- The pinned composer keeps its own compact vertical bar padding;
 				     the form carries ContainerLG's width + horizontal gutter so the
 				     input lines up with the message column above. -->
-				<form id="chat-form" class="mx-auto max-w-6xl px-6 lg:px-8" hx-boost="false">
+				<form id="chat-form" class="mx-auto max-w-6xl px-6 lg:px-8" style="box-sizing:border-box" hx-boost="false">
 					<div class="flex flex-wrap items-stretch gap-2">
 						<textarea
 							id="chat-input"
