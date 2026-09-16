@@ -578,7 +578,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"ui_configs": {
 						Type:        "object",
-						Description: "Optional UI configuration per type",
+						Description: "Optional UI configuration per type — map of type name to UI config. Each entry may set: \"icon\" (a Lucide icon name from the closed catalog; kebab-case like \"file-text\", \"user\", \"git-branch\" — PascalCase \"FileText\" and \"lucide--file-text\" also accepted), \"color\" (a hex color like \"#3B82F6\"), plus free-form keys like \"category\". Icons outside the catalog render as a generic box. Call schema-icon-list to see every valid icon name.",
 					},
 					"extraction_prompts": {
 						Type:        "object",
@@ -621,6 +621,14 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Description: "When true, includes schemaId, schemaName, schemaVersion, and shadowed flag for each type",
 					},
 				},
+			},
+		},
+		{
+			Name:        "schema-icon-list",
+			Description: "List the valid Lucide icon names for schema object types (the value of ui_configs.<type>.icon). Icons are a CLOSED catalog — a name outside it silently renders as a generic box. Returns the canonical kebab-case names plus the accepted alternate spellings. Colors (ui_configs.<type>.color) accept any hex value, e.g. \"#3B82F6\".",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
 			},
 		},
 		{
@@ -1492,6 +1500,7 @@ var toolRequiredScope = map[string]string{
 	"schema-list-installed": "schema:read",
 	"schema-history":        "schema:read",
 	"schema-compiled-types": "graph:read",
+	"schema-icon-list":      "schema:read",
 	// Schema write
 	"schema-assign":            "schema:write",
 	"schema-assignment-update": "schema:write",
@@ -1737,6 +1746,8 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 		return s.executeSchemaHistory(ctx, projectID)
 	case "schema-compiled-types":
 		return s.executeSchemaCompiledTypes(ctx, projectID, args)
+	case "schema-icon-list":
+		return s.executeSchemaIconList(ctx, projectID)
 	case "entity-create":
 		return s.executeBatchCreateEntities(ctx, projectID, args)
 	case "relationship-create":

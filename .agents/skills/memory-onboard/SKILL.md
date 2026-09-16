@@ -254,7 +254,7 @@ Examples: `go-microservice`, `react-app`, `data-pipeline`, `research-papers`
 - Relationship names should be snake_case verbs: `depends_on`, `implements`, `owned_by`.
 - Use `fromTypes`/`toTypes` arrays (multiple source/target types are allowed).
 - `extraction_guidelines` tells the AI extractor what to look for in documents — be specific.
-- `ui_configs` icon names come from Lucide icons (e.g. `Box`, `Layers`, `User`, `FileText`, `GitBranch`, `Database`, `Globe`, `Tag`, `Shield`, `Zap`).
+- `ui_configs` icon names come from a **closed catalog** of 65 Lucide names (e.g. `file-text`, `user`, `git-branch`, `database`, `globe`, `tag`, `shield`, `zap`, `layers`, `box`) — a name outside the catalog silently renders as a generic box. Values may be kebab-case (`file-text`), PascalCase (`FileText`), or `lucide--file-text`. Each type may also set `color` to any hex value (e.g. `"#3B82F6"`). Call the `schema-icon-list` MCP tool for the full list.
 
 **Present the pack design to the user** and confirm before proceeding:
 > "Here's the schema I designed. Object types: Service, Endpoint, Migration. Relationships: Service -> depends_on -> Service, Endpoint -> defined_in -> Service. Does this look right?"
