@@ -1,0 +1,52 @@
+name: Review gate
+
+# Deliberately NO `paths:` and NO `branches:` filter.
+#
+# A path- or branch-filtered workflow never runs for pull requests outside the
+# filter, so its required check stays in "Pending" forever and blocks EVERY
+# pull request. This gate must therefore run for every PR; the script itself
+# exits immediately when no gated reviewer was requested.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  # issues: read is required for the timeline endpoint
+  # (GET /repos/{owner}/{repo}/issues/{number}/timeline).
+  issues: read
+
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-gate:
+    name: review-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      # Check out the BASE ref so the gate script always comes from trusted
+      # code. The PR diff is never checked out and never executed.
+      - name: Checkout base (trusted script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Wait for requested reviewer bots to review the head SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MAX_WAIT_SECONDS: "600"
+          POLL_INTERVAL_SECONDS: "25"
+        run: |
+          # Bootstrap guard: while this workflow is first landing, the base
+          # ref does not contain the script yet. Fail open rather than red on
+          # the PR that introduces it; from the next PR on, base has it.
+          if [ ! -f .github/scripts/copilot_review_gate.sh ]; then
+            echo "[review-gate] script not present on base yet; fail-open (bootstrap)"
+            exit 0
+          fi
+          bash .github/scripts/copilot_review_gate.sh
