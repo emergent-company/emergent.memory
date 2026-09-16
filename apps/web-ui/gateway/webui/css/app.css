@@ -224,27 +224,23 @@ div:has(> #_layout-topbar) {
 }
 
 /* Chat composer bar (chat.templ): bottom-anchored under #chat-log, so its
-   controls would sit on the home indicator. #chat-log + div is that wrapper;
-   on the run-transcript page (runs.templ) the adjacent sibling is #chat-empty,
-   which is display:none, so the rule is inert there. calc keeps the existing
-   py-3 (0.75rem) and adds the inset on top. */
+   controls would sit on the home indicator. #chat-log + div is the composer
+   wrapper (wrapper div → #chat-form → layout.Container). The wrapper carries
+   no vertical padding of its own — layout.Container's p-6 lg:p-8 supplies the
+   page gutter — so add only the inset here. On the run-transcript page
+   (runs.templ) the adjacent sibling is #chat-empty, which is display:none, so
+   the rule is inert there. */
 #chat-log + div {
-  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Chat composer on the chat page only; the run page (runs.templ) has no
-   composer, so the transcript is the bottom-most surface (#chat-root carries
-   data-run there). Its log wrapper is the scroll content — extend its bottom
-   padding by the inset so the last message clears the home indicator.
-   (max() would be nicer, but the lg breakpoint changes the base padding from
-   1rem to 1.5rem, so the media query mirrors that.) */
+/* Run transcript (runs.templ) has no composer, so the transcript is the
+   bottom-most surface (#chat-root carries data-run there). #chat-log > div is
+   the flex scroll-fill wrapper; the layout.Container inside it supplies the
+   p-6 lg:p-8 gutter, so add only the inset to lift the last message off the
+   home indicator. */
 #chat-root[data-run] #chat-log > div {
-  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-}
-@media (min-width: 64rem) {
-  #chat-root[data-run] #chat-log > div {
-    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
-  }
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Session rail (#chat-rail / #chat-rail-list, chat.templ): on md+ the rail is
@@ -714,9 +710,10 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
 }
 
 /* Modal: center the conversation column and the bottom composer, mirroring the
-   /chat page (chat.templ wraps its log + form in mx-auto max-w-3xl/max-w-6xl).
-   The header stays full-width; only the log column and the form's inner
-   content are constrained, so the border-t on the form still spans the box. */
+   /chat page (chat.templ constrains both its log column and its composer with
+   layout.Container → max-w-6xl). The header stays full-width; only the log
+   column and the form's inner content are constrained, so the border-t on the
+   form still spans the box. */
 #sidepanel-panel.sidepanel-in-modal #sidepanel-log > div {
   margin-inline: auto;
   width: 100%;

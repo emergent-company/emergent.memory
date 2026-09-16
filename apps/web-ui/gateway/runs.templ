@@ -20,22 +20,28 @@ import (
 templ RunPage(data runPageData) {
 	<div class="h-full">
 		if data.LoadErr != nil {
-			@layout.Container(layout.ContainerMD, nil) {
+			@layout.Container(layout.ContainerLG, nil) {
 				@pageError("Run unavailable", data.LoadErr)
 			}
 		} else if data.Run == nil || data.Run.Run == nil {
-			@layout.Container(layout.ContainerMD, nil) {
+			@layout.Container(layout.ContainerLG, nil) {
 				@pageError("Run unavailable", fmt.Errorf("run not found"))
 			}
 		} else {
 			<div id="chat-root" data-run={ data.Run.Run.ID } class="flex h-full flex-col">
-				<div class="mx-auto w-full max-w-6xl shrink-0 px-4 pt-4 lg:px-6 lg:pt-6">
+				@layout.Container(layout.ContainerLG, nil) {
 					@runPageHeader(data.Run.Run)
 					@runMetaHeader(data.Run, data.Trace)
-				</div>
+				}
 				<div id="chat-log" class="min-h-0 grow overflow-y-auto">
-					<div class="mx-auto flex min-h-full max-w-6xl flex-col justify-end gap-3 p-4 lg:p-6">
-						<div id="chat-messages" class="flex flex-col gap-3"></div>
+					<!-- Scroll-fill transcript shell: the flex wrapper keeps the
+					     min-h-full/justify-end trick (a short transcript rests at
+					     the bottom of the log) while layout.Container supplies the
+					     shared page width + padding. -->
+					<div class="flex min-h-full flex-col justify-end">
+						@layout.Container(layout.ContainerLG, nil) {
+							<div id="chat-messages" class="flex flex-col gap-3"></div>
+						}
 					</div>
 				</div>
 				<div id="chat-empty" class="hidden"></div>

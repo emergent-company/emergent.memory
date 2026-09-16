@@ -16,7 +16,7 @@ import (
 // and by branch. typeUIByType carries the compiled types' declared ui accents
 // (icon/color) keyed by object type name, so rows can render each type's icon.
 templ ObjectsPage(objects []GraphObject, types []string, typeFilter string, branches []Branch, branchID string, typeUIByType map[string]typeUI, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@objectsHeader(len(objects), loadErr == nil)
 		if loadErr != nil {
 			@pageError("Failed to load objects", loadErr)
@@ -130,7 +130,7 @@ templ objectRow(o GraphObject, tui typeUI) {
 // array/object properties use a chip TagList; labelSuggestions feeds the
 // labels input's autocomplete from existing labels in the graph.
 templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef, form objectCreateForm, labelSuggestions []string, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Failed to load object types", loadErr)
 		} else if len(objectTypes) == 0 {
@@ -262,7 +262,7 @@ templ propertyInput(def objectPropertyDef, vals []string) {
 // type's icon.
 templ ObjectDetailPage(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI) {
 	@flashToasts(flashMsg, flashErr)
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Object unavailable", loadErr)
 		} else {

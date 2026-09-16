@@ -14,7 +14,7 @@ import (
 // SessionsPage renders the session list, most recent first. A failed fetch
 // renders the whole-page error state.
 templ SessionsPage(convs []Conversation, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		@sessionsHeader(len(convs), loadErr == nil)
 		if loadErr != nil {
 			@pageError("Failed to load sessions", loadErr)
@@ -73,7 +73,7 @@ templ sessionRow(c Conversation) {
 // fabricated. Unknown sessions render an empty timeline (not an error); other
 // failures render the error state.
 templ SessionPage(detail *ConversationDetail, groups []runGroup, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Session unavailable", loadErr)
 		} else {

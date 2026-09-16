@@ -337,7 +337,7 @@ func backupMetaLine(b Backup) string {
 // the whole-page error state instead. The page degrades cleanly for creating
 // and failed backups (no checksums, partial stats, no broken layout).
 templ BackupDetailPage(b *Backup, loadErr error) {
-	@layout.Container(layout.ContainerMD, nil) {
+	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil || b == nil {
 			@pageError("Backup unavailable", backupLoadErr(b, loadErr))
 		} else {
