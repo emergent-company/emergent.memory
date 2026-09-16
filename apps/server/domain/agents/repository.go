@@ -11,6 +11,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
 
@@ -444,7 +445,16 @@ func (r *Repository) FindAllDefinitions(ctx context.Context, projectID string, i
 }
 
 // FindDefinitionByID returns an agent definition by ID, optionally filtering by project.
+//
+// A non-UUID id is treated as not-found and returns (nil, nil): kb.agent_definitions.id
+// is a UUID column, so querying it with a non-UUID string (e.g. an agent *name* passed
+// as an *id*) makes Postgres raise 22P02 "invalid input syntax for type uuid". That is
+// not sql.ErrNoRows, so without this guard it surfaced as a 500 instead of a 404.
 func (r *Repository) FindDefinitionByID(ctx context.Context, id string, projectID *string) (*AgentDefinition, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, nil
+	}
+
 	def := new(AgentDefinition)
 	q := r.db.NewSelect().
 		Model(def).
