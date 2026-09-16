@@ -1,7 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { openObjectForm, submitObjectForm } from '../../helpers/objects';
-import { readBootstrap } from '../../helpers/bootstrap';
-import { MEMORY_API_URL } from '../../helpers/tokens';
+import { createTypedObject, cleanupObjects } from '../../helpers/objects';
 
 // Object relationships — POST /objects/:id/relationships (uiObjectRelationshipCreate).
 //
@@ -28,86 +26,6 @@ function relationshipsSection(page: Page) {
   return page
     .locator('section')
     .filter({ has: page.getByRole('heading', { name: 'Relationships' }) });
-}
-
-/**
- * Create a typed object through the real create form and return its id (the
- * PRG redirect target parsed by the shared helper).
- */
-async function createTypedObject(page: Page, type: string, key: string): Promise<string> {
-  await openObjectForm(page, type);
-  await page.locator('#object-key').fill(key);
-  return submitObjectForm(page);
-}
-
-/**
- * Auth headers for the memory API: the signed-in user's Zitadel access token
- * (carried inside the gateway's memory_session cookie) plus the active project
- * id. The gateway does not proxy graph-object deletes, so the spec talks to the
- * memory API directly — the same origin the token-lifecycle specs probe.
- */
-async function memoryAuthHeaders(page: Page): Promise<Record<string, string>> {
-  const cookies = await page.context().cookies();
-  const session = cookies.find((c) => c.name === 'memory_session');
-  if (!session) throw new Error('memory_session cookie missing from the browser context');
-  const payload = JSON.parse(
-    Buffer.from(session.value.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString(
-      'utf8',
-    ),
-  ) as { access_token?: string };
-  if (!payload.access_token) throw new Error('memory_session cookie carries no access_token');
-  const bootstrap = readBootstrap();
-  return {
-    Authorization: `Bearer ${payload.access_token}`,
-    'X-Project-ID': bootstrap?.projectId ?? '',
-  };
-}
-
-/** Ids of the relationships touching an object (memory API edges response). */
-async function edgeIdsOf(
-  page: Page,
-  headers: Record<string, string>,
-  objectId: string,
-): Promise<string[]> {
-  const resp = await page.request
-    .get(`${MEMORY_API_URL}/api/graph/objects/${encodeURIComponent(objectId)}/edges`, { headers })
-    .catch(() => null);
-  if (!resp || !resp.ok()) return [];
-  const body = (await resp.json().catch(() => ({}))) as {
-    incoming?: Array<{ id?: string }>;
-    outgoing?: Array<{ id?: string }>;
-  };
-  return [...(body.incoming ?? []), ...(body.outgoing ?? [])]
-    .map((r) => r.id)
-    .filter((id): id is string => Boolean(id));
-}
-
-/** Best-effort cleanup: remove edges touching the objects, then the objects. */
-async function cleanupObjects(page: Page, objectIds: string[]): Promise<void> {
-  try {
-    const headers = await memoryAuthHeaders(page);
-    const ids = objectIds.filter(Boolean);
-    for (const id of ids) {
-      for (const edgeId of await edgeIdsOf(page, headers, id)) {
-        await page.request
-          .delete(`${MEMORY_API_URL}/api/graph/relationships/${encodeURIComponent(edgeId)}`, {
-            headers,
-            failOnStatusCode: false,
-          })
-          .catch(() => undefined);
-      }
-    }
-    for (const id of ids) {
-      await page.request
-        .delete(`${MEMORY_API_URL}/api/graph/objects/${encodeURIComponent(id)}`, {
-          headers,
-          failOnStatusCode: false,
-        })
-        .catch(() => undefined);
-    }
-  } catch {
-    // Best-effort only — never mask the spec's real failure.
-  }
 }
 
 test('object relationships: an edge created from the connect dialog is visible from both objects', async ({

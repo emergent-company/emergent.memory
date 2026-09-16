@@ -1,7 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
-import { openObjectForm, submitObjectForm } from '../../helpers/objects';
-import { readBootstrap } from '../../helpers/bootstrap';
-import { MEMORY_API_URL } from '../../helpers/tokens';
+import { test, expect } from '@playwright/test';
+import { createTypedObject, cleanupObjects } from '../../helpers/objects';
 
 // Object search — GET /objects/search (uiObjectSearch).
 //
@@ -26,45 +24,6 @@ interface SearchResult {
   type: string;
 }
 
-async function createObject(page: Page, type: string, key: string): Promise<string> {
-  await openObjectForm(page, type);
-  await page.locator('#object-key').fill(key);
-  return submitObjectForm(page);
-}
-
-/** Auth headers for the memory API (see the relationships spec for the why). */
-async function memoryAuthHeaders(page: Page): Promise<Record<string, string>> {
-  const cookies = await page.context().cookies();
-  const session = cookies.find((c) => c.name === 'memory_session');
-  if (!session) throw new Error('memory_session cookie missing from the browser context');
-  const payload = JSON.parse(
-    Buffer.from(session.value.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString(
-      'utf8',
-    ),
-  ) as { access_token?: string };
-  if (!payload.access_token) throw new Error('memory_session cookie carries no access_token');
-  const bootstrap = readBootstrap();
-  return {
-    Authorization: `Bearer ${payload.access_token}`,
-    'X-Project-ID': bootstrap?.projectId ?? '',
-  };
-}
-
-async function deleteObject(page: Page, id: string): Promise<void> {
-  try {
-    if (!id) return;
-    const headers = await memoryAuthHeaders(page);
-    await page.request
-      .delete(`${MEMORY_API_URL}/api/graph/objects/${encodeURIComponent(id)}`, {
-        headers,
-        failOnStatusCode: false,
-      })
-      .catch(() => undefined);
-  } catch {
-    // Best-effort only.
-  }
-}
-
 test('object search: filters to the created object and its result opens the object', async ({
   page,
 }) => {
@@ -74,7 +33,7 @@ test('object search: filters to the created object and its result opens the obje
   let objectId = '';
 
   try {
-    objectId = await createObject(page, 'Person', key);
+    objectId = await createTypedObject(page, 'Person', key);
 
     // 1a. The JSON contract: the unique token resolves to exactly this object.
     const hitResp = await page.request.get(`/objects/search?q=${encodeURIComponent(key)}`);
@@ -109,6 +68,6 @@ test('object search: filters to the created object and its result opens the obje
     await expect(page.getByRole('heading', { name: key })).toBeVisible();
     await expect(page.locator('#object-key')).toHaveValue(key);
   } finally {
-    await deleteObject(page, objectId);
+    await cleanupObjects(page, [objectId]);
   }
 });
