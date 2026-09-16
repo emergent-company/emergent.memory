@@ -1,0 +1,66 @@
+name: Review gate
+
+# Deliberately NO `paths:` and NO `branches:` filter.
+#
+# A path- or branch-filtered workflow never runs for pull requests outside the
+# filter, so its required check stays in "Pending" forever and blocks EVERY
+# pull request. This gate must therefore run for every PR; the script itself
+# exits immediately when no gated reviewer was requested.
+#
+# Trigger is `pull_request_target`, NOT `pull_request`: the workflow YAML is
+# taken from the BASE branch, so a contributor cannot rewrite this inline
+# `run:` block and execute arbitrary commands with the workflow token. The PR's
+# own code is never checked out or executed (see the checkout step below). This
+# mirrors the trusted review workflow in .github/workflows/review.yml.
+on:
+  pull_request_target:
+    # `review_requested` covers Copilot being requested AFTER the PR is opened:
+    # without it, the one earlier run would have seen no request, exited 0, and
+    # nothing would restart the gate.
+    # `review_request_removed` is intentionally omitted — a removal cannot be
+    # distinguished from the persisted `review_requested` timeline event (the
+    # event survives removal), so it could only create a spurious ~10-minute wait.
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
+
+# Strictly read-only: this gate only reads reviewer/review state and never needs
+# write access. Do NOT add write permissions here.
+permissions:
+  contents: read
+  pull-requests: read
+  # issues: read is required for the timeline endpoint
+  # (GET /repos/{owner}/{repo}/issues/{number}/timeline).
+  issues: read
+
+concurrency:
+  # Key on the head SHA: a new push gets its own run, and only same-SHA
+  # duplicates supersede each other. An in-flight wait for a given SHA is never
+  # silently cancelled by an unrelated event.
+  group: review-gate-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: true
+
+jobs:
+  review-gate:
+    name: review-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      # Check out the BASE ref (trusted script). With the `pull_request_target`
+      # trigger this is the base branch, and the PR diff is never checked out or
+      # executed.
+      - name: Checkout base (trusted script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Wait for requested reviewer bots to review the head SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MAX_WAIT_SECONDS: "600"
+          POLL_INTERVAL_SECONDS: "25"
+        run: |
+          # With `pull_request_target` the workflow and the script land on the
+          # base branch together, so a missing script means the base is broken
+          # and must fail loudly rather than silently pass.
+          bash .github/scripts/copilot_review_gate.sh
