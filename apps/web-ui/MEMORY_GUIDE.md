@@ -17,7 +17,7 @@ MCP endpoint: `http://localhost:5300/api/mcp`
 
 The gateway calls Memory's HTTP API directly (not MCP) for agents/chat/settings/etc. Auth: `Authorization: Bearer <token>`.
 
-- **Source**: full clone `/root/emergent.memory` (where backend edits go); vendored read-only copy `/root/alfred/.slim/clonedeps/repos/emergent-company__emergent.memory` (for reading internals). Memory is a `go.work` monorepo — build/test from `apps/server`.
+- **Source**: full clone `/root/emergent.memory` (where backend edits go); vendored read-only copy `/root/emergent.memory/apps/web-ui/.slim/clonedeps/repos/emergent-company__emergent.memory` (for reading internals). Memory is a `go.work` monorepo — build/test from `apps/server`.
 - **`X-Project-ID` header required** for non-`emt_*` (Zitadel user-session) calls: the user token is user-scoped, not project-scoped, and `GetProjectID` errors without it. `emt_*` tokens are project-bound and skip the header.
 - **Route split**: some routes under `/api/v1/...` (e.g. backups: `/api/v1/organizations/:orgId/...`), most under `/api/...`, some under `/api/superadmin/...`. Several endpoints (data-sources, some admin) are ABSENT from repo-root `openapi.yaml` — grep `apps/server/**/routes.go` / the full swagger / SDK client instead.
 - **Known gaps**: restore endpoint is a hardcoded 501 (unavailable); data-source OAuth (`gmail_oauth`/`google_drive`) has no callback endpoint.

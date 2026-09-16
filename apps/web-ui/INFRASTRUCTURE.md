@@ -59,7 +59,7 @@ have reachable external servers:
 - **Manage**: `ssh root@home2` → `pct exec 112 -- docker compose -f /opt/livekit/docker-compose.yml ps|logs|up -d`
 - Access is **Tailscale-only**: UFW allows `100.64.0.0/10`, everything else denied. No TURN — all endpoints are on the tailnet.
 
-## Agent worker (home2 LXC 112, /root/alfred)
+## Agent worker (home2 LXC 112, /root/emergent.memory/apps/web-ui)
 
 | Worker | Start | Log | Env file | Model |
 |--------|-------|-----|----------|-------|
