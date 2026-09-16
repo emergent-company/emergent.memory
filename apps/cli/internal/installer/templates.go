@@ -86,7 +86,8 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       - memory
 
   kreuzberg:
-    image: goldziher/kreuzberg:latest
+    # Pinned: Kreuzberg v4 LTS (GHCR). Do not revert to the old floating :latest tag (frozen at 4.0.7).
+    image: ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3
     container_name: memory-kreuzberg
     restart: unless-stopped
     ports:
