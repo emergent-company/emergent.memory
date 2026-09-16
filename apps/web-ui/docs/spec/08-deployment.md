@@ -33,7 +33,7 @@ Current production runs **directly in the LiveKit LXC** (not yet Docker):
 | App dir | `/opt/alfred` (Go binary + `memory_bridge/`) |
 | Service | `systemd memory.service` (`EnvironmentFile=/opt/alfred/.env`, `Restart=always`) |
 | Port | `:8082` (old `admin.py` still holds `:8080`; gateway moves there at cut-over) |
-| Bridge Python | reuses `/root/alfred/.venv` (livekit-agents 1.6.9 + deepgram/cartesia/silero) |
+| Bridge Python | reuses `/root/emergent.memory/apps/web-ui/.venv` (livekit-agents 1.6.9 + deepgram/cartesia/silero) |
 
 The Dockerfile/compose above is the target packaging (go-daisy must be vendored first).
 
