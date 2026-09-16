@@ -165,6 +165,18 @@ resulting state rather than transient toasts, and assert only on the entities th
 created — never on absolute list contents, because the mutation project shares the
 bootstrap tenant with every other run.
 
+Further additions: **backup lifecycle** (create via the form → wait for `ready` →
+download affordance + the route's 302 → delete → gone), **document delete** (upload →
+detail → delete → gone, chunk view reports the document as unavailable),
+**project-settings inline autosave** (project info and editor agent persist across a
+full reload, with the original values restored afterwards) and **project overrides**
+(create → delete, each asserted across reloads, plus a no-leftovers guard).
+
+Note on `data-testid`: none of the four flows above needed one — semantic locators
+sufficed. Anchors are added only where an element has no stable accessible name (so
+far: three in `api_tokens.templ`, for the token row, the revoked badge and the
+one-time secret reveal panel).
+
 Scenarios: one full journey on a fresh scratch project —
 provider add via the settings UI (live-validated by the memory backend, so a
 real key is needed), agent with an explicit model, bundled `personal-memory`

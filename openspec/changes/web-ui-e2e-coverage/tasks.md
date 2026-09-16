@@ -35,9 +35,9 @@
 - [ ] 3.3 `specs/objects/object-search-ui.spec.ts`: `/objects/search` typeahead filters and result navigation
 - [ ] 3.4 `specs/schema/blueprint-lifecycle-ui.spec.ts`: `POST /blueprints/enable` then `POST /blueprints/:id/unapply`; assert types removed
 - [ ] 3.5 `specs/schema/blueprint-migration-rollback-ui.spec.ts`: `POST /blueprints/migrate` then `POST /blueprints/migrate/rollback`; assert schema returns to pre-migration state
-- [ ] 3.6 `specs/backups/backups-crud-ui.spec.ts`: `POST /backups` → detail `ready` → `/:id/download` → `/:id/delete`
+- [x] 3.6 `specs/backups/backups-lifecycle-ui.spec.ts`: creates a backup via the real form, waits up to 120s for `ready` (skips with a reason otherwise), opens the detail, asserts the Download affordance and the route's 302 `Location`, deletes it and asserts it is gone from the list. **Known limitation:** the download click itself is not simulated — the gateway 302s to a presigned off-origin object-storage URL, so the spec asserts the rendered link/href and verifies the 302 through the authenticated request context instead.
 - [x] 3.7 `specs/projects/project-restore-ui.spec.ts`: schedules a scratch project for deletion from its row menu, asserts the pending state, restores it via `POST /projects/restore`, and asserts it returns to the active list. Self-cleans the scratch org.
-- [ ] 3.8 `specs/documents/document-delete-ui.spec.ts`: `POST /documents/:id/delete`; assert removal from list and chunk viewer no longer reachable
+- [x] 3.8 `specs/documents/document-delete-ui.spec.ts`: uploads a uniquely-named document, opens its detail, deletes it (accepting the `hx-confirm` dialog), then asserts it is gone from the list and that the detail/chunk view renders "Document unavailable".
 - [ ] 3.9 Phase 3 verify: `task e2e:test -- --project=mutations`; confirm scratch projects cleaned up
 
 ## 4. Phase 4 — Agent & skill CRUD, org admin
@@ -53,13 +53,13 @@
 
 ## 5. Phase 5 — Interaction depth on render-only pages
 
-- [ ] 5.1 `specs/settings/project-settings-autosave-ui.spec.ts`: assert `hx-post` + `hx-trigger="change delay:400ms"` + `hx-swap="none"` autosave shows the toast and persists after reload
-- [ ] 5.2 `specs/settings/approvals-respond-ui.spec.ts`: `POST /settings/approvals/:id/respond` and `/cancel` clear the pending item
+- [x] 5.1 `specs/settings/project-settings-autosave-ui.spec.ts`: drives the `project_info` textarea (`POST /settings/project/project_info`, `hx-trigger="change delay:400ms"`, `hx-swap="none"`) and the `editor_agent` select (`POST /settings/editor`), asserting the `HX-Trigger` `memory-toast` event plus the persisted value after a full reload. Both values are captured and restored in cleanup. `dedup_threshold` and `budget_usd` were rejected as not symmetrically restorable through the UI (empty input means "leave unchanged"), which would strand tenant state.
+- [ ] 5.2 `specs/settings/approvals-respond-ui.spec.ts`: `POST /settings/approvals/:questionId/respond` and `/cancel` clear the pending item
 - [ ] 5.3 `specs/settings/devices-revoke-ui.spec.ts`: `POST /settings/devices/:key/revoke`
 - [ ] 5.4 `specs/settings/voice-save-ui.spec.ts`: `POST /settings/voice`, `/voice/:key`, `/voice/group/:group` persist field/group edits
 - [ ] 5.5 `specs/settings/provider-connection-test-ui.spec.ts`: `POST /settings/providers/test`, `/check-url`, `/:provider/test`, `/:provider/remove`
-- [ ] 5.6 `specs/settings/settings-overrides-ui.spec.ts`: project override create (`POST /settings/overrides`) + `/:agentName/delete`
-- [ ] 5.7 `specs/settings/settings-editor-remember-ui.spec.ts`: `POST /settings/editor` and `/settings/remember/:field` persist
+- [x] 5.6 `specs/settings/settings-overrides-ui.spec.ts`: creates then deletes a scratch `E2E override …` (`POST /settings/overrides`, `/:agentName/delete`), asserting both states across reloads, plus a no-leftovers guard test. No scratch agent is needed — overrides are name-keyed project settings and memory performs no agent-existence check.
+- [ ] 5.7 `specs/settings/settings-editor-remember-ui.spec.ts`: `POST /settings/remember/:field` persists. The `POST /settings/editor` half is already covered by 5.1, so this task reduces to the remember-field route.
 - [ ] 5.8 `specs/settings/mcp-nodes-ui.spec.ts`: `/settings/mcp-nodes` lists nodes and `POST /settings/mcp-nodes/remove` works
 - [ ] 5.9 `specs/sessions/usage-charts-ui.spec.ts`: assert `stat-total-tokens`/`stat-estimated-cost`/`stat-sessions`/`stat-month-spend` render and `usage-token-chart`/`usage-session-chart` draw from `#usage-timeseries`
 - [ ] 5.10 `specs/sessions/session-detail-ui.spec.ts`: `/sessions/:id` renders timeline, run grouping and tool-call details
