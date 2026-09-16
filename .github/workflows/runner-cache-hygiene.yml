@@ -7,6 +7,11 @@ name: Runner Cache Hygiene
 # (re-downloading ~14G is the exact cost we are avoiding) and uses no GitHub
 # Actions cache layer at all.
 #
+# Cache ownership: GOCACHE is derived from the job user's HOME, which on these
+# runners resolves to /root/.cache/go-build (the runner service runs as root).
+# Every run logs the resolved path, and a missing directory raises a warning
+# annotation instead of silently skipping the prune forever.
+#
 # Scheduler note: the three memory runners share a single `memory` label (no
 # per-runner labels), so one job run can only land on one of them. A daily
 # schedule therefore covers the pool over time as the scheduler picks whichever
@@ -49,7 +54,7 @@ jobs:
         run: |
           GOCACHE="$(go env GOCACHE)"
           if [ ! -d "$GOCACHE" ]; then
-            echo "GOCACHE ($GOCACHE) does not exist — nothing to prune."
+            echo "::warning::GOCACHE ($GOCACHE) missing — nothing to prune. Check the job user's HOME."
             exit 0
           fi
           SIZE_MB=$(du -sm "$GOCACHE" | cut -f1)
@@ -67,7 +72,7 @@ jobs:
 
       - name: Report post-prune cache usage
         run: |
+          # The module cache is never touched, so it is not re-measured here.
           GOCACHE="$(go env GOCACHE)"
-          GOMODCACHE="$(go env GOMODCACHE)"
-          df -h "$GOCACHE" "$GOMODCACHE"
-          du -sh "$GOCACHE" "$GOMODCACHE"
+          df -h "$GOCACHE"
+          du -sh "$GOCACHE"

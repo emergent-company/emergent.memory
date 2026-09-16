@@ -62,7 +62,7 @@ jobs:
       - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          # GOCACHE is OS-specific: Linux uses ~/.cache, macOS uses ~/Library/Caches.
+          # GOCACHE differs per OS; list both, the key's runner.os partitions entries.
           path: |
             ~/.cache/go-build
             ~/Library/Caches/go-build
