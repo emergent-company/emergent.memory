@@ -149,7 +149,12 @@ func TestFindDefinitionByID_ValidUUIDPresentReturnsRow(t *testing.T) {
 // TestFindDefinitionByID_ValidUUIDAbsentReturnsNilNil verifies a valid UUID that
 // does not exist still resolves as (nil, nil).
 func TestFindDefinitionByID_ValidUUIDAbsentReturnsNilNil(t *testing.T) {
-	repo := newUUIDSyntaxRepository(t)
+	// newNoRowsRepository is a pre-existing shared helper in this package's test
+	// files (remember_status_rest_test.go): its driver yields no rows, so the
+	// lookup reports sql.ErrNoRows and the repository maps it to (nil, nil).
+	// Do not swap it for newUUIDSyntaxRepository — that driver fails every query
+	// with the 22P02 uuid-syntax error, which is the *other* case under test.
+	repo := newNoRowsRepository(t)
 
 	def, err := repo.FindDefinitionByID(context.Background(), uuid.NewString(), nil)
 
