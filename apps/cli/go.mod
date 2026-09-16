@@ -79,3 +79,9 @@ require (
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )
+
+// Build the CLI against the in-repo SDK while the agent MCP endpoint client is
+// unreleased. CI runs the CLI jobs with GOWORK=off, so this replace is what lets
+// them see the new SDK methods; drop it once the SDK is released and the require
+// version is bumped.
+replace github.com/emergent-company/emergent.memory/apps/server/pkg/sdk => ../server/pkg/sdk
