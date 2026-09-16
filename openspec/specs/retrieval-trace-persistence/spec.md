@@ -1,7 +1,7 @@
 # retrieval-trace-persistence Specification
 
 ## Purpose
-TBD - created by archiving change search-retrieval-performance. Update Purpose after archive.
+Persists an addressable record of every search — the raw query, applied filters, candidate set, per-result lexical/vector/fused scores, and the selected node/passage IDs — under a stable trace ID. Traces are bounded (capped candidate count plus configurable retention) and can reconstruct the exact ordered result packet later without re-running embedding or lexical scoring.
 
 ## Requirements
 
