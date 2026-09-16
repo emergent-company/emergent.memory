@@ -6,10 +6,24 @@ name: Review gate
 # filter, so its required check stays in "Pending" forever and blocks EVERY
 # pull request. This gate must therefore run for every PR; the script itself
 # exits immediately when no gated reviewer was requested.
+#
+# Trigger is `pull_request_target`, NOT `pull_request`: the workflow YAML is
+# taken from the BASE branch, so a contributor cannot rewrite this inline
+# `run:` block and execute arbitrary commands with the workflow token. The PR's
+# own code is never checked out or executed (see the checkout step below). This
+# mirrors the trusted review workflow in .github/workflows/review.yml.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_target:
+    # `review_requested` covers Copilot being requested AFTER the PR is opened:
+    # without it, the one earlier run would have seen no request, exited 0, and
+    # nothing would restart the gate.
+    # `review_request_removed` is intentionally omitted — a removal cannot be
+    # distinguished from the persisted `review_requested` timeline event (the
+    # event survives removal), so it could only create a spurious ~10-minute wait.
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
 
+# Strictly read-only: this gate only reads reviewer/review state and never needs
+# write access. Do NOT add write permissions here.
 permissions:
   contents: read
   pull-requests: read
@@ -27,8 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      # Check out the BASE ref so the gate script always comes from trusted
-      # code. The PR diff is never checked out and never executed.
+      # Check out the BASE ref (trusted script). With the `pull_request_target`
+      # trigger this is the base branch, and the PR diff is never checked out or
+      # executed.
       - name: Checkout base (trusted script)
         uses: actions/checkout@v4
         with:
@@ -42,11 +57,11 @@ jobs:
           MAX_WAIT_SECONDS: "600"
           POLL_INTERVAL_SECONDS: "25"
         run: |
-          # Bootstrap guard: while this workflow is first landing, the base
-          # ref does not contain the script yet. Fail open rather than red on
-          # the PR that introduces it; from the next PR on, base has it.
+          # Belt-and-suspenders: with pull_request_target the base workflow and
+          # the base script ship together, so the script is normally present. If
+          # it is somehow missing, fail open rather than red.
           if [ ! -f .github/scripts/copilot_review_gate.sh ]; then
-            echo "[review-gate] script not present on base yet; fail-open (bootstrap)"
+            echo "[review-gate] script not present on base; fail-open"
             exit 0
           fi
           bash .github/scripts/copilot_review_gate.sh

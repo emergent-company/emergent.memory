@@ -17,7 +17,17 @@
 #   - REST GET /pulls/{n}/reviews  -> user.login = copilot-pull-request-reviewer[bot]
 #   - REST GET /pulls/{n}/comments -> user.login = Copilot
 #   - GraphQL / gh pr view --json reviews -> author.login = copilot-pull-request-reviewer
-#   Match all three spellings; NEVER match bare "copilot".
+#   - timeline `review_requested`  -> requested_reviewer.login = Copilot
+#   NEVER match bare "copilot".
+#
+#   Step A reads REQUEST signals (timeline `review_requested`, requested_reviewers),
+#   where the timeline reports `Copilot`, so it accepts all three spellings.
+#   Step B reads only REST GET /pulls/{n}/reviews, which returns
+#   `copilot-pull-request-reviewer[bot]` and never `Copilot` (that spelling exists
+#   only on the comments endpoint). Step B therefore uses a NARROWER matcher so
+#   the accepted contract matches what that endpoint can actually return; no
+#   second endpoint is polled.
+#
 #   Copilot reviews return state COMMENTED, so do NOT require APPROVED — the
 #   `commit_id` staleness test is what matters.
 #
@@ -44,9 +54,27 @@ fi
 
 # Exact comparison against the known Copilot login spellings. The case patterns
 # are quoted so the literal "[bot]" suffix is not treated as a glob.
-is_gated_reviewer() {
+#
+# Request signals (Step A): the timeline `review_requested` event and
+# requested_reviewers report `Copilot`, so all three spellings are accepted.
+is_gated_request_login() {
   case "$1" in
     "copilot-pull-request-reviewer[bot]" | "copilot-pull-request-reviewer" | "Copilot")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Review signals (Step B): this reads REST GET /pulls/{n}/reviews, which only
+# ever returns the two `copilot-pull-request-reviewer*` spellings. `Copilot`
+# appears solely on the comments endpoint and is deliberately excluded here so
+# the accepted contract matches what this endpoint can actually return.
+is_gated_review_login() {
+  case "$1" in
+    "copilot-pull-request-reviewer[bot]" | "copilot-pull-request-reviewer")
       return 0
       ;;
     *)
@@ -78,7 +106,7 @@ fi
 requested_source=""
 while IFS= read -r login; do
   [ -n "$login" ] || continue
-  if is_gated_reviewer "$login"; then
+  if is_gated_request_login "$login"; then
     requested_source="timeline review_requested event"
     break
   fi
@@ -87,7 +115,7 @@ done <<<"$timeline_logins"
 if [ -z "$requested_source" ]; then
   while IFS= read -r login; do
     [ -n "$login" ] || continue
-    if is_gated_reviewer "$login"; then
+    if is_gated_request_login "$login"; then
       requested_source="requested_reviewers.users[]"
       break
     fi
@@ -127,7 +155,7 @@ while :; do
 
   while IFS=$'\t' read -r login commit_id; do
     [ -n "${login:-}" ] || continue
-    if is_gated_reviewer "$login" && [ "$commit_id" = "$HEAD_SHA" ]; then
+    if is_gated_review_login "$login" && [ "$commit_id" = "$HEAD_SHA" ]; then
       log "PASS: review by $login covers head $HEAD_SHA"
       exit 0
     fi
