@@ -18,11 +18,8 @@
      MemoryChatHost helper (chat-host.js is loaded globally in ui.templ on the
      same pages as this file); degrades safely if that script is unavailable. */
   function isTransientError(err) {
-    return !!(
-      window.MemoryChatHost &&
-      window.MemoryChatHost.isTransientError &&
-      window.MemoryChatHost.isTransientError(err)
-    );
+    var host = window.MemoryChatHost;
+    return !!(host && typeof host.isTransientError === "function" && host.isTransientError(err));
   }
 
   /* ---------- PWA standalone detection ---------- */

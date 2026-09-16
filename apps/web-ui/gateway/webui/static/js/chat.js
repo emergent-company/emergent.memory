@@ -23,8 +23,9 @@
      loaded globally in ui.templ alongside this file). */
   function reportError(err, context) {
     var transient = false;
-    if (window.MemoryChatHost && typeof MemoryChatHost.isTransientError === "function") {
-      transient = !!MemoryChatHost.isTransientError(err);
+    var host = window.MemoryChatHost;
+    if (host && typeof host.isTransientError === "function") {
+      transient = !!host.isTransientError(err);
     }
     if (transient) {
       console.warn("chat: " + context + " (transient, not reported):", err);
