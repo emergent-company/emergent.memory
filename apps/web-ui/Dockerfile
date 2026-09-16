@@ -12,6 +12,11 @@ FROM golang:1.26 AS build
 # templ version pinned to gateway/go.mod (a-h/templ v0.3.1020)
 RUN go install github.com/a-h/templ/cmd/templ@v0.3.1020
 # Node 22 (Tailwind v4 CLI requires Node >= 20; Debian bookworm's apt node is 18).
+# xz-utils provides `xz`, required by `tar -xJ` to extract the Node tarball
+# (the golang base image does not ship it).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends xz-utils \
+ && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz \
       | tar -xJ -C /usr/local --strip-components=1
 WORKDIR /src
