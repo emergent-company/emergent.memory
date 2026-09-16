@@ -132,7 +132,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 				     min-h-full/justify-end trick (short transcripts rest on the
 				     composer) while layout.Container supplies the shared page
 				     width + padding — the same ContainerLG every other page uses. -->
-				<div class="flex min-h-full flex-col justify-end overflow-x-hidden">
+				<div class="flex min-h-full min-w-0 flex-col justify-end">
 
 					@layout.Container(layout.ContainerLG, nil) {
 						<div class="flex w-full flex-col gap-3">
