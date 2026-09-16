@@ -40,17 +40,11 @@ The new backend change `add-mcp-share-instances` (emergent.memory) defines the a
 
 **Rationale:** Matches backend semantics (token returned once via `TokenEncrypted` only at creation) and avoids storing secrets in gateway memory or logs.
 
-### 4. Tool and agent pickers fed by backend catalog/agent lists
+### 4. Tool picker fed by the backend catalog
 
-**Decision:** The create/edit form loads the tool catalog from the backend catalog endpoint (grouped by category, searchable) and agents from the existing agent list. Selected tool names/agent IDs are sent as arrays on create/update.
+**Decision:** The create/edit form loads the tool catalog from the backend catalog endpoint (grouped by category, searchable). Selected tool names are sent as an array on create/update.
 
 **Rationale:** Server-enforced set == picker set; no gateway-side copy of the tool taxonomy to drift.
-
-### 5. Agent "Share via MCP" as a deep link with preselection
-
-**Decision:** An agent action navigates to the create form with the agent ID in the query string; the form preselects it.
-
-**Rationale:** Minimal code, no separate flow, and the create path stays single-sourced.
 
 ## Risks / Trade-offs
 

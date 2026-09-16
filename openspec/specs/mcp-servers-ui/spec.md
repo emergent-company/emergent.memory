@@ -77,3 +77,17 @@ Each env/header key/value row on the create and edit forms SHALL offer a Plain/S
 #### Scenario: Toggle preserves secrets
 - **WHEN** a user enables or disables a server that has stored secret env/header values
 - **THEN** the toggle persists without clearing or overwriting the stored secrets
+
+### Requirement: Reach MCP Sharing from the MCP Servers page
+
+The MCP Servers page SHALL provide a navigation entry point to the MCP Sharing area so admins can move between managing servers the project consumes and shares the project exposes.
+
+#### Scenario: Entry point present
+
+- **WHEN** a user opens the MCP Servers page
+- **THEN** a visible link to the MCP Sharing page is shown
+
+#### Scenario: Navigate to sharing
+
+- **WHEN** the user selects the MCP Sharing entry point
+- **THEN** the MCP Sharing page opens in the same project context
