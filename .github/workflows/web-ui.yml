@@ -40,6 +40,10 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: apps/web-ui/gateway/go.sum
+          # Persistent self-hosted runner: GOMODCACHE/GOCACHE already survive
+          # between jobs on disk, so setup-go's GH cache is redundant — it tries
+          # to upload ~10GB and always exceeds the 10GB cache limit.
+          cache: false
 
       # `*_templ.go` is generated and gitignored, so the checkout has no templ
       # output until this runs; `go build ./...` depends on it.
