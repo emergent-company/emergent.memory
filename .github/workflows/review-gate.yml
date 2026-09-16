@@ -13,14 +13,8 @@ name: Review gate
 # own code is never checked out or executed (see the checkout step below). This
 # mirrors the trusted review workflow in .github/workflows/review.yml.
 on:
-  pull_request_target:
-    # `review_requested` covers Copilot being requested AFTER the PR is opened:
-    # without it, the one earlier run would have seen no request, exited 0, and
-    # nothing would restart the gate.
-    # `review_request_removed` is intentionally omitted — a removal cannot be
-    # distinguished from the persisted `review_requested` timeline event (the
-    # event survives removal), so it could only create a spurious ~10-minute wait.
-    types: [opened, synchronize, reopened, ready_for_review, review_requested]
+  # Review gate is OFF: manual trigger only.
+  workflow_dispatch:
 
 # Strictly read-only: this gate only reads reviewer/review state and never needs
 # write access. Do NOT add write permissions here.

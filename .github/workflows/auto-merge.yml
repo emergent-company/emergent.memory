@@ -1,8 +1,8 @@
 name: Auto-merge
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+  # Auto-merge is OFF: manual trigger only.
+  workflow_dispatch:
 
 permissions:
   contents: write
