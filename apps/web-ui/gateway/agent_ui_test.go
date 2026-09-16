@@ -429,8 +429,10 @@ func TestAgentModelWarnings(t *testing.T) {
 		providersURL = `href="/settings/providers"`
 	)
 
+	// ModelConfigKnown mirrors production: the project model-config fetch
+	// succeeded, so DefaultModel is the authoritative PINNED default.
 	dash := func(agent *AgentDefinition, defaultModel string, hasProviders bool, providerNames []string) string {
-		return renderHTML(t, AgentDashboardPage(agentDashboardData{Agent: agent, DefaultModel: defaultModel, HasProviders: hasProviders, ProviderNames: providerNames}))
+		return renderHTML(t, AgentDashboardPage(agentDashboardData{Agent: agent, DefaultModel: defaultModel, ModelConfigKnown: true, HasProviders: hasProviders, ProviderNames: providerNames}))
 	}
 
 	// 1. no provider, no default → error alert on the dashboard
@@ -455,7 +457,21 @@ func TestAgentModelWarnings(t *testing.T) {
 		t.Error("dashboard must not show the error copy when providers exist")
 	}
 
-	// 3. providers + resolvable default → no warning, model shown
+	// 2b. providers configured but no pinned default, while memory resolves a
+	//     provider-credential fallback into EffectiveModel → still the unpinned
+	//     warning (the fallback must not mask an unpinned default).
+	fallback := &AgentDefinition{ID: "a1", Name: "diane", EffectiveModel: "openai/deepseek-v4-flash"}
+	h = dash(fallback, "", true, []string{"openai"})
+	for _, want := range []string{warnDash, "isn&#39;t pinned", providersURL, "Set a default model"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("provider-fallback warning missing %q", want)
+		}
+	}
+	if strings.Contains(h, errDash) {
+		t.Error("provider fallback must not show the error copy")
+	}
+
+	// 3. providers + pinned default → no warning, model shown
 	h = dash(noModel, "openai/gpt-4o", true, []string{"openai"})
 	for _, bad := range []string{errDash, warnDash} {
 		if strings.Contains(h, bad) {
@@ -516,7 +532,7 @@ func TestAgentModelWarnings(t *testing.T) {
 
 	// settings page: warning renders above the model picker
 	settings := func(agent *AgentDefinition, defaultModel string, hasProviders bool, providerNames []string) string {
-		return renderHTML(t, AgentSettingsPage(agentSettingsData{Agent: agent, DefaultModel: defaultModel, HasProviders: hasProviders, ProviderNames: providerNames}))
+		return renderHTML(t, AgentSettingsPage(agentSettingsData{Agent: agent, DefaultModel: defaultModel, ModelConfigKnown: true, HasProviders: hasProviders, ProviderNames: providerNames}))
 	}
 	hs := settings(noModel, "", false, nil)
 	for _, want := range []string{errSettings, "so chats will fail", providersURL, "Configure a provider"} {

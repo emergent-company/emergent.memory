@@ -4705,26 +4705,12 @@ Let's begin by locating the entity.`, entityName, filterNote, depth,
 	}, nil
 }
 
-// delegateAgentTool dispatches agent-related tool calls to the AgentToolHandler,
-// applying the share-instance agent allowlist (when present) both before
-// execution and to discovery results.
+// delegateAgentTool dispatches agent-related tool calls to the AgentToolHandler.
+// Share instances scope tools only, so there is no agent allowlist to apply
+// here; availability is governed by the instance tool allowlist and token
+// scopes.
 func (s *Service) delegateAgentTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
-	scope := InstanceScopeFromContext(ctx)
-	if scope != nil && scope.HasAgentAllowlist {
-		id, _ := agentReference(args)
-		if s.agentDeniedByAllowlist(ctx, projectID, toolName, args, scope) {
-			return agentDenialResult(id), nil
-		}
-	}
-
-	res, err := s.delegateAgentToolInner(ctx, projectID, toolName, args)
-	if err != nil {
-		return res, err
-	}
-	if scope != nil && scope.HasAgentAllowlist {
-		res = s.filterAgentResult(ctx, projectID, toolName, res, scope)
-	}
-	return res, nil
+	return s.delegateAgentToolInner(ctx, projectID, toolName, args)
 }
 
 // delegateAgentToolInner is the unguarded dispatch to the AgentToolHandler.

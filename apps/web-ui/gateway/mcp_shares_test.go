@@ -10,21 +10,19 @@ import (
 )
 
 // TestMCPShareInstanceJSONRoundTrip verifies the instance model carries every
-// field the UI needs, including the nullable tools/agents arrays and the
-// nullable lastUsedAt.
+// field the UI needs, including the tools array and the nullable lastUsedAt.
+// Instances are tools-only: there is no agents field.
 func TestMCPShareInstanceJSONRoundTrip(t *testing.T) {
 	raw := `{
 		"id": "s1",
 		"name": "research",
 		"description": "read-only research access",
 		"tools": ["search_memory", "get_object"],
-		"agents": ["a1"],
 		"status": "active",
 		"isLegacy": false,
 		"createdAt": "2026-01-02T03:04:05Z",
 		"lastUsedAt": "2026-01-03T00:00:00Z",
-		"toolCount": 2,
-		"agentCount": 1
+		"toolCount": 2
 	}`
 	var inst MCPShareInstance
 	if err := json.Unmarshal([]byte(raw), &inst); err != nil {
@@ -36,22 +34,19 @@ func TestMCPShareInstanceJSONRoundTrip(t *testing.T) {
 	if len(inst.Tools) != 2 || inst.Tools[0] != "search_memory" {
 		t.Errorf("tools = %v", inst.Tools)
 	}
-	if len(inst.Agents) != 1 || inst.Agents[0] != "a1" {
-		t.Errorf("agents = %v", inst.Agents)
-	}
-	if inst.Status != "active" || inst.IsLegacy || inst.ToolCount != 2 || inst.AgentCount != 1 {
+	if inst.Status != "active" || inst.IsLegacy || inst.ToolCount != 2 {
 		t.Errorf("flags/counts = %+v", inst)
 	}
 	if inst.CreatedAt != "2026-01-02T03:04:05Z" || inst.LastUsedAt == nil || *inst.LastUsedAt != "2026-01-03T00:00:00Z" {
 		t.Errorf("timestamps = %+v", inst)
 	}
 
-	// nullable arrays + lastUsedAt survive a null round-trip
+	// a null tools array + lastUsedAt survive a null round-trip
 	var nullish MCPShareInstance
-	if err := json.Unmarshal([]byte(`{"id":"s2","tools":null,"agents":null,"lastUsedAt":null}`), &nullish); err != nil {
+	if err := json.Unmarshal([]byte(`{"id":"s2","tools":null,"lastUsedAt":null}`), &nullish); err != nil {
 		t.Fatalf("null unmarshal: %v", err)
 	}
-	if nullish.Tools != nil || nullish.Agents != nil || nullish.LastUsedAt != nil {
+	if nullish.Tools != nil || nullish.LastUsedAt != nil {
 		t.Errorf("null fields should decode to nil, got %+v", nullish)
 	}
 
@@ -62,6 +57,10 @@ func TestMCPShareInstanceJSONRoundTrip(t *testing.T) {
 	if !strings.Contains(string(out), `"toolCount":2`) || !strings.Contains(string(out), `"isLegacy":false`) {
 		t.Errorf("marshal missing fields: %s", out)
 	}
+	// the model must not resurrect an agents field
+	if strings.Contains(string(out), `"agents"`) || strings.Contains(string(out), `"agentCount"`) {
+		t.Errorf("instance must not carry agent fields: %s", out)
+	}
 }
 
 // TestMemoryClientListMCPShareInstances asserts the path, method, auth header
@@ -71,7 +70,7 @@ func TestMemoryClientListMCPShareInstances(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"success":true,"data":[{"id":"s1","name":"alpha","tools":["a"],"agents":null,"toolCount":1}]}`)
+		_, _ = io.WriteString(w, `{"success":true,"data":[{"id":"s1","name":"alpha","tools":["a"],"toolCount":1}]}`)
 	}))
 	defer ts.Close()
 
@@ -185,60 +184,37 @@ func TestDecodeMCPShareListUnrecognizedWrapper(t *testing.T) {
 	}
 }
 
-// TestDecodeMCPShareListDerivesCounts asserts counts are derived from the
-// allowlist arrays only when the backend omitted the count field: an explicit
-// backend count (including an explicit 0) always wins, and an empty agent
-// allowlist stays 0 ("all agents").
-func TestDecodeMCPShareListDerivesCounts(t *testing.T) {
+// TestDecodeMCPShareToolCount covers the tool count derivation: an omitted (or
+// null) toolCount is derived from the tools array, while an explicit backend
+// count (including an explicit 0) always wins.
+func TestDecodeMCPShareToolCount(t *testing.T) {
 	tests := map[string]struct {
-		raw            string
-		wantToolCount  int
-		wantAgentCount int
+		raw           string
+		wantToolCount int
 	}{
-		"fills-both": {
-			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":["x"]}],"total":1}`,
-			wantToolCount:  2,
-			wantAgentCount: 1,
+		"derives-from-tools": {
+			raw:           `{"instances":[{"id":"s1","tools":["a","b"]}],"total":1}`,
+			wantToolCount: 2,
 		},
-		"null-agents-stays-zero": {
-			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":null}],"total":1}`,
-			wantToolCount:  2,
-			wantAgentCount: 0,
+		"explicit-count-wins": {
+			raw:           `{"instances":[{"id":"s1","tools":["a"],"toolCount":9}],"total":1}`,
+			wantToolCount: 9,
 		},
-		"backend-counts-win": {
-			raw:            `{"instances":[{"id":"s1","tools":["a"],"agents":["x"],"toolCount":9,"agentCount":4}],"total":1}`,
-			wantToolCount:  9,
-			wantAgentCount: 4,
+		"explicit-zero-wins": {
+			raw:           `{"instances":[{"id":"s1","tools":["a","b"],"toolCount":0}],"total":1}`,
+			wantToolCount: 0,
 		},
-		"explicit-zero-counts-win": {
-			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":["x","y"],"toolCount":0,"agentCount":0}],"total":1}`,
-			wantToolCount:  0,
-			wantAgentCount: 0,
-		},
-		"explicit-zero-tool-derives-agent": {
-			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":["x","y"],"toolCount":0}],"total":1}`,
-			wantToolCount:  0,
-			wantAgentCount: 2,
-		},
-		"explicit-zero-agent-derives-tool": {
-			raw:            `{"instances":[{"id":"s1","tools":["a","b","c"],"agents":["x"],"agentCount":0}],"total":1}`,
-			wantToolCount:  3,
-			wantAgentCount: 0,
-		},
-		"null-counts-derive": {
-			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":["x"],"toolCount":null,"agentCount":null}],"total":1}`,
-			wantToolCount:  2,
-			wantAgentCount: 1,
+		"null-count-derives": {
+			raw:           `{"instances":[{"id":"s1","tools":["a","b"],"toolCount":null}],"total":1}`,
+			wantToolCount: 2,
 		},
 		"shares-wrapper-explicit-zero-wins": {
-			raw:            `{"shares":[{"id":"s1","tools":["a","b"],"agents":["x"],"toolCount":0,"agentCount":0}]}`,
-			wantToolCount:  0,
-			wantAgentCount: 0,
+			raw:           `{"shares":[{"id":"s1","tools":["a","b"],"toolCount":0}]}`,
+			wantToolCount: 0,
 		},
 		"bare-array-derives": {
-			raw:            `[{"id":"s1","tools":["a"],"agents":["x"]}]`,
-			wantToolCount:  1,
-			wantAgentCount: 1,
+			raw:           `[{"id":"s1","tools":["a"]}]`,
+			wantToolCount: 1,
 		},
 	}
 	for name, tc := range tests {
@@ -250,8 +226,8 @@ func TestDecodeMCPShareListDerivesCounts(t *testing.T) {
 			if len(shares) != 1 {
 				t.Fatalf("len = %d, want 1", len(shares))
 			}
-			if shares[0].ToolCount != tc.wantToolCount || shares[0].AgentCount != tc.wantAgentCount {
-				t.Errorf("counts = %d/%d, want %d/%d", shares[0].ToolCount, shares[0].AgentCount, tc.wantToolCount, tc.wantAgentCount)
+			if shares[0].ToolCount != tc.wantToolCount {
+				t.Errorf("toolCount = %d, want %d", shares[0].ToolCount, tc.wantToolCount)
 			}
 		})
 	}
@@ -271,7 +247,7 @@ func TestMemoryClientCreateMCPShareInstance(t *testing.T) {
 
 	m := NewMemoryClient(ts.URL, "tok", "proj-1")
 	created, err := m.CreateMCPShareInstance(t.Context(), &MCPShareInput{
-		Name: "alpha", Description: "d", Tools: []string{"a", "b"}, Agents: []string{"a1"},
+		Name: "alpha", Description: "d", Tools: []string{"a", "b"},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -284,6 +260,9 @@ func TestMemoryClientCreateMCPShareInstance(t *testing.T) {
 	}
 	if tools, _ := gotBody["tools"].([]any); len(tools) != 2 {
 		t.Errorf("body tools = %+v", gotBody["tools"])
+	}
+	if _, ok := gotBody["agents"]; ok {
+		t.Errorf("create body must not carry an agents field: %+v", gotBody)
 	}
 	if created.Token != "emt_secret" || created.MCPURL != "https://mem.example/mcp" {
 		t.Errorf("created = %+v", created)
@@ -346,7 +325,7 @@ func TestMemoryClientMCPSharePaths(t *testing.T) {
 
 	want := []call{
 		{"GET", "/api/projects/proj-1/mcp/shares/s1", ""},
-		{"PATCH", "/api/projects/proj-1/mcp/shares/s1", `{"name":"beta","tools":["a"],"agents":null}`},
+		{"PATCH", "/api/projects/proj-1/mcp/shares/s1", `{"name":"beta","tools":["a"]}`},
 		{"DELETE", "/api/projects/proj-1/mcp/shares/s1", ""},
 		{"POST", "/api/projects/proj-1/mcp/shares/s1/rotate", ""},
 		{"GET", "/api/projects/proj-1/mcp/tools", ""},

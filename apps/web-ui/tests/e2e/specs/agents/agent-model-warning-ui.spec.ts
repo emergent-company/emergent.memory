@@ -164,24 +164,6 @@ test('warning severity: provider configured, no default model pinned', async ({ 
     if (!(await requireConfiguredProvider(page))) return;
 
     agentId = await createAgent(page, name);
-
-    // The warning only renders when the project HAS a provider but the agent
-    // resolves to NO model: the gateway's classifier short-circuits to "no
-    // issue" as soon as agentModelName() finds an effective model. Memory
-    // requires a generative model on every provider save and reports it as the
-    // agent's effective model, so a provider-configured project is never
-    // model-less — the warning state is unreachable. Skip (assertions below are
-    // unchanged) instead of failing on a state the backend no longer produces.
-    const agentResp = await page.request.get(`/api/agents/${agentId}`);
-    const effectiveModel = ((await agentResp.json()) as { effectiveModel?: string }).effectiveModel;
-    if (effectiveModel) {
-      test.skip(
-        true,
-        `warning state unreachable: memory resolves the configured provider's default model (${effectiveModel}), so the agent is never model-less`,
-      );
-      return;
-    }
-
     const title = new RegExp(name);
 
     // Dashboard: warning alert + "Set a default model" link.

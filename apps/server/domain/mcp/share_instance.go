@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -15,7 +14,6 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
-	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -42,8 +40,8 @@ var agentExecutionTools = map[string]bool{
 }
 
 // agentMutationTools create/update/delete agents, definitions, hooks, or answer
-// agent questions. They can affect agents outside an instance's agent allowlist
-// and are rejected from any non-null tool allowlist.
+// agent questions. They can affect agents outside a share instance's scope and
+// are rejected from any non-null tool allowlist.
 var agentMutationTools = map[string]bool{
 	"agent-create":            true,
 	"update_agent":            true,
@@ -54,33 +52,6 @@ var agentMutationTools = map[string]bool{
 	"agent-hook-create":       true,
 	"agent-hook-delete":       true,
 	"agent-question-respond":  true,
-}
-
-// agentRunInspectionTools read run data by run ID and cannot be mapped to the
-// runtime-agent allowlist on the hot path, so they are hidden/denied whenever an
-// agent allowlist is active.
-var agentRunInspectionTools = map[string]bool{
-	"agent-run-list":              true,
-	"agent-run-get":               true,
-	"agent-run-messages":          true,
-	"agent-run-tool-calls":        true,
-	"agent-run-status":            true,
-	"acp-get-run-status":          true,
-	"acp-get-run-events":          true,
-	"remember-status":             true,
-	"agent-question-list":         true,
-	"agent-question-list-project": true,
-	"agent-hook-list":             true,
-	"adk-session-list":            true,
-	"adk-session-get":             true,
-}
-
-// agentAllowlistDeniedTools are tools that must not be visible or callable when
-// an instance has an agent allowlist (fail closed). Agent-definition read tools
-// are handled by result filtering instead because they can be mapped to allowed
-// agent names; mutations and run-inspection cannot be mapped reliably.
-func agentAllowlistDeniedTools(toolName string) bool {
-	return agentRunInspectionTools[toolName] || agentMutationTools[toolName]
 }
 
 // ============================================================================
@@ -114,8 +85,7 @@ type shareInstanceStore interface {
 	ListLegacyTokens(ctx context.Context, projectID string) ([]*LegacyTokenRef, error)
 }
 
-// AgentRef is a minimal project-agent reference used for allowlist validation
-// and filtering.
+// AgentRef is a minimal project-agent reference.
 type AgentRef struct {
 	ID      string
 	Name    string
@@ -123,17 +93,12 @@ type AgentRef struct {
 }
 
 // agentDirectory resolves project agents. Implemented by Bun and injectable in
-// tests.
+// tests. Agent sharing is handled by the agent-scoped MCP endpoint; these
+// lookups exist for that lifecycle only.
 type agentDirectory interface {
-	ListProjectAgents(ctx context.Context, projectID string) ([]AgentRef, error)
 	// FindProjectAgentByID returns one project agent by ID, or nil when it does
 	// not exist in the project.
 	FindProjectAgentByID(ctx context.Context, projectID, id string) (*AgentRef, error)
-	FindAgentIDByName(ctx context.Context, projectID, name string) (string, bool, error)
-	// FindAgentIDByNameOrSlug resolves either the raw kb.agents.name or its
-	// ACP slug (agents.ACPSlugFromName). Used to gate acp-trigger-run, whose
-	// agent_name argument is a slug rather than the raw name.
-	FindAgentIDByNameOrSlug(ctx context.Context, projectID, nameOrSlug string) (string, bool, error)
 	// FindAgentRefsByDefinitionID returns the project runtime agents linked to
 	// an agent definition, either via the agent_definition_id FK or via the
 	// chat-session strategy_type marker. The FK-linked row is ordered first,
@@ -149,23 +114,27 @@ type agentDirectory interface {
 // ============================================================================
 
 // MCPShareInstance binds one core.api_tokens credential to a named, optional
-// tool and agent allowlist. NULL allowlists mean "unrestricted" (all
-// scope-permitted entries), matching legacy share tokens.
+// tool allowlist. A NULL tool allowlist means "unrestricted" (all
+// scope-permitted tools), matching legacy share tokens.
+//
+// Instances scope TOOLS ONLY. The legacy core.mcp_share_instances.allowed_agents
+// column is deprecated and intentionally unmapped here (no reads or writes); the
+// physical column is left in place for a later migration. Agent sharing is
+// handled by the agent-scoped MCP endpoint.
 type MCPShareInstance struct {
 	bun.BaseModel `bun:"table:core.mcp_share_instances,alias:msi"`
 
-	ID            string      `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
-	ProjectID     string      `bun:"project_id,type:uuid,notnull"`
-	Name          string      `bun:"name,notnull"`
-	Description   *string     `bun:"description"`
-	TokenID       string      `bun:"token_id,type:uuid,notnull"`
-	AllowedTools  []string    `bun:"allowed_tools,array"`
-	AllowedAgents []uuid.UUID `bun:"allowed_agents,type:uuid[]"`
-	IsLegacy      bool        `bun:"is_legacy,notnull,default:false"`
-	CreatedBy     *string     `bun:"created_by,type:uuid"`
-	CreatedAt     time.Time   `bun:"created_at,notnull,default:now()"`
-	UpdatedAt     time.Time   `bun:"updated_at,notnull,default:now()"`
-	RevokedAt     *time.Time  `bun:"revoked_at"`
+	ID           string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	ProjectID    string     `bun:"project_id,type:uuid,notnull"`
+	Name         string     `bun:"name,notnull"`
+	Description  *string    `bun:"description"`
+	TokenID      string     `bun:"token_id,type:uuid,notnull"`
+	AllowedTools []string   `bun:"allowed_tools,array"`
+	IsLegacy     bool       `bun:"is_legacy,notnull,default:false"`
+	CreatedBy    *string    `bun:"created_by,type:uuid"`
+	CreatedAt    time.Time  `bun:"created_at,notnull,default:now()"`
+	UpdatedAt    time.Time  `bun:"updated_at,notnull,default:now()"`
+	RevokedAt    *time.Time `bun:"revoked_at"`
 
 	// Transient fields populated by read queries that join core.api_tokens.
 	TokenLastUsedAt *time.Time `bun:"token_last_used_at,scanonly"`
@@ -184,20 +153,19 @@ type LegacyTokenRef struct {
 	ExpiresAt  *time.Time `bun:"expires_at"`
 }
 
-// InstanceScope is the per-request allowlist view resolved from an API token.
-// A nil *InstanceScope (or one with neither allowlist) means unrestricted.
+// InstanceScope is the per-request tool-allowlist view resolved from an API
+// token. A nil *InstanceScope (or one without a tool allowlist) means
+// unrestricted. Share instances scope TOOLS ONLY; there is no agent allowlist.
 type InstanceScope struct {
-	HasToolAllowlist  bool
-	AllowedTools      []string
-	HasAgentAllowlist bool
-	AllowedAgents     []string
+	HasToolAllowlist bool
+	AllowedTools     []string
 }
 
 type instanceScopeKey struct{}
 
 // WithInstanceScope stores the resolved instance scope in the request context
-// so the service layer (agent tools) can enforce the agent allowlist without
-// changing the ExecuteTool signature.
+// so the service layer (e.g. the ADK ToolPool) can enforce the tool allowlist
+// without changing the ExecuteTool signature.
 func WithInstanceScope(ctx context.Context, scope *InstanceScope) context.Context {
 	if scope == nil {
 		return ctx
@@ -218,15 +186,20 @@ func InstanceScopeFromContext(ctx context.Context) *InstanceScope {
 // CreateShareInstanceRequest is the request body for POST .../shares.
 // Tools == nil means unrestricted (null allowlist); an empty non-nil slice is
 // rejected.
+//
+// Agents is retained ONLY so a legacy client that supplies the retired agent
+// allowlist can be rejected explicitly; instances scope tools only and the
+// agent-scoped MCP endpoint handles agent sharing.
 type CreateShareInstanceRequest struct {
 	Name        string    `json:"name"`
 	Description *string   `json:"description,omitempty"`
 	Tools       *[]string `json:"tools"`
-	Agents      []string  `json:"agents"`
+	Agents      *[]string `json:"agents"`
 }
 
 // UpdateShareInstanceRequest is the request body for PATCH .../shares/:id.
-// Nil pointers mean "leave unchanged".
+// Nil pointers mean "leave unchanged". Agents is retained ONLY so a request
+// that supplies the retired agent allowlist can be rejected explicitly.
 type UpdateShareInstanceRequest struct {
 	Name        *string   `json:"name"`
 	Description *string   `json:"description"`
@@ -234,14 +207,14 @@ type UpdateShareInstanceRequest struct {
 	Agents      *[]string `json:"agents"`
 }
 
-// ShareInstanceDTO is the non-secret representation of a share instance.
+// ShareInstanceDTO is the non-secret representation of a share instance. It
+// carries the tool allowlist only — instances no longer have an agent allowlist.
 type ShareInstanceDTO struct {
 	ID          string     `json:"id"`
 	ProjectID   string     `json:"projectId"`
 	Name        string     `json:"name"`
 	Description *string    `json:"description,omitempty"`
 	Tools       *[]string  `json:"tools"`
-	Agents      *[]string  `json:"agents"`
 	IsLegacy    bool       `json:"isLegacy"`
 	Status      string     `json:"status"`
 	CreatedAt   time.Time  `json:"createdAt"`
@@ -448,54 +421,38 @@ func InstanceAllowsTool(scope *InstanceScope, toolName string) bool {
 	return false
 }
 
-// InstanceDeniesTool reports whether the instance scope forbids the tool, either
-// because of the tool allowlist or because the instance has an agent allowlist
-// and the tool cannot be safely scoped to it (agent-definition, run-inspection,
-// or agent-mutation). This is the single predicate used by transports and by
-// Service.ExecuteTool.
+// InstanceDeniesTool reports whether the instance scope forbids the tool
+// because of the tool allowlist. This is the single predicate used by
+// transports and by Service.ExecuteTool.
 func InstanceDeniesTool(scope *InstanceScope, toolName string) bool {
 	if scope == nil {
 		return false
 	}
-	if scope.HasToolAllowlist && !InstanceAllowsTool(scope, toolName) {
-		return true
-	}
-	if scope.HasAgentAllowlist && agentAllowlistDeniedTools(toolName) {
-		return true
-	}
-	return false
+	return scope.HasToolAllowlist && !InstanceAllowsTool(scope, toolName)
 }
 
 // InstanceRestrictsContent reports whether the instance imposes an explicit
-// allowlist. MCP resources and prompts are not covered by the tool/agent
-// allowlists, so they must fail closed for any restricted instance. A nil scope
+// tool allowlist. MCP resources and prompts are not covered by the tool
+// allowlist, so they must fail closed for any restricted instance. A nil scope
 // (legacy/unrestricted, including null-allowlist instances) keeps the historical
 // behavior.
 func InstanceRestrictsContent(scope *InstanceScope) bool {
-	return scope != nil && (scope.HasToolAllowlist || scope.HasAgentAllowlist)
+	return scope != nil && scope.HasToolAllowlist
 }
 
 // FilterToolsForInstance applies the instance tool allowlist on top of scope
-// filtering. When an agent allowlist is active it also removes agent-definition,
-// run-inspection, and agent-mutation tools that cannot be safely scoped to the
-// allowlist (fail closed). Order is preserved.
+// filtering. Order is preserved.
 func FilterToolsForInstance(tools []ToolDefinition, scope *InstanceScope) []ToolDefinition {
-	if scope == nil || (!scope.HasToolAllowlist && !scope.HasAgentAllowlist) {
+	if scope == nil || !scope.HasToolAllowlist {
 		return tools
 	}
-	var allowed map[string]bool
-	if scope.HasToolAllowlist {
-		allowed = make(map[string]bool, len(scope.AllowedTools))
-		for _, t := range scope.AllowedTools {
-			allowed[t] = true
-		}
+	allowed := make(map[string]bool, len(scope.AllowedTools))
+	for _, t := range scope.AllowedTools {
+		allowed[t] = true
 	}
 	out := make([]ToolDefinition, 0, len(tools))
 	for _, t := range tools {
-		if allowed != nil && !allowed[t.Name] {
-			continue
-		}
-		if scope.HasAgentAllowlist && agentAllowlistDeniedTools(t.Name) {
+		if !allowed[t.Name] {
 			continue
 		}
 		out = append(out, t)
@@ -532,7 +489,7 @@ func agentDirectoryOrNil(db bun.IDB) agentDirectory {
 }
 
 const shareInstanceSelect = `SELECT msi.id, msi.project_id, msi.name, msi.description, msi.token_id,
-	msi.allowed_tools, msi.allowed_agents, msi.is_legacy, msi.created_by,
+	msi.allowed_tools, msi.is_legacy, msi.created_by,
 	msi.created_at, msi.updated_at, msi.revoked_at,
 	at.last_used_at AS token_last_used_at,
 	at.revoked_at AS token_revoked_at,
@@ -612,7 +569,6 @@ func (r *bunShareInstanceStore) Update(ctx context.Context, inst *MCPShareInstan
 		Set("description = ?", inst.Description).
 		Set("token_id = ?", inst.TokenID).
 		Set("allowed_tools = ?", pq.Array(inst.AllowedTools)).
-		Set("allowed_agents = ?", pq.Array(inst.AllowedAgents)).
 		Set("updated_at = ?", inst.UpdatedAt).
 		Set("revoked_at = ?", inst.RevokedAt).
 		Where("id = ?", inst.ID).
@@ -664,19 +620,6 @@ type bunAgentDirectory struct {
 
 func newAgentDirectory(db bun.IDB) *bunAgentDirectory {
 	return &bunAgentDirectory{db: db}
-}
-
-func (d *bunAgentDirectory) ListProjectAgents(ctx context.Context, projectID string) ([]AgentRef, error) {
-	var rows []AgentRef
-	err := d.db.NewSelect().
-		TableExpr("kb.agents").
-		Column("id", "name", "enabled").
-		Where("project_id = ?", projectID).
-		Scan(ctx, &rows)
-	if err != nil {
-		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
-	}
-	return rows, nil
 }
 
 // FindProjectAgentByID returns a single project agent reference by ID, or nil
@@ -745,44 +688,6 @@ func (d *bunAgentDirectory) AgentDefinitionExists(ctx context.Context, projectID
 		return false, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return id != "", nil
-}
-
-func (d *bunAgentDirectory) FindAgentIDByName(ctx context.Context, projectID, name string) (string, bool, error) {
-	var id string
-	err := d.db.NewSelect().
-		TableExpr("kb.agents").
-		Column("id").
-		Where("project_id = ?", projectID).
-		Where("name = ?", name).
-		Limit(1).
-		Scan(ctx, &id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", false, nil
-		}
-		return "", false, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
-	}
-	return id, id != "", nil
-}
-
-// FindAgentIDByNameOrSlug resolves the raw agent name or its ACP slug. The slug
-// is computed in Go (pkg/acpslug) so no SQL function is required.
-func (d *bunAgentDirectory) FindAgentIDByNameOrSlug(ctx context.Context, projectID, nameOrSlug string) (string, bool, error) {
-	target := strings.TrimSpace(nameOrSlug)
-	if target == "" {
-		return "", false, nil
-	}
-	lowerTarget := strings.ToLower(target)
-	agents, err := d.ListProjectAgents(ctx, projectID)
-	if err != nil {
-		return "", false, err
-	}
-	for _, a := range agents {
-		if a.Name == target || acpslug.FromName(a.Name) == lowerTarget {
-			return a.ID, true, nil
-		}
-	}
-	return "", false, nil
 }
 
 // ============================================================================
@@ -874,14 +779,16 @@ func (s *Service) CreateShareInstance(ctx context.Context, projectID, userID, ba
 	if existing != nil {
 		return nil, apperror.New(409, "share_instance_name_exists", "A share instance named \""+name+"\" already exists for this project")
 	}
+	// Instances scope tools only. Reject a retired agent allowlist explicitly
+	// rather than silently ignoring it, and point users at the agent-scoped
+	// endpoint.
+	if req.Agents != nil {
+		return nil, errAgentsNotSupported()
+	}
 
 	// Populate the tool index (including project/relay tools) before validating.
 	s.GetToolDefinitionsForProject(ctx, projectID)
 	tools, err := normalizeToolAllowlist(req.Tools, s.GetToolByName)
-	if err != nil {
-		return nil, err
-	}
-	agents, err := s.normalizeAgentAllowlist(ctx, projectID, req.Agents)
 	if err != nil {
 		return nil, err
 	}
@@ -897,16 +804,15 @@ func (s *Service) CreateShareInstance(ctx context.Context, projectID, userID, ba
 
 	now := time.Now().UTC()
 	inst := &MCPShareInstance{
-		ID:            uuid.NewString(),
-		ProjectID:     projectID,
-		Name:          name,
-		Description:   req.Description,
-		TokenID:       token.ID,
-		AllowedTools:  tools,
-		AllowedAgents: agents,
-		CreatedBy:     &userID,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:           uuid.NewString(),
+		ProjectID:    projectID,
+		Name:         name,
+		Description:  req.Description,
+		TokenID:      token.ID,
+		AllowedTools: tools,
+		CreatedBy:    &userID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := store.Create(ctx, inst); err != nil {
 		// Best-effort cleanup so we do not strand an untracked credential.
@@ -921,75 +827,12 @@ func (s *Service) CreateShareInstance(ctx context.Context, projectID, userID, ba
 	}, nil
 }
 
-// normalizeAgentAllowlist validates agent references against the project and
-// de-duplicates. Empty input yields nil (unrestricted).
-//
-// An entry may be either a project runtime-agent ID (kb.agents) or an
-// agent-definition ID (kb.agent_definitions). A definition ID is resolved to
-// the definition's runtime agent(s) and the runtime IDs are stored, so the
-// allowlist always holds runtime agent IDs (the gating semantics are unchanged).
-// A definition that exists but has no runtime agent yet is rejected rather than
-// silently accepted.
-func (s *Service) normalizeAgentAllowlist(ctx context.Context, projectID string, agents []string) ([]uuid.UUID, error) {
-	if len(agents) == 0 {
-		return nil, nil
-	}
-	dir := s.agentDirectorySvc()
-	if dir == nil {
-		return nil, apperror.NewInternal("agent directory unavailable", nil)
-	}
-	projectAgents, err := dir.ListProjectAgents(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	known := make(map[string]bool, len(projectAgents))
-	for _, a := range projectAgents {
-		known[a.ID] = true
-	}
-	seen := make(map[uuid.UUID]bool, len(agents))
-	out := make([]uuid.UUID, 0, len(agents))
-	for _, raw := range agents {
-		id, perr := uuid.Parse(strings.TrimSpace(raw))
-		if perr != nil {
-			return nil, apperror.NewValidation("invalid agent id: " + raw)
-		}
-		if known[id.String()] {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			out = append(out, id)
-			continue
-		}
-		// Not a runtime agent ID: accept an agent-definition ID and store the
-		// runtime agent(s) it resolves to.
-		isDef, derr := dir.AgentDefinitionExists(ctx, projectID, id.String())
-		if derr != nil {
-			return nil, derr
-		}
-		if !isDef {
-			return nil, apperror.NewValidation("unknown agent: " + id.String())
-		}
-		refs, rerr := dir.FindAgentRefsByDefinitionID(ctx, projectID, id.String())
-		if rerr != nil {
-			return nil, rerr
-		}
-		if len(refs) == 0 {
-			return nil, apperror.NewValidation("agent " + id.String() + " has no runtime agent in this project yet")
-		}
-		for _, ref := range refs {
-			rid, rperr := uuid.Parse(ref.ID)
-			if rperr != nil {
-				return nil, apperror.NewValidation("invalid agent id: " + ref.ID)
-			}
-			if seen[rid] {
-				continue
-			}
-			seen[rid] = true
-			out = append(out, rid)
-		}
-	}
-	return out, nil
+// errAgentsNotSupported is the unprocessable-entity rejection for a request that
+// supplies the retired `agents` field. Project share instances scope tools only;
+// agent sharing uses the agent-scoped MCP endpoint.
+func errAgentsNotSupported() error {
+	return apperror.New(422, "validation_error",
+		"agents are not supported on project share instances; share an agent with the agent-scoped MCP endpoint instead")
 }
 
 // ListShareInstances returns bound instances plus unbound legacy share tokens.
@@ -1047,11 +890,15 @@ func (s *Service) GetShareInstance(ctx context.Context, projectID, userID, id st
 	return &dto, nil
 }
 
-// UpdateShareInstance updates name/description/allowlists and keeps the bound
-// token scopes in sync. The token secret is never changed.
+// UpdateShareInstance updates name/description/tool allowlist and keeps the
+// bound token scopes in sync. The token secret is never changed.
 func (s *Service) UpdateShareInstance(ctx context.Context, projectID, userID, id string, req UpdateShareInstanceRequest) (*ShareInstanceDTO, error) {
 	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
 		return nil, err
+	}
+	// Instances scope tools only: reject the retired agent allowlist explicitly.
+	if req.Agents != nil {
+		return nil, errAgentsNotSupported()
 	}
 	store := s.shareStore()
 	tokenSvc := s.shareTokenSvc()
@@ -1094,9 +941,8 @@ func (s *Service) UpdateShareInstance(ctx context.Context, projectID, userID, id
 		updated.Description = req.Description
 	}
 
-	// Validate/normalize EVERYTHING before persisting anything. In particular,
-	// agent normalization must not run after token scopes have been written, or a
-	// failed normalization would leave scopes and allowlist divergent.
+	// Validate/normalize EVERYTHING before persisting anything, so token scopes
+	// are never written for an invalid tool allowlist.
 	var newTools []string
 	var newScopes []string
 	scopesChanged := false
@@ -1113,13 +959,6 @@ func (s *Service) UpdateShareInstance(ctx context.Context, projectID, userID, id
 		newTools = tools
 		newScopes = scopes
 		scopesChanged = true
-	}
-	if req.Agents != nil {
-		agents, aerr := s.normalizeAgentAllowlist(ctx, projectID, *req.Agents)
-		if aerr != nil {
-			return nil, aerr
-		}
-		updated.AllowedAgents = agents
 	}
 	if scopesChanged {
 		updated.AllowedTools = newTools
@@ -1281,9 +1120,10 @@ func BuildToolCatalog(ctx context.Context, s *Service, projectID string) []Catal
 	return out
 }
 
-// ResolveInstanceScope resolves the allowlist for the authenticated API token
-// (from AuthUser.APITokenID). It returns (nil, nil) for legacy/unknown tokens
-// (including bound instances with a null allowlist), meaning "unrestricted".
+// ResolveInstanceScope resolves the tool allowlist for the authenticated API
+// token (from AuthUser.APITokenID). It returns (nil, nil) for legacy/unknown
+// tokens (including bound instances with a null allowlist), meaning
+// "unrestricted".
 //
 // A non-nil error means the share-instance lookup itself failed. Callers MUST
 // fail closed (deny) on error rather than treating it as unrestricted; silently
@@ -1303,22 +1143,10 @@ func (s *Service) ResolveInstanceScope(ctx context.Context, apiTokenID string) (
 	if inst == nil || inst.RevokedAt != nil {
 		return nil, nil
 	}
-	scope := &InstanceScope{}
-	if len(inst.AllowedTools) > 0 {
-		scope.HasToolAllowlist = true
-		scope.AllowedTools = inst.AllowedTools
-	}
-	if len(inst.AllowedAgents) > 0 {
-		scope.HasAgentAllowlist = true
-		scope.AllowedAgents = make([]string, len(inst.AllowedAgents))
-		for i, id := range inst.AllowedAgents {
-			scope.AllowedAgents[i] = id.String()
-		}
-	}
-	if !scope.HasToolAllowlist && !scope.HasAgentAllowlist {
+	if len(inst.AllowedTools) == 0 {
 		return nil, nil
 	}
-	return scope, nil
+	return &InstanceScope{HasToolAllowlist: true, AllowedTools: inst.AllowedTools}, nil
 }
 
 // mcpEndpointURL builds the canonical MCP endpoint from a base URL.
@@ -1359,13 +1187,6 @@ func (inst *MCPShareInstance) toDTO(now time.Time) ShareInstanceDTO {
 		tools := append([]string(nil), inst.AllowedTools...)
 		dto.Tools = &tools
 	}
-	if len(inst.AllowedAgents) > 0 {
-		agents := make([]string, len(inst.AllowedAgents))
-		for i, id := range inst.AllowedAgents {
-			agents[i] = id.String()
-		}
-		dto.Agents = &agents
-	}
 	return dto
 }
 
@@ -1380,294 +1201,4 @@ func legacyTokenToDTO(projectID string, tok *LegacyTokenRef, now time.Time) Shar
 		UpdatedAt:  tok.CreatedAt,
 		LastUsedAt: tok.LastUsedAt,
 	}
-}
-
-// ============================================================================
-// Agent scoping
-// ============================================================================
-
-// agentDenialResult builds a non-fatal "not found" tool error without invoking
-// the underlying handler, so no run is started.
-func agentDenialResult(identifier string) *ToolResult {
-	msg := "agent not found"
-	if identifier != "" {
-		msg = "agent not found: " + identifier
-	}
-	text, _ := json.Marshal(map[string]string{"error": msg})
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(text)}}}
-}
-
-// agentReference extracts the referenced agent identity from tool args.
-func agentReference(args map[string]any) (id, name string) {
-	if args == nil {
-		return "", ""
-	}
-	if v, ok := args["agent_id"].(string); ok {
-		id = strings.TrimSpace(v)
-	}
-	if v, ok := args["agent_name"].(string); ok {
-		name = strings.TrimSpace(v)
-	}
-	return id, name
-}
-
-// agentDeniedByAllowlist decides whether an agent-related call must be rejected
-// when an agent allowlist is active. It fails CLOSED: tools that cannot be
-// scoped to the allowlist, unresolvable agent references, and directory errors
-// are all denied. It must be called before the underlying handler so no run
-// starts.
-func (s *Service) agentDeniedByAllowlist(ctx context.Context, projectID, toolName string, args map[string]any, scope *InstanceScope) bool {
-	if scope == nil || !scope.HasAgentAllowlist {
-		return false
-	}
-	if agentAllowlistDeniedTools(toolName) {
-		return true
-	}
-	if !agentToolReferencesAgent(toolName) {
-		return false
-	}
-	allowed := make(map[string]bool, len(scope.AllowedAgents))
-	for _, a := range scope.AllowedAgents {
-		allowed[a] = true
-	}
-	id, name := agentReference(args)
-	if id != "" {
-		// Fail closed: an unresolvable/foreign id is not allowed.
-		return !allowed[id]
-	}
-	if name == "" {
-		// Fail closed: cannot verify the referenced agent.
-		return true
-	}
-	dir := s.agentDirectorySvc()
-	if dir == nil {
-		return true
-	}
-	// Resolve either the raw name or the ACP slug (acp-trigger-run passes a slug).
-	resolved, found, err := dir.FindAgentIDByNameOrSlug(ctx, projectID, name)
-	if err != nil || !found {
-		return true
-	}
-	return !allowed[resolved]
-}
-
-// agentToolReferencesAgent reports whether a tool targets a specific agent.
-func agentToolReferencesAgent(toolName string) bool {
-	switch toolName {
-	case "agent-get", "trigger_agent", "acp-trigger-run":
-		return true
-	default:
-		return false
-	}
-}
-
-// filterAgentResult post-processes discovery-tool results to hide agents
-// outside the allowlist. Filtering fails CLOSED: a parse/shape mismatch yields
-// an empty result rather than the unfiltered payload.
-func (s *Service) filterAgentResult(ctx context.Context, projectID, toolName string, res *ToolResult, scope *InstanceScope) *ToolResult {
-	if res == nil || scope == nil || !scope.HasAgentAllowlist || len(res.Content) == 0 {
-		return res
-	}
-	allowed := make(map[string]bool, len(scope.AllowedAgents))
-	for _, a := range scope.AllowedAgents {
-		allowed[a] = true
-	}
-	switch toolName {
-	case "agent-list":
-		return filterAgentListResult(res, allowed)
-	case "agent-list-available":
-		return s.filterAvailableAgentsResult(ctx, projectID, res, scope)
-	case "acp-list-agents":
-		return s.filterACPListAgentsResult(ctx, projectID, res, scope)
-	case "agent-def-list":
-		return s.filterAgentDefinitionsListResult(ctx, projectID, res, scope)
-	case "agent-def-get":
-		return s.filterAgentDefinitionGetResult(ctx, projectID, res, scope)
-	default:
-		return res
-	}
-}
-
-// filterAgentListResult filters a JSON array of agent objects by "id". Fails
-// closed to an empty list.
-func filterAgentListResult(res *ToolResult, allowed map[string]bool) *ToolResult {
-	var arr []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &arr); err != nil {
-		return replaceToolResultText(res, "[]")
-	}
-	filtered := make([]map[string]any, 0, len(arr))
-	for _, item := range arr {
-		if id, _ := item["id"].(string); id != "" && allowed[id] {
-			filtered = append(filtered, item)
-		}
-	}
-	text, err := json.MarshalIndent(filtered, "", "  ")
-	if err != nil {
-		return replaceToolResultText(res, "[]")
-	}
-	return replaceToolResultText(res, string(text))
-}
-
-// emptyAvailableAgentsText is the fail-closed payload for agent-list-available.
-const emptyAvailableAgentsText = `{"agents":[],"count":0}`
-
-// filterAvailableAgentsResult filters {agents:[...], count} by agent name,
-// resolving allowed IDs to names. Deleted IDs resolve to nothing. Fails closed.
-func (s *Service) filterAvailableAgentsResult(ctx context.Context, projectID string, res *ToolResult, scope *InstanceScope) *ToolResult {
-	dir := s.agentDirectorySvc()
-	if dir == nil {
-		return replaceToolResultText(res, emptyAvailableAgentsText)
-	}
-	agents, err := dir.ListProjectAgents(ctx, projectID)
-	if err != nil {
-		return replaceToolResultText(res, emptyAvailableAgentsText)
-	}
-	allowedNames := allowedAgentNames(scope.AllowedAgents, agents)
-
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &payload); err != nil {
-		return replaceToolResultText(res, emptyAvailableAgentsText)
-	}
-	rawAgents, ok := payload["agents"].([]any)
-	if !ok {
-		return replaceToolResultText(res, emptyAvailableAgentsText)
-	}
-	filtered := make([]any, 0, len(rawAgents))
-	for _, raw := range rawAgents {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := item["name"].(string)
-		if allowedNames[name] {
-			filtered = append(filtered, item)
-		}
-	}
-	payload["agents"] = filtered
-	payload["count"] = len(filtered)
-	text, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return replaceToolResultText(res, emptyAvailableAgentsText)
-	}
-	return replaceToolResultText(res, string(text))
-}
-
-// filterACPListAgentsResult filters the ACP manifest array by manifest name
-// (an ACP slug) against the allowlist's slugs. Fails closed to an empty list.
-func (s *Service) filterACPListAgentsResult(ctx context.Context, projectID string, res *ToolResult, scope *InstanceScope) *ToolResult {
-	dir := s.agentDirectorySvc()
-	if dir == nil {
-		return replaceToolResultText(res, "[]")
-	}
-	agents, err := dir.ListProjectAgents(ctx, projectID)
-	if err != nil {
-		return replaceToolResultText(res, "[]")
-	}
-	allowedNames := allowedAgentNames(scope.AllowedAgents, agents)
-	allowedSlugs := make(map[string]bool, len(allowedNames))
-	for name := range allowedNames {
-		allowedSlugs[acpslug.FromName(name)] = true
-	}
-
-	var arr []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &arr); err != nil {
-		return replaceToolResultText(res, "[]")
-	}
-	filtered := make([]map[string]any, 0, len(arr))
-	for _, item := range arr {
-		name, _ := item["name"].(string)
-		if allowedSlugs[name] {
-			filtered = append(filtered, item)
-		}
-	}
-	text, err := json.MarshalIndent(filtered, "", "  ")
-	if err != nil {
-		return replaceToolResultText(res, "[]")
-	}
-	return replaceToolResultText(res, string(text))
-}
-
-// allowedAgentNameSets resolves the allowlisted runtime agents to their names
-// and ACP slugs. ok is false when the directory is unavailable (fail closed).
-func (s *Service) allowedAgentNameSets(ctx context.Context, projectID string, scope *InstanceScope) (names, slugs map[string]bool, ok bool) {
-	dir := s.agentDirectorySvc()
-	if dir == nil {
-		return nil, nil, false
-	}
-	agents, err := dir.ListProjectAgents(ctx, projectID)
-	if err != nil {
-		return nil, nil, false
-	}
-	names = allowedAgentNames(scope.AllowedAgents, agents)
-	slugs = make(map[string]bool, len(names))
-	for name := range names {
-		slugs[acpslug.FromName(name)] = true
-	}
-	return names, slugs, true
-}
-
-// filterAgentDefinitionsListResult filters an agent-definition summary array by
-// definition name (or ACP slug) against the allowlist. Fails closed.
-func (s *Service) filterAgentDefinitionsListResult(ctx context.Context, projectID string, res *ToolResult, scope *InstanceScope) *ToolResult {
-	names, slugs, ok := s.allowedAgentNameSets(ctx, projectID, scope)
-	if !ok {
-		return replaceToolResultText(res, "[]")
-	}
-	var arr []map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &arr); err != nil {
-		return replaceToolResultText(res, "[]")
-	}
-	filtered := make([]map[string]any, 0, len(arr))
-	for _, item := range arr {
-		name, _ := item["name"].(string)
-		if names[name] || slugs[acpslug.FromName(name)] {
-			filtered = append(filtered, item)
-		}
-	}
-	text, err := json.MarshalIndent(filtered, "", "  ")
-	if err != nil {
-		return replaceToolResultText(res, "[]")
-	}
-	return replaceToolResultText(res, string(text))
-}
-
-// filterAgentDefinitionGetResult returns a definition only when its name/slug is
-// allowlisted; otherwise it reports not-found. Fails closed.
-func (s *Service) filterAgentDefinitionGetResult(ctx context.Context, projectID string, res *ToolResult, scope *InstanceScope) *ToolResult {
-	names, slugs, ok := s.allowedAgentNameSets(ctx, projectID, scope)
-	if !ok {
-		return replaceToolResultText(res, `{"error":"agent definition not found"}`)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(res.Content[0].Text), &payload); err != nil {
-		return replaceToolResultText(res, `{"error":"agent definition not found"}`)
-	}
-	name, _ := payload["name"].(string)
-	if name == "" || (!names[name] && !slugs[acpslug.FromName(name)]) {
-		return replaceToolResultText(res, `{"error":"agent definition not found"}`)
-	}
-	return res
-}
-
-// allowedAgentNames maps the allowlisted IDs to their current names. Missing
-// (deleted) IDs are simply absent.
-func allowedAgentNames(allowedIDs []string, agents []AgentRef) map[string]bool {
-	allowed := make(map[string]bool, len(allowedIDs))
-	for _, id := range allowedIDs {
-		allowed[id] = true
-	}
-	names := make(map[string]bool, len(agents))
-	for _, a := range agents {
-		if allowed[a.ID] {
-			names[a.Name] = true
-		}
-	}
-	return names
-}
-
-func replaceToolResultText(res *ToolResult, text string) *ToolResult {
-	content := make([]ContentBlock, len(res.Content))
-	copy(content, res.Content)
-	content[0].Text = text
-	return &ToolResult{Content: content, IsError: res.IsError}
 }

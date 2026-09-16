@@ -23,27 +23,33 @@ The Go app exposes a simplified agent model to users, mapped 1:1 onto memory's
 
 ## Default model resolution & display
 
-An agent whose `model` is unset ("Auto — default model") falls back to the
-project's default generative model (project model-config). Memory's
-`GET /agent-definitions/:id` returns the resolved choice as `effectiveModel`
-(an explicit per-agent model wins). The Go gateway decodes it and shows the
-**exact model** on the agent dashboard. On the Agents list it appears in the
-desktop table's **Model** column (`md` and up — D37); the mobile card grid
-shows only name + icon and carries no model. The list summary has no
-explicit-vs-resolved signal, so there is no "(default)" suffix.
+An agent whose `model` is unset ("Auto — default model") resolves to the
+project's model choice. Memory's `GET /agent-definitions/:id` returns the
+resolved choice as `effectiveModel` (an explicit per-agent model wins). The Go
+gateway decodes it and shows the **exact model** on the agent dashboard. On the
+Agents list it appears in the desktop table's **Model** column (`md` and up —
+D37); the mobile card grid shows only name + icon and carries no model. The
+list summary has no explicit-vs-resolved signal, so there is no "(default)"
+suffix.
 
-Resolution is project-config-only in memory (`ResolveGenerativeModel` returns
-empty when no project default is set), so `effectiveModel` comes back empty
-for an auto agent on a project without a default — the gateway then warns
-instead of guessing: **error** when the project has no configured provider
-(chats can't run — memory returns `503 no_provider`), **warning** when
-providers exist but no default pins the model. Warning surfaces: agent
-dashboard summary and the agent-settings Model section, both linking to
-Settings → Providers (see session log
+Memory resolves `effectiveModel` in two steps (`ResolveGenerativeModel`): the
+project's **pinned** model-config first, else a **provider-credential
+fallback** (`DefaultGenerativeModel` — the first configured provider credential
+that carries a generative model). `effectiveModel` is therefore non-empty
+whenever a configured provider credential carries a generative model — with or
+without a pinned project default — and stays empty when none does, even on a
+project with configured providers.
+The gateway separates the two when warning about an auto agent: **error** when
+the project has no configured provider (chats can't run — memory returns
+`503 no_provider`), **warning** while the model is only a provider-credential
+fallback (no pinned default), and no notice when a pinned project default
+resolves. `defaultModel` on the agent pages is the pinned project default only
+(project model-config); a failed model-config fetch keeps the legacy behavior
+(any resolvable model suppresses the warning) rather than fabricate one.
+Warning surfaces: agent dashboard summary and the agent-settings Model section,
+both linking to Settings → Providers (see session log
 [2026-09-08-agent-model-default-display](../sessions/2026-09-08-agent-model-default-display.md);
-the decision-log row is pending the concurrent docs WIP landing). Surfacing
-the runtime/env fallback when no project default exists is a memory-side
-follow-up ([task](../tasks/agent-effective-model-memory.md)).
+the decision-log row is pending the concurrent docs WIP landing).
 
 ## Explicit (pinned) models without a configured provider
 

@@ -102,6 +102,27 @@ func TestHandleCreateShareInstanceUnknownTool(t *testing.T) {
 	assertAppError(t, err, 422)
 }
 
+// TestHandleCreateShareInstanceAgentsRejected covers the MODIFIED spec scenario
+// "Agent allowlist is rejected" at the HTTP boundary.
+func TestHandleCreateShareInstanceAgentsRejected(t *testing.T) {
+	h := newTestHandler(newFakeShareStore(), &fakeTokenSvc{}, &fakeAgentDir{})
+	c, _ := newJSONContext(t, http.MethodPost, `{"name":"Team A","agents":["`+agentA+`"]}`, adminUser(), []string{"projectId"}, []string{"proj-1"})
+	err := h.HandleCreateShareInstance(*c)
+	assertAppError(t, err, 422)
+}
+
+// TestHandleUpdateShareInstanceAgentsRejected covers the MODIFIED spec scenario
+// "Agent allowlist update is rejected" at the HTTP boundary.
+func TestHandleUpdateShareInstanceAgentsRejected(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj-1", Name: "Team A", TokenID: "tok-1", AllowedTools: []string{"entity-search"}}
+	h := newTestHandler(store, &fakeTokenSvc{}, &fakeAgentDir{})
+	c, _ := newJSONContext(t, http.MethodPatch, `{"agents":["`+agentA+`"]}`, adminUser(), []string{"projectId", "id"}, []string{"proj-1", "i1"})
+	err := h.HandleUpdateShareInstance(*c)
+	assertAppError(t, err, 422)
+	assert.Equal(t, "Team A", store.byID["i1"].Name)
+}
+
 func TestHandleListAndGetOmitTokenSecret(t *testing.T) {
 	store := newFakeShareStore()
 	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj-1", Name: "Team A", TokenID: "tok-1", AllowedTools: []string{"entity-search"}}
