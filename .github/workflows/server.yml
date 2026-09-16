@@ -163,11 +163,13 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
             BUILD_TIME=${{ steps.version.outputs.build_time }}
-          # Read-only cache: this job only validates on PRs, and a cache written
-          # on a PR ref is unreadable by other refs, so it exports nothing. It
-          # reuses the published image's cache from the default branch instead
-          # (same Dockerfile, scope written weekly by publish-self-hosted-images).
-          cache-from: type=gha,scope=memory-server
+          # Validation job: runs on PRs, main pushes and workflow_dispatch.
+          # Only non-PR runs export — a cache written on a PR ref is readable by
+          # re-runs of that same PR alone, so exporting all four stages there
+          # just churns the shared 10 GB budget. Main pushes write the
+          # default-branch cache that PR runs then import.
+          cache-from: type=gha,scope=memory-server-ci
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=memory-server-ci,mode=max,ignore-error=true' || '' }}
 
       - name: Get image size
         run: |

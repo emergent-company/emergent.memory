@@ -104,10 +104,11 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
             BUILD_TIME=${{ steps.version.outputs.build_time }}
-          # real published 4-stage image: branch/scheduled runs write a cache
-          # PRs can read; a failed cache export must not fail the job.
+          # 4-stage image: mode=max caches the Go builder stages, which are
+          # absent from the final image; the weekly scheduled run (default
+          # branch) keeps this scope warm for later tag and manual runs.
           cache-from: type=gha,scope=memory-server
-          cache-to: type=gha,scope=memory-server,mode=max,ignore-error=true
+          cache-to: type=gha,scope=memory-server,mode=max
 
       # Unchanged tag push: re-tag the previous version's multi-arch manifest list
       # to the new version tags (no rebuild).

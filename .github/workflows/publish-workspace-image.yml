@@ -51,9 +51,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # single-stage Dockerfile: nothing extra to export beyond the default.
+          # Verified single-stage (docker/workspace-base.Dockerfile): min already
+          # exports every layer of the image, so max would add nothing. Export
+          # errors stay fatal so a broken cache cannot hide behind a release.
           cache-from: type=gha,scope=memory-workspace
-          cache-to: type=gha,scope=memory-workspace,mode=min,ignore-error=true
+          cache-to: type=gha,scope=memory-workspace,mode=min
 
       - name: Image digest
         run: |
