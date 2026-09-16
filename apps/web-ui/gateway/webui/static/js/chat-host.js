@@ -47,14 +47,18 @@
   // chat.js and app.js via window.MemoryChatHost.
   function isTransientError(err) {
     if (!err) return false;
-    if (/failed to fetch|networkerror|load failed|network request failed|the network connection was lost|networkerror when attempting/i.test(String(err.message || ""))) return true;
-    // AbortError from a user-initiated stop/abort is expected; unrelated aborts
-    // (e.g. programming errors that call controller.abort() in the wrong state)
-    // are rare enough that we keep filtering — but we require a non-empty
-    // err.message check to avoid swallowing synthetic {name:"AbortError"} noise.
+    // Explicit marker callers set for a known transport failure (e.g. the
+    // gateway POST helper's network flag). Preferred over message heuristics:
+    // it does not depend on browser/vendor error wording.
+    if (err.transient === true) return true;
+    // A user-initiated abort (stop button, navigating away, superseding a
+    // request) is deliberate, not a bug worth reporting.
     if (err.name === "AbortError") return true;
+    if (err.name === "TypeError" && /failed to fetch|failed fetch|network\s?error|network request failed|load failed|the network connection was lost/i.test(String(err.message || ""))) return true;
     if (err.status === 502 || err.status === 503 || err.status === 504) return true;
-    var m = /HTTP\s+(\d{3})/.exec(String(err.message || ""));
+    // Only a bare "HTTP 502" (exactly what callers throw) counts — anchoring
+    // avoids matching unrelated messages that merely mention an HTTP status.
+    var m = /^HTTP\s+(\d{3})$/.exec(String(err.message || ""));
     if (!m) return false;
     var code = parseInt(m[1], 10);
     return code === 502 || code === 503 || code === 504;

@@ -925,9 +925,13 @@
     var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/respond", { response: answerValue });
     if (!result.ok) {
       // result.network === true is a fetch transport failure; postJSON has
-      // already discarded the original error, so rebuild it as the TypeError
-      // fetch rejects with so reportError classifies it as transient.
-      if (result.network) reportError(new TypeError(result.error || "Failed to fetch"), "answer send failed");
+      // already discarded the original error, so mark the rebuilt error
+      // explicitly as transient instead of relying on message heuristics.
+      if (result.network) {
+        var netErr = new Error(result.error || "Failed to fetch");
+        netErr.transient = true;
+        reportError(netErr, "answer send failed");
+      }
       failStream("Could not send answer: " + result.error);
       return;
     }
@@ -952,7 +956,11 @@
     var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/" + action, payload);
     if (!result.ok) {
       // see answerQuestion: result.network is a transient fetch transport failure.
-      if (result.network) reportError(new TypeError(result.error), "decision send failed");
+      if (result.network) {
+        var netErr = new Error(result.error || "Failed to fetch");
+        netErr.transient = true;
+        reportError(netErr, "decision send failed");
+      }
       failStream("Could not send decision: " + result.error);
       return;
     }

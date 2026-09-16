@@ -299,7 +299,7 @@
         } else {
           captureError(err);
         }
-          toast("error", "Save failed: " + (err && err.message ? err.message : "unknown error"));
+        toast("error", "Save failed: " + ((err && err.message) || String(err)));
       });
   }
 
@@ -341,7 +341,7 @@
         } else {
           captureError(err);
         }
-        toast("error", "Delete failed: " + err.message);
+        toast("error", "Delete failed: " + ((err && err.message) || String(err)));
       });
   }
 
