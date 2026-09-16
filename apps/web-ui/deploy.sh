@@ -27,8 +27,8 @@ step "1/3 deploy gateway -> $GATEWAY_HOST (docker compose up --build)"
 # Sync the gateway module + bridge + compose files, then rebuild/restart the
 # container on the gateway host.
 tar -C "$SRC_ROOT" -czf - gateway memory_bridge docker-compose.yml Dockerfile .env \
-  | ssh "$GATEWAY_HOST" "tar -C /root/alfred -xzf -"
-ssh "$GATEWAY_HOST" "cd /root/alfred && docker compose up -d --build"
+  | ssh "$GATEWAY_HOST" "tar -C /root/emergent.memory/apps/web-ui -xzf -"
+ssh "$GATEWAY_HOST" "cd /root/emergent.memory/apps/web-ui && docker compose up -d --build"
 
 # --- 2. iOS source -> Mac --------------------------------------------------
 step "2/3 sync iOS source -> $MAC_HOST"

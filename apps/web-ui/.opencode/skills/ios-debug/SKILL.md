@@ -5,7 +5,7 @@ description: Debug the Memory iOS app runtime (logs, crashes, screenshots, backt
 
 # iOS Debug
 
-Debug the Memory iOS app runtime on the Mac build machine (`mcj-mini`, reachable via `ssh mcj-mini`, no password). App process name is `Memory`, bundle id `com.emergent.memory`. Project checkout on Mac: `~/code/alftred` (rsync'd from `/root/alfred`).
+Debug the Memory iOS app runtime on the Mac build machine (`mcj-mini`, reachable via `ssh mcj-mini`, no password). App process name is `Memory`, bundle id `com.emergent.memory`. Project checkout on Mac: `~/code/alftred` (rsync'd from `/root/emergent.memory/apps/web-ui`).
 
 ## 1. When to use
 
