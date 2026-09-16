@@ -469,11 +469,16 @@ type AgentQuestionOption struct {
 type AgentQuestion struct {
 	bun.BaseModel `bun:"table:kb.agent_questions,alias:aq"`
 
-	ID              string                       `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	RunID           string                       `bun:"run_id,type:uuid,notnull" json:"runId"`
-	AgentID         string                       `bun:"agent_id,type:uuid,notnull" json:"agentId"`
-	ProjectID       string                       `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	Question        string                       `bun:"question,notnull" json:"question"`
+	ID        string `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	RunID     string `bun:"run_id,type:uuid,notnull" json:"runId"`
+	AgentID   string `bun:"agent_id,type:uuid,notnull" json:"agentId"`
+	ProjectID string `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Question  string `bun:"question,notnull" json:"question"`
+	// Proposal is an optional structured payload attached to an ask_user
+	// checkpoint. The envelope shape is {kind, summary, body}; kind is a string
+	// discriminator (e.g. "blueprint") and body holds the kind-specific manifest.
+	// Nil for plain-text questions.
+	Proposal        map[string]any               `bun:"proposal,type:jsonb" json:"proposal,omitempty"`
 	Options         []AgentQuestionOption        `bun:"options,type:jsonb,notnull,default:'[]'" json:"options"`
 	InteractionType AgentQuestionInteractionType `bun:"interaction_type,type:text,notnull,default:'buttons'" json:"interactionType"`
 	Placeholder     string                       `bun:"placeholder,type:text" json:"placeholder,omitempty"`
