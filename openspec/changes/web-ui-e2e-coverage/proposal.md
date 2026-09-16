@@ -6,15 +6,15 @@ The Memory Web UI (`apps/web-ui/gateway`, Go templ + HTMX) exposes 251 registere
 - **Zero coverage for several high-risk mutation families**: API token lifecycle (scopes/regenerate/revoke, both project and profile scope), MCP shares (create/update/revoke/rotate), member role changes and removals, invite revoke/accept/decline, object merge and relationship creation, blueprint enable/unapply and migration rollback, backup create/download/delete, agent and skill update/delete, project restore, org rename and org tool-settings, approval respond/cancel, schedule update/delete/trigger/toggle and run detail, session/run detail.
 - **Chat streaming is unasserted** — the `POST /api/chat` SSE stream, conversation live events, ask-user question cards, and the assistant sidepanel (`sidepanel.js`) have no e2e proof.
 - **Feature testids exist in only 7 templ files** (`ui.templ`, `chat.templ`, `schedules.templ`, `usage.templ`, `account_menu.templ`, `sidepanel.templ`, `auth_ui.templ`). Every other area must be targeted with `#id`/`input[name=]` locators, which are brittle and break on markup refactors.
-- The documented `chromium → mutations → scenarios` project ordering is described in `tests/e2e/README.md` but **not encoded** in `playwright.config.ts`, so the read-surface and mutation projects currently run without a declared order.
+- The documented `chromium → mutations → scenarios` project ordering drifted from the config: `tests/e2e/README.md` described mutations as running "AFTER chromium", but `playwright.config.ts` deliberately declares `setup` as the dependency of `chromium`, `mutations` and `scenarios`, and intentionally does **not** make `mutations` depend on `chromium`. The config was always correct — the README wording was the defect, and that is what got corrected.
 
 The consequence is that regressions in secret lifecycle, authorization changes, and destructive graph/schema operations can ship undetected — precisely the flows where a silent regression is most expensive.
 
 ## What Changes
 
-Six independently mergeable phases, ordered by risk:
+Harness groundwork plus six independently mergeable feature phases, ordered by risk:
 
-- **Phase 0 — Harness**: shared toast/dialog/cleanup helpers, the missing `data-testid` attributes across the 13 templ areas that lack them (plus `templ generate`), the `chromium → mutations` ordering in `playwright.config.ts`, and a README update documenting the testid convention.
+- **Phase 0 — Harness**: shared helpers and per-control `data-testid` anchors added **just in time, with the spec that needs them** (see the revision note in `design.md` D6 and `tasks.md` §0); plus a README correction so the documented project order matches the config's deliberate `mutations: dependencies: ['setup']`.
 - **Phase 1 — Secret lifecycle** (highest risk): project API tokens (`edit`/`scopes`/`regenerate`/`revoke`), profile API tokens (full family), MCP share lifecycle (list/new/edit/update/revoke/rotate + one-time token reveal), per-agent MCP shares.
 - **Phase 2 — Authorization**: member role change (including the self-change and equal-role guards), member removal, `/members/:userId` detail, invite revoke/accept/decline.
 - **Phase 3 — Destructive operations**: object merge, relationship creation, object search typeahead, blueprint enable/unapply, blueprint migration apply + rollback, backup create/download/delete, project restore, document delete.
@@ -39,7 +39,7 @@ Every new spec lands in the `mutations` project (`*-ui.spec.ts`, `workers: 1`) u
 ## Impact
 
 - `apps/web-ui/tests/e2e/specs/**` — ~30 new spec files (phases 1-6)
-- `apps/web-ui/tests/e2e/helpers/**` — new `toast.ts`, `dialogs.ts`, `tokens.ts`, `mcp.ts`; extensions to `bootstrap.ts`
+- `apps/web-ui/tests/e2e/helpers/**` — new `tokens.ts` is the helper this phase adds; `toast.ts`/`dialogs.ts` were dropped because the specs assert resulting state instead of transient toasts and no implementation lane needed a dialog helper, and `mcp.ts` stays deferred with the blocked Phase 1.3/1.4 MCP-share specs
 - `apps/web-ui/tests/e2e/playwright.config.ts` — encode `chromium → mutations` ordering
 - `apps/web-ui/tests/e2e/README.md` — testid convention and phase/coverage documentation
 - `apps/web-ui/gateway/**/*.templ` + generated `*_templ.go` — additive `data-testid` attributes in agents, documents, objects, schema, blueprints, skills, backups, project settings, api tokens, MCP servers/shares, orgs/members/invites/profile, sessions templates (run `templ generate`)

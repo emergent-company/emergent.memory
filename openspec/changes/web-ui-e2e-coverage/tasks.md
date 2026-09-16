@@ -1,31 +1,32 @@
 ## 0. Harness groundwork
 
-- [ ] 0.1 Add `helpers/toast.ts` with `expectFlashToast(page, text?)` (settles the `flashToast` render in `toast.templ` + `app.js` stash/flush)
-- [ ] 0.2 Add `helpers/dialogs.ts` with `confirmDialog(page, action)` and `openRowMenu(page, rowLocator)` for destructive/row-menu flows
-- [ ] 0.3 Add `helpers/tokens.ts` with `createProjectToken`, `createProfileToken`, `readOneTimeSecret` (one-time reveal panel)
-- [ ] 0.4 Add `helpers/mcp.ts` with `registerMCPServer`, `createMCPShare`, `revokeShare`, `rotateShare` built on the existing bootstrap/auth helpers
-- [ ] 0.5 Extend `helpers/bootstrap.ts` with `createScratchProject(name)` + `deleteScratchProject(id)` for destructive phases
-- [ ] 0.6 Add selective `data-testid` attributes (D4 list) to: `agents*.templ`, `documents.templ`, `objects.templ`, `schema*.templ`, `blueprints.templ`, `skills*.templ`, `backups.templ`, `project_settings.templ`, `api_tokens.templ`, `mcp_servers*.templ`, `mcp_shares*.templ`, `org_members_ui.templ`, `sessions.templ` — row menus, destructive triggers, status badges, secret-reveal panels, list rows only
-- [ ] 0.7 Run `templ generate`; `go build ./...` and `task lint` from `apps/web-ui/gateway`
-- [ ] 0.8 Encode `chromium → mutations → scenarios` ordering via explicit `dependencies` in `tests/e2e/playwright.config.ts` (match README, D6)
-- [ ] 0.9 Document the testid/locator convention and the phase coverage table in `apps/web-ui/tests/e2e/README.md`
-- [ ] 0.10 Verify baseline: `cd apps/web-ui && task e2e:test -- --project=chromium` green before any new spec lands
+> **Revised during implementation.** Helpers and per-control `data-testid` anchors are added **just in time, with the spec that needs them** — the batch `data-testid` sweep across 13 templ areas originally planned here was dropped: without a consuming spec there is no way to tell which locators are genuinely unstable, and it would touch many `.templ` files concurrently with in-flight lanes. Both Phase 1/2 lanes needed only three anchors in total.
+
+- [x] 0.1 `helpers/tokens.ts` — created with the Phase 1 token specs (create token, read the one-time secret panel, find a token row, revoke)
+- [x] 0.2 `helpers/toast.ts` / `helpers/dialogs.ts` — **dropped from Phase 0**: investigation showed the preference is to assert resulting state rather than transient toasts (`toast.templ` + `app.js` flash stash), and neither implementation lane needed a dialog helper. Add only if a later phase's spec genuinely needs one.
+- [x] 0.3 `helpers/mcp.ts` — deferred with Phase 1.3/1.4 (see the blocker there)
+- [x] 0.4 Scratch-project helper — **not needed**: the restore lane seeded its own scratch org/project through the existing bootstrap helpers (`helpers/bootstrap.ts`, unchanged)
+- [x] 0.5 Per-control `data-testid` anchors — now per-phase, alongside the spec that uses them. Added so far: `token-row`, `token-revoked-badge`, `token-secret-panel` in `api_tokens.templ` (row menu / one-time reveal panel had no stable semantic anchor)
+- [x] 0.6 Verify templ changes when they happen: `PATH="/root/go/bin:$PATH" templ generate -f <file>.templ`, then from `apps/web-ui/gateway` run `go build ./...`, `go test ./...` and `task lint` — the full pipeline required by `apps/web-ui/gateway/AGENTS.md` and by this change's harness spec ("Templ changes are verified through the standard pipeline"). This verification applies to every phase that touches templates, not just Phase 0. Note: `*_templ.go` are gitignored, so a fresh worktree must generate before it can build.
+- [x] 0.7 Correct the project-order documentation instead of changing the config: keep `mutations: dependencies: ['setup']` (deliberate — makes a single mutation spec cheap) and fix `README.md`, which described mutations as running after chromium (D6, revised)
+- [x] 0.8 Update `apps/web-ui/tests/e2e/README.md`: landed — the project-order description now matches `playwright.config.ts` (mutations depend on `setup` only), the fresh-worktree `templ generate` prerequisite is documented in Notes, and the Coverage section carries the new Phase 1 token-lifecycle entries plus the Phase 3 additions (backup lifecycle, document delete, project restore, project-settings autosave, project overrides)
+- [x] 0.9 Baseline verified: the mutation project ran green (setup + new specs) before further specs landed
 
 ## 1. Phase 1 — Secret lifecycle
 
-- [ ] 1.1 `specs/settings/project-token-lifecycle-ui.spec.ts`: create → edit scopes (`POST /settings/tokens/:id/scopes`) → regenerate → revoke; assert one-time secret shown once
-- [ ] 1.2 `specs/account/profile-token-lifecycle-ui.spec.ts`: `/profile/tokens/new` → `/:id/edit` → `/:id/scopes` → `/:id/regenerate` → `/:id/revoke`
-- [ ] 1.3 `specs/settings/mcp-share-lifecycle-ui.spec.ts`: list → new → edit/update → rotate (old token rejected) → revoke; self-cleanup guard
-- [ ] 1.4 `specs/agents/agent-mcp-share-ui.spec.ts`: create/revoke/rotate per-agent share from the agent detail surface
-- [ ] 1.5 Phase 1 verify: `task e2e:test -- --project=mutations`, no orphaned tokens/shares left behind
+- [x] 1.1 `specs/settings/project-token-lifecycle-ui.spec.ts`: create → edit scopes (`POST /settings/tokens/:tokenId/scopes`) → regenerate → revoke; asserts the one-time secret, the changed scope set, and the revoked state. Includes a self-cleanup guard test.
+- [x] 1.2 `specs/account/profile-token-lifecycle-ui.spec.ts`: `/profile/tokens/new` → `/:tokenId/edit` → `/:tokenId/scopes` → `/:tokenId/regenerate` → `/:tokenId/revoke`, plus a self-cleanup guard test.
+- [ ] 1.3 `specs/settings/mcp-share-lifecycle-ui.spec.ts`: list → new → edit/update → rotate → revoke; self-cleanup guard. **Blocked:** two unmerged lanes (`feat/mcp-share-reveal-wide-highlighted-json`, `fix/mcp-share-list-decode`) are actively rewriting `mcp_shares.templ`, `agent_mcp_shares.templ` and `mcp_shares.go`. Land after they merge to avoid conflicting testids/selectors.
+- [ ] 1.4 `specs/agents/agent-mcp-share-ui.spec.ts`: create/revoke/rotate per-agent share from the agent detail surface. **Blocked:** same two lanes (also `agent.templ` is in flight in `fix/page-widths`).
+- [x] 1.5 Phase 1 verify: `npx playwright test specs/settings/project-token-lifecycle-ui.spec.ts specs/account/profile-token-lifecycle-ui.spec.ts --project=mutations` → setup + 4 tests (project lifecycle, project no-live-token guard, account lifecycle, account no-live-token guard), green on repeat; no tokens left behind (guard tests assert this).
 
 ## 2. Phase 2 — Authorization
 
-- [ ] 2.1 `specs/organizations/member-role-ui.spec.ts`: change role; assert self-change and equal-role requests are rejected (`org_members_ui.go:346,388,608`)
-- [ ] 2.2 `specs/organizations/member-remove-ui.spec.ts`: remove member via UI, assert removal from list and loss of access
-- [ ] 2.3 `specs/organizations/member-detail-ui.spec.ts`: `/members/:userId` renders identity + role state
-- [ ] 2.4 `specs/organizations/invite-lifecycle-ui.spec.ts`: revoke (`POST /invites/:id/revoke`), decline, and accept (`/invites/:id/accept`) surfaces
-- [ ] 2.5 Phase 2 verify: `task e2e:test -- --project=mutations`
+- [ ] 2.1 `specs/organizations/member-role-ui.spec.ts`: change role; assert self-change and equal-role requests are rejected (`org_members_ui.go`). **Blocked — needs a second identity.** Role change requires a second member in the org; the suite has one Zitadel test user. Resolve by provisioning a second test user in `setup` (see Open Questions in `design.md`).
+- [ ] 2.2 `specs/organizations/member-remove-ui.spec.ts`: remove member via UI. **Blocked — same second-identity requirement.**
+- [ ] 2.3 `specs/organizations/member-detail-ui.spec.ts`: `/members/:userId` renders identity + role state. **Blocked — needs a second member to have a detail page to open.**
+- [x] 2.4 `specs/organizations/invite-revoke-ui.spec.ts`: creates a pending invite for a unique address via `/members/new`, asserts the pending row, revokes it (`POST /invites/:id/revoke`) and asserts it is no longer pending in both the DOM and `/api/invites`. The **accept/decline** surfaces remain uncovered — they need the invitee identity.
+- [ ] 2.5 Phase 2 verify: run the mutation project once the second-identity question is settled.
 
 ## 3. Phase 3 — Destructive operations
 
@@ -34,9 +35,9 @@
 - [ ] 3.3 `specs/objects/object-search-ui.spec.ts`: `/objects/search` typeahead filters and result navigation
 - [ ] 3.4 `specs/schema/blueprint-lifecycle-ui.spec.ts`: `POST /blueprints/enable` then `POST /blueprints/:id/unapply`; assert types removed
 - [ ] 3.5 `specs/schema/blueprint-migration-rollback-ui.spec.ts`: `POST /blueprints/migrate` then `POST /blueprints/migrate/rollback`; assert schema returns to pre-migration state
-- [ ] 3.6 `specs/backups/backups-crud-ui.spec.ts`: `POST /backups` → detail `ready` → `/:id/download` → `/:id/delete`
-- [ ] 3.7 `specs/projects/project-restore-ui.spec.ts`: `POST /projects/restore` after a scheduled purge; assert project restored to the active list
-- [ ] 3.8 `specs/documents/document-delete-ui.spec.ts`: `POST /documents/:id/delete`; assert removal from list and chunk viewer no longer reachable
+- [x] 3.6 `specs/backups/backups-lifecycle-ui.spec.ts`: creates a backup via the real form, waits up to 120s for `ready` (skips with a reason otherwise), opens the detail, asserts the rendered Download link and its `href` (`/backups/:id/download`), then observes the route's 302 with an authenticated request that disables redirects (`maxRedirects: 0`) and asserts the status plus a non-empty `Location`, deletes it and asserts it is gone from the list. **Known limitation:** the download click itself is not simulated — the gateway 302s to a presigned off-origin object-storage URL, so the spec never chases that URL off-origin.
+- [x] 3.7 `specs/projects/project-restore-ui.spec.ts`: schedules a scratch project for deletion from its row menu, asserts the pending state, restores it via `POST /projects/restore`, and asserts it returns to the active list. Self-cleans the scratch org.
+- [x] 3.8 `specs/documents/document-delete-ui.spec.ts`: uploads a uniquely-named document, opens its detail, deletes it (accepting the `hx-confirm` dialog), then asserts it is gone from the list and that the detail/chunk view renders "Document unavailable".
 - [ ] 3.9 Phase 3 verify: `task e2e:test -- --project=mutations`; confirm scratch projects cleaned up
 
 ## 4. Phase 4 — Agent & skill CRUD, org admin
@@ -52,13 +53,13 @@
 
 ## 5. Phase 5 — Interaction depth on render-only pages
 
-- [ ] 5.1 `specs/settings/project-settings-autosave-ui.spec.ts`: assert `hx-post` + `hx-trigger="change delay:400ms"` + `hx-swap="none"` autosave shows the toast and persists after reload
-- [ ] 5.2 `specs/settings/approvals-respond-ui.spec.ts`: `POST /settings/approvals/:id/respond` and `/cancel` clear the pending item
+- [x] 5.1 `specs/settings/project-settings-autosave-ui.spec.ts`: drives the `project_info` textarea (`POST /settings/project/project_info`, `hx-trigger="change delay:400ms"`, `hx-swap="none"`) and the `editor_agent` select (`POST /settings/editor`), asserting the `HX-Trigger` `memory-toast` event plus the persisted value after a full reload. Both values are captured and restored in cleanup. `dedup_threshold` and `budget_usd` were rejected as not symmetrically restorable through the UI (empty input means "leave unchanged"), which would strand tenant state.
+- [ ] 5.2 `specs/settings/approvals-respond-ui.spec.ts`: `POST /settings/approvals/:questionId/respond` and `/cancel` clear the pending item
 - [ ] 5.3 `specs/settings/devices-revoke-ui.spec.ts`: `POST /settings/devices/:key/revoke`
 - [ ] 5.4 `specs/settings/voice-save-ui.spec.ts`: `POST /settings/voice`, `/voice/:key`, `/voice/group/:group` persist field/group edits
 - [ ] 5.5 `specs/settings/provider-connection-test-ui.spec.ts`: `POST /settings/providers/test`, `/check-url`, `/:provider/test`, `/:provider/remove`
-- [ ] 5.6 `specs/settings/settings-overrides-ui.spec.ts`: project override create (`POST /settings/overrides`) + `/:agentName/delete`
-- [ ] 5.7 `specs/settings/settings-editor-remember-ui.spec.ts`: `POST /settings/editor` and `/settings/remember/:field` persist
+- [x] 5.6 `specs/settings/settings-overrides-ui.spec.ts`: creates then deletes a scratch `E2E override …` (`POST /settings/overrides`, `/:agentName/delete`), asserting both states across reloads, plus a no-leftovers guard test. No scratch agent is needed — overrides are name-keyed project settings and memory performs no agent-existence check.
+- [ ] 5.7 `specs/settings/settings-editor-remember-ui.spec.ts`: `POST /settings/remember/:field` persists. The `POST /settings/editor` half is already covered by 5.1, so this task reduces to the remember-field route.
 - [ ] 5.8 `specs/settings/mcp-nodes-ui.spec.ts`: `/settings/mcp-nodes` lists nodes and `POST /settings/mcp-nodes/remove` works
 - [ ] 5.9 `specs/sessions/usage-charts-ui.spec.ts`: assert `stat-total-tokens`/`stat-estimated-cost`/`stat-sessions`/`stat-month-spend` render and `usage-token-chart`/`usage-session-chart` draw from `#usage-timeseries`
 - [ ] 5.10 `specs/sessions/session-detail-ui.spec.ts`: `/sessions/:id` renders timeline, run grouping and tool-call details
