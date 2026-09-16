@@ -405,19 +405,26 @@ func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSumm
 // cannot currently run (the model-availability error state), or an empty map
 // when none apply. Best-effort: a failed default-model or provider fetch
 // degrades to "no default / no providers" (captured, mirroring uiAgent); an
-// agent whose definition can't be fetched is skipped. The message text comes
-// from agentModelDashboardIssue so the chat banner matches the agent
-// dashboard/settings warnings exactly.
+// agent whose definition can't be fetched is skipped. A failed provider fetch
+// degrades to "no providers"; a failed model-config fetch leaves the pinned
+// default unknown, so the classifier keeps its legacy resolved-model rule and
+// never fabricates an unpinned warning. The message text comes from
+// agentModelDashboardIssue so the chat banner matches the agent dashboard/
+// settings warnings exactly.
 func (s *Server) chatModelWarnings(ctx context.Context, agents []AgentDefinitionSummary) map[string]string {
 	warnings := map[string]string{}
 	if len(agents) == 0 {
 		return warnings
 	}
 	var defaultModel string
-	if mc, err := s.memory.GetProjectModelConfig(ctx); err == nil && mc != nil {
-		defaultModel = mc.GenerativeModel
-	} else if err != nil {
+	modelConfigKnown := false
+	if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
 		captureError(err)
+	} else {
+		if mc != nil {
+			defaultModel = mc.GenerativeModel
+		}
+		modelConfigKnown = true
 	}
 	providers := []string{}
 	if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
@@ -437,7 +444,7 @@ func (s *Server) chatModelWarnings(ctx context.Context, agents []AgentDefinition
 		if def == nil {
 			continue
 		}
-		if sev, msg := agentModelDashboardIssue(def, defaultModel, len(providers) > 0, providers); sev == "error" {
+		if sev, msg := agentModelDashboardIssue(def, defaultModel, modelConfigKnown, len(providers) > 0, providers); sev == "error" {
 			warnings[agents[i].ID] = msg
 		}
 	}

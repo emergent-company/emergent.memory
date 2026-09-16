@@ -21,9 +21,16 @@ type agentDashboardData struct {
 	ChatsErr error
 	LoadErr  error
 
-	// DefaultModel is the project's default generative model (best-effort
-	// fallback when memory does not report EffectiveModel).
+	// DefaultModel is the project's PINNED default generative model (project
+	// model-config); "" when none is pinned. The provider-credential fallback is
+	// deliberately NOT folded in — ModelConfigKnown + HasProviders drive the
+	// "isn't pinned" warning.
 	DefaultModel string
+
+	// ModelConfigKnown reports whether the project model-config fetch succeeded,
+	// so DefaultModel == "" reliably means "no pinned default" rather than
+	// "signal unavailable".
+	ModelConfigKnown bool
 
 	// HasProviders reports whether the project has at least one configured
 	// provider (drives the "agent can't chat" warning for default-less agents).
@@ -46,10 +53,13 @@ func (s *Server) uiAgent(c echo.Context) error {
 	}
 	data := agentDashboardData{Agent: agent}
 
-	if mc, err := s.memory.GetProjectModelConfig(ctx); err == nil && mc != nil {
-		data.DefaultModel = mc.GenerativeModel
-	} else if err != nil {
+	if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
 		captureError(err)
+	} else {
+		if mc != nil {
+			data.DefaultModel = mc.GenerativeModel
+		}
+		data.ModelConfigKnown = true
 	}
 
 	if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
@@ -134,8 +144,12 @@ type agentSettingsData struct {
 	FlashMsg   string
 	FlashErr   error
 
-	// DefaultModel is the project's default generative model (best-effort).
+	// DefaultModel is the project's PINNED default generative model (project
+	// model-config); "" when none is pinned.
 	DefaultModel string
+	// ModelConfigKnown reports whether the project model-config fetch succeeded
+	// (see agentDashboardData.ModelConfigKnown).
+	ModelConfigKnown bool
 	// HasProviders reports whether the project has a configured provider.
 	HasProviders bool
 	// ProviderNames holds the configured provider keys of the project, e.g.
@@ -187,10 +201,13 @@ func (s *Server) uiAgentSettings(c echo.Context) error {
 	deriveDelegation(agent) // reconstruct Delegation for the form's prefill
 	data.Agent = agent
 
-	if mc, err := s.memory.GetProjectModelConfig(ctx); err == nil && mc != nil {
-		data.DefaultModel = mc.GenerativeModel
-	} else if err != nil {
+	if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
 		captureError(err)
+	} else {
+		if mc != nil {
+			data.DefaultModel = mc.GenerativeModel
+		}
+		data.ModelConfigKnown = true
 	}
 	if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
 		data.HasProviders = len(ps) > 0
@@ -487,25 +504,37 @@ type agentModelIssue struct {
 }
 
 // classifyAgentModelIssue decides whether (and why) an agent's model can't be
-// served. Legacy no-explicit-model rules are unchanged: "error" when the
-// project has no configured provider and no default resolves, "warning" when
-// providers exist but nothing pins the model, none when a model resolves. An
-// explicit model is "error" when the project has no configured provider or its
-// provider prefix matches no configured provider; a bare model (no "/") with
-// providers configured is treated as satisfied, and a matching provider is
-// satisfied even when the model name isn't in its catalog (custom base URLs).
-func classifyAgentModelIssue(agent *AgentDefinition, defaultModel string, hasProviders bool, providerNames []string) agentModelIssue {
+// served. For an agent with no explicit model the PINNED project default
+// decides: "error" when the project has no configured provider, "warning" when
+// providers exist but the model is only a provider-credential fallback (no
+// pinned project default), none when a pinned project default resolves. Memory
+// always resolves a provider-credential fallback into EffectiveModel, so that
+// fallback must not suppress the "isn't pinned" warning. pinnedDefaultKnown
+// false means the project model-config fetch failed — the legacy rule (any
+// resolvable model suppresses the warning) is kept so a transient fetch error
+// never fabricates a warning. An explicit model is "error" when the project has
+// no configured provider or its provider prefix matches no configured provider;
+// a bare model (no "/") with providers configured is treated as satisfied, and
+// a matching provider is satisfied even when the model name isn't in its
+// catalog (custom base URLs).
+func classifyAgentModelIssue(agent *AgentDefinition, pinnedDefault string, pinnedDefaultKnown, hasProviders bool, providerNames []string) agentModelIssue {
 	if agent == nil {
 		return agentModelIssue{}
 	}
 	if agent.Model == nil || agent.Model.Name == "" {
-		if resolved, _ := agentModelName(agent, defaultModel); resolved != "" {
-			return agentModelIssue{}
-		}
 		if !hasProviders {
 			return agentModelIssue{sev: "error"}
 		}
-		return agentModelIssue{sev: "warning"}
+		if !pinnedDefaultKnown {
+			if resolved, _ := agentModelName(agent, pinnedDefault); resolved != "" {
+				return agentModelIssue{}
+			}
+			return agentModelIssue{sev: "warning"}
+		}
+		if pinnedDefault == "" {
+			return agentModelIssue{sev: "warning"}
+		}
+		return agentModelIssue{}
 	}
 	model := agent.Model.Name
 	if !hasProviders {
@@ -520,8 +549,8 @@ func classifyAgentModelIssue(agent *AgentDefinition, defaultModel string, hasPro
 
 // agentModelDashboardIssue returns the severity and copy for the agent
 // dashboard's model-availability notice, or ("", "") when no warning applies.
-func agentModelDashboardIssue(agent *AgentDefinition, defaultModel string, hasProviders bool, providerNames []string) (sev, msg string) {
-	issue := classifyAgentModelIssue(agent, defaultModel, hasProviders, providerNames)
+func agentModelDashboardIssue(agent *AgentDefinition, pinnedDefault string, pinnedDefaultKnown, hasProviders bool, providerNames []string) (sev, msg string) {
+	issue := classifyAgentModelIssue(agent, pinnedDefault, pinnedDefaultKnown, hasProviders, providerNames)
 	switch {
 	case issue.sev == "":
 		return "", ""
@@ -540,8 +569,8 @@ func agentModelDashboardIssue(agent *AgentDefinition, defaultModel string, hasPr
 // agentModelSettingsIssue returns the severity and copy for the agent-settings
 // Model section's availability warning, or ("", "") when none applies. Copy
 // mirrors the dashboard's but uses "pinned" wording.
-func agentModelSettingsIssue(agent *AgentDefinition, defaultModel string, hasProviders bool, providerNames []string) (sev, msg string) {
-	issue := classifyAgentModelIssue(agent, defaultModel, hasProviders, providerNames)
+func agentModelSettingsIssue(agent *AgentDefinition, pinnedDefault string, pinnedDefaultKnown, hasProviders bool, providerNames []string) (sev, msg string) {
+	issue := classifyAgentModelIssue(agent, pinnedDefault, pinnedDefaultKnown, hasProviders, providerNames)
 	switch {
 	case issue.sev == "":
 		return "", ""
