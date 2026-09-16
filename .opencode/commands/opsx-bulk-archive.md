@@ -1,13 +1,5 @@
 ---
-name: openspec-bulk-archive-change
-description: Archive multiple completed changes at once. Use when archiving several parallel changes.
-allowed-tools: Bash(openspec:*)
-license: MIT
-compatibility: Requires openspec CLI.
-metadata:
-  author: openspec
-  version: "1.0"
-  generatedBy: "1.13.0"
+description: "Archive multiple completed changes at once"
 ---
 
 Archive multiple completed changes in a single operation.
@@ -82,6 +74,7 @@ This skill allows you to batch-archive changes, handling spec conflicts intellig
         lookup for that change; do not infer deltas from unrelated artifacts.
       - Evaluate this independently for every change, including mixed-schema
         batches where some schemas have no `specs` artifact.
+
 4. **Detect spec conflicts**
 
    Build a map keyed by `<capability-path>`, the exact path relative to `specs/`:
@@ -184,7 +177,7 @@ This skill allows you to batch-archive changes, handling spec conflicts intellig
    Process changes in the determined order (respecting conflict resolution):
 
    a. **Sync included delta specs**:
-      - Run the `openspec-sync-specs` workflow inline (agent-driven intelligent merge) only for changes with entries in `includedDeltas`, passing only the included delta paths and explicitly instructing it to ignore that change's `excludedDeltas`. Wait for it to finish.
+      - Run the `/opsx-sync` workflow inline (agent-driven intelligent merge) only for changes with entries in `includedDeltas`, passing only the included delta paths and explicitly instructing it to ignore that change's `excludedDeltas`. Wait for it to finish.
       - For conflicts, apply in resolved order.
       - Pass that change's snapshot from `specsRuleSnapshots` (looked up by change
         name) into inline sync by reference; inline sync must reuse it without
@@ -337,7 +330,7 @@ No active changes found. Create a new change to get started.
 - Preserve .openspec.yaml when moving to archive
 - Archive target name follows the canonical archive-target rule from the archive workflow step 5: use the change name as-is only when it starts with a full `YYYY-MM-DD-` prefix (four-digit year, two-digit month, two-digit day); otherwise prepend the current date as `YYYY-MM-DD-<change-name>`. Never stack a second date, and never treat a partial prefix such as `2026-1-5-foo` as already dated
 - If archive target exists, fail that change but continue with others
-- If sync is requested, run the `openspec-sync-specs` workflow inline (agent-driven) for each change with included delta specs
+- If sync is requested, run the `/opsx-sync` workflow inline (agent-driven) for each change with included delta specs
 - Carry the per-delta `includedDeltas` and `excludedDeltas` decisions into execution; sync and verify only included deltas
 - Report every excluded delta as `sync skipped` without treating the archive itself as skipped
 - Never archive a change while a spec sync is still in flight — run the sync inline and verify main specs at `<planningHome.root>/openspec/specs/<capability-path>/spec.md` before moving `changeRoot`
