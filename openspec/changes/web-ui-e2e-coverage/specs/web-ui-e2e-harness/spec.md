@@ -70,7 +70,8 @@ Specs that create or mutate state SHALL confine themselves to entities they crea
 
 #### Scenario: Scratch entity cleanup
 - **WHEN** a spec creates a disposable entity
-- **THEN** it deletes that entity in cleanup regardless of pass or fail
+- **THEN** it removes that entity from live state in cleanup regardless of pass or fail
+- **AND** when the gateway exposes no delete route for it (graph objects), it deletes through the memory API using the signed-in user's own session token
 
 #### Scenario: Audit-retained resources
 - **WHEN** a spec creates a credential the product retains as an audit trail on revoke (a revoked API token stays as a row with a `Revoked` badge)
@@ -78,7 +79,11 @@ Specs that create or mutate state SHALL confine themselves to entities they crea
 
 #### Scenario: Self-cleanup guard
 - **WHEN** a spec creates an enumerable resource under the bootstrap tenant
-- **THEN** a trailing guard test asserts that no leftover `E2E`-prefixed resource remains
+- **THEN** a trailing guard test asserts that no leftover `E2E`-prefixed resource remains in live state
+
+#### Scenario: Soft-deleted graph entities are not "left behind" in live state
+- **WHEN** a spec cleans up a graph object or relationship
+- **THEN** "no leftover" means absent from live listings and search results, not absent from the database: graph deletes are soft, and the retained archive row stays restorable via `POST /api/graph/objects/:id/restore` and `POST /api/graph/relationships/:id/restore`
 
 #### Scenario: Shared bootstrap state is not depended on
 - **WHEN** a spec requires seeded schemas, blueprints, or providers to survive
