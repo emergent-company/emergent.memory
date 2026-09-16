@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"context"
+
 	"go.uber.org/fx"
 )
 
@@ -25,5 +27,22 @@ var Module = fx.Module("mcp",
 	fx.Provide(NewSSEHandler),
 	fx.Provide(NewStreamableHTTPHandler),
 	fx.Provide(NewAgentEndpointHandler),
+	fx.Provide(NewAgentMCPSessionReaper),
 	fx.Invoke(RegisterRoutes),
+	fx.Invoke(registerAgentMCPSessionReaper),
 )
+
+// registerAgentMCPSessionReaper wires the expired-session reaper into the fx
+// lifecycle, mirroring agents.registerStaleRunReaper.
+func registerAgentMCPSessionReaper(lc fx.Lifecycle, reaper *AgentMCPSessionReaper) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			reaper.Start(ctx)
+			return nil
+		},
+		OnStop: func(_ context.Context) error {
+			reaper.Stop()
+			return nil
+		},
+	})
+}

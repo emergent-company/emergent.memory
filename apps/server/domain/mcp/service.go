@@ -136,6 +136,11 @@ type Service struct {
 	// are overridable in tests.
 	agentEndpoints agentMCPEndpointStore
 	agentKeys      agentMCPKeyStore
+
+	// Persistent agent MCP conversation sessions (agent-mcp-sessions). Session
+	// ownership/metadata only; history lives in the ADK session store. Default
+	// is derived from DB in NewService but is overridable in tests.
+	agentSessions agentMCPSessionStore
 }
 
 // ServiceParams bundles optional dependencies for NewService.
@@ -223,6 +228,7 @@ func NewService(p ServiceParams) *Service {
 		agentShares:             agentMCPShareOrNil(p.DB),
 		agentEndpoints:          agentMCPEndpointOrNil(p.DB),
 		agentKeys:               agentMCPKeyOrNil(p.DB),
+		agentSessions:           agentMCPSessionOrNil(p.DB),
 	}
 }
 

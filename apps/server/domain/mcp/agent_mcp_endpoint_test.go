@@ -169,6 +169,7 @@ func (f *fakeKeyStore) SetKeyToken(_ context.Context, id, tokenID string, at tim
 type endpointTestFixture struct {
 	endpoints *fakeEndpointStore
 	keys      *fakeKeyStore
+	sessions  *fakeSessionStore
 	tokenSvc  *fakeTokenSvc
 	dir       *fakeAgentDir
 	handler   *stubAgentHandler
@@ -195,11 +196,12 @@ func newEndpointTestFixture() *endpointTestFixture {
 	svc := &Service{
 		agentEndpoints:   endpoints,
 		agentKeys:        keys,
+		agentSessions:    newFakeSessionStore(),
 		shareTokens:      tokenSvc,
 		agentDir:         dir,
 		agentToolHandler: handler,
 	}
-	return &endpointTestFixture{endpoints: endpoints, keys: keys, tokenSvc: tokenSvc, dir: dir, handler: handler, svc: svc}
+	return &endpointTestFixture{endpoints: endpoints, keys: keys, sessions: svc.agentSessions.(*fakeSessionStore), tokenSvc: tokenSvc, dir: dir, handler: handler, svc: svc}
 }
 
 // ============================================================================

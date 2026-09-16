@@ -11,8 +11,22 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
-// AgentMCPSessionStatusActive is the status a session starts in.
+// AgentMCPSessionStatusActive is the status a session starts in and returns to
+// after a successful or failed turn.
 const AgentMCPSessionStatusActive = "active"
+
+// Session lifecycle statuses.
+const (
+	// AgentMCPSessionStatusRunning marks a turn in flight. A second concurrent
+	// turn is rejected while a session is running (unless the run looks stuck).
+	AgentMCPSessionStatusRunning = "running"
+	// AgentMCPSessionStatusInterrupted marks a turn canceled mid-run. An
+	// interrupted session remains continuable.
+	AgentMCPSessionStatusInterrupted = "interrupted"
+	// AgentMCPSessionStatusExpired marks a session past its TTL. Expired
+	// sessions are not continuable.
+	AgentMCPSessionStatusExpired = "expired"
+)
 
 // ============================================================================
 // Model
@@ -55,6 +69,20 @@ type agentMCPSessionStore interface {
 	// TouchSession records one more turn in a single update: it increments
 	// turn_count, adds steps to total_steps, and sets last_run_id/last_active_at.
 	TouchSession(ctx context.Context, id string, steps int, lastRunID *string, at time.Time) error
+	// ClaimSession is the per-session optimistic CAS that serializes turns. It
+	// flips a session to "running" only when it is active/interrupted, or when it
+	// is already running but its last_active_at is older than staleBefore (a
+	// crashed run that must be recoverable). It reports whether the claim won;
+	// a false result means another turn holds the session and the caller must
+	// return "session busy".
+	ClaimSession(ctx context.Context, id string, at, staleBefore time.Time) (bool, error)
+	// ReleaseSession records the terminal status of a claimed turn (active or
+	// interrupted) and refreshes last_active_at.
+	ReleaseSession(ctx context.Context, id, status string, at time.Time) error
+	// MarkExpiredSessions marks every non-expired session whose expiry has passed
+	// as "expired" and returns how many rows changed. It is the reaper's only
+	// write and never touches sessions without an expiry.
+	MarkExpiredSessions(ctx context.Context, now time.Time) (int, error)
 }
 
 // ============================================================================
@@ -158,4 +186,58 @@ func (r *bunAgentMCPSessionStore) TouchSession(ctx context.Context, id string, s
 		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return nil
+}
+
+func (r *bunAgentMCPSessionStore) ClaimSession(ctx context.Context, id string, at, staleBefore time.Time) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*AgentMCPSession)(nil)).
+		Set("status = ?", AgentMCPSessionStatusRunning).
+		Set("last_active_at = ?", at).
+		Where("id = ?", id).
+		Where(
+			"(status IN (?) OR (status = ? AND last_active_at < ?))",
+			bun.In([]string{AgentMCPSessionStatusActive, AgentMCPSessionStatusInterrupted}),
+			AgentMCPSessionStatusRunning,
+			staleBefore,
+		).
+		Exec(ctx)
+	if err != nil {
+		return false, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return n > 0, nil
+}
+
+func (r *bunAgentMCPSessionStore) ReleaseSession(ctx context.Context, id, status string, at time.Time) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentMCPSession)(nil)).
+		Set("status = ?", status).
+		Set("last_active_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return nil
+}
+
+func (r *bunAgentMCPSessionStore) MarkExpiredSessions(ctx context.Context, now time.Time) (int, error) {
+	res, err := r.db.NewUpdate().
+		Model((*AgentMCPSession)(nil)).
+		Set("status = ?", AgentMCPSessionStatusExpired).
+		Where("status <> ?", AgentMCPSessionStatusExpired).
+		Where("expires_at IS NOT NULL").
+		Where("expires_at <= ?", now).
+		Exec(ctx)
+	if err != nil {
+		return 0, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return int(n), nil
 }

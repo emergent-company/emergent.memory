@@ -270,6 +270,16 @@ type stubAgentHandler struct {
 	runCalled  bool
 	runCount   int
 	runAgentID string
+
+	// RunAgentInSession scaffolding (persistent session tests).
+	runSteps       int
+	runSessionRefs []string
+	runMessages    []string
+	// runStarted, when non-nil, receives a token each time a session turn
+	// begins. runBlock, when non-nil, blocks the turn until it is closed or the
+	// context is canceled (concurrency/cancellation tests).
+	runStarted chan struct{}
+	runBlock   chan struct{}
 }
 
 func (s *stubAgentHandler) ExecuteListAgents(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
@@ -394,6 +404,34 @@ func (s *stubAgentHandler) RunAgentOnce(_ context.Context, _, agentID, _ string,
 		return "", "run-1", s.runErr
 	}
 	return s.runReply, "run-1", nil
+}
+
+// RunAgentInSession mirrors RunAgentOnce while recording the session ref and
+// message so tests can assert that continuation reuses one ADK session key.
+func (s *stubAgentHandler) RunAgentInSession(ctx context.Context, _, agentID, sessionRef, message string, _ AgentRunBudget) (string, string, int, error) {
+	s.runCalled = true
+	s.runCount++
+	s.runAgentID = agentID
+	s.runSessionRefs = append(s.runSessionRefs, sessionRef)
+	s.runMessages = append(s.runMessages, message)
+	steps := s.runSteps
+	if steps == 0 {
+		steps = 1
+	}
+	if s.runStarted != nil {
+		s.runStarted <- struct{}{}
+	}
+	if s.runBlock != nil {
+		select {
+		case <-s.runBlock:
+		case <-ctx.Done():
+			return "", "run-1", steps, ctx.Err()
+		}
+	}
+	if s.runErr != nil {
+		return "", "run-1", steps, s.runErr
+	}
+	return s.runReply, "run-1", steps, nil
 }
 
 // ============================================================================

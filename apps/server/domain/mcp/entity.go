@@ -147,6 +147,13 @@ type AgentToolHandler interface {
 	// per-agent MCP endpoint. An AgentRunError is returned (wrapped) for
 	// unavailable agents, failed runs, human-input pauses, and budget exhaustion.
 	RunAgentOnce(ctx context.Context, projectID, agentID, message string, budget AgentRunBudget) (reply string, runID string, err error)
+
+	// RunAgentInSession runs one agent turn inside a persistent conversation
+	// session. It behaves exactly like RunAgentOnce but carries sessionRef to the
+	// executor as ExecuteRequest.SessionID so successive turns share context.
+	// The returned steps is the number of agent steps the executor ran, used for
+	// the cumulative session budget.
+	RunAgentInSession(ctx context.Context, projectID, agentID, sessionRef, message string, budget AgentRunBudget) (reply string, runID string, steps int, err error)
 }
 
 // AgentRunBudget bounds a single synchronous run started by the per-agent MCP

@@ -47,7 +47,36 @@ type agentOnceRepository interface {
 // to structured tool errors. A human-in-the-loop pause yields
 // mcp.AgentRunErrorPaused carrying the pending question; the caller must not
 // fabricate a reply.
+//
+// It is a thin wrapper over runAgentTurn that leaves the ADK session key
+// per-run (SessionID empty), preserving one-shot semantics.
 func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, message string, budget mcp.AgentRunBudget) (string, string, error) {
+	reply, runID, _, err := h.runAgentTurn(ctx, projectID, agentID, "", message, budget)
+	return reply, runID, err
+}
+
+// RunAgentInSession runs one agent turn inside a persistent conversation
+// session. It is identical to RunAgentOnce except that it sets
+// ExecuteRequest.SessionID, so the executor keys the ADK session as
+// "session:<projectID>:<sessionRef>" and successive turns share history
+// (cross-run load/token-trim/LLM-compress, executor.go).
+//
+// It is a NEW entry point; RunAgentOnce keeps its four-argument signature and
+// its one-shot behaviour. The returned step count is the number of agent steps
+// the executor actually ran this turn, used by the caller to enforce a
+// cumulative session budget.
+func (h *MCPToolHandler) RunAgentInSession(ctx context.Context, projectID, agentID, sessionRef, message string, budget mcp.AgentRunBudget) (string, string, int, error) {
+	return h.runAgentTurn(ctx, projectID, agentID, sessionRef, message, budget)
+}
+
+// runAgentTurn is the shared execution core for RunAgentOnce and
+// RunAgentInSession. sessionRef is empty for the one-shot path; when non-empty
+// it is carried to the executor as ExecuteRequest.SessionID.
+//
+// Failures are returned as *mcp.AgentRunError; the reply extraction
+// (assistantReply) and error mapping live here and are shared, never
+// duplicated.
+func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, sessionRef, message string, budget mcp.AgentRunBudget) (string, string, int, error) {
 	repo := h.onceRepo
 	if repo == nil {
 		if h.repo != nil {
@@ -61,28 +90,28 @@ func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, m
 		}
 	}
 	if repo == nil || runner == nil {
-		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent execution is unavailable"}
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent execution is unavailable"}
 	}
 
 	message = strings.TrimSpace(message)
 	if message == "" {
-		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "message is required"}
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "message is required"}
 	}
 
 	agent, err := repo.FindByID(ctx, agentID, &projectID)
 	if err != nil {
-		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent: " + err.Error()}
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent: " + err.Error()}
 	}
 	if agent == nil {
-		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent not found"}
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent not found"}
 	}
 	if !agent.Enabled {
-		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent is disabled"}
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorUnavailable, Message: "agent is disabled"}
 	}
 
 	def, err := repo.ResolveDefinitionForAgent(ctx, agent)
 	if err != nil {
-		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent definition: " + err.Error()}
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent definition: " + err.Error()}
 	}
 
 	orgID := auth.OrgIDFromContext(ctx)
@@ -108,11 +137,19 @@ func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, m
 		ProjectID:       projectID,
 		OrgID:           orgID,
 		UserMessage:     message,
+		SessionID:       sessionRef,
 		MaxSteps:        &maxSteps,
 		Timeout:         &timeout,
 	})
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
+	}
+
+	// The executor's per-turn step count is the unit of cumulative session
+	// budget accounting. Zero when no result was produced.
+	steps := 0
+	if result != nil {
+		steps = result.Steps
 	}
 
 	// A context deadline is a budget exhaustion regardless of how the executor
@@ -122,17 +159,17 @@ func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, m
 		if result != nil {
 			runID = result.RunID
 		}
-		return "", runID, &mcp.AgentRunError{
+		return "", runID, steps, &mcp.AgentRunError{
 			Kind:    mcp.AgentRunErrorBudget,
 			Message: "agent run exceeded the time budget",
 			RunID:   runID,
 		}
 	}
 	if err != nil {
-		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "agent run failed: " + err.Error()}
+		return "", "", steps, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "agent run failed: " + err.Error()}
 	}
 	if result == nil {
-		return "", "", &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "agent run produced no result"}
+		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "agent run produced no result"}
 	}
 
 	runID := result.RunID
@@ -141,20 +178,20 @@ func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, m
 		// A pause with a pending question needs human input; a pause without one
 		// is the step-limit budget being exhausted.
 		if question := pendingQuestionText(ctx, repo, runID); question != "" {
-			return "", runID, &mcp.AgentRunError{
+			return "", runID, steps, &mcp.AgentRunError{
 				Kind:     mcp.AgentRunErrorPaused,
 				Message:  "agent run paused awaiting human input",
 				Question: question,
 				RunID:    runID,
 			}
 		}
-		return "", runID, &mcp.AgentRunError{
+		return "", runID, steps, &mcp.AgentRunError{
 			Kind:    mcp.AgentRunErrorBudget,
 			Message: "agent run exceeded the step budget",
 			RunID:   runID,
 		}
 	case RunStatusError:
-		return "", runID, &mcp.AgentRunError{
+		return "", runID, steps, &mcp.AgentRunError{
 			Kind:    mcp.AgentRunErrorFailed,
 			Message: runFailureMessage(ctx, repo, runID, result),
 			RunID:   runID,
@@ -163,9 +200,17 @@ func (h *MCPToolHandler) RunAgentOnce(ctx context.Context, projectID, agentID, m
 
 	reply, err := assistantReply(ctx, repo, runID)
 	if err != nil {
-		return "", runID, err
+		return "", runID, steps, err
 	}
-	return reply, runID, nil
+	return reply, runID, steps, nil
+}
+
+// agentADKSessionKey derives the ADK session key for a caller-supplied session
+// ref. It is the single definition of the cross-run session key namespace:
+// executor.Execute uses it when ExecuteRequest.SessionID is set, and the session
+// tests assert against it.
+func agentADKSessionKey(projectID, sessionRef string) string {
+	return "session:" + projectID + ":" + sessionRef
 }
 
 // pendingQuestionText returns the first pending question for a run, or "".
