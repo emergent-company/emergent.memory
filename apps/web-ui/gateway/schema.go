@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -436,9 +437,9 @@ func (s *Server) uiSchemaObjectTypeEdit(c echo.Context) error {
 }
 
 // uiSchemaObjectTypeUpdate persists an object-type edit. A project-authored
-// type writes through to its owning pack; a blueprint-derived type is copied
-// into the project-owned override pack instead (design D1). The type name is
-// immutable.
+// type writes through to its owning pack; a blueprint-derived or builtin/shared
+// type is copied into the project-owned override pack instead (design D1). The
+// type name is immutable.
 //
 // The editor form is distinct from the JSON API: it posts _ui=1 and, on a
 // validation or backend error, gets the editor back (200) with the submitted
@@ -473,12 +474,12 @@ func (s *Server) uiSchemaObjectTypeUpdate(c echo.Context) error {
 		}
 		return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("object type %q not found", name)})
 	}
-	if prov := provenanceFor(s.buildProvenanceIndex(ctx), *found); prov != nil {
+	prov := provenanceFor(s.buildProvenanceIndex(ctx), *found)
+	if prov != nil {
+		// Blueprint-derived type: copy into the project-owned override pack
+		// (design D1); the blueprint's own pack is never mutated.
 		if err := s.upsertOverrideType(ctx, edit); err != nil {
-			if uiForm {
-				return s.renderEditorError(c, name, err)
-			}
-			return blueprintMemoryError(c, err)
+			return s.objectTypeUpdateError(c, uiForm, name, err)
 		}
 	} else {
 		if found.SchemaID == "" {
@@ -488,14 +489,51 @@ func (s *Server) uiSchemaObjectTypeUpdate(c echo.Context) error {
 			}
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
-		if err := s.memory.UpdateSchemaPack(ctx, found.SchemaID, edit); err != nil {
-			if uiForm {
-				return s.renderEditorError(c, name, err)
+		// A project-authored type is edited in place only when its owning pack
+		// is actually project-owned. Builtin/shared packs (source="builtin",
+		// project_id NULL) are not directly editable — copy them into the
+		// override pack instead.
+		owned, err := s.schemaPackOwnedByProject(ctx, found.SchemaID)
+		if err != nil {
+			return s.objectTypeUpdateError(c, uiForm, name, err)
+		}
+		if !owned {
+			if err := s.upsertOverrideType(ctx, edit); err != nil {
+				return s.objectTypeUpdateError(c, uiForm, name, err)
 			}
-			return blueprintMemoryError(c, err)
+		} else {
+			if err := s.memory.UpdateSchemaPack(ctx, found.SchemaID, edit); err != nil {
+				return s.objectTypeUpdateError(c, uiForm, name, err)
+			}
 		}
 	}
 	return c.Redirect(http.StatusSeeOther, "/schema/object-types/"+url.PathEscape(name)+"?updated=1")
+}
+
+// objectTypeUpdateError renders an object-type update failure: the editor
+// (200) with the inline error for a browser form, or the JSON status-code
+// contract otherwise.
+func (s *Server) objectTypeUpdateError(c echo.Context, uiForm bool, name string, err error) error {
+	if uiForm {
+		return s.renderEditorError(c, name, err)
+	}
+	return blueprintMemoryError(c, err)
+}
+
+// schemaPackOwnedByProject reports whether schemaID names a pack the project
+// owns and can therefore edit in place. The project-scoped catalog
+// (ListAllSchemas) excludes builtin/shared packs (source="builtin",
+// project_id NULL), so an unknown schemaID means the type must be edited via
+// the copy-on-write override pack (design D1) instead of in place.
+func (s *Server) schemaPackOwnedByProject(ctx context.Context, schemaID string) (bool, error) {
+	if schemaID == "" {
+		return false, nil
+	}
+	schemas, err := s.memory.ListAllSchemas(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(schemas, func(sc SchemaInfo) bool { return sc.ID == schemaID }), nil
 }
 
 // renderEditorError re-renders the object-type editor with the submitted values

@@ -107,8 +107,9 @@ func (m *MemoryClient) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTyp
 	return out, nil
 }
 
-// SchemaInfo is one registered schema in memory's global registry (from the
-// MCP schema-list tool). project_id is empty for global/built-in schemas.
+// SchemaInfo is one project-owned schema in the catalog, from the
+// project-scoped schema-list endpoint. project_id is always the caller's
+// project; builtin/shared packs (NULL project_id) are never returned.
 type SchemaInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -137,11 +138,11 @@ type BlueprintSchema struct {
 	Migrations              *SchemaMigrationHints `json:"migrations,omitempty"`
 }
 
-// ListAllSchemas lists the schema catalog visible to the current project
-// (project-owned + global packs) via the REST schema-catalog endpoint — the
-// REST mirror of the MCP schema-list tool (memory PR #389), which retires the
-// MCP handshake + tools/call round-trip. Source for the built-in / registry
-// blueprint catalog.
+// ListAllSchemas lists the project-owned schema catalog via the REST
+// schema-list endpoint — the mirror of the MCP schema-list tool (memory PR
+// #389), retiring the MCP handshake + tools/call round-trip. Strictly
+// project-scoped: builtin/shared packs (NULL project_id) are never returned.
+// Source for the registry portion of the available-schemas list.
 func (m *MemoryClient) ListAllSchemas(ctx context.Context) ([]SchemaInfo, error) {
 	project := m.projectIDFor(ctx)
 	if project == "" {
