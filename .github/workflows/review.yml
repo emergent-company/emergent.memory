@@ -21,7 +21,7 @@ jobs:
       contents: read
       pull-requests: write
     runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout base (trusted scripts)
         uses: actions/checkout@v4

@@ -75,6 +75,41 @@ def parse_review(content: str) -> dict:
         return {"verdict": "COMMENT", "body": s}
 
 
+def review_is_valid(content: str) -> bool:
+    """True when the model content carries the expected review JSON (a dict with
+    a `verdict` key). Used to decide whether a retry is worth it."""
+    s = (content or "").strip()
+    if not s:
+        return False
+    if s.startswith("```"):
+        s = s.split("\n", 1)[-1]
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+    i, j = s.find("{"), s.rfind("}")
+    if i == -1 or j == -1 or j <= i:
+        return False
+    try:
+        parsed = json.loads(s[i : j + 1])
+    except json.JSONDecodeError:
+        return False
+    return isinstance(parsed, dict) and "verdict" in parsed
+
+
+def request_review(base_url: str, key: str, payload: dict) -> str:
+    """One LiteLLM chat-completions call; returns the assistant content string."""
+    req = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=600) as r:
+        resp = json.loads(r.read())
+    return resp["choices"][0]["message"].get("content") or ""
+
+
 def build_body(review: dict) -> str:
     issues = review.get("issues") or []
     if not issues:
@@ -236,29 +271,31 @@ def main() -> None:
     )
 
     payload = {
-        # deepseek-flash is a thinking model. Disable thinking via extra_body —
-        # LiteLLM filters top-level `thinking` when the deployment isn't a native
-        # deepseek provider (drop_params), but extra_body is merged verbatim.
-        "model": "deepseek-v4-flash",
+        # Both the pro and flash reviewer models default to thinking ON;
+        # extra_body.thinking is the working on/off toggle (LiteLLM merges
+        # extra_body verbatim, while a top-level `thinking` is dropped for
+        # non-native providers). Reasoning tokens are not counted against
+        # max_tokens on this deployment.
+        "model": "deepseek-v4-pro",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 8000,
-        "extra_body": {"thinking": {"type": "disabled"}},
+        "max_tokens": 16000,
+        "extra_body": {"thinking": {"type": "enabled"}},
     }
-    req = urllib.request.Request(
-        f"{base_url}/chat/completions",
-        data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=300) as r:
-        resp = json.loads(r.read())
-
-    msg = resp["choices"][0]["message"]
-    content = msg.get("content") or ""
+    content = request_review(base_url, key, payload)
+    if not review_is_valid(content):
+        # A slow thinking run can occasionally come back empty or non-JSON.
+        # Retry once with thinking disabled: that path is fast and reliably
+        # returns the review JSON. The review is posted only once, below.
+        print(
+            "review response empty or not review JSON; retrying with thinking disabled",
+            file=sys.stderr,
+        )
+        payload["extra_body"] = {"thinking": {"type": "disabled"}}
+        content = request_review(base_url, key, payload)
     if not content.strip():
         sys.exit("review model returned empty content")
+    if not review_is_valid(content):
+        sys.exit("review model did not return the review JSON")
     review = parse_review(content)
     # Only keep issues whose path appears in the diff; the fixer will otherwise
     # happily edit unrelated files based on a hallucinated path.
