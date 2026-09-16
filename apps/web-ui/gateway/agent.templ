@@ -159,12 +159,13 @@ templ agentSummaryCard(data agentDashboardData) {
 }
 
 // agentModelNotice warns under the dashboard summary card when the agent's
-// model can't be served: an agent with no explicit model and no resolvable
-// default is error if the project has no configured provider (chats can't run)
-// and warning if the default isn't pinned; an explicit model is error when its
-// provider prefix matches no configured provider (or none is configured).
+// model can't be served: an agent with no explicit model is error when the
+// project has no configured provider (chats can't run) and warning while the
+// model is only a provider-credential fallback (no pinned project default);
+// an explicit model is error when its provider prefix matches no configured
+// provider (or none is configured).
 templ agentModelNotice(data agentDashboardData) {
-	if sev, msg := agentModelDashboardIssue(data.Agent, data.DefaultModel, data.HasProviders, data.ProviderNames); sev != "" {
+	if sev, msg := agentModelDashboardIssue(data.Agent, data.DefaultModel, data.ModelConfigKnown, data.HasProviders, data.ProviderNames); sev != "" {
 		<div class="mt-6">
 			@agentModelWarningBox(sev, msg)
 		</div>
@@ -174,7 +175,7 @@ templ agentModelNotice(data agentDashboardData) {
 // agentModelSettingsWarning alerts in the settings Model section when the
 // agent's model can't be served (see agentModelNotice for the rules).
 templ agentModelSettingsWarning(data agentSettingsData) {
-	if sev, msg := agentModelSettingsIssue(data.Agent, data.DefaultModel, data.HasProviders, data.ProviderNames); sev != "" {
+	if sev, msg := agentModelSettingsIssue(data.Agent, data.DefaultModel, data.ModelConfigKnown, data.HasProviders, data.ProviderNames); sev != "" {
 		@agentModelWarningBox(sev, msg)
 	}
 }

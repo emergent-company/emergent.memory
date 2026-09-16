@@ -73,6 +73,58 @@ func TestChatModelWarnings(t *testing.T) {
 	}
 }
 
+// TestClassifyAgentModelIssue pins the no-explicit-model classification rule:
+// with providers configured the PINNED project default decides, so a project
+// whose model only comes from the provider-credential fallback (memory's
+// EffectiveModel) still warns that the default isn't pinned. An unavailable
+// model-config signal preserves the legacy "any resolvable model suppresses the
+// warning" behavior, and explicit-model rules are untouched.
+func TestClassifyAgentModelIssue(t *testing.T) {
+	noModel := &AgentDefinition{ID: "a1", Name: "diane"}
+	fallback := &AgentDefinition{ID: "a1", Name: "diane", EffectiveModel: "openai/deepseek-v4-flash"}
+	pinnedModel := &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "openai/gpt-4o"}}
+	foreign := &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "anthropic/claude-sonnet-4"}}
+	bare := &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "gpt-4o"}}
+	openai := []string{"openai"}
+
+	tests := []struct {
+		name          string
+		agent         *AgentDefinition
+		pinnedDefault string
+		known         bool
+		hasProviders  bool
+		providerNames []string
+		wantSev       string
+		wantExplicit  bool
+		wantModel     string
+		wantProvider  string
+	}{
+		// --- no explicit model ---
+		{"no model, no provider, no pinned default", noModel, "", true, false, nil, "error", false, "", ""},
+		{"no model, no provider, pinned default", noModel, "openai/gpt-4o", true, false, nil, "error", false, "", ""},
+		{"no model, provider, no pinned default", fallback, "", true, true, openai, "warning", false, "", ""},
+		{"no model, provider, pinned default", fallback, "openai/gpt-4o", true, true, openai, "", false, "", ""},
+		{"no model, provider, signal unavailable + fallback resolves", fallback, "", false, true, openai, "", false, "", ""},
+		{"no model, provider, signal unavailable + nothing resolves", noModel, "", false, true, openai, "warning", false, "", ""},
+		// --- explicit model (unchanged) ---
+		{"explicit, no provider", pinnedModel, "", true, false, nil, "error", true, "openai/gpt-4o", ""},
+		{"explicit, matching provider", pinnedModel, "", true, true, openai, "", false, "", ""},
+		{"explicit, foreign provider", foreign, "", true, true, openai, "error", true, "anthropic/claude-sonnet-4", "anthropic"},
+		{"bare explicit, providers", bare, "", true, true, openai, "", false, "", ""},
+		{"nil agent", nil, "", true, true, openai, "", false, "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyAgentModelIssue(tc.agent, tc.pinnedDefault, tc.known, tc.hasProviders, tc.providerNames)
+			if got.sev != tc.wantSev || got.explicit != tc.wantExplicit || got.model != tc.wantModel || got.provider != tc.wantProvider {
+				t.Errorf("classifyAgentModelIssue() = %+v, want sev=%q explicit=%v model=%q provider=%q",
+					got, tc.wantSev, tc.wantExplicit, tc.wantModel, tc.wantProvider)
+			}
+		})
+	}
+}
+
 // TestChatModelWarningBannerRender asserts the chat workspace's pre-send
 // banner: when the default (selected) agent has a model warning the banner is
 // visible with the message text, error styling, and a Configure-a-provider
