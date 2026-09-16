@@ -21652,6 +21652,11 @@ const docTemplate = `{
                 "projectId": {
                     "type": "string"
                 },
+                "proposal": {
+                    "description": "Proposal is the optional structured proposal envelope {kind, summary, body}\nattached to the question. Nil/omitted for plain-text questions.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "question": {
                     "type": "string"
                 },

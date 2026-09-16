@@ -646,7 +646,8 @@ CREATE TABLE kb.agent_questions (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     interaction_type text DEFAULT 'buttons'::text NOT NULL,
     placeholder text,
-    max_length integer
+    max_length integer,
+    proposal jsonb
 );
 
 
@@ -676,6 +677,13 @@ COMMENT ON COLUMN kb.agent_questions.status IS 'Question lifecycle: pending, ans
 --
 
 COMMENT ON COLUMN kb.agent_questions.notification_id IS 'Link to the kb.notifications record created for this question';
+
+
+--
+-- Name: COLUMN agent_questions.proposal; Type: COMMENT; Schema: kb; Owner: -
+--
+
+COMMENT ON COLUMN kb.agent_questions.proposal IS 'Optional structured proposal envelope {kind, summary, body} attached to an ask_user checkpoint';
 
 
 --
