@@ -62,6 +62,35 @@ export async function configureProvider(
   }
 }
 
+/**
+ * Live-validatable provider for dev e2e: the OpenAI-compatible ("openai") slot
+ * pointed at the dev LiteLLM proxy. The memory backend live-tests credentials on
+ * save (catalog sync + a real generate call), so a placeholder key is rejected.
+ * These env vars carry the real callable creds — the same names the scenario
+ * suite uses (see tests/e2e/.env.e2e.example).
+ */
+export const LIVE_PROVIDER = 'openai' as const;
+export const LIVE_PROVIDER_API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
+export const LIVE_PROVIDER_BASE_URL =
+  process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
+/** Already-prefixed "provider/model" catalog value. */
+export const LIVE_PROVIDER_MODEL =
+  process.env.E2E_SCENARIO_LLM_MODEL || 'openai/deepseek-v4-flash';
+
+/** True when the env carries a key the memory backend can live-validate. */
+export function hasLiveProviderCreds(): boolean {
+  return Boolean(LIVE_PROVIDER_API_KEY);
+}
+
+/**
+ * Upsert the live provider on the page's active project. Throws like
+ * `configureProvider`; callers skip gracefully when the save is rejected or the
+ * env has no credentials.
+ */
+export function configureLiveProvider(page: Page): Promise<void> {
+  return configureProvider(page, LIVE_PROVIDER, LIVE_PROVIDER_API_KEY, LIVE_PROVIDER_BASE_URL);
+}
+
 /** Persist the bootstrap state so globalTeardown can delete the org. */
 export function writeBootstrap(state: BootstrapState): void {
   fs.mkdirSync(path.dirname(BOOTSTRAP_FILE), { recursive: true });

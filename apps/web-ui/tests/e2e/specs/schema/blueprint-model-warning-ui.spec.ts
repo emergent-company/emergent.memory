@@ -1,5 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
-import { readBootstrap, createProject, configureProvider } from '../../helpers/bootstrap';
+import {
+  readBootstrap,
+  createProject,
+  configureLiveProvider,
+  hasLiveProviderCreds,
+} from '../../helpers/bootstrap';
 import { expectAppPage } from '../../helpers/page';
 
 // Blueprint-pinned model warnings (gateway unservable-model surface): the
@@ -71,11 +76,19 @@ test("no warning when the pinned model's provider is configured", async ({ page 
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
 
-    // Best-effort provider upsert, mirroring the suite's provider precedent:
-    // the openai upsert is env-fragile (credential probe / catalog), so skip
-    // when the save fails rather than asserting against an unconfigured state.
+    // Live-validated provider upsert, mirroring the suite's provider precedent:
+    // the backend live-tests the credentials on save, so a placeholder key is
+    // rejected. Skip when the env creds are unset or the save fails rather than
+    // asserting against an unconfigured state.
+    if (!hasLiveProviderCreds()) {
+      test.skip(
+        true,
+        'E2E_SCENARIO_LLM_API_KEY is not set — the openai provider save is live-validated by the backend',
+      );
+      return;
+    }
     try {
-      await configureProvider(page, 'openai', 'sk-e2e-test-key');
+      await configureLiveProvider(page);
     } catch (e) {
       test.skip(true, `openai provider upsert unavailable on dev memory: ${(e as Error).message}`);
       return;
