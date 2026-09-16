@@ -156,11 +156,11 @@ CREATE INDEX idx_agent_mcp_sessions_key ON core.agent_mcp_sessions (key_id);
 
 **Rationale:** Pinning adds a version dimension to the endpoint schema for a case nobody has asked for; fail-closed on deletion is already the behavior.
 
-### 14. Project share cleanup: tools only, no agent picker
+### 14. Project share cleanup: tools only, no agent picker, retire `mcp-share-agent-scoping`
 
-**Decision:** Remove the agent allowlist and agent picker from project share instances (`normalizeAgentAllowlist`, `share_instance.go:933-993`, the DTOs, and the templ agent picker). Point users to the agent-scoped endpoint for agent sharing.
+**Decision:** Remove the agent allowlist and agent picker from project share instances (`normalizeAgentAllowlist`, `share_instance.go:933-993`, the DTOs, and the templ agent picker). Retire the `mcp-share-agent-scoping` capability as a `## REMOVED Requirements` delta in this same change. Point users to the agent-scoped endpoint for agent sharing.
 
-**Rationale:** Removes the "choosing an agent" ambiguity that motivated the change; all other project-share behavior (tool scoping, lifecycle, legacy shares) is unchanged.
+**Rationale:** Removes the "choosing an agent" ambiguity that motivated the change. Retiring the capability is not just dropping the picker: removing the allowlist also removes everything that capability required — agent-related tool filtering (`agent-list`/`agent-get`/`agent-list-available`), agent-execution gating, allowlist write validation, degrade-safely handling, name/ACP-slug reference resolution with fail-closed behavior, and the run-inspection/definition/discovery filtering that existed only to keep an agent-allowlisted instance within its allowlist. Leaving those requirements live would create spec drift, so they are removed together. All other project-share behavior (tool scoping, lifecycle, legacy shares) is unchanged.
 
 ## Risks / Trade-offs
 

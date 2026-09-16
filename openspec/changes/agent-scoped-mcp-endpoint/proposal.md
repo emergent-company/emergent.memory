@@ -25,12 +25,14 @@ Today an agent can be exposed over MCP only through a single-credential binding 
 - `agent-mcp-endpoint`: the tool catalog becomes the fixed five-tool session set; `call_agent` stays stateless while the session tools provide opt-in continuity; authorization moves to endpoint + key resolution with an `agent.Enabled` fast fail.
 - `agent-mcp-shares`: the single-credential share lifecycle becomes the many-labeled-keys lifecycle on one endpoint; `core.agent_mcp_shares` is superseded and backfilled.
 - `mcp-share-instances`: project share instances scope tools only; the agent allowlist and agent picker are removed and users are directed to the agent-scoped endpoint.
+- `mcp-share-agent-scoping`: retired. The whole agent-allowlist capability — its discovery/execution gating, write validation, degrade-safely behavior, reference resolution, and run-inspection/definition/discovery filtering — is removed with the allowlist it governs.
 
 ## Impact
 
 - New migration after `00148` (and after the in-flight `00150`), creating `core.agent_mcp_endpoints`, `core.agent_mcp_keys`, and `core.agent_mcp_sessions`, and backfilling the first two from `core.agent_mcp_shares`; mirrored in `apps/server/internal/testutil/schema.sql`.
 - `apps/server/domain/mcp/`: endpoint and key stores, `AuthorizeAgentEndpoint`, session store, five-tool catalog and dispatch table, envelope results for the session tools; updates to `agent_endpoint_handler.go`, `agent_mcp_share.go`, `routes.go`.
 - `apps/server/domain/agents/`: a session-aware run entry point (a new function — not an overload of the existing four-argument `RunAgentOnce`) and the continue path built on fresh `Execute` + `SessionID`.
-- `apps/server/domain/mcp/share_instance.go`: remove `normalizeAgentAllowlist` and the agent-allowlist plumbing from the project instance path.
+- `apps/server/domain/mcp/share_instance.go`: remove `normalizeAgentAllowlist`, the `allowed_agents` plumbing, and all agent-allowlist enforcement (`InstanceDeniesTool` agent gating, `agentDeniedByAllowlist`, `filterAgentResult`, and the run-inspection/discovery filtering that existed only for the allowlist).
+- **Capability retirement:** the `mcp-share-agent-scoping` capability is removed (REMOVED delta) in the same change that removes the project-instance agent allowlist, so no contradictory live requirements remain after archive.
 - `apps/web-ui/gateway`: register the agent-share routes in `main.go` and add key and session management surfaces.
 - **Stacking prerequisite:** this change stacks on the implemented-but-unarchived changes `add-agent-mcp-endpoint` and `add-mcp-share-instances`. Because `openspec/specs/` does not yet contain `agent-mcp-endpoint`, `agent-mcp-shares`, or `mcp-share-instances`, the MODIFIED deltas validate as valid but archive will refuse until those changes are archived first. Migration numbering MUST remain sequential after `00148` and `00150`.

@@ -29,11 +29,14 @@
 - [ ] 4.3 Return the session tool results through `envelopeResult` (`ok`/`error`/`data`/`meta`, `meta {steps, run_id}`, `meta.kind` from `AgentRunError` kinds) and leave `call_agent` un-enveloped; verify tests assert session tool envelopes and the bare `call_agent` reply.
 - [ ] 4.4 Implement `start_session` semantics (message present → run turn 1 and return the reply; absent → create an empty session and return only `session_id`) and `continue_session` semantics (append to prior context, return the new reply); verify tests for both start variants and for continue.
 
-## 5. Project share cleanup
+## 5. Project share cleanup and capability retirement
 
-- [ ] 5.1 Remove `normalizeAgentAllowlist` (`share_instance.go:933-993`) and the agent-allowlist plumbing from the project instance service and handler; verify instance tests assert tool scoping still works and no agent filtering occurs.
-- [ ] 5.2 Remove the `agents` field from the create/update/list DTOs and the agent picker from the gateway templ; verify no handler reads or writes an agent allowlist.
-- [ ] 5.3 Point users to the agent-scoped endpoint for agent sharing in the project-share UI copy; verify all other project-share behaviour tests remain green.
+- [ ] 5.1 Remove `normalizeAgentAllowlist` (`share_instance.go:933-993`) and the `allowed_agents` plumbing from the project instance model, store, service, and handler; verify instance tests assert tool scoping still works and no agent filtering occurs.
+- [ ] 5.2 Delete the agent-allowlist enforcement code paths: the `InstanceDeniesTool` agent gating, `agentDeniedByAllowlist`, and `filterAgentResult`, plus the run-inspection, agent-definition read, and agent-discovery filtering that existed only to enforce an instance agent allowlist; verify no call site still references these helpers and that tool scoping and token scopes alone govern tool availability.
+- [ ] 5.3 Delete the tests that covered the agent allowlist (discovery filtering, execution gating, write validation/definition resolution, degrade-safely, forced-empty discovery) in the same commit, so no test asserts removed behavior; verify `go test ./domain/mcp/... -short` is green.
+- [ ] 5.4 Record the capability retirement: ship the `mcp-share-agent-scoping` `## REMOVED Requirements` delta with this change; verify `openspec validate agent-scoped-mcp-endpoint --strict` is valid and reports no drift.
+- [ ] 5.5 Remove the `agents` field from the create/update/list DTOs and the agent picker from the gateway templ; verify no handler reads or writes an agent allowlist and a request supplying `agents` is rejected.
+- [ ] 5.6 Point users to the agent-scoped endpoint for agent sharing in the project-share UI copy; verify all other project-share behaviour tests remain green.
 
 ## 6. Gateway UI
 
