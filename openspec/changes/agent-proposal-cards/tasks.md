@@ -1,30 +1,30 @@
 ## 1. Server — schema + model
 
-- [ ] 1.1 Migration: add `proposal jsonb` (nullable) to `kb.agent_questions` (new `apps/server/migrations/NNNN_add_agent_question_proposal.sql`)
-- [ ] 1.2 `entity.go`: add `Proposal` field to `AgentQuestion` (Bun model, `jsonb`) + extend `AgentQuestionDTO`
-- [ ] 1.3 `repository.go`: persist/read `proposal` in `CreateQuestion` and the read/mapping paths
+- [x] 1.1 Migration: add `proposal jsonb` (nullable) to `kb.agent_questions` (`apps/server/migrations/00154_add_agent_question_proposal.sql`)
+- [x] 1.2 `entity.go`: add `Proposal` field to `AgentQuestion` (Bun model, `jsonb`) + extend `AgentQuestionDTO`
+- [x] 1.3 Persist/read `proposal` via the existing `CreateQuestion` `Insert().Model(q)` path (Bun reflects the new field — no repository change needed); DTO mapping carries it
 
 ## 2. Server — ask_user tool
 
-- [ ] 2.1 `ask_user_tool.go`: accept optional `proposal` arg; coerce/validate against the envelope (`kind`/`summary`/`body`); on invalid, drop the payload and proceed as plain-text (no hard error)
-- [ ] 2.2 Thread `proposal` through `CreateAndEmitQuestion` → `AgentQuestion` → `emitQuestionSSEEventDirect`
-- [ ] 2.3 Unit tests: valid `proposal` persisted; invalid `proposal` → plain question, no error; absent `proposal` unchanged
+- [x] 2.1 `ask_user_tool.go`: accept optional `proposal` arg; `parseProposal` validates the envelope (`kind`/`summary`/`body`); on invalid, drop the payload and proceed as plain-text (no hard error)
+- [x] 2.2 Thread `proposal` through `CreateAndEmitQuestion` → `AgentQuestion` → `emitQuestionSSEEventDirect` (field `proposal`, only when non-nil)
+- [x] 2.3 Unit tests: valid `proposal` persisted (INSERT includes `proposal` column); invalid `proposal` → nil, no error; absent `proposal` unchanged; SSE includes/omits `proposal`
 
 ## 3. Gateway — render proposal card
 
-- [ ] 3.1 `sse_markdown.go`: parse `proposal` from the question event; if present, convert `body` → `ObjectTypeDetail`/`RelationshipTypeDetail` via `objectTypesFromMaps`/`propertiesFromMap`, diff vs current compiled types (`diffObjectTypes`/`diffRelationshipTypes`), and render a card → `proposalHtml`
-- [ ] 3.2 Reuse `blueprints.templ`/`schema.templ` preview components (`objectTypeRow`/`relationshipTypeRow`/diff badges) in a new `proposal` templ partial
-- [ ] 3.3 Include `proposalHtml` in the `question` SSE event + history rehydration path
-- [ ] 3.4 `chat-stream.js`: inject `proposalHtml` above the options; fall back to `questionHtml` when absent
-- [ ] 3.5 Unit tests: blueprint proposal → card HTML with object/relationship rows + summary; no-proposal question → markdown unchanged
+- [x] 3.1 `proposal.go` + `sse_markdown.go`: parse `proposal` from the ask_user input; `buildProposalCard` → `ObjectTypeDetail`/`RelationshipTypeDetail` via `objectTypesFromMaps`/`relationshipTypesFromMaps`, diff vs current compiled types (`diffObjectTypes`/`diffRelationshipTypes`); render → `proposalHtml`
+- [x] 3.2 `proposal.templ` `proposalCard` reuses `objectTypeRow`/`relationshipTypeRow` + `ui.Badge`/`ui.Eyebrow` (no new design system)
+- [x] 3.3 Include `proposalHtml` in the `question` SSE event + history rehydration (`proposal_html`)
+- [x] 3.4 `chat-stream.js`: inject `proposalHtml` above the options; fall back to `questionHtml` when absent
+- [x] 3.5 Unit tests: blueprint proposal → card HTML with object/relationship rows + summary; no-proposal question → markdown unchanged
 
 ## 4. Operator prompt
 
-- [ ] 4.1 `operator.yaml` "Propose" step: emit a concise markdown summary in `question` + the manifest in `proposal` (drop the raw JSON fence)
-- [ ] 4.2 Verify `TestOperatorBlueprintDefinesOperatorAgent` / blueprint install tests still pass (prompt contract unchanged: still mandates propose→accept)
+- [x] 4.1 `operator.yaml` "Propose" step: concise markdown summary in `question` (no raw JSON fence) + manifest in structured `proposal` arg for blueprint/schema changes
+- [x] 4.2 Full gateway test suite passes (includes `TestOperatorBlueprintDefinesOperatorAgent` and blueprint install tests; prompt still mandates propose→accept)
 
 ## 5. Verify
 
-- [ ] 5.1 `go build ./...` + `go test ./...` in `apps/server` and `apps/web-ui/gateway`
-- [ ] 5.2 `task lint` (server + gateway)
+- [x] 5.1 `go build ./...` + `go test ./...` in `apps/server` (domain/agents) and `apps/web-ui/gateway`
+- [x] 5.2 Lint/vet/gofmt clean for changed code (gateway `golangci-lint` 0 issues; server changed files clean; remaining server lint findings are pre-existing in untouched `workspace_tools.go`/`handler_test.go`)
 - [ ] 5.3 Manual/browser smoke: operator proposal renders as a card (not raw JSON); Accept/Reject/Edit still respond via `/respond`

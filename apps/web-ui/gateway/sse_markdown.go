@@ -18,6 +18,7 @@ type askUserInput struct {
 	InteractionType string           `json:"interaction_type"`
 	Placeholder     string           `json:"placeholder"`
 	MaxLength       int              `json:"max_length"`
+	Proposal        json.RawMessage  `json:"proposal"`
 }
 
 // questionOption is one selectable answer, matching ask_user's options shape.
@@ -35,6 +36,7 @@ type questionEvent struct {
 	QuestionID      string           `json:"questionId"`
 	Question        string           `json:"question"`
 	QuestionHTML    string           `json:"questionHtml,omitempty"`
+	ProposalHTML    string           `json:"proposalHtml,omitempty"`
 	InteractionType string           `json:"interactionType"`
 	Options         []questionOption `json:"options"`
 	Placeholder     string           `json:"placeholder"`
@@ -107,6 +109,7 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 					QuestionID:      res.QuestionID,
 					Question:        askInput.Question,
 					QuestionHTML:    renderMarkdown(askInput.Question),
+					ProposalHTML:    renderProposalHTML(askInput.Proposal),
 					InteractionType: askInput.InteractionType,
 					Options:         askInput.Options,
 					Placeholder:     askInput.Placeholder,
@@ -263,8 +266,20 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 			toolName, _ := m["tool_name"].(string)
 			if toolName == "ask_user" {
 				if input, ok := m["tool_input"].(map[string]any); ok {
+					changed := false
 					if q, ok := input["question"].(string); ok && q != "" {
 						input["question_html"] = renderMarkdown(q)
+						changed = true
+					}
+					if p, ok := input["proposal"]; ok {
+						if raw, err := json.Marshal(p); err == nil {
+							if html := renderProposalHTML(raw); html != "" {
+								input["proposal_html"] = html
+								changed = true
+							}
+						}
+					}
+					if changed {
 						if re, err := marshalNoEscape(m); err == nil {
 							out[i] = re
 						}
