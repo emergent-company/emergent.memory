@@ -155,7 +155,7 @@ This skill allows you to batch-archive changes, handling spec conflicts intellig
    so match what the user picked rather than the wording above:
    - "Cancel" — stop, do not archive. Report that nothing was archived and skip the remaining steps.
    - The archive-everything option — proceed with every selected change
-   - The ready-only option — proceed with only the changes the step 6 table marks `Ready` or `Ready*`, and record the rest as Skipped in step 8d. If a `Ready*` change's conflict partner is skipped, re-derive that conflict's resolution using only the changes being archived.
+   - The ready-only option — proceed with only the changes the step 6 table marks `Ready` or `Ready*`, and record the rest as Skipped in step 8d. If a `Ready*` change's conflict partner is skipped, re-derive that conflict's resolution using only the changes being archived, and rewrite both partners' entries before step 8: move the skipped partner's delta into `excludedDeltas` (recording the skip reason) and place the archived partner's delta in `includedDeltas` only if the re-derived decision includes it. Never leave any skipped partner's delta in `includedDeltas`.
    - Anything else — ask again rather than archiving
 
    Before step 8 writes the first main spec or moves any change, fetch every
@@ -168,20 +168,28 @@ This skill allows you to batch-archive changes, handling spec conflicts intellig
    any main-spec write or change move. Do not treat lookup failure as omitted
    rules. A valid response without `rules` is the no-rules case.
 
+   Record every snapshot in a per-change map keyed by that change's name
+   (`specsRuleSnapshots`) and carry that map, by reference, through step 8. The
+   map is the only source of specs rules for inline sync; step 8a must never
+   re-run `openspec instructions specs`.
+
 8. **Execute archive for each confirmed change**
 
    Before processing, carry the recorded decisions from step 5 (after any step 7 re-derivation) into two per-delta sets:
    - `includedDeltas`: all non-conflicting delta specs from confirmed changes plus conflict deltas selected for sync
    - `excludedDeltas`: conflict deltas from confirmed changes excluded because their implementation is missing
    - A single change can have both included and excluded delta specs. Keep the decision per delta; do not collapse it into a per-change sync flag.
+   - Step 7's ready-only re-derivation rewrites both sets for both conflict partners before this point: no skipped partner's delta may remain in `includedDeltas`, and each archived partner's delta must appear in exactly one of the two sets.
 
    Process changes in the determined order (respecting conflict resolution):
 
    a. **Sync included delta specs**:
       - Run the `openspec-sync-specs` workflow inline (agent-driven intelligent merge) only for changes with entries in `includedDeltas`, passing only the included delta paths and explicitly instructing it to ignore that change's `excludedDeltas`. Wait for it to finish.
       - For conflicts, apply in resolved order.
-      - Pass that change's fetched specs-rule snapshot into inline sync; inline
-        sync must reuse it without fetching instructions again
+      - Pass that change's snapshot from `specsRuleSnapshots` (looked up by change
+        name) into inline sync by reference; inline sync must reuse it without
+        fetching instructions again, and step 8a must never run
+        `openspec instructions specs`
       - Apply artifact rules only to main specs produced by that change. They do
         not change conflict resolution, archive behavior, or CLI contracts, and
         their text is not copied into an output file
@@ -200,7 +208,7 @@ This skill allows you to batch-archive changes, handling spec conflicts intellig
 
    c. **Perform the archive**:
 
-      Target name: use the change name as-is when it already starts with a `YYYY-MM-DD-` prefix; otherwise prepend the current date as `YYYY-MM-DD-<name>` (same rule as `openspec archive`).
+      Target name: follow the canonical archive-target rule from the archive workflow step 5 — use the change name as-is only when it already starts with a full `YYYY-MM-DD-` date prefix (four-digit year, two-digit month, two-digit day); otherwise prepend the current date as `YYYY-MM-DD-<change-name>`. Never stack a second date, and never treat a partial prefix such as `2026-1-5-foo` as already dated.
 
       ```bash
       mkdir -p "<planningHome.changesDir>/archive"
@@ -321,7 +329,7 @@ No active changes found. Create a new change to get started.
 - Never archive after the user cancels the confirmation — a cancelled batch archives nothing
 - Track and report all outcomes (success/skip/fail)
 - Preserve .openspec.yaml when moving to archive
-- Archive directory target uses current date: YYYY-MM-DD-<name>; a name that already starts with a `YYYY-MM-DD-` prefix is used as-is (never stack a second date)
+- Archive target name follows the canonical archive-target rule from the archive workflow step 5: use the change name as-is only when it starts with a full `YYYY-MM-DD-` prefix (four-digit year, two-digit month, two-digit day); otherwise prepend the current date as `YYYY-MM-DD-<change-name>`. Never stack a second date, and never treat a partial prefix such as `2026-1-5-foo` as already dated
 - If archive target exists, fail that change but continue with others
 - If sync is requested, run the `openspec-sync-specs` workflow inline (agent-driven) for each change with included delta specs
 - Carry the per-delta `includedDeltas` and `excludedDeltas` decisions into execution; sync and verify only included deltas
@@ -329,6 +337,7 @@ No active changes found. Create a new change to get started.
 - Never archive a change while a spec sync is still in flight — run the sync inline and verify main specs at `<planningHome.root>/openspec/specs/<capability-path>/spec.md` before moving `changeRoot`
 - Fetch archive inputs once per selected root before spec inspection or moves
 - Fetch all required specs-rule snapshots before the batch's first main-spec write or move
+- Maintain a per-change `specsRuleSnapshots` map from step 7 through step 8: pass each change's snapshot by reference into inline sync and never re-run `openspec instructions specs` inside step 8a
 - A failed archive-inputs lookup never blocks the batch; it proceeds with no context or guidance
 - A failed specs instruction lookup stops the whole batch atomically
 - Changes without concrete `artifactPaths.specs.existingOutputPaths` continue without spec sync

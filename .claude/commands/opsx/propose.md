@@ -100,7 +100,7 @@ When the user is ready to implement, they must start the apply workflow explicit
         - `template`: The structure to use for your output file
         - `instruction`: Schema-specific guidance for this artifact type
         - `skipped`/`warning`: present when the change declares skip_specs and this artifact must NOT be created - stop and pick another artifact
-        - `resolvedOutputPath`: Resolved path or pattern to write the artifact
+        - `resolvedOutputPath`: Concrete path to write the artifact. The CLI must surface a concrete path by default; a glob is only valid when the schema's `instruction` explicitly documents how the glob expands
         - `dependencies`: Completed artifacts to read for context
       - Read any completed dependency files for context - always re-read them from disk, even if you saw them earlier in the conversation (the user may have edited them)
       - **Inspect the relevant project before drafting**: Read `context` and `rules` first, then inspect relevant implementation, nearby tests, configuration, and documentation outside `openspec/`. Keep inspection read-only and proportional to the change; reuse findings for later artifacts and inspect more only as needed.
@@ -108,7 +108,7 @@ When the user is ready to implement, they must start the apply workflow explicit
         - Ground scope, approach, and tasks in what you find. Distinguish observed behavior from assumptions and proposed additions; surface conflicts with existing specs instead of silently deciding which is correct.
         - Do this discovery now, rather than leaving generic "explore the codebase" or "make a plan" tasks for implementation. Keep any necessary follow-up investigation specific to an unresolved question.
       - If the `instruction` field delegates creation to a specific skill or command, invoke it to produce the artifact instead of writing the file yourself, then verify the artifact file exists at `resolvedOutputPath`
-      - Otherwise create the artifact file using `template` as the structure and write it to `resolvedOutputPath`. If `resolvedOutputPath` is a glob, follow `instruction` to choose the concrete file path
+      - Otherwise create the artifact file using `template` as the structure and write it to the concrete `resolvedOutputPath`; the CLI surfaces a concrete path by default, so never substitute a different filename. Only when the schema's `instruction` explicitly documents a glob expansion may `resolvedOutputPath` be a glob — for example one file per capability taken from the proposal's Capabilities list, such as `specs/<capability>/spec.md`. Expand a documented glob deterministically by following exactly that rule and no other. If the CLI returns a glob whose expansion is not documented, stop and report the ambiguity instead of guessing a filename
       - Apply `context` and `rules` as constraints - but do NOT copy them into the file
       - Show brief progress: "Created <artifact-id>"
 

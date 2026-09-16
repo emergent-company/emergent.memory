@@ -68,7 +68,7 @@ Continue working on a change by creating the next artifact.
      - `rules`: Artifact-specific rules (constraints for you - do NOT include in output)
      - `template`: The structure to use for your output file
      - `instruction`: Schema-specific guidance
-     - `resolvedOutputPath`: Resolved path or pattern to write the artifact
+     - `resolvedOutputPath`: Concrete path to write the artifact. The CLI must surface a concrete path by default; a glob is only valid when the schema's `instruction` explicitly documents how the glob expands
      - `dependencies`: Completed artifacts to read for context (entries with `skipped: true` have no files - do not look for them)
      - `skipped`/`warning`: present when the change declares skip_specs and this artifact must NOT be created - pick another artifact
    - **Create the artifact file**:
@@ -76,7 +76,7 @@ Continue working on a change by creating the next artifact.
      - If the `instruction` field delegates creation to a specific skill or command, invoke it to produce the artifact instead of writing the file yourself, then verify the artifact file exists at `resolvedOutputPath`
      - Otherwise use `template` as the structure - fill in its sections
      - Apply `context` and `rules` as constraints when writing - but do NOT copy them into the file
-     - Write to the `resolvedOutputPath` specified in instructions. If it is a glob pattern, choose the concrete file path using the schema instruction and the change's context
+     - Write to the concrete `resolvedOutputPath` from the instructions; the CLI surfaces a concrete path by default, so write to it verbatim and never substitute a different filename. Only when the schema's `instruction` explicitly documents a glob expansion may `resolvedOutputPath` be a glob — for example one file per capability taken from the proposal's Capabilities list, such as `specs/<capability>/spec.md`. Expand a documented glob deterministically by following exactly that rule and no other. If the CLI returns a glob whose expansion is not documented, stop and report the ambiguity instead of guessing a filename
    - Show what was created and what's now unlocked
    - STOP after creating ONE artifact
 
@@ -112,6 +112,7 @@ If the `instruction` field directs you to use a specific skill or command to cre
 - Never skip artifacts or create out of order
 - If context is unclear, ask the user before creating
 - Verify the artifact file exists after writing before marking progress
+- Write to the concrete `resolvedOutputPath`; only expand a glob when the schema's `instruction` explicitly documents the expansion rule, and never invent a filename the rule does not name
 - Use the schema's artifact sequence, don't assume specific artifact names
 - **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
   - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact

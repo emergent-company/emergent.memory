@@ -64,8 +64,8 @@ Archive a completed change in the experimental workflow.
    - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context
    - `artifacts`: List of artifacts with their status (`done`, `skipped`, or other)
 
-   **If any artifacts are neither `done` nor `skipped`** (skipped artifacts satisfy the requirement - the change declares skip_specs):
-   - Display warning listing incomplete artifacts
+   **If any artifacts are neither `done` nor `skipped`** (a `skipped` artifact is a satisfied artifact, because the change declares skip_specs):
+   - Display a warning listing only the artifacts that are neither `done` nor `skipped`; never list `skipped` artifacts as incomplete, and never let `skipped` alone trigger this warning
    - Prompt user for confirmation to continue
    - Proceed if user confirms
 
@@ -113,7 +113,9 @@ Archive a completed change in the experimental workflow.
    form of main specs produced by this merge; do not use them as archive guidance,
    change CLI behavior, or copy the rule text into any output file.
 
-   Then run the `/opsx:sync` workflow inline (agent-driven intelligent merge) for change '<name>', passing the delta spec analysis and the fetched specs-rule snapshot from above, and wait for it to finish. The inline sync must reuse that snapshot without fetching `specs` instructions again. Do not delegate it to a background task — step 5 would move `changeRoot` out from under a sync that is still reading it, leaving the change archived and the main specs never updated. If your agent can only run it by delegation, delegate synchronously and wait for the result.
+   Then run the `/opsx:sync` workflow inline (agent-driven intelligent merge) for change '<name>', passing the delta spec analysis and the fetched specs-rule snapshot from above, and wait for it to finish. The inline sync must reuse that snapshot without fetching `specs` instructions again. The inline sync also owns deletion: whenever it retires a capability (removes that capability's last requirement), it must delete `<planningHome.root>/openspec/specs/<capability-path>/spec.md` instead of leaving a file with an empty `## Requirements` section. Main-spec deletion happens inside this sync merge, not during step 5's `mv`. Do not delegate it to a background task — step 5 would move `changeRoot` out from under a sync that is still reading it, leaving the change archived and the main specs never updated. If your agent can only run it by delegation, delegate synchronously and wait for the result.
+
+   Before verifying, delete any retired capability's main spec that the sync left behind as a file with an empty `## Requirements` section at `<planningHome.root>/openspec/specs/<capability-path>/spec.md`, so the REMOVED check below can pass. If any such empty spec file still exists after this cleanup, report it and stop — do not archive. Deletion belongs to this sync/cleanup path, not to step 5's `mv`.
 
    Then re-run the comparison from the top of this step against every capability that has a delta spec in `artifactPaths.specs.existingOutputPaths` — not only the ones the sync reports it touched. A successful sync leaves nothing left to apply, so each capability must now read as already synced:
    - ADDED requirements present
@@ -130,7 +132,7 @@ Archive a completed change in the experimental workflow.
    mkdir -p "<planningHome.changesDir>/archive"
    ```
 
-   Generate the target name: use the change name as-is when it already starts with a `YYYY-MM-DD-` prefix; otherwise prepend the current date as `YYYY-MM-DD-<change-name>`. Never stack a second date (same rule as `openspec archive`).
+   Generate the target name using the canonical archive-target rule: use the change name as-is only when it already starts with a full `YYYY-MM-DD-` date prefix (four-digit year, two-digit month, two-digit day); otherwise prepend the current date as `YYYY-MM-DD-<change-name>`. Never stack a second date, and never treat a partial prefix such as `2026-1-5-foo` as already dated. This is the same rule as `openspec archive`.
 
    **Check if target already exists:**
    - If yes: Fail with error, suggest renaming existing archive or using different date
@@ -147,7 +149,7 @@ Archive a completed change in the experimental workflow.
    - Schema that was used
    - Archive location
    - Spec sync status (synced / sync skipped / no delta specs)
-   - Note about any warnings (incomplete artifacts/tasks)
+   - Note about any warnings (incomplete artifacts/tasks); `skipped` artifacts are not counted as incomplete and produce no warning
 
 **Output On Success**
 
@@ -213,10 +215,12 @@ Target archive directory already exists.
 - Announce the selected change; prompt for selection when it is ambiguous
 - Use artifact graph (openspec status --json) for completion checking
 - Don't block archive on warnings - just inform and confirm
+- Treat `skipped` artifacts as satisfying artifact completion (the change declares skip_specs): they are never reported as incomplete, never trigger the step 2 warning, and never block archiving
 - Preserve .openspec.yaml when moving to archive (it moves with the directory)
 - Show clear summary of what happened
 - If sync is requested, run the `/opsx:sync` workflow inline (agent-driven)
 - Never archive while a spec sync is still in flight — run the sync inline and verify the main specs before moving `changeRoot`
+- The step 4 inline sync (and its cleanup) deletes a retired capability's emptied main spec; deletion is never deferred to the step 5 `mv`
 - If delta specs exist, always run the sync assessment and show the combined summary before prompting
 - Apply relevant runtime context and report conflicts; operation guidance remains advisory
 - Consider every guidance entry and explain any inapplicable or conflicting advice
