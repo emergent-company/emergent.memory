@@ -59,12 +59,9 @@ type bunAgentMCPEndpointStore struct {
 	db bun.IDB
 }
 
-// The store is not yet injected into Service (that wiring lands with the auth
-// refactor); assert conformance and keep the injection seam referenced.
-var (
-	_ agentMCPEndpointStore = (*bunAgentMCPEndpointStore)(nil)
-	_                       = agentMCPEndpointOrNil
-)
+// The store is injected into Service and also exercised directly by the store
+// tests; assert conformance.
+var _ agentMCPEndpointStore = (*bunAgentMCPEndpointStore)(nil)
 
 func newAgentMCPEndpointStore(db bun.IDB) *bunAgentMCPEndpointStore {
 	return &bunAgentMCPEndpointStore{db: db}

@@ -112,14 +112,21 @@ const agentCallScope = "mcp:agent-call"
 // marker scope; the internal per-agent share mint path uses
 // CreateAgentShareToken instead.
 func (s *Service) Create(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, userID, name, scopes, false)
+	return s.create(ctx, projectID, userID, name, scopes, false, nil)
 }
 
 // CreateAgentShareToken mints a token that may carry the reserved
 // mcp:agent-call marker. It must only be called by the per-agent MCP share
 // lifecycle (domain/mcp/agent_mcp_share.go); all user-facing paths call Create.
 func (s *Service) CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, userID, name, scopes, true)
+	return s.create(ctx, projectID, userID, name, scopes, true, nil)
+}
+
+// CreateAgentShareTokenWithExpiry is CreateAgentShareToken with an optional
+// token expiry. It backs the per-endpoint labeled keys, whose optional
+// expiresAt maps straight onto core.api_tokens.expires_at.
+func (s *Service) CreateAgentShareTokenWithExpiry(ctx context.Context, projectID, userID, name string, scopes []string, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
+	return s.create(ctx, projectID, userID, name, scopes, true, expiresAt)
 }
 
 // rejectReservedAgentCallScope returns an error when scopes carries the
@@ -134,8 +141,9 @@ func rejectReservedAgentCallScope(scopes []string) error {
 }
 
 // create is the shared implementation behind Create and CreateAgentShareToken.
-// allowAgentCallScope gates the reserved mcp:agent-call marker.
-func (s *Service) create(ctx context.Context, projectID, userID, name string, scopes []string, allowAgentCallScope bool) (*CreateApiTokenResponseDTO, error) {
+// allowAgentCallScope gates the reserved mcp:agent-call marker; expiresAt, when
+// non-nil, is persisted as the token's expiry.
+func (s *Service) create(ctx context.Context, projectID, userID, name string, scopes []string, allowAgentCallScope bool, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
 	if !allowAgentCallScope {
 		if err := rejectReservedAgentCallScope(scopes); err != nil {
 			return nil, err
@@ -212,6 +220,7 @@ func (s *Service) create(ctx context.Context, projectID, userID, name string, sc
 		TokenPrefix:    getTokenPrefix(rawToken),
 		TokenEncrypted: tokenEncrypted,
 		Scopes:         scopes,
+		ExpiresAt:      expiresAt,
 	}
 
 	if err := s.repo.Create(ctx, token); err != nil {

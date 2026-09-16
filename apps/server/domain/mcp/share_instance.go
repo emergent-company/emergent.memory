@@ -65,6 +65,9 @@ type shareTokenService interface {
 	// CreateAgentShareToken mints a token permitted to carry the reserved
 	// mcp:agent-call marker (per-agent MCP shares only).
 	CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error)
+	// CreateAgentShareTokenWithExpiry is CreateAgentShareToken with an optional
+	// token expiry, used by per-endpoint labeled keys.
+	CreateAgentShareTokenWithExpiry(ctx context.Context, projectID, userID, name string, scopes []string, expiresAt *time.Time) (*apitoken.CreateApiTokenResponseDTO, error)
 	UpdateScopes(ctx context.Context, tokenID, projectID, userID string, scopes []string) (*apitoken.ApiTokenDTO, error)
 	Revoke(ctx context.Context, tokenID, projectID, userID string) error
 	Regenerate(ctx context.Context, tokenID, projectID, userID string) (*apitoken.CreateApiTokenResponseDTO, error)
@@ -662,7 +665,12 @@ func (d *bunAgentDirectory) FindAgentRefsByDefinitionID(ctx context.Context, pro
 		Column("id", "name", "enabled").
 		Where("project_id = ?", projectID).
 		Where("(agent_definition_id = ? OR (agent_definition_id IS NULL AND (strategy_type = 'chat-session:' || ? OR strategy_type = 'agent-def:' || ?)))", definitionID, definitionID, definitionID).
-		OrderExpr("(agent_definition_id = ?) DESC, created_at ASC, id ASC", definitionID).
+		// NULLS LAST keeps the FK-linked agent first: without it, the NULL
+		// result of (agent_definition_id = ?) for marker rows sorts first under
+		// DESC (Postgres defaults DESC to NULLS FIRST), so marker rows would
+		// precede the FK-linked row and resolveAgentShareTarget would pick the
+		// wrong primary runtime agent.
+		OrderExpr("(agent_definition_id = ?) DESC NULLS LAST, created_at ASC, id ASC", definitionID).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)

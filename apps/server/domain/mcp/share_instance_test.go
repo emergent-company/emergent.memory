@@ -137,10 +137,19 @@ type fakeTokenSvc struct {
 	updateScopes     []string
 	revoked          []string
 	createdScopes    []string
+	createdExpiresAt *time.Time
+	createErrOnce    error
+	createCalls      int
 	regenerateCalled bool
 }
 
 func (f *fakeTokenSvc) Create(_ context.Context, _, _, _ string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error) {
+	f.createCalls++
+	if f.createErrOnce != nil {
+		err := f.createErrOnce
+		f.createErrOnce = nil
+		return nil, err
+	}
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
@@ -159,6 +168,17 @@ func (f *fakeTokenSvc) Create(_ context.Context, _, _, _ string, scopes []string
 // reservation so tests can exercise the agent-share mint path.
 func (f *fakeTokenSvc) CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error) {
 	return f.Create(ctx, projectID, userID, name, scopes)
+}
+
+// CreateAgentShareTokenWithExpiry mirrors CreateAgentShareToken, recording the
+// optional expiry so endpoint-key tests can assert it is mapped onto the token.
+func (f *fakeTokenSvc) CreateAgentShareTokenWithExpiry(ctx context.Context, projectID, userID, name string, scopes []string, expiresAt *time.Time) (*apitoken.CreateApiTokenResponseDTO, error) {
+	f.createdExpiresAt = expiresAt
+	resp, err := f.Create(ctx, projectID, userID, name, scopes)
+	if resp != nil {
+		resp.ExpiresAt = expiresAt
+	}
+	return resp, err
 }
 
 func (f *fakeTokenSvc) UpdateScopes(_ context.Context, _, _, _ string, scopes []string) (*apitoken.ApiTokenDTO, error) {

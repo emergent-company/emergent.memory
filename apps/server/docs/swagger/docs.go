@@ -306,7 +306,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid definition ID",
+                        "description": "Missing definition ID",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -318,7 +318,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Agent definition not found",
+                        "description": "Agent definition not found (invalid or unknown definition ID)",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -374,7 +374,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid definition ID, request body, or validation error",
+                        "description": "Missing definition ID, invalid request body, or validation error",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -386,7 +386,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Agent definition not found",
+                        "description": "Agent definition not found (invalid or unknown definition ID)",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -10053,7 +10053,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid project ID or definition ID",
+                        "description": "Missing definition ID",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -10065,13 +10065,84 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Agent definition not found",
+                        "description": "Agent definition not found (invalid or unknown definition ID)",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/agent-mcp-endpoints/{id}/keys": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Mints a project API token bound to the endpoint as a labeled key. Returns the raw token exactly once.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Create a labeled key on an agent MCP endpoint",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Endpoint ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Key",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateAgentMCPKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.CreateAgentMCPKeyResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Project admin required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Endpoint not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Duplicate label",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -10357,6 +10428,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/projects/{projectId}/agents/{agentId}/mcp-endpoint": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Establishes the single active MCP endpoint owned by an agent. Returns 409 when an active endpoint already exists.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Create an agent's MCP endpoint",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Agent ID (UUID)",
+                        "name": "agentId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcp.AgentMCPEndpointDTO"
+                        }
+                    },
+                    "403": {
+                        "description": "Project admin required",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Agent not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Active endpoint already exists",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/agents/{id}/enable": {
             "post": {
                 "security": [
@@ -10418,83 +10551,6 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/projects/{projectId}/agents/{id}/mcp-share": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Creates a share credential binding a new project API token to one agent, exposing it as a single-tool MCP server. Returns the raw token exactly once.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "mcp"
-                ],
-                "summary": "Create a per-agent MCP share",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Project ID (UUID)",
-                        "name": "projectId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Agent ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Share",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/domain_mcp.CreateAgentMCPShareRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/domain_mcp.CreateAgentMCPShareResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Project admin required",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Agent not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "409": {
-                        "description": "Duplicate name",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "422": {
-                        "description": "Invalid request",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -26350,6 +26406,35 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_mcp.AgentMCPEndpointDTO": {
+            "type": "object",
+            "properties": {
+                "agentId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mcpUrl": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "revokedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_mcp.CatalogResponse": {
             "type": "object",
             "properties": {
@@ -26381,18 +26466,18 @@ const docTemplate = `{
                 }
             }
         },
-        "domain_mcp.CreateAgentMCPShareRequest": {
+        "domain_mcp.CreateAgentMCPKeyRequest": {
             "type": "object",
             "properties": {
-                "description": {
+                "expiresAt": {
                     "type": "string"
                 },
-                "name": {
+                "label": {
                     "type": "string"
                 }
             }
         },
-        "domain_mcp.CreateAgentMCPShareResponse": {
+        "domain_mcp.CreateAgentMCPKeyResponse": {
             "type": "object",
             "properties": {
                 "agentId": {
@@ -26401,22 +26486,22 @@ const docTemplate = `{
                 "createdAt": {
                     "type": "string"
                 },
-                "description": {
+                "endpointId": {
+                    "type": "string"
+                },
+                "expiresAt": {
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "label": {
                     "type": "string"
                 },
                 "lastUsedAt": {
                     "type": "string"
                 },
                 "mcpUrl": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "projectId": {
                     "type": "string"
                 },
                 "status": {
@@ -26456,12 +26541,6 @@ const docTemplate = `{
         "domain_mcp.CreateShareInstanceResponse": {
             "type": "object",
             "properties": {
-                "agents": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -26705,6 +26784,19 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "secretEnvKeys": {
+                    "description": "SecretEnvKeys/SecretHeadersKeys name the entries in Env/Headers whose\nvalues must be encrypted at rest instead of stored in plaintext.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "secretHeadersKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "type": {
                     "enum": [
                         "stdio",
@@ -26759,6 +26851,19 @@ const docTemplate = `{
                 },
                 "projectId": {
                     "type": "string"
+                },
+                "secretEnvKeys": {
+                    "description": "SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.\nThe corresponding values are never returned by the API.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "secretHeadersKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "toolCount": {
                     "type": "integer"
@@ -26817,6 +26922,19 @@ const docTemplate = `{
                 },
                 "projectId": {
                     "type": "string"
+                },
+                "secretEnvKeys": {
+                    "description": "SecretEnvKeys/SecretHeadersKeys list the keys stored encrypted at rest.\nThe corresponding values are never returned by the API.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "secretHeadersKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "toolCount": {
                     "type": "integer"
@@ -26922,6 +27040,19 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "secretEnvKeys": {
+                    "description": "SecretEnvKeys/SecretHeadersKeys name the entries in Env/Headers whose\nvalues must be encrypted at rest. A key listed with an empty/omitted\nvalue keeps its previously stored ciphertext; keys no longer listed are\nremoved.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "secretHeadersKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "url": {
                     "type": "string"

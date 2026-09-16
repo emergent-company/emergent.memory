@@ -130,6 +130,12 @@ type Service struct {
 	// Per-agent MCP share persistence (add-agent-mcp-endpoint). Default is
 	// derived from DB in NewService but overridable in tests.
 	agentShares agentMCPShareStore
+
+	// Agent MCP endpoint (agent-scoped-mcp-endpoint): the agent-owned endpoint
+	// and its many labeled keys. Defaults are derived from DB in NewService but
+	// are overridable in tests.
+	agentEndpoints agentMCPEndpointStore
+	agentKeys      agentMCPKeyStore
 }
 
 // ServiceParams bundles optional dependencies for NewService.
@@ -215,6 +221,8 @@ func NewService(p ServiceParams) *Service {
 		shareTokens:             p.ApitokenSvc,
 		agentDir:                agentDirectoryOrNil(p.DB),
 		agentShares:             agentMCPShareOrNil(p.DB),
+		agentEndpoints:          agentMCPEndpointOrNil(p.DB),
+		agentKeys:               agentMCPKeyOrNil(p.DB),
 	}
 }
 
