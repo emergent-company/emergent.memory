@@ -4,6 +4,8 @@ description: Archive a completed change in the experimental workflow
 
 Archive a completed change in the experimental workflow.
 
+> Note: this repository has a single OpenSpec root at the repository root (`openspec/`). Run all `openspec` CLI and path operations from the repository root — never create or use `e2e/openspec/`.
+
 **Input**: Optionally specify a change name after `/opsx-archive` (e.g., `/opsx-archive add-auth`). If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
 
 **Steps**

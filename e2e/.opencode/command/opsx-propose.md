@@ -4,6 +4,8 @@ description: Propose a new change - create it and generate all artifacts in one 
 
 Propose a new change - create the change and generate all artifacts in one step.
 
+> Note: this repository has a single OpenSpec root at the repository root (`openspec/`). Run all `openspec` CLI and path operations from the repository root — never create or use `e2e/openspec/`.
+
 I'll create a change with artifacts:
 - proposal.md (what & why)
 - design.md (how)

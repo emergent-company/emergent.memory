@@ -93,6 +93,19 @@ task -d e2e test:mcj
 
 > There is no server-local `apps/server/tests/e2e/` suite anymore. API e2e lives in `e2e/tests-api/`; CLI e2e lives in `e2e/`.
 
+## OpenSpec
+
+Single OpenSpec root: `./openspec` (specs, changes, archive, config). Run all `openspec` commands from the repo root.
+
+| Task | Command |
+|---|---|
+| List active changes | `openspec list` |
+| List capability specs | `openspec list --specs` |
+| Validate | `openspec validate` |
+
+- **Placement**: a cross-app feature (e.g. backend + UI) is ONE change under `./openspec/changes/`; capability specs live at `./openspec/specs/<capability>/spec.md`.
+- **Capability naming**: app-specific capabilities are prefixed — `web-*`, `ios-*`, `mac-*`, `cli-*`, `e2e-*`, `mcp-*`; unprefixed names only for genuinely cross-cutting capabilities.
+
 ## Hot Reload — DO NOT restart after code changes
 
 The Go server uses `air`. Changes are picked up in 1-2 seconds automatically.
