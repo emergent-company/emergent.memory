@@ -17,17 +17,10 @@ type proposalEnvelope struct {
 	Body    json.RawMessage `json:"body"`
 }
 
-// proposalBlueprintBody is the "blueprint" proposal body — the same manifest
-// shape a blueprint pack carries (objectTypes + relationshipTypes as raw maps),
-// so the parsers in blueprints.go apply unchanged.
-type proposalBlueprintBody struct {
-	ObjectTypes       []map[string]any `json:"objectTypes"`
-	RelationshipTypes []map[string]any `json:"relationshipTypes"`
-}
-
 // ProposalCard is the render model for a proposal card: a side-effect summary
-// (diff counts vs the project's current types, empty here) plus read-only
-// object/relationship previews and the proposal's own summary/kind for scope.
+// (diff counts vs the project's current types, always additions here) plus
+// read-only object/relationship previews and the proposal's own summary/kind
+// for scope.
 type ProposalCard struct {
 	Kind    string
 	Summary string
@@ -35,32 +28,31 @@ type ProposalCard struct {
 	ObjectTypes       []ObjectTypeDetail
 	RelationshipTypes []RelationshipTypeDetail
 
-	AddedObjectTypes         int
-	ChangedObjectTypes       int
-	RemovedObjectTypes       int
-	AddedRelationshipTypes   int
-	ChangedRelationshipTypes int
-	RemovedRelationshipTypes int
+	AddedObjectTypes       int
+	AddedRelationshipTypes int
 }
 
 // buildProposalCard parses a raw proposal envelope into the card model, or
 // returns nil when the payload is absent, malformed, or carries no renderable
 // content (invalid proposals degrade to the plain markdown path).
 func buildProposalCard(raw json.RawMessage) *ProposalCard {
+	// Mirror the server's parseProposal envelope validation: require a
+	// non-empty kind, a non-empty summary, and an object body before rendering
+	// any card — a proposal the server dropped must never render here.
 	var env proposalEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil || env.Kind == "" {
+	if err := json.Unmarshal(raw, &env); err != nil || env.Kind == "" || env.Summary == "" {
+		return nil
+	}
+	var body map[string]any
+	if err := json.Unmarshal(env.Body, &body); err != nil || body == nil {
 		return nil
 	}
 	if env.Kind != "blueprint" {
 		// Unknown kind: render a lossless summary-only card.
 		return &ProposalCard{Kind: env.Kind, Summary: env.Summary}
 	}
-	var body proposalBlueprintBody
-	if err := json.Unmarshal(env.Body, &body); err != nil {
-		return nil
-	}
-	objectTypes := objectTypesFromMaps(body.ObjectTypes)
-	relationshipTypes := relationshipTypesFromMaps(body.RelationshipTypes)
+	objectTypes := objectTypesFromRaw(bodyField(body, "objectTypes"))
+	relationshipTypes := relationshipTypesFromRaw(bodyField(body, "relationshipTypes"))
 	if len(objectTypes) == 0 && len(relationshipTypes) == 0 {
 		return nil
 	}
@@ -73,26 +65,30 @@ func buildProposalCard(raw json.RawMessage) *ProposalCard {
 	// Diff against an empty current state: the stream transform has no project
 	// context, so every proposal entry reads as an addition.
 	for _, d := range diffObjectTypes(nil, objectTypes) {
-		switch d.Change {
-		case DiffChangeAdded:
+		if d.Change == DiffChangeAdded {
 			card.AddedObjectTypes++
-		case DiffChangeChanged:
-			card.ChangedObjectTypes++
-		case DiffChangeRemoved:
-			card.RemovedObjectTypes++
 		}
 	}
 	for _, d := range diffRelationshipTypes(nil, relationshipTypes) {
-		switch d.Change {
-		case DiffChangeAdded:
+		if d.Change == DiffChangeAdded {
 			card.AddedRelationshipTypes++
-		case DiffChangeChanged:
-			card.ChangedRelationshipTypes++
-		case DiffChangeRemoved:
-			card.RemovedRelationshipTypes++
 		}
 	}
 	return card
+}
+
+// bodyField re-marshals one proposal body field back to raw JSON so the
+// array-or-map tolerant parsers in blueprints.go apply unchanged.
+func bodyField(body map[string]any, key string) json.RawMessage {
+	v, ok := body[key]
+	if !ok || v == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // renderProposalHTML renders a proposal card to sanitized HTML, or "" when the
@@ -112,6 +108,7 @@ func renderProposalHTML(raw json.RawMessage) string {
 
 // proposalSummaryLabel renders the card's one-line side-effect summary, e.g.
 // "Adds 2 object types, 3 relationship types", or "" when nothing to report.
+// The diff base is always nil here, so only additions are possible.
 func proposalSummaryLabel(c *ProposalCard) string {
 	var parts []string
 	if c.AddedObjectTypes > 0 {
@@ -119,18 +116,6 @@ func proposalSummaryLabel(c *ProposalCard) string {
 	}
 	if c.AddedRelationshipTypes > 0 {
 		parts = append(parts, countLabel(c.AddedRelationshipTypes, "relationship type", "relationship types"))
-	}
-	if c.ChangedObjectTypes > 0 {
-		parts = append(parts, countLabel(c.ChangedObjectTypes, "changed object type", "changed object types"))
-	}
-	if c.ChangedRelationshipTypes > 0 {
-		parts = append(parts, countLabel(c.ChangedRelationshipTypes, "changed relationship type", "changed relationship types"))
-	}
-	if c.RemovedObjectTypes > 0 {
-		parts = append(parts, countLabel(c.RemovedObjectTypes, "removed object type", "removed object types"))
-	}
-	if c.RemovedRelationshipTypes > 0 {
-		parts = append(parts, countLabel(c.RemovedRelationshipTypes, "removed relationship type", "removed relationship types"))
 	}
 	if len(parts) == 0 {
 		return ""

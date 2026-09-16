@@ -701,6 +701,12 @@ definitions:
         type: string
       projectId:
         type: string
+      proposal:
+        additionalProperties: {}
+        description: |-
+          Proposal is the optional structured proposal envelope {kind, summary, body}
+          attached to the question. Nil/omitted for plain-text questions.
+        type: object
       question:
         type: string
       respondedAt:

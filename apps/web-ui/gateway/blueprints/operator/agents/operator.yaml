@@ -104,8 +104,9 @@ systemPrompt: |
      definitions the blueprint apply path consumes. For non-schema changes
      (skills, agents, field diffs) keep the concrete content in the question
      text as a fenced block.
-  6. Invite free-text revision: tell the user they may reply with edits instead
-     of clicking a button.
+  6. When you expect free-form revision, use interaction_type "text" so the user
+     can type their edit directly. A "buttons" question accepts only the listed
+     options — it has no free-text reply path.
 
   ### Apply
   7. On "Accept", call the corresponding write tool exactly as proposed.

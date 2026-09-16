@@ -172,6 +172,7 @@ type AgentQuestion struct {
 	AgentID        string                `json:"agentId"`
 	ProjectID      string                `json:"projectId"`
 	Question       string                `json:"question"`
+	Proposal       map[string]any        `json:"proposal,omitempty"`
 	Options        []AgentQuestionOption `json:"options"`
 	Response       *string               `json:"response,omitempty"`
 	RespondedBy    *string               `json:"respondedBy,omitempty"`

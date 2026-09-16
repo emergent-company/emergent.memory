@@ -9,7 +9,7 @@ import (
 // object/relationship previews reusing the blueprint/schema browser components.
 // Injected server-side into the question card, above the options.
 templ proposalCard(c *ProposalCard) {
-	<div class="proposal-card mt-0.5 overflow-hidden rounded-box border border-base-content/10 bg-base-200/30">
+	<div class="proposal-card mt-0.5 overflow-x-auto [overflow-wrap:anywhere] rounded-box border border-base-content/10 bg-base-200/30">
 		<div class="flex flex-wrap items-center gap-2 border-b border-base-content/10 bg-base-200/40 px-4 py-2.5">
 			<span class="iconify lucide--package text-primary size-4" aria-hidden="true"></span>
 			<p class="text-sm font-semibold">Proposed changes</p>
@@ -19,13 +19,13 @@ templ proposalCard(c *ProposalCard) {
 			}
 		</div>
 		if c.Summary != "" {
-			<p class="text-base-content/70 px-4 pt-2.5 text-xs">{ c.Summary }</p>
+			<p class="text-base-content/70 px-4 py-2.5 text-xs">{ c.Summary }</p>
 		}
 		if len(c.ObjectTypes) > 0 {
 			<div class="mt-2 px-4">
 				@ui.Eyebrow("Object types", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
 			</div>
-			<div class="divide-y divide-base-content/10">
+			<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
 				for _, ot := range c.ObjectTypes {
 					@objectTypeRow(ot.Name, ot.Label, ot.Description, ot.Properties, "", "", "", "")
 				}
@@ -35,7 +35,7 @@ templ proposalCard(c *ProposalCard) {
 			<div class="mt-2 px-4">
 				@ui.Eyebrow("Relationship types", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-1"})
 			</div>
-			<div class="divide-y divide-base-content/10">
+			<div class="max-h-64 divide-y divide-base-content/10 overflow-y-auto overscroll-contain">
 				for _, rt := range c.RelationshipTypes {
 					@relationshipTypeRow(rt)
 				}
