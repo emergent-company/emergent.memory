@@ -32,6 +32,15 @@ var files embed.FS
 //go:embed static/css/app.css
 var cssGuard []byte
 
+func init() {
+	// cssGuard exists to turn a missing app.css into a compile error (a
+	// single-file embed fails; all:static above silently omits a missing file).
+	// Assert it's non-empty too, so a blank stylesheet also fails loudly.
+	if len(cssGuard) == 0 {
+		panic("webui: static/css/app.css is empty — run `task css` before building")
+	}
+}
+
 // assetHash caches a content hash of the embedded static/ tree, computed
 // lazily and once per process.
 var (
