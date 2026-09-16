@@ -22,11 +22,15 @@
 #
 #   Step A reads REQUEST signals (timeline `review_requested`, requested_reviewers),
 #   where the timeline reports `Copilot`, so it accepts all three spellings.
-#   Step B reads only REST GET /pulls/{n}/reviews, which returns
-#   `copilot-pull-request-reviewer[bot]` and never `Copilot` (that spelling exists
-#   only on the comments endpoint). Step B therefore uses a NARROWER matcher so
-#   the accepted contract matches what that endpoint can actually return; no
-#   second endpoint is polled.
+#   Step B polls BOTH completion endpoints, because a Copilot review can be
+#   represented on either one:
+#     - REST GET /pulls/{n}/reviews  -> `copilot-pull-request-reviewer[bot]`
+#     - REST GET /pulls/{n}/comments -> `Copilot`
+#   A review comment that never materialises as a submitted review exists only
+#   on the comments endpoint, so polling reviews alone would let the gate time
+#   out and fail open on a perfectly valid Copilot review. Each endpoint is
+#   matched against its own spelling, and both are gated by the same
+#   `commit_id == HEAD_SHA` staleness test.
 #
 #   Copilot reviews return state COMMENTED, so do NOT require APPROVED — the
 #   `commit_id` staleness test is what matters.
@@ -68,13 +72,15 @@ is_gated_request_login() {
   esac
 }
 
-# Review signals (Step B): this reads REST GET /pulls/{n}/reviews, which only
-# ever returns the two `copilot-pull-request-reviewer*` spellings. `Copilot`
-# appears solely on the comments endpoint and is deliberately excluded here so
-# the accepted contract matches what this endpoint can actually return.
+# Review signals (Step B). Two endpoints are polled and each returns a different
+# spelling:
+#   - REST GET /pulls/{n}/reviews  -> `copilot-pull-request-reviewer[bot]`
+#   - REST GET /pulls/{n}/comments -> `Copilot`
+# Both matchers accept every Copilot spelling so a review observed on either
+# endpoint can satisfy the gate.
 is_gated_review_login() {
   case "$1" in
-    "copilot-pull-request-reviewer[bot]" | "copilot-pull-request-reviewer")
+    "copilot-pull-request-reviewer[bot]" | "copilot-pull-request-reviewer" | "Copilot")
       return 0
       ;;
     *)
@@ -82,6 +88,15 @@ is_gated_review_login() {
       ;;
   esac
 }
+
+# jq filter used by Step B to keep only Copilot-authored rows from the reviews
+# endpoint. Kept in sync with is_gated_review_login().
+REVIEWS_JQ='.[] | "\(.user.login)\t\(.commit_id)"'
+
+# jq filter for the review-comments endpoint. The `select` also trims the
+# payload: this endpoint is far chattier than /reviews and we only care about
+# Copilot rows.
+COMMENTS_JQ='.[] | select(.user.login == "Copilot" or .user.login == "copilot-pull-request-reviewer[bot]" or .user.login == "copilot-pull-request-reviewer") | "\(.user.login)\t\(.commit_id)"'
 
 # ---------------------------------------------------------------------------
 # Step A — is a gated reviewer actually REQUESTED? PRs that never request a
@@ -139,6 +154,21 @@ if gh api --paginate \
   log "diagnostic: timeline reports copilot_work_started"
 fi
 
+# Returns 0 (and logs) when tab-separated `login<TAB>commit_id` rows contain a
+# gated reviewer whose commit_id equals HEAD_SHA. $2 is the endpoint label, used
+# only in the log line so a passing run says which signal satisfied the gate.
+matched_gated_review_for_head() {
+  local rows="$1" source="$2" login commit_id
+  while IFS=$'\t' read -r login commit_id; do
+    [ -n "${login:-}" ] || continue
+    if is_gated_review_login "$login" && [ "$commit_id" = "$HEAD_SHA" ]; then
+      log "PASS: review by $login covers head $HEAD_SHA (via $source)"
+      return 0
+    fi
+  done <<<"$rows"
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # Step B — poll reviews until one from a gated reviewer covers HEAD_SHA.
 # ---------------------------------------------------------------------------
@@ -146,20 +176,33 @@ deadline=$(( $(date +%s) + MAX_WAIT_SECONDS ))
 while :; do
   reviews="$(gh api --paginate \
     "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-    --jq '.[] | "\(.user.login)\t\(.commit_id)"' 2>/dev/null)"
+    --jq "$REVIEWS_JQ" 2>/dev/null)"
   reviews_rc=$?
   if [ "$reviews_rc" -ne 0 ]; then
     log "FAIL-OPEN: error fetching reviews (rc=$reviews_rc); not blocking"
     exit 0
   fi
 
-  while IFS=$'\t' read -r login commit_id; do
-    [ -n "${login:-}" ] || continue
-    if is_gated_review_login "$login" && [ "$commit_id" = "$HEAD_SHA" ]; then
-      log "PASS: review by $login covers head $HEAD_SHA"
-      exit 0
-    fi
-  done <<<"$reviews"
+  # Secondary completion signal: some Copilot reviews only ever appear as
+  # review comments, so polling /reviews alone would time out and fail open on
+  # a valid review. A failure here is non-fatal — /reviews is still polled and
+  # the deadline still applies, so a transient blip cannot bypass the gate while
+  # a permanent failure still ends in the fail-open timeout path.
+  comments="$(gh api --paginate \
+    "repos/$REPO/pulls/$PR_NUMBER/comments" \
+    --jq "$COMMENTS_JQ" 2>/dev/null)"
+  comments_rc=$?
+  if [ "$comments_rc" -ne 0 ]; then
+    log "WARNING: error fetching review comments (rc=$comments_rc); continuing to poll reviews"
+    comments=""
+  fi
+
+  if matched_gated_review_for_head "$reviews" "GET /pulls/$PR_NUMBER/reviews"; then
+    exit 0
+  fi
+  if matched_gated_review_for_head "$comments" "GET /pulls/$PR_NUMBER/comments"; then
+    exit 0
+  fi
 
   now=$(date +%s)
   if [ "$now" -ge "$deadline" ]; then
