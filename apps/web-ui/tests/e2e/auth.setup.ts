@@ -3,8 +3,11 @@ import { login } from './helpers/auth';
 import {
   createOrg,
   createProject,
-  configureProvider,
+  configureLiveProvider,
+  hasLiveProviderCreds,
   writeBootstrap,
+  LIVE_PROVIDER,
+  LIVE_PROVIDER_BASE_URL,
 } from './helpers/bootstrap';
 import { STORAGE_STATE } from './constants/storage';
 
@@ -53,12 +56,24 @@ setup('authenticate and reuse-or-create tenant', async ({ page }) => {
   expect(act.ok(), `activate project failed (HTTP ${act.status()})`).toBeTruthy();
 
   // Provider config is best-effort: the backend runs a live generate test on
-  // save, so a fake key 401s. Supply a real key (or skip) — the form flow is
-  // covered by the provider UI spec.
-  try {
-    await configureProvider(page, 'deepseek', 'sk-e2e-test-key');
-  } catch (e) {
-    console.warn(`[setup] provider config skipped: ${(e as Error).message}`);
+  // save, so a fake key 401s. Configure the real dev provider from env
+  // (E2E_SCENARIO_LLM_*) so provider-gated specs have a configured provider;
+  // when the creds are unset (default CI/local run) leave the project
+  // provider-less with a note — those specs then skip rather than fail setup.
+  if (hasLiveProviderCreds()) {
+    try {
+      await configureLiveProvider(page);
+      console.log(
+        `[setup] configured live provider '${LIVE_PROVIDER}' (base_url ${LIVE_PROVIDER_BASE_URL})`,
+      );
+    } catch (e) {
+      console.warn(`[setup] provider config failed, continuing without it: ${(e as Error).message}`);
+    }
+  } else {
+    console.warn(
+      '[setup] provider config skipped: set E2E_SCENARIO_LLM_API_KEY ' +
+        '(and optionally E2E_SCENARIO_LLM_BASE_URL) to configure a live-validated provider',
+    );
   }
 
   // Seed a bundled schema pack (idempotent) so object types exist.
