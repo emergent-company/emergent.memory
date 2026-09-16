@@ -58,7 +58,7 @@ func (h *AgentEndpointHandler) HandleAgentEndpoint(c echo.Context) error {
 
 	// Authorize before handling notifications: an unbound or foreign credential
 	// must never receive an accepted (202) response, even for notifications/*.
-	share, err := h.svc.AuthorizeAgentShare(c.Request().Context(), user.APITokenID, agentID)
+	endpoint, _, err := h.svc.AuthorizeAgentEndpoint(c.Request().Context(), user.APITokenID, agentID)
 	if err != nil {
 		return c.JSON(http.StatusForbidden, NewErrorResponse(req.ID, ErrCodeForbidden, err.Error(), nil))
 	}
@@ -74,9 +74,9 @@ func (h *AgentEndpointHandler) HandleAgentEndpoint(c echo.Context) error {
 	case "initialize":
 		response = h.handleInitialize(&req)
 	case "tools/list":
-		response = h.handleToolsList(ctx, &req, share)
+		response = h.handleToolsList(ctx, &req, endpoint)
 	case "tools/call":
-		response = h.handleToolsCall(ctx, &req, share)
+		response = h.handleToolsCall(ctx, &req, endpoint)
 	default:
 		response = NewErrorResponse(req.ID, ErrCodeMethodNotFound, "Method not found: "+req.Method, map[string]any{
 			"method":            req.Method,
@@ -117,16 +117,16 @@ func (h *AgentEndpointHandler) handleInitialize(req *Request) *Response {
 }
 
 // handleToolsList returns exactly one call_agent tool definition.
-func (h *AgentEndpointHandler) handleToolsList(ctx context.Context, req *Request, share *AgentMCPShare) *Response {
+func (h *AgentEndpointHandler) handleToolsList(ctx context.Context, req *Request, endpoint *AgentMCPEndpoint) *Response {
 	name := ""
-	if agent, err := h.svc.resolveProjectAgent(ctx, share.ProjectID, share.AgentID); err == nil && agent != nil {
+	if agent, err := h.svc.resolveProjectAgent(ctx, endpoint.ProjectID, endpoint.AgentID); err == nil && agent != nil {
 		name = agent.Name
 	}
 	return NewSuccessResponse(req.ID, ToolsListResult{Tools: []ToolDefinition{agentCallToolDefinition(name)}})
 }
 
 // handleToolsCall executes call_agent or rejects any other tool.
-func (h *AgentEndpointHandler) handleToolsCall(ctx context.Context, req *Request, share *AgentMCPShare) *Response {
+func (h *AgentEndpointHandler) handleToolsCall(ctx context.Context, req *Request, endpoint *AgentMCPEndpoint) *Response {
 	var params ToolsCallParams
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -146,7 +146,7 @@ func (h *AgentEndpointHandler) handleToolsCall(ctx context.Context, req *Request
 		return NewErrorResponse(req.ID, ErrCodeInvalidParams, "Missing required argument: message", map[string]any{"required": []string{"message"}})
 	}
 
-	result := h.svc.CallAgentOnce(ctx, share.ProjectID, share.AgentID, message)
+	result := h.svc.CallAgentOnce(ctx, endpoint.ProjectID, endpoint.AgentID, message)
 	return NewSuccessResponse(req.ID, result)
 }
 

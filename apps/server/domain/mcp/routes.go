@@ -63,24 +63,27 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	// Includable tool catalog for the allowlist picker
 	adminGroup.GET("/tools", h.HandleListToolCatalog)
 
-	// Per-agent MCP share lifecycle (add-agent-mcp-endpoint). Registered on
-	// subpaths of the agents resource; uses :id to match the existing agent
-	// routes' param name.
+	// Agent-owned MCP endpoint and its labeled keys (agent-scoped-mcp-endpoint).
 	//
-	// These are likewise project-admin credential-minting operations, so they
-	// share the same RequireAPITokenScopes("admin") guard as the project share
-	// lifecycle above: a narrowly-scoped project share token must not be able to
-	// mint, rotate, or revoke agent shares.
-	ag := e.Group("/api/projects/:projectId/agents/:id")
+	// These are project-admin credential-minting operations, so they share the
+	// same RequireAPITokenScopes("admin") guard as the project share lifecycle
+	// above: a narrowly-scoped project share token must not be able to mint,
+	// rotate, or revoke agent endpoint keys.
+	ag := e.Group("/api/projects/:projectId/agents/:agentId")
 	ag.Use(authMiddleware.RequireAuth(), authMiddleware.RequireAPITokenScopes("admin"))
-	ag.POST("/mcp-share", h.HandleCreateAgentShare)
-	ag.GET("/mcp-shares", h.HandleListAgentShares)
+	ag.POST("/mcp-endpoint", h.HandleCreateAgentEndpoint)
+	ag.GET("/mcp-endpoint", h.HandleGetAgentEndpoint)
 
-	agProject := e.Group("/api/projects/:projectId/agent-mcp-shares")
-	agProject.Use(authMiddleware.RequireAuth(), authMiddleware.RequireAPITokenScopes("admin"))
-	agProject.GET("", h.HandleListProjectAgentShares)
-	agProject.DELETE("/:id", h.HandleRevokeAgentShare)
-	agProject.POST("/:id/rotate", h.HandleRotateAgentShare)
+	endpointGroup := e.Group("/api/projects/:projectId/agent-mcp-endpoints")
+	endpointGroup.Use(authMiddleware.RequireAuth(), authMiddleware.RequireAPITokenScopes("admin"))
+	endpointGroup.DELETE("/:id", h.HandleRevokeAgentEndpoint)
+	endpointGroup.POST("/:id/keys", h.HandleCreateAgentKey)
+	endpointGroup.GET("/:id/keys", h.HandleListAgentKeys)
+
+	keyGroup := e.Group("/api/projects/:projectId/agent-mcp-keys")
+	keyGroup.Use(authMiddleware.RequireAuth(), authMiddleware.RequireAPITokenScopes("admin"))
+	keyGroup.DELETE("/:id", h.HandleRevokeAgentKey)
+	keyGroup.POST("/:id/rotate", h.HandleRotateAgentKey)
 
 	// Dedicated per-agent MCP endpoint (auth-gated, one tool: call_agent).
 	aeg := e.Group("/api/mcp/agents")

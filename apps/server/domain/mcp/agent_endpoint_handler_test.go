@@ -17,14 +17,11 @@ import (
 )
 
 func agentEndpointService(handler AgentToolHandler) *Service {
-	store := newFakeAgentShareStore()
-	store.byID["s1"] = &AgentMCPShare{ID: "s1", ProjectID: "proj-1", AgentID: agentA, Name: "Team A", TokenID: "tok-1"}
-	if handler == nil {
-		handler = &stubAgentHandler{runReply: "the reply"}
+	f := newEndpointTestFixture()
+	if handler != nil {
+		f.svc.agentToolHandler = handler
 	}
-	return newAgentShareService(store, &fakeTokenSvc{}, &fakeAgentDir{
-		agents: []AgentRef{{ID: agentA, Name: "Alpha", Enabled: true}, {ID: agentB, Name: "Beta", Enabled: true}},
-	}, handler)
+	return f.svc
 }
 
 func agentEndpointRequest(t *testing.T, method string, params any, apiTokenID string) (*echo.Context, *httptest.ResponseRecorder) {

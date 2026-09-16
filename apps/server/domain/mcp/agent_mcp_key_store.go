@@ -72,6 +72,10 @@ type agentMCPKeyStore interface {
 	// including the token's lifecycle timestamps. Returns nil when the token is
 	// not bound to any active key.
 	GetActiveKeyByTokenID(ctx context.Context, tokenID string) (*AgentMCPKey, error)
+	// GetKeyByID returns one key by primary key (revoked or active) joined with
+	// its endpoint identity and token timestamps, or nil when unknown. The
+	// EndpointProjectID field scopes revoke/rotate to the caller's project.
+	GetKeyByID(ctx context.Context, id string) (*AgentMCPKeyDetail, error)
 	// ListKeysByEndpoint returns every key for an endpoint (active and revoked)
 	// with its endpoint identity and token timestamps, newest first.
 	ListKeysByEndpoint(ctx context.Context, endpointID string) ([]*AgentMCPKeyDetail, error)
@@ -91,12 +95,9 @@ type bunAgentMCPKeyStore struct {
 	db bun.IDB
 }
 
-// The store is not yet injected into Service (that wiring lands with the auth
-// refactor); assert conformance and keep the injection seam referenced.
-var (
-	_ agentMCPKeyStore = (*bunAgentMCPKeyStore)(nil)
-	_                  = agentMCPKeyOrNil
-)
+// The store is injected into Service and also exercised directly by the store
+// tests; assert conformance.
+var _ agentMCPKeyStore = (*bunAgentMCPKeyStore)(nil)
 
 func newAgentMCPKeyStore(db bun.IDB) *bunAgentMCPKeyStore {
 	return &bunAgentMCPKeyStore{db: db}
@@ -133,6 +134,18 @@ LEFT JOIN core.api_tokens at ON at.id = amk.token_id`
 func (r *bunAgentMCPKeyStore) GetActiveKeyByTokenID(ctx context.Context, tokenID string) (*AgentMCPKey, error) {
 	row := new(AgentMCPKey)
 	err := r.db.NewRaw(agentMCPKeySelect+` WHERE amk.token_id = ? AND amk.revoked_at IS NULL`, tokenID).Scan(ctx, row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, apperror.NewDatabase(apperror.ErrDatabase.Message, err)
+	}
+	return row, nil
+}
+
+func (r *bunAgentMCPKeyStore) GetKeyByID(ctx context.Context, id string) (*AgentMCPKeyDetail, error) {
+	row := new(AgentMCPKeyDetail)
+	err := r.db.NewRaw(agentMCPKeyDetailSelect+` WHERE amk.id = ?`, id).Scan(ctx, row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil

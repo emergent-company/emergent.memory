@@ -65,6 +65,9 @@ type shareTokenService interface {
 	// CreateAgentShareToken mints a token permitted to carry the reserved
 	// mcp:agent-call marker (per-agent MCP shares only).
 	CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*apitoken.CreateApiTokenResponseDTO, error)
+	// CreateAgentShareTokenWithExpiry is CreateAgentShareToken with an optional
+	// token expiry, used by per-endpoint labeled keys.
+	CreateAgentShareTokenWithExpiry(ctx context.Context, projectID, userID, name string, scopes []string, expiresAt *time.Time) (*apitoken.CreateApiTokenResponseDTO, error)
 	UpdateScopes(ctx context.Context, tokenID, projectID, userID string, scopes []string) (*apitoken.ApiTokenDTO, error)
 	Revoke(ctx context.Context, tokenID, projectID, userID string) error
 	Regenerate(ctx context.Context, tokenID, projectID, userID string) (*apitoken.CreateApiTokenResponseDTO, error)
