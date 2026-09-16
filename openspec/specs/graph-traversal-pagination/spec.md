@@ -1,7 +1,7 @@
 # graph-traversal-pagination Specification
 
 ## Purpose
-TBD - created by archiving change search-retrieval-performance. Update Purpose after archive.
+Defines correct, bounded pagination for knowledge-graph traversal: `TraverseGraph` computes `HasNextPage` from the actual result set instead of hard-coding `false`, honors `pageSize` (default 50, cap 1000) with offset/cursor continuation, and `ExpandGraph` reports truncation when its `MaxNodes`/`MaxEdges` bounds are reached. It exists so callers can page through large traversals without re-running the full traversal or silently dropping results.
 
 ## Requirements
 

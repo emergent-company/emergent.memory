@@ -1,7 +1,7 @@
 # search-similarity-threshold Specification
 
 ## Purpose
-TBD - created by archiving change search-retrieval-performance. Update Purpose after archive.
+Lets every search path (unified search, graph search, chunk text search, relationship search) drop results whose final fused similarity score falls below a caller-supplied `min_score`, instead of force-filling a default candidate floor with weak matches. The threshold is validated to the `[0, 1]` range, applied to each candidate set before fusion and again to the fused results, and omitting it preserves pre-change behavior.
 
 ## Requirements
 
