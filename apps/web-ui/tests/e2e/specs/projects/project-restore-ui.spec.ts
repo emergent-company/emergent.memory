@@ -84,9 +84,12 @@ test.describe('Project restore', () => {
     const orgName = `E2E Restore Org ${stamp}`;
     const projectName = `E2E Restore Project ${stamp}`;
     const orgId = await createOrg(page, orgName);
-    const projectId = await createProject(page, orgId, projectName);
+    let projectId: string;
 
+    let bodyError: unknown = null;
     try {
+      projectId = await createProject(page, orgId, projectName);
+
       await page.goto(`/orgs/${orgId}`);
       await expectAppPage(page, new RegExp(orgName));
       await expect(page.getByRole('heading', { name: orgName })).toBeVisible();
@@ -158,6 +161,9 @@ test.describe('Project restore', () => {
           { timeout: 20_000, intervals: [200, 300, 500] },
         )
         .not.toBe('pending_deletion');
+    } catch (e) {
+      bodyError = e;
+      throw e;
     } finally {
       // Put the bootstrap project back as the session's active project, then
       // drop the scratch org (its cascade removes whatever the UI left behind).
@@ -166,9 +172,20 @@ test.describe('Project restore', () => {
           .post(`/api/projects/${bootstrap.projectId}/activate`)
           .catch(() => {});
       }
-      await deleteOrgAndPollGone(page, orgId).catch((e) =>
-        console.warn(`[project-restore-ui] cleanup skipped: ${(e as Error).message}`),
-      );
+      try {
+        await deleteOrgAndPollGone(page, orgId);
+      } catch (cleanupError) {
+        // A leaked scratch org must fail the test (not just warn) — unless the
+        // body already failed, in which case keep the original failure and log
+        // the cleanup one.
+        if (bodyError) {
+          console.warn(
+            `[project-restore-ui] cleanup also failed: ${(cleanupError as Error).message}`,
+          );
+        } else {
+          throw cleanupError;
+        }
+      }
     }
   });
 });

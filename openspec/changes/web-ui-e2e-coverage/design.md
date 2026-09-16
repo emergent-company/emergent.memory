@@ -52,9 +52,9 @@ Priority order for new locators: `getByRole` → `input[name=]`/`#id` → `data-
 
 *Rationale:* the README already states the "add testid only where unstable" convention, and 8 of the 49 existing specs use `getByTestId`. Blindly testid-ing every element would be churn without benefit. Phase 0 adds the attributes selectively, per the list in `tasks.md`, not wholesale.
 
-### D5 — Six phases, ordered by risk, each independently mergeable
+### D5 — Harness groundwork + six feature phases, ordered by risk, each independently mergeable
 
-Secret lifecycle → authorization → destructive → CRUD → interaction depth → chat. Each phase is a self-contained PR: new specs + the testids those specs need + README/coverage note.
+Phase 0 (harness groundwork) → secret lifecycle → authorization → destructive → CRUD → interaction depth → chat. Each phase is a self-contained PR: new specs + the testids those specs need + README/coverage note.
 
 *Rationale:* a single 30-spec PR is unreviewable and will block on one flaky test. Risk ordering means the highest-value coverage lands first even if later phases slip.
 
@@ -81,7 +81,7 @@ For `POST /api/chat`, prefer asserting on rendered transcript DOM plus the termi
 ## Risks / Trade-offs
 
 - **Added runtime.** Phases 1-6 add ~30 specs; `mutations` is `workers: 1`, so wall-clock grows roughly linearly. *Mitigation:* keep each spec to one flow, reuse the bootstrap org, avoid per-spec login (shared `storageState`), and do not add live-LLM specs outside `scenarios`.
-- **Templ churn.** Adding testids touches many `.templ` files and requires `templ generate`. *Mitigation:* attributes are additive and mechanical; Phase 0 does them in one commit so later phases only touch specs. Every phase that changes `.templ` runs `templ generate` + `task lint` + the gateway `go build` (rules in `apps/web-ui/gateway/AGENTS.md`).
+- **Templ churn.** Adding testids touches `.templ` files and requires `templ generate`. *Mitigation:* attributes are additive and mechanical, and are added **just in time with the consuming spec** rather than in one batch — three anchors so far, all in `api_tokens.templ`. When a `.templ` file does change, that phase runs `templ generate` + `task lint` + the gateway `go build ./...` per `apps/web-ui/gateway/AGENTS.md`.
 - **Destructive-spec blast radius.** Object merge, blueprint unapply, migration rollback, and backup delete operate on real state. *Mitigation:* each runs against scratch entities in the bootstrap project created within the spec; blueprint/migration tests use a scratch project where the bootstrap and bundled packs are not required to survive.
 - **Mutating specs share one tenant.** The mutation project runs `workers: 1` against the shared bootstrap tenant, so every spec must assert on the entities it created rather than on absolute list contents. *Enforced via D3 and by writing locators that target own-created names; both implementation lanes were green on repeat runs.*
 - **Fresh worktree builds.** `*_templ.go` are gitignored, so a new worktree contains no generated templates and the gateway will not compile until `templ generate` runs. Any lane verifying a Go/templ change must generate first. *Mitigation: documented in `tests/e2e/README.md` and in lane instructions.*

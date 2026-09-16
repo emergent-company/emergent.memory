@@ -43,7 +43,11 @@ test.describe('Invite revoke', () => {
     // Invitations target the session's active project; pin it to the bootstrap
     // project so this spec is independent of whatever ran before it.
     if (bootstrap?.projectId) {
-      await page.request.post(`/api/projects/${bootstrap.projectId}/activate`);
+      const activate = await page.request.post(`/api/projects/${bootstrap.projectId}/activate`);
+      expect(
+        activate.ok(),
+        `activating the bootstrap project failed (HTTP ${activate.status()})`,
+      ).toBeTruthy();
     }
 
     const email = `e2e-invite-revoke-${Date.now()}-${Math.floor(Math.random() * 1e4)}@example.com`;
@@ -98,5 +102,12 @@ test.describe('Invite revoke', () => {
         console.warn(`[invite-revoke-ui] cleanup skipped: ${(e as Error).message}`),
       );
     }
+  });
+
+  test('invite revoke: no pending E2E invites left behind (self-cleanup guard)', async ({ page }) => {
+    const pending = (await listInvites(page)).filter(
+      (inv) => inv.email.startsWith('e2e-invite-revoke-') && inv.status === 'pending',
+    );
+    expect(pending.map((p) => p.email)).toEqual([]);
   });
 });

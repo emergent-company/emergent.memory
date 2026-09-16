@@ -1,4 +1,4 @@
-import { Page, Locator, expect } from '@playwright/test';
+import { Page, Locator, APIRequestContext, expect } from '@playwright/test';
 
 /**
  * Shared helper for the API token management surfaces:
@@ -93,6 +93,48 @@ export async function readOneTimeSecret(page: Page): Promise<string> {
     throw new Error(`readOneTimeSecret: reveal panel value is not an emt_ token (got ${JSON.stringify(secret)})`);
   }
   return secret;
+}
+
+/** Memory API origin. The gateway talks to it via MEMORY_URL; dev default below. */
+export const MEMORY_API_URL =
+  process.env.E2E_MEMORY_API_URL || 'https://api.dev.emergent-company.ai';
+
+/**
+ * Assert the memory API rejects `token` as unauthenticated. Revoked/rotated
+ * `emt_*` tokens must fail with 401 (invalid token), not 403 (valid token,
+ * missing scope) — that distinction is what proves invalidation.
+ */
+export async function expectTokenRejected(
+  request: APIRequestContext,
+  token: string,
+): Promise<void> {
+  const resp = await request.get(`${MEMORY_API_URL}/api/projects`, {
+    headers: { Authorization: `Bearer ${token}` },
+    failOnStatusCode: false,
+  });
+  expect(
+    resp.status(),
+    `stale token ${token.slice(0, 12)}… must be rejected by the memory API with 401`,
+  ).toBe(401);
+}
+
+/**
+ * Assert the memory API still accepts `token` as a valid credential. 403 (valid
+ * token, missing scope) is acceptable; 401 (invalid token) is not — this is the
+ * contrast that makes `expectTokenRejected` non-trivial.
+ */
+export async function expectTokenAuthenticated(
+  request: APIRequestContext,
+  token: string,
+): Promise<void> {
+  const resp = await request.get(`${MEMORY_API_URL}/api/projects`, {
+    headers: { Authorization: `Bearer ${token}` },
+    failOnStatusCode: false,
+  });
+  expect(
+    resp.status(),
+    `live token ${token.slice(0, 12)}… must be accepted by the memory API (401 = invalid token)`,
+  ).not.toBe(401);
 }
 
 /** Check exactly the given scope checkboxes on the create/edit form. */

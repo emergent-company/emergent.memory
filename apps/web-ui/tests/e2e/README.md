@@ -156,8 +156,10 @@ the unavailable state for a missing backup).
 
 Secret lifecycle and destructive additions: **project token lifecycle**
 (`/settings/tokens` — create → edit scopes → regenerate → revoke, plus a guard test
-asserting no live `E2E` tokens are left behind), **account token lifecycle**
-(`/profile/tokens` — the same lifecycle with its own guard), **project restore**
+asserting no live `E2E` tokens are left behind, and a direct memory API probe
+asserting the previous secret is rejected with HTTP 401 — not merely that its row is
+marked revoked), **account token lifecycle**
+(`/profile/tokens` — the same lifecycle, 401 probes and guard), **project restore**
 (row-menu schedule-for-deletion → restore → back in the active list and no longer
 pending), and **invite revoke** (create a pending invite for a unique address →
 revoke → no longer pending in the DOM or in `/api/invites`). All of these assert
@@ -224,6 +226,9 @@ status and the blocked items recorded in `tasks.md`).
 
 - The suite reuses the already-running gateway; it does **not** start one.
   `E2E_BASE_URL` overrides the target (default `http://alfred-dev.tail0358fa.ts.net:8095`).
+- `E2E_MEMORY_API_URL` overrides the memory API origin the token-lifecycle specs
+  probe directly (default `https://api.dev.emergent-company.ai`); those specs use it
+  to prove a regenerated/revoked secret is rejected with HTTP 401.
 - **Fresh Git worktree:** `apps/web-ui/gateway/*_templ.go` are gitignored, so a new
   worktree has no generated templates and the gateway will **not** compile until you
   run `PATH="/root/go/bin:$PATH" templ generate` (or `-f <file>.templ` for one file).

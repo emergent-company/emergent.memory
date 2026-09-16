@@ -27,15 +27,16 @@ The gateway SHALL continue to render a `data-testid="page-<slug>"` anchor on eve
 - **THEN** the request is redirected to `/auth/login` and no page anchor is rendered
 
 ### Requirement: Shared helpers cover the recurring interaction primitives
-The suite SHALL provide helpers for the interaction primitives that new specs need, so that phases do not re-implement them per spec.
+The suite SHALL provide a shared helper for any interaction primitive that more than one spec needs, so that phases do not re-implement it per spec. A primitive with a single consumer MAY instead be handled by a spec-local helper.
 
 #### Scenario: Toast assertion helper
 - **WHEN** a spec expects flash feedback after a mutation
 - **THEN** it uses a shared toast helper that settles the flash render rather than asserting on a transient class
 
 #### Scenario: Dialog and row-menu helpers
-- **WHEN** a spec triggers a confirm dialog or opens a row menu
+- **WHEN** a spec triggers a confirm dialog or opens a row menu that more than one spec needs
 - **THEN** it uses a shared dialog/row-menu helper
+- **AND** a primitive with a single consumer may define its helper locally in the spec instead (the shipped project-restore spec defines `openRowMenu`/`deleteDialog` locally)
 
 #### Scenario: Credential helpers
 - **WHEN** a spec creates or reads a token or share secret
@@ -61,15 +62,19 @@ The Playwright configuration SHALL declare the project dependency graph, and the
 - **THEN** it matches the declared dependencies in `playwright.config.ts`, including that the mutation project does not wait for the read surface
 
 ### Requirement: Mutation specs isolate and clean up their state
-Specs that create or mutate state SHALL confine themselves to entities they create, and SHALL remove them on completion.
+Specs that create or mutate state SHALL confine themselves to entities they create, and SHALL remove them on completion. Resources the product deliberately retains as an audit trail are exempt from removal; for those, the requirement is that no LIVE instance remains.
 
 #### Scenario: Writers confined to the mutation project
 - **WHEN** a spec performs a create, update, or delete
 - **THEN** it is named `*-ui.spec.ts` and runs in the `mutations` project with `workers: 1`
 
 #### Scenario: Scratch entity cleanup
-- **WHEN** a spec creates an entity
+- **WHEN** a spec creates a disposable entity
 - **THEN** it deletes that entity in cleanup regardless of pass or fail
+
+#### Scenario: Audit-retained resources
+- **WHEN** a spec creates a credential the product retains as an audit trail on revoke (a revoked API token stays as a row with a `Revoked` badge)
+- **THEN** cleanup revokes any remaining live instance and the guard asserts no live token remains, rather than requiring the audit row to be deleted
 
 #### Scenario: Self-cleanup guard
 - **WHEN** a spec creates an enumerable resource under the bootstrap tenant

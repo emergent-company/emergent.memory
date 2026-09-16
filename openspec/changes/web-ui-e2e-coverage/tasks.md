@@ -7,9 +7,9 @@
 - [x] 0.3 `helpers/mcp.ts` — deferred with Phase 1.3/1.4 (see the blocker there)
 - [x] 0.4 Scratch-project helper — **not needed**: the restore lane seeded its own scratch org/project through the existing bootstrap helpers (`helpers/bootstrap.ts`, unchanged)
 - [x] 0.5 Per-control `data-testid` anchors — now per-phase, alongside the spec that uses them. Added so far: `token-row`, `token-revoked-badge`, `token-secret-panel` in `api_tokens.templ` (row menu / one-time reveal panel had no stable semantic anchor)
-- [x] 0.6 Verify templ changes when they happen: `PATH="/root/go/bin:$PATH" templ generate -f <file>.templ` then `go build ./...` from `apps/web-ui/gateway`. Note: `*_templ.go` are gitignored, so a fresh worktree must generate before it can build.
+- [x] 0.6 Verify templ changes when they happen: `PATH="/root/go/bin:$PATH" templ generate -f <file>.templ`, then from `apps/web-ui/gateway` run `go build ./...`, `go test ./...` and `task lint` — the full pipeline required by `apps/web-ui/gateway/AGENTS.md` and by this change's harness spec ("Templ changes are verified through the standard pipeline"). This verification applies to every phase that touches templates, not just Phase 0. Note: `*_templ.go` are gitignored, so a fresh worktree must generate before it can build.
 - [x] 0.7 Correct the project-order documentation instead of changing the config: keep `mutations: dependencies: ['setup']` (deliberate — makes a single mutation spec cheap) and fix `README.md`, which described mutations as running after chromium (D6, revised)
-- [ ] 0.8 Update `apps/web-ui/tests/e2e/README.md`: corrected project order, the fresh-worktree `templ generate` prerequisite, and the new Phase 1/3 spec coverage
+- [x] 0.8 Update `apps/web-ui/tests/e2e/README.md`: landed — the project-order description now matches `playwright.config.ts` (mutations depend on `setup` only), the fresh-worktree `templ generate` prerequisite is documented in Notes, and the Coverage section carries the new Phase 1 token-lifecycle entries plus the Phase 3 additions (backup lifecycle, document delete, project restore, project-settings autosave, project overrides)
 - [x] 0.9 Baseline verified: the mutation project ran green (setup + new specs) before further specs landed
 
 ## 1. Phase 1 — Secret lifecycle
@@ -18,7 +18,7 @@
 - [x] 1.2 `specs/account/profile-token-lifecycle-ui.spec.ts`: `/profile/tokens/new` → `/:tokenId/edit` → `/:tokenId/scopes` → `/:tokenId/regenerate` → `/:tokenId/revoke`, plus a self-cleanup guard test.
 - [ ] 1.3 `specs/settings/mcp-share-lifecycle-ui.spec.ts`: list → new → edit/update → rotate → revoke; self-cleanup guard. **Blocked:** two unmerged lanes (`feat/mcp-share-reveal-wide-highlighted-json`, `fix/mcp-share-list-decode`) are actively rewriting `mcp_shares.templ`, `agent_mcp_shares.templ` and `mcp_shares.go`. Land after they merge to avoid conflicting testids/selectors.
 - [ ] 1.4 `specs/agents/agent-mcp-share-ui.spec.ts`: create/revoke/rotate per-agent share from the agent detail surface. **Blocked:** same two lanes (also `agent.templ` is in flight in `fix/page-widths`).
-- [x] 1.5 Phase 1 verify: `npx playwright test <the two specs> --project=mutations` → 5 passed (setup + 4 tests), green on repeat; no tokens left behind (guard tests assert this).
+- [x] 1.5 Phase 1 verify: `npx playwright test specs/settings/project-token-lifecycle-ui.spec.ts specs/account/profile-token-lifecycle-ui.spec.ts --project=mutations` → setup + 4 tests (project lifecycle, project no-live-token guard, account lifecycle, account no-live-token guard), green on repeat; no tokens left behind (guard tests assert this).
 
 ## 2. Phase 2 — Authorization
 
@@ -35,7 +35,7 @@
 - [ ] 3.3 `specs/objects/object-search-ui.spec.ts`: `/objects/search` typeahead filters and result navigation
 - [ ] 3.4 `specs/schema/blueprint-lifecycle-ui.spec.ts`: `POST /blueprints/enable` then `POST /blueprints/:id/unapply`; assert types removed
 - [ ] 3.5 `specs/schema/blueprint-migration-rollback-ui.spec.ts`: `POST /blueprints/migrate` then `POST /blueprints/migrate/rollback`; assert schema returns to pre-migration state
-- [x] 3.6 `specs/backups/backups-lifecycle-ui.spec.ts`: creates a backup via the real form, waits up to 120s for `ready` (skips with a reason otherwise), opens the detail, asserts the Download affordance and the route's 302 `Location`, deletes it and asserts it is gone from the list. **Known limitation:** the download click itself is not simulated — the gateway 302s to a presigned off-origin object-storage URL, so the spec asserts the rendered link/href and verifies the 302 through the authenticated request context instead.
+- [x] 3.6 `specs/backups/backups-lifecycle-ui.spec.ts`: creates a backup via the real form, waits up to 120s for `ready` (skips with a reason otherwise), opens the detail, asserts the rendered Download link and its `href` (`/backups/:id/download`), then observes the route's 302 with an authenticated request that disables redirects (`maxRedirects: 0`) and asserts the status plus a non-empty `Location`, deletes it and asserts it is gone from the list. **Known limitation:** the download click itself is not simulated — the gateway 302s to a presigned off-origin object-storage URL, so the spec never chases that URL off-origin.
 - [x] 3.7 `specs/projects/project-restore-ui.spec.ts`: schedules a scratch project for deletion from its row menu, asserts the pending state, restores it via `POST /projects/restore`, and asserts it returns to the active list. Self-cleans the scratch org.
 - [x] 3.8 `specs/documents/document-delete-ui.spec.ts`: uploads a uniquely-named document, opens its detail, deletes it (accepting the `hx-confirm` dialog), then asserts it is gone from the list and that the detail/chunk view renders "Document unavailable".
 - [ ] 3.9 Phase 3 verify: `task e2e:test -- --project=mutations`; confirm scratch projects cleaned up

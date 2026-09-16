@@ -5,7 +5,7 @@ Every Web UI flow that mints, mutates, or revokes a credential SHALL have a Play
 
 #### Scenario: Project API token lifecycle
 - **WHEN** a spec creates a token via `GET/POST /settings/tokens/new`, edits its scopes via `POST /settings/tokens/:tokenId/scopes`, regenerates it via `POST /settings/tokens/:tokenId/regenerate`, and revokes it via `POST /settings/tokens/:tokenId/revoke`
-- **THEN** each step is asserted in the UI (one-time secret revealed once, updated scope set shown, prior secret invalidated, token absent from the list after revoke)
+- **THEN** each step is asserted in the UI (one-time secret revealed once, updated scope set shown, prior secret invalidated, no live token remains after revoke — the revoked audit row is retained)
 
 #### Scenario: Profile API token lifecycle
 - **WHEN** a spec drives `/profile/tokens/new`, `/profile/tokens/:tokenId/edit`, `/:tokenId/scopes`, `/:tokenId/regenerate`, `/:tokenId/revoke`
