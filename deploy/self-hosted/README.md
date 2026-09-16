@@ -498,5 +498,5 @@ For issues specific to:
 
 - **Tailscale**: https://tailscale.com/contact/support
 - **Emergent**: GitHub issues or documentation
-Verify the Kreuzberg v4 LTS documentation URL and correct it; the referenced repo appears nonexistent.
+- **Kreuzberg (v4 LTS)**: https://github.com/kreuzberg-dev/kreuzberg-lts
 - **MinIO**: https://min.io/docs/minio/linux/
