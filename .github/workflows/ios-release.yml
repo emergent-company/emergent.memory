@@ -45,18 +45,22 @@ jobs:
 
   build:
     name: Build & upload to TestFlight
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS, ARM64, mac]
     needs: check
     if: needs.check.outputs.changed == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select newest Xcode (iOS 26 SDK required)
+      - name: Select Xcode (iOS 26 SDK required)
         run: |
-          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          XCODE=$(ls -d /Applications/Xcode.app 2>/dev/null || ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode found in /Applications"
+            exit 1
+          fi
           echo "Selecting $XCODE"
-          sudo xcode-select -s "$XCODE"
+          sudo -n xcode-select -s "$XCODE" 2>/dev/null || true
           xcodebuild -version
 
       - name: Derive version

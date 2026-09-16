@@ -46,7 +46,7 @@ jobs:
 
   build:
     name: Build, sign, notarize, package
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS, ARM64, mac]
     needs: check
     if: needs.check.outputs.changed == 'true'
     env:
@@ -57,16 +57,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select newest Xcode (project format 77 requires Xcode 16+)
+      - name: Select Xcode (project format 77 requires Xcode 16+)
         run: |
-          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          XCODE=$(ls -d /Applications/Xcode.app 2>/dev/null || ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
           if [ -z "$XCODE" ]; then
             echo "::error::No Xcode found in /Applications"
             ls -d /Applications/Xcode*.app 2>/dev/null || true
             exit 1
           fi
           echo "Selecting $XCODE"
-          sudo xcode-select -s "$XCODE"
+          sudo -n xcode-select -s "$XCODE" 2>/dev/null || true
           xcodebuild -version
           MAJOR=$(xcodebuild -version | awk 'NR==1 {split($2,v,"."); print v[1]}')
           if [ -z "$MAJOR" ] || [ "$MAJOR" -lt 16 ]; then
