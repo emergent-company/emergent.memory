@@ -148,7 +148,7 @@ test('schedules every project for deletion via select-all + the dialog, then can
     await expect(form.locator('input[name="projectId"]')).toHaveCount(projectNames.length);
     for (const name of projectNames) {
       const row = rowForProject(page, name);
-      await expect(row.locator('span.truncate.text-sm.font-medium')).toHaveText(name);
+      await expect(row.locator('button.truncate.text-left')).toHaveText(name);
     }
 
     const selectAll = form.locator('input[aria-label="Select all projects"]');
@@ -252,7 +252,7 @@ test('deletes one project via its row menu, shows pending, then cancels deletion
     await expect(page.getByRole('heading', { name: orgName })).toBeVisible();
     for (const name of projectNames) {
       const row = rowForProject(page, name);
-      await expect(row.locator('span.truncate.text-sm.font-medium')).toHaveText(name);
+      await expect(row.locator('button.truncate.text-left')).toHaveText(name);
     }
 
     // The row popover menu holds Open, Delete (and Transfer when the bootstrap
