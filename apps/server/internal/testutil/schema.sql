@@ -274,7 +274,6 @@ CREATE TABLE core.mcp_share_instances (
     description text,
     token_id uuid NOT NULL,
     allowed_tools text[],
-    allowed_agents uuid[],
     is_legacy boolean DEFAULT false NOT NULL,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -289,32 +288,6 @@ CREATE INDEX idx_mcp_share_instances_project ON core.mcp_share_instances (projec
 
 ALTER TABLE ONLY core.mcp_share_instances
     ADD CONSTRAINT mcp_share_instances_token_id_fkey FOREIGN KEY (token_id) REFERENCES core.api_tokens(id) ON DELETE CASCADE;
-
-
---
--- Name: agent_mcp_shares; Type: TABLE; Schema: core; Owner: -
---
-
-CREATE TABLE core.agent_mcp_shares (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    project_id uuid NOT NULL,
-    agent_id uuid NOT NULL,
-    token_id uuid NOT NULL,
-    name text NOT NULL,
-    description text,
-    created_by uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    revoked_at timestamp with time zone,
-    CONSTRAINT agent_mcp_shares_pkey PRIMARY KEY (id)
-);
-
-CREATE UNIQUE INDEX uq_agent_mcp_shares_project_name ON core.agent_mcp_shares (project_id, lower(name)) WHERE (revoked_at IS NULL);
-CREATE UNIQUE INDEX uq_agent_mcp_shares_active_token ON core.agent_mcp_shares (token_id) WHERE (revoked_at IS NULL);
-CREATE INDEX idx_agent_mcp_shares_project_agent ON core.agent_mcp_shares (project_id, agent_id);
-
-ALTER TABLE ONLY core.agent_mcp_shares
-    ADD CONSTRAINT agent_mcp_shares_token_id_fkey FOREIGN KEY (token_id) REFERENCES core.api_tokens(id) ON DELETE CASCADE;
 
 
 --
