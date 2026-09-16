@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,19 +13,17 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
-	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
-// Valid-UUID agent IDs (the AllowedAgents column is uuid[]).
+// Valid-UUID agent IDs shared by the agent-scoped share/endpoint tests in this
+// package.
 const (
-	agentA       = "00000000-0000-0000-0000-0000000000a1"
-	agentB       = "00000000-0000-0000-0000-0000000000b1"
-	agentC       = "00000000-0000-0000-0000-0000000000c1"
-	agentDeleted = "00000000-0000-0000-0000-00000000dead"
+	agentA = "00000000-0000-0000-0000-0000000000a1"
+	agentB = "00000000-0000-0000-0000-0000000000b1"
+	agentC = "00000000-0000-0000-0000-0000000000c1"
 	// Valid-UUID agent-definition IDs (kb.agent_definitions).
 	agentDefA       = "00000000-0000-0000-0000-0000000000d1"
-	agentDefB       = "00000000-0000-0000-0000-0000000000d2"
 	agentDefEmpty   = "00000000-0000-0000-0000-0000000000d3"
 	agentDefUnknown = "00000000-0000-0000-0000-0000000000d4"
 )
@@ -203,17 +200,13 @@ func (f *fakeTokenSvc) GetUserProjectRole(_ context.Context, _, _ string) (strin
 	return f.role, nil
 }
 
+// fakeAgentDir implements the agentDirectory seam used by the agent-scoped
+// share lifecycle.
 type fakeAgentDir struct {
 	agents []AgentRef
 	// definitions maps an agent-definition ID (kb.agent_definitions) to the
-	// runtime agents it resolves to. A definition with no runtime agent is
-	// represented by an empty/nil slice so AgentDefinitionExists still reports
-	// it as existing.
+	// runtime agents it resolves to.
 	definitions map[string][]AgentRef
-}
-
-func (f *fakeAgentDir) ListProjectAgents(_ context.Context, _ string) ([]AgentRef, error) {
-	return f.agents, nil
 }
 
 func (f *fakeAgentDir) FindProjectAgentByID(_ context.Context, _, id string) (*AgentRef, error) {
@@ -241,24 +234,6 @@ func (f *fakeAgentDir) AgentDefinitionExists(_ context.Context, _, definitionID 
 	return ok, nil
 }
 
-func (f *fakeAgentDir) FindAgentIDByName(_ context.Context, _, name string) (string, bool, error) {
-	for _, a := range f.agents {
-		if a.Name == name {
-			return a.ID, true, nil
-		}
-	}
-	return "", false, nil
-}
-
-func (f *fakeAgentDir) FindAgentIDByNameOrSlug(_ context.Context, _, nameOrSlug string) (string, bool, error) {
-	for _, a := range f.agents {
-		if a.Name == nameOrSlug || acpslug.FromName(a.Name) == strings.ToLower(nameOrSlug) {
-			return a.ID, true, nil
-		}
-	}
-	return "", false, nil
-}
-
 // stubAgentHandler records dispatch and returns canned JSON payloads.
 type stubAgentHandler struct {
 	listed        []string
@@ -280,14 +255,14 @@ type stubAgentHandler struct {
 func (s *stubAgentHandler) ExecuteListAgents(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
 	s.listed = append(s.listed, "list")
 	if s.listJSON == "" {
-		s.listJSON = `[{"id":"` + agentA + `","name":"a"},{"id":"` + agentB + `","name":"b"},{"id":"` + agentC + `","name":"c"}]`
+		s.listJSON = `[{"id":"00000000-0000-0000-0000-0000000000a1","name":"a"},{"id":"00000000-0000-0000-0000-0000000000b1","name":"b"},{"id":"00000000-0000-0000-0000-0000000000c1","name":"c"}]`
 	}
 	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: s.listJSON}}}, nil
 }
 
 func (s *stubAgentHandler) ExecuteGetAgent(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
 	s.getCalled = true
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: `{"id":"` + agentC + `"}`}}}, nil
+	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: `{"id":"00000000-0000-0000-0000-0000000000c1"}`}}}, nil
 }
 
 func (s *stubAgentHandler) ExecuteTriggerAgent(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
@@ -626,6 +601,40 @@ func TestCreateShareInstanceDuplicateName(t *testing.T) {
 	assert.Equal(t, 409, appErr.HTTPStatus)
 }
 
+// TestCreateShareInstanceAgentsRejected covers the MODIFIED spec scenario
+// "Agent allowlist is rejected": instances scope tools only, so supplying an
+// `agents` array is a 422 and creates nothing.
+func TestCreateShareInstanceAgentsRejected(t *testing.T) {
+	store := newFakeShareStore()
+	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
+	agents := []string{uuid.NewString()}
+	_, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{Name: "X", Agents: &agents})
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.True(t, errors.As(err, &appErr))
+	assert.Equal(t, 422, appErr.HTTPStatus)
+	assert.Empty(t, store.byID, "no instance may be created for a rejected agent allowlist")
+}
+
+// TestUpdateShareInstanceAgentsRejected covers the MODIFIED spec scenario
+// "Agent allowlist update is rejected": the instance is left unchanged.
+func TestUpdateShareInstanceAgentsRejected(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1", AllowedTools: []string{"entity-search"}}
+	tok := &fakeTokenSvc{}
+	svc := newTestService(store, tok, &fakeAgentDir{})
+
+	agents := []string{uuid.NewString()}
+	_, err := svc.UpdateShareInstance(context.Background(), "proj", "user", "i1", UpdateShareInstanceRequest{Agents: &agents})
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.True(t, errors.As(err, &appErr))
+	assert.Equal(t, 422, appErr.HTTPStatus)
+	assert.Equal(t, "Team A", store.byID["i1"].Name, "instance must be unchanged")
+	assert.Equal(t, []string{"entity-search"}, store.byID["i1"].AllowedTools)
+	assert.Nil(t, tok.updateScopes, "no token scope write for a rejected update")
+}
+
 func TestUpdateShareInstanceScopesFollowAllowlist(t *testing.T) {
 	store := newFakeShareStore()
 	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1"}
@@ -706,12 +715,35 @@ func TestListShareInstancesIncludesLegacy(t *testing.T) {
 	assert.Equal(t, "legacy-1", legacy.ID)
 }
 
+// TestShareInstanceRepresentationOmitsAgentAllowlist covers the MODIFIED spec
+// scenario "List omits agent allowlist": neither list nor get exposes an
+// `agents` field.
+func TestShareInstanceRepresentationOmitsAgentAllowlist(t *testing.T) {
+	store := newFakeShareStore()
+	store.byID["i1"] = &MCPShareInstance{
+		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1",
+		AllowedTools: []string{"entity-search"},
+	}
+	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
+
+	list, err := svc.ListShareInstances(context.Background(), "proj", "user")
+	require.NoError(t, err)
+	rawList, err := json.Marshal(list)
+	require.NoError(t, err)
+	assert.NotContains(t, string(rawList), `"agents"`)
+
+	one, err := svc.GetShareInstance(context.Background(), "proj", "user", "i1")
+	require.NoError(t, err)
+	rawOne, err := json.Marshal(one)
+	require.NoError(t, err)
+	assert.NotContains(t, string(rawOne), `"agents"`)
+}
+
 func TestResolveInstanceScope(t *testing.T) {
 	store := newFakeShareStore()
 	store.byID["i1"] = &MCPShareInstance{
 		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1",
-		AllowedTools:  []string{"entity-search"},
-		AllowedAgents: []uuid.UUID{uuid.MustParse(agentA)},
+		AllowedTools: []string{"entity-search"},
 	}
 	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{})
 
@@ -720,7 +752,7 @@ func TestResolveInstanceScope(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, scope)
 		assert.True(t, scope.HasToolAllowlist)
-		assert.True(t, scope.HasAgentAllowlist)
+		assert.Equal(t, []string{"entity-search"}, scope.AllowedTools)
 	})
 
 	t.Run("absent instance is legacy", func(t *testing.T) {
@@ -747,119 +779,9 @@ func TestBuildToolCatalogExcludesAgentOnlyAndSorts(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// Agent scoping tests
-// ============================================================================
-
-func agentScope(ids ...string) *InstanceScope {
-	return &InstanceScope{HasAgentAllowlist: true, AllowedAgents: ids}
-}
-
-func TestAgentListFiltered(t *testing.T) {
-	h := &stubAgentHandler{}
-	svc := &Service{agentToolHandler: h, agentDir: &fakeAgentDir{}}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA, agentB))
-	res, err := svc.ExecuteTool(ctx, "proj", "agent-list", nil)
-	require.NoError(t, err)
-
-	var arr []map[string]any
-	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &arr))
-	ids := []string{}
-	for _, item := range arr {
-		ids = append(ids, item["id"].(string))
-	}
-	assert.ElementsMatch(t, []string{agentA, agentB}, ids)
-}
-
-func TestAgentGetNonAllowedRejected(t *testing.T) {
-	h := &stubAgentHandler{}
-	svc := &Service{agentToolHandler: h, agentDir: &fakeAgentDir{}}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA))
-	res, err := svc.ExecuteTool(ctx, "proj", "agent-get", map[string]any{"agent_id": agentC})
-	require.NoError(t, err)
-	assert.False(t, h.getCalled, "underlying handler must not run")
-	assert.Contains(t, res.Content[0].Text, "agent not found")
-}
-
-func TestTriggerAgentNonAllowedRejected(t *testing.T) {
-	h := &stubAgentHandler{}
-	svc := &Service{agentToolHandler: h, agentDir: &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "alpha"}, {ID: agentC, Name: "gamma"}}}}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA))
-	res, err := svc.ExecuteTool(ctx, "proj", "trigger_agent", map[string]any{"agent_name": "gamma"})
-	require.NoError(t, err)
-	assert.False(t, h.ranCalled, "run must not start")
-	assert.Contains(t, res.Content[0].Text, "agent not found")
-}
-
-func TestACPSlugTriggerNonAllowedRejected(t *testing.T) {
-	h := &stubAgentHandler{}
-	svc := &Service{agentToolHandler: h, agentDir: &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "My Agent"}, {ID: agentC, Name: "Gamma Agent"}}}}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA))
-	// acp-trigger-run passes the ACP slug, not the raw agent name.
-	res, err := svc.ExecuteTool(ctx, "proj", "acp-trigger-run", map[string]any{"agent_name": "gamma-agent"})
-	require.NoError(t, err)
-	assert.Equal(t, 0, len(h.listed), "underlying handler must not run")
-	assert.Contains(t, res.Content[0].Text, "agent not found")
-}
-
-func TestAgentDeniedToolsWhenAgentAllowlistActive(t *testing.T) {
-	// Run-inspection and agent-mutation tools cannot be mapped to the
-	// runtime-agent allowlist, so the central ExecuteTool guard rejects them.
-	for _, tool := range []string{"agent-run-get", "agent-hook-create", "agent-question-respond"} {
-		h := &stubAgentHandler{}
-		svc := &Service{agentToolHandler: h, agentDir: &fakeAgentDir{}}
-		ctx := WithInstanceScope(context.Background(), agentScope(agentA))
-		_, err := svc.ExecuteTool(ctx, "proj", tool, map[string]any{})
-		require.Error(t, err, tool)
-	}
-}
-
-func TestAgentDefinitionListFiltered(t *testing.T) {
-	svc := &Service{
-		agentToolHandler: &stubAgentHandler{},
-		agentDir:         &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "alpha"}, {ID: agentC, Name: "gamma"}}},
-	}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA))
-	res, err := svc.ExecuteTool(ctx, "proj", "agent-def-list", nil)
-	require.NoError(t, err)
-	var arr []map[string]any
-	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &arr))
-	require.Len(t, arr, 1)
-	assert.Equal(t, "alpha", arr[0]["name"])
-}
-
-func TestAgentDefinitionGetNonAllowedRejected(t *testing.T) {
-	svc := &Service{
-		agentToolHandler: &stubAgentHandler{defJSON: `{"name":"gamma"}`},
-		agentDir:         &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "alpha"}, {ID: agentC, Name: "gamma"}}},
-	}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA))
-	res, err := svc.ExecuteTool(ctx, "proj", "agent-def-get", map[string]any{"definition_id": "d1"})
-	require.NoError(t, err)
-	assert.Contains(t, res.Content[0].Text, "not found")
-}
-
-func TestAgentListFailsClosedOnMalformedResult(t *testing.T) {
-	h := &stubAgentHandler{listJSON: "not-json"}
-	svc := &Service{agentToolHandler: h, agentDir: &fakeAgentDir{}}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA))
-	res, err := svc.ExecuteTool(ctx, "proj", "agent-list", nil)
-	require.NoError(t, err)
-	assert.Equal(t, "[]", res.Content[0].Text)
-}
-
-func TestAgentListAvailableFailsClosedOnMalformedResult(t *testing.T) {
-	svc := &Service{
-		agentToolHandler: &stubAgentHandler{availableJSON: "not-json"},
-		agentDir:         &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "alpha"}}},
-	}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA))
-	res, err := svc.ExecuteTool(ctx, "proj", "agent-list-available", nil)
-	require.NoError(t, err)
-	assert.JSONEq(t, emptyAvailableAgentsText, res.Content[0].Text)
-}
-
-func TestNullAgentAllowlistExposesAll(t *testing.T) {
+// TestNullScopeDoesNotFilterAgentList proves an unrestricted (nil) instance
+// scope applies no agent filtering: all agents are returned unfiltered.
+func TestNullScopeDoesNotFilterAgentList(t *testing.T) {
 	h := &stubAgentHandler{}
 	svc := &Service{agentToolHandler: h, agentDir: &fakeAgentDir{}}
 	res, err := svc.ExecuteTool(context.Background(), "proj", "agent-list", nil)
@@ -867,161 +789,6 @@ func TestNullAgentAllowlistExposesAll(t *testing.T) {
 	var arr []map[string]any
 	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &arr))
 	assert.Len(t, arr, 3)
-}
-
-func TestDeletedAllowedAgentDoesNotError(t *testing.T) {
-	h := &stubAgentHandler{}
-	svc := &Service{agentToolHandler: h, agentDir: &fakeAgentDir{}}
-	ctx := WithInstanceScope(context.Background(), agentScope(agentA, agentDeleted))
-	res, err := svc.ExecuteTool(ctx, "proj", "agent-list", nil)
-	require.NoError(t, err)
-	var arr []map[string]any
-	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &arr))
-	require.Len(t, arr, 1)
-	assert.Equal(t, agentA, arr[0]["id"])
-}
-
-func TestFilterToolsForInstanceRemovesAgentDeniedTools(t *testing.T) {
-	tools := []ToolDefinition{{Name: "agent-run-get"}, {Name: "agent-hook-create"}, {Name: "agent-list"}, {Name: "agent-def-list"}}
-	scope := &InstanceScope{HasAgentAllowlist: true, AllowedAgents: []string{agentA}}
-	got := FilterToolsForInstance(tools, scope)
-	require.Len(t, got, 2)
-	assert.Equal(t, "agent-list", got[0].Name)
-	assert.Equal(t, "agent-def-list", got[1].Name)
-}
-
-func TestCreateShareInstanceUnknownAgentRejected(t *testing.T) {
-	store := newFakeShareStore()
-	svc := newTestService(store, &fakeTokenSvc{}, &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "alpha"}}})
-	_, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{
-		Name:   "X",
-		Agents: []string{"ghost"},
-	})
-	require.Error(t, err)
-	var appErr *apperror.Error
-	require.True(t, errors.As(err, &appErr))
-	assert.Equal(t, 422, appErr.HTTPStatus)
-}
-
-func TestCreateShareInstanceAgentsDeduped(t *testing.T) {
-	store := newFakeShareStore()
-	tok := &fakeTokenSvc{createToken: "emt", createID: "tok-1"}
-	svc := newTestService(store, tok, &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "alpha"}}})
-	resp, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{
-		Name:   "X",
-		Agents: []string{agentA, agentA},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp.Agents)
-	assert.Equal(t, []string{agentA}, *resp.Agents)
-}
-
-// TestNormalizeAgentAllowlistResolvesDefinitionIDs covers the fix: an allowlist
-// entry may be an agent-definition ID, which resolves to the definition's
-// runtime agent(s) and is stored as runtime IDs. A definition with no runtime
-// agent, and a truly unknown ID, are both rejected.
-func TestNormalizeAgentAllowlistResolvesDefinitionIDs(t *testing.T) {
-	tests := []struct {
-		name    string
-		dir     *fakeAgentDir
-		agents  []string
-		want    []uuid.UUID
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name:   "runtime agent accepted",
-			dir:    &fakeAgentDir{agents: []AgentRef{{ID: agentA, Name: "alpha"}}},
-			agents: []string{agentA},
-			want:   []uuid.UUID{uuid.MustParse(agentA)},
-		},
-		{
-			name:   "definition resolves to one runtime agent",
-			dir:    &fakeAgentDir{definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}}}},
-			agents: []string{agentDefA},
-			want:   []uuid.UUID{uuid.MustParse(agentB)},
-		},
-		{
-			name:   "definition resolves to several runtime agents",
-			dir:    &fakeAgentDir{definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}, {ID: agentC, Name: "gamma"}}}},
-			agents: []string{agentDefA},
-			want:   []uuid.UUID{uuid.MustParse(agentB), uuid.MustParse(agentC)},
-		},
-		{
-			name: "definition and runtime agent deduped",
-			dir: &fakeAgentDir{
-				agents:      []AgentRef{{ID: agentB, Name: "beta"}},
-				definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}}},
-			},
-			agents: []string{agentB, agentDefA},
-			want:   []uuid.UUID{uuid.MustParse(agentB)},
-		},
-		{
-			name:    "definition with no runtime agent rejected",
-			dir:     &fakeAgentDir{definitions: map[string][]AgentRef{agentDefEmpty: nil}},
-			agents:  []string{agentDefEmpty},
-			wantErr: true,
-			errMsg:  "has no runtime agent",
-		},
-		{
-			name:    "unknown id rejected",
-			dir:     &fakeAgentDir{},
-			agents:  []string{agentDefUnknown},
-			wantErr: true,
-			errMsg:  "unknown agent",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			svc := &Service{agentDir: tt.dir}
-			got, err := svc.normalizeAgentAllowlist(context.Background(), "proj", tt.agents)
-			if tt.wantErr {
-				require.Error(t, err)
-				var appErr *apperror.Error
-				require.ErrorAs(t, err, &appErr)
-				assert.Equal(t, 422, appErr.HTTPStatus)
-				assert.Equal(t, "validation_error", appErr.Code)
-				if tt.errMsg != "" {
-					assert.Contains(t, err.Error(), tt.errMsg)
-				}
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestCreateShareInstanceDefinitionIDPersistsRuntimeAgent(t *testing.T) {
-	store := newFakeShareStore()
-	tok := &fakeTokenSvc{createToken: "emt", createID: "tok-1"}
-	dir := &fakeAgentDir{definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}}}}
-	svc := newTestService(store, tok, dir)
-
-	resp, err := svc.CreateShareInstance(context.Background(), "proj", "user", "", CreateShareInstanceRequest{
-		Name:   "X",
-		Agents: []string{agentDefA},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp.Agents)
-	assert.Equal(t, []string{agentB}, *resp.Agents)
-	inst := store.byID[resp.ID]
-	require.NotNil(t, inst)
-	assert.Equal(t, []uuid.UUID{uuid.MustParse(agentB)}, inst.AllowedAgents)
-}
-
-func TestUpdateShareInstanceDefinitionIDPersistsRuntimeAgent(t *testing.T) {
-	store := newFakeShareStore()
-	store.byID["i1"] = &MCPShareInstance{ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1"}
-	dir := &fakeAgentDir{definitions: map[string][]AgentRef{agentDefA: {{ID: agentB, Name: "beta"}, {ID: agentC, Name: "gamma"}}}}
-	svc := newTestService(store, &fakeTokenSvc{}, dir)
-
-	agents := []string{agentDefA}
-	dto, err := svc.UpdateShareInstance(context.Background(), "proj", "user", "i1", UpdateShareInstanceRequest{Agents: &agents})
-	require.NoError(t, err)
-	require.NotNil(t, dto.Agents)
-	assert.ElementsMatch(t, []string{agentB, agentC}, *dto.Agents)
-	assert.ElementsMatch(t, []uuid.UUID{uuid.MustParse(agentB), uuid.MustParse(agentC)}, store.byID["i1"].AllowedAgents)
 }
 
 func TestResolveInstanceScopeRevokedIsNil(t *testing.T) {
@@ -1069,7 +836,7 @@ func TestCatalogExcludesAgentExecutionTools(t *testing.T) {
 
 // TestExecuteToolEnforcesInstanceAllowlist is the C1 defense-in-depth check:
 // even a direct ExecuteTool call (e.g. from the ADK ToolPool) is denied when the
-// context carries a restrictive instance scope.
+// context carries a restrictive tool scope.
 func TestExecuteToolEnforcesInstanceAllowlist(t *testing.T) {
 	svc := &Service{}
 	scope := &InstanceScope{HasToolAllowlist: true, AllowedTools: []string{"entity-search"}}
@@ -1079,31 +846,14 @@ func TestExecuteToolEnforcesInstanceAllowlist(t *testing.T) {
 	assert.Contains(t, err.Error(), "not allowed")
 }
 
-// TestExecuteToolDeniesAgentScopeTools covers tools that are dispatched directly
-// (not via delegateAgentTool) so the central ExecuteTool guard is required.
-func TestExecuteToolDeniesAgentScopeTools(t *testing.T) {
-	svc := &Service{}
-	scope := &InstanceScope{HasAgentAllowlist: true, AllowedAgents: []string{agentA}}
-	ctx := WithInstanceScope(context.Background(), scope)
-	for _, tool := range []string{"agent-run-get", "agent-hook-create", "agent-question-respond", "acp-get-run-status"} {
-		_, err := svc.ExecuteTool(ctx, "proj", tool, nil)
-		require.Error(t, err, tool)
-		assert.Contains(t, err.Error(), "not allowed", tool)
-	}
-}
-
 func TestInstanceDeniesToolPredicate(t *testing.T) {
 	toolScope := &InstanceScope{HasToolAllowlist: true, AllowedTools: []string{"entity-search"}}
 	assert.True(t, InstanceDeniesTool(toolScope, "schema-list"))
 	assert.False(t, InstanceDeniesTool(toolScope, "entity-search"))
 
-	agentScoped := &InstanceScope{HasAgentAllowlist: true, AllowedAgents: []string{agentA}}
-	assert.True(t, InstanceDeniesTool(agentScoped, "agent-run-get"))
-	assert.True(t, InstanceDeniesTool(agentScoped, "agent-hook-create"))
-	assert.False(t, InstanceDeniesTool(agentScoped, "agent-list"))
-	// Agent-definition reads are not denied but are result-filtered.
-	assert.False(t, InstanceDeniesTool(agentScoped, "agent-def-list"))
+	// A nil or empty scope denies nothing.
 	assert.False(t, InstanceDeniesTool(nil, "anything"))
+	assert.False(t, InstanceDeniesTool(&InstanceScope{}, "anything"))
 }
 
 func TestRotateFailureLeavesInstanceUnchanged(t *testing.T) {
@@ -1179,7 +929,6 @@ func TestInstanceRestrictsContent(t *testing.T) {
 	assert.False(t, InstanceRestrictsContent(nil))
 	assert.False(t, InstanceRestrictsContent(&InstanceScope{}))
 	assert.True(t, InstanceRestrictsContent(&InstanceScope{HasToolAllowlist: true}))
-	assert.True(t, InstanceRestrictsContent(&InstanceScope{HasAgentAllowlist: true}))
 }
 
 // TestNormalizeToolAllowlistRejectsAdminScope ensures an admin-scoped tool can
@@ -1230,9 +979,9 @@ func TestUpdateShareInstanceRollsBackAllowlistOnScopeFailure(t *testing.T) {
 		"allowlist must be rolled back to the prior value")
 }
 
-// TestUpdateShareInstanceNormalizesBeforePersisting verifies that an agent
-// normalization failure never writes token scopes (no scope/allowlist divergence).
-func TestUpdateShareInstanceNormalizesBeforePersisting(t *testing.T) {
+// TestUpdateShareInstanceValidatesToolsBeforePersisting verifies that an invalid
+// tool allowlist never writes token scopes (no scope/allowlist divergence).
+func TestUpdateShareInstanceValidatesToolsBeforePersisting(t *testing.T) {
 	store := newFakeShareStore()
 	store.byID["i1"] = &MCPShareInstance{
 		ID: "i1", ProjectID: "proj", Name: "Team A", TokenID: "tok-1",
@@ -1241,11 +990,9 @@ func TestUpdateShareInstanceNormalizesBeforePersisting(t *testing.T) {
 	tok := &fakeTokenSvc{}
 	svc := newTestService(store, tok, &fakeAgentDir{})
 
-	tools := []string{"schema-list"}
-	badAgents := []string{"ghost"}
+	badTools := []string{"definitely-not-a-tool"}
 	_, err := svc.UpdateShareInstance(context.Background(), "proj", "user", "i1", UpdateShareInstanceRequest{
-		Tools:  &tools,
-		Agents: &badAgents,
+		Tools: &badTools,
 	})
 	require.Error(t, err)
 	assert.Nil(t, tok.updateScopes, "token scopes must not be written when validation fails")

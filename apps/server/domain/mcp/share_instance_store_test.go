@@ -61,14 +61,13 @@ func TestShareInstanceStoreCRUD(t *testing.T) {
 	store := newShareInstanceStore(db)
 
 	inst := &MCPShareInstance{
-		ID:            uuid.NewString(),
-		ProjectID:     projectID,
-		Name:          "Team A " + uuid.NewString(),
-		TokenID:       tokenID,
-		AllowedTools:  []string{"entity-search"},
-		AllowedAgents: []uuid.UUID{uuid.MustParse(agentA)},
-		CreatedAt:     time.Now().UTC(),
-		UpdatedAt:     time.Now().UTC(),
+		ID:           uuid.NewString(),
+		ProjectID:    projectID,
+		Name:         "Team A " + uuid.NewString(),
+		TokenID:      tokenID,
+		AllowedTools: []string{"entity-search"},
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
 	}
 	require.NoError(t, store.Create(ctx, inst))
 
@@ -77,8 +76,6 @@ func TestShareInstanceStoreCRUD(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, inst.Name, got.Name)
 	assert.Equal(t, []string{"entity-search"}, got.AllowedTools)
-	require.Len(t, got.AllowedAgents, 1)
-	assert.Equal(t, uuid.MustParse(agentA), got.AllowedAgents[0])
 
 	byToken, err := store.GetByTokenID(ctx, tokenID)
 	require.NoError(t, err)
@@ -99,13 +96,11 @@ func TestShareInstanceStoreCRUD(t *testing.T) {
 	assert.Equal(t, legacyTokenID, legacy[0].ID)
 
 	got.AllowedTools = []string{"schema-list"}
-	got.AllowedAgents = []uuid.UUID{uuid.MustParse(agentA), uuid.MustParse(agentB)}
 	got.UpdatedAt = time.Now().UTC()
 	require.NoError(t, store.Update(ctx, got))
 	reloaded, err := store.GetByID(ctx, projectID, inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"schema-list"}, reloaded.AllowedTools)
-	require.Len(t, reloaded.AllowedAgents, 2)
 
 	// Revoke is persisted via Update.
 	revoked := time.Now().UTC()
@@ -117,8 +112,8 @@ func TestShareInstanceStoreCRUD(t *testing.T) {
 	assert.Nil(t, afterRevoke, "revoked instance no longer resolves by token")
 }
 
-// TestShareInstanceStoreNullAllowlistRoundTrip verifies a null allowlist (both
-// columns NULL) round-trips as unrestricted, distinct from an empty allowlist.
+// TestShareInstanceStoreNullAllowlistRoundTrip verifies a null tool allowlist
+// round-trips as unrestricted, distinct from an empty allowlist.
 func TestShareInstanceStoreNullAllowlistRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping database integration test in short mode")
@@ -145,7 +140,6 @@ func TestShareInstanceStoreNullAllowlistRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Empty(t, got.AllowedTools, "null tool allowlist stays unrestricted")
-	assert.Empty(t, got.AllowedAgents, "null agent allowlist stays unrestricted")
 }
 
 // TestListShareInstancesLegacyDB verifies bound instances surface through the

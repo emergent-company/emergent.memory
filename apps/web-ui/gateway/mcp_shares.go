@@ -27,29 +27,27 @@ import (
 // is surfaced as an error rather than a false empty list.
 
 // MCPShareInstance is one named MCP share instance: an API-key grant exposing a
-// chosen subset of memory tools and agents to outside MCP clients. Tools and
-// Agents are nullable — a nil Agents list means "all scope-permitted agents".
+// chosen subset of memory tools to outside MCP clients. Instances scope TOOLS
+// ONLY — there is no agent allowlist; agent sharing uses the agent-scoped MCP
+// endpoint.
 type MCPShareInstance struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
 	Tools       []string `json:"tools"`
-	Agents      []string `json:"agents"`
 	Status      string   `json:"status"`
 	IsLegacy    bool     `json:"isLegacy"`
 	CreatedAt   string   `json:"createdAt"`
 	LastUsedAt  *string  `json:"lastUsedAt"`
 	ToolCount   int      `json:"toolCount"`
-	AgentCount  int      `json:"agentCount"`
 }
 
 // MCPShareInput is the create/update request body. Tools must hold at least one
-// name; Agents may be empty (all agents).
+// name.
 type MCPShareInput struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
 	Tools       []string `json:"tools"`
-	Agents      []string `json:"agents"`
 }
 
 // MCPShareSecret is the create/rotate payload. Token is the raw API key and is
@@ -133,13 +131,12 @@ func decodeMCPShareList(raw json.RawMessage) ([]MCPShareInstance, error) {
 }
 
 // mcpShareCountsPresent records which count fields the backend actually sent.
-// MCPShareInstance carries plain int counts, so after decoding an omitted count
-// is indistinguishable from an explicit zero; these pointers preserve that
-// presence bit so a backend-supplied 0 is never overwritten by the allowlist
-// length. A JSON null counts as absent.
+// MCPShareInstance carries a plain int count, so after decoding an omitted count
+// is indistinguishable from an explicit zero; the pointer preserves that
+// presence bit so a backend-supplied 0 is never overwritten by the tool
+// allowlist length. A JSON null counts as absent.
 type mcpShareCountsPresent struct {
-	ToolCount  *int `json:"toolCount"`
-	AgentCount *int `json:"agentCount"`
+	ToolCount *int `json:"toolCount"`
 }
 
 // decodeMCPShareItems decodes every list element, preserving count-field
@@ -156,11 +153,10 @@ func decodeMCPShareItems(items []json.RawMessage) ([]MCPShareInstance, error) {
 	return out, nil
 }
 
-// decodeMCPShareItem fills tool/agent counts from the allowlist arrays so list
-// rows show real numbers when the backend omits explicit counts. Only an
-// omitted (or null) count is derived: an explicit backend count — including an
-// explicit 0 — always wins, and a nil/empty agent allowlist stays 0 ("all
-// agents").
+// decodeMCPShareItem fills the tool count from the allowlist array so list rows
+// show a real number when the backend omits an explicit count. Only an omitted
+// (or null) count is derived: an explicit backend count — including an explicit
+// 0 — always wins.
 func decodeMCPShareItem(raw json.RawMessage) (MCPShareInstance, error) {
 	var inst MCPShareInstance
 	if err := json.Unmarshal(raw, &inst); err != nil {
@@ -172,9 +168,6 @@ func decodeMCPShareItem(raw json.RawMessage) (MCPShareInstance, error) {
 	}
 	if present.ToolCount == nil && len(inst.Tools) > 0 {
 		inst.ToolCount = len(inst.Tools)
-	}
-	if present.AgentCount == nil && len(inst.Agents) > 0 {
-		inst.AgentCount = len(inst.Agents)
 	}
 	return inst, nil
 }
@@ -245,8 +238,8 @@ func (m *MemoryClient) GetMCPShareInstance(ctx context.Context, id string) (*MCP
 	return &inst, nil
 }
 
-// UpdateMCPShareInstance persists a share's name/description/allowlists. The
-// key is unchanged by an update.
+// UpdateMCPShareInstance persists a share's name/description/tool allowlist.
+// The key is unchanged by an update.
 func (m *MemoryClient) UpdateMCPShareInstance(ctx context.Context, id string, in *MCPShareInput) (*MCPShareInstance, error) {
 	raw, err := m.shareRaw(ctx, http.MethodPatch, m.mcpSharePath(ctx, "shares", id), in)
 	if err != nil {
@@ -346,15 +339,6 @@ func mcpShareStatusLabel(status string) string {
 		return "active"
 	}
 	return status
-}
-
-// mcpShareAgentsLabel describes the agent allowlist: an empty selection means
-// the share can reach every scope-permitted agent.
-func mcpShareAgentsLabel(count int) string {
-	if count <= 0 {
-		return "all agents"
-	}
-	return countLabel(count, "agent", "agents")
 }
 
 // mcpShareLastUsedLabel renders the last-used timestamp (or a never-used note).
