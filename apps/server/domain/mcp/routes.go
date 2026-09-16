@@ -79,6 +79,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	endpointGroup.DELETE("/:id", h.HandleRevokeAgentEndpoint)
 	endpointGroup.POST("/:id/keys", h.HandleCreateAgentKey)
 	endpointGroup.GET("/:id/keys", h.HandleListAgentKeys)
+	endpointGroup.GET("/:id/sessions", h.HandleListAgentSessions)
 
 	keyGroup := e.Group("/api/projects/:projectId/agent-mcp-keys")
 	keyGroup.Use(authMiddleware.RequireAuth(), authMiddleware.RequireAPITokenScopes("admin"))
