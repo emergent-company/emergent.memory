@@ -703,13 +703,19 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 		listParams := graph.ListParams{
 			ProjectID: projectUUID,
 			Type:      &typeStr,
+			// MigrateObject appends dropped fields to obj.MigrationArchive, and
+			// the patch below persists that slice. Without the column selected the
+			// slice scans empty and the UPDATE clobbers the previous hop's entries.
+			IncludeMigrationArchive: true,
 		}
-		if maxObjs > 0 {
-			listParams.Limit = maxObjs
-		}
-		objs, listErr := s.graphSvc.GetRepository().List(ctx, listParams)
+		// ListAll pages through the whole result set so projects larger than one
+		// List page are fully migrated (List alone caps at MaxListLimit).
+		objs, listErr := s.graphSvc.GetRepository().ListAll(ctx, listParams)
 		if listErr != nil {
 			return nil, fmt.Errorf("failed to list objects of type %s: %w", typeName, listErr)
+		}
+		if maxObjs > 0 && len(objs) > maxObjs {
+			objs = objs[:maxObjs]
 		}
 
 		for _, obj := range objs {
@@ -804,9 +810,14 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		}
 	}
 
-	// Fetch all objects that have a migration_archive entry for toVersion
-	objs, listErr := s.graphSvc.GetRepository().List(ctx, graph.ListParams{
-		ProjectID: projectUUID,
+	// Fetch all objects that have a migration_archive entry for toVersion.
+	// IncludeMigrationArchive is required: the restore loop below skips objects
+	// whose archive is empty, so without the column every object is skipped and
+	// the rollback silently restores nothing. ListAll covers every page rather
+	// than just the first MaxListLimit objects.
+	objs, listErr := s.graphSvc.GetRepository().ListAll(ctx, graph.ListParams{
+		ProjectID:               projectUUID,
+		IncludeMigrationArchive: true,
 	})
 	if listErr != nil {
 		return nil, fmt.Errorf("failed to list objects: %w", listErr)

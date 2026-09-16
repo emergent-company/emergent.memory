@@ -163,6 +163,13 @@ type ListParams struct {
 	Fields          []string           // Property field projection (include only these property keys)
 	Namespace       *string            // Filter by namespace
 	PropertyOrder   *PropertyOrderSpec // optional property-based ordering
+
+	// IncludeMigrationArchive selects the migration_archive column in List
+	// results. It is opt-in because List also backs the public graph list/search
+	// API, and the archive JSON must not leak into those responses. Only callers
+	// that actually read or write obj.MigrationArchive (schema migrate/rollback)
+	// should set it.
+	IncludeMigrationArchive bool
 }
 
 // numericPropertyKeywords are substrings that hint a property path holds a
@@ -356,19 +363,26 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 	if params.Limit <= 0 {
 		params.Limit = 50
 	}
-	if params.Limit > r.maxListLimit {
+	// Only clamp when a positive cap is configured; an unset/non-positive
+	// maxListLimit must not collapse the page size to zero.
+	if r.maxListLimit > 0 && params.Limit > r.maxListLimit {
 		params.Limit = r.maxListLimit
 	}
 	if params.Order == "" {
 		params.Order = "desc"
 	}
 
-	q := r.buildObjectBaseQuery(params).
-		Column("id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
-			"type", "key", "status", "properties", "labels", "change_summary",
-			"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
-			"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
-			"content_hash")
+	columns := []string{"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
+		"type", "key", "status", "properties", "labels", "change_summary",
+		"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
+		"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
+		"content_hash"}
+	if params.IncludeMigrationArchive {
+		// Opt-in only — see ListParams.IncludeMigrationArchive. Without this the
+		// column is omitted and obj.MigrationArchive always scans as empty.
+		columns = append(columns, "migration_archive")
+	}
+	q := r.buildObjectBaseQuery(params).Column(columns...)
 
 	// Property-based ordering: ORDER BY the JSONB property accessor with id as a
 	// tiebreaker. Keyset cursor pagination encodes (created_at, id), which is
@@ -421,6 +435,49 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 	}
 
 	return objects, nil
+}
+
+// ListAll returns every HEAD object matching params. Unlike List — which clamps
+// the page size to MaxListLimit and fetches at most one page — ListAll walks the
+// result set with keyset cursors so batch callers (schema migrate/rollback) are
+// not silently capped at a single page.
+//
+// Callers that read or write obj.MigrationArchive must set
+// params.IncludeMigrationArchive. Property ordering is rejected because it is
+// incompatible with the (created_at, id) keyset cursor.
+func (r *Repository) ListAll(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+	if params.PropertyOrder != nil {
+		return nil, apperror.NewBadRequest("property ordering is not supported for full list scans")
+	}
+	if params.Order == "" {
+		params.Order = "desc"
+	}
+	// Mirror List's own default so an unconfigured (non-positive) maxListLimit
+	// does not collapse the page size.
+	pageSize := r.maxListLimit
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+
+	all := make([]*GraphObject, 0)
+	for {
+		page := params
+		page.Limit = pageSize
+		objects, err := r.List(ctx, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, objects...)
+
+		// List fetches Limit+1 rows so callers can detect a further page; a page
+		// no larger than the requested size means the result set is exhausted.
+		if len(objects) <= pageSize {
+			return all, nil
+		}
+		last := objects[len(objects)-1]
+		cursor := encodeCursor(last.CreatedAt, last.ID)
+		params.Cursor = &cursor
+	}
 }
 
 // Count returns the total count of graph objects matching the given parameters.
