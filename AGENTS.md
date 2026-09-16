@@ -67,6 +67,18 @@ Never make code or doc changes directly in the shared checkout (`/root/emergent.
 - Full protocol, safety guards, and state tracking: load the `worktrees` skill.
 - Before any build/commit: check `git status` + `git log --oneline -5`, and stage only files you authored — never sweep a parallel session's WIP into your commit.
 
+## Feature Work — Spec + Implementation in One PR
+
+Non-trivial work is spec-driven **and** ships as a **single** pull request. The OpenSpec change and its implementation are one unit of work — never two.
+
+- **Small changes skip the spec.** Trivial work — a typo, a one-line fix, an isolated small edit with no behavior, interface, schema, or API change — goes straight to implementation.
+- **Everything else starts with an OpenSpec change:** `openspec new change "<name>"` → artifacts in `openspec/changes/<name>/` (proposal, tasks, delta specs).
+- **Implement in the same worktree and the same branch.** Do not create a second worktree or a second PR for the spec.
+- **Open exactly one PR** containing both the change directory and the implementation (code, tests, and spec edits together). A spec-only PR that waits to merge before implementation begins is **not** the workflow.
+- **Do not block on the spec.** Once the artifacts are written, keep going on the same branch; the change gets reviewed once, as part of the finished PR.
+- **Archive after merge.** Run `openspec archive` (sync delta specs → `openspec/specs/`) as a post-merge follow-up, never as a pre-implementation PR.
+- **PR description:** link the OpenSpec change directory and summarize the delta specs.
+
 ## Commands
 
 ```bash
