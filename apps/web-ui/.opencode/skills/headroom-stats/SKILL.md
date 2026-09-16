@@ -21,7 +21,7 @@ tools/headroom-stats.py -n 10      # show last 10 request rows
 tools/headroom-stats.py --raw      # dump raw /stats-history JSON
 ```
 
-Run from repo root (`/root/alfred`). Exit 0 = ok, 1 = proxy unreachable/bad response.
+Run from the web-ui repo root (`/root/emergent.memory/apps/web-ui`). Exit 0 = ok, 1 = proxy unreachable/bad response.
 
 For a one-line health gate before reporting: `systemctl status headroom-proxy --no-pager`.
 

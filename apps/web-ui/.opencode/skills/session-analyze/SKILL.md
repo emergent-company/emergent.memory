@@ -9,7 +9,7 @@ Analyze one recorded Memory session (chat/voice conversation) and produce concre
 
 ## 1. Fetch the session dump
 
-The Memory gateway serves a formatted dump. Read the gateway host/port and API key from `/root/alfred/.env` (`MEMORY_PORT`, default 8095; `TOKEN_API_KEY`, empty in dev). The live instance serves on host `livekit` port 8082. Try, in order:
+The Memory gateway serves a formatted dump. Read the gateway host/port and API key from `/root/emergent.memory/apps/web-ui/.env` (`MEMORY_PORT`, default 8095; `TOKEN_API_KEY`, empty in dev). The live instance serves on host `livekit` port 8082. Try, in order:
 
 ```bash
 curl -sS "http://livekit:8082/api/conversations/<SESSION_ID>/dump"
@@ -23,7 +23,7 @@ If `TOKEN_API_KEY` is non-empty, add `-H "X-API-Key: $TOKEN_API_KEY"`.
 Fallback (gateway unreachable) — query memory directly:
 
 ```bash
-set -a; . /root/alfred/.env; set +a
+set -a; . /root/emergent.memory/apps/web-ui/.env; set +a
 curl -sS -H "Authorization: Bearer $MEMORY_TOKEN" "$MEMORY_URL/api/chat/<SESSION_ID>/history"
 ```
 
