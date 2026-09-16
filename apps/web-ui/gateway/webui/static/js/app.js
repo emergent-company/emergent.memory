@@ -122,7 +122,11 @@
           hydrateSkills(a);
         })
         .catch(function (err) {
-          captureError(err);
+          if (isTransientError(err)) {
+            console.warn("app: agent load failed (transient, not reported):", err);
+          } else {
+            captureError(err);
+          }
           toast("error", "Could not load agent: " + err.message);
           closeFormDialog();
         });
