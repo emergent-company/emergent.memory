@@ -563,6 +563,30 @@
     }
   }
 
+  // A run's lifecycle items (run_start / run_end) carry run_status and, on
+  // failure, error_message. The transcript renders the run's messages and tool
+  // chips but nothing for the lifecycle itself — so without this banner a
+  // failed run ends silently right after its last chip. Rendered left-aligned
+  // like an assistant bubble, in the shared error tint.
+  function isFailedRun(status) {
+    return status === "failed" || status === "error";
+  }
+
+  function appendRunFailure(errorMessage) {
+    hideEmpty();
+    var wrap = document.createElement("div");
+    wrap.className = "chat chat-start memory-rise";
+    wrap.setAttribute("role", "alert");
+    wrap.innerHTML =
+      '<div class="chat-image bg-error/10 text-error border-error/20 flex items-center justify-center rounded-full border p-2">' +
+      '<span class="iconify lucide--circle-alert size-5" aria-hidden="true"></span></div>' +
+      '<div class="chat-header text-xs text-error/80">Run failed</div>' +
+      '<div class="chat-bubble max-w-[85%] border border-error/25 bg-error/5 text-error">' +
+      '<p class="text-sm leading-relaxed whitespace-pre-wrap break-words"></p></div>';
+    wrap.querySelector("p").textContent = errorMessage || "The agent run failed.";
+    messages.appendChild(wrap);
+  }
+
   // renderTimelineItems renders a raw history payload (conversation or run) —
   // the item vocabulary, sorting, and rendering are identical for both.
   function renderTimelineItems(items, pendingApprovals) {
@@ -587,6 +611,8 @@
     items = MemoryChatHost.sortTimeline(items);
 
     var runStatus = ""; // status of the run being rendered (set by run_start)
+    var runError = ""; // error_message of that run, if the server attached one
+    var runEnded = false; // whether a run_end was seen for the current run
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
       if (!item || typeof item !== "object") continue;
@@ -599,8 +625,16 @@
       switch (item.kind) {
         case "run_start":
           runStatus = item.run_status || "";
+          runError = item.error_message || "";
+          runEnded = false;
           break;
         case "run_end":
+          runEnded = true;
+          // Surface a failed run once, after its content, using the run_end's
+          // message when present and the run_start's otherwise.
+          if (isFailedRun(item.run_status || runStatus)) {
+            appendRunFailure(item.error_message || runError);
+          }
           break;
         case "tool_call":
           // ask_user never renders as a tool chip. A pending question renders
@@ -659,6 +693,12 @@
           }
           break;
       }
+    }
+
+    // A run with no run_end item (partial/older history) still has to surface
+    // its failure, so fall back to the run_start's status once the loop ends.
+    if (!runEnded && isFailedRun(runStatus)) {
+      appendRunFailure(runError);
     }
 
     // Pending tool approvals (run paused awaiting a human decision) render as

@@ -126,7 +126,8 @@ templ sessionTimeline(groups []runGroup) {
 // Per-run usage is absent from the conversation-history API and intentionally
 // not shown.
 templ sessionRunBlock(n int, g runGroup) {
-	{{ model, status, dur := g.runMeta() }}
+	{{ model, status, dur := g.runMeta()
+	runErr := g.runError() }}
 	<div class="mb-6">
 		<div class="mb-2 flex flex-wrap items-center gap-2">
 			<span class="font-mono text-[11px] font-medium text-base-content/55">run { strconv.Itoa(n) }</span>
@@ -140,6 +141,12 @@ templ sessionRunBlock(n int, g runGroup) {
 				@ui.Badge(ui.BadgeProps{Label: dur, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
 			}
 		</div>
+		if runErr != "" {
+			<p class="text-error mt-1 flex items-start gap-1.5 text-xs font-medium">
+				<span class="iconify lucide--circle-alert mt-px size-3.5 shrink-0" aria-hidden="true"></span>
+				<span class="min-w-0 break-words">{ runErr }</span>
+			</p>
+		}
 		<div class="space-y-3">
 			for _, it := range g.items {
 				if it.Kind == "message" {
