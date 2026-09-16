@@ -41,12 +41,9 @@ type mcpShareTestBackend struct {
 
 func newMCPShareTestBackend(shares []MCPShareInstance, catalog []MCPShareTool) *mcpShareTestBackend {
 	return &mcpShareTestBackend{
-		fakeMemory: &fakeMemory{agents: []AgentDefinitionSummary{
-			{ID: "a1", Name: "diane", FlowType: "agentic"},
-			{ID: "a2", Name: "research-bot"},
-		}},
-		shares:  shares,
-		catalog: catalog,
+		fakeMemory: &fakeMemory{},
+		shares:     shares,
+		catalog:    catalog,
 	}
 }
 
@@ -85,8 +82,8 @@ func (b *mcpShareTestBackend) CreateMCPShareInstance(ctx context.Context, in *MC
 	}
 	inst := MCPShareInstance{
 		ID: "share-1", Name: in.Name, Description: in.Description,
-		Tools: in.Tools, Agents: in.Agents, Status: "active",
-		CreatedAt: "2026-02-01T00:00:00Z", ToolCount: len(in.Tools), AgentCount: len(in.Agents),
+		Tools: in.Tools, Status: "active",
+		CreatedAt: "2026-02-01T00:00:00Z", ToolCount: len(in.Tools),
 	}
 	b.shares = append(b.shares, inst)
 	return &MCPShareCreated{
@@ -122,9 +119,7 @@ func (b *mcpShareTestBackend) UpdateMCPShareInstance(ctx context.Context, id str
 	inst.Name = in.Name
 	inst.Description = in.Description
 	inst.Tools = in.Tools
-	inst.Agents = in.Agents
 	inst.ToolCount = len(in.Tools)
-	inst.AgentCount = len(in.Agents)
 	cp := *inst
 	return &cp, nil
 }
@@ -178,13 +173,13 @@ func mcpShareFixture() []MCPShareInstance {
 	return []MCPShareInstance{
 		{
 			ID: "sh-1", Name: "research", Description: "read-only research access",
-			Tools: []string{"search_memory", "get_object"}, Agents: []string{"a1"},
+			Tools:  []string{"search_memory", "get_object"},
 			Status: "active", CreatedAt: "2026-01-02T00:00:00Z", LastUsedAt: strPtr("2026-01-05T00:00:00Z"),
-			ToolCount: 2, AgentCount: 1,
+			ToolCount: 2,
 		},
 		{
 			ID: "sh-legacy", Name: "old share", IsLegacy: true, Status: "active",
-			CreatedAt: "2025-12-01T00:00:00Z", ToolCount: 0, AgentCount: 0,
+			CreatedAt: "2025-12-01T00:00:00Z", ToolCount: 0,
 		},
 	}
 }
@@ -252,7 +247,7 @@ func TestMCPSharesListRendersRowsAndLegacyReadOnly(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"MCP Sharing", "research", "read-only research access",
-		"2 tools", "1 agent",
+		"2 tools",
 		`href="/settings/mcp-servers/shares/sh-1/edit"`,
 		`aria-label="Rotate key for research"`, `aria-label="Revoke research"`,
 		"legacy", "old share",
@@ -260,6 +255,12 @@ func TestMCPSharesListRendersRowsAndLegacyReadOnly(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("shares list missing %q", want)
+		}
+	}
+	// no agent allowlist in the list representation
+	for _, absent := range []string{`name="agents"`, "1 agent", "all agents"} {
+		if strings.Contains(body, absent) {
+			t.Errorf("shares list must not render agent allowlist data %q", absent)
 		}
 	}
 	// legacy row is read-only: no edit/rotate/revoke for it
@@ -303,7 +304,7 @@ func TestMCPSharesListEmptyAndError(t *testing.T) {
 
 // --- create ---
 
-func TestMCPShareNewPageRendersPickers(t *testing.T) {
+func TestMCPShareNewPageRendersToolPicker(t *testing.T) {
 	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
 	s := &Server{cfg: Config{}, memory: f}
 	e := mcpShareTestServer(s)
@@ -319,11 +320,16 @@ func TestMCPShareNewPageRendersPickers(t *testing.T) {
 		`data-mcp-tool-search`, `data-mcp-tool-select-all`, `data-mcp-tool-clear`,
 		`data-mcp-tool-group`, `name="tools" value="search_memory"`, `name="tools" value="create_agent"`,
 		"Memory", "Agents",
-		`name="agents" value="a1"`, "diane", "research-bot",
 		"Create share", `href="/settings/mcp-servers/shares"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("new share page missing %q", want)
+		}
+	}
+	// the retired agent picker must be gone
+	for _, absent := range []string{`name="agents"`, "diane", "research-bot", "Leave all unchecked"} {
+		if strings.Contains(body, absent) {
+			t.Errorf("new share page must not render the agent picker %q", absent)
 		}
 	}
 	if strings.Contains(body, "Save changes") {
@@ -331,7 +337,9 @@ func TestMCPShareNewPageRendersPickers(t *testing.T) {
 	}
 }
 
-func TestMCPShareNewPagePreselectsAgent(t *testing.T) {
+// TestMCPShareNewPageIgnoresAgentPreselect proves the retired ?agent= deep link
+// no longer preselects anything (the agent picker is gone).
+func TestMCPShareNewPageIgnoresAgentPreselect(t *testing.T) {
 	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
 	s := &Server{cfg: Config{}, memory: f}
 	e := mcpShareTestServer(s)
@@ -340,8 +348,9 @@ func TestMCPShareNewPagePreselectsAgent(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET new?agent = %d, want 200", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `value="a1" class="checkbox checkbox-sm mt-0.5" checked`) {
-		t.Error("create form must preselect the agent from the query string")
+	body := rec.Body.String()
+	if strings.Contains(body, `name="agents"`) || strings.Contains(body, `value="a1"`) {
+		t.Error("create form must not render an agent picker or preselect an agent")
 	}
 }
 
@@ -351,7 +360,7 @@ func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {
 	e := mcpShareTestServer(s)
 
 	rec := mcpSharePost(e, "/settings/mcp-servers/shares/new",
-		"name=research2&description=hello&tools=search_memory&tools=get_object&agents=a1")
+		"name=research2&description=hello&tools=search_memory&tools=get_object")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create = %d, want 200 reveal render", rec.Code)
 	}
@@ -402,7 +411,7 @@ func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {
 	if len(f.shares) != 1 || f.shares[0].Name != "research2" {
 		t.Fatalf("store after create = %+v", f.shares)
 	}
-	if len(f.lastCreate.Tools) != 2 || len(f.lastCreate.Agents) != 1 {
+	if len(f.lastCreate.Tools) != 2 {
 		t.Errorf("create input = %+v", f.lastCreate)
 	}
 }
@@ -459,11 +468,14 @@ func TestMCPShareEditPagePrefills(t *testing.T) {
 	for _, want := range []string{
 		"Edit share", `action="/settings/mcp-servers/shares/sh-1/update"`,
 		`value="research"`, "read-only research access", "Save changes",
-		`name="tools" value="search_memory"`, `name="agents" value="a1"`,
+		`name="tools" value="search_memory"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("edit page missing %q", want)
 		}
+	}
+	if strings.Contains(body, `name="agents"`) {
+		t.Error("edit page must not render the agent picker")
 	}
 }
 
@@ -484,14 +496,17 @@ func TestMCPShareUpdatePersists(t *testing.T) {
 	e := mcpShareTestServer(s)
 
 	rec := mcpSharePost(e, "/settings/mcp-servers/shares/sh-1/update",
-		"name=research&description=updated&tools=get_object&agents=a1&agents=a2")
+		"name=research&description=updated&tools=get_object")
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers/shares?updated=1" {
 		t.Fatalf("update = %d %q, want 303 ?updated=1", rec.Code, rec.Header().Get("Location"))
 	}
 	if f.lastUpdateID != "sh-1" || len(f.lastUpdate.Tools) != 1 || f.lastUpdate.Tools[0] != "get_object" {
 		t.Errorf("update input = %s %+v", f.lastUpdateID, f.lastUpdate)
 	}
-	if inst := f.find("sh-1"); inst == nil || len(inst.Agents) != 2 || inst.Description != "updated" {
+	// submitting an agents field must not reach the backend allowlist
+	mcpSharePost(e, "/settings/mcp-servers/shares/sh-1/update",
+		"name=research&description=updated&tools=get_object&agents=a1&agents=a2")
+	if inst := f.find("sh-1"); inst == nil || len(inst.Tools) != 1 || inst.Description != "updated" {
 		t.Errorf("persisted share = %+v", inst)
 	}
 }
@@ -599,7 +614,7 @@ func TestMCPShareJSONCreateReturnsTokenOnce(t *testing.T) {
 	e := mcpShareTestServer(s)
 
 	rec := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares",
-		`{"name":"api share","tools":["search_memory"],"agents":[]}`)
+		`{"name":"api share","tools":["search_memory"]}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /api/mcp-shares = %d, want 201", rec.Code)
 	}

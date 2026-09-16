@@ -45,16 +45,14 @@ type mcpShareFieldErrs struct {
 }
 
 // mcpShareFormData is the payload shared by the create and edit pages and by
-// their inline validation re-renders. Catalog + AgentsList are loaded from the
-// backend; the rest is the user's draft or the instance being edited.
+// their inline validation re-renders. Catalog is loaded from the backend; the
+// rest is the user's draft or the instance being edited.
 type mcpShareFormData struct {
 	ID          string
 	Name        string
 	Description string
 	Tools       []string
-	Agents      []string
 	Catalog     []MCPShareTool
-	AgentsList  []AgentDefinitionSummary
 
 	Legacy     bool
 	NotFound   bool
@@ -116,17 +114,12 @@ func (s *Server) renderMCPShareListWithReveal(c echo.Context, reveal *mcpShareRe
 
 // --- create page + create flow ---
 
-// uiMCPShareNewPage renders the create form (GET .../shares/new). ?agent=
-// preselects an agent in the picker (the agent view's "Share via MCP" deep
-// link).
+// uiMCPShareNewPage renders the create form (GET .../shares/new).
 func (s *Server) uiMCPShareNewPage(c echo.Context) error {
 	ctx := c.Request().Context()
 	data := mcpShareFormData{FlashErr: flashError(c)}
 	if err := s.loadMCPShareFormData(ctx, &data); err != nil {
 		data.LoadErr = err
-	}
-	if id := strings.TrimSpace(c.QueryParam("agent")); id != "" {
-		data.Agents = []string{id}
 	}
 	return s.page(c, pageTitle("New MCP share"), MCPShareNewPage(data))
 }
@@ -158,7 +151,6 @@ func (s *Server) uiMCPShareCreate(c echo.Context) error {
 		Name:        draft.Name,
 		Description: draft.Description,
 		Tools:       draft.Tools,
-		Agents:      draft.Agents,
 	})
 	if err != nil {
 		if mcpShareIsNameConflict(err) {
@@ -199,7 +191,6 @@ func (s *Server) uiMCPShareEditPage(c echo.Context) error {
 		Name:        inst.Name,
 		Description: inst.Description,
 		Tools:       inst.Tools,
-		Agents:      inst.Agents,
 		FlashErr:    flashError(c),
 	}
 	if err := s.loadMCPShareFormData(ctx, &data); err != nil {
@@ -245,7 +236,6 @@ func (s *Server) uiMCPShareUpdate(c echo.Context) error {
 		Name:        draft.Name,
 		Description: draft.Description,
 		Tools:       draft.Tools,
-		Agents:      draft.Agents,
 	}); err != nil {
 		if mcpShareIsNameConflict(err) {
 			fe.Name = err.Error()
@@ -388,22 +378,15 @@ func (s *Server) listMCPShareTools(c echo.Context) error {
 
 // --- shared helpers ---
 
-// loadMCPShareFormData fills the tool catalog and agent list on a form
-// payload, preserving any draft/instance fields already set. A catalog failure
-// is returned so the page renders its error state; an agent-list failure
-// degrades to an empty picker (the share can still be created).
+// loadMCPShareFormData fills the tool catalog on a form payload, preserving any
+// draft/instance fields already set. A catalog failure is returned so the page
+// renders its error state.
 func (s *Server) loadMCPShareFormData(ctx context.Context, data *mcpShareFormData) error {
 	catalog, err := s.memory.ListMCPShareTools(ctx)
 	if err != nil {
 		return err
 	}
 	data.Catalog = catalog
-	agents, aerr := s.memory.ListAgentDefinitions(ctx)
-	if aerr != nil {
-		captureError(aerr)
-		return nil
-	}
-	data.AgentsList = agents
 	return nil
 }
 
@@ -463,16 +446,14 @@ func mcpShareFieldErrsNonEmpty(fe mcpShareFieldErrs) bool {
 }
 
 // mcpShareFormDataFromRequest parses the create/edit draft from the submitted
-// form (name, description, tools[], agents[]).
+// form (name, description, tools[]).
 func mcpShareFormDataFromRequest(c echo.Context) mcpShareFormData {
 	values, _ := c.FormParams()
 	tools := mcpDedupeStrings(values["tools"])
-	agents := mcpDedupeStrings(values["agents"])
 	return mcpShareFormData{
 		Name:        strings.TrimSpace(c.FormValue("name")),
 		Description: strings.TrimSpace(c.FormValue("description")),
 		Tools:       tools,
-		Agents:      agents,
 	}
 }
 
@@ -543,7 +524,7 @@ func mcpShareUpstreamStatus(err error) int {
 func errShareIDRequired() error { return errors.New("share id is required") }
 
 func legacyShareEditErr() error {
-	return errors.New("legacy shares cannot be edited — recreate the share to change its tools or agents")
+	return errors.New("legacy shares cannot be edited — recreate the share to change its tools")
 }
 
 func legacyShareRevokeErr() error {

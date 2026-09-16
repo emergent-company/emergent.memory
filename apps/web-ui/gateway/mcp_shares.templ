@@ -22,7 +22,7 @@ import (
 templ MCPSharesPage(data mcpSharesPageData) {
 	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-shares-root": ""}) {
 		{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing")) }}
-		@detailHeader(crumbs, "", "MCP Sharing", "Hand an outside MCP client a scoped key that exposes only the memory tools and agents you choose.", detailHeaderOpts{Margin: "mb-6"}) {
+		@detailHeader(crumbs, "", "MCP Sharing", "Hand an outside MCP client a scoped key that exposes only the memory tools you choose. To share one agent, use that agent's own MCP endpoint instead.", detailHeaderOpts{Margin: "mb-6"}) {
 			if data.LoadErr == nil {
 				@countBadge(len(data.Shares), "share", "lucide--share-2")
 				@ui.Button(ui.ButtonProps{
@@ -43,7 +43,7 @@ templ MCPSharesPage(data mcpSharesPageData) {
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--share-2",
 				Title:       "No MCP shares yet",
-				Description: "Create a share to expose a chosen set of memory tools and agents to an outside MCP client, with its own API key.",
+				Description: "Create a share to expose a chosen set of memory tools to an outside MCP client, with its own API key. To share an agent, use that agent's own MCP endpoint.",
 				Bordered:    true,
 				Class:       "py-12",
 				ActionHref:  mcpShareSettingsBase + "/new",
@@ -67,7 +67,7 @@ templ MCPSharesPage(data mcpSharesPageData) {
 	}
 }
 
-// mcpShareRow is one share: identity + status, tool/agent counts, timestamps,
+// mcpShareRow is one share: identity + status, tool counts, timestamps,
 // and the edit/rotate/revoke actions. Legacy shares render read-only.
 templ mcpShareRow(inst MCPShareInstance) {
 	<div class="flex flex-col gap-3 px-4 py-3.5" data-mcp-share-row={ inst.ID }>
@@ -95,7 +95,7 @@ templ mcpShareRow(inst MCPShareInstance) {
 						Shape:     ui.ButtonShapeSquare,
 						Icon:      "lucide--sliders-horizontal",
 						AriaLabel: "Edit " + inst.Name,
-						Attrs:     templ.Attributes{"title": "Edit tools and agents"},
+						Attrs:     templ.Attributes{"title": "Edit tools"},
 					})
 					@ui.Button(ui.ButtonProps{
 						Type:      ui.ButtonTypeButton,
@@ -125,10 +125,6 @@ templ mcpShareRow(inst MCPShareInstance) {
 			<span class="inline-flex items-center gap-1">
 				@ui.IconSpan("lucide--wrench", "size-3.5")
 				{ countLabel(inst.ToolCount, "tool", "tools") }
-			</span>
-			<span class="inline-flex items-center gap-1">
-				@ui.IconSpan("lucide--bot", "size-3.5")
-				{ mcpShareAgentsLabel(inst.AgentCount) }
 			</span>
 			<span class="inline-flex items-center gap-1">
 				@ui.IconSpan("lucide--calendar-plus", "size-3.5")
@@ -289,7 +285,6 @@ templ mcpShareFormBody(data mcpShareFormData, editing bool) {
 				<textarea id="mcp-share-description" name="description" rows="2" placeholder="e.g. Read-only access for the analyst bot" class="textarea w-full resize-none">{ data.Description }</textarea>
 			}
 			@mcpShareToolPicker(data)
-			@mcpShareAgentPicker(data)
 			if data.GeneralErr != nil {
 				@ui.Alert(ui.AlertProps{
 					Type:    ui.AlertError,
@@ -379,32 +374,6 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 							</label>
 						}
 					</div>
-				}
-			</div>
-		}
-	</div>
-}
-
-// mcpShareAgentPicker is the optional agent allowlist. No selection means the
-// share can reach every scope-permitted agent.
-templ mcpShareAgentPicker(data mcpShareFormData) {
-	<div class="flex flex-col gap-2">
-		@ui.Eyebrow("Agents", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
-		<p class="text-base-content/50 -mt-1 text-xs">Leave all unchecked to let the share reach every scope-permitted agent. Check specific agents to limit it.</p>
-		if len(data.AgentsList) == 0 {
-			<p class="text-base-content/45 text-xs">No agents in this project yet — the share will use all agents.</p>
-		} else {
-			<div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-				for _, a := range data.AgentsList {
-					<label class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-content/10 bg-base-100 px-3 py-2 transition-colors hover:border-base-content/25">
-						<input type="checkbox" name="agents" value={ a.ID } class="checkbox checkbox-sm mt-0.5" checked?={ mcpShareContains(data.Agents, a.ID) }/>
-						<span class="min-w-0">
-							<span class="block truncate text-xs font-medium">{ a.Name }</span>
-							if a.FlowType != "" {
-								<span class="text-base-content/45 block text-[10px]">{ flowLabel(a.FlowType) }</span>
-							}
-						</span>
-					</label>
 				}
 			</div>
 		}
