@@ -120,10 +120,8 @@ type agentDirectory interface {
 // tool allowlist. A NULL tool allowlist means "unrestricted" (all
 // scope-permitted tools), matching legacy share tokens.
 //
-// Instances scope TOOLS ONLY. The legacy core.mcp_share_instances.allowed_agents
-// column is deprecated and intentionally unmapped here (no reads or writes); the
-// physical column is left in place for a later migration. Agent sharing is
-// handled by the agent-scoped MCP endpoint.
+// Instances scope TOOLS ONLY; agent sharing is handled by the agent-scoped MCP
+// endpoint.
 type MCPShareInstance struct {
 	bun.BaseModel `bun:"table:core.mcp_share_instances,alias:msi"`
 
