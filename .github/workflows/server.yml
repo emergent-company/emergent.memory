@@ -163,10 +163,11 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
             BUILD_TIME=${{ steps.version.outputs.build_time }}
-          # pr-only validation: a cache written on a PR ref is unreadable by
-          # other refs, so exporting all four stages just churns the 10 GB budget
-          cache-from: type=gha,scope=memory-server-ci
-          cache-to: type=gha,scope=memory-server-ci,mode=min,ignore-error=true
+          # Read-only cache: this job only validates on PRs, and a cache written
+          # on a PR ref is unreadable by other refs, so it exports nothing. It
+          # reuses the published image's cache from the default branch instead
+          # (same Dockerfile, scope written weekly by publish-self-hosted-images).
+          cache-from: type=gha,scope=memory-server
 
       - name: Get image size
         run: |
