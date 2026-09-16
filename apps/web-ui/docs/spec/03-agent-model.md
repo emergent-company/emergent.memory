@@ -34,9 +34,11 @@ suffix.
 
 Memory resolves `effectiveModel` in two steps (`ResolveGenerativeModel`): the
 project's **pinned** model-config first, else a **provider-credential
-fallback** (`DefaultGenerativeModel` — the first configured provider that
-carries a generative model). `effectiveModel` is therefore non-empty whenever
-the project has a configured provider, even with no pinned project default.
+fallback** (`DefaultGenerativeModel` — the first configured provider credential
+that carries a generative model). `effectiveModel` is therefore non-empty
+whenever a configured provider credential carries a generative model — with or
+without a pinned project default — and stays empty when none does, even on a
+project with configured providers.
 The gateway separates the two when warning about an auto agent: **error** when
 the project has no configured provider (chats can't run — memory returns
 `503 no_provider`), **warning** while the model is only a provider-credential

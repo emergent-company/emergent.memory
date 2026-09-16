@@ -508,8 +508,9 @@ type agentModelIssue struct {
 // decides: "error" when the project has no configured provider, "warning" when
 // providers exist but the model is only a provider-credential fallback (no
 // pinned project default), none when a pinned project default resolves. Memory
-// always resolves a provider-credential fallback into EffectiveModel, so that
-// fallback must not suppress the "isn't pinned" warning. pinnedDefaultKnown
+// resolves a provider-credential fallback into EffectiveModel whenever a
+// configured credential carries a generative model (it stays empty otherwise),
+// so that fallback must not suppress the "isn't pinned" warning. pinnedDefaultKnown
 // false means the project model-config fetch failed — the legacy rule (any
 // resolvable model suppresses the warning) is kept so a transient fetch error
 // never fabricates a warning. An explicit model is "error" when the project has
