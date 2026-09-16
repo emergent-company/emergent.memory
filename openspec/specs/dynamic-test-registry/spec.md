@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The e2e TUI discovers tests dynamically from the database instead of a hardcoded registry. An optional config file supplies test categories and display names, with a defined search path, simplified database path resolution, and a configurable test launch command.
+
+## Requirements
 
 ### Requirement: TUI discovers tests from the database
 The TUI SHALL populate its test list by querying `SELECT DISTINCT test_name FROM test_runs` from the connected SQLite database. The hardcoded `knownTests` slice SHALL be removed.

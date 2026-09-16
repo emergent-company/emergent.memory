@@ -1,4 +1,8 @@
-## MODIFIED Requirements
+## Purpose
+
+MCP tool names follow a consistent `area-action` kebab-case convention. The spec locks in the complete rename mapping, updated dispatch routing, current README tool counts, and `Authorization: Bearer` auth examples, while tool parameters and behavior stay unchanged.
+
+## Requirements
 
 ### Requirement: MCP tool names follow area-action kebab-case format
 All MCP tool names exposed by the Memory server SHALL use the `area[-noun]-action` kebab-case format. The area segment identifies the primary resource domain. An optional noun segment identifies a sub-resource. The action segment is the last segment and identifies the operation (e.g., `list`, `get`, `create`, `update`, `delete`).

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+`memory orgs` exposes organization management from the CLI. It lists organizations with text or JSON output, fetches organization details by ID, and creates and deletes organizations.
+
+## Requirements
 
 ### Requirement: List organizations
 The CLI SHALL provide a `memory orgs list` command that lists all organizations the authenticated user is a member of. The command SHALL use account-level authentication. The output SHALL display each organization's name and ID in a numbered list. The command SHALL support JSON output via `--output json` or `--json`.

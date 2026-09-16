@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+A long-lived Python daemon runs inside the sandbox container and executes scripts in isolated forked child processes. It injects per-invocation environment variables, communicates with the Go tool layer over a FIFO, and backs the `run_python` tool with cold-start fallback.
+
+## Requirements
 
 ### Requirement: Daemon runs inside the sandbox container
 The workspace container image SHALL include a `pyrunner.py` daemon script that starts automatically at container boot. The daemon SHALL pre-import the `emergent` SDK and any other standard SDK dependencies so they are resident in memory before the first script execution request arrives.

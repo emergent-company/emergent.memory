@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The CLI reference documentation covers the newer CLI commands. It documents `memory init`, `memory ask`, `memory adk-sessions`, `memory mcp-guide`, and `memory install-memory-skills` so users can discover them.
+
+## Requirements
 
 ### Requirement: CLI reference page documents memory init
 The developer guide SHALL include documentation for `memory init` covering its purpose (interactive wizard to set up a Memory project in a directory), the env vars it writes (`MEMORY_PROJECT_ID`, `MEMORY_PROJECT_NAME`, `MEMORY_PROJECT_API_KEY`), and its flags (`--skip-provider`, `--skip-skills`).

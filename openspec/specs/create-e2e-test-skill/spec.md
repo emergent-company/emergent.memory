@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+An OpenCode skill guides agents through writing e2e tests. It ships a `SKILL.md` workflow plus reference files that list the framework API and document common test patterns.
+
+## Requirements
 
 ### Requirement: Skill directory created at .opencode/skills/create-e2e-test/
 The repo SHALL contain a skill at `.opencode/skills/create-e2e-test/SKILL.md` following standard OpenCode skill format. The skill directory SHALL also contain a `reference/` sub-directory with supporting docs.

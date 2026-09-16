@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+`memory graph objects create-batch` accepts a subgraph JSON format in addition to the flat-array format. It auto-detects the input shape, supports `_ref` placeholders and `key`-based idempotency, enforces server limits with actionable errors, and returns a `ref_map` under `--output json`.
+
+## Requirements
 
 ### Requirement: create-batch accepts subgraph format
 `memory graph objects create-batch` SHALL detect the input file format by inspecting the top-level JSON type and route accordingly: a JSON array routes to the existing bulk-create endpoint; a JSON object with `objects` and `relationships` keys routes to `POST /api/graph/subgraph`.

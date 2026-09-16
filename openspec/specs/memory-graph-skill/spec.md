@@ -1,4 +1,8 @@
-## MODIFIED Requirements
+## Purpose
+
+The memory-graph agent skill documents how to populate the graph efficiently. It teaches agents to use the subgraph format when objects and relationships are created together, documents the subgraph JSON file format, and describes a chunking strategy for populations exceeding 100 objects.
+
+## Requirements
 
 ### Requirement: batch creation uses subgraph format when relationships are needed
 When creating objects that need relationships wired in the same operation, agents SHALL use the subgraph format with `create-batch` rather than two separate passes (objects then relationships). The subgraph format is the primary recommended pattern; the flat-array format is for objects-only populations.
@@ -11,7 +15,6 @@ When creating objects that need relationships wired in the same operation, agent
 - **WHEN** an agent needs to create objects with no relationships
 - **THEN** the agent may use either the flat-array format or the subgraph format (objects array, empty relationships)
 
-## ADDED Requirements
 
 ### Requirement: skill documents subgraph file format
 The skill SHALL document the subgraph JSON format with a complete worked example showing `_ref` usage, `key` for idempotency, and the chunking pattern for populations exceeding 100 objects.

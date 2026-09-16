@@ -1,5 +1,7 @@
 # cli-init-wizard
 
+## Purpose
+
 Interactive `memory init` command that orchestrates project selection/creation, provider setup, skills installation, and `.env.local` configuration in a single guided flow. Supports idempotent re-runs that verify existing settings.
 
 ## Requirements

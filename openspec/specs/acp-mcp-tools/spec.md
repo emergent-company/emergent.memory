@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+ACP access is also exposed as MCP tools so agents can drive ACP operations without HTTP. The server registers `acp-list-agents`, `acp-trigger-run`, and `acp-get-run-status` tools that call internal services directly and follow the existing MCP tool-definition pattern.
+
+## Requirements
 
 ### Requirement: MCP tool `acp-list-agents`
 The system SHALL register an `acp-list-agents` MCP tool in `MCPToolHandler` that lists externally-visible agents via ACP semantics. The tool SHALL call internal service methods directly (not HTTP) and return a JSON array of agent manifests matching the ACP discovery format. The tool SHALL accept no required parameters and an optional `include_status` boolean parameter.

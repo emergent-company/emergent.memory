@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The e2e framework is extracted into an importable Go module. It provides client, server, project, agent, graph, CLI, runlog/Gantt, environment, and parse helpers, with all test files migrated to consume it.
+
+## Requirements
 
 ### Requirement: Framework package exists as importable Go module
 The framework library SHALL live in the standalone module `github.com/emergent-company/runlog` (package `runlog`). All test files SHALL import it with the alias `framework "github.com/emergent-company/runlog"`. The library SHALL NOT contain any `Test*` functions.

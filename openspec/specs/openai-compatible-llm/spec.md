@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The server supports OpenAI-compatible LLM backends configured via environment variables. The provider takes priority over the Google backends, speaks the Chat Completions wire protocol with ADK role mapping and JSON mode for structured extraction, honors `LLM_MODEL`, and registers an `openai-compatible` provider type.
+
+## Requirements
 
 ### Requirement: OpenAI-compatible provider configuration via environment variables
 The system SHALL support configuring an OpenAI-compatible LLM endpoint using three environment variables: `OPENAI_BASE_URL` (the base URL of the compatible API, e.g. `http://localhost:11434/v1`), `OPENAI_API_KEY` (the API key, which MAY be a placeholder such as `local` for keyless local servers), and `LLM_MODEL` (the model name to request from the endpoint, e.g. `kvasir`, `llama3`, `mistral`).

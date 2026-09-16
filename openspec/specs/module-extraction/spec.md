@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The e2e framework is extracted into a standalone Go module with its own module path. All framework sources and the `cmd/runlog` TUI binary move with it, free of circular or cross-repo imports.
+
+## Requirements
 
 ### Requirement: Standalone Go module with correct module path
 The new repository SHALL use the Go module path `github.com/emergent-company/runlog`. The library package SHALL be the root package (`package runlog`). The TUI binary SHALL live at `cmd/runlog/main.go`.

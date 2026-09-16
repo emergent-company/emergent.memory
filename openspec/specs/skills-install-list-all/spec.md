@@ -33,3 +33,7 @@ Each row SHALL include the tool's marker path and install directory (both relati
 
 ### Requirement: No side effects
 The command SHALL NOT create, modify, or delete any files or directories.
+
+#### Scenario: Listing does not modify the project
+- **WHEN** `runlog skills list` is run
+- **THEN** no files or directories are created, modified, or deleted
