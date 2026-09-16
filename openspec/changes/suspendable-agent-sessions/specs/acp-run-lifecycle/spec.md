@@ -18,9 +18,13 @@ The system SHALL expose `POST /acp/v1/agents/:name/runs/:runId/resume` that acce
 - **THEN** the human answer is injected as a `FunctionResponse` for `pending_tool_call_id`
 - **THEN** no synthetic "here is what happened" text message appears in the conversation
 
-#### Scenario: Resume a run not in input-required status returns 422
-- **WHEN** a client sends a resume request for a run with status `completed` or `working`
-- **THEN** the server responds with HTTP 422 Unprocessable Entity
+#### Scenario: Resume a non-paused run returns 409
+- **WHEN** a client sends `POST /acp/v1/agents/my-agent/runs/<runId>/resume` for a run that is not in `input-required` status
+- **THEN** the server responds with HTTP 409 Conflict
+
+#### Scenario: Resume with stream mode
+- **WHEN** a client resumes a paused run with `mode: "stream"`
+- **THEN** the server streams SSE events inline just like a streamed run creation
 
 ## ADDED Requirements
 
