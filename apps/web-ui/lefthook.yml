@@ -34,6 +34,16 @@ pre-commit:
     - name: no-secrets
       run: gitleaks protect --staged --config .gitleaks.toml --no-banner
 
+    - name: no-generated
+      run: |
+        bad=$(git diff --cached --name-only --diff-filter=ACM \
+          | grep -E 'webui/static/css/app\.css$|_templ\.go$' || true)
+        if [ -n "$bad" ]; then
+          echo "Generated files staged (gitignored — regenerate via task build/css):"
+          echo "$bad"
+          exit 1
+        fi
+
 lint:
   parallel: true
   jobs:
