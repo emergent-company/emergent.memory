@@ -37,7 +37,10 @@ jobs:
       - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/go-build
+          # GOCACHE is OS-specific: Linux uses ~/.cache, macOS uses ~/Library/Caches.
+          path: |
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-build-${{ runner.os }}-
@@ -68,7 +71,10 @@ jobs:
       - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/go-build
+          # GOCACHE is OS-specific: Linux uses ~/.cache, macOS uses ~/Library/Caches.
+          path: |
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-build-${{ runner.os }}-
@@ -121,7 +127,10 @@ jobs:
       - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/go-build
+          # GOCACHE is OS-specific: Linux uses ~/.cache, macOS uses ~/Library/Caches.
+          path: |
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-build-${{ runner.os }}-
@@ -193,7 +202,10 @@ jobs:
       - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/go-build
+          # GOCACHE is OS-specific: Linux uses ~/.cache, macOS uses ~/Library/Caches.
+          path: |
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-build-${{ runner.os }}-
