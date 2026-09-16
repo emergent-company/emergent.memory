@@ -7,8 +7,11 @@ mode — through the full tenant lifecycle:
 ```
 setup project     OIDC login → create org → project → provider (API) → save storage state
 chromium project  read/use smoke surface, parallel, reuse the bootstrap tenant
-mutations project UI/API mutations (create agent/skill/schedule/token/object, invite, org delete),
-                  serial, runs AFTER chromium so mutations never race the read surface
+mutations project UI/API mutations (create agent/skill/schedule/token/object, invite, org delete,
+                  project restore, token lifecycle), serial (workers: 1). Depends on `setup`
+                  ONLY — not on chromium — so running a single mutation spec runs just
+                  login/bootstrap + that spec instead of the whole read surface. Mutation specs
+                  self-clean, so they never race the parallel read surface.
 scenarios project live-LLM full journey (provider → agent → blueprint → object → chat) on a
                   scratch project, sequential; skips fast when E2E_SCENARIO_LLM_API_KEY is unset
 connector project memory-connector CLI PKCE sign-in with the test user; gateway-independent
@@ -151,6 +154,17 @@ schedule-create, token-create, document-upload, document-extraction
 cleanup + row→`/backups/:id` link, details page sections/settings/integrity, and
 the unavailable state for a missing backup).
 
+Secret lifecycle and destructive additions: **project token lifecycle**
+(`/settings/tokens` — create → edit scopes → regenerate → revoke, plus a guard test
+asserting no live `E2E` tokens are left behind), **account token lifecycle**
+(`/profile/tokens` — the same lifecycle with its own guard), **project restore**
+(row-menu schedule-for-deletion → restore → back in the active list and no longer
+pending), and **invite revoke** (create a pending invite for a unique address →
+revoke → no longer pending in the DOM or in `/api/invites`). All of these assert
+resulting state rather than transient toasts, and assert only on the entities they
+created — never on absolute list contents, because the mutation project shares the
+bootstrap tenant with every other run.
+
 Scenarios: one full journey on a fresh scratch project —
 provider add via the settings UI (live-validated by the memory backend, so a
 real key is needed), agent with an explicit model, bundled `personal-memory`
@@ -185,10 +199,23 @@ warning-severity case skips when the dev-memory provider catalog is unsynced
 (provider upsert rejected); the scenario skips too when its provider save is
 rejected or `E2E_SCENARIO_LLM_API_KEY` is unset.
 
+Out of scope (need a second identity): member role change, member removal, member
+detail, and invite accept/decline all require a second member in the org. The suite
+has one Zitadel test user, so these stay uncovered rather than being weakened into
+page-load assertions. Seeding a second member during `setup` is the intended fix.
+
+The remaining gaps above are tracked as an OpenSpec change:
+`openspec/changes/web-ui-e2e-coverage/` (phases per feature area, with per-task
+status and the blocked items recorded in `tasks.md`).
+
 ## Notes
 
 - The suite reuses the already-running gateway; it does **not** start one.
   `E2E_BASE_URL` overrides the target (default `http://alfred-dev.tail0358fa.ts.net:8095`).
+- **Fresh Git worktree:** `apps/web-ui/gateway/*_templ.go` are gitignored, so a new
+  worktree has no generated templates and the gateway will **not** compile until you
+  run `PATH="/root/go/bin:$PATH" templ generate` (or `-f <file>.templ` for one file).
+  Run it before `go build ./...` in any worktree-based lane.
 - Legacy mock harness (`mock-memory.mjs`, `run-e2e.sh`) still exists for the
   dev-mode (no-auth) smoke path; this suite is the primary, session-mode path.
 - Voice/LiveKit/STT and the iOS client are not browser-testable and are out of scope.

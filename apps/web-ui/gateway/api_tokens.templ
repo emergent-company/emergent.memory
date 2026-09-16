@@ -148,12 +148,12 @@ templ apiTokenTable(tokens []APIToken, actionBase, emptyTitle, emptyDesc string)
 // never rendered here.
 templ apiTokenRowContent(t APIToken, actionBase string) {
 	{{ tokenBase := actionBase + "/" + url.PathEscape(t.ID) }}
-	<tr>
+	<tr data-testid="token-row">
 		<td>
 			<div class="flex flex-wrap items-center gap-2">
 				<p class="font-medium">{ t.Name }</p>
 				if t.IsRevoked {
-					@ui.Badge(ui.BadgeProps{Label: "Revoked", Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Icon: "lucide--ban"})
+					@ui.Badge(ui.BadgeProps{Label: "Revoked", Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Icon: "lucide--ban", Attrs: templ.Attributes{"data-testid": "token-revoked-badge"}})
 				}
 			</div>
 		</td>
@@ -425,7 +425,7 @@ templ apiTokenScopePickerContent(selected []string) {
 // regenerate responses: the full token value, a copy affordance, and a Done
 // link back to the list.
 templ apiTokenRevealContent(r apiTokenReveal) {
-	@ui.CardRaw("card-border border-primary/20", "p-5", nil) {
+	@ui.CardRaw("card-border border-primary/20", "p-5", templ.Attributes{"data-testid": "token-secret-panel"}) {
 		<div class="flex items-center gap-3">
 			@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
 			<div class="min-w-0">
