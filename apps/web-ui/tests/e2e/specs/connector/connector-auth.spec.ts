@@ -24,6 +24,8 @@ const CLIENT_ID = process.env.E2E_CONNECTOR_CLIENT_ID || '390138928478289930';
 const REDIRECT_URI =
   process.env.E2E_CONNECTOR_REDIRECT || 'com.emergent.memory.connector://callback';
 
+// __dirname = apps/web-ui/tests/e2e/specs/connector — six segments to the repo
+// root (connector → specs → e2e → tests → web-ui → apps → root).
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..', '..');
 const CONNECTOR_DIR = path.join(REPO_ROOT, 'apps', 'connector.linux');
 
@@ -59,34 +61,146 @@ function runCliJson<T>(bin: string, configPath: string, args: string[]): T {
   }
 }
 
+// A cold `go build` can take minutes, so the build budget and the Playwright
+// test budget are tied together: the test must outlive the build it triggers.
+const BUILD_TIMEOUT_MS = 600_000;
+const TEST_TIMEOUT_MS = BUILD_TIMEOUT_MS + 180_000; // build + sign-in/browser budget
+const CACHE_DIR = path.join(os.tmpdir(), 'memory-e2e');
+const CACHE_BIN = path.join(
+  CACHE_DIR,
+  process.platform === 'win32' ? 'memory-connector-bin.exe' : 'memory-connector-bin',
+);
+const CACHE_STAMP = `${CACHE_BIN}.stamp`;
+const CACHE_LOCK = `${CACHE_BIN}.lock`;
+const LOCK_WAIT_TIMEOUT_MS = BUILD_TIMEOUT_MS + 60_000;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Change detector for the connector module: newest source mtime + file count.
+ * The cache is keyed by this, so a binary built from an older revision (branch
+ * switch, `git pull`, local edit) is never reused.
+ */
+function sourceFingerprint(): string {
+  let newest = 0;
+  let count = 0;
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '.git' || entry.name === 'node_modules') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) {
+        count += 1;
+        const { mtimeMs } = fs.statSync(full);
+        if (mtimeMs > newest) newest = mtimeMs;
+      }
+    }
+  };
+  try {
+    walk(CONNECTOR_DIR);
+  } catch {
+    return 'unknown';
+  }
+  return `${newest}:${count}`;
+}
+
+function isCacheValid(fingerprint: string): boolean {
+  if (!fs.existsSync(CACHE_BIN)) return false;
+  try {
+    return fs.readFileSync(CACHE_STAMP, 'utf8').trim() === fingerprint;
+  } catch {
+    return false;
+  }
+}
+
+/** A lock older than any plausible build belongs to a crashed process. */
+function isLockStale(): boolean {
+  try {
+    return Date.now() - fs.statSync(CACHE_LOCK).mtimeMs > LOCK_WAIT_TIMEOUT_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build into a unique staging dir and publish with an atomic rename: a reader
+ * never observes a partial binary, and a failed/timed-out build never replaces
+ * a good one (the stamp is only written after the rename succeeds).
+ */
+function buildConnectorBinary(): void {
+  const staging = fs.mkdtempSync(path.join(CACHE_DIR, 'build-'));
+  try {
+    const staged = path.join(staging, path.basename(CACHE_BIN));
+    const res = spawnSync('go', ['build', '-o', staged, './cmd/memory-connector'], {
+      cwd: CONNECTOR_DIR,
+      encoding: 'utf8',
+      timeout: BUILD_TIMEOUT_MS,
+    });
+    if (res.status !== 0) {
+      const detail = res.signal
+        ? `killed by ${res.signal}`
+        : res.error?.message
+          ? `spawn error: ${res.error.message}`
+          : res.stderr || res.stdout;
+      throw new Error(`go build ./cmd/memory-connector failed (exit ${res.status}): ${detail}`);
+    }
+    fs.renameSync(staged, CACHE_BIN);
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+type LockAcquisition = { fd: number } | { cached: true };
+
+/**
+ * Serialize cache fills across processes: the `wx` open is the critical
+ * section. The winner builds, racing invocations wait for the stamp (or take
+ * over a stale lock), so no two processes write the cache path at once.
+ */
+async function acquireCacheLock(fingerprint: string): Promise<LockAcquisition> {
+  const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
+  for (;;) {
+    try {
+      return { fd: fs.openSync(CACHE_LOCK, 'wx') };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      if (Date.now() > deadline) {
+        throw new Error('timed out waiting for another process to fill the connector binary cache');
+      }
+      await sleep(250);
+      if (isCacheValid(fingerprint)) return { cached: true };
+      if (isLockStale()) fs.rmSync(CACHE_LOCK, { force: true });
+    }
+  }
+}
+
 /**
  * Resolve the connector binary: `MEMORY_CONNECTOR_BIN` wins, else reuse a
- * cached build across runs, else build once into the cache dir. The binary is
- * cached outside the per-test temp dir so concurrent/serial suites don't each
- * pay for a cold `go build`.
+ * cached build whose fingerprint matches the connector sources, else build once
+ * into the cache dir. The binary is cached outside the per-test temp dir so
+ * concurrent/serial suites don't each pay for a cold `go build`.
  */
-function resolveConnectorBinary(): string {
-  if (process.env.MEMORY_CONNECTOR_BIN) return process.env.MEMORY_CONNECTOR_BIN;
-  const name = process.platform === 'win32' ? 'memory-connector-bin.exe' : 'memory-connector-bin';
-  const bin = path.join(os.tmpdir(), 'memory-e2e', name);
-  if (fs.existsSync(bin)) return bin;
-  fs.mkdirSync(path.dirname(bin), { recursive: true });
-  const res = spawnSync('go', ['build', '-o', bin, './cmd/memory-connector'], {
-    cwd: CONNECTOR_DIR,
-    encoding: 'utf8',
-    timeout: 600_000,
-  });
-  if (res.status !== 0) {
-    const detail = res.signal
-      ? `killed by ${res.signal}`
-      : res.error?.message
-        ? `spawn error: ${res.error.message}`
-        : res.stderr || res.stdout;
-    throw new Error(
-      `go build ./cmd/memory-connector failed (exit ${res.status}): ${detail}`,
-    );
+async function resolveConnectorBinary(): Promise<string> {
+  const override = process.env.MEMORY_CONNECTOR_BIN;
+  if (override) return override;
+
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  const fingerprint = sourceFingerprint();
+  if (isCacheValid(fingerprint)) return CACHE_BIN;
+
+  const lock = await acquireCacheLock(fingerprint);
+  if ('cached' in lock) return CACHE_BIN;
+
+  try {
+    // Re-check under the lock: a racing builder may have just finished.
+    if (isCacheValid(sourceFingerprint())) return CACHE_BIN;
+    buildConnectorBinary();
+    fs.writeFileSync(CACHE_STAMP, `${fingerprint}\n`);
+    return CACHE_BIN;
+  } finally {
+    fs.closeSync(lock.fd);
+    fs.rmSync(CACHE_LOCK, { force: true });
   }
-  return bin;
 }
 
 interface AuthStartDoc {
@@ -114,14 +228,14 @@ test.describe('memory-connector auth', () => {
       !EMAIL || !PASSWORD,
       'E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD not set — connector auth spec skipped',
     );
-    test.setTimeout(180_000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'connector-e2e-'));
     const configPath = path.join(tmpDir, 'config.yml');
     let bin = '';
 
     try {
-      bin = resolveConnectorBinary();
+      bin = await resolveConnectorBinary();
 
       const start = runCliJson<AuthStartDoc>(bin, configPath, [
         'auth',
