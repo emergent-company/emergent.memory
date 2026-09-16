@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -195,10 +196,17 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 		if sc != nil {
 			cctx = withSessionContext(ctx, sc)
 		}
+		// The poll loop is a 1.5s self-healing tick: a transient failure is
+		// skipped and retried next tick, so it is logged but never reported
+		// to Sentry as an error.
 		questions, err := s.memory.ListAgentQuestions(cctx)
-		captureError(err)
+		if err != nil {
+			log.Printf("conversation poll: list agent questions: %v", err)
+		}
 		approvals, err := s.memory.ListToolApprovals(cctx)
-		captureError(err)
+		if err != nil {
+			log.Printf("conversation poll: list tool approvals: %v", err)
+		}
 		for _, id := range ids {
 			cc := ctx
 			if sc := convs[id]; sc != nil {

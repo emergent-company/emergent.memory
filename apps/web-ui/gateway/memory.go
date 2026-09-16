@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -96,6 +99,72 @@ func (e *memoryHTTPError) Error() string {
 	return fmt.Sprintf("memory %d: %s", e.Status, e.Message)
 }
 
+// memoryAttemptError wraps a memory request failure with the number of HTTP
+// attempts made. Error/Unwrap delegate to the underlying error, so status
+// classification (memoryStatus, isMemoryStatus, isMemoryNotFound) and
+// errors.Is/errors.As keep working unchanged.
+type memoryAttemptError struct {
+	err      error
+	attempts int
+}
+
+func (e *memoryAttemptError) Error() string { return e.err.Error() }
+
+func (e *memoryAttemptError) Unwrap() error { return e.err }
+
+// maxMemoryAttempts is the total number of attempts (initial + retries) for an
+// idempotent request.
+const maxMemoryAttempts = 3
+
+// retryBackoff holds the base delay before retry i (0-based), before jitter.
+var retryBackoff = [...]time.Duration{200 * time.Millisecond, 600 * time.Millisecond}
+
+// retryableMemoryStatus reports whether a memory response status is a transient
+// upstream failure worth retrying for an idempotent request.
+func retryableMemoryStatus(status int) bool {
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// retryBackoffDelay returns the delay before the next attempt: the configured
+// base for the attempt just made plus up to 100ms of jitter, so concurrent
+// clients do not retry in lockstep.
+func retryBackoffDelay(attempt int) time.Duration {
+	base := retryBackoff[min(attempt, len(retryBackoff))-1]
+	return base + rand.N(100*time.Millisecond)
+}
+
+// retryAfterDelay parses a Retry-After header value as delta-seconds, capped at
+// 5s. It returns 0 when the header is absent or not a valid delta-seconds value
+// (e.g. an HTTP-date), so the caller falls back to its own backoff.
+func retryAfterDelay(header string) time.Duration {
+	if header == "" {
+		return 0
+	}
+	secs, err := strconv.Atoi(strings.TrimSpace(header))
+	if err != nil || secs < 0 {
+		return 0
+	}
+	return min(time.Duration(secs)*time.Second, 5*time.Second)
+}
+
+// waitRetry sleeps for d, reporting false when ctx is cancelled first so the
+// caller aborts immediately.
+func waitRetry(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // parseMemoryError converts a non-2xx memory response body into a clean
 // error. It extracts the {"error":{"code":...,"message":...}} shape when
 // present, else the {"error":"..."} string shape, else the raw body.
@@ -152,6 +221,11 @@ func (m *MemoryClient) do(ctx context.Context, method, path string, body any, ou
 
 // doH is do with extra request headers (e.g. the Accept header the MCP
 // endpoint needs).
+//
+// Transient upstream failures (502/503/504) are retried up to maxMemoryAttempts
+// times for idempotent requests only (GET/HEAD without a body); non-idempotent
+// requests are never replayed. The returned error is wrapped in
+// memoryAttemptError so callers can report how many attempts were made.
 func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, hdrs map[string]string, out any) error {
 	var rd io.Reader
 	if body != nil {
@@ -161,12 +235,75 @@ func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, h
 		}
 		rd = bytes.NewReader(b)
 	}
+	// Only requests without a body may be replayed: re-sending a
+	// POST/PUT/PATCH/DELETE could duplicate a side effect, and a consumed
+	// reader cannot be safely reused.
+	retryable := (method == http.MethodGet || method == http.MethodHead) && body == nil
+
+	var (
+		status   int
+		raw      []byte
+		lastErr  error
+		attempts int
+	)
+	for attempt := range maxMemoryAttempts {
+		attempts = attempt + 1
+		var retryAfter time.Duration
+		status, raw, retryAfter, lastErr = m.doOnce(ctx, method, path, rd, body != nil, hdrs)
+		if lastErr != nil {
+			break
+		}
+		if !retryable || attempts == maxMemoryAttempts || !retryableMemoryStatus(status) {
+			break
+		}
+		// Honour an upstream Retry-After (valid delta-seconds, capped at 5s)
+		// over the default exponential backoff with jitter. Abort immediately
+		// when the caller's context is done.
+		delay := retryAfter
+		if delay == 0 {
+			delay = retryBackoffDelay(attempts)
+		}
+		if !waitRetry(ctx, delay) {
+			break
+		}
+	}
+	attemptErr := func(err error) error { return &memoryAttemptError{err: err, attempts: attempts} }
+	if lastErr != nil {
+		return attemptErr(lastErr)
+	}
+	if status >= 400 {
+		err := parseMemoryError(status, raw)
+		// A 404 "not found" is a normal, expected outcome for single-resource
+		// reads in this app — absent project settings, deleted conversations or
+		// blueprints, unknown sessions. Handlers map those to "not set"/empty
+		// states via isMemoryNotFound, so they are not real errors and must not
+		// be reported to Sentry as such.
+		if status != http.StatusNotFound {
+			// Log the failure locally (method/path/status + the backend's
+			// response body — never the request body, which carries secrets
+			// like API keys) so real causes surface even when Sentry is
+			// unconfigured.
+			log.Printf("memory API error: %s %s -> %d: %s", method, path, status, truncateString(string(raw), 2048))
+			captureMemoryError(method, path, status, attemptErr(err))
+		}
+		return attemptErr(err)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(raw, out)
+}
+
+// doOnce performs one HTTP attempt and returns the response status, body and
+// any Retry-After delay. The response body is always closed before returning,
+// so retries never leak connections.
+func (m *MemoryClient) doOnce(ctx context.Context, method, path string, rd io.Reader, hasBody bool, hdrs map[string]string) (status int, raw []byte, retryAfter time.Duration, err error) {
 	req, err := http.NewRequestWithContext(ctx, method, m.baseURL+path, rd)
 	if err != nil {
-		return err
+		return 0, nil, 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+m.tokenFor(ctx))
-	if body != nil {
+	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	for k, v := range hdrs {
@@ -179,38 +316,18 @@ func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, h
 	resp, err := m.http.Do(req)
 	span.Finish()
 	if err != nil {
-		return err
+		return 0, nil, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxMemoryResponseBytes+1))
+	raw, err = io.ReadAll(io.LimitReader(resp.Body, maxMemoryResponseBytes+1))
 	if err != nil {
-		return err
+		return resp.StatusCode, nil, 0, err
 	}
 	if len(raw) > maxMemoryResponseBytes {
-		return fmt.Errorf("memory response exceeds %d bytes", maxMemoryResponseBytes)
+		return resp.StatusCode, nil, 0, fmt.Errorf("memory response exceeds %d bytes", maxMemoryResponseBytes)
 	}
-	if resp.StatusCode >= 400 {
-		err := parseMemoryError(resp.StatusCode, raw)
-		// A 404 "not found" is a normal, expected outcome for single-resource
-		// reads in this app — absent project settings, deleted conversations or
-		// blueprints, unknown sessions. Handlers map those to "not set"/empty
-		// states via isMemoryNotFound, so they are not real errors and must not
-		// be reported to Sentry as such.
-		if resp.StatusCode != http.StatusNotFound {
-			// Log the failure locally (method/path/status + the backend's
-			// response body — never the request body, which carries secrets
-			// like API keys) so real causes surface even when Sentry is
-			// unconfigured.
-			log.Printf("memory API error: %s %s -> %d: %s", method, path, resp.StatusCode, truncateString(string(raw), 2048))
-			captureMemoryError(method, path, resp.StatusCode, err)
-		}
-		return err
-	}
-	if out == nil {
-		return nil
-	}
-	return json.Unmarshal(raw, out)
+	return resp.StatusCode, raw, retryAfterDelay(resp.Header.Get("Retry-After")), nil
 }
 
 // --- agent definitions ---
