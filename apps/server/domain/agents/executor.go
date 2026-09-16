@@ -1494,7 +1494,7 @@ func (ae *AgentExecutor) runPipeline(
 	// Otherwise fall back to the root run ID (current per-run behavior).
 	var sessionID string
 	if req.SessionID != "" {
-		sessionID = "session:" + req.ProjectID + ":" + req.SessionID
+		sessionID = agentADKSessionKey(req.ProjectID, req.SessionID)
 	} else {
 		sessionID = ae.getRootRunID(ctx, run)
 	}

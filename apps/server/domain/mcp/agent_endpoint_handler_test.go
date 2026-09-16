@@ -40,7 +40,7 @@ func agentShareUser() *auth.AuthUser {
 	return &auth.AuthUser{ID: "user-1", ProjectID: "proj-1", APITokenID: "tok-1", Scopes: []string{AgentCallScope}}
 }
 
-func TestAgentEndpointListsExactlyOneTool(t *testing.T) {
+func TestAgentEndpointListsFixedFiveTools(t *testing.T) {
 	ep := NewAgentEndpointHandler(agentEndpointService(nil), slog.Default())
 	c, rec := agentEndpointRequest(t, "tools/list", nil, "tok-1")
 	require.NoError(t, ep.HandleAgentEndpoint(*c))
@@ -51,14 +51,39 @@ func TestAgentEndpointListsExactlyOneTool(t *testing.T) {
 	require.Nil(t, resp.Error)
 	result, _ := resp.Result.(map[string]any)
 	tools, _ := result["tools"].([]any)
-	require.Len(t, tools, 1)
-	tool := tools[0].(map[string]any)
-	assert.Equal(t, agentCallToolName, tool["name"])
-	assert.Contains(t, tool["description"], "Alpha")
+	require.Len(t, tools, 5)
+
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.(map[string]any)["name"].(string))
+	}
+	assert.ElementsMatch(t, []string{
+		agentCallToolName, agentStartSessionToolName, agentContinueSessionToolName,
+		agentGetSessionToolName, agentListSessionsToolName,
+	}, names)
+	// The call_agent description still identifies the bound agent.
+	for _, tool := range tools {
+		if tool.(map[string]any)["name"] == agentCallToolName {
+			assert.Contains(t, tool.(map[string]any)["description"], "Alpha")
+		}
+	}
 
 	// No project tool surfaces.
 	assert.NotContains(t, rec.Body.String(), "entity-search")
 	assert.NotContains(t, rec.Body.String(), "schema-list")
+}
+
+func TestAgentEndpointUnknownToolExecutesNothing(t *testing.T) {
+	handler := &stubAgentHandler{runReply: "unused"}
+	ep := NewAgentEndpointHandler(agentEndpointService(handler), slog.Default())
+	c, rec := agentEndpointRequest(t, "tools/call", ToolsCallParams{Name: "entity-search", Arguments: map[string]any{"message": "hi"}}, "tok-1")
+	require.NoError(t, ep.HandleAgentEndpoint(*c))
+
+	var resp Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
+	assert.False(t, handler.runCalled, "unknown tool must not execute anything")
 }
 
 func TestAgentEndpointUnknownToolRejected(t *testing.T) {

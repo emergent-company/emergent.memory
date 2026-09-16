@@ -385,3 +385,52 @@ func TestRunAgentOnceEmptyMessage(t *testing.T) {
 	require.ErrorAs(t, err, &runErr)
 	assert.Equal(t, mcp.AgentRunErrorFailed, runErr.Kind)
 }
+
+// ============================================================================
+// RunAgentInSession (session-aware continuation)
+// ============================================================================
+
+// RunAgentInSession must set ExecuteRequest.SessionID so the executor keys the
+// ADK session as session:<projectID>:<sessionRef>; RunAgentOnce must leave it
+// empty so one-shot calls keep their per-run session.
+func TestRunAgentInSessionSetsSessionIDAndKey(t *testing.T) {
+	repo := &fakeOnceRepo{agent: enabledAgent(), msgs: assistantMessages("session reply")}
+	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess, Steps: 7}}
+	h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+	const sessionRef = "0f3f0f3f-1111-2222-3333-444455556666"
+	reply, runID, steps, err := h.RunAgentInSession(context.Background(), "proj-1", "agent-1", sessionRef, "ping", mcp.AgentRunBudget{})
+	require.NoError(t, err)
+	assert.Equal(t, "session reply", reply)
+	assert.Equal(t, "r1", runID)
+	assert.Equal(t, 7, steps)
+
+	assert.Equal(t, sessionRef, runner.gotReq.SessionID, "SessionID must be carried to the executor")
+	assert.Equal(t, "session:proj-1:"+sessionRef, agentADKSessionKey("proj-1", runner.gotReq.SessionID))
+}
+
+// RunAgentOnce keeps one-shot semantics: no SessionID and the same reply path.
+func TestRunAgentOnceLeavesSessionIDEmpty(t *testing.T) {
+	repo := &fakeOnceRepo{agent: enabledAgent(), msgs: assistantMessages("one-shot")}
+	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
+	h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+	reply, _, err := h.RunAgentOnce(context.Background(), "proj-1", "agent-1", "ping", mcp.AgentRunBudget{})
+	require.NoError(t, err)
+	assert.Equal(t, "one-shot", reply)
+	assert.Empty(t, runner.gotReq.SessionID, "call_agent must not open a persistent session")
+}
+
+// Error mapping is shared: a session turn that exceeds the step budget reports
+// the same AgentRunErrorBudget kind as the one-shot path.
+func TestRunAgentInSessionMapsBudgetError(t *testing.T) {
+	repo := &fakeOnceRepo{agent: enabledAgent()}
+	runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusPaused}}
+	h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+	_, runID, _, err := h.RunAgentInSession(context.Background(), "proj-1", "agent-1", "ref-1", "ping", mcp.AgentRunBudget{})
+	var runErr *mcp.AgentRunError
+	require.ErrorAs(t, err, &runErr)
+	assert.Equal(t, mcp.AgentRunErrorBudget, runErr.Kind)
+	assert.Equal(t, "r1", runID)
+}

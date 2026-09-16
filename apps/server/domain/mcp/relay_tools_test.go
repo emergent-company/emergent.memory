@@ -259,6 +259,9 @@ func (s *stubAgentToolHandler) GetAgentToolDefinitionsForProject(_ context.Conte
 func (s *stubAgentToolHandler) RunAgentOnce(_ context.Context, _, _, _ string, _ AgentRunBudget) (string, string, error) {
 	return "", "", nil
 }
+func (s *stubAgentToolHandler) RunAgentInSession(_ context.Context, _, _, _, _ string, _ AgentRunBudget) (string, string, int, error) {
+	return "", "", 0, nil
+}
 
 func TestGetToolDefinitionsForProject_RelayToolsAppended(t *testing.T) {
 	projectID := uuid.New().String()

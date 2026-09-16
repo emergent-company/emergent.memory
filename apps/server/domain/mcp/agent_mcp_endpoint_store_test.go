@@ -287,6 +287,71 @@ func TestAgentMCPSessionStoreCRUD(t *testing.T) {
 	assert.Len(t, byKey, 1)
 }
 
+// TestAgentMCPSessionStoreClaimReleaseAndReap covers the optimistic CAS that
+// serializes turns, stuck-run takeover, and reaper expiry marking against a real
+// Postgres.
+func TestAgentMCPSessionStoreClaimReleaseAndReap(t *testing.T) {
+	db := connectTestDB(t)
+	requireAgentMCPEndpointTables(t, db)
+	ctx := context.Background()
+	_, projectID := seedProject(t, db)
+	agentID := seedAgent(t, db, projectID)
+
+	epStore := newAgentMCPEndpointStore(db)
+	keyStore := newAgentMCPKeyStore(db)
+	sessStore := newAgentMCPSessionStore(db)
+
+	ep := &AgentMCPEndpoint{ID: uuid.NewString(), ProjectID: projectID, AgentID: agentID}
+	require.NoError(t, epStore.CreateEndpoint(ctx, ep))
+	tokenID := seedShareUserAndToken(t, db, projectID, "claim-"+uuid.NewString())
+	key := &AgentMCPKey{ID: uuid.NewString(), EndpointID: ep.ID, TokenID: tokenID, Label: "claim-key"}
+	require.NoError(t, keyStore.CreateKey(ctx, key))
+
+	sess := &AgentMCPSession{ID: uuid.NewString(), EndpointID: ep.ID, KeyID: key.ID, SessionRef: uuid.NewString()}
+	require.NoError(t, sessStore.CreateSession(ctx, sess))
+
+	now := time.Now().UTC()
+	claimed, err := sessStore.ClaimSession(ctx, sess.ID, now, now.Add(-agentMCPSessionStuckRunTimeout))
+	require.NoError(t, err)
+	assert.True(t, claimed, "an active session is claimable")
+
+	// A second concurrent claim loses while the first is fresh-running.
+	claimed, err = sessStore.ClaimSession(ctx, sess.ID, time.Now().UTC(), time.Now().UTC().Add(-agentMCPSessionStuckRunTimeout))
+	require.NoError(t, err)
+	assert.False(t, claimed, "a fresh running session is busy")
+
+	require.NoError(t, sessStore.ReleaseSession(ctx, sess.ID, AgentMCPSessionStatusActive, time.Now().UTC()))
+	got, err := sessStore.GetSessionByRef(ctx, sess.SessionRef)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, AgentMCPSessionStatusActive, got.Status)
+
+	// A stale running row (crashed run) must be recoverable via takeover.
+	_, err = db.NewRaw(`UPDATE core.agent_mcp_sessions SET status = 'running', last_active_at = ? WHERE id = ?`,
+		time.Now().UTC().Add(-agentMCPSessionStuckRunTimeout-time.Minute), sess.ID).Exec(ctx)
+	require.NoError(t, err)
+	claimed, err = sessStore.ClaimSession(ctx, sess.ID, time.Now().UTC(), time.Now().UTC().Add(-agentMCPSessionStuckRunTimeout))
+	require.NoError(t, err)
+	assert.True(t, claimed, "a stuck running session is taken over")
+
+	// Reaper expiry: an expiry in the past marks the row expired exactly once.
+	_, err = db.NewRaw(`UPDATE core.agent_mcp_sessions SET status = 'active', expires_at = ? WHERE id = ?`,
+		time.Now().UTC().Add(-time.Minute), sess.ID).Exec(ctx)
+	require.NoError(t, err)
+	n, err := sessStore.MarkExpiredSessions(ctx, time.Now().UTC())
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, n, 1)
+	got, err = sessStore.GetSessionByRef(ctx, sess.SessionRef)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, AgentMCPSessionStatusExpired, got.Status)
+
+	// Idempotent: already-expired rows are not re-marked.
+	n, err = sessStore.MarkExpiredSessions(ctx, time.Now().UTC())
+	require.NoError(t, err)
+	assert.Zero(t, n)
+}
+
 // TestAgentMCPKeyStoreRejectsDuplicateTokenBinding proves the global
 // core.agent_mcp_keys.token_id uniqueness: one credential cannot be bound to a
 // second key, on the same or a different endpoint.
