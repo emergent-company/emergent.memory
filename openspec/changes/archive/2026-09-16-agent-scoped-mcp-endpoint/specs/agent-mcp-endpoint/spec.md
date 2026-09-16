@@ -13,6 +13,11 @@ The system SHALL expose an MCP endpoint at `/api/mcp/agents/:agentId` that suppo
 - **WHEN** an authorized client calls `tools/list` on the per-agent endpoint
 - **THEN** the response contains exactly `call_agent`, `start_session`, `continue_session`, `get_session`, and `list_sessions`
 
+#### Scenario: Listing tools shows only call_agent
+
+- **WHEN** an authorized client calls `tools/list` on the per-agent endpoint
+- **THEN** `call_agent` is present as the endpoint's bare-reply tool and no project tool appears
+
 #### Scenario: Project tools are not exposed
 
 - **WHEN** an authorized client calls `tools/list` on the per-agent endpoint
