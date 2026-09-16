@@ -318,6 +318,79 @@ ALTER TABLE ONLY core.agent_mcp_shares
 
 
 --
+-- Name: agent_mcp_endpoints; Type: TABLE; Schema: core; Owner: -
+--
+
+CREATE TABLE core.agent_mcp_endpoints (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT agent_mcp_endpoints_pkey PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX uq_agent_mcp_endpoints_agent ON core.agent_mcp_endpoints (agent_id) WHERE (revoked_at IS NULL);
+
+
+--
+-- Name: agent_mcp_keys; Type: TABLE; Schema: core; Owner: -
+--
+
+CREATE TABLE core.agent_mcp_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    endpoint_id uuid NOT NULL,
+    token_id uuid NOT NULL,
+    label text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT agent_mcp_keys_pkey PRIMARY KEY (id),
+    CONSTRAINT agent_mcp_keys_token_id_key UNIQUE (token_id)
+);
+
+CREATE INDEX idx_agent_mcp_keys_endpoint ON core.agent_mcp_keys (endpoint_id);
+CREATE UNIQUE INDEX uq_agent_mcp_keys_endpoint_label ON core.agent_mcp_keys (endpoint_id, lower(label)) WHERE (revoked_at IS NULL);
+
+ALTER TABLE ONLY core.agent_mcp_keys
+    ADD CONSTRAINT agent_mcp_keys_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES core.agent_mcp_endpoints(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY core.agent_mcp_keys
+    ADD CONSTRAINT agent_mcp_keys_token_id_fkey FOREIGN KEY (token_id) REFERENCES core.api_tokens(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_mcp_sessions; Type: TABLE; Schema: core; Owner: -
+--
+
+CREATE TABLE core.agent_mcp_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    endpoint_id uuid NOT NULL,
+    key_id uuid NOT NULL,
+    session_ref text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    turn_count integer DEFAULT 0 NOT NULL,
+    total_steps integer DEFAULT 0 NOT NULL,
+    last_run_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_active_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone,
+    CONSTRAINT agent_mcp_sessions_pkey PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX uq_agent_mcp_sessions_ref ON core.agent_mcp_sessions (session_ref);
+CREATE INDEX idx_agent_mcp_sessions_key ON core.agent_mcp_sessions (key_id);
+
+ALTER TABLE ONLY core.agent_mcp_sessions
+    ADD CONSTRAINT agent_mcp_sessions_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES core.agent_mcp_endpoints(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY core.agent_mcp_sessions
+    ADD CONSTRAINT agent_mcp_sessions_key_id_fkey FOREIGN KEY (key_id) REFERENCES core.agent_mcp_keys(id) ON DELETE CASCADE;
+
+
+--
 -- Name: superadmins; Type: TABLE; Schema: core; Owner: -
 --
 
@@ -5424,6 +5497,14 @@ ALTER TABLE ONLY core.user_email_preferences
 
 ALTER TABLE ONLY core.user_profiles
     ADD CONSTRAINT user_profiles_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES core.user_profiles(id);
+
+
+--
+-- Name: agent_mcp_endpoints agent_mcp_endpoints_agent_id_fkey; Type: FK CONSTRAINT; Schema: core; Owner: -
+--
+
+ALTER TABLE ONLY core.agent_mcp_endpoints
+    ADD CONSTRAINT agent_mcp_endpoints_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES kb.agents(id) ON DELETE CASCADE;
 
 
 --
