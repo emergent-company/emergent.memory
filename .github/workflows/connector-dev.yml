@@ -66,9 +66,9 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/Library/Caches/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          key: go-build-${{ runner.os }}-connector-${{ hashFiles('apps/connector.linux/go.sum') }}
           restore-keys: |
-            go-build-${{ runner.os }}-
+            go-build-${{ runner.os }}-connector-
 
       - name: Build binary
         working-directory: apps/connector.linux

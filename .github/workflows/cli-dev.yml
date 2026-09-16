@@ -71,9 +71,9 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/Library/Caches/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          key: go-build-${{ runner.os }}-cli-${{ hashFiles('apps/cli/go.sum') }}
           restore-keys: |
-            go-build-${{ runner.os }}-
+            go-build-${{ runner.os }}-cli-
 
 
       - name: Build binary
