@@ -115,6 +115,116 @@ func TestMemoryClientMCPShareDecodeTolerance(t *testing.T) {
 	}
 }
 
+// TestDecodeMCPShareList covers the accepted list shapes: a bare array, the
+// {"shares":[...]} wrapper, and memory's {"instances":[...]} wrapper.
+func TestDecodeMCPShareList(t *testing.T) {
+	tests := map[string]struct {
+		raw      string
+		wantLen  int
+		wantID   string
+		wantName string
+	}{
+		"instances-key": {
+			raw:      `{"instances":[{"id":"s1","name":"alpha"}],"total":1}`,
+			wantLen:  1,
+			wantID:   "s1",
+			wantName: "alpha",
+		},
+		"shares-key": {
+			raw:      `{"shares":[{"id":"s1","name":"alpha"}]}`,
+			wantLen:  1,
+			wantID:   "s1",
+			wantName: "alpha",
+		},
+		"bare-array": {
+			raw:      `[{"id":"s1","name":"alpha"}]`,
+			wantLen:  1,
+			wantID:   "s1",
+			wantName: "alpha",
+		},
+		"empty-instances": {
+			raw:     `{"instances":[],"total":0}`,
+			wantLen: 0,
+		},
+		"empty-bare-array": {
+			raw:     `[]`,
+			wantLen: 0,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			shares, err := decodeMCPShareList(json.RawMessage(tc.raw))
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(shares) != tc.wantLen {
+				t.Fatalf("len = %d, want %d (%+v)", len(shares), tc.wantLen, shares)
+			}
+			if tc.wantLen == 0 {
+				return
+			}
+			if shares[0].ID != tc.wantID || shares[0].Name != tc.wantName {
+				t.Errorf("instance = %+v, want id=%q name=%q", shares[0], tc.wantID, tc.wantName)
+			}
+		})
+	}
+}
+
+// TestDecodeMCPShareListUnrecognizedWrapper asserts an object with neither a
+// "shares" nor an "instances" key errors instead of silently decoding empty.
+func TestDecodeMCPShareListUnrecognizedWrapper(t *testing.T) {
+	for name, raw := range map[string]string{
+		"unexpected-key": `{"unexpected":[]}`,
+		"empty-object":   `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeMCPShareList(json.RawMessage(raw)); err == nil {
+				t.Fatalf("expected an error for %s", raw)
+			}
+		})
+	}
+}
+
+// TestDecodeMCPShareListDerivesCounts asserts zero counts are filled from the
+// allowlist arrays and that an empty agent allowlist stays 0 ("all agents").
+func TestDecodeMCPShareListDerivesCounts(t *testing.T) {
+	tests := map[string]struct {
+		raw            string
+		wantToolCount  int
+		wantAgentCount int
+	}{
+		"fills-both": {
+			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":["x"]}],"total":1}`,
+			wantToolCount:  2,
+			wantAgentCount: 1,
+		},
+		"null-agents-stays-zero": {
+			raw:            `{"instances":[{"id":"s1","tools":["a","b"],"agents":null}],"total":1}`,
+			wantToolCount:  2,
+			wantAgentCount: 0,
+		},
+		"backend-counts-win": {
+			raw:            `{"instances":[{"id":"s1","tools":["a"],"agents":["x"],"toolCount":9,"agentCount":4}],"total":1}`,
+			wantToolCount:  9,
+			wantAgentCount: 4,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			shares, err := decodeMCPShareList(json.RawMessage(tc.raw))
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(shares) != 1 {
+				t.Fatalf("len = %d, want 1", len(shares))
+			}
+			if shares[0].ToolCount != tc.wantToolCount || shares[0].AgentCount != tc.wantAgentCount {
+				t.Errorf("counts = %d/%d, want %d/%d", shares[0].ToolCount, shares[0].AgentCount, tc.wantToolCount, tc.wantAgentCount)
+			}
+		})
+	}
+}
+
 // TestMemoryClientCreateMCPShareInstance asserts the POST path/body and that
 // the one-time secret decodes.
 func TestMemoryClientCreateMCPShareInstance(t *testing.T) {

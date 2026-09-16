@@ -21,8 +21,10 @@ import (
 //
 // The response decoding is tolerant: admin routes wrap payloads in the
 // {success,data} envelope while some project routes return plain JSON, and a
-// list may arrive as a bare array or under a {"shares":[...]} key. shareDecode
-// accepts all of these so the UI keeps working across backend versions.
+// list may arrive as a bare array or under a {"shares":[...]} or
+// {"instances":[...]} key. shareRaw/decodeMCPShareList accept all of these so
+// the UI keeps working across backend versions; an unrecognized object wrapper
+// is surfaced as an error rather than a false empty list.
 
 // MCPShareInstance is one named MCP share instance: an API-key grant exposing a
 // chosen subset of memory tools and agents to outside MCP clients. Tools and
@@ -103,19 +105,46 @@ func (m *MemoryClient) shareRaw(ctx context.Context, method, path string, body a
 	return raw, nil
 }
 
-// decodeMCPShareList accepts a bare array or a {"shares":[...]} wrapper.
+// decodeMCPShareList accepts a bare array or an object wrapping the list under
+// either the "shares" (gateway/agent-share convention) or "instances" key
+// (memory's ShareInstanceListResponse). Any other object shape is an error so
+// the page renders its error state instead of a false empty list.
 func decodeMCPShareList(raw json.RawMessage) ([]MCPShareInstance, error) {
 	var list []MCPShareInstance
 	if err := json.Unmarshal(raw, &list); err == nil {
-		return list, nil
+		return mcpShareDeriveCounts(list), nil
 	}
-	var wrap struct {
-		Shares []MCPShareInstance `json:"shares"`
-	}
+	var wrap map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &wrap); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode mcp share list: %w", err)
 	}
-	return wrap.Shares, nil
+	for _, key := range []string{"instances", "shares"} {
+		payload, ok := wrap[key]
+		if !ok {
+			continue
+		}
+		var wrapped []MCPShareInstance
+		if err := json.Unmarshal(payload, &wrapped); err != nil {
+			return nil, fmt.Errorf("decode mcp share list %q: %w", key, err)
+		}
+		return mcpShareDeriveCounts(wrapped), nil
+	}
+	return nil, fmt.Errorf("decode mcp share list: unrecognized payload shape (want array, \"shares\" or \"instances\")")
+}
+
+// mcpShareDeriveCounts fills zero tool/agent counts from the allowlist arrays so
+// list rows show real numbers when the backend omits explicit counts. Counts the
+// backend provides win; a nil/empty agent allowlist stays 0 ("all agents").
+func mcpShareDeriveCounts(shares []MCPShareInstance) []MCPShareInstance {
+	for i := range shares {
+		if shares[i].ToolCount == 0 && len(shares[i].Tools) > 0 {
+			shares[i].ToolCount = len(shares[i].Tools)
+		}
+		if shares[i].AgentCount == 0 && len(shares[i].Agents) > 0 {
+			shares[i].AgentCount = len(shares[i].Agents)
+		}
+	}
+	return shares
 }
 
 // decodeMCPShareTools accepts a bare array or a {"tools":[...]} wrapper.
