@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The e2e suite's fixtures live in an importable Go sub-package. The bookstore fixture moves into `fixtures/`, leaving the root package free of non-test Go files.
+
+## Requirements
 
 ### Requirement: Fixtures package exists as importable Go sub-package
 The `fixtures/` directory SHALL be a Go package named `e2efixtures` under module `github.com/emergent-company/emergent.memory.e2e/fixtures`. It SHALL contain reusable test fixture data structs and builder functions used by multiple tests.

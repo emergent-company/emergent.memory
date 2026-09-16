@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The CLI performs a background self-update check on every invocation. It compares the installed version against the latest GitHub release, prints an update notification, optionally auto-downloads, rate-limits checks via a cache file, and can be disabled by environment variable, config, or special-build and command detection.
+
+## Requirements
 
 ### Requirement: Version check on every CLI invocation
 The CLI SHALL perform an automatic version check against the latest GitHub release on every command invocation. The check SHALL run in a background goroutine and SHALL NOT block or delay command execution. If the check does not complete within 100ms after command execution, it SHALL be silently discarded.

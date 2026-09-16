@@ -1,3 +1,7 @@
+## Purpose
+
+`memory logout` performs OIDC token revocation before clearing local auth state. It revokes the stored access and refresh tokens via the RFC 7009 endpoint, offers a `--all` flag to clear every auth artifact, and reports detailed output for each step.
+
 ## Requirements
 
 ### Requirement: OIDC token revocation on logout

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Standalone project documentation covers installation, features, and migration. It includes a README with an overview and quick-start, an installation section for all methods, a feature overview, a migration guide, and a changelog for release tracking.
+
+## Requirements
 
 ### Requirement: README with project overview and quick-start
 The repository SHALL contain a `README.md` with: project name and one-line description, feature highlights, installation methods (go install, binary download, install script), quick-start example showing framework usage in a Go test, and a link to full documentation.

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+`memory init` checks for an existing organization before proceeding. When none is found it offers interactive organization creation, while re-runs are left unaffected.
+
+## Requirements
 
 ### Requirement: Init detects missing organization
 The `memory init` command SHALL check whether the authenticated user has any organizations before entering the project selection flow. This check SHALL happen immediately after client creation.

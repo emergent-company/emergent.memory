@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Release automation produces and distributes cross-platform binaries. GoReleaser builds the artifacts, GitHub Actions release and CI workflows run on tags and pushes, an install script downloads binaries, and versions follow semantic versioning from `v0.1.0`.
+
+## Requirements
 
 ### Requirement: goreleaser configuration produces cross-platform binaries
 The repository SHALL contain a `.goreleaser.yaml` that builds the `cmd/runlog` binary for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`, and `windows/amd64`.

@@ -1,5 +1,7 @@
 # post-login-context-hint
 
+## Purpose
+
 Context-aware post-login output that checks folder initialization state and either suggests `memory init` or displays inline authentication status with current project info.
 
 ## Requirements

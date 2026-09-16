@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The ACP run API manages agent-run execution over `POST /acp/v1/...`. It supports sync, async, and stream creation modes, human-in-the-loop pause/resume, cancellation, event-log retrieval, persisted SSE events, ACP status and message mapping, and optional session linkage.
+
+## Requirements
 
 ### Requirement: Create run with async mode
 The system SHALL expose `POST /acp/v1/agents/:name/runs` that accepts a JSON body with `message` (array of ACP message parts), `mode` (`sync`, `async`, or `stream`), and optional `session_id`. When `mode` is `async`, the server SHALL create the run, enqueue it for execution, and return HTTP 202 with the run object including `id` and status `submitted`.
