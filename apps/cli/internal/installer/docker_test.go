@@ -45,7 +45,7 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 		"services:",
 		"db:",
 		"pgvector/pgvector:pg17",
-		"ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3",
+		KreuzbergImage,
 		"kreuzberg:",
 		"minio:",
 		"minio-init:",
