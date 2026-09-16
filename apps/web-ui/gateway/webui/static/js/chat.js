@@ -30,7 +30,7 @@
       console.warn("chat: " + context + " (transient, not reported):", err);
       return;
     }
-    captureError(err || new Error(context));
+    captureError(err || new Error(context || "unknown error"));
   }
 
   var root = null, log = null, messages = null, empty = null;

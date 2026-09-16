@@ -299,7 +299,7 @@
         } else {
           captureError(err);
         }
-        toast("error", "Save failed: " + err.message);
+          toast("error", "Save failed: " + (err && err.message ? err.message : "unknown error"));
       });
   }
 
