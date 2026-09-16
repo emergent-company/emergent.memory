@@ -82,8 +82,10 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             GIT_SHA=${{ steps.version.outputs.commit }}
+          # main-branch cache is readable by PRs, so keeping the intermediate
+          # stage pays off; a failed cache export must not fail the release.
           cache-from: type=gha,scope=memory-web-ui
-          cache-to: type=gha,mode=max,scope=memory-web-ui
+          cache-to: type=gha,scope=memory-web-ui,mode=max,ignore-error=true
 
       # Unchanged tag push: re-alias the existing image to the new version tag
       # (no rebuild — seconds instead of ~2min).

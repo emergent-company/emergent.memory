@@ -104,8 +104,10 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ steps.version.outputs.commit }}
             BUILD_TIME=${{ steps.version.outputs.build_time }}
+          # real published 4-stage image: branch/scheduled runs write a cache
+          # PRs can read; a failed cache export must not fail the job.
           cache-from: type=gha,scope=memory-server
-          cache-to: type=gha,mode=max,scope=memory-server
+          cache-to: type=gha,scope=memory-server,mode=max,ignore-error=true
 
       # Unchanged tag push: re-tag the previous version's multi-arch manifest list
       # to the new version tags (no rebuild).

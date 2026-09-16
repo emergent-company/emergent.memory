@@ -51,8 +51,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # single-stage Dockerfile: nothing extra to export beyond the default.
           cache-from: type=gha,scope=memory-workspace
-          cache-to: type=gha,mode=max,scope=memory-workspace
+          cache-to: type=gha,scope=memory-workspace,mode=min,ignore-error=true
 
       - name: Image digest
         run: |
