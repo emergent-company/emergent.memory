@@ -427,6 +427,7 @@
       else if (status === "input-required") { icon = "lucide--pause"; label = "Waiting on you"; }
       else if (status === "cancelled" || status === "cancelling") { icon = "lucide--ban"; label = "Run cancelled"; }
       else if (status === "completed" || status === "skipped" || status === "") { icon = "lucide--circle-check"; label = "Run complete"; }
+      else if (status === "working" || status === "submitted") { icon = "lucide--loader-circle"; label = "Running"; }
       else { icon = "lucide--circle-dot"; label = "Run ended"; }
     }
     var el = document.createElement("div");
