@@ -23,7 +23,7 @@ templ AgentDashboardPage(data agentDashboardData) {
 			@pageError("Agent unavailable", data.LoadErr)
 		} else {
 			@agentDashboardHeader(data.Agent, "")
-			@layout.Rail(agentSubNav(data.Agent.ID, "dashboard"), nil) {
+			@layout.Rail(agentSubNav(data.Agent.ID, "dashboard", ""), nil) {
 				@agentSummaryCard(data)
 				@agentModelNotice(data)
 				@agentToolsSection(data)
@@ -36,12 +36,33 @@ templ AgentDashboardPage(data agentDashboardData) {
 // agentSubNav is the vertical sub-navigation rail for the per-agent pages
 // (dashboard / settings / sandbox / sessions). It stacks horizontally on small
 // screens and becomes a sticky left rail on desktop.
-templ agentSubNav(agentID string, active string) {
+templ agentSubNav(agentID string, active string, section string) {
 	@components.SubNav("Agent sections") {
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID), active == "dashboard", "lucide--layout-dashboard", "Dashboard")
-		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", active == "settings", "lucide--settings", "Settings")
+		@agentSettingsNavGroup(agentID, active, section)
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
+	}
+}
+
+// agentSettingsNavGroup renders the Settings rail entry. Off the settings
+// surface it is a plain link; on any settings subpage it becomes a group with
+// the six subpage children indented beneath it (active child highlighted).
+templ agentSettingsNavGroup(agentID string, active string, section string) {
+	if active != "settings" {
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
+	} else {
+		<div class="flex flex-col gap-1">
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
+			<div class="flex flex-col gap-1 pl-4">
+				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
+				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
+				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
+				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/skills", section == "skills", "lucide--sparkles", "Skills")
+				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/delegation", section == "delegation", "lucide--users", "Delegation")
+				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/mcp", section == "mcp", "lucide--plug", "MCP sharing")
+			</div>
+		</div>
 	}
 }
 
@@ -135,7 +156,7 @@ templ agentSummaryCard(data agentDashboardData) {
 			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
-				Href:    "/agents/" + url.PathEscape(data.Agent.ID) + "/settings#mcp",
+				Href:    "/agents/" + url.PathEscape(data.Agent.ID) + "/settings/mcp",
 				Variant: ui.ButtonGhost,
 				Size:    ui.ButtonSM,
 				Icon:    "lucide--share-2",
@@ -289,10 +310,10 @@ templ chatLinkRow(c Conversation) {
 
 // --- Agent settings ---
 
-// AgentSettingsPage renders the in-page edit form for one agent: header,
-// sub-nav, and a full settings form mirroring the create/edit modal's fields.
-// A failed agent fetch (LoadErr) renders the whole-page error state;
-// FlashMsg/FlashErr surface PRG feedback from the update flow.
+// AgentSettingsPage renders one agent-settings subpage: header, sub-nav, and a
+// single section panel selected by data.Section. A failed agent fetch (LoadErr)
+// renders the whole-page error state; FlashMsg/FlashErr surface PRG feedback
+// from the update flow.
 templ AgentSettingsPage(data agentSettingsData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
@@ -300,20 +321,53 @@ templ AgentSettingsPage(data agentSettingsData) {
 		} else {
 			@agentDashboardHeader(data.Agent, "Settings")
 			@flashToasts(data.FlashMsg, data.FlashErr)
-			@layout.Rail(agentSubNav(data.Agent.ID, "settings"), nil) {
-				@agentSettingsForm(data)
-				@agentMCPSection(data)
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@agentSettingsSectionPanel(data)
 			}
 		}
 	}
 }
 
-// agentSettingsForm is the edit form (PRG → POST /agents/:id/update). Field
-// names mirror the old modal's submitAgentForm mapping exactly. The body is
-// split into section panels (general / model / tools / skills / delegation)
-// matching the dashboard's section rhythm.
-templ agentSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/update") }>
+// agentSettingsSectionPanel renders exactly one settings subpage's panel based
+// on data.Section ("" defaults to the General landing page).
+templ agentSettingsSectionPanel(data agentSettingsData) {
+	switch data.Section {
+	case "model":
+		@agentModelSettingsForm(data)
+	case "tools":
+		@agentToolsSettingsForm(data)
+	case "skills":
+		@agentSkillsSettingsForm(data)
+	case "delegation":
+		@agentDelegationSettingsForm(data)
+	case "mcp":
+		@agentMCPSection(data)
+	default:
+		@agentGeneralSettingsForm(data)
+	}
+}
+
+// agentSettingsSave is the shared PRG form footer: a primary submit button in
+// the same FormActions wrapper every settings subpage uses.
+templ agentSettingsSave() {
+	<div class="mt-6">
+		@form.FormActions("", "") {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--save",
+			}) {
+				Save changes
+			}
+		}
+	</div>
+}
+
+// agentGeneralSettingsForm is the General subpage (PRG → POST
+// /agents/:id/settings/general): name, system prompt, language.
+templ agentGeneralSettingsForm(data agentSettingsData) {
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general") }>
 		@ui.Section("General", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "p-5",
@@ -366,6 +420,15 @@ templ agentSettingsForm(data agentSettingsData) {
 				</div>
 			</div>
 		}
+		@agentSettingsSave()
+	</form>
+}
+
+// agentModelSettingsForm is the Model subpage (PRG → POST
+// /agents/:id/settings/model): the model picker, temperature, max tokens, and
+// the model-misconfiguration warning box.
+templ agentModelSettingsForm(data agentSettingsData) {
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/model") }>
 		@ui.Section("Model", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "p-5",
@@ -376,6 +439,15 @@ templ agentSettingsForm(data agentSettingsData) {
 				@modelParamsGrid("agent-settings", data.Agent.Model)
 			</div>
 		}
+		@agentSettingsSave()
+	</form>
+}
+
+// agentToolsSettingsForm is the Tools subpage (PRG → POST
+// /agents/:id/settings/tools): the default-approval select and the grouped tool
+// checkbox picker.
+templ agentToolsSettingsForm(data agentSettingsData) {
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/tools") }>
 		@ui.Section("Tools", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "p-5",
@@ -390,6 +462,14 @@ templ agentSettingsForm(data agentSettingsData) {
 			</div>
 			@agentToolPicker(data)
 		}
+		@agentSettingsSave()
+	</form>
+}
+
+// agentSkillsSettingsForm is the Skills subpage (PRG → POST
+// /agents/:id/settings/skills): the skill checkbox picker.
+templ agentSkillsSettingsForm(data agentSettingsData) {
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/skills") }>
 		@ui.Section("Skills", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "p-5",
@@ -407,6 +487,15 @@ templ agentSettingsForm(data agentSettingsData) {
 				})
 			}
 		}
+		@agentSettingsSave()
+	</form>
+}
+
+// agentDelegationSettingsForm is the Delegation subpage (PRG → POST
+// /agents/:id/settings/delegation): the enable toggle and the delegation-target
+// agent picker.
+templ agentDelegationSettingsForm(data agentSettingsData) {
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/delegation") }>
 		@ui.Section("Delegation", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "p-5",
@@ -435,18 +524,7 @@ templ agentSettingsForm(data agentSettingsData) {
 				})
 			}
 		}
-		<div class="mt-6">
-			@form.FormActions("", "") {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save changes
-				}
-			}
-		</div>
+		@agentSettingsSave()
 	</form>
 }
 
@@ -463,7 +541,7 @@ templ AgentSandboxPage(data agentSandboxData) {
 		} else {
 			@agentDashboardHeader(data.Agent, "Sandbox")
 			@flashToasts(data.FlashMsg, data.FlashErr)
-			@layout.Rail(agentSubNav(data.Agent.ID, "sandbox"), nil) {
+			@layout.Rail(agentSubNav(data.Agent.ID, "sandbox", ""), nil) {
 				@agentSandboxForm(data)
 			}
 		}
@@ -826,7 +904,7 @@ templ AgentSessionsPage(data agentSessionsData) {
 			@pageError("Agent unavailable", data.LoadErr)
 		} else {
 			@agentDashboardHeader(data.Agent, "Sessions")
-			@layout.Rail(agentSubNav(data.Agent.ID, "sessions"), nil) {
+			@layout.Rail(agentSubNav(data.Agent.ID, "sessions", ""), nil) {
 				@agentChatsList(data.ChatsErr, data.Chats, "Sessions", "", "No sessions yet")
 			}
 		}

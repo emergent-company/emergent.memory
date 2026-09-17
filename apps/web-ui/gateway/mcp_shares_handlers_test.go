@@ -751,7 +751,7 @@ func TestAgentDashboardShareViaMCP(t *testing.T) {
 	html := renderHTML(t, AgentDashboardPage(data))
 	for _, want := range []string{
 		"Share via MCP",
-		`href="/agents/a1/settings#mcp"`,
+		`href="/agents/a1/settings/mcp"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("agent dashboard missing %q", want)

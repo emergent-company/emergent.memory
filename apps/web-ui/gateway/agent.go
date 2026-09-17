@@ -131,7 +131,10 @@ func (s *Server) uiAgentMemories(c echo.Context) error {
 // the skill list, and every other agent (the delegation-target picker). A
 // failed agent fetch renders the whole-page error state (LoadErr).
 type agentSettingsData struct {
-	Agent      *AgentDefinition
+	Agent *AgentDefinition
+	// Section is the settings subpage being rendered: "general", "model",
+	// "tools", "skills", "delegation", or "mcp" ("" is treated as "general").
+	Section    string
 	Agents     []AgentDefinitionSummary
 	Models     []Model
 	MCPServers []MCPServer
@@ -201,16 +204,55 @@ type agentSandboxData struct {
 	FlashErr  error
 }
 
-// uiAgentSettings renders the in-page agent edit form (moved out of the
-// create/edit modal) plus the agent's own MCP endpoint section. ?updated=1 /
-// ?err=1 surface PRG feedback from the update flow, mirroring uiSkill; the
-// mcp* flags surface MCP create/revoke feedback; ?sessions= preselects the MCP
-// session status filter.
+// Settings subpage keys. "general" is the landing page (/agents/:id/settings);
+// the rest are /agents/:id/settings/<section>.
+const (
+	sectionGeneral    = "general"
+	sectionModel      = "model"
+	sectionTools      = "tools"
+	sectionSkills     = "skills"
+	sectionDelegation = "delegation"
+	sectionMCP        = "mcp"
+)
+
+// agentSettingsSections is the ordered list of settings subpages, used by the
+// nav group.
+var agentSettingsSections = []string{sectionGeneral, sectionModel, sectionTools, sectionSkills, sectionDelegation, sectionMCP}
+
+// agentSettingsSectionPath returns the settings subpage URL for one section.
+// "general" maps to the bare /agents/:id/settings landing route.
+func agentSettingsSectionPath(agentID, section string) string {
+	base := "/agents/" + url.PathEscape(agentID) + "/settings"
+	if section == "" || section == sectionGeneral {
+		return base
+	}
+	return base + "/" + section
+}
+
+// uiAgentSettings renders the settings landing page (the General section).
 func (s *Server) uiAgentSettings(c echo.Context) error {
+	return s.renderAgentSettingsSection(c, sectionGeneral)
+}
+
+// uiAgentSettingsSection renders one settings subpage (Model / Tools / Skills /
+// Delegation / MCP sharing). An unknown section is a 404.
+func (s *Server) uiAgentSettingsSection(c echo.Context) error {
+	section := c.Param("section")
+	if !containsString(agentSettingsSections, section) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	return s.renderAgentSettingsSection(c, section)
+}
+
+// renderAgentSettingsSection assembles the settings payload for one subpage and
+// renders the shared AgentSettingsPage, with data.Section selecting the panel.
+// ?updated=1 / ?err=... surface PRG feedback; ?sessions= preselects the MCP
+// session status filter (only loaded on the MCP subpage).
+func (s *Server) renderAgentSettingsSection(c echo.Context, section string) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 
-	data := agentSettingsData{}
+	data := agentSettingsData{Section: section}
 	switch {
 	case c.QueryParam("updated") != "":
 		data.FlashMsg = "Agent updated."
@@ -228,9 +270,165 @@ func (s *Server) uiAgentSettings(c echo.Context) error {
 		data.LoadErr = err
 		return s.page(c, pageTitle("Agent settings"), AgentSettingsPage(data))
 	}
-	s.loadAgentMCP(ctx, id, &data)
+	// The MCP block (endpoint/keys/sessions) is only rendered on the MCP
+	// sharing subpage; other subpages skip those backend fetches.
+	if section == sectionMCP {
+		s.loadAgentMCP(ctx, id, &data)
+	}
 
 	return s.page(c, pageTitle(data.Agent.Name, "Settings"), AgentSettingsPage(data))
+}
+
+// agentSectionApply mutates the freshly fetched definition with one subpage's
+// form values only — it never touches fields another subpage owns, so saving
+// one section can't wipe the others.
+type agentSectionApply func(def *AgentDefinition, c echo.Context) error
+
+// applyAgentSettingsSection fetches the agent definition, reconstructs the
+// gateway-only Delegation field from the persisted representation, applies one
+// section's fields, re-applies delegation (so delegation-managed tools and
+// spawnPolicy survive even a non-delegation save), and persists. PRG redirects
+// back to the section with ?updated=1 on success or ?err=<msg> on failure.
+func (s *Server) applyAgentSettingsSection(c echo.Context, section string, apply agentSectionApply) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+
+	def, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	// Parse the form once so the multi-value reads (tool[], skill[],
+	// delegation-target[]) in the section appliers see the submitted values.
+	if err := c.Request().ParseForm(); err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	deriveDelegation(def)
+	if err := apply(def, c); err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	if err := applyDelegation(def); err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	if _, err := s.memory.UpdateAgentDefinition(ctx, id, def); err != nil {
+		return redirectWithError(c, agentSettingsSectionPath(id, section), err)
+	}
+	return c.Redirect(http.StatusSeeOther, agentSettingsSectionPath(id, section)+"?updated=1")
+}
+
+// uiAgentUpdateGeneral handles POST /agents/:id/settings/general (and the
+// back-compat POST /agents/:id/update alias): name, system prompt, language.
+func (s *Server) uiAgentUpdateGeneral(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionGeneral, applyAgentGeneralSection)
+}
+
+// uiAgentUpdateModel handles POST /agents/:id/settings/model.
+func (s *Server) uiAgentUpdateModel(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionModel, applyAgentModelSection)
+}
+
+// uiAgentUpdateTools handles POST /agents/:id/settings/tools.
+func (s *Server) uiAgentUpdateTools(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionTools, applyAgentToolsSection)
+}
+
+// uiAgentUpdateSkills handles POST /agents/:id/settings/skills.
+func (s *Server) uiAgentUpdateSkills(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionSkills, applyAgentSkillsSection)
+}
+
+// uiAgentUpdateDelegation handles POST /agents/:id/settings/delegation.
+func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionDelegation, applyAgentDelegationSection)
+}
+
+// applyAgentGeneralSection maps the General form (name, system prompt,
+// language, appearance) onto the definition. Name is trimmed and required;
+// language persists to Config["language"] (deleted when empty); the icon +
+// color appearance persists to the uiConfig blob (both empty clears it).
+func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
+	name := strings.TrimSpace(c.FormValue("name"))
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	def.Name = name
+	def.SystemPrompt = c.FormValue("systemPrompt")
+	def.UIConfig = agentUIConfig(c.FormValue("icon"), c.FormValue("color"))
+	lang := strings.TrimSpace(c.FormValue("language"))
+	if def.Config == nil {
+		def.Config = map[string]any{}
+	}
+	if lang != "" {
+		def.Config["language"] = lang
+	} else {
+		delete(def.Config, "language")
+	}
+	return nil
+}
+
+// applyAgentModelSection maps the Model form onto the definition: an explicit
+// model (name + temperature + max tokens) or nil when "Auto — default model"
+// is selected.
+func applyAgentModelSection(def *AgentDefinition, c echo.Context) error {
+	if modelName := strings.TrimSpace(c.FormValue("modelName")); modelName != "" {
+		temp, terr := strconv.ParseFloat(c.FormValue("temperature"), 64)
+		if terr != nil {
+			temp = 0.7
+		}
+		maxTok, merr := strconv.Atoi(c.FormValue("maxTokens"))
+		if merr != nil || maxTok <= 0 {
+			maxTok = 4096
+		}
+		def.Model = &ModelConfig{Name: modelName, Temperature: temp, MaxTokens: maxTok}
+	} else {
+		def.Model = nil
+	}
+	return nil
+}
+
+// applyAgentToolsSection maps the Tools form onto the definition: the allowed
+// tool list, un-banning any newly allowed tool, the default approval policy,
+// and per-tool policy overrides (ask/deny/allow), iterating only over the
+// tools in this section's form.
+func applyAgentToolsSection(def *AgentDefinition, c echo.Context) error {
+	def.Tools = c.Request().Form["tool"]
+	def.BannedTools = removeItems(def.BannedTools, def.Tools...)
+	def.DefaultToolPolicy = strings.TrimSpace(c.FormValue("defaultToolPolicy"))
+	policies := map[string]ToolPolicy{}
+	for _, tool := range def.Tools {
+		switch c.FormValue("toolPolicy." + tool) {
+		case "ask":
+			policies[tool] = ToolPolicy{Confirm: true}
+		case "deny":
+			policies[tool] = ToolPolicy{Disabled: true}
+		case "allow":
+			policies[tool] = ToolPolicy{}
+		}
+	}
+	def.ToolPolicies = policies
+	return nil
+}
+
+// applyAgentSkillsSection maps the Skills form onto the definition, always
+// setting (even to empty) so clearing skills reaches memory.
+func applyAgentSkillsSection(def *AgentDefinition, c echo.Context) error {
+	def.Skills = c.Request().Form["skill"]
+	return nil
+}
+
+// applyAgentDelegationSection maps the Delegation form onto the definition:
+// enabled with targets, or disabled. applyDelegation (run after every section)
+// then syncs the spawn_agents/list_available_agents tools and spawnPolicy.
+func applyAgentDelegationSection(def *AgentDefinition, c echo.Context) error {
+	if c.FormValue("delegationEnabled") == "on" {
+		targets := c.Request().Form["delegation-target"]
+		if len(targets) == 0 {
+			return fmt.Errorf("delegation requires at least one target")
+		}
+		def.Delegation = &Delegation{Enabled: true, Targets: targets}
+	} else {
+		def.Delegation = &Delegation{Enabled: false}
+	}
+	return nil
 }
 
 // loadAgentSettings assembles the agent settings payload: the agent being
@@ -282,94 +480,6 @@ func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSe
 	data.Skills = skills
 
 	return nil
-}
-
-// uiAgentUpdate handles the Settings edit form (PRG). It maps form fields onto
-// the existing AgentDefinition — mirroring the old modal's submitAgentForm
-// JSON mapping exactly — then persists via UpdateAgentDefinition.
-func (s *Server) uiAgentUpdate(c echo.Context) error {
-	ctx := c.Request().Context()
-	id := c.Param("id")
-
-	def, err := s.memory.GetAgentDefinition(ctx, id)
-	if err != nil {
-		return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/settings", err)
-	}
-
-	name := strings.TrimSpace(c.FormValue("name"))
-	if name == "" {
-		return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/settings", fmt.Errorf("name is required"))
-	}
-	def.Name = name
-	def.SystemPrompt = c.FormValue("systemPrompt")
-	// Appearance (icon + color) persists to the uiConfig blob; both empty
-	// clears it so the agent falls back to the default bot tile.
-	def.UIConfig = agentUIConfig(c.FormValue("icon"), c.FormValue("color"))
-	// Language persists to Config["language"]; the memory service reads it at
-	// runtime. Empty clears it so the model default applies.
-	lang := strings.TrimSpace(c.FormValue("language"))
-	if def.Config == nil {
-		def.Config = map[string]any{}
-	}
-	if lang != "" {
-		def.Config["language"] = lang
-	} else {
-		delete(def.Config, "language")
-	}
-	// Tools come from the checkbox picker (name="tool"), not a free-text string.
-	def.Tools = c.Request().Form["tool"]
-	// A tool can't be both allowed and banned; un-ban any newly allowed tool.
-	def.BannedTools = removeItems(def.BannedTools, def.Tools...)
-
-	// Always set skills (even empty) so clearing them reaches memory.
-	def.Skills = c.Request().Form["skill"]
-
-	// Tool approval policy: default + per-tool overrides.
-	def.DefaultToolPolicy = strings.TrimSpace(c.FormValue("defaultToolPolicy"))
-	policies := map[string]ToolPolicy{}
-	for _, tool := range def.Tools {
-		switch c.FormValue("toolPolicy." + tool) {
-		case "ask":
-			policies[tool] = ToolPolicy{Confirm: true}
-		case "deny":
-			policies[tool] = ToolPolicy{Disabled: true}
-		case "allow":
-			policies[tool] = ToolPolicy{}
-		}
-	}
-	def.ToolPolicies = policies
-
-	if modelName := strings.TrimSpace(c.FormValue("modelName")); modelName != "" {
-		temp, terr := strconv.ParseFloat(c.FormValue("temperature"), 64)
-		if terr != nil {
-			temp = 0.7
-		}
-		maxTok, merr := strconv.Atoi(c.FormValue("maxTokens"))
-		if merr != nil || maxTok <= 0 {
-			maxTok = 4096
-		}
-		def.Model = &ModelConfig{Name: modelName, Temperature: temp, MaxTokens: maxTok}
-	} else {
-		def.Model = nil
-	}
-
-	if c.FormValue("delegationEnabled") == "on" {
-		targets := c.Request().Form["delegation-target"]
-		if len(targets) == 0 {
-			return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/settings", fmt.Errorf("delegation requires at least one target"))
-		}
-		def.Delegation = &Delegation{Enabled: true, Targets: targets}
-	} else {
-		def.Delegation = &Delegation{Enabled: false}
-	}
-
-	if err := applyDelegation(def); err != nil {
-		return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/settings", err)
-	}
-	if _, err := s.memory.UpdateAgentDefinition(ctx, id, def); err != nil {
-		return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/settings", err)
-	}
-	return c.Redirect(http.StatusSeeOther, "/agents/"+url.PathEscape(id)+"/settings?updated=1")
 }
 
 // uiAgentSessions renders the full conversation list for one agent, mirroring

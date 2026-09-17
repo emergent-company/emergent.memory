@@ -211,7 +211,15 @@ func main() {
 	e.GET("/agents", s.uiAgents)
 	e.GET("/agents/:id", s.uiAgent)
 	e.GET("/agents/:id/settings", s.uiAgentSettings)
-	e.POST("/agents/:id/update", s.uiAgentUpdate)
+	e.GET("/agents/:id/settings/:section", s.uiAgentSettingsSection)
+	e.POST("/agents/:id/settings/general", s.uiAgentUpdateGeneral)
+	e.POST("/agents/:id/settings/model", s.uiAgentUpdateModel)
+	e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+	e.POST("/agents/:id/settings/skills", s.uiAgentUpdateSkills)
+	e.POST("/agents/:id/settings/delegation", s.uiAgentUpdateDelegation)
+	// Back-compat: the pre-split full-form update URL now targets the General
+	// section handler (name / system prompt / language).
+	e.POST("/agents/:id/update", s.uiAgentUpdateGeneral)
 	e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
 	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
 	e.GET("/agents/:id/sessions", s.uiAgentSessions)
