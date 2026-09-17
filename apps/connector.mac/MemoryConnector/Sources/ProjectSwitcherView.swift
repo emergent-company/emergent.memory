@@ -33,6 +33,9 @@ struct ProjectSwitcherView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+                // Same horizontal rhythm as `switcherLabel` so the loading row
+                // does not shift when it becomes the project dropdown.
+                .padding(.horizontal, 10)
             case .signedOut:
                 signedOutMenu
             case .error:
@@ -180,13 +183,17 @@ struct ProjectSwitcherView: View {
         .help(text)
     }
 
-    /// Borderless, single-line chrome: just spacing + a small chevron, so it
-    /// reads as a dropdown rather than a second toolbar button.
+    /// Borderless, single-line chrome: spacing + a small chevron and horizontal
+    /// padding, so it reads as a dropdown rather than a second toolbar button.
+    /// The padding matches the account control next door (10pt) so the two
+    /// trailing toolbar items read as a pair; it is the single chrome entry
+    /// point, so every label state gets the same left/right space.
     private func switcherLabel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: 5) {
             content()
         }
         .font(.subheadline)
+        .padding(.horizontal, 10)
     }
 
     private var chevron: some View {
