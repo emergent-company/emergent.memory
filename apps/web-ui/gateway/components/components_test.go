@@ -140,7 +140,7 @@ func TestSecretRevealPanelRendersInline(t *testing.T) {
 	assertContains(t, html,
 		"card-border",
 		`data-testid="token-secret-panel"`,
-		"Token created",
+		`<h3 class="text-sm font-semibold">Token created</h3>`,
 		"my-token — this key is shown only once. Store it somewhere safe.",
 		`id="api-token-secret"`,
 		"tok",

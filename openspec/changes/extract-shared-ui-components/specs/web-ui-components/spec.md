@@ -59,17 +59,17 @@ Key/value detail rows SHALL render through one shared meta-row component with a 
 
 ### Requirement: Table shells render through a single component
 
-List and detail tables SHALL render inside one shared table-card shell, and tables inside that shell SHALL use the go-daisy table primitives rather than raw table markup.
+List and detail tables SHALL render inside one shared table-card shell, the caller SHALL supply the table markup, and the shell SHALL NOT impose a specific table primitive. Adopting the go-daisy table primitives is deferred: `table.TableWithProps` always emits its own `overflow-x-auto` wrapper, and every gateway raw table already sits inside one, so adopting the primitive would add a nesting level.
 
 #### Scenario: Shell renders around supplied content
 
 - **WHEN** a page renders a table inside the shared shell
 - **THEN** the shell supplies the bordered, overflow-hidden, shadowed card with a zero-padding body and the page supplies only the table markup
 
-#### Scenario: No raw table shells remain
+#### Scenario: No page-defined table-card shells remain
 
 - **WHEN** the gateway templates are searched for a hand-written bordered zero-padding card wrapping a table
-- **THEN** no occurrence remains outside the shared component
+- **THEN** no occurrence remains outside the shared component, and raw `<table>` markup inside the shared shell is acceptable until the go-daisy primitive adoption is unblocked
 
 ### Requirement: Dialog opening uses one client helper
 

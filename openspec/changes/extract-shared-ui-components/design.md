@@ -47,7 +47,7 @@ Anything else that renders differently — or any class that changes the rendere
 
 For the ~11 inline auto-open IIFEs (`agent_mcp_endpoint.templ:626-631`, `mcp_shares.templ:471-476`, `project_settings.templ:1330-1335`, `auth_ui.templ:254-266`, …) which exist to re-open a dialog after an htmx swap, the trigger becomes a markup attribute: `components.DialogAutoOpen()` returns `data-dialog-autoopen`, scanned by `app.js` on `DOMContentLoaded` and `htmx:afterSwap`. That keeps the htmx re-open semantics while deleting the per-page scripts.
 
-For the row-dialog scripts whose id is computed at render time (`openBackupDelete(id)`, `openMCPShareDialog(kind, id)`, …), `components.DialogOpenScript()` emits one page-level `openDialogByID(id)` global that delegates to `MemoryApp.openDialog`; callers stop declaring their own opener per dialog.
+For the row-dialog scripts whose id is computed at render time (`openBackupDelete(id)`, `openMCPShareDialog(kind, id)`, …), `app.js` exposes a `window.openDialogByID(id)` global that delegates to `openDialog`; templ call sites emit inline handlers via `templ.JSFuncCall("openDialogByID", …)` and stop declaring their own opener per dialog.
 
 ### D4 — Domain vocabularies stay in `package main`
 

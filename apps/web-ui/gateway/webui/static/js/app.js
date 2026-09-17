@@ -499,8 +499,9 @@
   /*
    * openDialog opens a native <dialog> by id. No-op when the element is missing
    * or is not a dialog (or is already open). Single entry point for every
-   * dialog-opening call site: templ script blocks delegate here through
-   * components.DialogOpenScript, and openDialogByID is that global.
+   * dialog-opening call site: templ handlers with a literal id call
+   * MemoryApp.openDialog, and templ inline row-dialog handlers call the
+   * window.openDialogByID global (both delegate here).
    */
   function openDialog(id) {
     var d = id && document.getElementById(id);
@@ -510,15 +511,16 @@
 
   /*
    * openDialogByID opens a dialog whose id is computed at render time, matching
-   * the row-dialog convention: openDialogByID("backup-delete-" + id). Used by
-   * inline handlers that cannot call openDialog with a literal id.
+   * the row-dialog convention: openDialogByID("backup-delete-" + id). Exposed
+   * as window.openDialogByID (below) for the templ inline row-dialog handlers
+   * that cannot call openDialog with a literal id.
    */
   function openDialogByID(id) {
     openDialog(id);
   }
 
   /*
-   * openAutoOpenDialogs opens every dialogs marked with
+   * openAutoOpenDialogs opens every dialog marked with
    * data-dialog-autoopen. Called on load and after htmx swaps (components
    * .DialogAutoOpen replaces the per-page showModal() IIFEs that used to
    * re-open a dialog after a mutation swapped it in).
@@ -541,4 +543,13 @@
     openAutoOpenDialogs: openAutoOpenDialogs,
     toast: toast,
   };
+
+  /*
+   * templ row-dialog handlers emit inline onclick handlers via
+   * templ.JSFuncCall("openDialogByID", ...), which resolves the name against
+   * window, not this IIFE's scope. app.js is loaded on every page, so this one
+   * global is the single implementation; no per-page dialog-open script
+   * component is needed and none was added.
+   */
+  window.openDialogByID = openDialogByID;
 })();

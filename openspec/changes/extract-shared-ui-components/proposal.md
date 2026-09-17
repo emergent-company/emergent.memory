@@ -19,7 +19,7 @@ Create a real, importable component package for the gateway and extract the twel
   1. `SecretRevealModal` / `SecretRevealPanel` — one-time secret reveal (MCP keys, MCP shares, API tokens).
   2. `MetaRow` — key/value detail row, one label-style convention.
   3. `TableCard` — table shell wrapper.
-  4. `DialogOpenScript` + `MemoryApp.openDialog(id)` — one dialog-opening helper replacing 8 scripts and ~11 auto-open IIFEs.
+  4. `MemoryApp.openDialog(id)` + `window.openDialogByID(id)` — one dialog-opening helper replacing 8 scripts and ~11 auto-open IIFEs.
   5. `SnippetCard` — client config snippet block with copy affordance.
   6. `ToggleField` — settings toggle row with info tip.
   7. `SelectOptionGroups` — provider/model grouped `<optgroup>` renderer.
