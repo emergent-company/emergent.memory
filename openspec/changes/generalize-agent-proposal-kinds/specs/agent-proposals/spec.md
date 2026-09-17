@@ -31,7 +31,7 @@ The proposal card SHALL provide first-class renderers for the operator's writabl
 
 - `skill` — `{name, description, prompt, tools, bannedTools}`
 - `agent` — `{name, description, model, systemPrompt, tools, skills, bannedTools, flowType, visibility}`
-- `mcp_server` — `{name, type, url, headers, enabled, enabledTools, disabledTools}`
+- `mcp_server` — `{name, type, url, headers, enabled, enabledTools, disabledTools}` (write-path shape; `headers` intentionally omitted from the rendered card)
 - `provider` — `{provider, baseUrl, models}` (secret masked, never echoed)
 - `object` — `{entities, relationships}`
 
@@ -46,6 +46,10 @@ The proposal card SHALL provide first-class renderers for the operator's writabl
 #### Scenario: MCP server proposal is previewed
 - **WHEN** a question carries a `proposal` whose `kind` is `mcp_server`
 - **THEN** the card SHALL show the server's name, type, URL, and the tools it enables/disables
+
+#### Scenario: MCP server proposal masks auth headers
+- **WHEN** a question carries a `proposal` whose `kind` is `mcp_server` and whose body includes `headers`
+- **THEN** the card SHALL NOT render the `headers` field or any auth credentials it carries
 
 #### Scenario: Provider proposal masks the secret
 - **WHEN** a question carries a `proposal` whose `kind` is `provider`
