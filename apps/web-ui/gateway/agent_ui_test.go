@@ -857,8 +857,9 @@ func activeNavHrefs(rail string) []string {
 // TestRenderAgentSubNavSettingsAlwaysVisible guards the agent details rail: the
 // second level (Settings parent + its six children) stays visible on every agent
 // section, not only on settings subpages. Off the settings surface the only
-// active item is that surface's own entry; on a settings section the parent and
-// exactly the matching child are active.
+// active item is that surface's own entry; on a settings section exactly the
+// matching child is active (the parent Settings link shares the General child's
+// destination, so it is never marked current).
 func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 	agent := &AgentDefinition{ID: "a1", Name: "diane"}
 
@@ -914,8 +915,9 @@ func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 		})
 	}
 
-	// On a settings section: the parent Settings link and exactly the matching
-	// child are active; no other child is.
+	// On a settings section: exactly the matching child is active; no other
+	// section entry is. The Settings parent is never active — on General it would
+	// duplicate the child's href.
 	for _, c := range children {
 		t.Run("settings_"+c.section, func(t *testing.T) {
 			html := renderHTML(t, AgentSettingsPage(agentSettingsData{Section: c.section, Agent: agent}))
@@ -923,8 +925,7 @@ func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 			if rail == "" {
 				t.Fatal("agent rail not rendered")
 			}
-			want := []string{settingsParent, c.href}
-			slices.Sort(want)
+			want := []string{c.href}
 			if got := activeNavHrefs(rail); !slices.Equal(got, want) {
 				t.Errorf("section %q active rail items = %v, want %v", c.section, got, want)
 			}
