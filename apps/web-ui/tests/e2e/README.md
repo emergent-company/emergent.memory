@@ -244,8 +244,9 @@ on a run error, when the model never asked (no `question` SSE event), or on a
 markdown-fallback degradation (a `question` event with an empty/absent
 `proposalHtml`, i.e. the proposal body was empty or malformed) — those are
 non-deterministic model deviations, annotated and skipped. Note an unknown-kind
-proposal still renders a summary-only _card_ with a non-empty `proposalHtml`, so
-it is asserted, not skipped. But when the server emitted a `question` event carrying a non-empty
+proposal still renders a summary-only _card_ with a non-empty `proposalHtml`: a
+missing card for it hard-fails, while a rendered summary-only card is still
+skipped at the structured-preview check. But when the server emitted a `question` event carrying a non-empty
 `proposalHtml` and no `.proposal-card` rendered, the spec HARD-FAILS: a fetch
 interceptor tees the `/api/chat` SSE stream and records the `question` events,
 so a gateway render regression can no longer masquerade as a skip.
