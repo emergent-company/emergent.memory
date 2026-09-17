@@ -4,9 +4,9 @@ import SwiftUI
 /// Popover content for a LEFT-click on the status item.
 ///
 /// Effectively signed in → the active account listed by EMAIL (environment
-/// badge) plus a switcher for the other accounts and an "Add account" menu.
-/// Not effectively signed in → an explicit Prod/Dev sign-in call to action and
-/// no account rows. Settings/Quit live in the right-click menu
+/// badge) plus a switcher for the other accounts and an "Add account" action.
+/// Not effectively signed in → a single prominent Production sign-in call to
+/// action and no account rows. Settings/Quit live in the right-click menu
 /// (`StatusItemController`), not here.
 struct MenuBarView: View {
     @EnvironmentObject private var accountStore: AccountStore
@@ -83,20 +83,12 @@ struct MenuBarView: View {
             Divider()
 
             HStack(spacing: 10) {
-                Menu {
-                    ForEach(Environment.all) { environment in
-                        Button {
-                            signIn(environment)
-                        } label: {
-                            Text("Sign in to \(environment.shortLabel)")
-                        }
-                    }
+                Button {
+                    signIn(signInEnvironment)
                 } label: {
                     Label("Add account", systemImage: "plus")
                         .font(.callout)
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
                 .disabled(accountStore.isSigningIn)
 
                 Spacer(minLength: 0)
@@ -128,25 +120,18 @@ struct MenuBarView: View {
             Text("Not signed in")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Text("Choose an environment to sign in.")
+            Text("Sign in with Memory to connect your account and projects.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             Button {
-                signIn(.prod)
+                signIn(signInEnvironment)
             } label: {
-                Text("Sign in to Prod")
+                Text("Sign in with Memory")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-
-            Button {
-                signIn(.dev)
-            } label: {
-                Text("Sign in to Dev")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
+            .disabled(accountStore.isSigningIn)
 
             if accountStore.isSigningIn {
                 HStack(spacing: 6) {
@@ -163,6 +148,12 @@ struct MenuBarView: View {
     }
 
     // MARK: - Actions
+
+    /// The environment this popover's sign-in action targets, from the shared
+    /// per-surface policy.
+    private var signInEnvironment: Environment {
+        Environment.signInEnvironments(for: .menuBar).first ?? Environment.primary
+    }
 
     private func signIn(_ environment: Environment) {
         Task {
