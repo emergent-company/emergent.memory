@@ -47,11 +47,11 @@ Unknown kinds fall through to the summary-only renderer (kind badge + `summary`)
 | `blueprint` | `{objectTypes[], relationshipTypes[]}` | object/relationship previews (existing `objectTypeRow`/`relationshipTypeRow`) |
 | `skill` | `{name, description, prompt, tools[], bannedTools[]}` | name + description + prompt + tool/banned-tool lists |
 | `agent` | `{name, description, model, systemPrompt, tools[], skills[], bannedTools[], flowType, visibility}` | name + model + system prompt + tool/skill/banned-tool lists |
-| `mcp_server` | `{name, type, url, headers{}, enabled, enabledTools[], disabledTools[]}` | name + type + url + enable/disable lists |
+| `mcp_server` | `{name, type, url, headers{}, enabled, enabledTools[], disabledTools[]}` | name + type + url + enable/disable lists (`headers` omitted — carries credentials) |
 | `provider` | `{provider, baseUrl, models[]}` (secret never echoed) | slug + base URL + models |
 | `object` | `{entities[], relationships[]}` | entity type/key/properties + relationship source→target |
 
-Each body reuses the exact shapes the corresponding write tool consumes, so a proposal never drifts from the apply path (same rationale as the blueprint kind). The provider body excludes the API key — only a masked indicator is rendered (the parser ignores any `apiKey`/`api_key` field outright).
+Each body reuses the exact shapes the corresponding write tool consumes, so a proposal never drifts from the apply path (same rationale as the blueprint kind). The provider body excludes the API key — only a masked indicator is rendered (the parser ignores any `apiKey`/`api_key` field outright). The mcp_server body likewise keeps `headers` in the write-path shape but drops it from the rendered card (the parser ignores any `headers`/`header` field outright), because auth headers routinely carry credentials.
 
 ### Decision: `object` kind ships renderer-only
 

@@ -74,7 +74,10 @@ type AgentProposal struct {
 	Visibility   string
 }
 
-// MCPServerProposal is the render model for an `mcp_server` proposal.
+// MCPServerProposal is the render model for an `mcp_server` proposal. Auth
+// headers are never carried — the body's `headers` map commonly holds
+// credentials, so it is deliberately dropped from the card and only the name,
+// type, URL, and tool enable/disable lists are rendered.
 type MCPServerProposal struct {
 	Name          string
 	Type          string
@@ -217,7 +220,9 @@ func buildAgentCard(kind, summary string, body map[string]any) *ProposalCard {
 	}
 }
 
-// buildMCPServerCard renders an `mcp_server` proposal. A server without a name
+// buildMCPServerCard renders an `mcp_server` proposal. The `headers` field is
+// deliberately ignored (auth headers carry credentials, so any headers/header
+// field is never read and can't leak into the card). A server without a name
 // is not renderable.
 func buildMCPServerCard(kind, summary string, body map[string]any) *ProposalCard {
 	name := strAny(body["name"])
