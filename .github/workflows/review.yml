@@ -42,6 +42,12 @@ jobs:
           # Post as the App identity (emergent-code-reviewer) when configured;
           # otherwise stay github-actions[bot].
           if [ -n "$GH_APP_PRIVATE_KEY" ]; then
-            export GH_TOKEN="$(python3 .github/scripts/gh_app_token.py)"
+            GH_TOKEN="$(python3 .github/scripts/gh_app_token.py)"
+            if [ -z "$GH_TOKEN" ]; then
+              echo "mint failed: empty App token" >&2
+              exit 1
+            fi
+            echo "::add-mask::$GH_TOKEN"
+            export GH_TOKEN
           fi
           python3 .github/scripts/ai_review.py

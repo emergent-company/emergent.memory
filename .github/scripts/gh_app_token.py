@@ -7,6 +7,9 @@ Env:
   GH_APP_INSTALLATION_ID (default 160306576)
 
 Prints the token to stdout. Requires openssl on PATH (for JWT RS256 signing).
+Fails loudly with a clear message on stderr and a non-zero exit so callers
+(e.g. `GH_TOKEN="$(python3 gh_app_token.py)"`) never proceed with an empty or
+truncated token.
 """
 import base64
 import json
@@ -15,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 APP_ID = os.environ.get("GH_APP_ID", "4884315")
@@ -38,10 +42,18 @@ try:
     header = b64(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
     payload = b64(json.dumps({"iat": now - 60, "exp": now + 540, "iss": int(APP_ID)}).encode())
     signing = header + b"." + payload
-    sig = subprocess.run(
-        ["openssl", "dgst", "-sha256", "-sign", pem],
-        input=signing, capture_output=True, check=True,
-    ).stdout
+    try:
+        sig = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", pem],
+            input=signing, capture_output=True, check=True,
+        ).stdout
+    except subprocess.CalledProcessError as e:
+        # Do not leak the tempfile path of the private key in the message.
+        detail = e.stderr.decode(errors="replace").replace(pem, "<tmp-key>").strip()
+        sys.exit(f"openssl signing failed (exit {e.returncode}): {detail or 'no stderr'}")
+    if not sig:
+        # openssl can exit 0 with empty stdout (e.g. passphrase prompt, bad key).
+        sys.exit("openssl produced an empty signature; check the private key")
     jwt = (signing + b"." + b64(sig)).decode()
 finally:
     os.unlink(pem)
@@ -51,7 +63,19 @@ req = urllib.request.Request(
     method="POST",
     headers={"Authorization": f"Bearer {jwt}", "Accept": "application/vnd.github+json"},
 )
-with urllib.request.urlopen(req, timeout=30) as r:
-    token = json.loads(r.read())["token"]
+try:
+    with urllib.request.urlopen(req, timeout=30) as r:
+        payload = json.loads(r.read())
+except urllib.error.HTTPError as e:
+    detail = e.read().decode(errors="replace").strip()
+    sys.exit(f"GitHub token request failed ({e.code}): {detail}")
+except urllib.error.URLError as e:
+    sys.exit(f"GitHub token request failed: {e.reason}")
+except json.JSONDecodeError as e:
+    sys.exit(f"GitHub token response was not JSON: {e}")
+
+token = payload.get("token")
+if not token:
+    sys.exit(f"GitHub token response missing 'token' (keys: {sorted(payload)})")
 
 print(token)
