@@ -64,6 +64,7 @@ func (m *MemoryClient) GetAgentDefinition(ctx context.Context, id string) (*Agen
 }
 
 func (m *MemoryClient) CreateAgentDefinition(ctx context.Context, in *AgentDefinition) (*AgentDefinition, error) {
+	sanitizeAgentWrite(in)
 	var env successEnvelope[AgentDefinition]
 	if err := m.do(ctx, http.MethodPost, "/api/projects/"+m.projectIDFor(ctx)+"/agent-definitions", in, &env); err != nil {
 		return nil, err
@@ -72,6 +73,7 @@ func (m *MemoryClient) CreateAgentDefinition(ctx context.Context, in *AgentDefin
 }
 
 func (m *MemoryClient) UpdateAgentDefinition(ctx context.Context, id string, in *AgentDefinition) (*AgentDefinition, error) {
+	sanitizeAgentWrite(in)
 	var env successEnvelope[AgentDefinition]
 	if err := m.do(ctx, http.MethodPatch, "/api/projects/"+m.projectIDFor(ctx)+"/agent-definitions/"+id, in, &env); err != nil {
 		return nil, err

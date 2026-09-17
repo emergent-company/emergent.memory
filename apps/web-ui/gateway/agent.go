@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -390,25 +391,112 @@ func applyAgentModelSection(def *AgentDefinition, c echo.Context) error {
 
 // applyAgentToolsSection maps the Tools form onto the definition: the allowed
 // tool list, un-banning any newly allowed tool, the default approval policy,
-// and per-tool policy overrides (ask/deny/allow), iterating only over the
-// tools in this section's form.
+// per-tool policy overrides (ask/deny/allow/inherit), and the capability-group
+// policy + enable/disable controls.
+//
+// Per-tool and group policy keys are written only when their form control is
+// actually present (a per-tool select submits for both checked and unchecked
+// tools; a group select submits only for non-"other" groups), so keys whose
+// control is absent are preserved verbatim rather than wiped.
+//
+// Group enable/disable is a membership operation (D4), not a policy: enabling a
+// group adds every member to Tools and un-bans it; disabling removes members
+// from Tools and bans them. Group policies are stored under reserved
+// "@group:<id>" keys in ToolPolicies, so resolution (explicit tool → group →
+// default) needs no schema change.
 func applyAgentToolsSection(def *AgentDefinition, c echo.Context) error {
-	def.Tools = c.Request().Form["tool"]
+	form := c.Request().Form
+	def.Tools = form["tool"]
 	def.BannedTools = removeItems(def.BannedTools, def.Tools...)
 	def.DefaultToolPolicy = strings.TrimSpace(c.FormValue("defaultToolPolicy"))
-	policies := map[string]ToolPolicy{}
-	for _, tool := range def.Tools {
-		switch c.FormValue("toolPolicy." + tool) {
+
+	// Start from the existing policies so per-tool overrides and @group: entries
+	// for tools/groups this save does not render are preserved, not deleted.
+	policies := maps.Clone(def.ToolPolicies)
+	if policies == nil {
+		policies = map[string]ToolPolicy{}
+	}
+
+	// Per-tool overrides are read first and win: a tool that carries an explicit
+	// "toolPolicy.<tool>" entry always writes its own entry; "inherit" deletes it.
+	// Iterate the submitted keys (not def.Tools) so a policy select for an
+	// unchecked tool is still honored.
+	for key := range form {
+		tool, ok := strings.CutPrefix(key, "toolPolicy.")
+		if !ok {
+			continue
+		}
+		switch form.Get(key) {
 		case "ask":
 			policies[tool] = ToolPolicy{Confirm: true}
 		case "deny":
 			policies[tool] = ToolPolicy{Disabled: true}
 		case "allow":
 			policies[tool] = ToolPolicy{}
+		case "inherit":
+			delete(policies, tool)
 		}
 	}
+	applyToolGroups(def, form, policies)
 	def.ToolPolicies = policies
 	return nil
+}
+
+// applyToolGroups writes the group-level policy entries and applies each
+// rendered group's enable/disable fan-out. A group is "rendered" when the form
+// carries its baseline groupWasEnabled.<id> field (emitted next to the enable
+// switch). The enable/disable fan-out runs only when the submitted switch state
+// differs from that baseline, so a no-op save or unchecking a single child does
+// not fan out the entire full-catalog group.
+//
+// Delegation-managed tools are never fanned out: the enable switch must not add
+// or ban spawn_agents / list_available_agents, which the delegation toggle owns.
+func applyToolGroups(def *AgentDefinition, form url.Values, policies map[string]ToolPolicy) {
+	// Group policy: only when the form explicitly submits a value for the group
+	// (the policy select is rendered for every non-"other" group). "inherit"
+	// clears the key; an absent control leaves the stored entry untouched.
+	for _, g := range def.ToolGroups {
+		if !form.Has("groupPolicy." + g.ID) {
+			continue
+		}
+		switch form.Get("groupPolicy." + g.ID) {
+		case "ask":
+			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{Confirm: true}
+		case "deny":
+			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{Disabled: true}
+		case "allow":
+			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{}
+		case "inherit":
+			delete(policies, toolGroupPolicyKey(g.ID))
+		}
+	}
+
+	// Enable/disable fan-out: only when the submitted switch state differs from
+	// the rendered baseline.
+	for _, g := range def.ToolGroups {
+		if !form.Has("groupWasEnabled." + g.ID) {
+			continue
+		}
+		wasEnabled := form.Get("groupWasEnabled."+g.ID) == "true"
+		nowEnabled := form.Has("groupEnabled." + g.ID)
+		if wasEnabled == nowEnabled {
+			continue
+		}
+		members := make([]string, 0, len(g.Tools))
+		for _, t := range g.Tools {
+			if isDelegationTool(t) {
+				continue
+			}
+			members = append(members, t)
+		}
+		if nowEnabled {
+			def.Tools = appendUnique(def.Tools, members...)
+			def.BannedTools = removeItems(def.BannedTools, members...)
+		} else {
+			def.Tools = removeItems(def.Tools, members...)
+			def.BannedTools = appendUnique(def.BannedTools, members...)
+		}
+	}
 }
 
 // applyAgentSkillsSection maps the Skills form onto the definition, always
@@ -609,6 +697,350 @@ func toolPolicyValue(agent *AgentDefinition, tool string) string {
 	default:
 		return "allow"
 	}
+}
+
+// --- capability-group Tools picker ---
+
+// toolGroupPolicyPrefix marks a group policy entry inside ToolPolicies. Tool
+// names are validated identifiers that cannot begin with "@", so the prefix
+// cannot collide with a per-tool entry.
+const toolGroupPolicyPrefix = "@group:"
+
+// toolGroupOtherID is the display-only fallback group id (server's
+// toolgroups.GroupOther). It is never a policy source: it gets an enable switch
+// but no group policy select, and its nested relay/server sub-groups get no
+// per-tool policy control.
+const toolGroupOtherID = "other"
+
+// toolGroupPolicyKey returns the ToolPolicies key for a group id.
+func toolGroupPolicyKey(groupID string) string {
+	return toolGroupPolicyPrefix + groupID
+}
+
+// groupPolicyValue returns a group's stored policy as "", "allow", "ask", or
+// "deny" ("" = inherit the agent default).
+func groupPolicyValue(agent *AgentDefinition, groupID string) string {
+	return toolPolicyValue(agent, toolGroupPolicyKey(groupID))
+}
+
+// groupPolicyFormValue maps a stored group policy onto the select's value
+// space, where "inherit" spells the absent policy.
+func groupPolicyFormValue(v string) string {
+	if v == "" {
+		return "inherit"
+	}
+	return v
+}
+
+// groupWasEnabledValue renders the boolean baseline for the hidden
+// groupWasEnabled.<id> field emitted next to each group enable switch, so the
+// applier can tell whether the switch actually toggled.
+func groupWasEnabledValue(enabled bool) string {
+	if enabled {
+		return "true"
+	}
+	return "false"
+}
+
+// policyTitle renders a policy value for an inheritance hint ("Ask", "Deny").
+func policyTitle(v string) string {
+	switch v {
+	case "allow":
+		return "Allow"
+	case "ask":
+		return "Ask"
+	case "deny":
+		return "Deny"
+	default:
+		return "Inherit"
+	}
+}
+
+// toolPolicyHint explains what a tool row falls back to: its own explicit
+// override when it has one, otherwise the owning capability group's policy (or
+// the agent default when the group inherits too). "" means the row says
+// nothing — e.g. an uncovered "Other" tool with no override.
+func toolPolicyHint(agent *AgentDefinition, tool, groupLabel, groupPolicy string) string {
+	if v := toolPolicyValue(agent, tool); v != "" {
+		return "Override · " + policyTitle(v)
+	}
+	if groupLabel == "" {
+		return ""
+	}
+	if groupPolicy != "" {
+		return "Inherits " + groupLabel + " · " + policyTitle(groupPolicy)
+	}
+	return "Inherits " + groupLabel + " · Default"
+}
+
+// toolPolicyHintShort is the compact, all-widths form of toolPolicyHint
+// ("→ Ask"), shown on narrow screens where the full sentence would crowd out
+// the tool name.
+func toolPolicyHintShort(agent *AgentDefinition, tool, groupLabel, groupPolicy string) string {
+	if v := toolPolicyValue(agent, tool); v != "" {
+		return "→ " + policyTitle(v)
+	}
+	if groupLabel == "" {
+		return ""
+	}
+	if groupPolicy != "" {
+		return "→ " + policyTitle(groupPolicy)
+	}
+	return "→ Default"
+}
+
+// toolRow resolves one tool into a picker row: its toggle state, the explicit
+// per-tool policy value, and the inheritance hints for its owning group.
+func toolRow(agent *AgentDefinition, name, description, groupLabel, groupPolicy string) agentToolRow {
+	return agentToolRow{
+		Name:        name,
+		Description: description,
+		Checked:     containsString(agent.Tools, name),
+		PolicyValue: toolPolicyValue(agent, name),
+		Hint:        toolPolicyHint(agent, name, groupLabel, groupPolicy),
+		HintShort:   toolPolicyHintShort(agent, name, groupLabel, groupPolicy),
+	}
+}
+
+// toolRows resolves names with their descriptions into picker rows.
+func toolRows(agent *AgentDefinition, names []string, descriptions map[string]string, groupLabel, groupPolicy string) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(names))
+	for _, name := range names {
+		rows = append(rows, toolRow(agent, name, descriptions[name], groupLabel, groupPolicy))
+	}
+	return rows
+}
+
+// anyChecked reports whether any name is currently allowed on the agent.
+func anyChecked(agent *AgentDefinition, names []string) bool {
+	return slices.ContainsFunc(names, func(name string) bool { return containsString(agent.Tools, name) })
+}
+
+// toolGroupView is the resolved view of one capability group in the grouped
+// picker: the server-supplied group, its stored policy, whether any member is
+// currently enabled, and the nested source sub-groups plus direct member rows
+// that make up its body.
+type toolGroupView struct {
+	Group        ToolGroup
+	Policy       string // "inherit" | "allow" | "ask" | "deny"
+	Enabled      bool
+	Open         bool
+	Count        int
+	ServerGroups []agentToolGroupProps
+	RelayGroups  []agentToolGroupProps
+	Rows         []agentToolRow
+}
+
+// buildToolGroupViews resolves the server-supplied tool groups into render
+// models. ToolGroup.Tools is the group's FULL membership — the project catalog
+// for that group unioned with the agent's allowed and banned tools — so it
+// drives the rows, the enable switch, and the enable/disable fan-out even when
+// every member is currently disabled. A group with no member tools is dropped
+// so the panel never renders an empty header.
+//
+// Each member renders exactly once: a tool offered by several sources is
+// claimed by the first source (server order, then relay order) and any member
+// no source offers renders as a direct row. This prevents duplicate
+// input[name=tool] values inside one group and keeps a group member out of the
+// "Other" fallback.
+func buildToolGroupViews(data agentSettingsData, groups []ToolGroup) []toolGroupView {
+	agent := data.Agent
+	if agent == nil || len(groups) == 0 {
+		return nil
+	}
+	descriptions := catalogToolDescriptions(data)
+	views := make([]toolGroupView, 0, len(groups))
+	for _, g := range groups {
+		if len(g.Tools) == 0 {
+			continue
+		}
+		// The server computes the group policy; prefer it, falling back to the
+		// stored "@group:" entry when an older memory omits the field.
+		policy := g.Policy
+		if policy == "" {
+			policy = groupPolicyValue(agent, g.ID)
+		}
+		inGroup := make(map[string]bool, len(g.Tools))
+		for _, t := range g.Tools {
+			inGroup[t] = true
+		}
+		rendered := make(map[string]bool, len(g.Tools))
+		enabled := false
+		for _, t := range g.Tools {
+			if !isDelegationTool(t) && containsString(agent.Tools, t) {
+				enabled = true
+				break
+			}
+		}
+		gv := toolGroupView{
+			Group:   g,
+			Policy:  groupPolicyFormValue(policy),
+			Enabled: enabled,
+			Open:    enabled,
+			Count:   len(g.Tools),
+		}
+		for _, srv := range data.MCPServers {
+			names := claimedServerToolNames(srv.Tools, inGroup, rendered)
+			if len(names) == 0 {
+				continue
+			}
+			markRendered(rendered, names)
+			gv.ServerGroups = append(gv.ServerGroups, agentToolGroupProps{
+				BorderClass:     "border-base-content/10 bg-base-100/60",
+				BodyBorderClass: "border-base-content/10",
+				Icon:            "lucide--server",
+				IconClass:       "text-base-content/40",
+				Title:           srv.Name,
+				Count:           len(names),
+				Open:            anyChecked(agent, names),
+				Tools:           toolRows(agent, names, descriptions, g.Label, policy),
+				// External MCP-server tools (the "other" group) get enable/disable
+				// only; built-in capability groups keep per-tool policy controls.
+				WithPolicy: g.ID != toolGroupOtherID,
+			})
+		}
+		for _, node := range relayPickerGroups(data.RelayNodes) {
+			names := claimedRelayToolNames(node, inGroup, rendered)
+			if len(names) == 0 {
+				continue
+			}
+			markRendered(rendered, names)
+			gv.RelayGroups = append(gv.RelayGroups, agentToolGroupProps{
+				BorderClass:     "border-primary/25 bg-primary/[0.04]",
+				BodyBorderClass: "border-primary/15",
+				Icon:            "lucide--radio",
+				IconClass:       "text-primary/60",
+				Title:           node.Session.InstanceID,
+				TitleMono:       true,
+				RemoteBadge:     true,
+				Count:           len(names),
+				Open:            anyChecked(agent, names),
+				Tools:           toolRows(agent, names, descriptions, g.Label, policy),
+				// Relay-node tools get enable/disable only, no policy control
+				// (deferred non-goal).
+				WithPolicy: false,
+			})
+		}
+		// Direct member rows: group members no server or relay offers (native
+		// tools) still belong to the group and render inline. A member is only
+		// skipped here when an earlier source already claimed it, or when it is
+		// delegation-managed (never rendered inside a capability group).
+		for _, t := range g.Tools {
+			if isDelegationTool(t) {
+				continue
+			}
+			if rendered[t] {
+				continue
+			}
+			rendered[t] = true
+			gv.Rows = append(gv.Rows, toolRow(agent, t, descriptions[t], g.Label, policy))
+		}
+		views = append(views, gv)
+	}
+	return views
+}
+
+// claimedServerToolNames returns a registry server's tool names that belong to
+// the group and have not been claimed by an earlier source, in server order.
+func claimedServerToolNames(tools []MCPTool, members, rendered map[string]bool) []string {
+	var names []string
+	for _, t := range tools {
+		if members[t.ToolName] && !rendered[t.ToolName] {
+			names = append(names, t.ToolName)
+		}
+	}
+	return names
+}
+
+// claimedRelayToolNames is claimedServerToolNames for a relay node's
+// agent-facing <instance>_<tool> names.
+func claimedRelayToolNames(node relayNode, members, rendered map[string]bool) []string {
+	var names []string
+	for _, t := range node.Tools {
+		name := relayAgentToolName(node.Session.InstanceID, t.Name)
+		if members[name] && !rendered[name] {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// markRendered records names as claimed so no later source or direct row
+// repeats them inside the same group.
+func markRendered(rendered map[string]bool, names []string) {
+	for _, n := range names {
+		rendered[n] = true
+	}
+}
+
+// catalogToolDescriptions maps every catalog tool name to its description, so
+// direct (source-less) group rows and the Other group can still show one.
+func catalogToolDescriptions(data agentSettingsData) map[string]string {
+	descriptions := map[string]string{}
+	for _, srv := range data.MCPServers {
+		for _, t := range srv.Tools {
+			if t.ToolName == "" {
+				continue
+			}
+			if _, ok := descriptions[t.ToolName]; !ok {
+				descriptions[t.ToolName] = t.Description
+			}
+		}
+	}
+	for _, node := range data.RelayNodes {
+		for _, t := range node.Tools {
+			name := relayAgentToolName(node.Session.InstanceID, t.Name)
+			if _, ok := descriptions[name]; !ok {
+				descriptions[name] = t.Description
+			}
+		}
+	}
+	return descriptions
+}
+
+// groupedOtherRows returns rows for tools the rendered groups do not cover —
+// the agent's allowed and banned tools plus any catalog tool (registry server
+// or relay node) whose capability group is missing — so a taxonomy gap can
+// never drop a tool from the picker on save. A tool that any group lists as a
+// member is covered and stays out of Other. Delegation-managed tools are
+// excluded (the delegation toggle owns them).
+func groupedOtherRows(data agentSettingsData, views []toolGroupView) []agentToolRow {
+	agent := data.Agent
+	if agent == nil {
+		return nil
+	}
+	covered := map[string]bool{}
+	for _, gv := range views {
+		for _, t := range gv.Group.Tools {
+			covered[t] = true
+		}
+	}
+	descriptions := catalogToolDescriptions(data)
+	names := slices.Clone(agent.Tools)
+	names = append(names, agent.BannedTools...)
+	for _, srv := range data.MCPServers {
+		for _, t := range srv.Tools {
+			names = append(names, t.ToolName)
+		}
+	}
+	for _, node := range data.RelayNodes {
+		names = append(names, node.agentToolNames()...)
+	}
+	seen := map[string]bool{}
+	var rows []agentToolRow
+	for _, name := range names {
+		if name == "" || covered[name] || seen[name] || isDelegationTool(name) {
+			continue
+		}
+		seen[name] = true
+		rows = append(rows, agentToolRow{
+			Name:        name,
+			Description: descriptions[name],
+			Checked:     containsString(agent.Tools, name),
+			PolicyValue: toolPolicyValue(agent, name),
+		})
+	}
+	return rows
 }
 
 // modelInCatalog reports whether a prefixed provider/model name is present in

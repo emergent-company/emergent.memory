@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +24,21 @@ func renderHTML(t *testing.T, c templ.Component) string {
 		t.Fatalf("render: %v", err)
 	}
 	return buf.String()
+}
+
+// selectShowsValue reports whether the <select name=...> block renders the
+// given option value as selected, scoped to that select so an unrelated select
+// on the page cannot satisfy the assertion.
+func selectShowsValue(html, name, value string) bool {
+	i := strings.Index(html, `name="`+name+`"`)
+	if i < 0 {
+		return false
+	}
+	seg := html[i:]
+	if len(seg) > 400 {
+		seg = seg[:400]
+	}
+	return strings.Contains(seg, `value="`+value+`" selected`)
 }
 
 func TestRenderAgentDashboard(t *testing.T) {
@@ -1607,6 +1626,675 @@ func TestUIAgentSandboxRoutes(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/nope/sandbox", nil))
 	if !strings.Contains(rec.Body.String(), "Agent unavailable") {
 		t.Error("unknown agent should render the error state")
+	}
+}
+
+// TestApplyAgentToolsSectionGroups covers the capability-group form mapping:
+// group policies land under reserved "@group:<id>" keys, group enable/disable
+// fans out to Tools + BannedTools, per-tool overrides still win, delegation
+// tools are never fanned out, and a group the form did not render is untouched.
+func TestApplyAgentToolsSectionGroups(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+		return e
+	}
+	post := func(e *echo.Echo, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+	groups := []ToolGroup{
+		{ID: "graph-write", Label: "Graph · Write", Tools: []string{"entity-create", "entity-delete"}},
+		{ID: "web", Label: "Web", Tools: []string{"web_search"}},
+		{ID: "agents", Label: "Agents", Tools: []string{"spawn_agents", "list_available_agents"}},
+	}
+	newFake := func(def *AgentDefinition) *fakeMemory {
+		return &fakeMemory{defs: map[string]*AgentDefinition{"a1": def}}
+	}
+
+	t.Run("group ask writes a group entry", func(t *testing.T) {
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "groupPolicy.graph-write=ask&groupEnabled.graph-write=on")
+		p, ok := f.updatedAgent.ToolPolicies["@group:graph-write"]
+		if !ok || !p.Confirm || p.Disabled {
+			t.Errorf("@group:graph-write = %+v (ok=%v), want confirm", p, ok)
+		}
+	})
+
+	t.Run("group inherit writes no group entry", func(t *testing.T) {
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "groupPolicy.graph-write=inherit&groupEnabled.graph-write=on")
+		if _, ok := f.updatedAgent.ToolPolicies["@group:graph-write"]; ok {
+			t.Errorf("inherit must not write a group entry: %+v", f.updatedAgent.ToolPolicies)
+		}
+	})
+
+	t.Run("group deny writes a disabled group entry", func(t *testing.T) {
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "groupPolicy.graph-write=deny&groupEnabled.graph-write=on")
+		p, ok := f.updatedAgent.ToolPolicies["@group:graph-write"]
+		if !ok || !p.Disabled {
+			t.Errorf("@group:graph-write = %+v (ok=%v), want disabled", p, ok)
+		}
+	})
+
+	t.Run("disabling a group removes and bans its members", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create", "entity-delete"},
+		})
+		// Rendered ON (both members enabled) then switched off: the policy field
+		// is present, the enable switch is absent, and the baseline is "true".
+		post(newServer(f), "tool=entity-create&tool=entity-delete&groupPolicy.graph-write=inherit&groupWasEnabled.graph-write=true")
+		u := f.updatedAgent
+		if containsString(u.Tools, "entity-create") || containsString(u.Tools, "entity-delete") {
+			t.Errorf("disabled group members must leave Tools: %v", u.Tools)
+		}
+		if !containsString(u.BannedTools, "entity-create") || !containsString(u.BannedTools, "entity-delete") {
+			t.Errorf("disabled group members must be banned: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("enabling a group restores its members", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			BannedTools: []string{"entity-create", "entity-delete"},
+		})
+		post(newServer(f), "groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if !containsString(u.Tools, "entity-create") || !containsString(u.Tools, "entity-delete") {
+			t.Errorf("enabled group members must be in Tools: %v", u.Tools)
+		}
+		if containsString(u.BannedTools, "entity-create") || containsString(u.BannedTools, "entity-delete") {
+			t.Errorf("enabled group members must be un-banned: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("per-tool override still wins alongside a group policy", func(t *testing.T) {
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "tool=entity-create&toolPolicy.entity-create=deny&groupPolicy.graph-write=ask&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if p := u.ToolPolicies["entity-create"]; !p.Disabled {
+			t.Errorf("explicit tool override must survive: %+v", u.ToolPolicies)
+		}
+		if p, ok := u.ToolPolicies["@group:graph-write"]; !ok || !p.Confirm {
+			t.Errorf("group policy must also be written: %+v", u.ToolPolicies)
+		}
+		if !containsString(u.Tools, "entity-delete") {
+			t.Errorf("enabling the group must fan out its other member: %v", u.Tools)
+		}
+	})
+
+	t.Run("delegation tools are never fanned out", func(t *testing.T) {
+		// enabling a group that (wrongly) lists delegation tools must not add
+		// them, and disabling must not ban them.
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "groupPolicy.agents=ask&groupEnabled.agents=on&groupWasEnabled.agents=false&groupPolicy.graph-write=ask&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if containsString(u.Tools, "spawn_agents") || containsString(u.Tools, "list_available_agents") {
+			t.Errorf("group enable must not add delegation tools: %v", u.Tools)
+		}
+		if containsString(u.BannedTools, "spawn_agents") || containsString(u.BannedTools, "list_available_agents") {
+			t.Errorf("group enable must not ban delegation tools: %v", u.BannedTools)
+		}
+
+		f2 := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"spawn_agents", "list_available_agents"},
+		})
+		post(newServer(f2), "groupPolicy.agents=inherit&groupWasEnabled.agents=true")
+		u2 := f2.updatedAgent
+		if containsString(u2.BannedTools, "spawn_agents") || containsString(u2.BannedTools, "list_available_agents") {
+			t.Errorf("group disable must not ban delegation tools: %v", u2.BannedTools)
+		}
+	})
+
+	t.Run("a group absent from the form is left alone", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"},
+		})
+		post(newServer(f), "tool=entity-create&groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if containsString(u.BannedTools, "web_search") {
+			t.Errorf("an unrendered group must not be disabled: %v", u.BannedTools)
+		}
+		if containsString(u.Tools, "web_search") {
+			t.Errorf("an unrendered group must not be enabled: %v", u.Tools)
+		}
+		if _, ok := u.ToolPolicies["@group:web"]; ok {
+			t.Errorf("an unrendered group must write no policy: %+v", u.ToolPolicies)
+		}
+	})
+
+	t.Run("no-op group save does not fan out the full group", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"}, // partial: entity-delete not enabled
+		})
+		// The switch is rendered ON (entity-create is enabled) and submitted
+		// unchanged; a no-op save must not add the full-catalog remainder.
+		post(newServer(f), "tool=entity-create&groupEnabled.graph-write=on&groupWasEnabled.graph-write=true")
+		u := f.updatedAgent
+		if containsString(u.Tools, "entity-delete") {
+			t.Errorf("a no-op group save must not fan out the full group: %v", u.Tools)
+		}
+		if !containsString(u.Tools, "entity-create") {
+			t.Errorf("the enabled member must survive a no-op save: %v", u.Tools)
+		}
+	})
+
+	t.Run("toggling a partially-enabled group off bans its members", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"},
+		})
+		// Switch rendered ON (entity-create enabled) but submitted OFF: every
+		// member (including the not-currently-enabled entity-delete) is banned.
+		post(newServer(f), "tool=entity-create&groupWasEnabled.graph-write=true")
+		u := f.updatedAgent
+		if containsString(u.Tools, "entity-create") {
+			t.Errorf("toggling off must remove enabled members: %v", u.Tools)
+		}
+		if !containsString(u.BannedTools, "entity-create") || !containsString(u.BannedTools, "entity-delete") {
+			t.Errorf("toggling off must ban all group members: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("save preserves existing per-tool and group policies", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"},
+			ToolPolicies: map[string]ToolPolicy{
+				"entity-delete":   {Confirm: true},
+				"some_other_tool": {Disabled: true},
+				"@group:web":      {Disabled: true},
+			},
+		})
+		// A no-touch save: no toolPolicy.* or groupPolicy.* control submitted.
+		post(newServer(f), "tool=entity-create&groupEnabled.graph-write=on&groupWasEnabled.graph-write=true&groupWasEnabled.web=false&groupWasEnabled.agents=false")
+		u := f.updatedAgent
+		if p, ok := u.ToolPolicies["entity-delete"]; !ok || !p.Confirm {
+			t.Errorf("existing per-tool override must survive a no-touch save: %+v", u.ToolPolicies)
+		}
+		if p, ok := u.ToolPolicies["some_other_tool"]; !ok || !p.Disabled {
+			t.Errorf("unrendered per-tool entry must survive: %+v", u.ToolPolicies)
+		}
+		if p, ok := u.ToolPolicies["@group:web"]; !ok || !p.Disabled {
+			t.Errorf("existing @group: entry must survive a no-touch save: %+v", u.ToolPolicies)
+		}
+	})
+}
+
+// TestRenderAgentSettingsToolGroups covers the capability-group panel: a
+// collapsible header per group with its enable switch + policy select, the MCP
+// server nested under the group that owns its tools, inheritance hints on rows
+// without an override and the explicit value on rows with one, an "Other" group
+// for uncovered tools, and no header for a group with no member tools.
+func TestRenderAgentSettingsToolGroups(t *testing.T) {
+	data := agentSettingsData{
+		Section: "tools",
+		Agent: &AgentDefinition{
+			ID: "a1", Name: "diane",
+			Tools:        []string{"entity-create", "ha_get_state"},
+			ToolPolicies: map[string]ToolPolicy{"entity-create": {Confirm: true}},
+			ToolGroups: []ToolGroup{
+				{ID: "graph-write", Label: "Graph · Write", Description: "Create, update, or delete graph objects.", Policy: "ask", Enabled: true, Tools: []string{"entity-create", "entity-delete"}},
+				{ID: "web", Label: "Web", Description: "Search and fetch web content.", Tools: []string{"web_search"}},
+				{ID: "empty", Label: "Empty group"},
+			},
+		},
+		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 3, Tools: []MCPTool{
+			{ToolName: "entity-create", Description: "create an object"},
+			{ToolName: "entity-delete", Description: "delete an object"},
+			{ToolName: "web_search", Description: "search the web"},
+		}}},
+	}
+	html := renderHTML(t, AgentSettingsPage(data))
+	for _, want := range []string{
+		"Graph · Write", "Create, update, or delete graph objects.",
+		`data-testid="tool-group-header-graph-write"`,
+		`data-tool-group="graph-write"`,
+		`name="groupPolicy.graph-write"`,
+		`name="groupEnabled.graph-write" value="on" checked`,
+		`data-testid="tool-group-policy-graph-write"`,
+		`data-testid="tool-group-enabled-graph-write"`,
+		`name="tool" type="checkbox" value="entity-create" checked`,
+		`name="tool" type="checkbox" value="entity-delete"`,
+		"Override · Ask",               // entity-create has an explicit entry
+		"Inherits Graph · Write · Ask", // entity-delete has none
+		"builtin",                      // MCP server nested in the group that owns it
+		"Web", `name="groupPolicy.web"`,
+		`name="tool" type="checkbox" value="web_search"`,
+		`data-testid="tool-group-other"`,
+		`name="tool" type="checkbox" value="ha_get_state" checked`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("grouped tools page missing %q", want)
+		}
+	}
+	// the policy select reflects the stored group policy (scoped to each select)
+	if !selectShowsValue(html, "groupPolicy.graph-write", "ask") {
+		t.Error("graph-write policy select should show Ask")
+	}
+	if !selectShowsValue(html, "groupPolicy.web", "inherit") {
+		t.Error("web policy select should show Inherit")
+	}
+	if strings.Contains(html, "Empty group") {
+		t.Error("a group with no member tools must not render a header")
+	}
+	// an enabled group opens by default; an idle group stays collapsed
+	if !strings.Contains(html, `open data-testid="tool-group" data-tool-group="graph-write"`) {
+		t.Error("a group with enabled members should default open")
+	}
+	if strings.Contains(html, `open data-testid="tool-group" data-tool-group="web"`) {
+		t.Error("a group with no enabled members should stay collapsed")
+	}
+
+	// no groups reported → fall back to the source-only grouping unchanged
+	fallback := agentSettingsData{
+		Section: "tools",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"web_search"}},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 1, Tools: []MCPTool{
+			{ToolName: "web_search", Description: "search the web"},
+		}}},
+	}
+	fh := renderHTML(t, AgentSettingsPage(fallback))
+	if !strings.Contains(fh, `name="tool" type="checkbox" value="web_search" checked`) {
+		t.Error("fallback source-only grouping should still render server tools")
+	}
+	if strings.Contains(fh, `data-testid="tool-groups"`) {
+		t.Error("fallback must not render the capability-group wrapper")
+	}
+}
+
+// TestApplyAgentToolsSectionGroupsFullMembership covers the form mapping against
+// full-membership toolGroups (the server's reconciled contract): a group the
+// agent has fully disabled arrives with enabled:false and its whole member
+// list, so switching it on restores every member; a relay tool's per-tool
+// policy persists under its agent-facing <instance>_<tool> name.
+func TestApplyAgentToolsSectionGroupsFullMembership(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+		return e
+	}
+	post := func(e *echo.Echo, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("a fully disabled group can be switched back on", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {
+			ID: "a1", Name: "diane",
+			// full membership; the agent currently allows none of it
+			ToolGroups: []ToolGroup{{ID: "graph-write", Label: "Graph · Write", Enabled: false, Tools: []string{"entity-create", "entity-delete"}}},
+		}}}
+		post(newServer(f), "groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if !containsString(u.Tools, "entity-create") || !containsString(u.Tools, "entity-delete") {
+			t.Errorf("enabling a disabled group must restore its full membership: %v", u.Tools)
+		}
+		if len(u.BannedTools) != 0 {
+			t.Errorf("restored members must not stay banned: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("relay tool per-tool policy persists under its instance name", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {
+			ID: "a1", Name: "diane",
+			ToolGroups: []ToolGroup{{ID: "mac", Label: "Mac", Tools: []string{"mac-ada_notes_search"}}},
+		}}}
+		post(newServer(f), "tool=mac-ada_notes_search&toolPolicy.mac-ada_notes_search=ask&groupPolicy.mac=inherit&groupEnabled.mac=on")
+		p, ok := f.updatedAgent.ToolPolicies["mac-ada_notes_search"]
+		if !ok || !p.Confirm {
+			t.Errorf("relay tool override must persist: %+v", f.updatedAgent.ToolPolicies)
+		}
+	})
+}
+
+// TestGroupWritePathIgnoresToolGroups asserts the write path never depends on
+// the read-only toolGroups field: with toolGroups populated, a save makes only
+// the intended Tools / ToolPolicies / BannedTools changes.
+func TestGroupWritePathIgnoresToolGroups(t *testing.T) {
+	groups := []ToolGroup{
+		{ID: "graph-write", Label: "Graph · Write", Enabled: true, Tools: []string{"entity-create", "entity-delete"}},
+		{ID: "web", Label: "Web", Enabled: false, Tools: []string{"web_search"}},
+	}
+	f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {
+		ID: "a1", Name: "diane",
+		Tools:        []string{"entity-create"},
+		BannedTools:  []string{"web_search"},
+		ToolPolicies: map[string]ToolPolicy{"@group:web": {Confirm: true}},
+		ToolGroups:   groups,
+	}}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader("tool=entity-create&groupPolicy.web=deny&groupEnabled.web=on&groupWasEnabled.web=false"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	u := f.updatedAgent
+	if len(u.Tools) != 2 || !containsString(u.Tools, "entity-create") || !containsString(u.Tools, "web_search") {
+		t.Errorf("Tools = %v, want [entity-create web_search] only", u.Tools)
+	}
+	if len(u.BannedTools) != 0 {
+		t.Errorf("BannedTools = %v, want empty after enabling the web group", u.BannedTools)
+	}
+	if p, ok := u.ToolPolicies["@group:web"]; !ok || !p.Disabled {
+		t.Errorf("@group:web = %+v (ok=%v), want disabled", p, ok)
+	}
+	if _, ok := u.ToolPolicies["web_search"]; ok {
+		t.Errorf("enabling a group must not write per-tool entries: %+v", u.ToolPolicies)
+	}
+	if len(u.ToolGroups) != len(groups) {
+		t.Errorf("the applier must not depend on toolGroups: %+v", u.ToolGroups)
+	}
+}
+
+// TestSanitizeAgentWriteDropsToolGroups asserts the client write path strips the
+// server-computed toolGroups field before serializing an agent definition.
+func TestSanitizeAgentWriteDropsToolGroups(t *testing.T) {
+	def := &AgentDefinition{ID: "a1", ToolGroups: []ToolGroup{{ID: "g", Tools: []string{"t"}}}}
+	sanitizeAgentWrite(def)
+	if def.ToolGroups != nil {
+		t.Errorf("sanitizeAgentWrite must clear toolGroups, got %+v", def.ToolGroups)
+	}
+	sanitizeAgentWrite(nil) // must not panic
+}
+
+// TestRenderAgentSettingsToolGroupsFullMembership covers the picker against
+// full-membership toolGroups: a fully disabled group still renders with its
+// switch off and every member row unchecked (so it can be switched on), each
+// member renders exactly once and never leaks into Other, a banned-only member
+// still appears in its group, an uncovered relay tool lands in Other, and the
+// inheritance hint stays visible at all widths.
+func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
+	data := agentSettingsData{
+		Section: "tools",
+		Agent: &AgentDefinition{
+			ID: "a1", Name: "diane",
+			Tools:       []string{"mac-ada_notes_search"},
+			BannedTools: []string{"entity-delete"},
+			ToolGroups: []ToolGroup{
+				{ID: "graph-write", Label: "Graph · Write", Description: "Create, update, or delete graph objects.", Enabled: false, Tools: []string{"entity-create", "entity-delete"}},
+				{ID: "web", Label: "Web", Description: "Search and fetch web content.", Enabled: false, Tools: []string{"web_search"}},
+			},
+		},
+		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 3, Tools: []MCPTool{
+			{ToolName: "entity-create"},
+			{ToolName: "entity-delete"},
+			{ToolName: "web_search"},
+		}}},
+		RelayNodes: []relayNode{{Session: RelaySession{InstanceID: "mac-ada", ToolCount: 1}, Tools: []RelayTool{{Name: "notes_search"}}}},
+	}
+	html := renderHTML(t, AgentSettingsPage(data))
+
+	// a fully disabled group is still rendered (not dropped) with its switch off
+	for _, want := range []string{
+		`data-testid="tool-group-header-graph-write"`,
+		`data-testid="tool-group-header-web"`,
+		`name="groupEnabled.graph-write"`,
+		`name="groupEnabled.web"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("grouped picker missing %q", want)
+		}
+	}
+	for _, group := range []string{"graph-write", "web"} {
+		if strings.Contains(html, `name="groupEnabled.`+group+`" value="on" checked`) {
+			t.Errorf("group %s has no enabled members, switch must be off", group)
+		}
+	}
+
+	// every member renders exactly once, unchecked (banned-only included)
+	for _, name := range []string{"entity-create", "entity-delete", "web_search"} {
+		if got := strings.Count(html, `value="`+name+`"`); got != 1 {
+			t.Errorf("%s rendered %d times, want 1 (no duplicate, no Other leak)", name, got)
+		}
+		if strings.Contains(html, `value="`+name+`" checked`) {
+			t.Errorf("%s must render unchecked", name)
+		}
+	}
+
+	// the uncovered relay tool lands in Other, checked, so it is never lost
+	if !strings.Contains(html, `data-testid="tool-group-other"`) {
+		t.Error("uncovered tools should render the Other group")
+	}
+	if !strings.Contains(html, `name="tool" type="checkbox" value="mac-ada_notes_search" checked`) {
+		t.Error("uncovered relay tool should appear checked in Other")
+	}
+
+	// inheritance stays visible at all widths: compact form alongside the full one
+	if !strings.Contains(html, "→ Default") {
+		t.Error("compact inheritance hint should render for inherited rows")
+	}
+	if !strings.Contains(html, "Inherits Graph · Write · Default") {
+		t.Error("full inheritance hint should render for inherited rows")
+	}
+}
+
+// goldenToolGroupsPath resolves the server-lane golden fixture relative to this
+// test file, so it works from any working directory and never needs an absolute
+// machine path.
+func goldenToolGroupsPath(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve the test file path")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "..", "..",
+		"openspec", "changes", "add-agent-tool-groups", "fixtures", "tool-groups.golden.json")
+}
+
+// TestGoldenToolGroupsFixtureContract is the cross-lane contract test: it parses
+// the server-lane golden fixture — the real serialized AgentDefinition.toolGroups
+// payload — into the gateway's local ToolGroup type and drives the real Tools
+// panel render path with it. Deterministic: file + in-process render only.
+func TestGoldenToolGroupsFixtureContract(t *testing.T) {
+	raw, err := os.ReadFile(goldenToolGroupsPath(t))
+	if err != nil {
+		t.Fatalf("read golden tool-groups fixture: %v", err)
+	}
+	var groups []ToolGroup
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		t.Fatalf("unmarshal golden fixture into []ToolGroup via the gateway JSON tags: %v", err)
+	}
+	if len(groups) == 0 {
+		t.Fatal("golden fixture has no tool groups")
+	}
+
+	// Frozen shape: every entry must carry all six D6 keys, with valid values.
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("unmarshal golden fixture as raw entries: %v", err)
+	}
+	if len(entries) != len(groups) {
+		t.Fatalf("raw entry count %d != decoded group count %d", len(entries), len(groups))
+	}
+	ids := map[string]bool{}
+	for i, g := range groups {
+		for _, key := range []string{"id", "label", "description", "policy", "enabled", "tools"} {
+			if _, ok := entries[i][key]; !ok {
+				t.Errorf("group %q is missing the %q field", g.ID, key)
+			}
+		}
+		if g.ID == "" || g.Label == "" || g.Description == "" {
+			t.Errorf("group %d has an empty id/label/description: %+v", i, g)
+		}
+		if ids[g.ID] {
+			t.Errorf("duplicate group id %q", g.ID)
+		}
+		ids[g.ID] = true
+		switch g.Policy {
+		case "", "allow", "ask", "deny":
+		default:
+			t.Errorf("group %q has invalid policy %q", g.ID, g.Policy)
+		}
+		if g.Tools == nil {
+			t.Errorf("group %q has a null tools list (want an array)", g.ID)
+		}
+	}
+
+	// The fixture must actually exercise every case this contract depends on.
+	var (
+		disabledWithMembers bool
+		askGroupWithMembers bool
+		relayStyleMember    bool
+	)
+	for _, g := range groups {
+		if !g.Enabled && len(g.Tools) > 0 {
+			disabledWithMembers = true
+		}
+		if g.Policy == "ask" && len(g.Tools) > 0 {
+			askGroupWithMembers = true
+		}
+		for _, tool := range g.Tools {
+			if strings.Contains(tool, "_") {
+				relayStyleMember = true
+			}
+		}
+	}
+	if !disabledWithMembers {
+		t.Fatal("fixture is missing case: a group with enabled:false and a non-empty tools list")
+	}
+	if !askGroupWithMembers {
+		t.Fatal("fixture is missing case: a group with policy:\"ask\" and at least one member (needed to exercise an explicit override alongside a group policy)")
+	}
+	if !relayStyleMember {
+		t.Fatal("fixture is missing case: a relay-style <instance>_<tool> member name")
+	}
+
+	// Reconstruct the representative agent + catalog from the fixture. Every
+	// group member is either allowed (its group is enabled) or banned (disabled),
+	// names with an underscore are relay-style, the rest come from one registry
+	// server. The explicit overrides mirror the README: entity-create has a
+	// per-tool entry, and document-list overrides its group's ask policy.
+	var (
+		tools       []string
+		banned      []string
+		serverTools []MCPTool
+		relayTools  = map[string][]RelayTool{}
+		relayOrder  []string
+	)
+	for _, g := range groups {
+		for _, name := range g.Tools {
+			if g.Enabled {
+				tools = append(tools, name)
+			} else {
+				banned = append(banned, name)
+			}
+			instance, tool, isRelay := strings.Cut(name, "_")
+			if isRelay {
+				if _, ok := relayTools[instance]; !ok {
+					relayOrder = append(relayOrder, instance)
+				}
+				relayTools[instance] = append(relayTools[instance], RelayTool{Name: tool})
+				continue
+			}
+			serverTools = append(serverTools, MCPTool{ToolName: name})
+		}
+	}
+	var relayNodes []relayNode
+	for _, instance := range relayOrder {
+		relayNodes = append(relayNodes, relayNode{
+			Session: RelaySession{InstanceID: instance, ToolCount: len(relayTools[instance])},
+			Tools:   relayTools[instance],
+		})
+	}
+
+	data := agentSettingsData{
+		Section: "tools",
+		Agent: &AgentDefinition{
+			ID: "a1", Name: "fixture-agent",
+			Tools:       tools,
+			BannedTools: banned,
+			ToolPolicies: map[string]ToolPolicy{
+				"entity-create": {Confirm: true},
+				"document-list": {Disabled: true},
+			},
+			ToolGroups: groups,
+		},
+		Agents:     []AgentDefinitionSummary{{ID: "a1", Name: "fixture-agent"}},
+		MCPServers: []MCPServer{{Name: "builtin", ToolCount: len(serverTools), Tools: serverTools}},
+		RelayNodes: relayNodes,
+	}
+	html := renderHTML(t, AgentSettingsPage(data))
+
+	// every fixture group renders a header (no group dropped) and the relay-style
+	// member renders inside its group's relay sub-group.
+	for _, g := range groups {
+		if !strings.Contains(html, `data-testid="tool-group-header-`+g.ID+`"`) {
+			t.Errorf("group %q header is missing from the panel", g.ID)
+		}
+	}
+	if !strings.Contains(html, "relay1") {
+		t.Error("relay-style group member should render under its relay node sub-group")
+	}
+	if !strings.Contains(html, `name="tool" type="checkbox" value="relay1_reminders_list" checked`) {
+		t.Error("relay-style member should render checked in its relay sub-group")
+	}
+
+	// (a) a disabled group still renders its rows unchecked and offers the
+	//     controls needed to switch it on.
+	if !strings.Contains(html, `data-testid="tool-group-enabled-schema-write"`) ||
+		!strings.Contains(html, `data-testid="tool-group-policy-schema-write"`) {
+		t.Error("a fully disabled group must still render its enable switch and policy select")
+	}
+	if strings.Contains(html, `name="groupEnabled.schema-write" value="on" checked`) {
+		t.Error("schema-write has no enabled members, its switch must be off")
+	}
+	for _, name := range []string{"schema-create", "schema-delete"} {
+		if !strings.Contains(html, `name="tool" type="checkbox" value="`+name+`"`) {
+			t.Errorf("disabled group member %s is missing from the panel", name)
+		}
+		if strings.Contains(html, `value="`+name+`" checked`) {
+			t.Errorf("disabled group member %s must render unchecked", name)
+		}
+	}
+
+	// (b) the stored ask policy renders on the group's policy select.
+	if !selectShowsValue(html, "groupPolicy.documents", "ask") {
+		t.Error("documents group policy select should show Ask")
+	}
+
+	// (c) an explicit per-tool override renders its own value; a tool without one
+	//     renders the inherited hint for its group.
+	for _, want := range []string{
+		"Override · Ask",                   // entity-create (README's per-tool entry)
+		"Override · Deny",                  // document-list overrides its ask group
+		"Inherits Documents · Ask",         // document-create inherits ask
+		"Inherits Graph · Write · Default", // entity-update inherits the graph-write group
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("hint %q is missing from the rendered panel", want)
+		}
+	}
+
+	// (d) every fixture member renders exactly once (so no duplicate row inside a
+	//     group) and none leaks into the Other fallback block.
+	for _, g := range groups {
+		for _, name := range g.Tools {
+			if got := strings.Count(html, `value="`+name+`"`); got != 1 {
+				t.Errorf("fixture member %s rendered %d times, want exactly 1", name, got)
+			}
+		}
+	}
+	if strings.Contains(html, `data-testid="tool-group-other"`) {
+		t.Error("no fixture member may leak into the Other fallback block")
 	}
 }
 
