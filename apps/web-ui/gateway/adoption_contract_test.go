@@ -7,15 +7,15 @@ import (
 
 // These tests lock the documented shell normalizations from the
 // refactor-webui-component-adoption change: the three raw <dialog class="modal">
-// shells now render through modalShell (carrying hx-boost="false" on the dialog
+// shells now render through ui.Dialog (carrying hx-boost="false" on the dialog
 // root), and the two agent MCP endpoint lists now render through TableCard's
 // standard card shell. Identity, ARIA, form wiring, and submit behaviour are
 // preserved in both cases.
 
-// TestDeriveDialogsRenderThroughModalShell asserts the three migrated derive
-// dialogs render through modalShell, carrying hx-boost="false" on the <dialog>
+// TestDeriveDialogsRenderThroughDialog asserts the three migrated derive
+// dialogs render through ui.Dialog, carrying hx-boost="false" on the <dialog>
 // root while preserving their ids, aria wiring, and form action/method.
-func TestDeriveDialogsRenderThroughModalShell(t *testing.T) {
+func TestDeriveDialogsRenderThroughDialog(t *testing.T) {
 	t.Run("derive blueprint", func(t *testing.T) {
 		html := renderHTML(t, deriveBlueprintDialog())
 		assertContainsHTML(t, html,
