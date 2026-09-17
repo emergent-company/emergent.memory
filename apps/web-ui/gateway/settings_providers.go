@@ -850,6 +850,28 @@ func (s *Server) providerModelOptions(ctx context.Context) (gen, emb []Model) {
 	return defaultModelCatalog(d, "generative"), defaultModelCatalog(d, "embedding")
 }
 
+// configuredGenerativeModels returns the credential-prefixed generative model
+// catalog for the given configured providers — the only models the agent model
+// pickers (the settings Model section and the agents create/edit dialog) offer.
+// It reuses defaultModelCatalog (which also appends each provider's configured
+// fallback generative model) while skipping the pricing/overrides reads the
+// full providers panel needs. providers is passed in so callers that already
+// fetched it (for HasProviders/ProviderNames) avoid a second round trip; a
+// per-provider catalog failure skips that provider's models, like the providers
+// panel.
+func (s *Server) configuredGenerativeModels(ctx context.Context, providers []ProjectProviderConfig) []Model {
+	d := providerPanelData{
+		Providers:      providers,
+		ProviderModels: map[string][]ProviderSupportedModel{},
+	}
+	for _, p := range providers {
+		if models, err := s.memory.ListProviderModels(ctx, p.Provider); err == nil {
+			d.ProviderModels[p.Provider] = models
+		}
+	}
+	return defaultModelCatalog(d, "generative")
+}
+
 // prefixedModelInCatalog reports whether a provider-prefixed model name
 // ("provider/model") is present in the given catalog options.
 func prefixedModelInCatalog(models []Model, name string) bool {

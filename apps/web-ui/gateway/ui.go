@@ -358,23 +358,30 @@ func resolveAvatar(override, picture string) string {
 func (s *Server) uiAgents(c echo.Context) error {
 	ctx := c.Request().Context()
 	var (
-		agents    []AgentDefinitionSummary
-		agentsErr error
-		models    []Model
-		modelsErr error
-		skills    []Skill
-		skillsErr error
+		agents       []AgentDefinitionSummary
+		agentsErr    error
+		skills       []Skill
+		skillsErr    error
+		providers    []ProjectProviderConfig
+		providersErr error
 	)
 	var g errgroup.Group
 	g.Go(func() error { agents, agentsErr = s.memory.ListAgentDefinitions(ctx); return nil })
-	g.Go(func() error { models, modelsErr = s.memory.ListModels(ctx); return nil })
 	g.Go(func() error { skills, skillsErr = s.memory.ListSkills(ctx); return nil })
+	g.Go(func() error { providers, providersErr = s.memory.ListProjectProviders(ctx); return nil })
 	_ = g.Wait()
 	if agentsErr != nil {
 		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, nil, agentsErr))
 	}
-	captureError(modelsErr)
 	captureError(skillsErr)
+	captureError(providersErr)
+
+	// Offer only configured providers' models — the global catalog includes
+	// unconfigured providers, which would break chats.
+	var models []Model
+	if providersErr == nil {
+		models = s.configuredGenerativeModels(ctx, providers)
+	}
 
 	// Per-agent model info rides on the list response now (memory reports
 	// effectiveModel per summary), so there is no per-agent GET round-trip
