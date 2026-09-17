@@ -10,6 +10,12 @@ import Foundation
 /// `EngineManager`'s streaming handle. Both handles open with `O_APPEND` so the
 /// two writers cannot reorder or overwrite each other's bytes. Best-effort:
 /// failures are swallowed, because logging must never fail an account transition.
+///
+/// Writes are suppressed under hosted unit tests: the test bundle runs inside
+/// the app process, so without this guard a test run would append `[lifecycle]`
+/// lines (and test-stub accounts) to the real user's log at
+/// `~/Library/Logs/memory-connector-app.log`, polluting the file the
+/// observability lines exist to make readable.
 enum ConnectorLog {
 
     /// Appends a `[lifecycle]` line (with a trailing newline).
@@ -17,7 +23,21 @@ enum ConnectorLog {
         append("[lifecycle] \(message)\n")
     }
 
+    /// Whether this process is a hosted unit-test run. Pure so it is
+    /// unit-testable; mirrors the hosted-test check
+    /// `AppEnvironment.defaultLegacyMigrator()` uses to avoid touching real
+    /// Keychain/config state from a test.
+    static func isHostedTest(environment: [String: String]) -> Bool {
+        environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+    }
+
+    private static var isHostedTestRun: Bool {
+        isHostedTest(environment: ProcessInfo.processInfo.environment)
+    }
+
     private static func append(_ line: String) {
+        guard !isHostedTestRun else { return }
         let url = EngineManager.logFileURL
         do {
             try FileManager.default.createDirectory(
