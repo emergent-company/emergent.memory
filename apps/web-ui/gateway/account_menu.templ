@@ -68,15 +68,18 @@ templ userAccountMenu(user *currentUser, accounts []currentUser) {
 // accountAvatar renders a round avatar via go-daisy's AvatarFull: an <img>
 // when a picture URL is present, else an initials badge (falling back to a
 // user icon). size selects the diameter; textClass sizes the initials text
-// (inherited by the inner badge).
+// (passed through AvatarProps.TextClass). The outer shrink-0 wrapper is kept
+// local because AvatarFull has no shrink slot, and it prevents the avatar from
+// collapsing in the flex menu rows.
 templ accountAvatar(name, picture string, size ui.AvatarSize, textClass string) {
-	<div class={ "shrink-0", textClass }>
+	<div class="shrink-0">
 		@ui.AvatarFull(ui.AvatarProps{
-			Name:     name,
-			Src:      picture,
-			Icon:     "lucide--user",
-			Size:     size,
-			Fallback: ui.AvatarFallbackInitials,
+			Name:      name,
+			Src:       picture,
+			Icon:      "lucide--user",
+			Size:      size,
+			Fallback:  ui.AvatarFallbackInitials,
+			TextClass: textClass,
 		})
 	</div>
 }
