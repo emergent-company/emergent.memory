@@ -82,6 +82,8 @@ var (
 	defFlowType             string
 	defVisibility           string
 	defIsDefault            string
+	defIcon                 string
+	defColor                string
 	defMaxSteps             int
 	defDefaultTimeout       int
 	defListLimit            int
@@ -335,6 +337,13 @@ func runCreateAgentDef(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("default-timeout") {
 		createReq.DefaultTimeout = &defDefaultTimeout
 	}
+	if defIcon != "" || defColor != "" {
+		ui, err := buildUIConfig(defIcon, defColor)
+		if err != nil {
+			return fmt.Errorf("failed to build uiConfig: %w", err)
+		}
+		createReq.UIConfig = ui
+	}
 
 	result, err := c.SDK.AgentDefinitions.Create(context.Background(), createReq)
 	if err != nil {
@@ -424,6 +433,14 @@ func runUpdateAgentDef(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("default-timeout") {
 		updateReq.DefaultTimeout = &defDefaultTimeout
+		hasUpdate = true
+	}
+	if cmd.Flags().Changed("icon") || cmd.Flags().Changed("color") {
+		ui, err := buildUIConfig(defIcon, defColor)
+		if err != nil {
+			return fmt.Errorf("failed to build uiConfig: %w", err)
+		}
+		updateReq.UIConfig = ui
 		hasUpdate = true
 	}
 
@@ -721,6 +738,20 @@ func runListOverrides(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// buildUIConfig builds the opaque uiConfig JSON blob sent for --icon/--color.
+// Empty values are omitted; when both are empty it returns an empty object
+// ("{}") so callers can clear a previously-set appearance.
+func buildUIConfig(icon, color string) (json.RawMessage, error) {
+	m := map[string]string{}
+	if icon != "" {
+		m["icon"] = icon
+	}
+	if color != "" {
+		m["color"] = color
+	}
+	return json.Marshal(m)
+}
+
 func init() {
 	// List pagination flags
 	listAgentDefsCmd.Flags().IntVar(&defListLimit, "limit", 0, "Maximum number of definitions to show (0 = all)")
@@ -739,6 +770,8 @@ func init() {
 	createAgentDefCmd.Flags().StringVar(&defFlowType, "flow-type", "", "Flow type (single, multi, coordinator)")
 	createAgentDefCmd.Flags().StringVar(&defVisibility, "visibility", "", "Visibility (external, project, internal)")
 	createAgentDefCmd.Flags().StringVar(&defIsDefault, "is-default", "", "Set as default definition (true/false)")
+	createAgentDefCmd.Flags().StringVar(&defIcon, "icon", "", "Icon name (bare kebab-case Lucide name)")
+	createAgentDefCmd.Flags().StringVar(&defColor, "color", "", "Icon color (#RRGGBB)")
 	createAgentDefCmd.Flags().IntVar(&defMaxSteps, "max-steps", 0, "Maximum steps per run")
 	createAgentDefCmd.Flags().IntVar(&defDefaultTimeout, "default-timeout", 0, "Default timeout in seconds")
 	_ = createAgentDefCmd.MarkFlagRequired("name")
@@ -753,6 +786,8 @@ func init() {
 	updateAgentDefCmd.Flags().StringVar(&defFlowType, "flow-type", "", "New flow type")
 	updateAgentDefCmd.Flags().StringVar(&defVisibility, "visibility", "", "New visibility")
 	updateAgentDefCmd.Flags().StringVar(&defIsDefault, "is-default", "", "Set as default (true/false)")
+	updateAgentDefCmd.Flags().StringVar(&defIcon, "icon", "", "New icon name (bare kebab-case Lucide name)")
+	updateAgentDefCmd.Flags().StringVar(&defColor, "color", "", "New icon color (#RRGGBB)")
 	updateAgentDefCmd.Flags().IntVar(&defMaxSteps, "max-steps", 0, "New max steps")
 	updateAgentDefCmd.Flags().IntVar(&defDefaultTimeout, "default-timeout", 0, "New default timeout")
 

@@ -519,6 +519,9 @@ func buildAgentDefinition(m *AgentManifest, projectID string) *agents.AgentDefin
 			}
 		}
 	}
+	if ui := agentUIConfig(m.UI); ui != nil {
+		def.UIConfig = ui
+	}
 	return def
 }
 
@@ -594,6 +597,33 @@ func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest)
 			}
 		}
 	}
+	// UI is optional: applied only when the manifest carries a non-empty
+	// icon/color; omitted = preserve the current ui_config.
+	if ui := agentUIConfig(m.UI); ui != nil {
+		def.UIConfig = ui
+	}
+}
+
+// agentUIConfig marshals an AgentUIManifest into the opaque ui_config JSONB
+// blob stored on agents.AgentDefinition.UIConfig. Returns nil when the block is
+// absent or has no non-empty icon/color, so callers leave ui_config at the DB
+// default '{}' (create) or preserve the existing value (update).
+func agentUIConfig(ui *AgentUIManifest) json.RawMessage {
+	if ui == nil || (ui.Icon == "" && ui.Color == "") {
+		return nil
+	}
+	m := map[string]string{}
+	if ui.Icon != "" {
+		m["icon"] = ui.Icon
+	}
+	if ui.Color != "" {
+		m["color"] = ui.Color
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // toSkillMetadata converts manifest metadata (opaque map) into a typed
