@@ -602,10 +602,15 @@ templ agentSandboxForm(data agentSandboxData) {
 					<select id="agent-sandbox-provider" name="provider" class="select w-full" aria-describedby="agent-sandbox-provider-status">
 						<option value="" selected?={ sandboxConfigProvider(data.Config) == "" }>Auto</option>
 						for _, p := range data.Providers {
-							<option value={ p.Type } selected?={ sandboxConfigProvider(data.Config) == p.Type } disabled?={ !p.Healthy } title={ p.Message }>{ sandboxProviderOptionLabel(p) }</option>
+							// A disabled option is omitted from the submitted form data, so
+							// disabling the SELECTED option would drop a stored-but-unavailable
+							// provider and silently persist Auto. Keep the stored provider's
+							// option selectable (still labelled unavailable); every other
+							// unavailable provider stays disabled.
+							<option value={ p.Type } selected?={ sandboxConfigProvider(data.Config) == p.Type } disabled?={ !p.Healthy && sandboxConfigProvider(data.Config) != p.Type } title={ p.Message }>{ sandboxProviderOptionLabel(p) }</option>
 						}
 						if saved := sandboxConfigProvider(data.Config); saved != "" && !sandboxProviderListed(data.Providers, saved) {
-							<option value={ saved } disabled selected title="The server no longer reports this provider.">{ sandboxSavedProviderLabel(saved) }</option>
+							<option value={ saved } selected title="The server no longer reports this provider.">{ sandboxSavedProviderLabel(saved) }</option>
 						}
 					</select>
 				}
