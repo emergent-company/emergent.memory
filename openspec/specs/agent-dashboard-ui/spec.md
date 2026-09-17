@@ -2,7 +2,9 @@
 
 ## Purpose
 A gateway web UI agent dashboard where a user can see one agent's summary, its configured tools, and its recent chats, edit the agent's settings in-page, browse its full session list, and follow a link to a subpage that browses the project's memory objects with search and detail views.
+
 ## Requirements
+
 ### Requirement: Navigate to an agent's dashboard
 
 The agents list SHALL link each agent to its own dashboard.
@@ -60,26 +62,36 @@ The dashboard SHALL provide a link to the memories subpage.
 
 ### Requirement: Navigate agent sections
 
-The agent pages SHALL show a vertical sub-menu with Dashboard, Settings, and Sessions sections scoped to that agent.
+The agent pages SHALL show a vertical sub-menu with Dashboard, Settings, Sandbox, and Sessions sections scoped to that agent. On any agent Settings subpage, the Settings entry SHALL expand into a group of six indented subpage links — General, Model, Tools, Skills, Delegation, and MCP sharing — with the active subpage highlighted.
 
 #### Scenario: Sub-menu present
 
 - **WHEN** an agent page loads
-- **THEN** the sub-menu shows Dashboard, Settings, and Sessions links for that agent only
+- **THEN** the sub-menu shows Dashboard, Settings, Sandbox, and Sessions links for that agent only
+
+#### Scenario: Settings group lists the six subpages
+
+- **WHEN** an agent Settings subpage loads
+- **THEN** the Settings entry shows six indented children — General, Model, Tools, Skills, Delegation, and MCP sharing — and the current subpage is highlighted
+
+#### Scenario: Subpages are distinct routes
+
+- **WHEN** the owner opens any Settings subpage
+- **THEN** each subpage renders only its own panel at `/agents/:id/settings[/<section>]`, and an unknown section returns 404
 
 ### Requirement: Edit an agent in-page
 
-The Settings section SHALL show a form organized into panels (section header + panel), one per concern: General (name, system prompt), Model (model, temperature, max tokens), Tools, Skills, and Delegation. It SHALL NOT use a modal.
+The Settings surface SHALL be split into one form per concern — General (name, system prompt, language), Model (model, temperature, max tokens), Tools (default approval + tool picker), Skills, and Delegation — each with its own Save action that persists ONLY that concern's fields. It SHALL NOT use a modal.
 
 #### Scenario: Edit form shows current values
 
-- **WHEN** the Settings section loads
-- **THEN** the form shows the agent's current values for every editable field
+- **WHEN** a Settings subpage loads
+- **THEN** the form shows the agent's current values for that concern's fields
 
 #### Scenario: Save changes
 
-- **WHEN** the user submits the form with valid values
-- **THEN** the changes persist and the page shows a success message
+- **WHEN** the owner submits a section's form with valid values
+- **THEN** only that section's fields change, every other section's fields are preserved, and the page shows a success message
 
 #### Scenario: Save rejected
 
@@ -178,4 +190,3 @@ The dashboard and memories subpage SHALL show a clear error state when a backend
 
 - **WHEN** a required backend request fails
 - **THEN** the affected section shows an error message while the rest of the page remains usable
-
