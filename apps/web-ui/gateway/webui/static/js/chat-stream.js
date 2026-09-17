@@ -580,7 +580,7 @@
         if (!sel) return "";
         return isMulti
           ? '<span class="iconify lucide--check size-3 text-primary-content" aria-hidden="true"></span>'
-          : '<span class="size-2 rounded-full bg-primary"></span>';
+          : '<span class="size-2 rounded-full bg-primary-content"></span>';
       }
 
       function buildRow(opt, i) {
