@@ -1,0 +1,32 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// SubNav renders a sub-navigation rail: it stacks horizontally on small screens
+// and becomes a vertical rail on desktop. Callers supply SubNavItems; the rail
+// lives here rather than in a feature page file.
+templ SubNav(label string) {
+	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label={ label }>
+		{ children... }
+	</nav>
+}
+
+// SubNavItem renders one sub-navigation entry, marking the active destination.
+templ SubNavItem(href string, isActive bool, icon, label string) {
+	<a
+		class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", isActive), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !isActive) }
+		href={ templ.URL(href) }
+		if isActive {
+			aria-current="page"
+		}
+	>
+		if isActive {
+			@ui.IconSpan(icon, "size-4 shrink-0 text-primary")
+		} else {
+			@ui.IconSpan(icon, "size-4 shrink-0 text-base-content/40")
+		}
+		<span>{ label }</span>
+	</a>
+}

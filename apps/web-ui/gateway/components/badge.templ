@@ -1,0 +1,42 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// StatusBadgeOpts tunes a StatusBadge. Every domain status badge keeps its
+// existing treatment (style, size, dot vs icon) by passing these, so unifying
+// on this primitive does not change rendered output.
+type StatusBadgeOpts struct {
+	// Style is the badge fill style, e.g. ui.BadgeStyleSoft. Default default.
+	Style ui.BadgeStyle
+	// Size is the badge size. Default ui.BadgeSizeSM.
+	Size ui.BadgeSize
+	// Dot renders a status dot instead of an icon.
+	Dot bool
+	// Attrs carries extra attributes such as data-testid.
+	Attrs templ.Attributes
+}
+
+// StatusBadge renders a status badge from an explicit intent. Domain status
+// vocabularies stay in the calling package, which maps its own status values to
+// an intent and (optionally) an icon here.
+templ StatusBadge(label string, intent ui.BadgeIntent, icon string, opts ...StatusBadgeOpts) {
+	{{ var o StatusBadgeOpts
+	size := ui.BadgeSizeSM
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	if o.Size != "" {
+		size = o.Size
+	} }}
+	@ui.Badge(ui.BadgeProps{
+		Label:   label,
+		Variant: intent,
+		Style:   o.Style,
+		Size:    size,
+		Icon:    icon,
+		Dot:     o.Dot,
+		Attrs:   o.Attrs,
+	})
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
@@ -101,9 +102,8 @@ templ agentMCPEndpointBody(data agentSettingsData) {
 				Dot:     true,
 				Attrs:   templ.Attributes{"data-testid": "agent-mcp-endpoint-status"},
 			})
-			<span class="text-base-content/45 inline-flex items-center gap-1 text-xs">
-				@ui.IconSpan("lucide--calendar-plus", "size-3.5")
-				created { relTime(ep.CreatedAt) }
+			<span class="text-base-content/45 text-xs">
+				@components.MetaChip("lucide--calendar-plus", "created "+relTime(ep.CreatedAt))
 			</span>
 			<form class="ms-auto" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.MCPAgentID) + "/mcp-endpoint/revoke") }>
 				@ui.Button(ui.ButtonProps{
@@ -113,7 +113,7 @@ templ agentMCPEndpointBody(data agentSettingsData) {
 					Icon:       "lucide--trash-2",
 					ExtraClass: "text-error hover:text-error",
 					AriaLabel:  "Revoke this agent's MCP endpoint",
-					OnClick:    agentMCPOpenDialog("endpoint-revoke-dialog"),
+					OnClick:    templ.JSFuncCall("openDialogByID", "agent-mcp-endpoint-revoke-dialog"),
 				}) {
 					Revoke endpoint
 				}
@@ -303,7 +303,7 @@ templ agentMCPKeyRow(k AgentMCPKey) {
 						Icon:      "lucide--refresh-cw",
 						AriaLabel: "Rotate key " + label,
 						Attrs:     templ.Attributes{"title": "Issue a new secret for this key"},
-						OnClick:   agentMCPOpenDialog("key-rotate-" + k.ID),
+						OnClick:   templ.JSFuncCall("openDialogByID", "agent-mcp-key-rotate-"+k.ID),
 					})
 					@ui.Button(ui.ButtonProps{
 						Type:       ui.ButtonTypeButton,
@@ -314,7 +314,7 @@ templ agentMCPKeyRow(k AgentMCPKey) {
 						ExtraClass: "text-error hover:text-error",
 						AriaLabel:  "Revoke key " + label,
 						Attrs:      templ.Attributes{"title": "Revoke this key"},
-						OnClick:    agentMCPOpenDialog("key-revoke-" + k.ID),
+						OnClick:    templ.JSFuncCall("openDialogByID", "agent-mcp-key-revoke-"+k.ID),
 					})
 				</div>
 			}
@@ -403,12 +403,6 @@ templ agentMCPKeyRotateDialog(agentID string, k AgentMCPKey) {
 			}
 		</form>
 	}
-}
-
-// agentMCPOpenDialog opens one row's rotate/revoke confirmation dialog.
-script agentMCPOpenDialog(id string) {
-	var d = document.getElementById("agent-mcp-" + id);
-	if (d) d.showModal();
 }
 
 // --- sessions ---
@@ -550,109 +544,25 @@ func sessionFilterQuery(value string) string {
 // exists only in this response; closing the dialog returns to the section and it
 // is gone for good.
 templ agentMCPRevealModal(r agentMCPReveal) {
-	<dialog id="agent-mcp-reveal-modal" class="modal" hx-boost="false" data-agent-mcp-reveal>
-		<div class="modal-box max-w-[63rem]">
-			<div class="flex items-center gap-3">
-				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
-				<div class="min-w-0">
-					<h3 class="text-lg font-semibold">{ r.Heading }</h3>
-					<p class="text-base-content/50 mt-0.5 text-xs">
-						if r.Label != "" {
-							{ r.Label } — this key is shown only once. Store it somewhere safe.
-						} else {
-							This key is shown only once. Store it somewhere safe.
-						}
-					</p>
-				</div>
-			</div>
-			<div class="mt-4 flex flex-wrap items-center gap-2">
-				<div id="agent-mcp-key-secret" class="rounded-box border-base-content/15 bg-base-200/50 min-w-0 flex-1 border px-3 py-2 font-mono text-xs break-all" data-testid="agent-mcp-key-secret">{ r.Token }</div>
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeButton,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--copy",
-					Attrs:   templ.Attributes{"data-copy-target": "#agent-mcp-key-secret"},
-				}) {
-					Copy key
-				}
-			</div>
-			if r.MCPURL != "" {
-				<div class="mt-3 flex flex-wrap items-center gap-2">
-					@ui.Eyebrow("Endpoint", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
-					<div id="agent-mcp-reveal-endpoint" class="rounded-box border-base-content/15 bg-base-200/50 min-w-0 flex-1 border px-3 py-2 font-mono text-xs break-all">{ r.MCPURL }</div>
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeButton,
-						Variant: ui.ButtonGhost,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--copy",
-						Attrs:   templ.Attributes{"data-copy-target": "#agent-mcp-reveal-endpoint"},
-					}) {
-						Copy
-					}
-				</div>
-			}
-			<div class="mt-3">
-				@ui.Alert(ui.AlertProps{
-					Type:    ui.AlertWarning,
-					Style:   ui.AlertStyleOutline,
-					Icon:    "lucide--triangle-alert",
-					Message: "This secret will not be shown again. If you lose it, rotate the key to issue a new one.",
-				})
-			</div>
-			<div class="mt-5 flex flex-col gap-3">
-				@ui.Eyebrow("Client setup", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
-				<p class="text-base-content/50 -mt-2 text-xs">Paste one of these into your MCP client. Each already contains the endpoint and key.</p>
-				for _, s := range r.Snippets {
-					@agentMCPKeySnippetBlock(s)
-				}
-			</div>
-			<form method="dialog" class="modal-action">
-				@ui.Button(ui.ButtonProps{
-					Type:       ui.ButtonTypeSubmit,
-					Variant:    ui.ButtonPrimary,
-					Size:       ui.ButtonSM,
-					Icon:       "lucide--check",
-					ExtraClass: "w-full sm:w-auto",
-				}) {
-					Done — I've saved the key
-				}
-			</form>
-		</div>
-		<form method="dialog" class="modal-backdrop">
-			<button>close</button>
-		</form>
-	</dialog>
-	<script type="text/javascript">
-		(function () {
-			var d = document.getElementById('agent-mcp-reveal-modal');
-			if (!d || typeof d.showModal !== 'function' || d.open) return;
-			d.showModal();
-		})();
-	</script>
+	@components.SecretRevealModal(components.SecretRevealProps{
+		Heading:      r.Heading,
+		Name:         r.Label,
+		SecretID:     "agent-mcp-key-secret",
+		SecretTestID: "agent-mcp-key-secret",
+		Secret:       r.Token,
+		EndpointID:   "agent-mcp-reveal-endpoint",
+		Endpoint:     r.MCPURL,
+		Warning:      "This secret will not be shown again. If you lose it, rotate the key to issue a new one.",
+		DialogID:     "agent-mcp-reveal-modal",
+		Attrs:        templ.Attributes{"data-agent-mcp-reveal": "true"},
+		Snippets:     agentMCPKeySnippetBlocks(r.Snippets),
+		AutoOpen:     true,
+	})
 }
 
-// agentMCPKeySnippetBlock is one client snippet card with a copy button.
-templ agentMCPKeySnippetBlock(s agentMCPKeySnippet) {
-	<div class="rounded-box border-base-content/10 bg-base-200/30 border p-3">
-		<div class="mb-2 flex items-center justify-between gap-2">
-			<span class="text-xs font-semibold">{ s.Label }</span>
-			@ui.Button(ui.ButtonProps{
-				Type:      ui.ButtonTypeButton,
-				Variant:   ui.ButtonGhost,
-				Size:      ui.ButtonXS,
-				Icon:      "lucide--copy",
-				AriaLabel: "Copy " + s.Label + " config",
-				Attrs:     templ.Attributes{"data-copy-target": "#agent-mcp-key-snippet-" + s.Key},
-			}) {
-				Copy
-			}
-		</div>
-		{{ hl, ok := highlightJSONSnippet(s.Code) }}
-		<pre id={ "agent-mcp-key-snippet-" + s.Key } class="rounded-box bg-base-100 overflow-x-auto p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">if ok {
-			@templ.Raw(hl)
-		} else {
-			{ s.Code }
-		}</pre>
-	</div>
+// agentMCPKeySnippetBlocks renders the reveal's client snippet list.
+templ agentMCPKeySnippetBlocks(snippets []agentMCPKeySnippet) {
+	for _, s := range snippets {
+		@components.SnippetCard(s.Label, "agent-mcp-key-snippet-"+s.Key, snippetCode(s.Code))
+	}
 }
