@@ -152,7 +152,7 @@ func TestRenderChatPageOriginFilter(t *testing.T) {
 	convs := &ConversationList{Conversations: []Conversation{{ID: "c1", Title: "Morning chat", AgentDefinitionID: "a1", UpdatedAt: "2026-08-26T09:00:00Z"}}}
 	schedRuns := []scheduledRunRow{{ID: "run-1", AgentName: "Daily briefing", Status: "completed", StartedAt: "2026-08-27T08:00:00Z"}}
 
-	html := renderHTML(t, ChatPage(agents, convs, map[string]string{"a1": "memory"}, schedRuns, "", "", "", nil, false, nil))
+	html := renderHTML(t, ChatPage(agents, convs, map[string]agentAppearance{"a1": {Name: "memory"}}, schedRuns, "", "", "", nil, false, nil))
 
 	// the filter select with the three options
 	if !strings.Contains(html, `id="chat-origin-filter"`) {

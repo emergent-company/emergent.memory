@@ -248,6 +248,7 @@ final class AccountStore: ObservableObject {
             if activeAccountID != accountID {
                 activeAccountID = accountID
                 defaults.set(accountID, forKey: Self.activeAccountIDKey)
+                ConnectorLog.lifecycle("activeAccountDidChange source=signIn account=\(account.id)")
                 activeAccountDidChange(account)
             }
             // The CLI just completed sign-in, so the session is valid now.
@@ -385,6 +386,7 @@ final class AccountStore: ObservableObject {
         }
         activeAccountID = accountID
         defaults.set(accountID, forKey: Self.activeAccountIDKey)
+        ConnectorLog.lifecycle("activeAccountDidChange source=switchTo account=\(account.id)")
         activeAccountDidChange(account)
         // The CLI validated this account's session above.
         sessionValid[accountID] = true
@@ -425,6 +427,7 @@ final class AccountStore: ObservableObject {
             } else {
                 defaults.removeObject(forKey: Self.activeAccountIDKey)
             }
+            ConnectorLog.lifecycle("activeAccountDidChange source=signOut account=\(next?.id ?? "nil")")
             activeAccountDidChange(next)
             // Re-derive the effective state for the promoted account (or clear
             // it when the last account is gone).

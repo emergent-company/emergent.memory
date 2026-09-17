@@ -140,3 +140,98 @@ func TestRenderAgentNameChip(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderAgentInlineGlyph(t *testing.T) {
+	// No appearance: a bare muted bot glyph — no tile frame, no border, no badge,
+	// and no style attribute at all (the fallback path only sets the muted class).
+	html := renderHTML(t, agentInlineGlyph("", ""))
+	for _, want := range []string{"lucide--bot", "size-4", "text-base-content/40"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("default inline glyph missing %q: %s", want, html)
+		}
+	}
+	for _, bad := range []string{"rounded-lg", "badge", "border", "bg-primary", "style="} {
+		if strings.Contains(html, bad) {
+			t.Errorf("inline glyph must be bare (found %q): %s", bad, html)
+		}
+	}
+
+	// Declared icon + color: the agent icon tinted with its text color ONLY —
+	// no background/border tint behind it (that is the framed tile's job).
+	html = renderHTML(t, agentInlineGlyph("database", "#2563EB"))
+	for _, want := range []string{"lucide--database", "color:#2563EB"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("accented inline glyph missing %q: %s", want, html)
+		}
+	}
+	for _, bad := range []string{"background-color", "border-color", "style=\"\""} {
+		if strings.Contains(html, bad) {
+			t.Errorf("accented inline glyph must tint the glyph only (found %q): %s", bad, html)
+		}
+	}
+
+	// Color only falls back to the tinted bot glyph.
+	html = renderHTML(t, agentInlineGlyph("", "#2563EB"))
+	if !strings.Contains(html, "lucide--bot") || !strings.Contains(html, "color:#2563EB") {
+		t.Errorf("color-only inline glyph = %s", html)
+	}
+}
+
+// TestAgentDashboardHeaderLeadingTile asserts the agent dashboard header now
+// leads with the framed agent icon tile (before the h1) — matching the summary
+// card row — for both a declared appearance and the neutral bot default.
+func TestAgentDashboardHeaderLeadingTile(t *testing.T) {
+	declared := &AgentDefinition{
+		ID: "a1", Name: "diane",
+		UIConfig: json.RawMessage(`{"icon":"database","color":"#2563EB"}`),
+	}
+	html := renderHTML(t, AgentDashboardPage(agentDashboardData{Agent: declared}))
+	tile := strings.Index(html, "lucide--database")
+	h1 := strings.Index(html, `lg:text-3xl">diane</h1>`)
+	if tile == -1 || h1 == -1 {
+		t.Fatalf("dashboard header missing tile or title: tile=%d h1=%d", tile, h1)
+	}
+	if tile > h1 {
+		t.Errorf("agent tile (%d) must lead the title (%d)", tile, h1)
+	}
+
+	neutral := &AgentDefinition{ID: "a1", Name: "diane"}
+	html = renderHTML(t, AgentDashboardPage(agentDashboardData{Agent: neutral}))
+	tile = strings.Index(html, "lucide--bot")
+	h1 = strings.Index(html, `lg:text-3xl">diane</h1>`)
+	if tile == -1 || h1 == -1 || tile > h1 {
+		t.Errorf("neutral agent tile must lead the title: tile=%d h1=%d", tile, h1)
+	}
+}
+
+// TestChatRailAgentGlyphLeading asserts the session rail leads each row with the
+// agent's own bare glyph (no generic message/calendar icon, no frame) when an
+// appearance is declared, and keeps the "name · time" subtitle intact.
+func TestChatRailAgentGlyphLeading(t *testing.T) {
+	conv := Conversation{ID: "c1", Title: "Morning chat", AgentDefinitionID: "a1", UpdatedAt: "2026-08-26T09:00:00Z"}
+	ap := agentAppearance{Name: "memory", Icon: "database", Color: "#2563EB"}
+	html := renderHTML(t, sessionRailItem(conv, ap, false))
+	for _, want := range []string{"lucide--database", "color:#2563EB", "memory ·"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rail row missing %q: %s", want, html)
+		}
+	}
+	for _, bad := range []string{"lucide--messages-square", "lucide--calendar-clock"} {
+		if strings.Contains(html, bad) {
+			t.Errorf("rail row must lead with the agent glyph, found generic %q", bad)
+		}
+	}
+
+	// No declared appearance → the neutral bare bot glyph, name still shown.
+	html = renderHTML(t, sessionRailItem(conv, agentAppearance{Name: "memory"}, false))
+	if !strings.Contains(html, "lucide--bot") || !strings.Contains(html, "memory ·") {
+		t.Errorf("neutral rail row missing bot glyph or name: %s", html)
+	}
+
+	// Scheduled runs lead with the same agent glyph (resolved from the run row).
+	run := scheduledRunRow{ID: "run-1", AgentName: "Daily briefing", Status: "completed", StartedAt: "2026-08-27T08:00:00Z", Icon: "database", Color: "#2563EB"}
+	html = renderHTML(t, scheduledRailItem(run))
+	if !strings.Contains(html, "lucide--database") || strings.Contains(html, "lucide--calendar-clock") {
+		t.Errorf("scheduled rail row must lead with the agent glyph: %s", html)
+	}
+}
