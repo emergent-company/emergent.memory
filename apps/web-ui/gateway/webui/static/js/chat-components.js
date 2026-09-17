@@ -268,6 +268,288 @@
     };
   }
 
+  /* ---------- run-control surfaces (copy, footer, typed run markers) ---------- */
+
+  function clipboardCopy(text) {
+    if (window.MemoryChatHost && typeof window.MemoryChatHost.copyText === "function") {
+      window.MemoryChatHost.copyText(text);
+      return;
+    }
+    // Host module absent (should not happen — loaded on every chat surface):
+    // keep the same navigator.clipboard + textarea fallback inline.
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try { navigator.clipboard.writeText(String(text)); return; } catch (e) {}
+    }
+    var ta = document.createElement("textarea");
+    ta.value = String(text);
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  var COPY_ICON = '<span class="iconify lucide--copy size-3.5" aria-hidden="true"></span>';
+  var COPIED_ICON = '<span class="iconify lucide--check size-3.5" aria-hidden="true"></span>';
+
+  // makeCopyButton builds a compact copy affordance. It copies ONLY what the
+  // getter returns — never surrounding markup — and confirms non-intrusively by
+  // swapping the icon to a check for a moment (no toast, no layout shift).
+  function makeCopyButton(opts) {
+    var o = opts || {};
+    var label = o.label || "Copy";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = o.className ? "memory-copy-btn " + o.className : "memory-copy-btn";
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    btn.innerHTML = COPY_ICON;
+    var timer = null;
+    btn.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      var text = typeof o.getText === "function" ? o.getText() : (o.text || "");
+      clipboardCopy(text);
+      if (timer) clearTimeout(timer);
+      btn.classList.add("memory-copy-done");
+      btn.setAttribute("aria-label", "Copied");
+      btn.title = "Copied";
+      btn.innerHTML = COPIED_ICON;
+      timer = setTimeout(function () {
+        btn.classList.remove("memory-copy-done");
+        btn.setAttribute("aria-label", label);
+        btn.title = label;
+        btn.innerHTML = COPY_ICON;
+      }, 1400);
+    });
+    return btn;
+  }
+
+  // enhanceMessage adds copy affordances to an already-rendered message block:
+  // a whole-message copy button in the header row (never inside the bubble, so
+  // reading flow and bubble layout are untouched) and a copy button on every
+  // fenced code block. Idempotent: guarded per element, safe to re-run.
+  function enhanceMessage(wrap) {
+    if (!wrap) return;
+    // Whole-message copy — assistant turns only (neutral bubble).
+    var header = wrap.querySelector(".chat-header");
+    var bubble = wrap.querySelector(".chat-bubble.chat-bubble-neutral");
+    var body = bubble ? bubble.querySelector(".memory-md") : null;
+    if (header && body && !header._memoryCopyWired) {
+      header._memoryCopyWired = true;
+      header.appendChild(makeCopyButton({
+        className: "memory-copy-msg",
+        label: "Copy message",
+        getText: function () { return body.innerText || body.textContent || ""; },
+      }));
+    }
+    // Per-code-block copy — the block's source only. Wrapping the <pre> keeps
+    // the copy button out of the scroll area and out of the copied text;
+    // moving the block margin to the wrapper preserves the original spacing.
+    var pres = wrap.querySelectorAll(".memory-md pre");
+    for (var i = 0; i < pres.length; i++) {
+      var pre = pres[i];
+      if (pre._memoryCopyWired) continue;
+      pre._memoryCopyWired = true;
+      var codeWrap = document.createElement("div");
+      codeWrap.className = "memory-code-wrap";
+      if (pre.parentNode) pre.parentNode.insertBefore(codeWrap, pre);
+      codeWrap.appendChild(pre);
+      (function (preEl) {
+        codeWrap.appendChild(makeCopyButton({
+          className: "memory-copy-code",
+          label: "Copy code",
+          getText: function () {
+            var code = preEl.querySelector("code");
+            return (code || preEl).textContent || "";
+          },
+        }));
+      })(pre);
+    }
+  }
+
+  // turnFooter renders the per-turn footer: model, wall-clock duration (only
+  // when the run has ended), an end timestamp revealed on hover/focus, and a
+  // copy-turn action. opts = {model, durationMs, endTime, getText}.
+  function turnFooter(opts) {
+    var o = opts || {};
+    var el = document.createElement("div");
+    el.className = "memory-turn-footer chat-footer";
+    var duration = (typeof o.durationMs === "number") ? (window.MemoryChatHost ? window.MemoryChatHost.formatDuration(o.durationMs) : "") : "";
+    var endClock = o.endTime ? formatClock(o.endTime) : "";
+    var html = "";
+    if (o.model) html += '<span class="memory-turn-model">' + escapeHTML(o.model) + "</span>";
+    if (duration !== "") {
+      html += '<span class="memory-turn-dur">' + escapeHTML(duration) + "</span>";
+    }
+    if (endClock) {
+      html += '<span class="memory-turn-time" title="' + escapeHTML(o.endTime) + '">' + escapeHTML(endClock) + "</span>";
+    }
+    el.innerHTML = html;
+    if (typeof o.getText === "function") {
+      el.appendChild(makeCopyButton({
+        className: "memory-copy-turn",
+        label: "Copy turn",
+        getText: o.getText,
+      }));
+    }
+    return el;
+  }
+
+  function formatClock(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // runMarker renders a typed run boundary for a run_start/run_end timeline item
+  // instead of generic content. opts = {phase, status, model, error}.
+  function runMarker(opts) {
+    var o = opts || {};
+    var phase = o.phase === "start" ? "start" : "end";
+    var status = o.status || "";
+    var icon = "lucide--play";
+    var label = "Run started";
+    if (phase === "end") {
+      if (status === "failed" || status === "error") { icon = "lucide--circle-alert"; label = "Run failed"; }
+      else if (status === "input-required") { icon = "lucide--pause"; label = "Waiting on you"; }
+      else if (status === "cancelled" || status === "cancelling") { icon = "lucide--ban"; label = "Run cancelled"; }
+      else if (status === "completed" || status === "skipped" || status === "") { icon = "lucide--circle-check"; label = "Run complete"; }
+      else { icon = "lucide--circle-dot"; label = "Run ended"; }
+    }
+    var el = document.createElement("div");
+    el.className = "memory-run-marker";
+    el.setAttribute("data-phase", phase);
+    el.setAttribute("data-status", status);
+    var modelChip = (phase === "start" && o.model)
+      ? '<span class="memory-run-marker-model">' + escapeHTML(o.model) + "</span>"
+      : "";
+    el.innerHTML =
+      '<span class="memory-run-marker-line" aria-hidden="true"></span>' +
+      '<span class="memory-run-marker-icon"><span class="iconify ' + icon + ' size-3.5" aria-hidden="true"></span></span>' +
+      '<span class="memory-run-marker-label">' + escapeHTML(label) + "</span>" +
+      modelChip +
+      '<span class="memory-run-marker-line" aria-hidden="true"></span>';
+    if (phase === "end" && (status === "failed" || status === "error")) {
+      el.setAttribute("role", "alert");
+      var err = document.createElement("p");
+      err.className = "memory-run-marker-error";
+      err.textContent = o.error || "The agent run failed.";
+      el.appendChild(err);
+    }
+    return el;
+  }
+
+  // Inject the run-control styles once. Mirrors ensureBadgeStyle: unlayered so
+  // it sits above the daisyUI/Tailwind layers. The same rules live in
+  // webui/css/app.css (the compiled source); this injection keeps the surfaces
+  // styled even before the CSS bundle is rebuilt.
+  function ensureChatControlStyle() {
+    if (document.getElementById("memory-chat-control-style")) return;
+    var st = document.createElement("style");
+    st.id = "memory-chat-control-style";
+    st.textContent =
+      /* live run status (chat header) */
+      ".memory-run-status{display:inline-flex;align-items:center;gap:.4rem;padding:.2rem .6rem;" +
+      "border-radius:9999px;border:1px solid transparent;font-size:.75rem;font-weight:500;white-space:nowrap}" +
+      ".memory-run-status[data-state='working']{color:var(--color-base-content);" +
+      "background:color-mix(in oklab,var(--color-primary) 10%,transparent);" +
+      "border-color:color-mix(in oklab,var(--color-primary) 28%,transparent)}" +
+      ".memory-run-status[data-state='waiting']{color:var(--color-warning);" +
+      "background:color-mix(in oklab,var(--color-warning) 12%,transparent);" +
+      "border-color:color-mix(in oklab,var(--color-warning) 34%,transparent)}" +
+      ".memory-run-status[data-state='failed']{color:var(--color-error);" +
+      "background:color-mix(in oklab,var(--color-error) 12%,transparent);" +
+      "border-color:color-mix(in oklab,var(--color-error) 34%,transparent)}" +
+      ".memory-run-status-dot{width:.5rem;height:.5rem;border-radius:9999px;background:currentColor}" +
+      ".memory-run-status[data-state='working'] .memory-run-status-dot{animation:memory-pulse 1.4s ease-in-out infinite}" +
+      "@keyframes memory-pulse{0%,100%{opacity:.35}50%{opacity:1}}" +
+      /* typed run markers */
+      ".memory-run-marker{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:.35rem 0;" +
+      "font-size:.6875rem;letter-spacing:.05em;text-transform:uppercase;color:color-mix(in oklab,var(--color-base-content) 42%,transparent)}" +
+      ".memory-run-marker-line{flex:1 1 2rem;height:1px;background:color-mix(in oklab,var(--color-base-content) 10%,transparent)}" +
+      ".memory-run-marker-icon{display:inline-flex}" +
+      ".memory-run-marker-model{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;" +
+      "text-transform:none;letter-spacing:0;font-size:.6875rem;padding:.05rem .4rem;border-radius:.375rem;" +
+      "background:color-mix(in oklab,var(--color-base-content) 8%,transparent);color:color-mix(in oklab,var(--color-base-content) 60%,transparent)}" +
+      ".memory-run-marker[data-status='failed']{color:var(--color-error)}" +
+      ".memory-run-marker[data-status='input-required']{color:var(--color-warning)}" +
+      ".memory-run-marker[data-status='cancelled']{color:color-mix(in oklab,var(--color-base-content) 55%,transparent)}" +
+      ".memory-run-marker-error{flex-basis:100%;margin:.15rem 0 0;padding:.5rem .75rem;border-radius:.5rem;" +
+      "font-size:.8rem;text-transform:none;letter-spacing:normal;white-space:pre-wrap;word-break:break-word;" +
+      "color:var(--color-error);background:color-mix(in oklab,var(--color-error) 8%,transparent);" +
+      "border:1px solid color-mix(in oklab,var(--color-error) 25%,transparent)}" +
+      /* turn footer */
+      ".memory-turn-footer{display:flex;align-items:center;gap:.5rem;margin-top:.25rem;" +
+      "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.6875rem;" +
+      "color:color-mix(in oklab,var(--color-base-content) 35%,transparent)}" +
+      ".memory-turn-footer .memory-turn-time{max-width:0;overflow:hidden;opacity:0;white-space:nowrap;" +
+      "transition:opacity .15s ease,max-width .2s ease}" +
+      ".memory-turn-footer:hover .memory-turn-time,.memory-turn-footer:focus-within .memory-turn-time{max-width:12rem;opacity:1}" +
+      /* copy affordances */
+      ".memory-copy-btn{display:inline-flex;align-items:center;gap:.25rem;padding:.15rem;border-radius:.375rem;" +
+      "color:color-mix(in oklab,var(--color-base-content) 40%,transparent);background:transparent;" +
+      "border:1px solid transparent;cursor:pointer;opacity:0;" +
+      "transition:opacity .15s ease,color .15s ease,background-color .15s ease}" +
+      ".memory-copy-btn:hover{color:var(--color-base-content);background:color-mix(in oklab,var(--color-base-content) 8%,transparent)}" +
+      ".memory-copy-btn:focus-visible{opacity:1;outline:2px solid var(--color-primary);outline-offset:2px}" +
+      ".memory-copy-btn.memory-copy-done{opacity:1;color:var(--color-success)}" +
+      ".memory-copy-msg{margin-left:.15rem;vertical-align:middle}" +
+      ".chat-start:hover .memory-copy-msg,.chat-start:focus-within .memory-copy-msg," +
+      ".memory-code-wrap:hover .memory-copy-code,.memory-code-wrap:focus-within .memory-copy-code{opacity:1}" +
+      ".memory-code-wrap{position:relative;margin:.8em 0}" +
+      ".memory-md .memory-code-wrap > pre{margin:0}" +
+      ".memory-code-wrap .memory-copy-code{position:absolute;top:.4rem;right:.4rem;" +
+      "background:color-mix(in oklab,var(--color-base-300) 80%,transparent)}" +
+      "@media (hover:none){.memory-copy-btn{opacity:.55}}" +
+      "@media (prefers-reduced-motion:reduce){.memory-run-status-dot{animation:none}}" +
+      /* composer queue lane */
+      ".memory-queue{border-bottom:1px solid color-mix(in oklab,var(--color-base-content) 8%,transparent);" +
+      "background:color-mix(in oklab,var(--color-base-200) 45%,transparent)}" +
+      ".memory-queue-head{display:flex;align-items:center;gap:.4rem;padding:.45rem .75rem .1rem;" +
+      "font-size:.625rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;" +
+      "color:color-mix(in oklab,var(--color-base-content) 45%,transparent)}" +
+      ".memory-queue-list{display:flex;flex-direction:column;gap:.25rem;padding:0 .75rem .5rem}" +
+      ".memory-queue-row{display:flex;align-items:flex-start;gap:.5rem;padding:.3rem .5rem;border-radius:.5rem;" +
+      "border:1px solid color-mix(in oklab,var(--color-base-content) 10%,transparent);background:var(--color-base-100)}" +
+      ".memory-queue-input{flex:1 1 auto;min-width:0;resize:none;background:transparent;border:0;outline:none;" +
+      "color:inherit;font-size:.8125rem;line-height:1.45;max-height:7rem;overflow-y:auto}" +
+      ".memory-queue-input:focus-visible{outline:2px solid color-mix(in oklab,var(--color-primary) 60%,transparent);outline-offset:2px;border-radius:.25rem}" +
+      ".memory-queue-send,.memory-queue-remove{display:inline-flex;align-items:center;gap:.25rem;flex:0 0 auto;" +
+      "padding:.2rem .5rem;border-radius:.375rem;border:1px solid transparent;background:transparent;cursor:pointer;" +
+      "font-size:.6875rem;font-weight:600;color:color-mix(in oklab,var(--color-base-content) 55%,transparent)}" +
+      ".memory-queue-send{color:var(--color-primary);border-color:color-mix(in oklab,var(--color-primary) 30%,transparent)}" +
+      ".memory-queue-send:hover{background:color-mix(in oklab,var(--color-primary) 12%,transparent)}" +
+      ".memory-queue-remove:hover{color:var(--color-error);background:color-mix(in oklab,var(--color-error) 12%,transparent)}" +
+      ".memory-queue-send:focus-visible,.memory-queue-remove:focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
+      /* pending-work dock */
+      "#chat-dock{border-bottom:1px solid color-mix(in oklab,var(--color-base-content) 8%,transparent);" +
+      "background:color-mix(in oklab,var(--color-base-200) 40%,transparent)}" +
+      "#chat-dock :is(button,a,input,select,textarea):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
+      /* session todo card */
+      "#chat-todos{margin-bottom:.25rem}" +
+      "#chat-todos :is(summary,button,input,select,a):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
+      /* rail status badge */
+      ".memory-rail-badge{display:inline-flex;align-items:center;gap:.25rem;padding:.1rem .4rem;border-radius:9999px;" +
+      "font-size:.625rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;" +
+      "border:1px solid transparent;align-self:center}" +
+      ".memory-rail-badge[data-bucket='needs_input']{color:var(--color-warning);" +
+      "background:color-mix(in oklab,var(--color-warning) 15%,transparent);" +
+      "border-color:color-mix(in oklab,var(--color-warning) 40%,transparent)}" +
+      ".memory-rail-badge[data-bucket='failed']{color:var(--color-error);" +
+      "background:color-mix(in oklab,var(--color-error) 14%,transparent);" +
+      "border-color:color-mix(in oklab,var(--color-error) 38%,transparent)}" +
+      ".memory-rail-badge[data-bucket='running']{color:var(--color-primary);" +
+      "background:color-mix(in oklab,var(--color-primary) 13%,transparent);" +
+      "border-color:color-mix(in oklab,var(--color-primary) 34%,transparent)}" +
+      ".memory-rail-badge[data-bucket='done']{color:color-mix(in oklab,var(--color-base-content) 45%,transparent);" +
+      "background:color-mix(in oklab,var(--color-base-content) 7%,transparent);" +
+      "border-color:color-mix(in oklab,var(--color-base-content) 12%,transparent)}" +
+      ".memory-rail-badge .memory-rail-count{display:inline-flex;align-items:center;justify-content:center;" +
+      "min-width:1rem;height:1rem;padding:0 .2rem;border-radius:9999px;font-size:.5625rem;" +
+      "background:currentColor;color:var(--color-base-100)}";
+    document.head.appendChild(st);
+  }
+
   window.MemoryChatComponents = {
     escapeHTML: escapeHTML,
     humanizeToolName: humanizeToolName,
@@ -279,5 +561,10 @@
     expandableBadge: expandableBadge,
     ensureBadgeStyle: ensureBadgeStyle,
     createThinkingBlock: createThinkingBlock,
+    makeCopyButton: makeCopyButton,
+    enhanceMessage: enhanceMessage,
+    turnFooter: turnFooter,
+    runMarker: runMarker,
+    ensureChatControlStyle: ensureChatControlStyle,
   };
 })();

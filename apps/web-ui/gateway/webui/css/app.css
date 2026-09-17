@@ -337,6 +337,308 @@ div:has(> #_layout-topbar) {
   color: var(--color-primary);
 }
 
+/* ---------- Agentic chat run-control surface ---------- */
+/* Live run status (chat header, chat.js → #chat-run-status), typed run markers,
+   turn footers, copy affordances, the composer queue, the pending-work dock, the
+   session todo card, and the rail status badge. chat-components.js injects the
+   same rules so the surfaces stay styled before this bundle is rebuilt. */
+
+.memory-run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.memory-run-status[data-state="working"] {
+  color: var(--color-base-content);
+  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
+  border-color: color-mix(in oklab, var(--color-primary) 28%, transparent);
+}
+.memory-run-status[data-state="waiting"] {
+  color: var(--color-warning);
+  background: color-mix(in oklab, var(--color-warning) 12%, transparent);
+  border-color: color-mix(in oklab, var(--color-warning) 34%, transparent);
+}
+.memory-run-status[data-state="failed"] {
+  color: var(--color-error);
+  background: color-mix(in oklab, var(--color-error) 12%, transparent);
+  border-color: color-mix(in oklab, var(--color-error) 34%, transparent);
+}
+.memory-run-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: currentColor;
+}
+.memory-run-status[data-state="working"] .memory-run-status-dot {
+  animation: memory-pulse 1.4s ease-in-out infinite;
+}
+@keyframes memory-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+/* typed run markers — turn boundaries, not generic content */
+.memory-run-marker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0;
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 42%, transparent);
+}
+.memory-run-marker-line {
+  flex: 1 1 2rem;
+  height: 1px;
+  background: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+}
+.memory-run-marker-icon { display: inline-flex; }
+.memory-run-marker-model {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.6875rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.375rem;
+  background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+}
+.memory-run-marker[data-status="failed"] { color: var(--color-error); }
+.memory-run-marker[data-status="input-required"] { color: var(--color-warning); }
+.memory-run-marker[data-status="cancelled"] {
+  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+}
+.memory-run-marker-error {
+  flex-basis: 100%;
+  margin: 0.15rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-error);
+  background: color-mix(in oklab, var(--color-error) 8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-error) 25%, transparent);
+}
+
+/* turn footer — model, duration, hover-revealed end time, copy-turn */
+.memory-turn-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  color: color-mix(in oklab, var(--color-base-content) 35%, transparent);
+}
+.memory-turn-footer .memory-turn-time {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  transition: opacity 0.15s ease, max-width 0.2s ease;
+}
+.memory-turn-footer:hover .memory-turn-time,
+.memory-turn-footer:focus-within .memory-turn-time {
+  max-width: 12rem;
+  opacity: 1;
+}
+
+/* copy affordances — hidden until hover/focus so layout and reading flow do
+   not change; revealed on touch via the hover:none fallback below. */
+.memory-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem;
+  border-radius: 0.375rem;
+  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.memory-copy-btn:hover {
+  color: var(--color-base-content);
+  background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+.memory-copy-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.memory-copy-btn.memory-copy-done {
+  opacity: 1;
+  color: var(--color-success);
+}
+.memory-copy-msg { margin-left: 0.15rem; vertical-align: middle; }
+.chat-start:hover .memory-copy-msg,
+.chat-start:focus-within .memory-copy-msg,
+.memory-code-wrap:hover .memory-copy-code,
+.memory-code-wrap:focus-within .memory-copy-code { opacity: 1; }
+.memory-code-wrap { position: relative; margin: 0.8em 0; }
+/* higher specificity than `.memory-md pre` (defined later in this file) so the
+   block margin moves to the wrapper and the spacing is unchanged */
+.memory-md .memory-code-wrap > pre { margin: 0; }
+.memory-code-wrap .memory-copy-code {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  background: color-mix(in oklab, var(--color-base-300) 80%, transparent);
+}
+@media (hover: none) {
+  .memory-copy-btn { opacity: 0.55; }
+}
+
+/* composer queue lane */
+.memory-queue {
+  border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  background: color-mix(in oklab, var(--color-base-200) 45%, transparent);
+}
+.memory-queue-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem 0.1rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+}
+.memory-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0 0.75rem 0.5rem;
+}
+.memory-queue-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  background: var(--color-base-100);
+}
+.memory-queue-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: none;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  max-height: 7rem;
+  overflow-y: auto;
+}
+.memory-queue-input:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-primary) 60%, transparent);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+.memory-queue-send,
+.memory-queue-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+}
+.memory-queue-send {
+  color: var(--color-primary);
+  border-color: color-mix(in oklab, var(--color-primary) 30%, transparent);
+}
+.memory-queue-send:hover { background: color-mix(in oklab, var(--color-primary) 12%, transparent); }
+.memory-queue-remove:hover { color: var(--color-error); background: color-mix(in oklab, var(--color-error) 12%, transparent); }
+.memory-queue-send:focus-visible,
+.memory-queue-remove:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+/* pending-work dock (fragment controls keep their own styling) */
+#chat-dock {
+  border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  background: color-mix(in oklab, var(--color-base-200) 40%, transparent);
+}
+#chat-dock :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* session todo card */
+#chat-todos { margin-bottom: 0.25rem; }
+#chat-todos :is(summary, button, input, select, a):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* session rail run-state badge + pending count */
+.memory-rail-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  align-self: center;
+  padding: 0.1rem 0.4rem;
+  border-radius: 9999px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.memory-rail-badge[data-bucket="needs_input"] {
+  color: var(--color-warning);
+  background: color-mix(in oklab, var(--color-warning) 15%, transparent);
+  border-color: color-mix(in oklab, var(--color-warning) 40%, transparent);
+}
+.memory-rail-badge[data-bucket="failed"] {
+  color: var(--color-error);
+  background: color-mix(in oklab, var(--color-error) 14%, transparent);
+  border-color: color-mix(in oklab, var(--color-error) 38%, transparent);
+}
+.memory-rail-badge[data-bucket="running"] {
+  color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 13%, transparent);
+  border-color: color-mix(in oklab, var(--color-primary) 34%, transparent);
+}
+.memory-rail-badge[data-bucket="done"] {
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+  border-color: color-mix(in oklab, var(--color-base-content) 12%, transparent);
+}
+.memory-rail-badge .memory-rail-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.2rem;
+  border-radius: 9999px;
+  font-size: 0.5625rem;
+  background: currentColor;
+  color: var(--color-base-100);
+}
+
 /* ---------- Markdown (rendered assistant content) ---------- */
 /* LLM markdown is sanitized to bare elements (no classes survive), wrapped
    in .memory-md inside the chat bubble. All styles are scoped to that
@@ -776,5 +1078,6 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   .memory-rise { animation: none; }
   .memory-caret { animation: none; opacity: 0.6; }
   .memory-typing span { animation: none; }
+  .memory-run-status[data-state="working"] .memory-run-status-dot { animation: none; }
   .toast-bar { animation: none; }
 }

@@ -64,6 +64,43 @@
     return code === 502 || code === 503 || code === 504;
   }
 
+  // Copy text to the clipboard using the same pattern as the API-token copy
+  // script (api_tokens.templ): navigator.clipboard when available, otherwise a
+  // hidden textarea + execCommand fallback for older/insecure contexts.
+  function copyText(text) {
+    var value = text == null ? "" : String(text);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        var p = navigator.clipboard.writeText(value);
+        if (p && typeof p.catch === "function") p.catch(function () {});
+        return;
+      } catch (e) { /* fall through to the textarea fallback */ }
+    }
+    var ta = document.createElement("textarea");
+    ta.value = value;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  // formatDuration renders a millisecond span as a compact wall-clock string
+  // ("0:07", "1:32", "1:02:03") for turn footers. Null/invalid → "".
+  function formatDuration(ms) {
+    if (typeof ms !== "number" || !isFinite(ms) || ms < 0) return "";
+    var total = Math.round(ms / 1000);
+    var h = Math.floor(total / 3600);
+    var m = Math.floor((total % 3600) / 60);
+    var s = total % 60;
+    var pad = function (n) { return n < 10 ? "0" + n : String(n); };
+    if (h > 0) return h + ":" + pad(m) + ":" + pad(s);
+    return m + ":" + pad(s);
+  }
+
   // POST a JSON body to a gateway endpoint and resolve {ok, data}. Network
   // failures and non-ok JSON responses resolve {ok:false, error:message}; the
   // `network` flag distinguishes a transport failure (for captureError) from an
@@ -262,6 +299,8 @@
   window.MemoryChatHost = {
     sortTimeline: sortTimeline,
     isTransientError: isTransientError,
+    copyText: copyText,
+    formatDuration: formatDuration,
     postJSON: postJSON,
     createComposer: createComposer,
     createResizeGrip: createResizeGrip,
