@@ -1,0 +1,44 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// SelectOption is one option of a grouped select.
+type SelectOption struct {
+	Value    string
+	Label    string
+	Selected bool
+}
+
+// SelectOptionGroup is a labelled group of options, rendered as an <optgroup>.
+type SelectOptionGroup struct {
+	Label   string
+	Options []SelectOption
+}
+
+// SelectOptionGroups renders grouped options for a select control. Grouping is
+// the caller's domain decision; this component only renders it.
+templ SelectOptionGroups(groups []SelectOptionGroup) {
+	for _, g := range groups {
+		<optgroup label={ g.Label }>
+			for _, o := range g.Options {
+				<option value={ o.Value } selected?={ o.Selected }>{ o.Label }</option>
+			}
+		</optgroup>
+	}
+}
+
+// ToggleField renders a settings row that pairs a toggle with a label and an
+// optional explanatory tip. attrs carries the row's htmx wiring.
+templ ToggleField(name, label, tip string, checked bool, attrs templ.Attributes) {
+	<label class="cursor-pointer label justify-start gap-3">
+		<input type="checkbox" id={ name } name={ name } class="toggle" checked?={ checked } { attrs... }/>
+		<span class="label-text flex items-center gap-1.5">
+			<span>{ label }</span>
+			if tip != "" {
+				@ui.InfoTip(tip)
+			}
+		</span>
+	</label>
+}

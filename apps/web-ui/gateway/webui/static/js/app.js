@@ -496,10 +496,39 @@
     dlg.returnValue = "";
   }, true);
 
+  /*
+   * openDialog opens a native <dialog> by id. No-op when the element is missing
+   * or is not a dialog (or is already open). Single entry point for every
+   * dialog-opening call site: templ script blocks delegate here through
+   * components.DialogOpenScript, and openDialogByID is that global.
+   */
+  function openDialog(id) {
+    var d = id && document.getElementById(id);
+    if (!d || typeof d.showModal !== "function" || d.open) return;
+    d.showModal();
+  }
+
+  /*
+   * openAutoOpenDialogs opens every dialogs marked with
+   * data-dialog-autoopen. Called on load and after htmx swaps (components
+   * .DialogAutoOpen replaces the per-page showModal() IIFEs that used to
+   * re-open a dialog after a mutation swapped it in).
+   */
+  function openAutoOpenDialogs(root) {
+    var scope = root && root.querySelectorAll ? root : document;
+    var dialogs = scope.querySelectorAll("dialog[data-dialog-autoopen]");
+    for (var i = 0; i < dialogs.length; i++) openDialog(dialogs[i].id);
+  }
+
+  document.addEventListener("DOMContentLoaded", function () { openAutoOpenDialogs(document); });
+  document.addEventListener("htmx:afterSwap", function (ev) { openAutoOpenDialogs(ev.target); });
+
   /* expose for templ script blocks */
   window.MemoryApp = {
     openAgentForm: openAgentForm,
     openDeleteConfirm: openDeleteConfirm,
+    openDialog: openDialog,
+    openAutoOpenDialogs: openAutoOpenDialogs,
     toast: toast,
   };
 })();

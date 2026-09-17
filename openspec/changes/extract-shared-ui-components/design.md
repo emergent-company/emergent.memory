@@ -30,21 +30,23 @@ Chosen over extending `ui.templ` (the current problem: a page file doubling as t
 
 The package MUST NOT import gateway domain types, reference gateway route paths, or read gateway config. Anything that needs a domain type stays in `package main` as a thin adapter (see D4).
 
-Extraction preserves rendered markup, with exactly three intentional normalizations, each a fix for a real drift already in `main`:
+Extraction preserves rendered markup, with a small set of intentional normalizations, each a fix for a real drift already in `main`:
 
-1. `<dt>` label class unifies on `text-base-content/45 text-[11px] font-medium tracking-wide uppercase` (the `text-xs` dialect at `org_members_ui.templ:441,511`, `project_settings.templ:748`, `schema_packs.templ:151,163` normalizes to it).
+1. `<dt>` label class unifies on `text-base-content/45 text-[11px] font-medium tracking-wide uppercase` (the `text-xs` dialect at `org_members_ui.templ:441,511`, `project_settings.templ:748`, `schema_packs.templ:151,163` normalizes to it), and the row's `<dd>` spacing unifies on `mt-1` (the `mt-0.5` dialect normalizes to it).
 2. Snippet `<pre>` class order unifies on the `agent_mcp_endpoint.templ:653` order (`rounded-box bg-base-100 overflow-x-auto whitespace-pre-wrap …`).
-3. Panel cards unify on `card-border` + `p-5`; the one-off `card-border border-primary/20` variant (`api_tokens.templ:428`) becomes `PanelCard` plus an `ExtraClass` override, so the accent stays.
+3. Panel cards unify on `card-border` + `p-5`; the one-off `card-border border-primary/20` variant (`api_tokens.templ:428`) becomes `PanelCard` with an appended `ExtraClass`.
+4. Tailwind class *order* differences that produce identical CSS (for example the secret element's `border`/`rounded-box` ordering between the two reveal dialogs) are dropped — only the set of classes matters.
+5. The reveal panel's heading becomes an `<h3>` (it was a `<p>`) so both reveal variants share one heading treatment.
 
-Anything else that renders differently is a bug in the extraction, not an accepted drift.
+Anything else that renders differently — or any class that changes the rendered CSS — is a bug in the extraction, not an accepted drift.
 
 ### D3 — Dialog opening: one JS helper, attribute-driven auto-open
 
-`window.MemoryApp` already exists (`webui/static/js/app.js:500`) and is the documented page-JS surface (`ui.templ:197-204`). Add `MemoryApp.openDialog(id)` there and delete the eight per-page `openX()` script blocks.
+`window.MemoryApp` already exists (`webui/static/js/app.js:500`) and is the documented page-JS surface (`ui.templ:197-204`). Add `MemoryApp.openDialog(id)` there — a no-op for a missing id, a non-dialog element, or an already-open dialog — and delete the eight per-page `openX()` scripts.
 
-For the ~11 inline auto-open IIFEs (`agent_mcp_endpoint.templ:626-631`, `mcp_shares.templ:471-476`, `project_settings.templ:1330-1335`, `auth_ui.templ:254-266`, …) which exist to re-open a dialog after an htmx swap, the trigger becomes a markup attribute: `data-dialog-autoopen` on the `<dialog>`, scanned by `app.js` on `DOMContentLoaded` and `htmx:afterSwap`. That keeps the htmx re-open semantics while deleting the per-page scripts.
+For the ~11 inline auto-open IIFEs (`agent_mcp_endpoint.templ:626-631`, `mcp_shares.templ:471-476`, `project_settings.templ:1330-1335`, `auth_ui.templ:254-266`, …) which exist to re-open a dialog after an htmx swap, the trigger becomes a markup attribute: `components.DialogAutoOpen()` returns `data-dialog-autoopen`, scanned by `app.js` on `DOMContentLoaded` and `htmx:afterSwap`. That keeps the htmx re-open semantics while deleting the per-page scripts.
 
-The `components.DialogOpenScript(id)` templ helper remains only for pages that must call `showModal()` from an inline `onclick` and cannot route through `MemoryApp` — it is a one-line delegation to `MemoryApp.openDialog`, not a reimplementation.
+For the row-dialog scripts whose id is computed at render time (`openBackupDelete(id)`, `openMCPShareDialog(kind, id)`, …), `components.DialogOpenScript()` emits one page-level `openDialogByID(id)` global that delegates to `MemoryApp.openDialog`; callers stop declaring their own opener per dialog.
 
 ### D4 — Domain vocabularies stay in `package main`
 
@@ -56,13 +58,19 @@ Same reasoning for `SelectOptionGroups`: the component takes `[]SelectOptionGrou
 
 `backupDetailField` (`backups.templ:409`), `memberDetailRow` (`org_members_ui.templ:509`), `schemaPackMetaRow` (`schema_packs.templ:161`) and `voiceSecretRow` (`project_settings.templ:746`) are the same component with different empty-value handling, so one `MetaRow(label, value string, opts ...MetaRowOpts)` covers all four. `MetaRowOpts` carries `Mono bool` and `NoEmptyDash bool` — `voiceSecretRow` renders status copy rather than an em-dash and is the `NoEmptyDash` caller.
 
-### D6 — Test convention
+### D6 — Slots over domain data for syntax-highlighted content
+
+`SnippetCard(label, copyTargetID string, code templ.Component)` takes the code as a slot rather than a string. Syntax highlighting (`highlightJSONSnippet`, `highlight.go:56`) is generic code but is shared with non-snippet JSON surfaces in `package main`; moving it would force call-site edits outside this phase's scope. Passing the already-rendered code as a component preserves the highlighted output exactly and keeps the component domain-free.
+
+By the same rule, `SecretRevealProps.Snippets` is a slot: the modal renders the "Client setup" heading and guidance, and the caller supplies the list, so the MCP snippet type stays in `package main`.
+
+### D7 — Test convention
 
 Each component gets a render test in `components/*_test.go` using the same `renderHTML(t, component)` idiom as gateway tests (`agent_ui_test.go:14`). Tests assert the contract, not the full markup: required/scoped attributes, slot content present, empty-value fallback, and the class that carries the pattern's identity (for example that `MetaRow` emits exactly one `<dt>` label class).
 
 Extraction-only call-site edits are covered by the existing gateway `*_ui_test.go` render tests plus a targeted assertion added where a page had no coverage of the extracted region.
 
-### D7 — Sequencing
+### D8 — Sequencing
 
 Call-site swaps touch the same ~28 files repeatedly, so the component definitions land first (phase 1), then swaps proceed in **file-disjoint** groups (phases 2-4) to allow parallel lanes with no overlapping write scopes.
 

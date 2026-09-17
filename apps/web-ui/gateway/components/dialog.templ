@@ -1,0 +1,23 @@
+package components
+
+// DialogOpenScript emits the page-level opener global used by inline handlers
+// that must open a dialog whose id is computed at render time (typically a
+// per-row dialog). Include it once per page, then call
+// openDialogByID('backup-delete-' + id) from the handler.
+//
+// The body delegates to MemoryApp.openDialog (webui/static/js/app.js) so the
+// dialog-opening logic lives in exactly one place.
+templ DialogOpenScript() {
+	<script type="text/javascript">
+		function openDialogByID(id) {
+			if (window.MemoryApp) { window.MemoryApp.openDialog(id); }
+		}
+	</script>
+}
+
+// DialogAutoOpen marks a dialog so the client opens it as soon as it is in the
+// DOM, including after an htmx swap. Replaces the per-page inline IIFEs that
+// called showModal() on load.
+func DialogAutoOpen() templ.Attributes {
+	return templ.Attributes{"data-dialog-autoopen": "true"}
+}
