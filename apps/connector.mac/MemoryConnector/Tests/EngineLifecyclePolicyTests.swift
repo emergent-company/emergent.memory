@@ -29,6 +29,17 @@ final class EngineLifecyclePolicyTests: XCTestCase {
         """)
     }
 
+    /// Writes a config with the given project id (omitted when `nil`) and
+    /// server URL.
+    private func writeConfig(projectID: String?,
+                             serverURL: String = "https://api.example.test") throws {
+        var content = "server_url: \(serverURL)\ntoken: emt_x\ninstance_id: host-connector\n"
+        if let projectID {
+            content += "project_id: \(projectID)\n"
+        }
+        try EngineConfigWriter.write(configURL: configURL, content: content)
+    }
+
     func testNoConnectedProjectDoesNotStartEvenWithStaleConfig() throws {
         try writeConfigFile() // stale config left on disk from a previous project
 
@@ -67,5 +78,59 @@ final class EngineLifecyclePolicyTests: XCTestCase {
         let decision = EngineLifecyclePolicy.decision(connectedProjectID: nil, configURL: configURL)
         XCTAssertEqual(decision, .noConnectedProject)
         XCTAssertFalse(EngineLifecyclePolicy.shouldRun(connectedProjectID: nil, configURL: configURL))
+    }
+
+    func testDifferentProjectIsWrongProject() throws {
+        try writeConfig(projectID: "p2")
+
+        let decision = EngineLifecyclePolicy.decision(connectedProjectID: "p1", configURL: configURL)
+        XCTAssertEqual(decision, .wrongProject(projectID: "p1", configuredProjectID: "p2"))
+        XCTAssertFalse(EngineLifecyclePolicy.shouldRun(connectedProjectID: "p1", configURL: configURL))
+    }
+
+    func testConfigWithoutProjectIDIsWrongProject() throws {
+        // A config that parses but binds no project id must never serve the
+        // connected project.
+        try writeConfig(projectID: nil)
+
+        let decision = EngineLifecyclePolicy.decision(connectedProjectID: "p1", configURL: configURL)
+        XCTAssertEqual(decision, .wrongProject(projectID: "p1", configuredProjectID: nil))
+        XCTAssertFalse(EngineLifecyclePolicy.shouldRun(connectedProjectID: "p1", configURL: configURL))
+    }
+
+    func testServerMismatchIsWrongProject() throws {
+        try writeConfig(projectID: "p1", serverURL: "https://api.example.test")
+
+        let decision = EngineLifecyclePolicy.decision(connectedProjectID: "p1",
+                                                      configURL: configURL,
+                                                      expectedServerURL: "https://other.test")
+        XCTAssertEqual(decision, .wrongProject(projectID: "p1", configuredProjectID: "p1"))
+        XCTAssertFalse(EngineLifecyclePolicy.shouldRun(connectedProjectID: "p1",
+                                                       configURL: configURL,
+                                                       expectedServerURL: "https://other.test"))
+    }
+
+    func testMatchingProjectAndServerRuns() throws {
+        try writeConfig(projectID: "p1", serverURL: "https://api.example.test")
+
+        let decision = EngineLifecyclePolicy.decision(connectedProjectID: "p1",
+                                                      configURL: configURL,
+                                                      expectedServerURL: "https://api.example.test")
+        XCTAssertEqual(decision, .run)
+        XCTAssertTrue(EngineLifecyclePolicy.shouldRun(connectedProjectID: "p1",
+                                                      configURL: configURL,
+                                                      expectedServerURL: "https://api.example.test"))
+    }
+
+    func testBlankExpectedServerSkipsServerCheck() throws {
+        try writeConfig(projectID: "p1", serverURL: "https://api.example.test")
+
+        let decision = EngineLifecyclePolicy.decision(connectedProjectID: "p1",
+                                                      configURL: configURL,
+                                                      expectedServerURL: "   ")
+        XCTAssertEqual(decision, .run)
+        XCTAssertTrue(EngineLifecyclePolicy.shouldRun(connectedProjectID: "p1",
+                                                      configURL: configURL,
+                                                      expectedServerURL: "   "))
     }
 }
