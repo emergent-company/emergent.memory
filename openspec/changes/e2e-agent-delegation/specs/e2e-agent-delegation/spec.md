@@ -70,7 +70,7 @@ result of the delegated task.
 #### Scenario: A shared orchestration root is cross-checked, not required
 
 - **WHEN** both the child run and its parent run carry a root run id
-- **THEN** the two root run ids match; when the spawn path leaves the root unset, the linkage is carried by the parent run id alone and the spec does not require a root
+- **THEN** the two root run ids match; when root run ids are not persisted (the run's OTel span context is invalid, i.e. tracing disabled), the linkage is carried by the parent run id alone and the spec does not require a root
 
 #### Scenario: Child run completes
 

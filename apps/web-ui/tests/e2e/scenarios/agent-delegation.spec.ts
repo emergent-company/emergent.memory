@@ -57,8 +57,11 @@ import { MEMORY_API_URL } from '../helpers/tokens';
 // child run id straight from the completed `spawn_agents` tool result and
 // links it via `agentDefinitionId` + `parentRunId` (the parent run is fetched by
 // id to prove the linkage). `rootRunId` is only cross-checked when both runs
-// carry one: the spawn path does not propagate the orchestration root, so every
-// spawned child in dev has `root_run_id IS NULL`.
+// carry one: `root_run_id` is persisted only when the run's OTel span context
+// is valid (`executor.go` `Execute` gates `UpdateTraceAndRootRun` on
+// `span.SpanContext().IsValid()`), and tracing is opt-in and effectively off in
+// dev, so in practice every run — parent and child alike — carries
+// `root_run_id IS NULL`.
 //
 // Flow:
 //   1. SEED (API): fresh scratch project under the bootstrap org — provider /
@@ -641,10 +644,12 @@ test.describe('Agent delegation scenario', () => {
       );
 
       // rootRunId is cross-checked, deliberately NOT required to be present.
-      // Live evidence: the spawn path does not propagate the orchestration root,
-      // so every spawned child in dev carries `root_run_id IS NULL`
-      // (kb.agent_runs: 5/5 children with a parentRunId). A parent/child linkage
-      // is therefore proven through parentRunId, and when both runs do carry a
+      // `root_run_id` is persisted only when the run's OTel span context is
+      // valid (`executor.go` `Execute` gates `UpdateTraceAndRootRun` on
+      // `span.SpanContext().IsValid()`); tracing is opt-in and effectively off
+      // in dev, so every run there carries `root_run_id IS NULL` (parents
+      // included, not just spawned children). A parent/child linkage is
+      // therefore proven through parentRunId, and when both runs do carry a
       // rootRunId they must agree.
       if (child!.rootRunId && parentRun!.rootRunId) {
         expect(
@@ -653,10 +658,14 @@ test.describe('Agent delegation scenario', () => {
         ).toBe(child!.rootRunId);
       }
 
-      // The child run's full transcript must contain B's sentinel answer in an
-      // ASSISTANT message — this proves B actually produced its delegated
-      // answer (not merely that the task was received in a user message), not
-      // just that a row was created.
+      // The child run's full transcript must contain B's sentinel answer. A
+      // spawned sub-agent's output is persisted under a role derived from the
+      // ADK event author (the sub-agent's name), NOT the literal `assistant`
+      // (`executor.go` `persistEventContent`: `role := "assistant"; if
+      // event.Author != "" { role = event.Author }`). Collect every non-user,
+      // non-tool message and require PINEAPPLE there — the target genuinely
+      // produced its delegated answer rather than merely receiving the task,
+      // which lands in a `user` message without the sentinel.
       const fullResp = await page.request.get(
         `${MEMORY_API_URL}/api/projects/${projectId}/agent-runs/${childRunId}/full`,
         { headers },
@@ -671,12 +680,12 @@ test.describe('Agent delegation scenario', () => {
         };
       };
       const assistantText = (full.data?.messages ?? [])
-        .filter((m) => m.role === 'assistant')
+        .filter((m) => m.role && m.role !== 'user' && m.role !== 'tool')
         .map((m) => String((m.content ?? {})['text'] ?? ''))
         .join('\n');
       expect(
         assistantText,
-        'the child run must contain PINEAPPLE in an ASSISTANT message (the target actually produced its delegated answer, not just received the task)',
+        'the child run must contain PINEAPPLE in a non-user, non-tool message (the target actually produced its delegated answer, not just received the task)',
       ).toContain('PINEAPPLE');
     } finally {
       await cleanup(page, targetId, delegatorId, rejectId, projectId);

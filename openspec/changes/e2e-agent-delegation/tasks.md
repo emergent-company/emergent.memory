@@ -102,10 +102,12 @@
       from the completed tool result instead.
 - [x] 4.2 **F3 (recorded in `design.md`)** — a dev `memory-server` restart
       produced a 502 during `setup`; not a delegation regression.
-- [ ] 4.3 **F2 follow-up (out of scope for this test-only change)** — coordination
-      spawns do not propagate `root_run_id`. Read-only dev evidence:
-      `SELECT count(*), count(root_run_id) FROM kb.agent_runs WHERE parent_run_id IS NOT NULL;`
-      → 5 children, 0 with a root. The parent/child link survives via
-      `parentRunId`, but the `agent-run-preview` change groups the delegation
-      tree by root run, so spawned children cannot be attached to that tree.
-      Needs its own change on the agents/executor path; not fixed here.
+- [ ] 4.3 **F2 follow-up (out of scope for this test-only change)** — `root_run_id`
+      is not persisted when the run's OTel span context is invalid (tracing off).
+      Read-only dev evidence:
+      `SELECT count(*) FILTER (WHERE root_run_id IS NULL), count(*) FILTER (WHERE root_run_id IS NOT NULL) FROM kb.agent_runs;`
+      → 204 null, 0 set, 204 total — every run, parents included. The
+      parent/child link survives via `parentRunId`, but the `agent-run-preview`
+      change groups the delegation tree by root run, so runs without a root
+      cannot be attached to that tree. Needs its own change on the
+      agents/executor path; not fixed here.

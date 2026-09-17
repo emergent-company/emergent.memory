@@ -84,24 +84,31 @@ child run id from the completed `spawn_agents` result replaces it as the
 correlation anchor — a strictly better signal, because it is the id the backend
 actually created for the spawn.
 
-### F2 — Coordination spawns do not propagate `root_run_id` (out of scope)
+### F2 — `root_run_id` is not persisted when tracing is off (out of scope)
 
 The second live run showed the child run's `rootRunId` is absent. Read-only
-confirmation against dev confirms this is systematic, not a race:
+confirmation against dev shows this is systematic and affects every run, not
+just spawned children:
 
 ```sql
-SELECT count(*) AS child_runs, count(root_run_id) AS with_root
-FROM kb.agent_runs WHERE parent_run_id IS NOT NULL;
--- child_runs = 5, with_root = 0
+SELECT count(*) FILTER (WHERE root_run_id IS NULL)   AS root_null,
+       count(*) FILTER (WHERE root_run_id IS NOT NULL) AS root_set,
+       count(*) AS total
+FROM kb.agent_runs;
+-- root_null = 204, root_set = 0, total = 204
 ```
 
-So the parent/child linkage is proven through `parentRunId`, and `rootRunId` is
-only cross-checked when both runs carry one. This is a product gap, not a test
-gap: the `agent-run-preview` change groups the delegation tree by root run, so a
-child with no root cannot be attached to that tree. It is deliberately **not**
-fixed here — this change is test-only, and widening it to a server-side fix would
-mix an unplanned behavioral change into a test PR. It is recorded in
-`tasks.md` as a follow-up.
+`root_run_id` is only written when the run's OTel span context is valid —
+`executor.go` `Execute` gates `UpdateTraceAndRootRun` on
+`span.SpanContext().IsValid()` — and tracing is opt-in
+(`OTEL_EXPORTER_OTLP_ENDPOINT`) and effectively off/unreachable in dev, so every
+run there carries `root_run_id IS NULL`. The parent/child linkage is therefore
+proven through `parentRunId`, and `rootRunId` is only cross-checked when both
+runs carry one. This is a product gap, not a test gap: the `agent-run-preview`
+change groups the delegation tree by root run, so runs without a root cannot be
+attached to that tree. It is deliberately **not** fixed here — this change is
+test-only, and widening it to a server-side fix would mix an unplanned
+behavioral change into a test PR. It is recorded in `tasks.md` as a follow-up.
 
 ### F3 — The dev backend can restart mid-run (environmental)
 
