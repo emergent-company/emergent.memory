@@ -33,7 +33,9 @@ type blueprintPack struct {
 
 // blueprintAgent is the manifest form of an agent definition. It mirrors
 // memory's AgentManifest. Model is a single-name struct (Memory's bundled
-// agents pin only a model name; temperature/maxTokens/etc. are unmanaged).
+// agents pin only a model name; temperature/maxTokens/etc. are unmanaged). UI
+// is the optional inline appearance block (BundledAgentUI already carries the
+// json tags AgentUIManifest expects).
 type blueprintAgent struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description,omitempty"`
@@ -45,10 +47,21 @@ type blueprintAgent struct {
 	FlowType     string          `json:"flowType,omitempty"`
 	Visibility   string          `json:"visibility,omitempty"`
 	Config       map[string]any  `json:"config,omitempty"`
+	UI           *BundledAgentUI `json:"ui,omitempty"`
 }
 
 type blueprintModel struct {
 	Name string `json:"name"`
+}
+
+// nonEmptyAgentUI drops an appearance block that declares neither icon nor
+// color, so the manifest never carries a meaningless `"ui":{}` (nil/empty both
+// mean "no appearance").
+func nonEmptyAgentUI(ui *BundledAgentUI) *BundledAgentUI {
+	if ui == nil || (ui.Icon == "" && ui.Color == "") {
+		return nil
+	}
+	return ui
 }
 
 // buildBlueprintManifest converts a bundled blueprint pack into the manifest
@@ -80,6 +93,7 @@ func buildBlueprintManifest(bp *BundledBlueprint) (json.RawMessage, error) {
 			FlowType:     a.FlowType,
 			Visibility:   a.Visibility,
 			Config:       a.Config,
+			UI:           nonEmptyAgentUI(a.UI),
 		}
 		if a.Model != "" {
 			am.Model = &blueprintModel{Name: a.Model}

@@ -44,16 +44,28 @@ type BundledBlueprint struct {
 // BundledAgent is one agent definition carried by a bundled blueprint
 // (agents/*.yaml). It maps onto the gateway's AgentDefinition create payload.
 type BundledAgent struct {
-	Name         string         `yaml:"name"`
-	Description  string         `yaml:"description"`
-	SystemPrompt string         `yaml:"systemPrompt"`
-	Model        string         `yaml:"model"`
-	Tools        []string       `yaml:"tools"`
-	BannedTools  []string       `yaml:"bannedTools"`
-	Skills       []string       `yaml:"skills"`
-	Config       map[string]any `yaml:"config"`
-	FlowType     string         `yaml:"flowType"`
-	Visibility   string         `yaml:"visibility"`
+	Name         string          `yaml:"name"`
+	Description  string          `yaml:"description"`
+	SystemPrompt string          `yaml:"systemPrompt"`
+	Model        string          `yaml:"model"`
+	Tools        []string        `yaml:"tools"`
+	BannedTools  []string        `yaml:"bannedTools"`
+	Skills       []string        `yaml:"skills"`
+	Config       map[string]any  `yaml:"config"`
+	FlowType     string          `yaml:"flowType"`
+	Visibility   string          `yaml:"visibility"`
+	UI           *BundledAgentUI `json:"ui,omitempty" yaml:"ui,omitempty"`
+}
+
+// BundledAgentUI is an agent's inline appearance block (icon + color) as
+// declared by a blueprint agent manifest. It mirrors memory's AgentUIManifest
+// and (with its json tags) doubles as the `ui` member of the manifest form
+// blueprintAgent POSTs, so the field round-trips: agents/*.yaml → manifest →
+// applied blueprint detail. Both fields optional; nil/empty means no
+// appearance.
+type BundledAgentUI struct {
+	Icon  string `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Color string `json:"color,omitempty" yaml:"color,omitempty"`
 }
 
 // bundledPackFile is the union shape of a pack/schema YAML file. Both the
@@ -697,6 +709,7 @@ func bundledAgentsFromManifest(agents []blueprintAgent) []BundledAgent {
 			FlowType:     a.FlowType,
 			Visibility:   a.Visibility,
 			Config:       a.Config,
+			UI:           a.UI,
 		})
 	}
 	return out

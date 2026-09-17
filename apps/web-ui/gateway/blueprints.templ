@@ -841,6 +841,9 @@ templ blueprintAgents(d *BlueprintDetail) {
 templ agentDetailRow(a BundledAgent, providerNames []string) {
 	<div class="px-4 py-4">
 		<div class="flex flex-wrap items-center gap-2">
+			if a.UI != nil && (a.UI.Icon != "" || a.UI.Color != "") {
+				@agentIconTile(a.UI.Icon, a.UI.Color)
+			}
 			<p class="text-sm font-medium">{ a.Name }</p>
 			if a.Model != "" {
 				@ui.Badge(ui.BadgeProps{Label: a.Model, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
