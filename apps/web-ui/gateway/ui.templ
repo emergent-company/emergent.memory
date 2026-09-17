@@ -544,7 +544,7 @@ templ deleteAgentDescription() {
 
 // deleteConfirmDialog confirms agent deletion before the DELETE call.
 templ deleteConfirmDialog() {
-	@confirmDeleteDialog("delete-confirm-modal", "agent", deleteAgentDescription()) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "delete-confirm-modal", Noun: "agent"}, deleteAgentDescription()) {
 		@form.FormActions("", "") {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeButton,
@@ -794,23 +794,6 @@ func modalBoxAttrs(boxID string) templ.Attributes {
 		return nil
 	}
 	return templ.Attributes{"id": boxID}
-}
-
-// confirmDeleteDialog renders the shared delete-confirmation modal shell:
-// error icon circle, "Delete <noun>?" heading, and the backdrop. description
-// is the detail paragraph (rendered under the heading); children are the
-// action buttons (outside the icon/title row, directly in the modal box).
-templ confirmDeleteDialog(id, noun string, description templ.Component) {
-	@ui.Dialog(ui.DialogProps{ID: id, BoxClass: "max-w-sm"}) {
-		<div class="mb-4 flex items-start gap-3">
-			@components.ConfirmIcon("")
-			<div>
-				<h3 class="text-lg font-semibold">Delete { noun }?</h3>
-				@description
-			</div>
-		</div>
-		{ children... }
-	}
 }
 
 // checkboxPickerItem is one checkbox option in a checkboxPicker list.

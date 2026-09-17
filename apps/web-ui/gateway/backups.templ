@@ -277,7 +277,7 @@ templ backupDeleteDescription(b Backup) {
 
 // backupDeleteDialog confirms deletion before the POST to /backups/:id/delete.
 templ backupDeleteDialog(b Backup) {
-	@confirmDeleteDialog("backup-delete-"+b.ID, "backup", backupDeleteDescription(b)) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "backup-delete-" + b.ID, Noun: "backup"}, backupDeleteDescription(b)) {
 		<form method="post" action={ templ.URL("/backups/" + url.PathEscape(b.ID) + "/delete") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{

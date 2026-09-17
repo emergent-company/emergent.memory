@@ -498,7 +498,7 @@ templ OrgLandingPage(data orgPageData) {
 // /projects/delete (modalShell disables hx-boost, so the handler's PRG
 // redirect lands back with the flash).
 templ projectDeleteDialog(orgID string) {
-	@confirmDeleteDialog("project-delete-modal", "project", projectDeleteDialogDescription()) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "project-delete-modal", Noun: "project"}, projectDeleteDialogDescription()) {
 		<form id="project-delete-form" method="post" action="/projects/delete" onsubmit="return submitProjectDelete(event)">
 			<input type="hidden" name="orgId" value={ orgID }/>
 			<div id="project-delete-ids" hidden></div>

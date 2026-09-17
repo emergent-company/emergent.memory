@@ -343,7 +343,7 @@ templ scheduleDeleteDescription(a *ScheduledAgent) {
 // The action is fixed because the dialog only exists on the detail page for
 // the schedule being viewed — no per-schedule JS state needed.
 templ scheduleDeleteDialog(a *ScheduledAgent) {
-	@confirmDeleteDialog("schedule-delete-modal", "schedule", scheduleDeleteDescription(a)) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "schedule-delete-modal", Noun: "schedule"}, scheduleDeleteDescription(a)) {
 		<form method="post" action={ templ.URL("/schedules/" + a.ID + "/delete") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{

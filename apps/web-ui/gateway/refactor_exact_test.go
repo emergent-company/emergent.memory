@@ -88,11 +88,11 @@ func TestRefactorOutputExact(t *testing.T) {
 	want = `<dialog id="sidepanel-modal" class="modal" hx-boost="false"><div id="sidepanel-modal-box" class="modal-box"><p>x</p></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
 	check("ui.Dialog boxid", got, want)
 
-	// confirmDeleteDialog
-	got = render(confirmDeleteDialog("delete-confirm-modal", "agent", deleteAgentDescription()),
+	// ui.ConfirmDialog (was the local confirmDeleteDialog — same markup)
+	got = render(ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "delete-confirm-modal", Noun: "agent"}, deleteAgentDescription()),
 		`<div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div>`)
 	want = `<dialog id="delete-confirm-modal" class="modal" hx-boost="false"><div class="modal-box max-w-sm"><div class="mb-4 flex items-start gap-3"><div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"><span class="iconify lucide--trash-2 size-5" aria-hidden="true"></span></div><div><h3 class="text-lg font-semibold">Delete agent?</h3><p class="text-base-content/55 mt-1 text-sm">This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.</p></div></div><div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
-	check("confirmDeleteDialog", got, want)
+	check("ui.ConfirmDialog", got, want)
 
 	// detailHeader default (existing callers)
 	got = render(detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", "New skill")), "", "New skill", "A name, what it does, and the instructions that make it work."))

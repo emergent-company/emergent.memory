@@ -278,7 +278,7 @@ templ mcpServerDeleteDescription(srv MCPServer) {
 // mcpServerDeleteDialog confirms deletion before the POST to
 // /settings/mcp-servers/:id/delete. One dialog per row (its action is fixed).
 templ mcpServerDeleteDialog(srv MCPServer) {
-	@confirmDeleteDialog("mcp-server-delete-"+srv.ID, "MCP server", mcpServerDeleteDescription(srv)) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "mcp-server-delete-" + srv.ID, Noun: "MCP server"}, mcpServerDeleteDescription(srv)) {
 		<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/delete") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{
