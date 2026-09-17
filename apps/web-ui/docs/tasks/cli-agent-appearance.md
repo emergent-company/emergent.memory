@@ -26,9 +26,9 @@ Do **not** work around this with a relative `replace` in `apps/cli/go.mod` — t
 - An SDK module tag **newer than `v0.82.0`** that contains `UIConfig` on the `agentdefinitions` agent-definition types (added in PR #541, `apps/server/pkg/sdk/agentdefinitions/client.go`). Confirm with:
   ```bash
   LATEST=$(git tag -l "apps/server/pkg/sdk/*" --sort=-v:refname | head -1)
-  git show "$LATEST:agentdefinitions/client.go" | grep -n UIConfig
+  git show "$LATEST:apps/server/pkg/sdk/agentdefinitions/client.go" | grep -n UIConfig
   ```
-- The archived capability spec `openspec/specs/agent-appearance/spec.md` (no CLI requirement was carried into the main spec — re-add one in the follow-up's delta spec).
+- The capability spec `openspec/specs/agent-appearance/spec.md` (the main spec, not an archive — no CLI requirement was carried into it, so re-add one in the follow-up's delta spec).
 
 ## Notes
 
