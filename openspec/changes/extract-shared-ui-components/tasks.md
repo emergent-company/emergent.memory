@@ -80,11 +80,11 @@ May run as two disjoint sub-lanes after phase 1; never in the same file set.
 
 ## 5 — Verification sweep
 
-- [ ] 5.1 Full gate: `templ generate ./...` && `go build ./...` && `go vet ./...` && `golangci-lint run ./...` && `go test ./...` (gateway) — all clean.
-- [ ] 5.2 Duplication gate: re-run the audit greps and assert zero remaining duplicates for the twelve patterns (no `<dt class="text-base-content/45`, no `d.showModal()` outside `app.js`/`components/dialog.templ`, no second 80-line reveal dialog, no per-page `openX()` script).
-- [ ] 5.3 `cd apps/web-ui && task lint` (lefthook: gofmt, go vet, go build, `templ generate -check`) clean.
-- [ ] 5.4 Browser smoke on the dev server for the affected routes (`/settings/providers`, `/settings/mcp-servers`, `/settings/mcp-servers/shares`, `/agents/*` MCP endpoint, `/settings/tokens`, `/backups/*`, `/schedules`, `/skills`, `/documents`, `/blueprints`, `/objects`, `/sessions`, `/schema`, `/orgs`, `/members`): pages render, dialogs open and re-open after mutation, secrets reveal once. Verify: no console errors; screenshot check of the normalized regions.
-- [ ] 5.5 `apps/web-ui/tests/e2e` smoke: run the render/title specs plus the MCP-share and token lifecycle specs. Verify: green (or the same failures as `main`, recorded).
+- [x] 5.1 Full gate: `templ generate ./...` && `go build ./...` && `go vet ./...` && `golangci-lint run ./...` && `go test ./...` (gateway) — all clean.
+- [x] 5.2 Duplication gate: re-run the audit greps and assert zero remaining duplicates for the twelve patterns (no `<dt class="text-base-content/45`, no `d.showModal()` outside `app.js`/`components/dialog.templ`, no second 80-line reveal dialog, no per-page `openX()` script).
+- [x] 5.3 `cd apps/web-ui && task lint` (lefthook: gofmt, go vet, go build, `templ generate -check`) clean.
+- [ ] 5.4 (not run locally — the dev server serves the shared checkout, not this worktree; CI + review-bot smoke covers it) Browser smoke on the dev server for the affected routes (`/settings/providers`, `/settings/mcp-servers`, `/settings/mcp-servers/shares`, `/agents/*` MCP endpoint, `/settings/tokens`, `/backups/*`, `/schedules`, `/skills`, `/documents`, `/blueprints`, `/objects`, `/sessions`, `/schema`, `/orgs`, `/members`): pages render, dialogs open and re-open after mutation, secrets reveal once. Verify: no console errors; screenshot check of the normalized regions.
+- [ ] 5.5 (not run locally — requires a session-mode gateway against this branch; deferred to CI/PR review) `apps/web-ui/tests/e2e` smoke: run the render/title specs plus the MCP-share and token lifecycle specs. Verify: green (or the same failures as `main`, recorded).
 
 ## 6 — PR
 
