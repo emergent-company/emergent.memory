@@ -19,7 +19,7 @@
   var picker = null, pickerLabel = null, sessionMenu = null;
   var assistantAgent = "";
   var aborter = null, streaming = false;
-  var bubble = null, bubbleHTML = "", conversationId = "";
+  var bubble = null, bubbleHTML = "", bubbleText = "", conversationId = "";
   // Persisted transcript: {role:"user",text} | {role:"assistant",html}
   var history = [];
   // Session picker: the assistant agent's conversations from the backend
@@ -101,6 +101,7 @@
     renderQuestion: function (evt) { renderQuestion(evt); },
     renderApproval: function (evt) { renderApproval(evt); },
     failStream: function (msg) { failStream(msg); },
+    onToken: function (evt) { appendToken(evt.token); },
     isAborted: function () { return !!(aborter && aborter.signal.aborted); },
     onMeta: function (evt) {
       if (evt.conversationId) {
@@ -126,6 +127,7 @@
     get aborter()    { return aborter; },    set aborter(v)    { aborter = v; },
     get bubble()     { return bubble; },     set bubble(v)     { bubble = v; },
     get bubbleHTML() { return bubbleHTML; }, set bubbleHTML(v) { bubbleHTML = v; },
+    get bubbleText() { return bubbleText; }, set bubbleText(v) { bubbleText = v; },
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
     currentAgentName: currentAgentName,
@@ -147,6 +149,7 @@
   var addAssistantMessage = stream.addAssistantMessage;
   var openAssistantBubble = stream.openAssistantBubble;
   var updateBubbleText = stream.updateBubbleText;
+  var appendToken = stream.appendToken;
   var toolChip = stream.toolChip;
   var setToolStatus = stream.setToolStatus;
   var handleToolEvent = stream.handleToolEvent;
@@ -447,7 +450,7 @@
     streaming = false;
     conversationId = "";
     history = [];
-    bubble = null; bubbleHTML = "";
+    bubble = null; bubbleHTML = ""; bubbleText = "";
     setStreaming(false);
     if (messages) messages.innerHTML = "";
     if (empty) empty.classList.remove("hidden");
@@ -464,7 +467,7 @@
     if (!id) return;
     if (aborter) aborter.abort();
     streaming = false;
-    bubble = null; bubbleHTML = "";
+    bubble = null; bubbleHTML = ""; bubbleText = "";
     setStreaming(false);
 
     var items = [];

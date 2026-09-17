@@ -300,6 +300,7 @@
       ctx.bubble = b;
       ctx.messages.appendChild(b);
       ctx.bubbleHTML = "";
+      ctx.bubbleText = "";
       b._recorded = false;
       updateBubbleText();
       ctx.scrollToBottom();
@@ -310,14 +311,23 @@
       var b = ctx.bubble;
       if (!b) return;
       var el = b.querySelector(".memory-md");
-      // animated typing indicator while waiting for the first token
-      if (ctx.streaming && !ctx.bubbleHTML) {
+      // animated typing indicator while waiting for the first token/snapshot
+      if (ctx.streaming && !ctx.bubbleHTML && !ctx.bubbleText) {
         if (!b.querySelector(".memory-typing")) {
           el.innerHTML = '<span class="memory-typing"><span></span><span></span><span></span></span>';
         }
         return;
       }
-      el.innerHTML = ctx.bubbleHTML;
+      // Two render paths, mutually exclusive by construction: the raw-text path
+      // owns the bubble until the authoritative snapshot lands; afterwards the
+      // innerHTML path owns it. Raw deltas render through textContent ONLY —
+      // they can never reach innerHTML (the server sanitizer is the sole
+      // markup boundary).
+      if (ctx.bubbleHTML) {
+        el.innerHTML = ctx.bubbleHTML;
+      } else {
+        el.textContent = ctx.bubbleText;
+      }
       var caret = b.querySelector(".memory-caret");
       if (ctx.streaming) {
         if (!caret) {
@@ -328,6 +338,20 @@
       } else if (caret) {
         caret.remove();
       }
+    }
+
+    // Raw-text append path: accumulate deltas into a raw string and render them
+    // via textContent (never innerHTML/insertAdjacentHTML). The path is inert
+    // once the authoritative html snapshot owns the bubble, so a late delta
+    // can never clobber the rendered markdown.
+    function appendToken(delta) {
+      var b = ctx.bubble;
+      if (!b) return;
+      if (ctx.bubbleHTML) return; // snapshot owns the bubble; raw path stops
+      if (delta == null) return;
+      ctx.bubbleText += String(delta);
+      updateBubbleText();
+      ctx.scrollToBottom();
     }
 
     /* ---------- tool chips (shared badge shell from chat-components.js) ---------- */
@@ -926,6 +950,7 @@
       addAssistantMessage: addAssistantMessage,
       openAssistantBubble: openAssistantBubble,
       updateBubbleText: updateBubbleText,
+      appendToken: appendToken,
       toolChip: toolChip,
       setToolStatus: setToolStatus,
       handleToolEvent: handleToolEvent,
