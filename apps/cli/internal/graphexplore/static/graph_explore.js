@@ -56,7 +56,7 @@ function syncTypeColorsFromDOM() {
 // Seed color cache on page load (may be empty if HTMX hasn't loaded filter lists yet)
 syncTypeColorsFromDOM();
 // Re-sync after HTMX swaps the filter lists
-document.body.addEventListener('htmx:afterSettle', (e) => {
+document.body.addEventListener('htmx:after:settle', (e) => {
   const tgt = e.detail?.target;
   if (tgt && (tgt.id === 'node-filter-list' || tgt.id === 'edge-filter-list')) {
     syncTypeColorsFromDOM();
