@@ -1454,7 +1454,7 @@ func TestRenderAgentSandboxPage(t *testing.T) {
 		Config: &AgentSandboxConfig{Provider: "firecracker"},
 		Providers: []SandboxProvider{
 			{Name: "E2B", Type: "e2b", Healthy: false, Message: "E2B_API_KEY not set"},
-			{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available (/dev/kvm missing)"},
+			{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
 		},
 	}
 	su := renderHTML(t, AgentSandboxPage(storedUnavailable))
@@ -1670,7 +1670,7 @@ func TestUIAgentSandboxProviderRoundTripSubmit(t *testing.T) {
 			cfg:  &AgentSandboxConfig{Enabled: true, Provider: "firecracker"},
 			providers: []SandboxProvider{
 				{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true},
-				{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available (/dev/kvm missing)"},
+				{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
 				{Name: "E2B", Type: "e2b", Registered: false, Healthy: false, Message: "E2B_API_KEY not set"},
 			},
 			wantSubmit: "firecracker",
@@ -1750,7 +1750,7 @@ func TestUIAgentSandboxExplicitAutoSubmit(t *testing.T) {
 		defs:          map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
 		sandboxConfig: &AgentSandboxConfig{Enabled: true, Provider: "firecracker"},
 		providers: []SandboxProvider{
-			{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available (/dev/kvm missing)"},
+			{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
 		},
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}

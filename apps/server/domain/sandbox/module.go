@@ -156,7 +156,7 @@ func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, cfg *config.
 			} else if fcProvider.IsKVMAvailable() {
 				orchestrator.RegisterProvider(ProviderFirecracker, fcProvider)
 			} else {
-				orchestrator.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available (/dev/kvm missing)")
+				orchestrator.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available on this host")
 				log.Info("Firecracker provider not registered — KVM not available")
 			}
 

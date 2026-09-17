@@ -55,7 +55,7 @@ The agent Sandbox settings page (`/agents/:id/sandbox`) SHALL render its provide
 
 #### Scenario: Unavailable provider that is not stored is visible but not selectable
 - **GIVEN** the providers endpoint reports `gvisor` as healthy
-- **AND** reports `firecracker` as unregistered with reason `"KVM not available (/dev/kvm missing)"`
+- **AND** reports `firecracker` as unregistered with reason `"KVM not available on this host"`
 - **AND** the agent's stored provider is not `firecracker`
 - **WHEN** a user opens the agent Sandbox settings page
 - **THEN** the `gvisor` option SHALL be selectable

@@ -45,7 +45,7 @@ func TestListProvidersReportsUnavailableProviders(t *testing.T) {
 
 	gv := &mockProvider{name: "gvisor", providerType: ProviderGVisor, healthy: true}
 	o.RegisterProvider(ProviderGVisor, gv)
-	o.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available (/dev/kvm missing)")
+	o.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available on this host")
 	o.MarkUnavailable(ProviderE2B, "E2B", "E2B_API_KEY not set")
 
 	providers := o.ListProviders()
@@ -61,7 +61,7 @@ func TestListProvidersReportsUnavailableProviders(t *testing.T) {
 	assert.Equal(t, "Firecracker", providers[1].Name)
 	assert.Nil(t, providers[1].Capabilities)
 	assert.False(t, providers[1].Healthy)
-	assert.Equal(t, "KVM not available (/dev/kvm missing)", providers[1].Message)
+	assert.Equal(t, "KVM not available on this host", providers[1].Message)
 
 	assert.Equal(t, ProviderE2B, providers[2].Type)
 	assert.False(t, providers[2].Registered)
@@ -76,7 +76,7 @@ func TestListProvidersReportsUnavailableProviders(t *testing.T) {
 func TestMarkUnavailableDoesNotRegister(t *testing.T) {
 	o := NewOrchestrator(testLogger())
 
-	o.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available (/dev/kvm missing)")
+	o.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available on this host")
 
 	_, err := o.GetProvider(ProviderFirecracker)
 	require.Error(t, err)
@@ -114,13 +114,13 @@ func TestSelectionErrorEnumeratesReasons(t *testing.T) {
 	o.RegisterProvider(ProviderGVisor, gv)
 	o.checkAllHealth(context.Background())
 
-	o.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available (/dev/kvm missing)")
+	o.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available on this host")
 	o.MarkUnavailable(ProviderE2B, "E2B", "E2B_API_KEY not set")
 
 	_, _, err := o.SelectProviderWithFallback(ContainerTypeAgentSandbox, DeploymentSelfHosted, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no healthy providers available (fallback exhausted)")
 	assert.Contains(t, err.Error(), "gvisor: unhealthy: gvisor health")
-	assert.Contains(t, err.Error(), "firecracker: not registered: KVM not available (/dev/kvm missing)")
+	assert.Contains(t, err.Error(), "firecracker: not registered: KVM not available on this host")
 	assert.Contains(t, err.Error(), "e2b: not registered: E2B_API_KEY not set")
 }
