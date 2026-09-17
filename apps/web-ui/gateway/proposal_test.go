@@ -199,23 +199,23 @@ func TestRenderProposalHTMLNewKinds(t *testing.T) {
 	}{
 		"skill": {
 			`{"kind":"skill","summary":"Add a summarize skill","body":{"name":"summarize","description":"d","prompt":"Summarize.","tools":["web-fetch"],"bannedTools":["ask_user"]}}`,
-			[]string{"proposal-card", "Proposed changes", "skill", "summarize", "Summarize.", "web-fetch", "Banned tools"},
+			[]string{"proposal-card", "Proposed changes", "skill", `data-proposal-kind="skill"`, "summarize", "Summarize.", "web-fetch", "Banned tools"},
 		},
 		"agent": {
 			`{"kind":"agent","summary":"Add an editor","body":{"name":"editor","model":"openai/deepseek-v4-flash","systemPrompt":"You edit."}}`,
-			[]string{"proposal-card", "agent", "editor", "openai/deepseek-v4-flash", "You edit."},
+			[]string{"proposal-card", "agent", `data-proposal-kind="agent"`, "editor", "openai/deepseek-v4-flash", "You edit."},
 		},
 		"mcp_server": {
 			`{"kind":"mcp_server","summary":"Add exa","body":{"name":"exa","type":"http","url":"https://mcp.exa.ai/mcp","enabled":true,"enabledTools":["search"]}}`,
-			[]string{"proposal-card", "mcp_server", "exa", "http", "https://mcp.exa.ai/mcp", "search"},
+			[]string{"proposal-card", "mcp_server", `data-proposal-kind="mcp_server"`, "exa", "http", "https://mcp.exa.ai/mcp", "search"},
 		},
 		"provider": {
 			`{"kind":"provider","summary":"Add openai","body":{"provider":"openai","baseUrl":"http://litellm:4000/v1","models":["deepseek-v4-flash"]}}`,
-			[]string{"proposal-card", "provider", "openai", "http://litellm:4000/v1", "deepseek-v4-flash"},
+			[]string{"proposal-card", "provider", `data-proposal-kind="provider"`, "openai", "http://litellm:4000/v1", "deepseek-v4-flash"},
 		},
 		"object": {
 			`{"kind":"object","summary":"Create a person","body":{"entities":[{"type":"person","key":"alice","properties":{"name":"Alice"}}],"relationships":[{"type":"assigned_to","source":"t1","target":"alice"}]}}`,
-			[]string{"proposal-card", "object", "Entities", "person", "alice", "Relationships", "assigned_to", "t1 → alice"},
+			[]string{"proposal-card", "object", `data-proposal-kind="object"`, "Entities", "person", "alice", "Relationships", "assigned_to", "t1 → alice"},
 		},
 	}
 	for name, tc := range cases {
@@ -231,7 +231,7 @@ func TestRenderProposalHTMLNewKinds(t *testing.T) {
 func TestRenderProposalHTML(t *testing.T) {
 	html := renderProposalHTML(json.RawMessage(proposalBlueprintJSON))
 	for _, want := range []string{
-		"proposal-card", "Proposed changes", "blueprint",
+		"proposal-card", "Proposed changes", "blueprint", `data-proposal-kind="blueprint"`,
 		"Adds 2 object types, 1 relationship type",
 		"person", "task", "assigned_to", "task → person",
 	} {
