@@ -607,7 +607,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () { openAutoOpenDialogs(document); });
-  document.addEventListener("htmx:afterSwap", function (ev) { openAutoOpenDialogs(ev.target); });
+  document.addEventListener("htmx:after:swap", function (ev) { openAutoOpenDialogs(ev.target); });
 
   /* expose for templ script blocks */
   window.MemoryApp = {
