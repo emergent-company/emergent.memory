@@ -225,6 +225,7 @@ type AgentRun struct {
 type CreateRunOptions struct {
 	AgentID           string
 	ParentRunID       *string
+	RootRunID         *string // top-level orchestration run ID; persisted at insert when known
 	MaxSteps          *int
 	ResumedFrom       *string
 	InitialStepCount  int // for resumed runs, start from prior run's step_count
@@ -238,6 +239,7 @@ type CreateRunOptions struct {
 // CreateRunQueuedOptions holds optional parameters for CreateRunQueued.
 type CreateRunQueuedOptions struct {
 	ParentRunID     *string        // parent run to re-enqueue when this run completes
+	RootRunID       *string        // top-level orchestration run ID; inherited by re-enqueued runs
 	TriggerMessage  *string        // message injected as user message when worker picks up this run
 	TriggerMetadata map[string]any // structured metadata propagated from parent run
 	MaxPendingJobs  int            // if > 0, reject the enqueue when the agent already has this many pending jobs

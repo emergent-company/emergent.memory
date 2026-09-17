@@ -555,6 +555,11 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		userMessage = fmt.Sprintf("[task_id: %s] %s", taskID, userMessage)
 	}
 
+	// Resolve the caller's orchestration root once. A delegated child must inherit
+	// the delegator's root unchanged in either dispatch mode; the sync branch
+	// below would otherwise self-root the child and split the tree.
+	rootOverride := rootOverrideFromContext(ctx)
+
 	// Dispatch routing: queued vs sync
 	if agentDef != nil && agentDef.DispatchMode == DispatchModeQueued {
 		// Queued branch: create run + job atomically and return immediately.
@@ -567,6 +572,9 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		}
 		if callerRunID := callerRunIDFromContext(ctx); callerRunID != "" {
 			queuedOpts.ParentRunID = &callerRunID
+		}
+		if rootOverride != nil {
+			queuedOpts.RootRunID = rootOverride
 		}
 		run, err := h.repo.CreateRunQueued(ctx, agent.ID, 1, queuedOpts)
 		if err != nil {
@@ -589,13 +597,17 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 	}
 
 	// Sync branch (default): block until execution completes
-	result, err := h.executor.Execute(ctx, ExecuteRequest{
+	execReq := ExecuteRequest{
 		Agent:           agent,
 		AgentDefinition: agentDef,
 		ProjectID:       agent.ProjectID,
 		OrgID:           orgID,
 		UserMessage:     userMessage,
-	})
+	}
+	if rootOverride != nil {
+		execReq.RootRunID = rootOverride
+	}
+	result, err := h.executor.Execute(ctx, execReq)
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()
 	}
