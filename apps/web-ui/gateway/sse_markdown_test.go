@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -121,35 +122,201 @@ func rewrite(t *testing.T, stream string) string {
 	return out.String()
 }
 
-// TestRewriteChatStreamTokenEvents asserts token events accumulate into
-// full-message html events, in order, as `data: ...\n\n` frames.
+// streamEvent is the subset of stream event fields the rewrite tests assert on.
+type streamEvent struct {
+	Type  string `json:"type"`
+	Token string `json:"token"`
+	HTML  string `json:"html"`
+}
+
+// parseStream decodes the SSE frames in out into a slice of streamEvents,
+// dropping any frame that is not a `data:` line.
+func parseStream(t *testing.T, out string) []streamEvent {
+	t.Helper()
+	var events []streamEvent
+	for _, frame := range strings.Split(out, "\n\n") {
+		frame = strings.TrimSpace(frame)
+		if !strings.HasPrefix(frame, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(frame, "data:"))
+		var ev streamEvent
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			t.Fatalf("event payload not JSON: %v (%s)", err, payload)
+		}
+		events = append(events, ev)
+	}
+	return events
+}
+
+// TestRewriteChatStreamTokenEvents asserts token deltas are forwarded as raw
+// `token` events and markdown is rendered exactly once per turn, as the single
+// authoritative `html` snapshot emitted before `done`.
 func TestRewriteChatStreamTokenEvents(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"type":"meta","conversationId":"c1"}`,
-		`data: {"type":"token","token":"Hello"}`,
-		`data: {"type":"token","token":" world"}`,
+		`data: {"type":"token","token":"Hel"}`,
+		`data: {"type":"token","token":"lo "}`,
+		`data: {"type":"token","token":"world"}`,
 		`data: {"type":"done"}`,
 	}, "\n\n") + "\n\n"
 
-	out := rewrite(t, stream)
+	events := parseStream(t, rewrite(t, stream))
 
-	if !strings.Contains(out, `"type":"html"`) {
-		t.Fatalf("no html event emitted: %s", out)
+	var types []string
+	var tokenDeltas []string
+	htmlCount := 0
+	for _, ev := range events {
+		types = append(types, ev.Type)
+		switch ev.Type {
+		case "token":
+			tokenDeltas = append(tokenDeltas, ev.Token)
+		case "html":
+			htmlCount++
+		}
 	}
-	// second html frame carries the accumulated message, not just the delta.
-	if !strings.Contains(out, "Hello world") {
-		t.Errorf("accumulated token text missing: %s", out)
+	if want := []string{"meta", "token", "token", "token", "html", "done"}; !slices.Equal(types, want) {
+		t.Fatalf("event sequence = %v, want %v", types, want)
 	}
-	// every emitted frame is a proper `data: ...\n\n` SSE frame.
-	if !strings.HasSuffix(out, "\n\n") {
-		t.Errorf("output must end on an event boundary: %q", out)
+	if want := []string{"Hel", "lo ", "world"}; !slices.Equal(tokenDeltas, want) {
+		t.Errorf("token deltas = %v, want %v", tokenDeltas, want)
 	}
-	// order preserved: meta < html < done.
-	iMeta := strings.Index(out, `"type":"meta"`)
-	iHTML := strings.Index(out, `"type":"html"`)
-	iDone := strings.Index(out, `"type":"done"`)
-	if iMeta < 0 || iHTML < 0 || iDone < 0 || iMeta >= iHTML || iHTML >= iDone {
-		t.Errorf("event order not preserved (meta=%d html=%d done=%d): %s", iMeta, iHTML, iDone, out)
+	if htmlCount != 1 {
+		t.Errorf("html events = %d, want exactly 1", htmlCount)
+	}
+	if !strings.Contains(events[4].HTML, "world") {
+		t.Errorf("snapshot missing accumulated text: %q", events[4].HTML)
+	}
+}
+
+// TestRewriteChatStreamRendersOncePerTurn feeds a 20-token turn and asserts a
+// single `html` event — one markdown render — not one per token. The `html`
+// event count equals the renderMarkdown invocation count because only
+// emitMarkdownSnapshot renders in the token/snapshot path.
+func TestRewriteChatStreamRendersOncePerTurn(t *testing.T) {
+	var parts []string
+	for range 20 {
+		parts = append(parts, `data: {"type":"token","token":"x"}`)
+	}
+	parts = append(parts, `data: {"type":"done"}`)
+	stream := strings.Join(parts, "\n\n") + "\n\n"
+
+	events := parseStream(t, rewrite(t, stream))
+
+	tokenCount, htmlCount := 0, 0
+	for _, ev := range events {
+		switch ev.Type {
+		case "token":
+			tokenCount++
+		case "html":
+			htmlCount++
+		}
+	}
+	if tokenCount != 20 {
+		t.Errorf("token events = %d, want 20", tokenCount)
+	}
+	if htmlCount != 1 {
+		t.Errorf("html events (renders) = %d, want 1", htmlCount)
+	}
+}
+
+// TestRewriteChatStreamDoneNoTokens asserts a `done` with no preceding token
+// emits no `html` snapshot.
+func TestRewriteChatStreamDoneNoTokens(t *testing.T) {
+	out := rewrite(t, `data: {"type":"done"}`+"\n\n")
+	if strings.Contains(out, `"type":"html"`) {
+		t.Errorf("done with no tokens must not emit html: %s", out)
+	}
+	if !strings.Contains(out, `"type":"done"`) {
+		t.Errorf("done must pass through: %s", out)
+	}
+}
+
+// TestRewriteChatStreamErrorFallbackSnapshot asserts a stream terminated by an
+// `error` event (no `done`) still emits the authoritative snapshot.
+func TestRewriteChatStreamErrorFallbackSnapshot(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"token","token":"par"}`,
+		`data: {"type":"token","token":"tial"}`,
+		`data: {"type":"error","message":"boom"}`,
+	}, "\n\n") + "\n\n"
+
+	events := parseStream(t, rewrite(t, stream))
+
+	var types []string
+	htmlCount := 0
+	for _, ev := range events {
+		types = append(types, ev.Type)
+		if ev.Type == "html" {
+			htmlCount++
+		}
+	}
+	if want := []string{"token", "token", "error", "html"}; !slices.Equal(types, want) {
+		t.Fatalf("event sequence = %v, want %v", types, want)
+	}
+	if htmlCount != 1 {
+		t.Errorf("html events = %d, want 1", htmlCount)
+	}
+	if !strings.Contains(events[3].HTML, "partial") {
+		t.Errorf("snapshot missing accumulated text: %q", events[3].HTML)
+	}
+}
+
+// TestRewriteChatStreamEOFFallbackSnapshot asserts EOF without `done` emits the
+// authoritative snapshot.
+func TestRewriteChatStreamEOFFallbackSnapshot(t *testing.T) {
+	out := rewrite(t, `data: {"type":"token","token":"open"}`+"\n\n")
+	events := parseStream(t, out)
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2 (%v)", len(events), events)
+	}
+	if events[0].Type != "token" || events[0].Token != "open" {
+		t.Errorf("first event = %+v, want token \"open\"", events[0])
+	}
+	if events[1].Type != "html" || !strings.Contains(events[1].HTML, "open") {
+		t.Errorf("second event = %+v, want html snapshot", events[1])
+	}
+}
+
+// TestRewriteChatStreamNoDuplicateSnapshot asserts the post-loop fallback does
+// not emit a second snapshot when `done` already emitted one.
+func TestRewriteChatStreamNoDuplicateSnapshot(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"token","token":"hi"}`,
+		`data: {"type":"done"}`,
+	}, "\n\n") + "\n\n"
+
+	htmlCount := 0
+	for _, ev := range parseStream(t, rewrite(t, stream)) {
+		if ev.Type == "html" {
+			htmlCount++
+		}
+	}
+	if htmlCount != 1 {
+		t.Errorf("html events = %d, want exactly 1 (no duplicate)", htmlCount)
+	}
+}
+
+// TestRewriteChatStreamSnapshotMatchesHistory asserts the live snapshot and the
+// conversation-history render of the same text are byte-identical, because both
+// call renderMarkdown.
+func TestRewriteChatStreamSnapshotMatchesHistory(t *testing.T) {
+	const text = "**bold** and `code`"
+	stream := "data: {\"type\":\"token\",\"token\":\"**bold**\"}\n\n" +
+		"data: {\"type\":\"token\",\"token\":\" and `code`\"}\n\n" +
+		"data: {\"type\":\"done\"}\n\n"
+
+	var snapshot string
+	for _, ev := range parseStream(t, rewrite(t, stream)) {
+		if ev.Type == "html" {
+			snapshot = ev.HTML
+		}
+	}
+	if snapshot == "" {
+		t.Fatal("no html snapshot emitted")
+	}
+	if want := renderMarkdown(text); snapshot != want {
+		t.Errorf("snapshot = %q, history render = %q", snapshot, want)
 	}
 }
 
