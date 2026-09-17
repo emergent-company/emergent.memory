@@ -166,14 +166,19 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// modelSelect — modal style (no current, data-testid)
 	models := []Model{{Provider: "openai", ModelName: "gpt-4o", DisplayName: "GPT-4o"}}
-	got = render(modelSelect("agent-model", models, nil, templ.Attributes{"data-testid": "model-select"}))
+	got = render(modelSelect("agent-model", models, nil, "", templ.Attributes{"data-testid": "model-select"}))
 	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-model" data-testid="model-select" name="modelName" class="select w-full"><option value="">Auto — default model</option><optgroup label="openai"><option value="openai/gpt-4o">GPT-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-base-content/60">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
 	check("modelSelect modal", got, want)
 
 	// modelSelect — settings style (current selected)
-	got = render(modelSelect("agent-settings-model", models, &ModelConfig{Name: "openai/gpt-4o"}, nil))
+	got = render(modelSelect("agent-settings-model", models, &ModelConfig{Name: "openai/gpt-4o"}, "", nil))
 	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-settings-model" name="modelName" class="select w-full"><option value="">Auto — default model</option><optgroup label="openai"><option value="openai/gpt-4o" selected>GPT-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-base-content/60">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
 	check("modelSelect settings", got, want)
+
+	// modelSelect — resolved default names the Auto option (value stays "")
+	got = render(modelSelect("agent-settings-model", models, nil, "openai/deepseek-v4-flash", nil))
+	want = `<fieldset class="fieldset"><legend class="fieldset-legend">Model</legend><select id="agent-settings-model" name="modelName" class="select w-full"><option value="">Auto — openai/deepseek-v4-flash (default)</option><optgroup label="openai"><option value="openai/gpt-4o">GPT-4o</option></optgroup></select><p class="label"><span class="label-text-alt text-base-content/60">Any model the bridge can reach — hosted or local.</span></p></fieldset>`
+	check("modelSelect named default", got, want)
 
 	// modelParamsGrid — modal (no values)
 	got = render(modelParamsGrid("agent", nil))
