@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -149,7 +150,7 @@ templ migrationsHeader() {
 }
 
 templ noMigrationCard() {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<div class="flex items-center gap-3">
 			@ui.IconSpan("lucide--check-circle", "size-5 text-success")
 			<div>
@@ -164,7 +165,7 @@ templ noMigrationCard() {
 // install exists to migrate against. Neutral copy only — no /blueprints upgrade
 // promise (staleness is a same-version re-stamp concern, not a missing upgrade).
 templ migrationFallbackCard(data migrationData) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<div class="flex items-start gap-3">
 			@ui.IconSpan("lucide--shield-alert", "size-5 shrink-0 text-warning")
 			<div class="min-w-0 grow">
@@ -176,7 +177,7 @@ templ migrationFallbackCard(data migrationData) {
 }
 
 templ migrationForm(data migrationData) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		if migrationCardKindFor(data) == migrationCardResync {
 			<h2 class="text-base font-semibold">Objects lag the installed schema</h2>
 			<p class="text-base-content/55 mt-1 text-sm">The target is the active schema (from == to). Preview then Execute re-stamps conforming objects to the installed schema version — no renames or type changes. Objects that do not conform are dropped and still block without Force.</p>
@@ -367,7 +368,7 @@ templ previewSection(data migrationData) {
 }
 
 templ rollbackForm() {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<h2 class="text-base font-semibold">Rollback</h2>
 		<p class="text-base-content/55 mt-1 text-sm">Restore object data to a prior schema version (from the migration archive).</p>
 		<form method="post" action="/blueprints/migrate/rollback" class="mt-4 flex flex-wrap items-end gap-3">

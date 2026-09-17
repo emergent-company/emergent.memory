@@ -84,6 +84,70 @@
     btn.disabled = busy;
   }
 
+  /* Sync a go-daisy IconPicker to a value. The bundled runtime only syncs on
+     user clicks, so hydration from an agent payload must mirror its commit():
+     write the hidden input, refresh the trigger label/glyph, and mark the tile
+     selected. No-op when the picker is absent (other pages reuse this file). */
+  function setIconPickerValue(id, value) {
+    var input = el(id);
+    if (!input) return;
+    var root = input.closest("[data-gd-icon-picker]");
+    if (!root) return;
+    var v = value || "";
+    input.value = v;
+    var panel = root.querySelector("[data-gd-icon-panel]");
+    var option = null;
+    var opts = panel ? panel.querySelectorAll("[data-gd-icon-option]") : [];
+    for (var i = 0; i < opts.length; i++) {
+      if ((opts[i].getAttribute("data-gd-icon-value") || "") === v) { option = opts[i]; break; }
+    }
+    var defaultVal = root.getAttribute("data-gd-icon-picker-default-value") || "";
+    var isDefault = v === defaultVal;
+    var labelEl = root.querySelector("[data-gd-icon-label]");
+    if (labelEl) {
+      labelEl.textContent = option
+        ? option.getAttribute("data-gd-icon-label")
+        : root.getAttribute("data-gd-icon-picker-default-label") || "";
+      labelEl.classList.toggle("text-base-content/50", isDefault);
+    }
+    var glyphEl = root.querySelector("[data-gd-icon-glyph]");
+    if (glyphEl) {
+      var glyph = option
+        ? option.getAttribute("data-gd-icon-class")
+        : root.getAttribute("data-gd-icon-picker-default-class") || "";
+      while (glyphEl.firstChild) glyphEl.removeChild(glyphEl.firstChild);
+      var span = document.createElement("span");
+      span.className = "iconify size-5 " + glyph;
+      span.setAttribute("aria-hidden", "true");
+      glyphEl.appendChild(span);
+    }
+    for (var j = 0; j < opts.length; j++) {
+      var active = (opts[j].getAttribute("data-gd-icon-value") || "") === v;
+      opts[j].setAttribute("aria-selected", active ? "true" : "false");
+      opts[j].setAttribute("tabindex", active ? "0" : "-1");
+    }
+    if (panel) {
+      var reset = panel.querySelector("[data-gd-icon-reset]");
+      if (reset) reset.style.display = isDefault ? "none" : "";
+    }
+  }
+
+  /* Sync a go-daisy ColorPicker's native swatch to its text value (the text
+     input is the real form control; hydration sets both). */
+  function setColorPickerValue(id, value) {
+    var input = el(id);
+    if (!input) return;
+    var v = value || "";
+    input.value = v;
+    var root = input.closest("[data-gd-color-picker]");
+    var swatch = root ? root.querySelector("[data-gd-color-swatch]") : null;
+    if (!swatch) return;
+    var h = v.trim();
+    if (/^#[0-9a-fA-F]{3}$/.test(h)) h = "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+    else if (/^#[0-9a-fA-F]{8}$/.test(h)) h = h.slice(0, 7);
+    if (/^#[0-9a-fA-F]{6}$/.test(h)) swatch.value = h;
+  }
+
   /* open with an agent id, or "" for create */
   function openAgentForm(id) {
     var d = formDialog();
@@ -92,6 +156,8 @@
     form.reset();
     resetDelegationTargets();
     resetSkills();
+    setIconPickerValue("agent-icon", "");
+    setColorPickerValue("agent-color", "");
     el("agent-id").value = id || "";
     el("agent-form-title").textContent = id ? "Edit agent" : "New agent";
     el("agent-form-subtitle").textContent = id
@@ -111,6 +177,8 @@
           if (!a || !a.name) throw new Error("bad agent payload");
           el("agent-name").value = a.name || "";
           el("agent-prompt").value = a.systemPrompt || "";
+          setIconPickerValue("agent-icon", a.uiConfig && a.uiConfig.icon);
+          setColorPickerValue("agent-color", a.uiConfig && a.uiConfig.color);
           setModelValue((a.model && a.model.name) || "");
           el("agent-temperature").value = a.model && a.model.temperature != null ? a.model.temperature : "";
           el("agent-max-tokens").value = a.model && a.model.maxTokens ? a.model.maxTokens : "";
@@ -241,6 +309,13 @@
       systemPrompt: el("agent-prompt").value,
       tools: splitList(el("agent-tools").value),
     };
+    // Appearance: always send the uiConfig blob (an empty {} clears any prior
+    // appearance), carrying only the values that are set.
+    var iconValue = el("agent-icon") ? el("agent-icon").value.trim() : "";
+    var colorValue = el("agent-color") ? el("agent-color").value.trim() : "";
+    body.uiConfig = {};
+    if (iconValue) body.uiConfig.icon = iconValue;
+    if (colorValue) body.uiConfig.color = colorValue;
     // Always send skills (even an empty array) so clearing a skill on edit
     // actually reaches memory instead of being omitted.
     var skillCbs = document.querySelectorAll('input[name="skill"]:checked');
@@ -496,10 +571,60 @@
     dlg.returnValue = "";
   }, true);
 
+  /*
+   * openDialog opens a native <dialog> by id. No-op when the element is missing
+   * or is not a dialog (or is already open). Single entry point for every
+   * dialog-opening call site: templ handlers with a literal id call
+   * MemoryApp.openDialog, and templ inline row-dialog handlers call the
+   * window.openDialogByID global (both delegate here).
+   */
+  function openDialog(id) {
+    var d = id && document.getElementById(id);
+    if (!d || typeof d.showModal !== "function" || d.open) return;
+    d.showModal();
+  }
+
+  /*
+   * openDialogByID opens a dialog whose id is computed at render time, matching
+   * the row-dialog convention: openDialogByID("backup-delete-" + id). Exposed
+   * as window.openDialogByID (below) for the templ inline row-dialog handlers
+   * that cannot call openDialog with a literal id.
+   */
+  function openDialogByID(id) {
+    openDialog(id);
+  }
+
+  /*
+   * openAutoOpenDialogs opens every dialog marked with
+   * data-dialog-autoopen. Called on load and after htmx swaps (components
+   * .DialogAutoOpen replaces the per-page showModal() IIFEs that used to
+   * re-open a dialog after a mutation swapped it in).
+   */
+  function openAutoOpenDialogs(root) {
+    var scope = root && root.querySelectorAll ? root : document;
+    var dialogs = scope.querySelectorAll("dialog[data-dialog-autoopen]");
+    for (var i = 0; i < dialogs.length; i++) openDialog(dialogs[i].id);
+  }
+
+  document.addEventListener("DOMContentLoaded", function () { openAutoOpenDialogs(document); });
+  document.addEventListener("htmx:afterSwap", function (ev) { openAutoOpenDialogs(ev.target); });
+
   /* expose for templ script blocks */
   window.MemoryApp = {
     openAgentForm: openAgentForm,
     openDeleteConfirm: openDeleteConfirm,
+    openDialog: openDialog,
+    openDialogByID: openDialogByID,
+    openAutoOpenDialogs: openAutoOpenDialogs,
     toast: toast,
   };
+
+  /*
+   * templ row-dialog handlers emit inline onclick handlers via
+   * templ.JSFuncCall("openDialogByID", ...), which resolves the name against
+   * window, not this IIFE's scope. app.js is loaded on every page, so this one
+   * global is the single implementation; no per-page dialog-open script
+   * component is needed and none was added.
+   */
+  window.openDialogByID = openDialogByID;
 })();

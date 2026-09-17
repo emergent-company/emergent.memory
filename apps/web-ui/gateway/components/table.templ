@@ -1,0 +1,14 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// TableCard renders the standard bordered card that wraps a list table. The
+// card body carries no padding so the table can meet the card edges. Callers
+// supply the table itself, preferring the go-daisy table primitives.
+templ TableCard(attrs templ.Attributes) {
+	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", attrs) {
+		{ children... }
+	}
+}

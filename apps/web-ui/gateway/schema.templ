@@ -4,6 +4,7 @@ import (
 	"net/url"
 
 	"github.com/emergent-company/go-daisy/components/form"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -126,7 +127,7 @@ templ compiledTypesTable(title string, types []CompiledType, endpoints bool, lin
 // provenanceBadge is the shared "Blueprint-derived" marker (list rows and the
 // object-type detail origin line).
 templ provenanceBadge(size ui.BadgeSize) {
-	@ui.Badge(ui.BadgeProps{Label: "Blueprint-derived", Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: size, Icon: "lucide--library"})
+	@components.StatusBadge("Blueprint-derived", ui.BadgeSecondary, "lucide--library", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: size})
 }
 
 // --- "Add schema" ---
@@ -374,7 +375,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 		}
 	>
 		<input type="hidden" name="_ui" value="1"/>
-		@ui.CardRaw("card-border", "p-5", nil) {
+		@components.PanelCard("", nil) {
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div class="min-w-0">
 					@form.FormControl("object-type-name", "Name", form.LabelAbove, "The type key is immutable after creation.", "", nil) {
@@ -391,7 +392,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 				</div>
 			</div>
 		}
-		@ui.CardRaw("card-border", "p-5", nil) {
+		@components.PanelCard("", nil) {
 			<div class="mb-4">
 				<h2 class="text-lg font-semibold tracking-tight">Appearance</h2>
 				<p class="text-base-content/55 mt-0.5 text-sm">Optional accent used wherever this type is shown.</p>
@@ -423,7 +424,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 				</div>
 			</div>
 		}
-		@ui.CardRaw("card-border", "p-5", nil) {
+		@components.PanelCard("", nil) {
 			<div class="mb-4 flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<h2 class="text-lg font-semibold tracking-tight">Properties</h2>

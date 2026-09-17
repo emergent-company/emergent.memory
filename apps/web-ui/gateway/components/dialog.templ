@@ -1,0 +1,11 @@
+package components
+
+// DialogAutoOpen marks a dialog so the client opens it as soon as it is in the
+// DOM, including after an htmx swap. Replaces the per-page inline IIFEs that
+// called showModal() on load.
+//
+// Opening itself has one implementation: MemoryApp.openDialog(id) (with
+// openDialogByID for render-time ids) in webui/static/js/app.js.
+func DialogAutoOpen() templ.Attributes {
+	return templ.Attributes{"data-dialog-autoopen": "true"}
+}

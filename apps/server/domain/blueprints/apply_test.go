@@ -126,3 +126,36 @@ func TestApplyAgentManifestToExisting_BannedTools(t *testing.T) {
 	applyAgentManifestToExisting(def, &AgentManifest{Name: "x", BannedTools: []string{"blueprint-set"}})
 	assert.Equal(t, []string{"blueprint-set"}, def.BannedTools)
 }
+
+// TestAgentUI_ManifestToUIConfig locks the appearance contract: an inline
+// `ui: {icon, color}` block is marshalled into the definition's opaque
+// UIConfig JSONB blob, and an absent/empty block leaves ui_config untouched.
+func TestAgentUI_ManifestToUIConfig(t *testing.T) {
+	// Create path: full icon+color block lands in UIConfig.
+	def := buildAgentDefinition(&AgentManifest{
+		Name: "x",
+		UI:   &AgentUIManifest{Icon: "bot", Color: "#FF00AA"},
+	}, "proj-1")
+	require.NotNil(t, def.UIConfig)
+	assert.JSONEq(t, `{"icon":"bot","color":"#FF00AA"}`, string(def.UIConfig))
+
+	// Icon-only block omits the empty color key.
+	def = buildAgentDefinition(&AgentManifest{
+		Name: "x",
+		UI:   &AgentUIManifest{Icon: "bot"},
+	}, "proj-1")
+	assert.JSONEq(t, `{"icon":"bot"}`, string(def.UIConfig))
+
+	// Empty block -> no UIConfig (DB default '{}').
+	def = buildAgentDefinition(&AgentManifest{Name: "x", UI: &AgentUIManifest{}}, "proj-1")
+	assert.Nil(t, def.UIConfig)
+
+	// Update path: provided block overwrites; omitted block preserves.
+	existing := &agents.AgentDefinition{UIConfig: json.RawMessage(`{"icon":"old"}`)}
+	applyAgentManifestToExisting(existing, &AgentManifest{Name: "x", UI: &AgentUIManifest{Icon: "new", Color: "#000000"}})
+	assert.JSONEq(t, `{"icon":"new","color":"#000000"}`, string(existing.UIConfig))
+
+	existing = &agents.AgentDefinition{UIConfig: json.RawMessage(`{"icon":"keep"}`)}
+	applyAgentManifestToExisting(existing, &AgentManifest{Name: "x"})
+	assert.JSONEq(t, `{"icon":"keep"}`, string(existing.UIConfig))
+}

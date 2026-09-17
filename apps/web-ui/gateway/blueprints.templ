@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/go-daisy/components/form"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -288,12 +289,12 @@ templ blueprintVersions(d *BlueprintDetail) {
 templ releaseBadge(status string) {
 	switch status {
 		case "draft":
-			@ui.Badge(ui.BadgeProps{Label: "Draft", Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+			@components.StatusBadge("Draft", ui.BadgeWarning, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 		case "published":
-			@ui.Badge(ui.BadgeProps{Label: "Published", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+			@components.StatusBadge("Published", ui.BadgeSuccess, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 		default:
 			if status != "" {
-				@ui.Badge(ui.BadgeProps{Label: status, Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+				@components.StatusBadge(status, ui.BadgeNeutral, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 			}
 	}
 }
@@ -841,6 +842,9 @@ templ blueprintAgents(d *BlueprintDetail) {
 templ agentDetailRow(a BundledAgent, providerNames []string) {
 	<div class="px-4 py-4">
 		<div class="flex flex-wrap items-center gap-2">
+			if a.UI != nil && (a.UI.Icon != "" || a.UI.Color != "") {
+				@agentIconTile(a.UI.Icon, a.UI.Color)
+			}
 			<p class="text-sm font-medium">{ a.Name }</p>
 			if a.Model != "" {
 				@ui.Badge(ui.BadgeProps{Label: a.Model, Variant: ui.BadgePrimary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})

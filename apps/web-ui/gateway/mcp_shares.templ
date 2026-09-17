@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -62,7 +63,7 @@ templ MCPSharesPage(data mcpSharesPageData) {
 				ActionIcon:  "lucide--plus",
 			})
 		} else {
-			@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+			@components.TableCard(nil) {
 				<div class="flex flex-col divide-y divide-base-200">
 					for _, inst := range data.Shares {
 						@mcpShareRow(inst)
@@ -116,7 +117,7 @@ templ mcpShareRow(inst MCPShareInstance) {
 						Icon:      "lucide--refresh-cw",
 						AriaLabel: "Rotate key for " + inst.Name,
 						Attrs:     templ.Attributes{"title": "Issue a new key"},
-						OnClick:   openMCPShareDialog("rotate", inst.ID),
+						OnClick:   templ.JSFuncCall("openDialogByID", "mcp-share-rotate-"+inst.ID),
 					})
 					@ui.Button(ui.ButtonProps{
 						Type:      ui.ButtonTypeButton,
@@ -127,24 +128,15 @@ templ mcpShareRow(inst MCPShareInstance) {
 						ExtraClass: "text-error hover:text-error",
 						AriaLabel: "Revoke " + inst.Name,
 						Attrs:     templ.Attributes{"title": "Revoke this share"},
-						OnClick:   openMCPShareDialog("revoke", inst.ID),
+						OnClick:   templ.JSFuncCall("openDialogByID", "mcp-share-revoke-"+inst.ID),
 					})
 				</div>
 			}
 		</div>
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-base-content/50">
-			<span class="inline-flex items-center gap-1">
-				@ui.IconSpan("lucide--wrench", "size-3.5")
-				{ countLabel(inst.ToolCount, "tool", "tools") }
-			</span>
-			<span class="inline-flex items-center gap-1">
-				@ui.IconSpan("lucide--calendar-plus", "size-3.5")
-				created { relTime(inst.CreatedAt) }
-			</span>
-			<span class="inline-flex items-center gap-1">
-				@ui.IconSpan("lucide--clock", "size-3.5")
-				last used { mcpShareLastUsedLabel(inst) }
-			</span>
+			@components.MetaChip("lucide--wrench", countLabel(inst.ToolCount, "tool", "tools"))
+			@components.MetaChip("lucide--calendar-plus", "created "+relTime(inst.CreatedAt))
+			@components.MetaChip("lucide--clock", "last used "+mcpShareLastUsedLabel(inst))
 		</div>
 	</div>
 	@mcpShareRevokeDialog(inst)
@@ -153,12 +145,10 @@ templ mcpShareRow(inst MCPShareInstance) {
 
 // mcpShareStatusBadge renders the share's status badge.
 templ mcpShareStatusBadge(inst MCPShareInstance) {
-	@ui.Badge(ui.BadgeProps{
-		Label:   mcpShareStatusLabel(inst.Status),
-		Variant: mcpShareStatusIntent(inst.Status),
-		Style:   ui.BadgeStyleSoft,
-		Size:    ui.BadgeSizeXS,
-		Dot:     true,
+	@components.StatusBadge(mcpShareStatusLabel(inst.Status), mcpShareStatusIntent(inst.Status), "", components.StatusBadgeOpts{
+		Style: ui.BadgeStyleSoft,
+		Size:  ui.BadgeSizeXS,
+		Dot:   true,
 	})
 }
 
@@ -236,12 +226,6 @@ templ mcpShareRotateDialog(inst MCPShareInstance) {
 	}
 }
 
-// openMCPShareDialog opens one row's rotate/revoke confirmation dialog.
-script openMCPShareDialog(kind string, id string) {
-	var d = document.getElementById("mcp-share-" + kind + "-" + id);
-	if (d) d.showModal();
-}
-
 // MCPShareNewPage renders the create page (GET .../shares/new).
 templ MCPShareNewPage(data mcpShareFormData) {
 	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-share-form": ""}) {
@@ -283,7 +267,7 @@ templ MCPShareEditPage(data mcpShareFormData) {
 
 // mcpShareFormBody is the shared create/edit form card.
 templ mcpShareFormBody(data mcpShareFormData, editing bool) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		{{ action := mcpShareSettingsBase + "/new"
 		if editing {
 			action = mcpShareSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
@@ -395,111 +379,26 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 // after create/rotate. The raw key exists only in this response; closing the
 // dialog returns to the list and the key is gone for good.
 templ mcpShareRevealModal(r mcpShareReveal) {
-	<dialog id="mcp-share-reveal-modal" class="modal" hx-boost="false" data-mcp-share-reveal>
-		<div class="modal-box max-w-[63rem]">
-			<div class="flex items-center gap-3">
-				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
-				<div class="min-w-0">
-					<h3 class="text-lg font-semibold">{ r.Heading }</h3>
-					<p class="text-base-content/50 mt-0.5 text-xs">
-						if r.Name != "" {
-							{ r.Name } — this key is shown only once. Store it somewhere safe.
-						} else {
-							This key is shown only once. Store it somewhere safe.
-						}
-					</p>
-				</div>
-			</div>
-			<div class="mt-4 flex flex-wrap items-center gap-2">
-				<div id="mcp-share-key" class="min-w-0 flex-1 rounded-box border border-base-content/15 bg-base-200/50 px-3 py-2 font-mono text-xs break-all">{ r.Token }</div>
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeButton,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--copy",
-					Attrs:   templ.Attributes{"data-copy-target": "#mcp-share-key"},
-				}) {
-					Copy key
-				}
-			</div>
-			if r.MCPURL != "" {
-				<div class="mt-3 flex flex-wrap items-center gap-2">
-					@ui.Eyebrow("Endpoint", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
-					<div id="mcp-share-endpoint" class="min-w-0 flex-1 rounded-box border border-base-content/15 bg-base-200/50 px-3 py-2 font-mono text-xs break-all">{ r.MCPURL }</div>
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeButton,
-						Variant: ui.ButtonGhost,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--copy",
-						Attrs:   templ.Attributes{"data-copy-target": "#mcp-share-endpoint"},
-					}) {
-						Copy
-					}
-				</div>
-			}
-			<div class="mt-3">
-				@ui.Alert(ui.AlertProps{
-					Type:    ui.AlertWarning,
-					Style:   ui.AlertStyleOutline,
-					Icon:    "lucide--triangle-alert",
-					Message: "This key will not be shown again. If you lose it, rotate the share to issue a new one.",
-				})
-			</div>
-			<div class="mt-5 flex flex-col gap-3">
-				@ui.Eyebrow("Client setup", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
-				<p class="text-base-content/50 -mt-2 text-xs">Paste one of these into your MCP client. Each already contains the endpoint and key.</p>
-				for _, s := range r.Snippets {
-					@mcpShareSnippetBlock(s)
-				}
-			</div>
-			<form method="dialog" class="modal-action">
-				@ui.Button(ui.ButtonProps{
-					Type:       ui.ButtonTypeSubmit,
-					Variant:    ui.ButtonPrimary,
-					Size:       ui.ButtonSM,
-					Icon:       "lucide--check",
-					ExtraClass: "w-full sm:w-auto",
-				}) {
-					Done — I've saved the key
-				}
-			</form>
-		</div>
-		<form method="dialog" class="modal-backdrop">
-			<button>close</button>
-		</form>
-	</dialog>
-	<script type="text/javascript">
-		(function () {
-			var d = document.getElementById('mcp-share-reveal-modal');
-			if (!d || typeof d.showModal !== 'function' || d.open) return;
-			d.showModal();
-		})();
-	</script>
+	@components.SecretRevealModal(components.SecretRevealProps{
+		Heading:    r.Heading,
+		Name:       r.Name,
+		SecretID:   "mcp-share-key",
+		Secret:     r.Token,
+		EndpointID: "mcp-share-endpoint",
+		Endpoint:   r.MCPURL,
+		Warning:    "This key will not be shown again. If you lose it, rotate the share to issue a new one.",
+		DialogID:   "mcp-share-reveal-modal",
+		Attrs:      templ.Attributes{"data-mcp-share-reveal": "true"},
+		Snippets:   mcpShareSnippetBlocks(r.Snippets),
+		AutoOpen:   true,
+	})
 }
 
-// mcpShareSnippetBlock is one client snippet card with a copy button.
-templ mcpShareSnippetBlock(s mcpShareSnippet) {
-	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
-		<div class="mb-2 flex items-center justify-between gap-2">
-			<span class="text-xs font-semibold">{ s.Label }</span>
-			@ui.Button(ui.ButtonProps{
-				Type:      ui.ButtonTypeButton,
-				Variant:   ui.ButtonGhost,
-				Size:      ui.ButtonXS,
-				Icon:      "lucide--copy",
-				AriaLabel: "Copy " + s.Label + " config",
-				Attrs:     templ.Attributes{"data-copy-target": "#mcp-share-snippet-" + s.Key},
-			}) {
-				Copy
-			}
-		</div>
-		{{ hl, ok := highlightJSONSnippet(s.Code) }}
-		<pre id={ "mcp-share-snippet-" + s.Key } class="overflow-x-auto whitespace-pre-wrap rounded-box bg-base-100 p-2.5 font-mono text-[11px] leading-relaxed">if ok {
-			@templ.Raw(hl)
-		} else {
-			{ s.Code }
-		}</pre>
-	</div>
+// mcpShareSnippetBlocks renders the reveal's client snippet list.
+templ mcpShareSnippetBlocks(snippets []mcpShareSnippet) {
+	for _, s := range snippets {
+		@components.SnippetCard(s.Label, "mcp-share-snippet-"+s.Key, snippetCode(s.Code))
+	}
 }
 
 // mcpShareScripts wires the tool picker's search filter and select-all/clear
