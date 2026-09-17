@@ -5,10 +5,10 @@ import SwiftUI
 ///
 /// Effectively signed in → the person icon opens the account switcher: every
 /// signed-in account listed by EMAIL (environment badge, active checkmark)
-/// with switching, an "Add account ▸ Prod / Dev" submenu, and "Manage
-/// accounts…" (the Project & Account page). Not effectively signed in → a
-/// padded "Sign in" button whose menu offers the built-in Prod/Dev
-/// environments; no stale account rows are shown.
+/// with switching, an "Add account" action (signs in to Production), and
+/// "Manage accounts…" (the Project & Account page). Not effectively signed in
+/// → a padded "Sign in" button that starts Production sign-in directly; no
+/// environment choice and no stale account rows are shown.
 ///
 /// Gating uses `AccountStore.isEffectivelySignedIn` (active account AND a
 /// valid connector CLI session), never the bare index lookup, so the control
@@ -22,7 +22,7 @@ struct AccountToolbarView: View {
         if accountStore.isEffectivelySignedIn {
             accountMenu
         } else {
-            signInMenu
+            signInButton
         }
     }
 
@@ -41,14 +41,8 @@ struct AccountToolbarView: View {
                 }
             }
             Section {
-                Menu {
-                    ForEach(Environment.all) { environment in
-                        Button {
-                            signIn(environment)
-                        } label: {
-                            Label("Sign in to \(environment.shortLabel)", systemImage: "plus.circle")
-                        }
-                    }
+                Button {
+                    signIn(signInEnvironment)
                 } label: {
                     Label("Add account", systemImage: "person.badge.plus")
                 }
@@ -70,17 +64,12 @@ struct AccountToolbarView: View {
 
     // MARK: - Signed out
 
-    /// Padded "Sign in" button; its menu names the Prod/Dev environments so the
-    /// very first sign-in is explicit about which Memory it targets.
-    private var signInMenu: some View {
-        Menu {
-            ForEach(Environment.all) { environment in
-                Button {
-                    signIn(environment)
-                } label: {
-                    Text("Sign in to \(environment.shortLabel)")
-                }
-            }
+    /// Padded "Sign in" button. Starts Production sign-in in one click — no
+    /// environment choice, so the very first sign-in never looks like a
+    /// product decision.
+    private var signInButton: some View {
+        Button {
+            signIn(signInEnvironment)
         } label: {
             HStack(spacing: 6) {
                 if accountStore.isSigningIn {
@@ -99,13 +88,19 @@ struct AccountToolbarView: View {
                     .strokeBorder(.quaternary)
             )
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
         .fixedSize()
         .disabled(accountStore.isSigningIn)
         .help("Sign in with Memory")
     }
 
     // MARK: - Actions
+
+    /// The environment this control's sign-in action targets, from the shared
+    /// per-surface policy.
+    private var signInEnvironment: Environment {
+        Environment.signInEnvironments(for: .windowHeader).first ?? Environment.primary
+    }
 
     private func signIn(_ environment: Environment) {
         Task {

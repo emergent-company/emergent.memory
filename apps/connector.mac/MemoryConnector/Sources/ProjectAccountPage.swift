@@ -127,7 +127,7 @@ struct ProjectAccountPage: View {
                 accountRow(account)
             }
             Divider()
-            addAccountMenu
+            addAccountControl
         }
     }
 
@@ -154,21 +154,21 @@ struct ProjectAccountPage: View {
         }
     }
 
-    private var addAccountMenu: some View {
-        Menu {
-            ForEach(Environment.all) { environment in
-                Button {
-                    addAccount(environment)
-                } label: {
-                    Text("Sign in to \(environment.shortLabel)")
-                }
-            }
+    /// Single Production sign-in action for adding an account — this page
+    /// offers no environment choice.
+    private var addAccountControl: some View {
+        Button {
+            addAccount(addAccountEnvironment)
         } label: {
             Label("Add account", systemImage: "person.badge.plus")
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
         .disabled(accountStore.isSigningIn)
+    }
+
+    /// The environment the "Add account" action targets, from the shared
+    /// per-surface policy.
+    private var addAccountEnvironment: Environment {
+        Environment.signInEnvironments(for: .projectAccount).first ?? Environment.primary
     }
 
     private func addAccount(_ environment: Environment) {
