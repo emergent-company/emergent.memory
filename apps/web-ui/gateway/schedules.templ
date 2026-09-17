@@ -154,7 +154,8 @@ templ scheduleEnabledBadge(a ScheduledAgent) {
 // page — the list otherwise only shows name/cron/enabled/last-run.
 templ scheduleDefinitionCell(defs []AgentDefinitionSummary, a ScheduledAgent) {
 	if n := scheduleDefinitionName(defs, a); n != "" {
-		@ui.Badge(ui.BadgeProps{Label: n, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--bot"})
+		{{ aui := scheduleDefinitionUI(defs, a) }}
+		@agentNameChip(n, ui.BadgeGhost, aui.Icon, aui.Color)
 	} else {
 		<span class="text-base-content/35 text-sm">—</span>
 	}
@@ -222,7 +223,8 @@ templ scheduleDetailMeta(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 		@scheduleLastRunBadges(*a)
 		@ui.Badge(ui.BadgeProps{Label: "cron " + a.CronSchedule, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
 		if n := scheduleDefinitionName(defs, *a); n != "" {
-			@ui.Badge(ui.BadgeProps{Label: "agent " + n, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--bot"})
+			{{ aui := scheduleDefinitionUI(defs, *a) }}
+			@agentNameChip("agent "+n, ui.BadgeGhost, aui.Icon, aui.Color)
 		}
 		@monoMeta(a.ID, "text-base-content/40")
 	</div>

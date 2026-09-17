@@ -32,7 +32,7 @@ func spotlightItems(agents []AgentDefinitionSummary) []ui.CommandPaletteItem {
 		items = append(items, ui.CommandPaletteItem{
 			Label:       a.Name,
 			Description: shortID(a.ID),
-			Icon:        "lucide--bot",
+			Icon:        agentIconifyClass(agentIcon(a.UIConfig)),
 			Href:        "/agents/" + url.PathEscape(a.ID),
 			Group:       "Agents",
 		})

@@ -17,7 +17,7 @@ func TestRenderSessionsPage(t *testing.T) {
 		{ID: "c1", Title: "Morning briefing", AgentDefinitionID: "agent_a", CreatedAt: "2026-08-26T10:00:00Z"},
 		{ID: "c2", AgentDefinitionID: "agent_b", CreatedAt: "2026-08-25T10:00:00Z"}, // untitled → "Chat c2"
 	}
-	html := renderHTML(t, SessionsPage(convs, nil))
+	html := renderHTML(t, SessionsPage(nil, convs, nil))
 	for _, want := range []string{
 		"Sessions", "Morning briefing", "Chat c2",
 		`href="/sessions/c1"`, `href="/sessions/c2"`,
@@ -28,12 +28,12 @@ func TestRenderSessionsPage(t *testing.T) {
 		}
 	}
 
-	htmlEmpty := renderHTML(t, SessionsPage(nil, nil))
+	htmlEmpty := renderHTML(t, SessionsPage(nil, nil, nil))
 	if !strings.Contains(htmlEmpty, "No sessions") {
 		t.Error("empty state missing")
 	}
 
-	htmlErr := renderHTML(t, SessionsPage(nil, errTest))
+	htmlErr := renderHTML(t, SessionsPage(nil, nil, errTest))
 	if !strings.Contains(htmlErr, "Failed to load sessions") {
 		t.Error("error state missing")
 	}
@@ -41,7 +41,7 @@ func TestRenderSessionsPage(t *testing.T) {
 
 func TestRenderSessionPage(t *testing.T) {
 	items := parseTimeline(sampleHistory().Items)
-	html := renderHTML(t, SessionPage(sampleConversation(), groupByRun(items), nil))
+	html := renderHTML(t, SessionPage(nil, sampleConversation(), groupByRun(items), nil))
 	for _, want := range []string{
 		"Capital of France", "What is the capital of France?",
 		"entity-create", "Input", "Output",
@@ -78,7 +78,7 @@ func TestRenderSessionPage(t *testing.T) {
 }
 
 func TestRenderSessionPageEmptyTimeline(t *testing.T) {
-	html := renderHTML(t, SessionPage(nil, nil, nil))
+	html := renderHTML(t, SessionPage(nil, nil, nil, nil))
 	if !strings.Contains(html, "No timeline") {
 		t.Error("empty timeline state missing")
 	}
@@ -92,7 +92,7 @@ func TestRenderSessionPageEmptyTimeline(t *testing.T) {
 // viewer omits usage and still renders the timeline.
 func TestRenderSessionPageUsageAbsent(t *testing.T) {
 	items := parseTimeline(sampleHistory().Items)
-	html := renderHTML(t, SessionPage(sampleConversation(), groupByRun(items), nil))
+	html := renderHTML(t, SessionPage(nil, sampleConversation(), groupByRun(items), nil))
 	for _, want := range []string{"Capital of France", "entity-create", "run 1"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("page missing %q", want)

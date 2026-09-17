@@ -14,16 +14,23 @@ import (
 // detail view (/sessions/:id). A failed fetch renders the whole-page error
 // state.
 func (s *Server) uiSessions(c echo.Context) error {
-	convs, err := s.memory.ListConversations(c.Request().Context())
+	ctx := c.Request().Context()
+	convs, err := s.memory.ListConversations(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Sessions"), SessionsPage(nil, err))
+		return s.page(c, pageTitle("Sessions"), SessionsPage(nil, nil, err))
+	}
+	// Agent appearance (icon + color) is best-effort decoration on each row.
+	agents, aerr := s.memory.ListAgentDefinitions(ctx)
+	if aerr != nil {
+		captureError(aerr)
+		agents = nil
 	}
 	list := convs.Conversations
 	// CreatedAt is RFC3339; string ordering is chronological for UTC timestamps.
 	sort.SliceStable(list, func(i, j int) bool {
 		return list[i].CreatedAt > list[j].CreatedAt
 	})
-	return s.page(c, pageTitle("Sessions"), SessionsPage(list, nil))
+	return s.page(c, pageTitle("Sessions"), SessionsPage(agents, list, nil))
 }
 
 // uiSession renders one session's timeline, reusing the existing conversation
@@ -39,16 +46,23 @@ func (s *Server) uiSession(c echo.Context) error {
 	detail, err := s.memory.GetConversation(ctx, id)
 	if err != nil {
 		if isSessionNotFound(err) {
-			return s.page(c, pageTitle("Session"), SessionPage(nil, nil, nil))
+			return s.page(c, pageTitle("Session"), SessionPage(nil, nil, nil, nil))
 		}
-		return s.page(c, pageTitle("Session"), SessionPage(nil, nil, err))
+		return s.page(c, pageTitle("Session"), SessionPage(nil, nil, nil, err))
+	}
+	// Agent appearance (icon + color) is best-effort decoration on the header
+	// badge and the assistant avatar.
+	agents, aerr := s.memory.ListAgentDefinitions(ctx)
+	if aerr != nil {
+		captureError(aerr)
+		agents = nil
 	}
 	history, err := s.memory.GetConversationHistory(ctx, id)
 	if err != nil {
 		if isSessionNotFound(err) {
-			return s.page(c, pageTitle("Session"), SessionPage(detail, nil, nil))
+			return s.page(c, pageTitle("Session"), SessionPage(agents, detail, nil, nil))
 		}
-		return s.page(c, pageTitle("Session"), SessionPage(detail, nil, err))
+		return s.page(c, pageTitle("Session"), SessionPage(agents, detail, nil, err))
 	}
 	if len(history.Items) == 0 {
 		history.Items = messageTimelineItems(detail.Messages)
@@ -56,7 +70,7 @@ func (s *Server) uiSession(c echo.Context) error {
 	items := parseTimeline(history.Items)
 	groups := groupByRun(items)
 	s.enrichRunTraces(ctx, groups)
-	return s.page(c, pageTitle(sessionTitle(detail)), SessionPage(detail, groups, nil))
+	return s.page(c, pageTitle(sessionTitle(detail)), SessionPage(agents, detail, groups, nil))
 }
 
 // enrichRunTraces attaches each run's trace spans to its run group. Memory now

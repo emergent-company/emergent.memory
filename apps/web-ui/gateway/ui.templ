@@ -301,7 +301,7 @@ templ agentCard(a AgentDefinitionSummary) {
 		templ.Attributes{"data-href": "/agents/" + url.PathEscape(a.ID)},
 	) {
 		<div class="flex items-center gap-3">
-			@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+			@agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig))
 			<p class="min-w-0 grow truncate text-base font-medium transition-colors duration-200 group-hover:text-primary" title={ a.Name }>{ a.Name }</p>
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeLink,
@@ -350,7 +350,7 @@ templ agentRow(a AgentDefinitionSummary) {
 	@table.TableRow(a.ID, true, templ.Attributes{"class": "memory-rise"}) {
 		@table.TableCell("", nil) {
 			<a class="flex items-center gap-3 hover:opacity-80" href={ templ.URL("/agents/" + url.PathEscape(a.ID)) }>
-				@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+				@agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig))
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{ a.Name }</p>
 					@monoMeta(shortID(a.ID), "text-base-content/35")
@@ -453,6 +453,26 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []
 			@form.FormControl("agent-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
 				<textarea id="agent-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none"></textarea>
 			}
+			<div class="grid gap-4 sm:grid-cols-2">
+				@form.FormControl("agent-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
+					@ui.IconPicker(ui.IconPickerProps{
+						ID:           "agent-icon",
+						Name:         "icon",
+						Options:      supportedIconPickerOptions(),
+						DefaultValue: "",
+						DefaultLabel: "Default icon",
+						DefaultClass: "lucide--bot",
+					})
+				}
+				@form.FormControl("agent-color", "Color", form.LabelAbove, "Any CSS color; tints the agent tile and chip (e.g. #4F46E5).", "", nil) {
+					@ui.ColorPicker(ui.ColorPickerProps{
+						ID:         "agent-color",
+						Name:       "color",
+						AllowEmpty: true,
+						Presets:    schemaColorPresets,
+					})
+				}
+			</div>
 			@modelSelect("agent-model", models, nil, templ.Attributes{"data-testid": "model-select"})
 			@modelParamsGrid("agent", nil)
 			@form.FormControl("agent-tools", "Tools", form.LabelAbove, "Comma-separated tool names the agent may use.", "", nil) {
@@ -616,7 +636,14 @@ templ detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, 
 				}}
 				if o.Dashboard {
 					<div>
-						<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+						if o.TitleAdornment != nil {
+							<div class="flex flex-wrap items-center gap-2">
+								<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+								@o.TitleAdornment
+							</div>
+						} else {
+							<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+						}
 						if subtitle != "" {
 							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
 						}

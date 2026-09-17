@@ -176,6 +176,30 @@
     try { return JSON.parse(s); } catch (e) { return null; }
   }
 
+  // agentAvatarHTML builds an assistant chat-image avatar. When the selected
+  // agent declares an appearance (icon/color, read from its <option>'s
+  // data-icon/data-color via ctx.currentAgentUI) the avatar uses that icon and
+  // tints its background/border/foreground with the color — mirroring the
+  // server-side typeColorStyle. Without an appearance it is byte-identical to
+  // the previous hardcoded avatar (caller's fallback icon + classes), so
+  // agent-less surfaces (side panel, approval gate) are unchanged.
+  function agentAvatarHTML(ui, fallbackIcon, fallbackClasses) {
+    var icon = ui && ui.icon ? String(ui.icon) : "";
+    var color = ui && ui.color ? String(ui.color) : "";
+    var glyph = /^[a-z0-9-]+$/.test(icon) ? "lucide--" + icon : fallbackIcon;
+    var style = "";
+    if (/^#[0-9a-fA-F]{3,8}$/.test(color)) {
+      style =
+        ' style="color:' + color +
+        ";background-color:color-mix(in oklch," + color + " 10%,transparent)" +
+        ";border-color:color-mix(in oklch," + color + " 15%,transparent)" + '"';
+    }
+    return (
+      '<div class="chat-image ' + fallbackClasses + ' flex items-center justify-center rounded-full border p-2"' + style + '>' +
+      '<span class="iconify ' + glyph + ' size-5" aria-hidden="true"></span></div>'
+    );
+  }
+
   // classifyTool turns a raw tool status + output into {status, error, summary}.
   function classifyTool(rawStatus, output) {
     var status = normalizeStatus(rawStatus);
@@ -193,6 +217,11 @@
   /* ---------- stateful engine (bound to a host page's ctx) ---------- */
 
   function createEngine(ctx) {
+
+    /* the selected agent's declared appearance, or null (bot fallback) */
+    function currentAgentUI() {
+      return (ctx.currentAgentUI && ctx.currentAgentUI()) || null;
+    }
 
     /* ---------- composer ---------- */
 
@@ -229,8 +258,7 @@
       var wrap = document.createElement("div");
       wrap.className = "chat chat-start memory-rise";
       wrap.innerHTML =
-        '<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-        '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>' +
+        agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
         '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(name || "Memory") + '</div>' +
         '<div class="chat-bubble chat-bubble-neutral max-w-[85%]"><div class="memory-md break-words"></div></div>' +
         (meta
@@ -246,8 +274,7 @@
       var b = document.createElement("div");
       b.className = "chat chat-start memory-rise";
       b.innerHTML =
-        '<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-        '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>' +
+        agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
         '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(ctx.currentAgentName()) + '</div>' +
         '<div class="chat-bubble chat-bubble-neutral max-w-[85%]"><div class="memory-md break-words"></div></div>';
       ctx.bubble = b;
@@ -457,8 +484,7 @@
       var wrap = document.createElement("div");
       wrap.className = "chat chat-start memory-rise";
       wrap.innerHTML =
-        '<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-        '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>' +
+        agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
         '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(ctx.currentAgentName()) + '</div>';
 
       var card = document.createElement("div");
@@ -709,8 +735,7 @@
       var wrap = document.createElement("div");
       wrap.className = "chat chat-start memory-rise";
       wrap.innerHTML =
-        '<div class="chat-image bg-warning/10 text-warning border-warning/20 flex items-center justify-center rounded-full border p-2">' +
-        '<span class="iconify lucide--shield-alert size-5" aria-hidden="true"></span></div>' +
+        agentAvatarHTML(currentAgentUI(), "lucide--shield-alert", "bg-warning/10 text-warning border-warning/20") +
         '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(ctx.currentAgentName()) + '</div>';
 
       var card = document.createElement("div");

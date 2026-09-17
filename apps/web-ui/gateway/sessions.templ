@@ -13,7 +13,7 @@ import (
 
 // SessionsPage renders the session list, most recent first. A failed fetch
 // renders the whole-page error state.
-templ SessionsPage(convs []Conversation, loadErr error) {
+templ SessionsPage(agents []AgentDefinitionSummary, convs []Conversation, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@sessionsHeader(len(convs), loadErr == nil)
 		if loadErr != nil {
@@ -21,7 +21,7 @@ templ SessionsPage(convs []Conversation, loadErr error) {
 		} else if len(convs) == 0 {
 			@sessionsEmpty()
 		} else {
-			@sessionsList(convs)
+			@sessionsList(agents, convs)
 		}
 	}
 }
@@ -44,23 +44,19 @@ templ sessionsEmpty() {
 	})
 }
 
-templ sessionsList(convs []Conversation) {
+templ sessionsList(agents []AgentDefinitionSummary, convs []Conversation) {
 	@cardList("", cardListProps{}) {
 		for _, c := range convs {
-			@sessionRow(c)
+			@sessionRow(agents, c)
 		}
 	}
 }
 
-templ sessionRow(c Conversation) {
+templ sessionRow(agents []AgentDefinitionSummary, c Conversation) {
 	@listRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
 		if c.AgentDefinitionID != "" {
-			@ui.Badge(ui.BadgeProps{
-				Label:   shortID(c.AgentDefinitionID),
-				Variant: ui.BadgeGhost,
-				Size:    ui.BadgeSizeXS,
-				Icon:    "lucide--bot",
-			})
+			{{ aui := agentUIForList(agents, c.AgentDefinitionID) }}
+			@agentNameChip(shortID(c.AgentDefinitionID), ui.BadgeGhost, aui.Icon, aui.Color)
 		}
 	}
 }
@@ -72,32 +68,37 @@ templ sessionRow(c Conversation) {
 // is not part of the conversation-history API, so it is omitted rather than
 // fabricated. Unknown sessions render an empty timeline (not an error); other
 // failures render the error state.
-templ SessionPage(detail *ConversationDetail, groups []runGroup, loadErr error) {
+templ SessionPage(agents []AgentDefinitionSummary, detail *ConversationDetail, groups []runGroup, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Session unavailable", loadErr)
 		} else {
-			@sessionDetailHeader(detail)
+			@sessionDetailHeader(agents, detail)
 			if len(groups) == 0 {
 				@sessionTimelineEmpty()
 			} else {
-				@sessionTimeline(groups)
+				@sessionTimeline(sessionAgentUI(agents, detail), groups)
 			}
 		}
 	}
 }
 
-templ sessionDetailHeader(detail *ConversationDetail) {
+// sessionAgentUI is the assistant identity accent for a session detail: the
+// linked agent definition's declared appearance, or the zero agentUI.
+func sessionAgentUI(agents []AgentDefinitionSummary, detail *ConversationDetail) agentUI {
+	if detail == nil {
+		return agentUI{}
+	}
+	return agentUIForList(agents, detail.AgentDefinitionID)
+}
+
+templ sessionDetailHeader(agents []AgentDefinitionSummary, detail *ConversationDetail) {
 	if detail != nil {
 		@detailHeader(crumbsActive(nav.Crumbs("Sessions", "/sessions", sessionTitle(detail))), "", sessionTitle(detail), "Created "+relTime(detail.CreatedAt), detailHeaderOpts{Margin: "mb-6"}) {
 			@countBadgeLabel(strconv.Itoa(len(detail.Messages))+" message"+plural(len(detail.Messages)), "lucide--message-square")
 			if detail.AgentDefinitionID != "" {
-				@ui.Badge(ui.BadgeProps{
-					Label:   shortID(detail.AgentDefinitionID),
-					Variant: ui.BadgeGhost,
-					Size:    ui.BadgeSizeXS,
-					Icon:    "lucide--bot",
-				})
+				{{ aui := agentUIForList(agents, detail.AgentDefinitionID) }}
+				@agentNameChip(shortID(detail.AgentDefinitionID), ui.BadgeGhost, aui.Icon, aui.Color)
 			}
 		}
 	} else {
@@ -115,9 +116,9 @@ templ sessionTimelineEmpty() {
 }
 
 // sessionTimeline renders the timeline grouped by run, in first-seen order.
-templ sessionTimeline(groups []runGroup) {
+templ sessionTimeline(aui agentUI, groups []runGroup) {
 	for i, g := range groups {
-		@sessionRunBlock(i+1, g)
+		@sessionRunBlock(aui, i+1, g)
 	}
 }
 
@@ -125,7 +126,7 @@ templ sessionTimeline(groups []runGroup) {
 // messages + tool calls in order, and its trace waterfall when one exists.
 // Per-run usage is absent from the conversation-history API and intentionally
 // not shown.
-templ sessionRunBlock(n int, g runGroup) {
+templ sessionRunBlock(aui agentUI, n int, g runGroup) {
 	{{ model, status, dur := g.runMeta()
 	runErr := g.runError() }}
 	<div class="mb-6">
@@ -150,7 +151,7 @@ templ sessionRunBlock(n int, g runGroup) {
 		<div class="space-y-3">
 			for _, it := range g.items {
 				if it.Kind == "message" {
-					@sessionMessageItem(it)
+					@sessionMessageItem(aui, it)
 				} else if it.Kind == "tool_call" {
 					@sessionToolItem(it)
 				}
@@ -167,7 +168,7 @@ templ sessionRunBlock(n int, g runGroup) {
 // answer bubble; a textless planning monologue shows its function calls as
 // ghost badges inside the bubble. A quiet footer carries step number +
 // relative time when the item has them.
-templ sessionMessageItem(it TimelineItem) {
+templ sessionMessageItem(aui agentUI, it TimelineItem) {
 	{{ role := it.Role
 	if role == "" {
 		role = "assistant"
@@ -183,7 +184,7 @@ templ sessionMessageItem(it TimelineItem) {
 	if role == "user" {
 		@sessionUserMessage(it)
 	} else if it.Content != nil && len(it.Content.FunctionCalls) > 0 {
-		@sessionAssistantBubble(author, it) {
+		@sessionAssistantBubble(author, aui, it) {
 			<div class="flex flex-wrap gap-1">
 				for _, fc := range it.Content.FunctionCalls {
 					@ui.Badge(ui.BadgeProps{Label: fc.Name, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--wrench"})
@@ -200,10 +201,10 @@ templ sessionMessageItem(it TimelineItem) {
 			reasoning, answer = splitLeadingReasoning(text)
 		} }}
 		if reasoning != "" {
-			@sessionThinkingBlock(reasoning)
+			@sessionThinkingBlock(aui, reasoning)
 		}
 		if answer != "" {
-			@sessionAssistantBubble(author, it) {
+			@sessionAssistantBubble(author, aui, it) {
 				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(answer))</div>
 			}
 		}
@@ -237,11 +238,11 @@ templ sessionUserMessage(it TimelineItem) {
 // sessionAssistantBubble renders a non-user turn as a left-aligned neutral
 // chat bubble under the author's name (bot avatar). The bubble body is
 // supplied as children (markdown reply or function-call badges).
-templ sessionAssistantBubble(author string, it TimelineItem) {
+templ sessionAssistantBubble(author string, aui agentUI, it TimelineItem) {
 	{{ footer := sessionItemFooter(it) }}
 	<div class="chat chat-start">
-		<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">
-			@ui.IconSpan("lucide--bot", "size-5")
+		<div class={ "chat-image flex items-center justify-center rounded-full border p-2", templ.KV("bg-primary/5 text-primary border-primary/10", aui.Color == "") } style={ typeColorStyle(aui.Color) }>
+			@agentGlyph(aui.Icon, "size-5", "text-lg")
 		</div>
 		<div class="chat-header text-xs text-base-content/50">{ author }</div>
 		<div class="chat-bubble chat-bubble-neutral max-w-[85%]">
@@ -256,10 +257,10 @@ templ sessionAssistantBubble(author string, it TimelineItem) {
 // sessionThinkingBlock renders a run's chain-of-thought as a quiet, collapsed
 // disclosure sitting in the same column as a chat-start bubble (invisible
 // avatar shell, exactly like the live chat's thinking badges).
-templ sessionThinkingBlock(reasoning string) {
+templ sessionThinkingBlock(aui agentUI, reasoning string) {
 	<div class="chat chat-start">
-		<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">
-			@ui.IconSpan("lucide--bot", "size-5")
+		<div class={ "chat-image invisible flex items-center justify-center rounded-full border p-2", templ.KV("bg-primary/5 text-primary border-primary/10", aui.Color == "") } style={ typeColorStyle(aui.Color) }>
+			@agentGlyph(aui.Icon, "size-5", "text-lg")
 		</div>
 		<details class="col-start-2 row-start-2 w-full">
 			<summary class="mb-1 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 text-[10px] font-medium text-base-content/50 [&::-webkit-details-marker]:hidden">
