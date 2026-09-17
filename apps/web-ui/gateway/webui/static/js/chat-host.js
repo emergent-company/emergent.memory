@@ -274,6 +274,7 @@
     //   handleToolEvent, renderQuestion, renderApproval, failStream,
     //   onMeta(evt),     // page-local meta handling (required)
     //   onThinking(evt), // optional (chat only)
+    //   onToken(evt),    // optional (raw delta append; hosts without it skip)
     //   isAborted(),     // optional (sidepanel drops frames from aborted streams)
     // }
     return function (raw) {
@@ -283,6 +284,9 @@
       switch (evt.type) {
         case "meta":
           h.onMeta(evt);
+          break;
+        case "token":
+          if (h.onToken) h.onToken(evt);
           break;
         case "html":
           h.setBubbleHTML(evt.html || "");

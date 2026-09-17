@@ -44,7 +44,8 @@
   var eventSource = null;   // SSE live-update channel for the active conversation
   var streaming = false;
   var bubble = null;        // current streaming assistant bubble
-  var bubbleHTML = "";      // accumulated assistant rendered HTML
+  var bubbleHTML = "";      // accumulated assistant rendered HTML (snapshot)
+  var bubbleText = "";      // accumulated raw token deltas (pre-snapshot)
   var conversationId = "";  // threaded back into /api/chat turns
   var activeRunId = "";     // scheduled-run transcript open in the pane ("" = conversation/fresh chat)
   var transcriptRefreshPending = false; // one history re-render at a time
@@ -128,6 +129,7 @@
       renderApproval(evt);
     },
     failStream: function (msg) { failStream(msg); },
+    onToken: function (evt) { appendToken(evt.token); },
     onThinking: handleThinkingEvent,
     onMeta: function (evt) {
       if (evt.conversationId) {
@@ -165,6 +167,7 @@
     get aborter()    { return aborter; },    set aborter(v)    { aborter = v; },
     get bubble()     { return bubble; },     set bubble(v)     { bubble = v; },
     get bubbleHTML() { return bubbleHTML; }, set bubbleHTML(v) { bubbleHTML = v; },
+    get bubbleText() { return bubbleText; }, set bubbleText(v) { bubbleText = v; },
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
     currentAgentName: currentAgentName,
@@ -186,6 +189,7 @@
   var addAssistantMessage = stream.addAssistantMessage;
   var openAssistantBubble = stream.openAssistantBubble;
   var updateBubbleText = stream.updateBubbleText;
+  var appendToken = stream.appendToken;
   var toolChip = stream.toolChip;
   var setToolStatus = stream.setToolStatus;
   var handleToolEvent = stream.handleToolEvent;
@@ -431,7 +435,7 @@
     updateUrl();
     clearActiveRailItem();
     if (messages) messages.innerHTML = "";
-    bubble = null; bubbleHTML = "";
+    bubble = null; bubbleHTML = ""; bubbleText = "";
     if (empty) empty.classList.remove("hidden");
     setStreaming(false);
     clearDock();
@@ -1268,7 +1272,7 @@
       clearThinking();
       updateUrl();
       if (messages) messages.innerHTML = "";
-      bubble = null; bubbleHTML = "";
+      bubble = null; bubbleHTML = ""; bubbleText = "";
     }
     if (input) {
       input.value = "";

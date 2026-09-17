@@ -44,17 +44,22 @@ type questionEvent struct {
 }
 
 // rewriteChatStream transforms a memory-service SSE stream in place:
-//   - `token` events are accumulated and re-emitted as full-message `html`
-//     events (markdown-rendered);
+//   - `token` events are accumulated into the turn buffer and forwarded as raw
+//     `token` deltas — no markdown render is performed per delta;
+//   - a single authoritative markdown-rendered `html` snapshot is emitted per
+//     turn, immediately before `done` or by the post-loop fallback when the
+//     stream ends without `done`;
 //   - `ask_user` MCP tool invocations are rewritten into interactive `question`
 //     events, and their raw `mcp_tool` events are suppressed (the question card
 //     replaces the tool chip);
-//   - all other events (`meta`, `mcp_tool`, `done`, unknown) pass through.
+//   - all other events (`meta`, `mcp_tool`, `approval`, `done`, unknown) pass
+//     through.
 func rewriteChatStream(w io.Writer, r io.Reader) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	sc.Split(splitSSEEvent)
 	var sb strings.Builder
+	var snapshotEmitted bool   // true once this turn's html snapshot was emitted
 	var askInput *askUserInput // ask_user args awaiting the tool's question_id
 	for sc.Scan() {
 		raw := sc.Bytes()
@@ -78,13 +83,24 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 		switch ev.Type {
 		case "token":
 			sb.WriteString(ev.Token)
-			html, err := marshalNoEscape(map[string]string{"type": "html", "html": renderMarkdown(sb.String())})
+			payload, err := marshalNoEscape(map[string]string{"type": "token", "token": ev.Token})
 			if err != nil {
 				return err
 			}
-			if _, err := fmtEvent(w, html); err != nil {
+			if _, err := fmtEvent(w, payload); err != nil {
 				return err
 			}
+		case "done":
+			// Emit the authoritative snapshot before passing done through, then
+			// reset the turn buffer for any subsequent turn in this stream.
+			if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
+				return err
+			}
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
+			sb.Reset()
+			snapshotEmitted = false
 		case "mcp_tool":
 			if ev.Tool != "ask_user" {
 				if err := emitToolResultHTML(w, raw, data, ev.Result); err != nil {
@@ -146,7 +162,32 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			}
 		}
 	}
+	// Fallback: a turn that produced text but never saw `done` (error, EOF, or
+	// scanner failure) still gets its authoritative snapshot before termination.
+	if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
+		return err
+	}
 	return sc.Err()
+}
+
+// emitMarkdownSnapshot emits the single authoritative `html` snapshot for the
+// accumulated turn text, unless the buffer is empty or a snapshot was already
+// emitted this turn. It renders via renderMarkdown — the same sanitized
+// renderer conversation history uses — so the live and history renders of the
+// same text are byte-identical.
+func emitMarkdownSnapshot(w io.Writer, sb *strings.Builder, snapshotEmitted *bool) error {
+	if sb.Len() == 0 || *snapshotEmitted {
+		return nil
+	}
+	payload, err := marshalNoEscape(map[string]string{"type": "html", "html": renderMarkdown(sb.String())})
+	if err != nil {
+		return err
+	}
+	if _, err := fmtEvent(w, payload); err != nil {
+		return err
+	}
+	*snapshotEmitted = true
+	return nil
 }
 
 // marshalNoEscape JSON-encodes v without HTML escaping, so sanitized HTML in

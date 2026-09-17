@@ -1616,11 +1616,23 @@ func TestChatStreamsMarkdown(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
+	// the raw token delta is forwarded unrendered, and markdown is rendered
+	// exactly once as the authoritative snapshot emitted before done.
+	if !strings.Contains(body, `"type":"token"`) || !strings.Contains(body, `"token":"**hi**"`) {
+		t.Fatalf("raw token delta not forwarded: %s", body)
+	}
 	if !strings.Contains(body, `"type":"html"`) {
 		t.Fatalf("no html event in body: %s", body)
 	}
 	if !strings.Contains(body, "<strong>hi</strong>") {
 		t.Fatalf("markdown not rendered in body: %s", body)
+	}
+	// order preserved: token < html < done.
+	iToken := strings.Index(body, `"type":"token"`)
+	iHTML := strings.Index(body, `"type":"html"`)
+	iDone := strings.Index(body, `"type":"done"`)
+	if iToken < 0 || iHTML < 0 || iDone < 0 || iToken >= iHTML || iHTML >= iDone {
+		t.Fatalf("event order not preserved (token=%d html=%d done=%d): %s", iToken, iHTML, iDone, body)
 	}
 }
 
