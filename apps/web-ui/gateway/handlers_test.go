@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,12 +24,37 @@ type triggerAgentCall struct {
 	Context map[string]string
 }
 
+// recordCatalog bumps the named catalog fetch counter (see catalogCalls).
+// Guarded by catalogMu: some handlers (e.g. uiAgents) fetch catalogs from
+// concurrent goroutines.
+func (f *fakeMemory) recordCatalog(method string) {
+	f.catalogMu.Lock()
+	defer f.catalogMu.Unlock()
+	if f.catalogCalls == nil {
+		f.catalogCalls = map[string]int{}
+	}
+	f.catalogCalls[method]++
+}
+
+// catalogCallCount reports how many times method was fetched.
+func (f *fakeMemory) catalogCallCount(method string) int {
+	f.catalogMu.Lock()
+	defer f.catalogMu.Unlock()
+	return f.catalogCalls[method]
+}
+
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
 	agents  []AgentDefinitionSummary
 	defs    map[string]*AgentDefinition // full definitions keyed by id
 	convs   []Conversation
 	servers []MCPServer
+
+	// catalogCalls counts backend catalog fetches (keyed by method name) so
+	// tests can assert the settings loader only fetches a section's catalogs.
+	// Writes go through recordCatalog; reads through catalogCallCount.
+	catalogCalls map[string]int
+	catalogMu    sync.Mutex
 
 	// MCP relay (external nodes): relaySessions is returned by
 	// ListRelaySessions; relayTools holds per-instance tool lists (an empty
@@ -319,6 +345,7 @@ type projectSettingWrite struct {
 }
 
 func (f *fakeMemory) ListAgentDefinitions(ctx context.Context) ([]AgentDefinitionSummary, error) {
+	f.recordCatalog("ListAgentDefinitions")
 	return f.agents, nil
 }
 
@@ -580,6 +607,7 @@ func (f *fakeMemory) GetConversationHistory(ctx context.Context, id string) (*Co
 }
 
 func (f *fakeMemory) ListMCPServers(ctx context.Context) ([]MCPServer, error) {
+	f.recordCatalog("ListMCPServers")
 	return f.servers, nil
 }
 
@@ -754,6 +782,7 @@ func (f *fakeMemory) mcpURLValue(agentID string) string {
 }
 
 func (f *fakeMemory) ListRelaySessions(ctx context.Context) ([]RelaySession, error) {
+	f.recordCatalog("ListRelaySessions")
 	if f.relaySessionsErr != nil {
 		return nil, f.relaySessionsErr
 	}
@@ -761,6 +790,7 @@ func (f *fakeMemory) ListRelaySessions(ctx context.Context) ([]RelaySession, err
 }
 
 func (f *fakeMemory) GetRelaySessionTools(ctx context.Context, instanceID string) ([]RelayTool, error) {
+	f.recordCatalog("GetRelaySessionTools")
 	if f.relayToolsErr != nil {
 		return nil, f.relayToolsErr
 	}
@@ -768,6 +798,7 @@ func (f *fakeMemory) GetRelaySessionTools(ctx context.Context, instanceID string
 }
 
 func (f *fakeMemory) ListModels(ctx context.Context) ([]Model, error) {
+	f.recordCatalog("ListModels")
 	return []Model{{Provider: "deepseek", ModelName: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash"}}, nil
 }
 
@@ -1178,6 +1209,7 @@ func (f *fakeMemory) ValidateSchemas(ctx context.Context) (*SchemaValidationResu
 }
 
 func (f *fakeMemory) ListSkills(ctx context.Context) ([]Skill, error) {
+	f.recordCatalog("ListSkills")
 	if f.skillErr != nil {
 		return nil, f.skillErr
 	}
@@ -1366,6 +1398,7 @@ func (f *fakeMemory) GetProjectUsageTimeSeries(ctx context.Context, granularity 
 }
 
 func (f *fakeMemory) ListProjectProviders(ctx context.Context) ([]ProjectProviderConfig, error) {
+	f.recordCatalog("ListProjectProviders")
 	if f.providerErr != nil {
 		return nil, f.providerErr
 	}
@@ -1482,6 +1515,7 @@ func (f *fakeMemory) TestProjectProvider(ctx context.Context, provider string) (
 }
 
 func (f *fakeMemory) GetProjectModelConfig(ctx context.Context) (*ProjectModelConfig, error) {
+	f.recordCatalog("GetProjectModelConfig")
 	if f.providerErr != nil {
 		return nil, f.providerErr
 	}

@@ -431,11 +431,19 @@ func applyAgentDelegationSection(def *AgentDefinition, c echo.Context) error {
 	return nil
 }
 
-// loadAgentSettings assembles the agent settings payload: the agent being
-// edited, the model catalog, the MCP servers + their tools (the tools picker),
-// the skill list, and every other agent (the delegation-target picker). The MCP
-// section is loaded separately (see loadAgentMCP). A failed agent fetch is
-// returned so the caller renders the whole-page error state.
+// loadAgentSettings assembles the agent settings payload for ONE subpage: the
+// agent being edited plus only the catalog data that subpage renders. Each
+// subpage's template is the source of truth for what must load here:
+//   - general:     agent only (name / system prompt / language / appearance)
+//   - model:       + project model config, providers, and the model catalog
+//   - tools:       + MCP servers + relay node tools (the picker)
+//   - skills:      + the skill list
+//   - delegation:  + every other agent (the delegation-target picker)
+//   - mcp:         agent only (endpoint/keys/sessions load via loadAgentMCP)
+//
+// GetAgentDefinition + deriveDelegation always run (the header/nav need the
+// agent). Catalog fetches stay best-effort (captureError) so a failed fetch
+// degrades only that subpage's content, never the whole page.
 func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSettingsData) error {
 	agent, err := s.memory.GetAgentDefinition(ctx, id)
 	if err != nil {
@@ -444,40 +452,41 @@ func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSe
 	deriveDelegation(agent) // reconstruct Delegation for the form's prefill
 	data.Agent = agent
 
-	if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
-		captureError(err)
-	} else {
-		if mc != nil {
-			data.DefaultModel = mc.GenerativeModel
+	switch data.Section {
+	case sectionModel:
+		if mc, err := s.memory.GetProjectModelConfig(ctx); err != nil {
+			captureError(err)
+		} else {
+			if mc != nil {
+				data.DefaultModel = mc.GenerativeModel
+			}
+			data.ModelConfigKnown = true
 		}
-		data.ModelConfigKnown = true
-	}
-	if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
-		data.HasProviders = len(ps) > 0
-		data.ProviderNames = projectProviderNames(ps)
-	} else {
+		if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
+			data.HasProviders = len(ps) > 0
+			data.ProviderNames = projectProviderNames(ps)
+		} else {
+			captureError(err)
+		}
+		models, err := s.memory.ListModels(ctx)
 		captureError(err)
+		data.Models = models
+	case sectionTools:
+		mcps, err := s.memory.ListMCPServers(ctx)
+		captureError(err)
+		data.MCPServers = mcps
+		// Relay nodes are best-effort: when the backend relay API is
+		// unreachable the relay groups are simply absent (see loadRelayNodes).
+		data.RelayNodes = s.loadRelayNodes(ctx)
+	case sectionSkills:
+		skills, err := s.memory.ListSkills(ctx)
+		captureError(err)
+		data.Skills = skills
+	case sectionDelegation:
+		agents, err := s.memory.ListAgentDefinitions(ctx)
+		captureError(err)
+		data.Agents = agents
 	}
-
-	agents, err := s.memory.ListAgentDefinitions(ctx)
-	captureError(err)
-	data.Agents = agents
-
-	models, err := s.memory.ListModels(ctx)
-	captureError(err)
-	data.Models = models
-
-	mcps, err := s.memory.ListMCPServers(ctx)
-	captureError(err)
-	data.MCPServers = mcps
-
-	// Relay nodes are best-effort: when the backend relay API is unreachable
-	// the relay groups are simply absent (see loadRelayNodes).
-	data.RelayNodes = s.loadRelayNodes(ctx)
-
-	skills, err := s.memory.ListSkills(ctx)
-	captureError(err)
-	data.Skills = skills
 
 	return nil
 }
