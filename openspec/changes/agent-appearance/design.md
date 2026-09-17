@@ -9,7 +9,7 @@ Object types already support a user-chosen icon and color: `kb.project_object_sc
 - Store a user-chosen icon + color per agent definition in a `ui_config` JSONB column, shaped exactly like object types.
 - Expose it through the agent DTOs (full + summary + create + update) as camelCase `uiConfig`.
 - Let the Web UI edit agent appearance with the exact object-type pickers, and render it on every agent-visible surface with the existing glyph primitives, falling back to `lucide--bot` when unset.
-- Support `ui: {icon, color}` in blueprint agent manifests and `--icon`/`--color` in the CLI.
+- Support `ui: {icon, color}` in blueprint agent manifests; the CLI flags that would also consume it are deferred until the next SDK module tag (D6).
 
 **Non-Goals:**
 
@@ -41,13 +41,15 @@ The agent editor uses `ui.IconPicker` + `ui.ColorPicker` with the same `supporte
 
 Where icon/color are unset, surfaces render today's neutral `lucide--bot` tile. No visual regression, no conditional rendering branches — the primitive already falls back cleanly when given an empty icon.
 
-### D5 — Blueprint `ui` parity via `AgentManifest.UI`
+### D5 — Blueprint `ui` parity via a typed `AgentManifest.UI`
 
-`AgentManifest` gains `UI map[string]any json:"ui,omitempty"` mirroring `ObjectTypeDef.UI`; apply maps it onto create/update, so `ui: {icon, color}` in a blueprint manifest persists exactly like an object type's `ui`. Raw `map[string]any` preserves the arbitrary `{icon,color}` shape losslessly.
+`AgentManifest` gains a typed `UI *AgentUIManifest` (`{Icon, Color string}` with `json`+`yaml` tags, `omitempty`) mirroring `ObjectTypeDef.UI`; apply marshals it into `UIConfig` on create/update (only when at least one value is non-empty, so create keeps the DB default `{}` and update preserves an existing appearance). The gateway's `BundledAgent`/`blueprintAgent` reuse the same `{icon,color}` shape, and the CLI blueprint `AgentFile` gets it in the follow-up slice.
 
-### D6 — CLI flags map directly onto the DTO
+*Alternatives considered:* raw `map[string]any` — rejected in favour of a typed block so the manifest contract is explicit and both the server and gateway can share the shape.
 
-`memory agent-definitions create/update` gain `--icon` and `--color`, building the `uiConfig` blob in the request. No terminal rendering of the values in this slice (out of scope).
+### D6 — CLI flags deferred to the next SDK release
+
+`memory agent-definitions create/update --icon/--color` (and the CLI blueprint-applier `ui` passthrough) are **not** in this change. They consume the new `uiConfig` field on the SDK's `agentdefinitions` types, but `apps/cli` is intentionally built against the *published* SDK module: `.github/workflows/cli.yml` runs with `GOWORK: off` and `apps/cli/go.mod` pins `sdk v0.82.0`. SDK module tags are only created on release tags (`server-sdk.yml` → `apps/server/pkg/sdk/<tag>`), so a CLI slice that references an unreleased SDK field cannot pass CI in the same PR. The CLI work ships as a follow-up once the next SDK tag exists and `apps/cli/go.mod` is bumped (no relative `replace` added to `apps/cli/go.mod` — the pinned-SDK check is deliberate release hygiene).
 
 ## Risks / Trade-offs
 
@@ -58,8 +60,8 @@ Where icon/color are unset, surfaces render today's neutral `lucide--bot` tile. 
 
 ## Migration Plan
 
-Additive: one Goose migration `00155_add_agent_appearance_ui_config.sql` adding `ui_config jsonb NOT NULL DEFAULT '{}'` to `kb.agent_definitions` (default ensures existing rows are `{}`). Server entity/DTO changes, blueprint manifest `ui`, CLI flags, and Web UI picker/rendering changes are all additive. Rollback = revert the change; the column is dropped by a down migration.
+Additive: one Goose migration `00155_add_ui_config_to_agent_definitions.sql` adding `ui_config jsonb NOT NULL DEFAULT '{}'` to `kb.agent_definitions` (default ensures existing rows are `{}`), mirrored into the integration-test fixture schema (`apps/server/internal/testutil/schema.sql`). Server entity/DTO changes, blueprint manifest `ui`, and Web UI picker/rendering changes are all additive. Rollback = revert the change; the column is dropped by a down migration.
 
 ## Open Questions
 
-- Whether iOS rendering (and later CLI terminal rendering) of agent icon/color should be tracked as a separate capability delta or folded into this change's archive follow-ups.
+- Whether iOS rendering (and the deferred CLI slice) of agent icon/color should be tracked as separate capability deltas or folded into this change's archive follow-ups.

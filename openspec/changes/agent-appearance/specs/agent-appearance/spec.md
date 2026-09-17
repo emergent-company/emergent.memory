@@ -78,17 +78,3 @@ Agent manifests in blueprints SHALL be able to declare `ui: {icon, color}`, and 
 
 - **WHEN** a blueprint manifest declares an agent with `ui: {icon: "bot", color: "#4F46E5"}` and is applied
 - **THEN** the resulting agent definition stores that appearance
-
-### Requirement: CLI sets appearance
-
-The CLI `memory agent-definitions create` and `memory agent-definitions update` commands SHALL accept `--icon` and `--color` flags and persist them.
-
-#### Scenario: Create with icon and color
-
-- **WHEN** the user runs `memory agent-definitions create --icon bot --color "#4F46E5" ...`
-- **THEN** the created agent definition stores that icon and color
-
-#### Scenario: Update icon and color
-
-- **WHEN** the user runs `memory agent-definitions update <id> --icon file-text --color "#10B981"`
-- **THEN** the definition's stored appearance changes to the new icon and color

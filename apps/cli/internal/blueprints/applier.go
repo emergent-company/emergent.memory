@@ -857,7 +857,6 @@ func agentFileToCreateRequest(ag AgentFile) *sdkagents.CreateAgentDefinitionRequ
 			EnableThinking: ag.Model.EnableThinking,
 		}
 	}
-	req.UIConfig = agentUIConfig(ag.UI)
 	return req
 }
 
@@ -900,29 +899,5 @@ func agentFileToUpdateRequest(ag AgentFile) *sdkagents.UpdateAgentDefinitionRequ
 			EnableThinking: ag.Model.EnableThinking,
 		}
 	}
-	req.UIConfig = agentUIConfig(ag.UI)
 	return req
-}
-
-// agentUIConfig marshals an AgentFile's optional ui block into the opaque
-// uiConfig JSON blob expected by the agent-definitions API. Returns nil when the
-// block is absent or has no non-empty icon/color, so the field is omitted from
-// the request: a create sends nothing, an update preserves the existing
-// appearance rather than clearing it.
-func agentUIConfig(ui *AgentUI) json.RawMessage {
-	if ui == nil || (ui.Icon == "" && ui.Color == "") {
-		return nil
-	}
-	m := map[string]string{}
-	if ui.Icon != "" {
-		m["icon"] = ui.Icon
-	}
-	if ui.Color != "" {
-		m["color"] = ui.Color
-	}
-	raw, err := json.Marshal(m)
-	if err != nil {
-		return nil
-	}
-	return raw
 }

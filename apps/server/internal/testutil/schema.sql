@@ -545,7 +545,8 @@ CREATE TABLE kb.agent_definitions (
     tool_policies jsonb DEFAULT '{}'::jsonb NOT NULL,
     enabled boolean DEFAULT true NOT NULL,
     default_tool_policy text DEFAULT 'allow'::text NOT NULL,
-    source_blueprint_id uuid
+    source_blueprint_id uuid,
+    ui_config jsonb DEFAULT '{}'::jsonb NOT NULL
 );
 
 

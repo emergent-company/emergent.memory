@@ -108,18 +108,9 @@ type AgentFile struct {
 	Config          map[string]any             `json:"config"          yaml:"config"`
 	WorkspaceConfig map[string]any             `json:"workspaceConfig" yaml:"workspaceConfig"`
 	ToolPolicies    map[string]AgentToolPolicy `json:"toolPolicies"    yaml:"toolPolicies"`
-	UI              *AgentUI                   `json:"ui"              yaml:"ui"`
 
 	// SourceFile is the path from which this agent was loaded (not serialised).
 	SourceFile string `json:"-" yaml:"-"`
-}
-
-// AgentUI describes an agent's optional appearance block, mirroring the
-// server-side manifest's ui block. Both fields are optional; a block is only
-// carried through to the API when at least one value is non-empty.
-type AgentUI struct {
-	Icon  string `json:"icon"  yaml:"icon"`
-	Color string `json:"color" yaml:"color"`
 }
 
 // AgentToolPolicy controls how a specific tool is invoked by an agent.

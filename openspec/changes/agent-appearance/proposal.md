@@ -8,8 +8,7 @@ Agent definitions are visually indistinguishable today: every agent renders the 
 - Server DTOs (`AgentDefinitionDTO`, `AgentDefinitionSummaryDTO`, `CreateAgentDefinitionDTO`, `UpdateAgentDefinitionDTO`) gain `uiConfig json.RawMessage` (camelCase `uiConfig`, matching the agents-domain tag convention). The summary DTO carries it so lists/pickers render appearance without a full fetch.
 - The Web UI editor (settings form + create/edit modal) reuses the object-type pickers — `ui.IconPicker` / `ui.ColorPicker`, `supportedIconPickerOptions()`, `schemaColorPresets` — so the agent icon/color editing experience is identical to object types. The icon catalog gains `lucide--bot`; the agent default/fallback glyph is `lucide--bot`.
 - Every agent surface — list cards/rows, dashboard header + summary card, session/chat author bubbles, session row + detail header, schedules rows/detail, ⌘K spotlight, blueprint agent rows, and client-side chat-stream bubbles — renders the agent's icon + color via the existing `typeGlyph` / `typeIconTile` / `typeNameChip` / `typeColorStyle` primitives. Where icon/color are unset, they render today's neutral `lucide--bot` tile (no visual regression).
-- Blueprint agent manifests may declare `ui: {icon, color}` and it is applied on create/update (parity with object types declaring `ui` in `object_type_schemas`).
-- The CLI `memory agent-definitions create`/`update` gain `--icon` / `--color`.
+- Blueprint agent manifests may declare `ui: {icon, color}` and it is applied on create/update (parity with object types declaring `ui` in `object_type_schemas`), on both the memory apply path and the gateway's bundled-blueprint manifest.
 
 ## Capabilities
 
@@ -21,7 +20,9 @@ Agent definitions are visually indistinguishable today: every agent renders the 
 
 - Database: new migration adding `ui_config jsonb NOT NULL DEFAULT '{}'` to `kb.agent_definitions` (matching `kb.project_object_schema_registry.ui_config`).
 - Server (`apps/server/domain/agents/`): entity gains `UIConfig`; DTOs + `ToDTO`/`ToSummaryDTO` map it; create/update handlers accept and persist it.
-- Blueprints (`apps/server/domain/blueprints/`): `AgentManifest` gains `ui`, and apply maps it onto create/update (parity with `ObjectTypeDef.UI`).
-- CLI (`apps/cli/internal/cmd/agent_definitions.go`): `--icon` / `--color` flags on create/update.
+- Blueprints (`apps/server/domain/blueprints/`): `AgentManifest` gains `ui`, and apply maps it onto create/update (parity with `ObjectTypeDef.UI`). The gateway's bundled-blueprint types (`BundledAgent`, `blueprintAgent`, `bundledAgentsFromManifest`) carry the same block so `agents/*.yaml → manifest → applied definition` round-trips.
 - Web UI (`apps/web-ui/gateway/`): agent editor uses `ui.IconPicker`/`ui.ColorPicker`; icon catalog gains `lucide--bot`; agent rendering surfaces switch to the type-glyph primitives with a `lucide--bot` default.
-- Follow-up (out of scope for this change): iOS app rendering and CLI terminal rendering of icon/color.
+- SDK (`apps/server/pkg/sdk/agentdefinitions`): the four agent-definition types carry `uiConfig` so API clients can set/read appearance.
+- Follow-ups (out of scope for this change):
+  - iOS app rendering and CLI terminal rendering of icon/color.
+  - CLI `--icon` / `--color` flags and the CLI blueprint-applier `ui` passthrough. These consume the new SDK field, and `apps/cli` is deliberately built against the **published** SDK module (`cli.yml` runs with `GOWORK: off`, `apps/cli/go.mod` pins `sdk v0.82.0`); SDK module tags are only cut on release tags, so the CLI slice lands as a follow-up once the next SDK tag exists and `apps/cli/go.mod` is bumped.
