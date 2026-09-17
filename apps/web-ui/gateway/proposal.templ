@@ -21,19 +21,34 @@ templ proposalCard(c *ProposalCard) {
 		if c.Summary != "" {
 			<p class="text-base-content/70 px-4 py-2.5 text-xs">{ c.Summary }</p>
 		}
+		// The kind section carries data-proposal-kind so tests can assert the
+		// structured preview rendered for a kind — a summary-only degradation
+		// (kind registered but its section missing) leaves the hook absent.
 		switch c.Kind {
 		case "blueprint":
-			@proposalBlueprintSection(c)
+			<div data-proposal-kind={ c.Kind }>
+				@proposalBlueprintSection(c)
+			</div>
 		case "skill":
-			@proposalSkillSection(c.Skill)
+			<div data-proposal-kind={ c.Kind }>
+				@proposalSkillSection(c.Skill)
+			</div>
 		case "agent":
-			@proposalAgentSection(c.Agent)
+			<div data-proposal-kind={ c.Kind }>
+				@proposalAgentSection(c.Agent)
+			</div>
 		case "mcp_server":
-			@proposalMCPServerSection(c.MCPServer)
+			<div data-proposal-kind={ c.Kind }>
+				@proposalMCPServerSection(c.MCPServer)
+			</div>
 		case "provider":
-			@proposalProviderSection(c.Provider)
+			<div data-proposal-kind={ c.Kind }>
+				@proposalProviderSection(c.Provider)
+			</div>
 		case "object":
-			@proposalObjectSection(c)
+			<div data-proposal-kind={ c.Kind }>
+				@proposalObjectSection(c)
+			</div>
 		}
 	</div>
 }
