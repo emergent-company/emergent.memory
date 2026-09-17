@@ -1,7 +1,7 @@
 ## 1. Server — tool group registry (TDD)
 
 - [ ] 1.1 New package `apps/server/domain/agents/toolgroups/`: `type Group struct { ID, Label, Description string }`, `var Groups []Group` in the frozen contract order (D6), and `func GroupForTool(tool string) string` returning a group id or `"other"`.
-- [ ] 1.2 Derive group from `RequiredScope` (export the scope lookup from `mcp` — `toolRequiredScope` is package-private, add an exported accessor) plus a static map for unscoped tools: `workspace_read|workspace_glob|workspace_grep|ast_grep` → `workspace-read`; `workspace_write|workspace_edit|workspace_git|workspace_bash|run_python|run_go` → `workspace-exec`; `google_search|url_context|code_execution|webfetch|brave_search|reddit_search` → `web`.
+- [ ] 1.2 Derive group from `RequiredScope` (export the scope lookup from `mcp` — `toolRequiredScope` is package-private, add an exported accessor) plus a static map for unscoped tools: `workspace_read|workspace_glob|workspace_grep|workspace_ast_grep` → `workspace-read`; `workspace_write|workspace_edit|workspace_git|workspace_bash|run_python|run_go` → `workspace-exec`; `web-fetch|web-search-brave|web-search-reddit` → `web` (Google-native tools are out of scope — configured under `Model.NativeTools`, they bypass the policy callback).
 - [ ] 1.3 Unit tests: every tool name in `sandbox.ValidToolNames`-derived workspace names maps to a workspace group; every scope key present in `toolRequiredScope` maps to a known non-`other` group; unknown names → `other`; `Groups` ids and order match the contract; no duplicate ids.
 
 ## 2. Server — group policy resolution
