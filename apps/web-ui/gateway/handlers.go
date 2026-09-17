@@ -227,6 +227,31 @@ func (s *Server) cancelQuestion(c echo.Context) error {
 	})
 }
 
+// cancelAgentRun handles POST /api/chat/runs/:runId/cancel. It resolves the
+// active run's owning runtime agent id from the run DTO, then proxies the
+// upstream project/agent-scoped cancel. Unresolvable run id or agent id, and
+// upstream failures, return a 200 with {"ok":false,"reason":…} — never an
+// error status — so the client always gets an actionable body. The upstream
+// cancel is idempotent (an already-terminal run is a non-error), so a
+// successful proxy here always reports ok:true.
+func (s *Server) cancelAgentRun(c echo.Context) error {
+	runID := c.Param("runId")
+	ctx := c.Request().Context()
+	run, err := s.memory.GetAgentRun(ctx, runID)
+	if err != nil {
+		captureError(err)
+		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": "run id could not be resolved"})
+	}
+	if run == nil || run.AgentID == "" {
+		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": "agent identifier could not be resolved"})
+	}
+	if err := s.memory.CancelAgentRun(ctx, run.AgentID, runID); err != nil {
+		captureError(err)
+		return c.JSON(http.StatusOK, map[string]any{"ok": false, "reason": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"ok": true, "runId": runID})
+}
+
 func (s *Server) listConversations(c echo.Context) error {
 	out, err := s.memory.ListConversations(c.Request().Context())
 	if err != nil {

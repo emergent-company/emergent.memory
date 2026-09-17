@@ -69,11 +69,14 @@ func (m *MemoryClient) GetRunQuestions(ctx context.Context, runID string) ([]Age
 // --- agent run spans (session viewer trace waterfall) ---
 
 // AgentRun is the subset of memory's run DTO (GET /agent-runs/:runId) the
-// gateway needs: the OpenTelemetry trace id (when the run was traced) and the
-// run's flattened trace spans, which memory now returns inline in the DTO.
+// gateway needs: the OpenTelemetry trace id (when the run was traced), the
+// run's flattened trace spans, and the run's owning runtime-agent identity
+// (used to resolve the upstream cancel route).
 type AgentRun struct {
-	TraceID string      `json:"traceId,omitempty"`
-	Spans   []TraceSpan `json:"spans,omitempty"`
+	TraceID   string      `json:"traceId,omitempty"`
+	Spans     []TraceSpan `json:"spans,omitempty"`
+	AgentID   string      `json:"agentId,omitempty"`
+	AgentName string      `json:"agentName,omitempty"`
 }
 
 // TraceSpan is one span of a run's trace, flattened by memory for the session
@@ -263,4 +266,43 @@ func (m *MemoryClient) ListToolApprovals(ctx context.Context) ([]ToolApprovalIte
 		return nil, err
 	}
 	return out.Data, nil
+}
+
+// CancelAgentRun proxies the project/agent-scoped upstream cancel endpoint
+// (POST /api/projects/:projectId/agents/:id/runs/:runId/cancel). agentID is
+// the runtime agent id resolved from the run's own DTO (GetAgentRun), so the
+// upstream "run belongs to agent" guard always matches. The endpoint is
+// idempotent: memory force-transitions the run to cancelled and returns 200
+// even for an already-terminal run, so there is no special terminal-state
+// handling here — any non-2xx (unknown agent/run, backend down) surfaces as a
+// typed error the caller maps to {"ok":false}.
+func (m *MemoryClient) CancelAgentRun(ctx context.Context, agentID, runID string) error {
+	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/agents/" + url.PathEscape(agentID) + "/runs/" + url.PathEscape(runID) + "/cancel"
+	if err := m.do(ctx, http.MethodPost, path, nil, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SessionTodo mirrors memory's sessiontodos.SessionTodo for the fields the
+// gateway relays to the chat todo card.
+type SessionTodo struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	Content   string `json:"content"`
+	Status    string `json:"status"`
+	Order     int    `json:"order"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// ListSessionTodos lists a session's todos (GET
+// /api/v1/agent/sessions/:sessionId/todos). The response is a bare JSON array
+// (not the successEnvelope), so it decodes straight into the slice.
+func (m *MemoryClient) ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error) {
+	var todos []SessionTodo
+	if err := m.do(ctx, http.MethodGet, "/api/v1/agent/sessions/"+url.PathEscape(sessionID)+"/todos", nil, &todos); err != nil {
+		return nil, err
+	}
+	return todos, nil
 }

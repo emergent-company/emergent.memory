@@ -18,6 +18,13 @@ type Conversation struct {
 	CanonicalID       string `json:"canonicalId"`
 	CreatedAt         string `json:"createdAt"`
 	UpdatedAt         string `json:"updatedAt"`
+
+	// Run-control state the gateway derives for the session rail badge (not
+	// present on memory's list response — populated by chatRailData). json:"-"
+	// keeps them out of the /api/conversations response.
+	Bucket           string `json:"-"`
+	PendingApprovals int    `json:"-"`
+	PendingQuestions int    `json:"-"`
 }
 
 type ConversationList struct {
