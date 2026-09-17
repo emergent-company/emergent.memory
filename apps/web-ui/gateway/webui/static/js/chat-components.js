@@ -540,7 +540,7 @@
       "#chat-dock :is(button,a,input,select,textarea):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
       ".dock-head{display:flex;align-items:center;gap:.4rem;margin:.45rem .75rem .1rem;font-size:.625rem;" +
       "font-weight:600;letter-spacing:.09em;text-transform:uppercase;" +
-      "color:color-mix(in oklab,var(--color-base-content) 45%,transparent)}" +
+      "color:color-mix(in oklab,var(--color-base-content) 65%,transparent)}" +
       ".dock-count{display:inline-flex;align-items:center;justify-content:center;min-width:1.05rem;height:1.05rem;" +
       "padding:0 .3rem;border-radius:9999px;background:var(--color-warning);color:var(--color-warning-content);font-size:.5625rem}" +
       ".dock-card-controls{display:flex;flex-basis:100%;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:.4rem}" +
@@ -562,13 +562,13 @@
       ".memory-rail-badge[data-bucket='needs_input']{color:var(--color-warning);" +
       "background:color-mix(in oklab,var(--color-warning) 15%,transparent);" +
       "border-color:color-mix(in oklab,var(--color-warning) 40%,transparent)}" +
-      ".memory-rail-badge[data-bucket='failed']{color:var(--color-error);" +
+      ".memory-rail-badge[data-bucket='failed']{color:color-mix(in oklab,var(--color-error) 60%,var(--color-base-content));" +
       "background:color-mix(in oklab,var(--color-error) 14%,transparent);" +
       "border-color:color-mix(in oklab,var(--color-error) 38%,transparent)}" +
       ".memory-rail-badge[data-bucket='running']{color:var(--color-primary);" +
       "background:color-mix(in oklab,var(--color-primary) 13%,transparent);" +
       "border-color:color-mix(in oklab,var(--color-primary) 34%,transparent)}" +
-      ".memory-rail-badge[data-bucket='done']{color:color-mix(in oklab,var(--color-base-content) 45%,transparent);" +
+      ".memory-rail-badge[data-bucket='done']{color:color-mix(in oklab,var(--color-base-content) 65%,transparent);" +
       "background:color-mix(in oklab,var(--color-base-content) 7%,transparent);" +
       "border-color:color-mix(in oklab,var(--color-base-content) 12%,transparent)}" +
       ".memory-rail-badge .memory-rail-count{display:inline-flex;align-items:center;justify-content:center;" +
