@@ -1410,6 +1410,7 @@ func (f *fakeMemory) ListProjectProviders(ctx context.Context) ([]ProjectProvide
 }
 
 func (f *fakeMemory) ListProviderModels(ctx context.Context, provider string) ([]ProviderSupportedModel, error) {
+	f.recordCatalog("ListProviderModels")
 	if f.modelErr != nil {
 		return nil, f.modelErr
 	}

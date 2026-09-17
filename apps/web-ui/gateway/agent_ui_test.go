@@ -1088,7 +1088,7 @@ func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
 
 	// Every catalog method the loader can call (see loadAgentSettings).
 	allCatalogs := []string{
-		"GetProjectModelConfig", "ListProjectProviders", "ListModels",
+		"GetProjectModelConfig", "ListProjectProviders", "ListModels", "ListProviderModels",
 		"ListMCPServers", "ListRelaySessions", "GetRelaySessionTools",
 		"ListSkills", "ListAgentDefinitions",
 	}
@@ -1098,7 +1098,7 @@ func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
 		loads   []string // methods that MUST be fetched
 	}{
 		{section: "general"},
-		{section: "model", loads: []string{"GetProjectModelConfig", "ListProjectProviders", "ListModels"}},
+		{section: "model", loads: []string{"GetProjectModelConfig", "ListProjectProviders", "ListProviderModels"}},
 		{section: "tools", loads: []string{"ListMCPServers", "ListRelaySessions", "GetRelaySessionTools"}},
 		{section: "skills", loads: []string{"ListSkills"}},
 		{section: "delegation", loads: []string{"ListAgentDefinitions"}},
@@ -1126,6 +1126,60 @@ func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLoadAgentSettingsModelCatalogIsConfiguredOnly proves the settings Model
+// section offers only configured providers' models: the global ListModels
+// catalog (which the fake returns as deepseek) must be ignored in favour of the
+// configured providers' own catalog.
+func TestLoadAgentSettingsModelCatalogIsConfiguredOnly(t *testing.T) {
+	f := &fakeMemory{
+		defs:             map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+		projectProviders: []ProjectProviderConfig{{Provider: "openai"}},
+		modelsByProvider: map[string][]ProviderSupportedModel{
+			"openai": {{Provider: "openai", ModelName: "gpt-4o", ModelType: "generative", DisplayName: "GPT-4o"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	data := agentSettingsData{Section: "model"}
+	if err := s.loadAgentSettings(t.Context(), "a1", &data); err != nil {
+		t.Fatalf("loadAgentSettings: %v", err)
+	}
+	if len(data.Models) != 1 || data.Models[0].Provider != "openai" || data.Models[0].ModelName != "gpt-4o" {
+		t.Errorf("model catalog = %+v, want only openai/gpt-4o", data.Models)
+	}
+}
+
+// TestConfiguredGenerativeModelsFiltersToConfiguredProviders covers the shared
+// helper: it keeps configured providers' generative models, drops embedding
+// models, and never leaks unconfigured providers.
+func TestConfiguredGenerativeModelsFiltersToConfiguredProviders(t *testing.T) {
+	f := &fakeMemory{
+		modelsByProvider: map[string][]ProviderSupportedModel{
+			"openai": {
+				{Provider: "openai", ModelName: "gpt-4o", ModelType: "generative", DisplayName: "GPT-4o"},
+				{Provider: "openai", ModelName: "text-embedding-3", ModelType: "embedding", DisplayName: "Embedding"},
+			},
+			"deepseek": {
+				{Provider: "deepseek", ModelName: "deepseek-chat", ModelType: "generative"},
+			},
+		},
+	}
+	s := &Server{memory: f}
+	models := s.configuredGenerativeModels(t.Context(), []ProjectProviderConfig{{Provider: "openai"}})
+	got := map[string]bool{}
+	for _, m := range models {
+		got[m.Provider+"/"+m.ModelName] = true
+	}
+	if !got["openai/gpt-4o"] {
+		t.Errorf("configured provider generative model missing: %+v", models)
+	}
+	if got["openai/text-embedding-3"] {
+		t.Error("embedding model must be excluded from the generative catalog")
+	}
+	if got["deepseek/deepseek-chat"] {
+		t.Error("unconfigured provider model must be excluded")
 	}
 }
 

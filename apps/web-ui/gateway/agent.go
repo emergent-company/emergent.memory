@@ -556,12 +556,12 @@ func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSe
 		if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
 			data.HasProviders = len(ps) > 0
 			data.ProviderNames = projectProviderNames(ps)
+			// Offer only configured providers' models — the global catalog
+			// includes unconfigured providers, which would break chats.
+			data.Models = s.configuredGenerativeModels(ctx, ps)
 		} else {
 			captureError(err)
 		}
-		models, err := s.memory.ListModels(ctx)
-		captureError(err)
-		data.Models = models
 	case sectionTools:
 		mcps, err := s.memory.ListMCPServers(ctx)
 		captureError(err)

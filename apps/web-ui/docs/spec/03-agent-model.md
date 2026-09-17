@@ -69,6 +69,16 @@ custom names), and a matching provider is satisfied even when the model name
 isn't in that provider's catalog (custom base URLs legitimately serve
 off-catalog models).
 
+## Model picker scope
+
+The agent model pickers — the settings **Model** section
+(`/agents/:id/settings/model`) and the create/edit dialog on the Agents page —
+offer only models from providers configured for the project (credential-prefixed,
+e.g. `openai/deepseek-v4-pro`), matching the default-model and provider-fallback
+dropdowns. Models from unconfigured providers are never listed, so a model that
+would fail at chat time cannot be selected. An agent's already-stored model still
+appears as a "(current)" option when it falls outside that catalog.
+
 ## MCP attachment
 
 An agent's capabilities come entirely from **MCP servers** in memory's registry. No
