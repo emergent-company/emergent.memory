@@ -17,6 +17,19 @@ import { addProvider } from '../helpers/providers';
 // closed-stream body to assert against — the card's presence in the DOM is the
 // proof that the gateway generated and injected `proposalHtml`.
 //
+// Fail-vs-skip: a broad "no card → skip" would let a real gateway render
+// regression (server emitted `proposalHtml`, renderQuestion dropped it) hide
+// behind a skip. The chat stream is a fetch()-read SSE body (NOT EventSource —
+// chat-stream.js reads `data:` lines off `res.body`), so a `page.addInitScript`
+// fetch wrapper tees every `/api/chat` response and records parsed `question`
+// events (whether `proposalHtml` was non-empty + a text snippet) into
+// `window.__proposalSseEvents` without disturbing the app's own stream (the
+// original `Response` is returned untouched; only a tee'd clone is read, and it
+// is never awaited on the app's path). After the card wait, the spec HARD-FAILS
+// when a `question` event carried a non-empty `proposalHtml` but no
+// `.proposal-card` rendered, and keeps the SKIP for the model-deviation cases
+// (no `question` event at all, or an empty/absent `proposalHtml`).
+//
 // Flow (mirrors mcp-servers-tool-call.spec.ts):
 //   1. SEED (API): fresh scratch project under the bootstrap org — provider and
 //      agent state are project-scoped, so a fresh project makes the loop real;
@@ -29,14 +42,16 @@ import { addProvider } from '../helpers/providers';
 //      the model to emit exactly one ask_user call carrying a blueprint
 //      proposal. Created via API because the agent modal cannot express the
 //      deterministic prompt this test needs;
-//   4. CHAT (UI): /chat?agent=<id> → one forced turn → wait for the
-//      `.proposal-card` to render;
+//   4. CHAT (UI): install the SSE fetch interceptor, then /chat?agent=<id> →
+//      one forced turn → wait for the `.proposal-card` to render;
 //   5. ASSERT: the card header + "blueprint" kind badge + the "Object types"
 //      preview section + the proposed object type name, plus the interactive
 //      Accept/Reject answer controls that render alongside the card. When the
 //      model completes the turn without a structured proposal (or the run
 //      errors) the test skips with an annotation, never fails on
-//      non-deterministic model tool-use.
+//      non-deterministic model tool-use — but a `question` SSE event with a
+//      non-empty `proposalHtml` and no rendered card HARD-FAILS (gateway render
+//      regression).
 //   6. CLEANUP (finally): delete agent, reactivate the bootstrap project,
 //      delete the scratch project.
 //
@@ -79,6 +94,116 @@ async function cleanup(page: Page, agentId: string, projectId: string): Promise<
       .post(`/projects/delete?projectId=${projectId}&orgId=${bootstrap.orgId}`)
       .catch(() => {});
   }
+}
+
+// One parsed `question` SSE event, captured from the tee'd `/api/chat` stream by
+// the fetch interceptor below. `hasProposalHtml` distinguishes a real proposal
+// (non-empty `proposalHtml` — the gateway must render it) from a summary-only /
+// unknown-kind degradation (empty or absent `proposalHtml` — model deviation).
+type ProposalSseEvent = {
+  questionId: string | null;
+  hasProposalHtml: boolean;
+  snippet: string;
+};
+
+// Wraps window.fetch before the chat page loads. For every `/api/chat` response
+// it tees the body (response.clone()) and asynchronously parses the SSE `data:`
+// lines, recording `question` events into window.__proposalSseEvents. The
+// original Response is returned untouched to the caller, and the tee'd read is
+// fire-and-forget (void + internal try/catch), so the app's stream semantics —
+// and its own res.body.getReader() — are never disturbed.
+async function installProposalSseInterceptor(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __proposalSseEvents?: ProposalSseEvent[] };
+    w.__proposalSseEvents = [];
+
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const response = await originalFetch(input, init);
+      let url = '';
+      try {
+        url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : (input as Request).url || '';
+      } catch {
+        /* ignore */
+      }
+      if (url.indexOf('/api/chat') !== -1 && response.body) {
+        try {
+          void recordQuestionEvents(response.clone());
+        } catch {
+          /* ignore — the probe must never break the app's stream */
+        }
+      }
+      return response;
+    }) as typeof fetch;
+
+    async function recordQuestionEvents(response: Response): Promise<void> {
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buf.indexOf('\n')) !== -1) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (!line || line.indexOf('data:') !== 0) continue;
+            let evt: { type?: string; questionId?: unknown; proposalHtml?: unknown };
+            try {
+              evt = JSON.parse(line.slice(5).trim());
+            } catch {
+              continue;
+            }
+            if (evt && evt.type === 'question') {
+              w.__proposalSseEvents!.push({
+                questionId: typeof evt.questionId === 'string' ? evt.questionId : null,
+                hasProposalHtml:
+                  typeof evt.proposalHtml === 'string' && evt.proposalHtml.trim().length > 0,
+                snippet: String(evt.proposalHtml || '').slice(0, 300),
+              });
+            }
+          }
+        }
+      } catch {
+        /* ignore — abort/close mid-read is not an assertion failure */
+      }
+    }
+  });
+}
+
+// Reads the question events the interceptor recorded for the chat turn.
+async function readProposalSseEvents(page: Page): Promise<ProposalSseEvent[]> {
+  const raw = await page.evaluate(() => {
+    const w = window as unknown as { __proposalSseEvents?: unknown };
+    return w.__proposalSseEvents;
+  });
+  return Array.isArray(raw) ? (raw as ProposalSseEvent[]) : [];
+}
+
+// The proposal card did not render (card wait timed out or the run surfaced an
+// error). Distinguish the model-deviation cases — which the caller skips — from
+// a genuine gateway render regression: if the server emitted a `question` event
+// with a non-empty `proposalHtml` but no `.proposal-card` appeared, FAIL with a
+// clear message naming the gateway render path.
+async function failOnUnrenderedProposal(page: Page): Promise<void> {
+  const sse = await readProposalSseEvents(page);
+  const withProposal = sse.filter((e) => e.hasProposalHtml);
+  expect(
+    withProposal.length,
+    `gateway render regression: the server emitted a question event carrying a non-empty ` +
+      `proposalHtml but no .proposal-card appeared in the DOM. ` +
+      `proposalHtml snippet(s): ${JSON.stringify(withProposal.map((e) => e.snippet))}`,
+  ).toBe(0);
 }
 
 // waitForProposalCard polls the transcript until the proposal card renders (or
@@ -195,6 +320,7 @@ test.describe('ask_user proposal card scenario', () => {
       // 4. CHAT (UI): one forced turn against the agent. Completion is detected
       // on the proposal card (the ask_user tool pauses the run; there is no
       // closed stream or settled bubble to wait on).
+      await installProposalSseInterceptor(page);
       await page.goto(`/chat?agent=${agentId}`);
       await expectAppPage(page, /Chat/);
       const agentSelect = page.locator('#chat-agent');
@@ -210,6 +336,10 @@ test.describe('ask_user proposal card scenario', () => {
         result = await waitForProposalCard(page);
       } catch (err) {
         const why = (err as Error).message;
+        // Timeout with no card: SKIP only when the model never sent a real
+        // proposal; FAIL when the server DID emit a non-empty `proposalHtml`.
+        await failOnUnrenderedProposal(page);
+
         test.info().annotations.push({
           type: 'skipped-step',
           description: `no proposal card rendered within 120s (${why}) — the turn may have stalled or the model answered without asking`,
@@ -219,6 +349,11 @@ test.describe('ask_user proposal card scenario', () => {
       }
 
       if (result.state === 'error') {
+        // A run error is usually a provider/environment failure (skip), but if a
+        // question event with a non-empty `proposalHtml` was emitted and no card
+        // rendered (renderQuestion threw), that is still a render regression.
+        await failOnUnrenderedProposal(page);
+
         test.info().annotations.push({
           type: 'skipped-step',
           description: `chat run errored before rendering a proposal (provider/environment): ${result.text}`,
