@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -41,7 +42,7 @@ templ documentsHeader(count int, ok bool) {
 templ uploadForm(flashMsg string, flashErr error) {
 	<div class="mb-6">
 		@flashToasts(flashMsg, flashErr)
-		@ui.CardRaw("card-border", "p-5", nil) {
+		@components.PanelCard("", nil) {
 			<form method="post" action="/documents" enctype="multipart/form-data" class="flex flex-wrap items-center gap-3">
 				<input type="file" name="file" class="file-input file-input-bordered file-input-sm grow"/>
 				@ui.Button(ui.ButtonProps{
@@ -118,11 +119,9 @@ templ documentStatusBadge(status string) {
 	if status == "" {
 		@emptyDash()
 	} else {
-		@ui.Badge(ui.BadgeProps{
-			Label:   status,
-			Variant: documentStatusIntent(status),
-			Size:    ui.BadgeSizeXS,
-			Dot:     true,
+		@components.StatusBadge(status, documentStatusIntent(status), "", components.StatusBadgeOpts{
+			Size: ui.BadgeSizeXS,
+			Dot:  true,
 		})
 	}
 }
@@ -167,7 +166,7 @@ templ documentDetailHeader(doc *Document) {
 }
 
 templ extractionCard(doc *Document, flashMsg string, flashErr error) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<div class="flex flex-wrap items-center justify-between gap-3">
 		<div class="flex items-center gap-3">
 			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})

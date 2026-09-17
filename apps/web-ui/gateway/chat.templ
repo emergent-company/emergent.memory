@@ -151,7 +151,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 									<label for="chat-agent" class="text-base-content/45 text-xs font-semibold tracking-wider uppercase">Agent</label>
 									<select id="chat-agent" class="select select-bordered w-full" aria-label="Agent">
 										for _, a := range agents {
-											<option value={ a.ID } data-warn={ modelWarnings[a.ID] } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
+											<option value={ a.ID } data-icon={ agentIcon(a.UIConfig) } data-color={ agentColor(a.UIConfig) } data-warn={ modelWarnings[a.ID] } selected?={ a.ID == defaultAgentID(agents, preselect) }>{ a.Name }</option>
 										}
 									</select>
 								</div>

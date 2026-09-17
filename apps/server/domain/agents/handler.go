@@ -1,7 +1,9 @@
 package agents
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1400,6 +1402,21 @@ func pickEffectiveModel(override, projectDefault string) string {
 	return projectDefault
 }
 
+// normalizeUIConfig maps the documented "no appearance" wire value to the
+// canonical ui_config representation so a bare jsonb `null` is never persisted.
+// Semantics: len 0 (nil or empty) → nil — on create that omits the field so the
+// DB default '{}' applies, on update it leaves the stored value untouched; JSON
+// null (any case, any surrounding whitespace) → {}; anything else unchanged.
+func normalizeUIConfig(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	if bytes.EqualFold(bytes.TrimSpace(raw), []byte("null")) {
+		return json.RawMessage("{}")
+	}
+	return raw
+}
+
 // CreateDefinition handles POST /api/projects/:projectId/agent-definitions
 func (h *Handler) CreateDefinition(c echo.Context) error {
 	user := auth.MustGetUser(c)
@@ -1494,6 +1511,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		SandboxConfig:     dto.SandboxConfig,
 		ToolPolicies:      dto.ToolPolicies,
 		DefaultToolPolicy: defaultToolPolicy,
+		UIConfig:          normalizeUIConfig(dto.UIConfig),
 	}
 
 	// Check for existing definition with same name to return a clear 409 instead of a 500
@@ -1604,6 +1622,9 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 	}
 	if dto.DefaultToolPolicy != nil {
 		def.DefaultToolPolicy = *dto.DefaultToolPolicy
+	}
+	if dto.UIConfig != nil {
+		def.UIConfig = normalizeUIConfig(dto.UIConfig)
 	}
 
 	if err := h.repo.UpdateDefinition(c.Request().Context(), def); err != nil {

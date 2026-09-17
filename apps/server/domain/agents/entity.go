@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -361,6 +362,7 @@ type AgentDefinition struct {
 	Visibility       AgentVisibility   `bun:"visibility,notnull,default:'project'" json:"visibility"`
 	ACPConfig        *ACPConfig        `bun:"acp_config,type:jsonb" json:"acpConfig,omitempty"`
 	Config           map[string]any    `bun:"config,type:jsonb,default:'{}'" json:"config,omitempty"`
+	UIConfig         json.RawMessage   `bun:"ui_config,type:jsonb,default:'{}'" json:"uiConfig,omitempty"`
 	SandboxConfig    map[string]any    `bun:"sandbox_config,type:jsonb" json:"sandboxConfig,omitempty"`
 	DispatchMode     AgentDispatchMode `bun:"dispatch_mode,notnull,default:'sync'" json:"dispatchMode"`
 	// ToolPolicies maps tool name → policy. When a tool has Confirm:true,

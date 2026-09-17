@@ -666,10 +666,11 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 
 	// regression: boolean attrs must render bare `selected`/`checked`, never
 	// `selected="false"`/`checked="false"` (HTML treats the latter as true).
-	if strings.Contains(html, `selected="false"`) {
+	// The leading space avoids matching the pickers' aria-selected="false".
+	if strings.Contains(html, ` selected="false"`) {
 		t.Error("model options must not render selected=\"false\" (boolean-attribute bug)")
 	}
-	if strings.Contains(html, `checked="false"`) {
+	if strings.Contains(html, ` checked="false"`) {
 		t.Error("checkboxes must not render checked=\"false\" (boolean-attribute bug)")
 	}
 	if !strings.Contains(html, `value="openai/gpt-4o" selected>`) {

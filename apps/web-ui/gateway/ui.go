@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/a-h/templ"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 	"github.com/emergent-company/go-daisy/render"
@@ -603,6 +604,37 @@ func modelGroups(models []Model) []modelGroup {
 			}
 		}
 		out = append(out, g)
+	}
+	return out
+}
+
+// modelOptionGroups adapts the model catalog into the shared option-group
+// renderer's shape, marking the agent's current model as selected. The
+// provider bucketing stays here; the markup lives in components.
+func modelOptionGroups(models []Model, current *ModelConfig) []components.SelectOptionGroup {
+	var name string
+	if current != nil {
+		name = current.Name
+	}
+	return modelOptionGroupsFor(models, name)
+}
+
+// modelOptionGroupsFor is modelOptionGroups for callers holding the current
+// model as a bare provider-prefixed name.
+func modelOptionGroupsFor(models []Model, current string) []components.SelectOptionGroup {
+	groups := modelGroups(models)
+	out := make([]components.SelectOptionGroup, 0, len(groups))
+	for _, g := range groups {
+		opts := make([]components.SelectOption, 0, len(g.Models))
+		for _, m := range g.Models {
+			value := m.Provider + "/" + m.ModelName
+			opts = append(opts, components.SelectOption{
+				Value:    value,
+				Label:    modelDisplay(m),
+				Selected: current != "" && value == current,
+			})
+		}
+		out = append(out, components.SelectOptionGroup{Label: g.Provider, Options: opts})
 	}
 	return out
 }

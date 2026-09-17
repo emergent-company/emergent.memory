@@ -168,6 +168,7 @@
     get conversationId() { return conversationId; },
     currentAgent: currentAgent,
     currentAgentName: currentAgentName,
+    currentAgentUI: currentAgentUI,
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
@@ -379,6 +380,19 @@
     return agentSelect && agentSelect.selectedOptions.length
       ? agentSelect.selectedOptions[0].textContent
       : "Memory";
+  }
+
+  // currentAgentUI is the selected agent's declared appearance, read from the
+  // #chat-agent option's data-icon/data-color attributes (emitted by chat.templ
+  // from the agent's uiConfig). Empty strings mean "no appearance" so the
+  // shared bubbles fall back to the default bot avatar.
+  function currentAgentUI() {
+    var opt = agentSelect && agentSelect.selectedOptions.length ? agentSelect.selectedOptions[0] : null;
+    if (!opt) return { icon: "", color: "" };
+    return {
+      icon: opt.getAttribute("data-icon") || "",
+      color: opt.getAttribute("data-color") || "",
+    };
   }
 
   // Pre-send model-availability warning: mirror the selected #chat-agent

@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/alpine"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
@@ -301,7 +302,7 @@ templ agentCard(a AgentDefinitionSummary) {
 		templ.Attributes{"data-href": "/agents/" + url.PathEscape(a.ID)},
 	) {
 		<div class="flex items-center gap-3">
-			@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+			@agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig))
 			<p class="min-w-0 grow truncate text-base font-medium transition-colors duration-200 group-hover:text-primary" title={ a.Name }>{ a.Name }</p>
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeLink,
@@ -321,7 +322,7 @@ templ agentCard(a AgentDefinitionSummary) {
 // table used by the other resource pages. It is hidden below md, where
 // agentCardGrid takes over.
 templ agentsTable(agents []AgentDefinitionSummary) {
-	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+	@components.TableCard(nil) {
 		@table.TableWithProps(table.TableProps{Bordered: false}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
@@ -350,7 +351,7 @@ templ agentRow(a AgentDefinitionSummary) {
 	@table.TableRow(a.ID, true, templ.Attributes{"class": "memory-rise"}) {
 		@table.TableCell("", nil) {
 			<a class="flex items-center gap-3 hover:opacity-80" href={ templ.URL("/agents/" + url.PathEscape(a.ID)) }>
-				@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+				@agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig))
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{ a.Name }</p>
 					@monoMeta(shortID(a.ID), "text-base-content/35")
@@ -453,6 +454,26 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []
 			@form.FormControl("agent-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
 				<textarea id="agent-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none"></textarea>
 			}
+			<div class="grid gap-4 sm:grid-cols-2">
+				@form.FormControl("agent-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
+					@ui.IconPicker(ui.IconPickerProps{
+						ID:           "agent-icon",
+						Name:         "icon",
+						Options:      supportedIconPickerOptions(),
+						DefaultValue: "",
+						DefaultLabel: "Default icon",
+						DefaultClass: "lucide--bot",
+					})
+				}
+				@form.FormControl("agent-color", "Color", form.LabelAbove, "Any CSS color; tints the agent tile and chip (e.g. #4F46E5).", "", nil) {
+					@ui.ColorPicker(ui.ColorPickerProps{
+						ID:         "agent-color",
+						Name:       "color",
+						AllowEmpty: true,
+						Presets:    schemaColorPresets,
+					})
+				}
+			</div>
 			@modelSelect("agent-model", models, nil, templ.Attributes{"data-testid": "model-select"})
 			@modelParamsGrid("agent", nil)
 			@form.FormControl("agent-tools", "Tools", form.LabelAbove, "Comma-separated tool names the agent may use.", "", nil) {
@@ -616,7 +637,14 @@ templ detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, 
 				}}
 				if o.Dashboard {
 					<div>
-						<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+						if o.TitleAdornment != nil {
+							<div class="flex flex-wrap items-center gap-2">
+								<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+								@o.TitleAdornment
+							</div>
+						} else {
+							<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+						}
 						if subtitle != "" {
 							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
 						}
@@ -744,9 +772,14 @@ func modalBoxAttrs(boxID string) templ.Attributes {
 
 // modalShell renders the shared native <dialog class="modal"> shell: a
 // modal-box (boxClass e.g. "max-w-sm", boxID when set) and the standard
-// backdrop form. Children are the modal-box content.
-templ modalShell(id, boxID, boxClass string) {
-	<dialog id={ id } class="modal" hx-boost="false">
+// backdrop form. Children are the modal-box content. attrs is optional extra
+// attributes for the dialog element (e.g. components.DialogAutoOpen()).
+templ modalShell(id, boxID, boxClass string, attrs ...templ.Attributes) {
+	{{ var extra templ.Attributes
+	if len(attrs) > 0 {
+		extra = attrs[0]
+	} }}
+	<dialog id={ id } class="modal" hx-boost="false" { extra... }>
 		<div { modalBoxAttrs(boxID)... } class={ "modal-box", templ.KV(boxClass, boxClass != "") }>
 			{ children... }
 		</div>
@@ -912,18 +945,7 @@ templ modelSelect(id string, models []Model, current *ModelConfig, attrs templ.A
 	@form.FormControl(id, "Model", form.LabelAbove, "Any model the bridge can reach — hosted or local.", "", nil) {
 		<select id={ id } { attrs... } name="modelName" class="select w-full">
 			<option value="">Auto — default model</option>
-			for _, g := range modelGroups(models) {
-				<optgroup label={ g.Provider }>
-					for _, m := range g.Models {
-						<option
-							value={ m.Provider + "/" + m.ModelName }
-							if current != nil && m.Provider+"/"+m.ModelName == current.Name {
-								selected
-							}
-						>{ modelDisplay(m) }</option>
-					}
-				</optgroup>
-			}
+			@components.SelectOptionGroups(modelOptionGroups(models, current))
 			@modelCurrentOption(current, models)
 		</select>
 	}
@@ -1005,18 +1027,4 @@ templ emptyDash() {
 // monoMeta renders a mono metadata line; pass the exact text color class.
 templ monoMeta(text, colorClass string) {
 	<span class={ "font-mono text-[11px] " + colorClass }>{ text }</span>
-}
-
-// listRow renders a clickable list-page row: a leading icon/tile, a grow
-// column (title + meta), trailing content (badges etc.), and an auto chevron.
-templ listRow(href templ.SafeURL, leading templ.Component, title, meta string) {
-	<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/50" href={ href }>
-		@leading
-		<div class="min-w-0 grow">
-			<p class="truncate text-sm font-medium">{ title }</p>
-			<p class="text-base-content/50 text-xs">{ meta }</p>
-		</div>
-		{ children... }
-		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
-	</a>
 }

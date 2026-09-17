@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -36,37 +37,24 @@ templ AgentDashboardPage(data agentDashboardData) {
 // (dashboard / settings / sandbox / sessions). It stacks horizontally on small
 // screens and becomes a sticky left rail on desktop.
 templ agentSubNav(agentID string, active string) {
-	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Agent sections">
-		@subNavItem("/agents/"+url.PathEscape(agentID), active == "dashboard", "lucide--layout-dashboard", "Dashboard")
-		@subNavItem("/agents/"+url.PathEscape(agentID)+"/settings", active == "settings", "lucide--settings", "Settings")
-		@subNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
-		@subNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
-	</nav>
-}
-
-templ subNavItem(href string, isActive bool, icon string, label string) {
-	<a
-		class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", isActive), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !isActive) }
-		href={ templ.URL(href) }
-		if isActive {
-			aria-current="page"
-		}
-	>
-		if isActive {
-			@ui.IconSpan(icon, "size-4 shrink-0 text-primary")
-		} else {
-			@ui.IconSpan(icon, "size-4 shrink-0 text-base-content/40")
-		}
-		<span>{ label }</span>
-	</a>
+	@components.SubNav("Agent sections") {
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID), active == "dashboard", "lucide--layout-dashboard", "Dashboard")
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", active == "settings", "lucide--settings", "Settings")
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
+	}
 }
 
 templ agentDashboardHeader(a *AgentDefinition, section string) {
 	{{ crumbs := crumbsActive(nav.Crumbs("Agents", "/agents", a.Name, "/agents/"+url.PathEscape(a.ID)))
 	if section != "" {
 		crumbs = crumbsActive(nav.Crumbs("Agents", "/agents", a.Name, "/agents/"+url.PathEscape(a.ID), section))
+	}
+	var adorn templ.Component
+	if icon, color := agentIcon(a.UIConfig), agentColor(a.UIConfig); icon != "" || color != "" {
+		adorn = agentTitleGlyph(icon, color)
 	} }}
-	@detailHeader(crumbs, "", a.Name, a.Description, detailHeaderOpts{Margin: "mb-6", Dashboard: true}) {
+	@detailHeader(crumbs, "", a.Name, a.Description, detailHeaderOpts{Margin: "mb-6", Dashboard: true, TitleAdornment: adorn}) {
 		@ui.Badge(ui.BadgeProps{
 			Label:   "updated " + relTime(a.UpdatedAt),
 			Variant: ui.BadgeGhost,
@@ -77,10 +65,10 @@ templ agentDashboardHeader(a *AgentDefinition, section string) {
 }
 
 templ agentSummaryCard(data agentDashboardData) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<div class="flex items-center gap-3">
-				@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+				@agentIconTile(agentIcon(data.Agent.UIConfig), agentColor(data.Agent.UIConfig))
 				<h2 class="text-lg font-semibold">{ data.Agent.Name }</h2>
 			</div>
 			@ui.Badge(ui.BadgeProps{
@@ -296,7 +284,7 @@ templ agentChatsSection(data agentDashboardData) {
 }
 
 templ chatLinkRow(c Conversation) {
-	@listRow(templ.URL("/chat?c=" + url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), relTime(c.UpdatedAt))
+	@components.ListRow(templ.URL("/chat?c="+url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), relTime(c.UpdatedAt))
 }
 
 // --- Agent settings ---
@@ -345,6 +333,37 @@ templ agentSettingsForm(data agentSettingsData) {
 						}
 					</select>
 				}
+			</div>
+		}
+		@ui.Section("Appearance", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
+					@form.FormControl("agent-settings-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
+						@ui.IconPicker(ui.IconPickerProps{
+							ID:           "agent-settings-icon",
+							Name:         "icon",
+							Value:        agentIcon(data.Agent.UIConfig),
+							Options:      supportedIconPickerOptions(),
+							DefaultValue: "",
+							DefaultLabel: "Default icon",
+							DefaultClass: "lucide--bot",
+						})
+					}
+				</div>
+				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
+					@form.FormControl("agent-settings-color", "Color", form.LabelAbove, "Any CSS color; tints the agent tile and chip (e.g. #4F46E5).", "", nil) {
+						@ui.ColorPicker(ui.ColorPickerProps{
+							ID:         "agent-settings-color",
+							Name:       "color",
+							Value:      agentColor(data.Agent.UIConfig),
+							AllowEmpty: true,
+							Presets:    schemaColorPresets,
+						})
+					}
+				</div>
 			</div>
 		}
 		@ui.Section("Model", ui.SectionProps{
@@ -884,7 +903,7 @@ templ memoryRow(id string, query string, m Memory) {
 }
 
 templ memoryDetail(id string, query string, m Memory) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<div class="flex flex-wrap items-center gap-2">
 			if m.Category != "" {
 				@ui.Badge(ui.BadgeProps{Label: m.Category, Variant: memoryCategoryIntent(m.Category), Size: ui.BadgeSizeSM})

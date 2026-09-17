@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"testing"
+	"testing/fstest"
 )
 
 // TestBuildBlueprintManifest verifies a schema-carrying blueprint with agents
@@ -122,5 +123,87 @@ func TestBuildBlueprintManifest_AgentOnly(t *testing.T) {
 	}
 	if _, ok := m["agents"]; !ok {
 		t.Errorf("agent-only blueprint must emit agents: %s", raw)
+	}
+}
+
+// TestBuildBlueprintManifest_AgentUI verifies an agent's inline `ui` block
+// (icon + color) survives into the manifest JSON posted to memory, and that a
+// nil/empty block is omitted rather than serialised as a meaningless `{}`.
+func TestBuildBlueprintManifest_AgentUI(t *testing.T) {
+	bp := &BundledBlueprint{
+		Name:    "operator",
+		Version: "1.0.0",
+		Agents: []BundledAgent{
+			{Name: "with-ui", UI: &BundledAgentUI{Icon: "database", Color: "#2563EB"}},
+			{Name: "empty-ui", UI: &BundledAgentUI{}},
+			{Name: "no-ui"},
+		},
+	}
+	raw, err := buildBlueprintManifest(bp)
+	if err != nil {
+		t.Fatalf("buildBlueprintManifest: %v", err)
+	}
+	var m struct {
+		Agents []map[string]any `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if len(m.Agents) != 3 {
+		t.Fatalf("agents = %d, want 3", len(m.Agents))
+	}
+	ui, ok := m.Agents[0]["ui"].(map[string]any)
+	if !ok {
+		t.Fatalf("declared agent ui dropped: %#v", m.Agents[0])
+	}
+	if ui["icon"] != "database" || ui["color"] != "#2563EB" {
+		t.Errorf("agent ui = %#v, want icon=database color=#2563EB", ui)
+	}
+	if _, ok := m.Agents[1]["ui"]; ok {
+		t.Errorf("empty agent ui block must be omitted, got %#v", m.Agents[1]["ui"])
+	}
+	if _, ok := m.Agents[2]["ui"]; ok {
+		t.Errorf("nil agent ui block must be omitted, got %#v", m.Agents[2]["ui"])
+	}
+}
+
+// TestBundledAgentsFromManifestPreservesUI round-trips an agent's declared
+// appearance from manifest JSON back into the detail view's BundledAgent shape.
+func TestBundledAgentsFromManifestPreservesUI(t *testing.T) {
+	manifest := json.RawMessage(`{"agents":[{"name":"operator","ui":{"icon":"database","color":"#2563EB"}},{"name":"plain"}]}`)
+	var m blueprintManifest
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	out := bundledAgentsFromManifest(m.Agents)
+	if len(out) != 2 {
+		t.Fatalf("agents = %d, want 2", len(out))
+	}
+	if out[0].UI == nil || out[0].UI.Icon != "database" || out[0].UI.Color != "#2563EB" {
+		t.Errorf("ui not preserved: %#v", out[0].UI)
+	}
+	if out[1].UI != nil {
+		t.Errorf("agent without ui must have a nil UI, got %#v", out[1].UI)
+	}
+}
+
+// TestBundledAgentsFromFSDecodesUI verifies an agents/*.yaml `ui` block decodes
+// into BundledAgent so a blueprint's declared appearance is not silently lost
+// on load.
+func TestBundledAgentsFromFSDecodesUI(t *testing.T) {
+	fsys := fstest.MapFS{
+		"agents/operator.yaml": &fstest.MapFile{
+			Data: []byte("name: operator\nsystemPrompt: assist\nui:\n  icon: database\n  color: \"#2563EB\"\n"),
+		},
+	}
+	out, err := bundledAgentsFromFS(fsys, "agents")
+	if err != nil {
+		t.Fatalf("bundledAgentsFromFS: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("agents = %d, want 1", len(out))
+	}
+	if out[0].UI == nil || out[0].UI.Icon != "database" || out[0].UI.Color != "#2563EB" {
+		t.Errorf("yaml ui not decoded: %#v", out[0].UI)
 	}
 }

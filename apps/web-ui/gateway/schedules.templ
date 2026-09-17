@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/go-daisy/components/form"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	"github.com/emergent-company/go-daisy/components/table"
@@ -67,7 +68,7 @@ templ schedulesEmpty() {
 
 // schedulesTable lists scheduled agents, mirroring the agents table style.
 templ schedulesTable(schedules []ScheduledAgent, defs []AgentDefinitionSummary) {
-	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+	@components.TableCard(nil) {
 		@table.TableWithProps(table.TableProps{Bordered: false}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
@@ -142,9 +143,9 @@ func schedulePrompt(a ScheduledAgent) string {
 // scheduleEnabledBadge shows the enabled/disabled state.
 templ scheduleEnabledBadge(a ScheduledAgent) {
 	if a.Enabled {
-		@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+		@components.StatusBadge("enabled", ui.BadgeSuccess, "lucide--check", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 	} else {
-		@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
+		@components.StatusBadge("disabled", ui.BadgeNeutral, "lucide--pause", components.StatusBadgeOpts{Size: ui.BadgeSizeXS})
 	}
 }
 
@@ -154,7 +155,8 @@ templ scheduleEnabledBadge(a ScheduledAgent) {
 // page — the list otherwise only shows name/cron/enabled/last-run.
 templ scheduleDefinitionCell(defs []AgentDefinitionSummary, a ScheduledAgent) {
 	if n := scheduleDefinitionName(defs, a); n != "" {
-		@ui.Badge(ui.BadgeProps{Label: n, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--bot"})
+		{{ aui := scheduleDefinitionUI(defs, a) }}
+		@agentNameChip(n, ui.BadgeGhost, aui.Icon, aui.Color)
 	} else {
 		<span class="text-base-content/35 text-sm">—</span>
 	}
@@ -222,7 +224,8 @@ templ scheduleDetailMeta(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 		@scheduleLastRunBadges(*a)
 		@ui.Badge(ui.BadgeProps{Label: "cron " + a.CronSchedule, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
 		if n := scheduleDefinitionName(defs, *a); n != "" {
-			@ui.Badge(ui.BadgeProps{Label: "agent " + n, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--bot"})
+			{{ aui := scheduleDefinitionUI(defs, *a) }}
+			@agentNameChip("agent "+n, ui.BadgeGhost, aui.Icon, aui.Color)
 		}
 		@monoMeta(a.ID, "text-base-content/40")
 	</div>
@@ -321,7 +324,7 @@ templ scheduleDangerZone(a *ScheduledAgent) {
 				Size:      ui.ButtonSM,
 				Icon:      "lucide--trash-2",
 				AriaLabel: "Delete " + a.Name,
-				OnClick:   openScheduleDelete(),
+				OnClick:   templ.JSFuncCall("MemoryApp.openDialog", "schedule-delete-modal"),
 			}) {
 				Delete
 			}
@@ -415,7 +418,3 @@ templ scheduleCreateForm(defs []AgentDefinitionSummary) {
 	}
 }
 
-script openScheduleDelete() {
-	var d = document.getElementById("schedule-delete-modal");
-	if (d) d.showModal();
-}

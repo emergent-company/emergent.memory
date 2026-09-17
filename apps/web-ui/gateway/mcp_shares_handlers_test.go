@@ -397,16 +397,17 @@ func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {
 	} else if seg, _, ok := strings.Cut(body[i:], "</pre>"); ok && strings.Contains(seg, `style="color:`) {
 		t.Error("shell snippet must not be syntax-highlighted")
 	}
-	// the reveal is a native <dialog> opened via showModal(): the modal-open
-	// class alone leaves method="dialog" submits (Done / backdrop) inert.
+	// the reveal is a native <dialog> the client auto-opens (data-dialog-autoopen,
+	// scanned by app.js on load and after swaps): the modal-open class alone
+	// leaves method="dialog" submits (Done / backdrop) inert.
 	if !strings.Contains(body, `id="mcp-share-reveal-modal" class="modal"`) {
 		t.Error("reveal dialog must use the native modal shell")
 	}
 	if strings.Contains(body, "modal modal-open") {
 		t.Error("reveal dialog must not use the modal-open class")
 	}
-	if !strings.Contains(body, "getElementById('mcp-share-reveal-modal')") || !strings.Contains(body, "d.showModal();") {
-		t.Error("reveal dialog must be opened via showModal()")
+	if !strings.Contains(body, "data-dialog-autoopen") {
+		t.Error("reveal dialog must be marked for client auto-open")
 	}
 	if len(f.shares) != 1 || f.shares[0].Name != "research2" {
 		t.Fatalf("store after create = %+v", f.shares)

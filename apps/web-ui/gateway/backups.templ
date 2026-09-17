@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/go-daisy/components/form"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/table"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -155,7 +156,7 @@ templ backupsEmpty() {
 // full details page; download is offered only for "ready" backups; every row
 // can be deleted via its confirm dialog.
 templ backupsTable(backups []Backup) {
-	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+	@components.TableCard(nil) {
 		@table.TableWithProps(table.TableProps{Bordered: false}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
@@ -259,7 +260,7 @@ templ backupRow(b Backup) {
 					Icon:       "lucide--trash-2",
 					ExtraClass: "text-error hover:text-error",
 					AriaLabel:  "Delete backup " + shortID(b.ID),
-					OnClick:    openBackupDelete(b.ID),
+					OnClick:    templ.JSFuncCall("openDialogByID", "backup-delete-"+b.ID),
 				})
 			</div>
 		}
@@ -298,12 +299,6 @@ templ backupDeleteDialog(b Backup) {
 			}
 		</form>
 	}
-}
-
-// openBackupDelete opens one row's delete-confirm dialog.
-script openBackupDelete(id string) {
-	var d = document.getElementById("backup-delete-" + id);
-	if (d) d.showModal();
 }
 
 // backupTitle names a backup row: the project name when known, else a generic
@@ -396,7 +391,7 @@ templ backupDetailHeader(b *Backup) {
 					Size:       ui.ButtonSM,
 					Icon:       "lucide--trash-2",
 					ExtraClass: "text-error hover:text-error",
-					OnClick:    openBackupDelete(b.ID),
+					OnClick:    templ.JSFuncCall("openDialogByID", "backup-delete-"+b.ID),
 				}) {
 					Delete
 				}
@@ -407,10 +402,7 @@ templ backupDetailHeader(b *Backup) {
 
 // backupDetailField is one label/value cell in a <dl> detail grid.
 templ backupDetailField(label, value string) {
-	<div>
-		<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
-		<dd class="text-base-content/85 mt-1 text-sm break-words">{ value }</dd>
-	</div>
+	@components.MetaRow(label, value)
 }
 
 // backupDetailOverview is the identity/metadata grid.

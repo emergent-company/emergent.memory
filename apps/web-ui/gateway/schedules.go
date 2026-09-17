@@ -219,6 +219,15 @@ func scheduleDefinitionName(defs []AgentDefinitionSummary, a ScheduledAgent) str
 	return shortID(*a.AgentDefinitionID)
 }
 
+// scheduleDefinitionUI resolves the linked agent definition's declared
+// appearance for a schedule's agent chip (zero agentUI when unset/unknown).
+func scheduleDefinitionUI(defs []AgentDefinitionSummary, a ScheduledAgent) agentUI {
+	if a.AgentDefinitionID == nil {
+		return agentUI{}
+	}
+	return agentUIForList(defs, *a.AgentDefinitionID)
+}
+
 // scheduleLastRunLabel renders the "never run" state for agents without a
 // last-run timestamp, else the relative time.
 func scheduleLastRunLabel(a ScheduledAgent) string {

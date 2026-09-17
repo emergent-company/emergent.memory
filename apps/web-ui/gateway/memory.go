@@ -388,6 +388,10 @@ type AgentDefinitionSummary struct {
 	// list endpoint from memory ≥ the effective-model deploy; empty means
 	// unconfigured or an older memory version.
 	EffectiveModel string `json:"effectiveModel,omitempty"`
+	// UIConfig is the agent's user-picked appearance blob
+	// ({"icon":"<kebab-lucide-name>","color":"<CSS color>"}); absent/{} means no
+	// appearance. Parsed by agentUIOf; see agent_ui.go.
+	UIConfig json.RawMessage `json:"uiConfig,omitempty"`
 }
 
 // UnmarshalJSON defaults Enabled to true when the `enabled` key is absent, so
@@ -455,6 +459,10 @@ type AgentDefinition struct {
 	ToolCount         int                   `json:"toolCount,omitempty"`
 	CreatedAt         string                `json:"createdAt,omitempty"`
 	UpdatedAt         string                `json:"updatedAt,omitempty"`
+	// UIConfig is the agent's user-picked appearance blob
+	// ({"icon":"<kebab-lucide-name>","color":"<CSS color>"}); absent/{} means no
+	// appearance. Parsed by agentUIOf; see agent_ui.go.
+	UIConfig json.RawMessage `json:"uiConfig,omitempty"`
 }
 
 // applyDelegation maps the gateway-only Delegation field onto memory's A2A

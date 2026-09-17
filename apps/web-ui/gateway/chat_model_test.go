@@ -175,7 +175,7 @@ func TestChatModelWarningBannerRender(t *testing.T) {
 	if !strings.Contains(htmlOther, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline hidden"`) {
 		t.Error("non-selected agent's warning must not pre-open the banner")
 	}
-	if !strings.Contains(htmlOther, `value="a2" data-warn="`) {
+	if !strings.Contains(htmlOther, `value="a2" data-icon="" data-color="" data-warn="`) {
 		t.Error("warned option missing data-warn")
 	}
 }

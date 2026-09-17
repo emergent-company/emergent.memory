@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
@@ -327,6 +328,7 @@ type AgentDefinitionDTO struct {
 	SandboxConfig     map[string]any        `json:"workspaceConfig,omitempty"`
 	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	DefaultToolPolicy ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
+	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
 	CreatedAt         time.Time             `json:"createdAt"`
 	UpdatedAt         time.Time             `json:"updatedAt"`
 	// EffectiveModel is the resolved generative model this definition would run
@@ -349,6 +351,7 @@ type AgentDefinitionSummaryDTO struct {
 	ToolCount        int             `json:"toolCount"`
 	Skills           []string        `json:"skills"`
 	HasSandboxConfig bool            `json:"hasSandboxConfig"`
+	UIConfig         json.RawMessage `json:"uiConfig,omitempty"`
 	CreatedAt        time.Time       `json:"createdAt"`
 	UpdatedAt        time.Time       `json:"updatedAt"`
 	// EffectiveModel is the model this definition would run with: the per-agent
@@ -380,6 +383,7 @@ type CreateAgentDefinitionDTO struct {
 	SandboxConfig     map[string]any        `json:"workspaceConfig"`
 	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	DefaultToolPolicy ToolPolicyDefault     `json:"defaultToolPolicy,omitempty"`
+	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
 }
 
 // UpdateAgentDefinitionDTO is the request DTO for updating an agent definition
@@ -404,6 +408,7 @@ type UpdateAgentDefinitionDTO struct {
 	SandboxConfig     map[string]any        `json:"workspaceConfig"`
 	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	DefaultToolPolicy *ToolPolicyDefault    `json:"defaultToolPolicy,omitempty"`
+	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
 }
 
 // --- Agent Run Message / Tool Call DTOs ---
@@ -468,6 +473,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		SandboxConfig:     d.SandboxConfig,
 		ToolPolicies:      d.ToolPolicies,
 		DefaultToolPolicy: d.DefaultToolPolicy,
+		UIConfig:          d.UIConfig,
 		CreatedAt:         d.CreatedAt,
 		UpdatedAt:         d.UpdatedAt,
 	}
@@ -487,6 +493,7 @@ func (d *AgentDefinition) ToSummaryDTO() *AgentDefinitionSummaryDTO {
 		ToolCount:        len(d.Tools),
 		Skills:           d.Skills,
 		HasSandboxConfig: len(d.SandboxConfig) > 0,
+		UIConfig:         d.UIConfig,
 		CreatedAt:        d.CreatedAt,
 		UpdatedAt:        d.UpdatedAt,
 	}
