@@ -1825,13 +1825,18 @@
     notify("info", "Will send as soon as this turn finishes.");
   }
 
-  // pumpQueue releases the queue in order, one turn at a time: each finished
-  // turn calls back here (finishTurn) and the next message goes out.
+  // pumpQueue releases an armed queue in order, one turn at a time: each
+  // finished turn calls back here (finishTurn) and the next message goes out.
+  // It refuses to release an unarmed queue so a Cmd/Ctrl+Enter parked while idle
+  // is not silently released when a later unrelated turn ends.
   function pumpQueue() {
     if (streaming || activeRunId) return;
     var q = activeQueue();
-    if (!q.items.length) return;
+    if (!q.items.length || !q.armed) return;
     var item = q.items.shift();
+    // The last queued row clearing also disarms the queue, so a later idle
+    // enqueue is not released by the next turn end.
+    if (!q.items.length) q.armed = false;
     persistQueue();
     renderQueue();
     if (!dispatchMessage(item.text)) {
@@ -1848,7 +1853,6 @@
     var q = activeQueue();
     if (!q.items.length || !q.armed) return;
     if (lastTimelineRun && lastTimelineRun.ended) {
-      q.armed = false;
       persistQueue();
       pumpQueue();
     }
