@@ -912,6 +912,70 @@ func TestUIAgentSettingsRoute(t *testing.T) {
 	}
 }
 
+// TestLoadAgentSettingsScopesCatalogFetches proves the settings loader fetches
+// only the catalogs the requested subpage renders (see loadAgentSettings):
+// "tools" is the only subpage that loads the MCP server catalog + relay nodes,
+// "model" loads the model config/providers/catalog, "skills" loads skills,
+// "delegation" loads the other agents, and "general"/"mcp" load none of those.
+// GetAgentDefinition (+ deriveDelegation) always run for every section.
+func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
+	agent := &AgentDefinition{ID: "a1", Name: "diane"}
+	newFake := func() *fakeMemory {
+		return &fakeMemory{
+			defs:             map[string]*AgentDefinition{"a1": agent},
+			agents:           []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+			servers:          []MCPServer{{Name: "builtin", Tools: []MCPTool{{ToolName: "web_search"}}}},
+			skills:           []Skill{{Name: "recall-memory"}},
+			relaySessions:    []RelaySession{{InstanceID: "mac-ada", ToolCount: 1}},
+			relayTools:       map[string][]RelayTool{"mac-ada": {{Name: "notes_search"}}},
+			modelConfig:      &ProjectModelConfig{GenerativeModel: "openai/gpt-4o"},
+			projectProviders: []ProjectProviderConfig{{Provider: "openai"}},
+		}
+	}
+
+	// Every catalog method the loader can call (see loadAgentSettings).
+	allCatalogs := []string{
+		"GetProjectModelConfig", "ListProjectProviders", "ListModels",
+		"ListMCPServers", "ListRelaySessions", "GetRelaySessionTools",
+		"ListSkills", "ListAgentDefinitions",
+	}
+
+	cases := []struct {
+		section string
+		loads   []string // methods that MUST be fetched
+	}{
+		{section: "general"},
+		{section: "model", loads: []string{"GetProjectModelConfig", "ListProjectProviders", "ListModels"}},
+		{section: "tools", loads: []string{"ListMCPServers", "ListRelaySessions", "GetRelaySessionTools"}},
+		{section: "skills", loads: []string{"ListSkills"}},
+		{section: "delegation", loads: []string{"ListAgentDefinitions"}},
+		{section: "mcp"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.section, func(t *testing.T) {
+			f := newFake()
+			s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+			data := agentSettingsData{Section: tc.section}
+			if err := s.loadAgentSettings(t.Context(), "a1", &data); err != nil {
+				t.Fatalf("loadAgentSettings(%q): %v", tc.section, err)
+			}
+			loaded := map[string]bool{}
+			for _, m := range tc.loads {
+				loaded[m] = true
+				if f.catalogCalls[m] == 0 {
+					t.Errorf("%s section: expected %s to be fetched, got 0 calls", tc.section, m)
+				}
+			}
+			for _, m := range allCatalogs {
+				if f.catalogCalls[m] != 0 && !loaded[m] {
+					t.Errorf("%s section: %s fetched %d times, want 0", tc.section, m, f.catalogCalls[m])
+				}
+			}
+		})
+	}
+}
+
 // TestUIAgentSessionsRoute exercises the sessions GET route: only the agent's
 // own conversations are listed.
 func TestUIAgentSessionsRoute(t *testing.T) {
