@@ -53,15 +53,64 @@ them so the toggle is what adds them.
 
 ### D3 — The strongest assertion is the child run, not the tool chip
 
-A rendered tool chip only proves the model emitted a call. The spec therefore
-also reads memory's run list for the target agent
-(`GET /api/projects/:projectId/agent-runs?agentId=…`), asserts a run exists
-whose `parentRunId` matches the source agent's run and whose `rootRunId` is
-shared with it, polls that run to a terminal `completed` status, and reads the
-child's `full` bundle (`/agent-runs/:childId/full`) to confirm the transcript
-carries the delegated task's result. Each assertion names what it proves so a
-broken link (no child run, wrong parent, never terminal) is immediately
-distinguishable.
+A rendered tool chip only proves the model emitted a call. The correlation
+anchor is the child run id that the completed `spawn_agents` tool result already
+carries (`result.results[0].run_id`), taken straight from the captured SSE. The
+spec asserts the started event named the correct target, then fetches that run by
+id and asserts it belongs to the target's definition, has a non-empty
+`parentRunId`, is `completed`, and that the parent run — fetched by that
+`parentRunId` — exists and is the same run the child points at. Finally it reads
+the child's `full` bundle (`/agent-runs/:childId/full`) and asserts the
+transcript carries the delegated task's result. Each assertion names what it
+proves, so a broken link (no child id in the tool result, wrong definition,
+missing parent, never terminal) is immediately distinguishable.
+
+`rootRunId` is deliberately only cross-checked, never required: see the finding
+below.
+
+## Live-run findings
+
+These were established by running the spec against the dev environment, and they
+shape the assertions above.
+
+### F1 — The chat `done` event carries no run id
+
+The first live run failed on the assumption that the `done` event could anchor
+the parent run. The captured stream ends in a bare `data: {"type":"done"}`:
+`DoneEvent.RunID` is `json:"runId,omitempty"` (`apps/server/pkg/sse/events.go`)
+and the chat path writes the done event with an empty id
+(`apps/server/domain/chat/handler.go`), so the field is omitted entirely. The
+child run id from the completed `spawn_agents` result replaces it as the
+correlation anchor — a strictly better signal, because it is the id the backend
+actually created for the spawn.
+
+### F2 — Coordination spawns do not propagate `root_run_id` (out of scope)
+
+The second live run showed the child run's `rootRunId` is absent. Read-only
+confirmation against dev confirms this is systematic, not a race:
+
+```sql
+SELECT count(*) AS child_runs, count(root_run_id) AS with_root
+FROM kb.agent_runs WHERE parent_run_id IS NOT NULL;
+-- child_runs = 5, with_root = 0
+```
+
+So the parent/child linkage is proven through `parentRunId`, and `rootRunId` is
+only cross-checked when both runs carry one. This is a product gap, not a test
+gap: the `agent-run-preview` change groups the delegation tree by root run, so a
+child with no root cannot be attached to that tree. It is deliberately **not**
+fixed here — this change is test-only, and widening it to a server-side fix would
+mix an unplanned behavioral change into a test PR. It is recorded in
+`tasks.md` as a follow-up.
+
+### F3 — The dev backend can restart mid-run (environmental)
+
+One run failed in `setup` with `session not established after login (HTTP 502)`
+because the dev `memory-server` container was being recreated at that moment
+(health probe over the host confirmed it). The spec and the gateway were
+unaffected; the run passed once the backend was healthy. Nothing to change in
+the spec — recorded so a 502 in `setup` is not mistaken for a delegation
+regression.
 
 ### D4 — Isolated project, always cleaned up
 

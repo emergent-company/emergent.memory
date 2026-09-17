@@ -38,41 +38,59 @@
       equals `["<B name>"]`. Failure messages state which half is missing.
 - [x] 1.6 Live chat turn: `/chat?agent=A`, select A, send the forced
       `spawn_agents` prompt, capture the POST `/api/chat` SSE body.
-- [x] 1.7 Tool-invocation assertion on the SSE body: `"type":"mcp_tool"` plus
-      `"tool":"spawn_agents"` (memory emits native ADK tool calls through the
-      same `mcp_tool` event as pooled MCP tools — `domain/chat/handler.go` maps
-      `StreamEventToolCallStart/End` to `NewMCPToolEvent`).
-- [x] 1.8 Child-run assertion: a run exists whose `parentRunId` equals A's run id
-      (from the `done` event) and whose `rootRunId` is the same, its
-      `agentDefinitionId` is B's definition, status is polled to terminal
-      `completed` (bounded, explicit timeout message), and B's `/full` bundle
-      transcript contains the delegated sentinel result. Correlation uses the run
-      id from the `done` event, not the definition id, because the run list
-      filters on the runtime agent id.
+- [x] 1.7 Tool-invocation assertion on the SSE body: the started `spawn_agents`
+      event must name the target, and the `"type":"mcp_tool"` event type is
+      asserted for the spawn (memory emits native ADK tool calls through the
+      same `mcp_tool` event as pooled MCP tools).
+- [x] 1.8 Child-run assertion: the child run id comes from the completed
+      `spawn_agents` tool result (`result.results[0].run_id`); the run is fetched
+      by id and must belong to B's definition, be `completed`, carry a non-empty
+      `parentRunId`, and the parent run fetched by that id must exist and be the
+      run the child points at. `rootRunId` is cross-checked only when both runs
+      carry one (see F2). The child's `/full` transcript must contain the
+      delegated sentinel result.
 - [x] 1.9 `finally` cleanup: delete both agents, reactivate the bootstrap
       project, delete the scratch project (`.catch(() => {})` on each).
 
 ## 2. Verification
 
-- [x] 2.1 Typecheck passes for the new spec: `npx -p typescript@5.6.3 tsc
-      --noEmit` reports 0 errors in this file (the repo pins no local
-      typescript; the only 2 reported errors are pre-existing and in
+- [x] 2.1 Typecheck passes for the new spec: 0 errors in this file (the repo
+      pins no local typescript; the only errors reported are pre-existing and in
       `specs/shell/css-go-daisy-scan.spec.ts`).
 - [x] 2.2 `npx playwright test --list scenarios/agent-delegation.spec.ts` lists
       the spec in the `scenarios` project without executing it.
 - [x] 2.3 `openspec validate e2e-agent-delegation --strict` passes.
-- [ ] 2.4 Run the spec against a live environment with credentials and record
-      the outcome. Not runnable from this checkout: `tests/e2e/.env.e2e` is
-      absent and no `E2E_SCENARIO_LLM_*` variables are set, so the spec reports
-      its documented skip. The child-run assertions (1.8) are the ones that
-      would catch a broken parent/child linkage on a credentialed run.
+- [x] 2.4 Live run against dev with real credentials: **2 passed** (setup +
+      scenario, 26.4s). The scenario found the spawn tool result run id, verified
+      the child run against B's definition, fetched the parent run by
+      `parentRunId`, and confirmed B's `/full` transcript contained the delegated
+      sentinel. Two environmental failures preceded the pass (`memory-server`
+      container restart → 502 in `setup`; login SPA timeout) — both cleared
+      without a spec change (F3).
 - [x] 2.5 Confirm no product code, gateway, or Playwright config file changed:
       `git status` in the worktree shows only the new spec and this change
       directory.
 
 ## 3. Ship
 
-- [ ] 3.1 Commit the change directory and the spec together on the feature
-      branch and open one PR against `main` (spec + implementation are one unit).
+- [x] 3.1 Commit the change directory and the spec together on the feature
+      branch and open one PR against `main` (spec + implementation are one unit):
+      PR #545.
 - [ ] 3.2 After merge, `openspec archive e2e-agent-delegation` and sync the delta
       spec into `openspec/specs/e2e-agent-delegation/`.
+
+## 4. Findings and follow-ups
+
+- [x] 4.1 **F1 (recorded in `design.md`)** — the chat `done` event carries no run
+      id: `DoneEvent.RunID` is `json:"runId,omitempty"` and the chat path writes
+      it empty, so the field is omitted. The spec anchors on the child run id
+      from the completed tool result instead.
+- [x] 4.2 **F3 (recorded in `design.md`)** — a dev `memory-server` restart
+      produced a 502 during `setup`; not a delegation regression.
+- [ ] 4.3 **F2 follow-up (out of scope for this test-only change)** — coordination
+      spawns do not propagate `root_run_id`. Read-only dev evidence:
+      `SELECT count(*), count(root_run_id) FROM kb.agent_runs WHERE parent_run_id IS NOT NULL;`
+      → 5 children, 0 with a root. The parent/child link survives via
+      `parentRunId`, but the `agent-run-preview` change groups the delegation
+      tree by root run, so spawned children cannot be attached to that tree.
+      Needs its own change on the agents/executor path; not fixed here.

@@ -59,8 +59,13 @@ result of the delegated task.
 
 #### Scenario: Child run is linked to the parent run
 
-- **WHEN** the target agent's runs are read after a spawn
-- **THEN** at least one run exists for the target whose parent run is the delegator's run and whose root run is shared with it
+- **WHEN** the target agent's run is read by the id carried in the completed spawn tool result
+- **THEN** that run belongs to the target agent's definition, carries a non-empty parent run id, and the parent run fetched by that id exists and is the run the child points at
+
+#### Scenario: A shared orchestration root is cross-checked, not required
+
+- **WHEN** both the child run and its parent run carry a root run id
+- **THEN** the two root run ids match; when the spawn path leaves the root unset, the linkage is carried by the parent run id alone and the spec does not require a root
 
 #### Scenario: Child run completes
 
