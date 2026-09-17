@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -273,7 +275,7 @@ func TestRenderAgentsPageSkillsPicker(t *testing.T) {
 		{Name: "recall-memory"},
 	}
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, AgentsPage(agents, nil, skills, nil))
+	html := renderHTML(t, AgentsPage(agents, nil, skills, "", nil))
 	for _, want := range []string{
 		`name="skill"`, `value="summarize-email"`, `value="recall-memory"`,
 		"summarize-email", "Condenses threads", "recall-memory",
@@ -294,7 +296,7 @@ func TestRenderAgentsPageSkillsPicker(t *testing.T) {
 	}
 
 	// no skills → empty note with a link, no checkboxes
-	htmlEmpty := renderHTML(t, AgentsPage(agents, nil, nil, nil))
+	htmlEmpty := renderHTML(t, AgentsPage(agents, nil, nil, "", nil))
 	if !strings.Contains(htmlEmpty, "No skills yet") || !strings.Contains(htmlEmpty, `href="/skills"`) {
 		t.Error("empty skill state missing")
 	}
@@ -352,7 +354,7 @@ func TestAgentModelDisplay(t *testing.T) {
 		{ID: "a2", Name: "milo"},
 		{ID: "a3", Name: "reggie"},
 	}
-	html := renderHTML(t, AgentsPage(agents, nil, nil, nil))
+	html := renderHTML(t, AgentsPage(agents, nil, nil, "", nil))
 
 	// both breakpoint wrappers present: table desktop-only, cards mobile-only.
 	for _, want := range []string{`class="hidden md:block"`, `class="md:hidden"`} {
@@ -545,6 +547,22 @@ func TestAgentModelWarnings(t *testing.T) {
 		if strings.Contains(hs, bad) {
 			t.Error("settings must not warn when a default model resolves")
 		}
+	}
+
+	// settings: the Auto option names the resolved default when the agent has
+	// no explicit model, and stays generic when nothing resolves.
+	if !strings.Contains(hs, `<option value="">Auto — openai/gpt-4o (default)</option>`) {
+		t.Error("settings Auto option should name the resolved default model")
+	}
+	hs = settings(noModel, "", true, []string{"openai"})
+	if !strings.Contains(hs, `<option value="">Auto — default model</option>`) {
+		t.Error("settings Auto option should stay generic when no default resolves")
+	}
+	// an explicitly pinned agent keeps the generic label (its model is the
+	// selected catalog option, not the Auto fallback).
+	hs = settings(pinned, "openai/gpt-4o", true, []string{"openai"})
+	if !strings.Contains(hs, `<option value="">Auto — default model</option>`) {
+		t.Error("settings Auto option should stay generic for a pinned agent")
 	}
 
 	// settings, explicit model, no providers → pinned zero-provider error
@@ -812,6 +830,122 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 	}
 	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{LoadErr: errTest})); !strings.Contains(h, "Agent unavailable") {
 		t.Error("load-error state missing")
+	}
+}
+
+// agentRailHTML returns the agent details sub-navigation markup — the
+// aria-label="Agent sections" nav block — or "" when a page renders no rail
+// (e.g. the whole-page error state).
+func agentRailHTML(html string) string {
+	const marker = `aria-label="Agent sections"`
+	i := strings.Index(html, marker)
+	if i < 0 {
+		return ""
+	}
+	rail := html[i:]
+	if j := strings.Index(rail, "</nav>"); j >= 0 {
+		return rail[:j]
+	}
+	return rail
+}
+
+var navAnchorRe = regexp.MustCompile(`<a\b[^>]*>`)
+
+// activeNavHrefs returns the sorted hrefs of the rail anchors marked
+// aria-current="page".
+func activeNavHrefs(rail string) []string {
+	var hrefs []string
+	for _, tag := range navAnchorRe.FindAllString(rail, -1) {
+		if !strings.Contains(tag, `aria-current="page"`) {
+			continue
+		}
+		if i := strings.Index(tag, `href="`); i >= 0 {
+			rest := tag[i+len(`href="`):]
+			if j := strings.Index(rest, `"`); j >= 0 {
+				hrefs = append(hrefs, rest[:j])
+			}
+		}
+	}
+	slices.Sort(hrefs)
+	return hrefs
+}
+
+// TestRenderAgentSubNavSettingsAlwaysVisible guards the agent details rail: the
+// second level (Settings parent + its six children) stays visible on every agent
+// section, not only on settings subpages. Off the settings surface the only
+// active item is that surface's own entry; on a settings section exactly the
+// matching child is active (the parent Settings link shares the General child's
+// destination, so it is never marked current).
+func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
+	agent := &AgentDefinition{ID: "a1", Name: "diane"}
+
+	const settingsParent = "/agents/a1/settings"
+	children := []struct {
+		section string
+		href    string
+	}{
+		{"general", settingsParent},
+		{"model", settingsParent + "/model"},
+		{"tools", settingsParent + "/tools"},
+		{"skills", settingsParent + "/skills"},
+		{"delegation", settingsParent + "/delegation"},
+		{"mcp", settingsParent + "/mcp"},
+	}
+	// Every agent section must expose the Settings parent plus all six children.
+	allSettingsHrefs := []string{settingsParent}
+	for _, c := range children {
+		allSettingsHrefs = append(allSettingsHrefs, c.href)
+	}
+
+	// Off the settings surface: dashboard / sandbox / sessions each render the
+	// full second level, with no settings entry marked active.
+	offSurface := []struct {
+		name       string
+		html       string
+		activeHref string
+	}{
+		{"dashboard", renderHTML(t, AgentDashboardPage(agentDashboardData{Agent: agent})), "/agents/a1"},
+		{"sandbox", renderHTML(t, AgentSandboxPage(agentSandboxData{Agent: agent})), "/agents/a1/sandbox"},
+		{"sessions", renderHTML(t, AgentSessionsPage(agentSessionsData{Agent: agent})), "/agents/a1/sessions"},
+	}
+	for _, tc := range offSurface {
+		t.Run(tc.name, func(t *testing.T) {
+			rail := agentRailHTML(tc.html)
+			if rail == "" {
+				t.Fatal("agent rail not rendered")
+			}
+			for _, href := range allSettingsHrefs {
+				if !strings.Contains(rail, `href="`+href+`"`) {
+					t.Errorf("%s rail missing settings link %q", tc.name, href)
+				}
+			}
+			got := activeNavHrefs(rail)
+			if !slices.Equal(got, []string{tc.activeHref}) {
+				t.Errorf("%s active rail items = %v, want only %q", tc.name, got, tc.activeHref)
+			}
+			for _, c := range children {
+				if slices.Contains(got, c.href) {
+					t.Errorf("%s settings child %q must not be active off the settings surface", tc.name, c.href)
+				}
+			}
+		})
+	}
+
+	// On a settings section: exactly the matching child is active; no other
+	// section entry is. The Settings parent is never active — on General it would
+	// duplicate the child's href.
+	for _, c := range children {
+		t.Run("settings_"+c.section, func(t *testing.T) {
+			html := renderHTML(t, AgentSettingsPage(agentSettingsData{Section: c.section, Agent: agent}))
+			rail := agentRailHTML(html)
+			if rail == "" {
+				t.Fatal("agent rail not rendered")
+			}
+			want := []string{c.href}
+			if got := activeNavHrefs(rail); !slices.Equal(got, want) {
+				t.Errorf("section %q active rail items = %v, want %v", c.section, got, want)
+			}
+		})
 	}
 }
 
