@@ -97,7 +97,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 				}
 				<div class="flex min-w-0 grow flex-col overflow-hidden">
 					<div class="bg-base-100 border-base-content/5 z-10 h-14 shrink-0 border-b">
-						@layout.Navbar(appBrand, spotlightTrigger()) {
+						@layout.Navbar(appBrand, ui.CommandPaletteButton("spotlight", "Search…")) {
 							@projectSwitcher(currentProject, currentOrgName, activeOrg, projectGroups, orgs, recentProjects, showRecent)
 							if assistantAgent != "" {
 								@ui.Button(ui.ButtonProps{
