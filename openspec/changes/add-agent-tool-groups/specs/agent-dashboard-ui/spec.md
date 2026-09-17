@@ -7,7 +7,7 @@ The Settings Tools panel SHALL let the user pick tools as checkboxes, SHALL orga
 #### Scenario: Tools grouped by capability
 
 - **WHEN** the Tools panel loads and the agent definition reports tool groups
-- **THEN** each group with at least one member tool in the catalog is listed as a collapsible group header
+- **THEN** each group with at least one member tool — whether in the project's catalog or already referenced by the agent (allowed or banned) — is listed as a collapsible group header, and each group's `tools` is its full membership
 
 #### Scenario: Tools grouped by server
 
@@ -34,10 +34,15 @@ The Settings Tools panel SHALL let the user pick tools as checkboxes, SHALL orga
 - **WHEN** the agent definition reports no tool groups
 - **THEN** the panel falls back to the previous source-only grouping and remains usable
 
-#### Scenario: Group with no catalog members is hidden
+#### Scenario: Group with no members is hidden
 
-- **WHEN** a tool group has no member tool in the project's available catalog
+- **WHEN** a tool group has no member tool in the project's available catalog and no tool in the agent's allowed or banned tools
 - **THEN** that group's header is not rendered
+
+#### Scenario: Disabled group still renders
+
+- **WHEN** a tool group's every member is banned or absent from the agent's allowed tools
+- **THEN** that group's header still renders with its enable control off, so it can be re-enabled
 
 ## ADDED Requirements
 

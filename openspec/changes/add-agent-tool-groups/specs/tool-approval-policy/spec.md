@@ -95,9 +95,14 @@ Disabling a tool group SHALL remove every member tool from the agent's allowed t
 
 ### Requirement: Group resolution is the single authorization point
 
-Group-aware resolution SHALL be applied by the same policy resolver used for per-tool and default policies, so that every enforcement path that consults tool policy observes the same effective value.
+Group-aware resolution SHALL be applied by the same policy resolver used for per-tool and default policies, so that every enforcement path that consults tool policy observes the same effective value. The group id SHALL be derived from the tool's required scope at enforcement time, so a tool governed by a group at read time is governed by the same group when it is called.
 
 #### Scenario: Enforcement paths agree
 
 - **WHEN** a tool's effective policy is computed
 - **THEN** the explicit-entry, group, and default layers are resolved in that order regardless of which enforcement path asks
+
+#### Scenario: Enforcement uses the scope-derived group
+
+- **WHEN** an agent calls a tool whose required scope derives its group, including a dynamic tool whose scope is known only from the tool catalog
+- **THEN** the enforcement resolver assigns the same group id the read DTO reports, so a stored group policy governs the call
