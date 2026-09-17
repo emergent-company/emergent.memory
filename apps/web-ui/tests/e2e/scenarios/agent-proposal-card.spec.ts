@@ -28,8 +28,11 @@ import { addProvider } from '../helpers/providers';
 // original `Response` is returned untouched; only a tee'd clone is read, and it
 // is never awaited on the app's path). After the card wait, the spec HARD-FAILS
 // when a `question` event carried a non-empty `proposalHtml` but no
-// `.proposal-card` rendered, and keeps the SKIP for the model-deviation cases
-// (no `question` event at all, or an empty/absent `proposalHtml`).
+// `.proposal-card` rendered, when the card carries the requested kind's badge
+// but its `[data-proposal-kind]` section did not render (summary-only
+// degradation of a registered kind), and keeps the SKIP for the model-deviation
+// cases (no `question` event at all, an empty/absent `proposalHtml`, a different
+// kind, or a different pinned body value).
 //
 // Flow (mirrors mcp-servers-tool-call.spec.ts), one pass per kind:
 //   1. SEED (API): fresh scratch project under the bootstrap org — provider and
@@ -45,13 +48,15 @@ import { addProvider } from '../helpers/providers';
 //      prompt this test needs;
 //   4. CHAT (UI): install the SSE fetch interceptor, then /chat?agent=<id> →
 //      one forced turn → wait for the `.proposal-card` to render;
-//   5. ASSERT: the card header + the kind badge + a body-field value unique to
-//      the kind's structured preview (proving it is not a summary-only
-//      degradation), plus the Accept/Reject answer controls. When the model
+//   5. ASSERT: the card header + the kind badge + the kind's structured preview
+//      — the model-independent `[data-proposal-kind="<kind>"]` section hook plus
+//      a body-field value unique to that kind (proving it is not a summary-only
+//      degradation) — plus the Accept/Reject answer controls. When the model
 //      completes the turn without a structured proposal (or the run errors) the
 //      test skips with an annotation, never fails on non-deterministic model
-//      tool-use — but a `question` SSE event with a non-empty `proposalHtml`
-//      and no rendered card HARD-FAILS (gateway render regression).
+//      tool-use — but a `question` SSE event with a non-empty `proposalHtml` and
+//      no rendered card, or a kind-badged card with no kind section, HARD-FAILS
+//      (gateway render regression).
 //   6. CLEANUP (finally): delete agent, reactivate the bootstrap project,
 //      delete the scratch project.
 //
@@ -244,9 +249,12 @@ async function waitForProposalCard(
 
 // One proposal kind exercised end-to-end. `body` is the proposal body JSON the
 // directive prompt pins; `assertText` is a body-field value that appears ONLY in
-// the kind's structured preview (never in the envelope summary), so its presence
-// in the rendered card proves the STRUCTURED preview rendered — not a
-// summary-only degradation (unknown kind or empty body).
+// the kind's structured preview (never in the envelope summary); `sectionLabel`
+// is the fixed label the gateway renders for that kind's section regardless of
+// the model's field values. The section also carries a model-independent DOM
+// hook, `[data-proposal-kind="<kind>"]` (gateway/proposal.templ), so a
+// summary-only degradation of a registered kind is caught deterministically
+// instead of being mistaken for a model deviation.
 type ProposalCase = {
   name: string;
   kind: string;
@@ -254,6 +262,7 @@ type ProposalCase = {
   question: string;
   body: string;
   assertText: string;
+  sectionLabel: string;
 };
 
 const CASES: ProposalCase[] = [
@@ -267,6 +276,7 @@ const CASES: ProposalCase[] = [
       `"description":"A conference talk","properties":{"title":{"type":"string",` +
       `"description":"Talk title"},"speaker":{"type":"string"}}}],"relationshipTypes":[]}`,
     assertText: PROPOSED_TYPE_NAME,
+    sectionLabel: 'Object types',
   },
   {
     name: 'skill',
@@ -277,6 +287,7 @@ const CASES: ProposalCase[] = [
       `{"name":"digest","description":"Condenses long text","prompt":"Condense the input text.",` +
       `"tools":["web-fetch"],"bannedTools":["ask_user"]}`,
     assertText: 'digest',
+    sectionLabel: 'Prompt',
   },
   {
     name: 'agent',
@@ -287,6 +298,7 @@ const CASES: ProposalCase[] = [
       `{"name":"curator","model":"openai/deepseek-v4-flash","systemPrompt":"You edit objects.",` +
       `"tools":["entity-create"],"skills":["editing"],"bannedTools":["ask_user"]}`,
     assertText: 'curator',
+    sectionLabel: 'System prompt',
   },
   {
     name: 'mcp_server',
@@ -297,6 +309,7 @@ const CASES: ProposalCase[] = [
       `{"name":"searchbox","type":"http","url":"https://example.com/mcp","enabled":true,` +
       `"enabledTools":["search"]}`,
     assertText: 'searchbox',
+    sectionLabel: 'URL',
   },
   {
     name: 'provider',
@@ -305,6 +318,7 @@ const CASES: ProposalCase[] = [
     question: 'Propose a provider now.',
     body: `{"provider":"openai","baseUrl":"http://litellm:4000/v1","models":["deepseek-v4-flash"]}`,
     assertText: 'openai',
+    sectionLabel: 'Base URL',
   },
 ];
 
@@ -432,20 +446,52 @@ test.describe('ask_user proposal card scenario', () => {
           return;
         }
 
-        // 5. ASSERT: the card header + kind badge + the kind's structured
-        // preview. When the model emitted a valid proposal but with a different
-        // kind (or an empty body), the gateway renders a summary-only card (or no
-        // card) — assertText proves the structured preview, so its absence means a
-        // model deviation → skip rather than fail on non-deterministic tool-use.
+        // 5. ASSERT: the card header + kind badge + the kind's STRUCTURED
+        // preview. Two independent signals, in order of what they prove:
+        //   - the `[data-proposal-kind="<kind>"]` section hook (gateway/proposal.templ)
+        //     is model-INDEPENDENT: it exists only when the gateway resolved the
+        //     kind through its registry and rendered that kind's section. A card
+        //     carrying the right kind badge but no hook is the summary-only
+        //     degradation this scenario exists to catch → FAIL.
+        //   - `assertText` (a pinned body-field value) is model-dependent, so its
+        //     absence while the section DID render is a model deviation → skip,
+        //     never fail on non-deterministic tool-use.
         const card = page.locator('#chat-messages .proposal-card').first();
-        if (!result.text.includes(c.assertText)) {
+        const sectionKind = await card
+          .locator('[data-proposal-kind]')
+          .first()
+          .getAttribute('data-proposal-kind')
+          .catch(() => null);
+        if (sectionKind !== c.kind) {
+          const askedKindRendered = (await card.getByText(c.kind, { exact: true }).count()) > 0;
+          if (askedKindRendered) {
+            throw new Error(
+              `gateway structured-preview regression: the "${c.kind}" proposal card rendered its kind ` +
+                `badge but no [data-proposal-kind="${c.kind}"] section — the gateway degraded a ` +
+                `registered kind to a summary-only card. Card text: "${result.text}"`,
+            );
+          }
           test.info().annotations.push({
             type: 'skipped-step',
-            description: `proposal card rendered but without the "${c.kind}" structured preview ("${c.assertText}" absent): "${result.text}"`,
+            description:
+              `proposal card rendered a different kind (section=${sectionKind ?? 'none'}) — the model ` +
+              `ignored the pinned "${c.kind}" proposal: "${result.text}"`,
           });
           test.skip(
             true,
-            `proposal card rendered without the "${c.kind}" structured preview ` +
+            `model emitted a different proposal kind (section=${sectionKind ?? 'none'}): "${result.text}"`,
+          );
+          return;
+        }
+
+        if (!result.text.includes(c.assertText)) {
+          test.info().annotations.push({
+            type: 'skipped-step',
+            description: `"${c.kind}" section rendered but body value "${c.assertText}" is absent — model deviation on the pinned body: "${result.text}"`,
+          });
+          test.skip(
+            true,
+            `"${c.kind}" section rendered without the pinned body value ` +
               `("${c.assertText}" absent): "${result.text}"`,
           );
           return;
@@ -453,7 +499,9 @@ test.describe('ask_user proposal card scenario', () => {
 
         await expect(card).toBeVisible();
         await expect(card.getByText('Proposed changes')).toBeVisible();
-        await expect(card.getByText(new RegExp(c.kind, 'i')).first()).toBeVisible();
+        await expect(card.getByText(c.kind, { exact: true }).first()).toBeVisible();
+        await expect(card.locator(`[data-proposal-kind="${c.kind}"]`)).toHaveCount(1);
+        await expect(card.getByText(c.sectionLabel, { exact: true }).first()).toBeVisible();
         await expect(card.getByText(c.assertText).first()).toBeVisible();
 
         // The interactive answer controls render alongside the card (buttons
