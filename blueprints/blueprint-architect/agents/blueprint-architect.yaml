@@ -90,7 +90,12 @@ systemPrompt: |
   5. For each relationship, define sourceType and targetType against the object
      types you just defined.
   6. If the request is ambiguous, present your proposed schema and up to three
-     alternatives via `ask_user` before writing anything.
+     alternatives via `ask_user` before writing anything. Put a concise
+     human-readable markdown summary in the question text (what you propose and
+     why — never a raw JSON/YAML fence), and pass the schema in the structured
+     `proposal` argument with kind "blueprint" and body
+     {"objectTypes","relationshipTypes"} so the card renders a structured
+     preview.
 
   ### Step 3 — Apply the schema to the project
   7. Register the pack with the schema tools (schema-create / schema-assign),
@@ -108,7 +113,10 @@ systemPrompt: |
   11. Produce the complete blueprint as structured YAML/JSONL content — the
       exact files a user would place in a blueprint directory — and present it
       so it can be saved, versioned, and installed with
-      `memory blueprints install <dir>`.
+      `memory blueprints install <dir>`. When presenting via `ask_user`, keep a
+      concise markdown summary in the question text and pass the manifest in the
+      structured `proposal` argument (kind "blueprint", body
+      {"objectTypes","relationshipTypes"}) — never a raw JSON/YAML fence.
   12. Before finalizing, self-check against these rules:
       - every pack has name + version + at least one objectType
       - every relationship sourceType/targetType names a defined objectType

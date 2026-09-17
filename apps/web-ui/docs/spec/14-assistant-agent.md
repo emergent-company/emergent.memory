@@ -194,10 +194,15 @@ Two modes, both already supported by the chat loop:
 
 ### A. Structured proposal (ask_user card)
 
-The assistant calls `ask_user` with a fenced-code-block question and
-`Accept` / `Reject` / named-alternative options. The gateway synthesizes a
-`question` event from the `ask_user` tool call and the UI renders the question
-card; the user clicks one option, the gateway
+The assistant calls `ask_user` with a short human-readable markdown question,
+`Accept` / `Reject` / named-alternative options, and a structured `proposal`
+argument — the envelope `{"kind","summary","body"}` with kinds
+`blueprint|skill|agent|mcp_server|provider|object`. The gateway renders the
+proposal as a structured card (side-effect summary + kind-specific preview)
+above the options. Legacy questions that paste a `json`/`yaml`/`yml` manifest
+fence into the question text (from a stale agent definition) render the same
+card from the fence as a presentation-only fallback; the structured envelope
+remains the primary path. The user clicks one option, the gateway
 `POST /api/chat/questions/:id/respond` proxies to Memory's
 `agent-questions/:id/respond`, Memory resumes the run in the background, and the
 client re-renders the transcript once the resumed run completes.
@@ -205,8 +210,10 @@ client re-renders the transcript once the resumed run completes.
 ```
 user: "create a skill that greets me in the morning"
   → assistant inspects existing skills, drafts content
-  → ask_user("Proposal — skill 'morning-greeting':
-      ```yaml …```", options=[Accept, Reject])
+  → ask_user(question="Proposal — add skill 'morning-greeting'",
+      proposal={"kind":"skill","summary":"Add skill morning-greeting",
+      "body":{"name":"morning-greeting","description":"…","prompt":"…"}},
+      options=[Accept, Reject])
   → [user clicks Accept]
   → assistant: skill-create(…) → skill-get(id) → "Done: skill <id>"
 ```
@@ -222,14 +229,16 @@ before any write.
 **v1 uses both**; the assistant's prompt decides which fits. No new backend is
 required for either.
 
-### C. Richer proposal card (UI enhancement, P2)
+### C. Proposal card (shipped)
 
-The existing `ask_user` card renders a text question + options. To make proposals
-first-class, extend the card to recognise a convention (fenced `yaml`/`json` block
-in the question) and render it as a **proposal card**: syntax-highlighted preview,
-scope badges (which setting type), and primary `Accept` / secondary `Reject` /
-`Edit…` actions (Edit feeds back as free text). This is presentation-only — it
-reuses `questionId` + `/respond` unchanged.
+The `ask_user` card renders the structured `proposal` as a **proposal card**:
+a side-effect summary chip (e.g. "Adds 2 object types, 3 relationship types"),
+a kind-specific read-only preview, and primary `Accept` / secondary `Reject`
+actions (free-text revision flows through a `text` question). This is
+presentation-only — it reuses `questionId` + `/respond` unchanged. A legacy
+question with a fenced `json`/`yaml`/`yml` manifest and no `proposal` renders
+the same card from the fence as a fallback; anything unrecognized stays
+markdown.
 
 ## Tool approval policy (enforcement)
 
@@ -241,9 +250,56 @@ dispatching a tool, independent of the model's behaviour.
 - **Policy per tool** — `allow` (run silently), `ask` (intercept + require
   approval), `deny` (block). An agent definition carries `ToolPolicies`
   (per-tool overrides) and a `DefaultToolPolicy` (fallback for unlisted tools).
-- **UI** — agent → Settings → Tools: each tool row has an on/off toggle and a
-  policy dropdown (Inherit / Allow / Ask / Deny); a "Default approval" select
-  sits above the groups. The dropdown is disabled/dimmed while the tool is off.
+- **Policy per capability group** — memory groups tools by capability domain
+  (`Graph · Write`, `Schema · Migrate`, `Workspace · Execute`, …) and exposes
+  the catalog on the agent definition as `toolGroups` (`id`, `label`,
+  `description`, `policy`, `enabled`, `tools`). A group policy applies to every
+  member tool that has no explicit per-tool override — the statement a user
+  actually wants ("all destructive graph writes require approval") without
+  configuring each tool. Group policies are stored under reserved
+  `"@group:<id>"` keys in the existing `ToolPolicies` map, so there is no
+  schema migration. The gateway renders the server-computed catalog (it never
+  re-derives the taxonomy) and writes the group form fields back. `toolGroups`
+  is read-only and each group's `tools` is its **full membership** — the
+  project catalog for that group unioned with the agent's allowed and banned
+  tools — so a group the agent has fully disabled still reports every member
+  (`enabled: false`) and can be switched back on. The gateway strips the
+  computed `toolGroups` before serializing the definition back, so the write
+  path never depends on it round-tripping.
+- **Which tools group policy governs** — a group policy applies to member tools
+  that have no explicit per-tool override. The `other` group is **display-only**:
+  it never carries a group policy, so external MCP-server, relay-node, and
+  otherwise-unmatched tools always fall through to their explicit entry or the
+  default. Those external/relay sections get enable/disable only. Google-native
+  tools (`google_search`, `url_context`, `code_execution` via
+  `Model.NativeTools`) are **out of scope** for group policy — they are injected
+  directly into the model's tools and bypass the tool-policy callback, so they
+  belong to no group.
+- **Resolution order** — `tool_policies[tool]` (explicit override, wins) →
+  `tool_policies["@group:"+group]` (group policy) → `default_tool_policy`
+  (fallback). A tool in no known group falls through to the default; a group
+  with no stored entry (or `Inherit`) likewise falls through. All three levels
+  resolve at the single `AgentDefinition.effectiveToolPolicy` chokepoint.
+- **Enable/disable vs deny** — they are different things. The **group enable
+  switch** is a membership operation: off removes every member from `Tools` and
+  records it in `BannedTools` (a hard filter, so a later tool-list change cannot
+  silently re-enable it); on is the inverse. `Disabled` (`Deny` at the policy
+  level) is weaker — the tool stays in context and the executor rejects the call
+  with a structured error. Delegation-managed tools (`spawn_agents`,
+  `list_available_agents`) are never fanned out by a group switch; the
+  Delegation toggle owns them.
+- **UI** — agent → Settings → Tools: a "Default approval" select sits at the
+  top; tools render inside collapsible capability groups, each header carrying a
+  group enable switch and a policy dropdown (Inherit / Allow / Ask / Deny). The
+  MCP-server and relay-node listings are nested as sub-groups inside the
+  capability group that owns their tools, keeping their labels and the
+  agent-facing `<instance>_<tool>` relay names. Each tool row keeps its own
+  on/off toggle and policy dropdown (disabled/dimmed while the tool is off), and
+  shows what it inherits ("Inherits Graph · Write · Ask") unless it carries an
+  explicit override, which it shows instead. Groups with no member tools are not
+  rendered; a group with enabled members opens by default, idle groups collapse.
+  When memory reports no `toolGroups` the panel falls back to the previous
+  source-only grouping.
 - **Interception** — when an `ask`-policy tool is called, the executor pauses the
   run, emits an in-stream `approval` event, and records a pending
   `agent_tool_approvals` row. The gateway renders an approval card (tool + args)

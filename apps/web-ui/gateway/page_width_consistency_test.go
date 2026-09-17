@@ -111,7 +111,7 @@ func firstClassContaining(html, needle string) string {
 func TestAgentsAndObjectsSharePageContainer(t *testing.T) {
 	agentsHTML := renderHTML(t, AgentsPage(
 		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
-		nil, nil, nil,
+		nil, nil, "", nil,
 	))
 	objectsHTML := renderHTML(t, ObjectsPage(
 		[]GraphObject{{ID: "o1", Type: "person"}},

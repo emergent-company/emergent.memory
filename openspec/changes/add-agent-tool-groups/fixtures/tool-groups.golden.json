@@ -1,0 +1,87 @@
+[
+  {
+    "id": "search",
+    "label": "Search",
+    "description": "Search the knowledge graph semantically and by keyword.",
+    "policy": "",
+    "enabled": true,
+    "tools": [
+      "search-hybrid"
+    ]
+  },
+  {
+    "id": "graph-read",
+    "label": "Graph · Read",
+    "description": "Read, search, and traverse graph objects.",
+    "policy": "",
+    "enabled": true,
+    "tools": [
+      "entity-search",
+      "entity-query"
+    ]
+  },
+  {
+    "id": "graph-write",
+    "label": "Graph · Write",
+    "description": "Create, update, or delete graph objects.",
+    "policy": "",
+    "enabled": true,
+    "tools": [
+      "entity-create",
+      "entity-update",
+      "entity-delete"
+    ]
+  },
+  {
+    "id": "schema-read",
+    "label": "Schema · Read",
+    "description": "Read schemas and entity type definitions.",
+    "policy": "",
+    "enabled": false,
+    "tools": [
+      "schema-list"
+    ]
+  },
+  {
+    "id": "schema-write",
+    "label": "Schema · Write",
+    "description": "Create, update, or delete schemas and entity types.",
+    "policy": "",
+    "enabled": false,
+    "tools": [
+      "schema-create",
+      "schema-delete"
+    ]
+  },
+  {
+    "id": "documents",
+    "label": "Documents",
+    "description": "Read and write project documents.",
+    "policy": "ask",
+    "enabled": true,
+    "tools": [
+      "document-list",
+      "document-create"
+    ]
+  },
+  {
+    "id": "skills",
+    "label": "Skills",
+    "description": "Read and manage skills.",
+    "policy": "",
+    "enabled": true,
+    "tools": [
+      "skill-list"
+    ]
+  },
+  {
+    "id": "other",
+    "label": "Other",
+    "description": "Tools without a specific capability group.",
+    "policy": "",
+    "enabled": true,
+    "tools": [
+      "relay1_reminders_list"
+    ]
+  }
+]

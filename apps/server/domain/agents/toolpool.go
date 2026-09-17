@@ -941,6 +941,25 @@ func (tp *ToolPool) ToolNames(projectID string) []string {
 	return names
 }
 
+// ToolScopes returns a name→RequiredScope map for the built-in and dynamic MCP
+// tool catalog. It is the authoritative scope source for policy enforcement,
+// matching the scope the read DTO derives group membership from (dynamic tools
+// set RequiredScope at definition time, which the tool-pool cache does not
+// retain). Built once per run; the catalog is rebuilt in memory via
+// mcp.Service.GetToolDefinitions() with no DB scan. Returns nil when the MCP
+// service is unavailable (callers then fall back to the catalog-less resolver).
+func (tp *ToolPool) ToolScopes() map[string]string {
+	if tp.mcpService == nil {
+		return nil
+	}
+	defs := tp.mcpService.GetToolDefinitions()
+	scopes := make(map[string]string, len(defs))
+	for _, td := range defs {
+		scopes[td.Name] = td.RequiredScope
+	}
+	return scopes
+}
+
 // ToolCount returns the number of tools in the pool for a project.
 func (tp *ToolPool) ToolCount(projectID string) int {
 	cache := tp.getOrBuildCache(projectID)

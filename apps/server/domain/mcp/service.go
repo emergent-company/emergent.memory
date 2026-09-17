@@ -1552,6 +1552,33 @@ var toolRequiredScope = map[string]string{
 	"journal-add-note": "journal:write",
 }
 
+// LookupToolScope returns the required MCP scope for a static core tool name.
+// It reports false for tool names that are not in the static scope table.
+// Dynamic tools (skills, agents, documents, blueprints, etc.) declare their
+// RequiredScope at definition time in their *_tools.go files, and external /
+// relay tools carry prefixed names, so they are not covered here.
+func LookupToolScope(toolName string) (string, bool) {
+	scope, ok := toolRequiredScope[toolName]
+	return scope, ok
+}
+
+// ToolScopes returns the sorted scope values present in toolRequiredScope. It
+// lets the agent toolgroups package assert every static scope maps to a known
+// group without maintaining a hand-synced duplicate list.
+func ToolScopes() []string {
+	out := make([]string, 0, len(toolRequiredScope))
+	seen := make(map[string]struct{}, len(toolRequiredScope))
+	for _, scope := range toolRequiredScope {
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		out = append(out, scope)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // FilterToolsForScopes filters tools based on token scopes.
 // Tools tagged AgentOnly are hidden from all external MCP clients regardless of scopes.
 // Tools with a RequiredScope are only shown when the token's expanded scope set includes that scope.

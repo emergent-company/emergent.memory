@@ -120,12 +120,13 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			}
 			_ = json.Unmarshal(ev.Result, &res)
 			if res.QuestionID != "" && askInput != nil {
+				questionHTML, proposalHTML := askUserQuestionHTML(askInput.Proposal, askInput.Question)
 				q := questionEvent{
 					Type:            "question",
 					QuestionID:      res.QuestionID,
 					Question:        askInput.Question,
-					QuestionHTML:    renderMarkdown(askInput.Question),
-					ProposalHTML:    renderProposalHTML(askInput.Proposal),
+					QuestionHTML:    questionHTML,
+					ProposalHTML:    proposalHTML,
 					InteractionType: askInput.InteractionType,
 					Options:         askInput.Options,
 					Placeholder:     askInput.Placeholder,
@@ -308,17 +309,21 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 			if toolName == "ask_user" {
 				if input, ok := m["tool_input"].(map[string]any); ok {
 					changed := false
-					if q, ok := input["question"].(string); ok && q != "" {
-						input["question_html"] = renderMarkdown(q)
-						changed = true
-					}
+					question, _ := input["question"].(string)
+					var proposalRaw json.RawMessage
 					if p, ok := input["proposal"]; ok {
 						if raw, err := json.Marshal(p); err == nil {
-							if html := renderProposalHTML(raw); html != "" {
-								input["proposal_html"] = html
-								changed = true
-							}
+							proposalRaw = raw
 						}
+					}
+					questionHTML, proposalHTML := askUserQuestionHTML(proposalRaw, question)
+					if question != "" {
+						input["question_html"] = questionHTML
+						changed = true
+					}
+					if proposalHTML != "" {
+						input["proposal_html"] = proposalHTML
+						changed = true
 					}
 					if changed {
 						if re, err := marshalNoEscape(m); err == nil {

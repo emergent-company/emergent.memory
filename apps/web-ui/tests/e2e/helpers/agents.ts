@@ -4,7 +4,9 @@ import { Page, expect } from '@playwright/test';
  * Create an agent through the real UI (Agents page → "New agent" modal) and
  * return the new agent's id. Fills the name and, when `model` is given,
  * selects it in the #agent-model catalog dropdown (options are grouped by
- * provider; the first, empty option is "Auto — default model"). The `model`
+ * provider; the first, empty option is the Auto fallback — labelled
+ * "Auto — default model", or "Auto — <model> (default)" when the project has
+ * a pinned default model). The `model`
  * argument must be the prefixed `provider/model` string (e.g.
  * `openai/deepseek-v4-flash`) — that is the value the modal's options carry
  * and the string submitted/stored by the agent create flow. When `tools` is
