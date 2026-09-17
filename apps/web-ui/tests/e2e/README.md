@@ -147,7 +147,9 @@ Mutations: org-create, org-delete (danger zone), project-create,
 project-transfer, project row-click activation, org-settings-hub render + legacy
 `tool-settings` 301, projects table (bulk + row-menu delete), account menu
 (avatar trigger, name + email identity), agent model warning (error/warning
-severity, no-alert on explicit model), agent-create, skill-create,
+  severity, no-alert on explicit model), agent model switch (two agents toggled
+  default ↔ specific models, with the model string verified on the agents list,
+  dashboard, and settings Model picker after every switch), agent-create, skill-create,
 schedule-create, token-create, document-upload, document-extraction
 (provider-gated), member-invite, provider-config, object-create, object-edit (versioned save →
 `?updated=1` toast → value persists on reload), backup-details (list checksum
