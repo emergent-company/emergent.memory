@@ -138,9 +138,27 @@ async function requireConfiguredDefault(page: Page): Promise<boolean> {
   const resp = await page.request.post('/settings/providers/model-config', {
     form: { generative_model: DEFAULT_MODEL, embedding_model: '' },
   });
-  const body = await resp.text();
-  if (!resp.ok() || /error/i.test(body)) {
-    test.skip(true, `could not pin the project default model: ${body.slice(0, 200)}`);
+  if (!resp.ok()) {
+    test.skip(true, `could not pin the project default model — POST HTTP ${resp.status()}`);
+    return false;
+  }
+
+  // The endpoint is a PRG-less HTMX POST (hx-swap="none") that reports failures
+  // as a 200 + error toast, so the response alone proves nothing. Confirm
+  // persistence the way setDefaultEmbeddingModel does: reload and read the
+  // server-rendered select.
+  await page.goto('/settings/providers');
+  const gen = page.locator('select[name="generative_model"]');
+  if ((await gen.count()) === 0) {
+    test.skip(true, 'default-models panel unavailable — cannot pin the project default model');
+    return false;
+  }
+  const persisted = await gen.inputValue();
+  if (persisted !== DEFAULT_MODEL) {
+    test.skip(
+      true,
+      `memory did not persist the project default model "${DEFAULT_MODEL}" (stored "${persisted || '(none)'}")`,
+    );
     return false;
   }
   return true;
