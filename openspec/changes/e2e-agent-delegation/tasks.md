@@ -65,7 +65,7 @@
       (`result.results[0].run_id`); a completed turn that never invoked the tool
       first asserts the delegator run's resolved `tools` contains `spawn_agents`
       (fail when unoffered) before skipping as "model declined"; PINEAPPLE is
-      asserted in an ASSISTANT message of the `/full` bundle.
+      asserted in a non-user, non-tool message of the `/full` bundle.
 
 ## 2. Verification
 
@@ -75,13 +75,15 @@
 - [x] 2.2 `npx playwright test --list scenarios/agent-delegation.spec.ts` lists
       the spec in the `scenarios` project without executing it.
 - [x] 2.3 `openspec validate e2e-agent-delegation --strict` passes.
-- [ ] 2.4 Live run against dev with real credentials. The earlier `2 passed`
-      observation predates the parent-run `tools`-offered guard, the
-      assistant-message PINEAPPLE assertion, and the no-target-rejection /
-      disable-removes scenarios, so it no longer describes this spec. Not
-      runnable from this checkout: `tests/e2e/.env.e2e` is absent and no
-      `E2E_SCENARIO_LLM_*` variables are set, so the spec reports its documented
-      skip.
+- [x] 2.4 Live run against dev with real credentials: **2 passed in 37.0s**
+      (setup + scenario; scenario 22.3s). Command:
+      `npx playwright test scenarios/agent-delegation.spec.ts --project=scenarios`
+      against the gateway at `alfred-dev.tail0358fa.ts.net:8095` and memory at
+      `https://api.dev.emergent-company.ai`, with credentials from the gitignored
+      `tests/e2e/.env.e2e`. The child run id was read from the completed
+      `spawn_agents` tool result, the child run verified against B's definition
+      and its `parentRunId` linkage, and B's output asserted in a non-user,
+      non-tool message.
 - [x] 2.5 Confirm no product code, gateway, or Playwright config file changed:
       `git status` in the worktree shows only the new spec and this change
       directory.
