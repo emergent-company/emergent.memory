@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -60,12 +61,156 @@ func TestBuildProposalCardInvalid(t *testing.T) {
 }
 
 func TestBuildProposalCardUnknownKind(t *testing.T) {
-	card := buildProposalCard(json.RawMessage(`{"kind":"skill","summary":"a skill","body":{"name":"x"}}`))
-	if card == nil || card.Kind != "skill" || card.Summary != "a skill" {
+	card := buildProposalCard(json.RawMessage(`{"kind":"token","summary":"a token","body":{"name":"x"}}`))
+	if card == nil || card.Kind != "token" || card.Summary != "a token" {
 		t.Fatalf("unknown kind should degrade to summary-only card, got %+v", card)
 	}
 	if proposalSummaryLabel(card) != "" {
 		t.Errorf("summary-only card should have no diff summary, got %q", proposalSummaryLabel(card))
+	}
+}
+
+func TestBuildProposalCardSkill(t *testing.T) {
+	card := buildProposalCard(json.RawMessage(`{"kind":"skill","summary":"Add a summarize skill","body":{"name":"summarize","description":"summarizes text","prompt":"Summarize the input.","tools":["web-fetch"],"bannedTools":["ask_user"]}}`))
+	if card == nil || card.Skill == nil {
+		t.Fatalf("skill proposal should parse, got %+v", card)
+	}
+	if card.Skill.Name != "summarize" || card.Skill.Description == "" || card.Skill.Prompt == "" {
+		t.Errorf("skill fields lost: %+v", card.Skill)
+	}
+	if !slices.Equal(card.Skill.Tools, []string{"web-fetch"}) || !slices.Equal(card.Skill.BannedTools, []string{"ask_user"}) {
+		t.Errorf("skill tool lists wrong: %+v", card.Skill)
+	}
+	if proposalSummaryLabel(card) != "" {
+		t.Errorf("skill card should have no diff summary, got %q", proposalSummaryLabel(card))
+	}
+}
+
+func TestBuildProposalCardAgent(t *testing.T) {
+	card := buildProposalCard(json.RawMessage(`{"kind":"agent","summary":"Add an editor agent","body":{"name":"editor","model":"openai/deepseek-v4-flash","systemPrompt":"You edit objects.","tools":["entity-create"],"skills":["editing"],"bannedTools":["ask_user"],"flowType":"agentic","visibility":"project"}}`))
+	if card == nil || card.Agent == nil {
+		t.Fatalf("agent proposal should parse, got %+v", card)
+	}
+	a := card.Agent
+	if a.Name != "editor" || a.Model != "openai/deepseek-v4-flash" || a.SystemPrompt == "" {
+		t.Errorf("agent fields lost: %+v", a)
+	}
+	if !slices.Equal(a.Tools, []string{"entity-create"}) || !slices.Equal(a.Skills, []string{"editing"}) || !slices.Equal(a.BannedTools, []string{"ask_user"}) {
+		t.Errorf("agent lists wrong: %+v", a)
+	}
+}
+
+func TestBuildProposalCardMCPServer(t *testing.T) {
+	card := buildProposalCard(json.RawMessage(`{"kind":"mcp_server","summary":"Add a search server","body":{"name":"exa","type":"http","url":"https://mcp.exa.ai/mcp","enabled":true,"enabledTools":["search"],"disabledTools":["crawl"]}}`))
+	if card == nil || card.MCPServer == nil {
+		t.Fatalf("mcp_server proposal should parse, got %+v", card)
+	}
+	m := card.MCPServer
+	if m.Name != "exa" || m.Type != "http" || m.URL == "" || !m.Enabled {
+		t.Errorf("mcp_server fields lost: %+v", m)
+	}
+	if !slices.Equal(m.EnabledTools, []string{"search"}) || !slices.Equal(m.DisabledTools, []string{"crawl"}) {
+		t.Errorf("mcp_server tool lists wrong: %+v", m)
+	}
+}
+
+func TestBuildProposalCardProviderMasksSecret(t *testing.T) {
+	card := buildProposalCard(json.RawMessage(`{"kind":"provider","summary":"Add the openai provider","body":{"provider":"openai","baseUrl":"http://litellm:4000/v1","models":["deepseek-v4-flash"],"api_key":"SUPERSECRET"}}`))
+	if card == nil || card.Provider == nil {
+		t.Fatalf("provider proposal should parse, got %+v", card)
+	}
+	p := card.Provider
+	if p.Provider != "openai" || p.BaseURL != "http://litellm:4000/v1" {
+		t.Errorf("provider fields lost: %+v", p)
+	}
+	if !slices.Equal(p.Models, []string{"deepseek-v4-flash"}) {
+		t.Errorf("provider models wrong: %+v", p.Models)
+	}
+	if html := renderProposalHTML(json.RawMessage(`{"kind":"provider","summary":"x","body":{"provider":"openai","baseUrl":"http://litellm:4000/v1","models":["deepseek-v4-flash"],"api_key":"SUPERSECRET"}}`)); strings.Contains(html, "SUPERSECRET") || strings.Contains(html, "api_key") {
+		t.Errorf("provider card must not render the API key:\n%s", html)
+	}
+}
+
+func TestBuildProposalCardObject(t *testing.T) {
+	card := buildProposalCard(json.RawMessage(`{"kind":"object","summary":"Create a person and a task","body":{"entities":[{"type":"person","key":"alice","properties":{"name":"Alice","age":30},"tags":["vip"]},{"type":"task","key":"t1"}],"relationships":[{"type":"assigned_to","source":"t1","target":"alice"}]}}`))
+	if card == nil {
+		t.Fatalf("object proposal should parse")
+	}
+	if len(card.Entities) != 2 || card.Entities[0].Type != "person" || card.Entities[0].Key != "alice" {
+		t.Errorf("entities wrong: %+v", card.Entities)
+	}
+	if card.Entities[0].Properties["age"] != "30" {
+		t.Errorf("entity properties not stringified: %+v", card.Entities[0].Properties)
+	}
+	if len(card.Relationships) != 1 || card.Relationships[0].Source != "t1" || card.Relationships[0].Target != "alice" {
+		t.Errorf("relationships wrong: %+v", card.Relationships)
+	}
+}
+
+func TestBuildProposalCardObjectNilProperty(t *testing.T) {
+	card := buildProposalCard(json.RawMessage(`{"kind":"object","summary":"Create a person","body":{"entities":[{"type":"person","key":"alice","properties":{"name":"Alice","nickname":null}}]}}`))
+	if card == nil || len(card.Entities) != 1 {
+		t.Fatalf("object proposal should parse, got %+v", card)
+	}
+	props := card.Entities[0].Properties
+	if props["name"] != "Alice" {
+		t.Errorf("string property lost: %+v", props)
+	}
+	if got, ok := props["nickname"]; !ok || got != "" {
+		t.Errorf("nil property should render as empty string, got %q (present=%v)", got, ok)
+	}
+	if html := renderProposalHTML(json.RawMessage(`{"kind":"object","summary":"Create a person","body":{"entities":[{"type":"person","key":"alice","properties":{"name":"Alice","nickname":null}}]}}`)); strings.Contains(html, "null") {
+		t.Errorf("nil property must not render as the literal \"null\":\n%s", html)
+	}
+}
+
+func TestBuildProposalCardEmptyKindBodies(t *testing.T) {
+	for name, raw := range map[string]string{
+		"skill-no-name":  `{"kind":"skill","summary":"s","body":{"description":"d"}}`,
+		"agent-no-name":  `{"kind":"agent","summary":"s","body":{"model":"m"}}`,
+		"mcp-no-name":    `{"kind":"mcp_server","summary":"s","body":{"url":"u"}}`,
+		"provider-empty": `{"kind":"provider","summary":"s","body":{}}`,
+		"object-empty":   `{"kind":"object","summary":"s","body":{"entities":[],"relationships":[]}}`,
+	} {
+		if card := buildProposalCard(json.RawMessage(raw)); card != nil {
+			t.Errorf("%s: want nil (degrade to markdown), got %+v", name, card)
+		}
+	}
+}
+
+func TestRenderProposalHTMLNewKinds(t *testing.T) {
+	cases := map[string]struct {
+		raw  string
+		want []string
+	}{
+		"skill": {
+			`{"kind":"skill","summary":"Add a summarize skill","body":{"name":"summarize","description":"d","prompt":"Summarize.","tools":["web-fetch"],"bannedTools":["ask_user"]}}`,
+			[]string{"proposal-card", "Proposed changes", "skill", "summarize", "Summarize.", "web-fetch", "Banned tools"},
+		},
+		"agent": {
+			`{"kind":"agent","summary":"Add an editor","body":{"name":"editor","model":"openai/deepseek-v4-flash","systemPrompt":"You edit."}}`,
+			[]string{"proposal-card", "agent", "editor", "openai/deepseek-v4-flash", "You edit."},
+		},
+		"mcp_server": {
+			`{"kind":"mcp_server","summary":"Add exa","body":{"name":"exa","type":"http","url":"https://mcp.exa.ai/mcp","enabled":true,"enabledTools":["search"]}}`,
+			[]string{"proposal-card", "mcp_server", "exa", "http", "https://mcp.exa.ai/mcp", "search"},
+		},
+		"provider": {
+			`{"kind":"provider","summary":"Add openai","body":{"provider":"openai","baseUrl":"http://litellm:4000/v1","models":["deepseek-v4-flash"]}}`,
+			[]string{"proposal-card", "provider", "openai", "http://litellm:4000/v1", "deepseek-v4-flash"},
+		},
+		"object": {
+			`{"kind":"object","summary":"Create a person","body":{"entities":[{"type":"person","key":"alice","properties":{"name":"Alice"}}],"relationships":[{"type":"assigned_to","source":"t1","target":"alice"}]}}`,
+			[]string{"proposal-card", "object", "Entities", "person", "alice", "Relationships", "assigned_to", "t1 → alice"},
+		},
+	}
+	for name, tc := range cases {
+		html := renderProposalHTML(json.RawMessage(tc.raw))
+		for _, want := range tc.want {
+			if !strings.Contains(html, want) {
+				t.Errorf("%s: proposal HTML missing %q:\n%s", name, want, html)
+			}
+		}
 	}
 }
 

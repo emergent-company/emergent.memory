@@ -1,0 +1,56 @@
+## MODIFIED Requirements
+
+### Requirement: Proposal renders as a structured card
+
+When a question carries a `proposal`, the conversation UI SHALL render it as a proposal card selected by the proposal's `kind`, rather than a raw JSON/YAML block. A `kind` without a dedicated renderer SHALL render a summary-only card (kind badge + summary text) and SHALL NOT error.
+
+#### Scenario: Object and relationship types are previewed
+- **WHEN** a question carries a `blueprint` proposal
+- **THEN** the card SHALL list the proposed object types with their properties and the proposed relationship types with their source and target
+- **THEN** the card SHALL NOT present the manifest as an unformatted code fence
+
+#### Scenario: Unknown kind degrades to a summary card
+- **WHEN** a question carries a `proposal` whose `kind` has no dedicated renderer
+- **THEN** the card SHALL show the kind and the proposal `summary`
+- **THEN** the question SHALL still be answerable and SHALL NOT error
+
+## ADDED Requirements
+
+### Requirement: Proposal kinds are extensible via a kind registry
+
+The gateway SHALL resolve a proposal's `kind` through an extensible registry of kind renderers (body parser + card renderer). Adding a kind SHALL be an additive, isolated change that does not alter the envelope, the `ask_user` tool contract, or the behavior of existing kinds.
+
+#### Scenario: New kind is additive
+- **WHEN** a new `kind` renderer is registered
+- **THEN** existing kinds and the summary-only fallback SHALL behave unchanged
+- **THEN** the `ask_user` envelope (`kind`, `summary`, `body`) SHALL remain unchanged
+
+### Requirement: First-class proposal kinds for writable resources
+
+The proposal card SHALL provide first-class renderers for the operator's writable resources, each using the same body shape the corresponding write tool consumes:
+
+- `skill` — `{name, description, prompt, tools, bannedTools}`
+- `agent` — `{name, description, model, systemPrompt, tools, skills, bannedTools, flowType, visibility}`
+- `mcp_server` — `{name, type, url, headers, enabled, enabledTools, disabledTools}`
+- `provider` — `{provider, baseUrl, models}` (secret masked, never echoed)
+- `object` — `{entities, relationships}`
+
+#### Scenario: Skill proposal is previewed
+- **WHEN** a question carries a `proposal` whose `kind` is `skill`
+- **THEN** the card SHALL show the skill's name, description, and prompt, and its tool/banned-tool lists
+
+#### Scenario: Agent proposal is previewed
+- **WHEN** a question carries a `proposal` whose `kind` is `agent`
+- **THEN** the card SHALL show the agent's name, model, and system prompt, and its tool/skill/banned-tool lists
+
+#### Scenario: MCP server proposal is previewed
+- **WHEN** a question carries a `proposal` whose `kind` is `mcp_server`
+- **THEN** the card SHALL show the server's name, type, URL, and the tools it enables/disables
+
+#### Scenario: Provider proposal masks the secret
+- **WHEN** a question carries a `proposal` whose `kind` is `provider`
+- **THEN** the card SHALL show the provider slug, base URL, and models, and SHALL NOT render the API key
+
+#### Scenario: Object proposal is previewed
+- **WHEN** a question carries a `proposal` whose `kind` is `object`
+- **THEN** the card SHALL list the proposed entities with their type and properties and the proposed relationships with their source and target
