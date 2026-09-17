@@ -24,11 +24,17 @@
 
 ### Decision: fence recognition is conservative
 
-Only the first fence whose info string is exactly `json`, `yaml`, or `yml` is considered; bare fences, other languages, unterminated fences, parse failures, and manifests with zero object/relationship types all return nil (question stays markdown). This limits false positives: a stray ```json block that is not a blueprint manifest never renders a card.
+Only fences whose info string is exactly `json`, `yaml`, or `yml` are considered, and only the first one whose content decodes to a manifest (a `packs` array or bare pack with non-zero object/relationship types) is recognized. Bare fences, other languages, unterminated fences, parse failures, non-manifest `json`/`yaml`/`yml` blocks, and manifests with zero object/relationship types are all skipped (a later real manifest is still found). This limits false positives: a stray ```json block that is not a blueprint manifest never renders a card.
 
-### Decision: structured proposal always wins
+### Decision: structured proposal always wins; fallback strips the fence
 
-`fallbackProposalHTML(proposal, question)` renders the structured `proposal` when it produces a card, and only falls back to the question fence otherwise. At the history site the fallback applies only when the tool input has no `proposal` field, so a structured proposal is never overridden or double-rendered.
+A single helper, `askUserQuestionHTML(proposal, question)`, renders both the question markdown and the proposal card for every site (live `question` event and `renderHistoryHTML`), so the two paths cannot diverge:
+
+1. A structured `proposal` that renders a card wins; the question markdown is untouched.
+2. Otherwise (absent, `null`, malformed, or an empty body), a fenced manifest in the question text renders the same card — and the recognized fence is stripped from the question markdown so the manifest does not appear twice (raw code fence beneath the card).
+3. With neither, the question renders as markdown with no proposal.
+
+The fallback is renderability-based, not presence-based: a present-but-empty structured proposal still falls back to the fence, identically at both sites.
 
 ### Decision: YAML via yaml.v3, JSON via encoding/json
 

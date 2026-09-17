@@ -120,12 +120,13 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			}
 			_ = json.Unmarshal(ev.Result, &res)
 			if res.QuestionID != "" && askInput != nil {
+				questionHTML, proposalHTML := askUserQuestionHTML(askInput.Proposal, askInput.Question)
 				q := questionEvent{
 					Type:            "question",
 					QuestionID:      res.QuestionID,
 					Question:        askInput.Question,
-					QuestionHTML:    renderMarkdown(askInput.Question),
-					ProposalHTML:    fallbackProposalHTML(askInput.Proposal, askInput.Question),
+					QuestionHTML:    questionHTML,
+					ProposalHTML:    proposalHTML,
 					InteractionType: askInput.InteractionType,
 					Options:         askInput.Options,
 					Placeholder:     askInput.Placeholder,
@@ -310,21 +311,18 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 					changed := false
 					question, _ := input["question"].(string)
 					if question != "" {
-						input["question_html"] = renderMarkdown(question)
-						changed = true
-					}
-					if p, ok := input["proposal"]; ok {
-						if raw, err := json.Marshal(p); err == nil {
-							if html := renderProposalHTML(raw); html != "" {
-								input["proposal_html"] = html
-								changed = true
+						var proposalRaw json.RawMessage
+						if p, ok := input["proposal"]; ok {
+							if raw, err := json.Marshal(p); err == nil {
+								proposalRaw = raw
 							}
 						}
-					} else if html := renderProposalCardHTML(proposalFromQuestionText(question)); html != "" {
-						// Legacy: no structured proposal — fall back to a fenced
-						// manifest in the question text.
-						input["proposal_html"] = html
+						questionHTML, proposalHTML := askUserQuestionHTML(proposalRaw, question)
+						input["question_html"] = questionHTML
 						changed = true
+						if proposalHTML != "" {
+							input["proposal_html"] = proposalHTML
+						}
 					}
 					if changed {
 						if re, err := marshalNoEscape(m); err == nil {

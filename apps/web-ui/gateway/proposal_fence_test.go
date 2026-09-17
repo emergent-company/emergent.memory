@@ -283,6 +283,123 @@ func TestRenderHistoryHTMLFenceFallbackPlainText(t *testing.T) {
 	}
 }
 
+// questionEventFields extracts the questionHtml and proposalHtml fields of the
+// synthesized question event.
+func questionEventFields(t *testing.T, out string) (questionHTML, proposalHTML string) {
+	t.Helper()
+	for _, frame := range strings.Split(out, "\n\n") {
+		frame = strings.TrimSpace(frame)
+		if !strings.HasPrefix(frame, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(frame, "data:"))
+		var ev struct {
+			Type         string `json:"type"`
+			QuestionHTML string `json:"questionHtml"`
+			ProposalHTML string `json:"proposalHtml"`
+		}
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			continue
+		}
+		if ev.Type == "question" {
+			return ev.QuestionHTML, ev.ProposalHTML
+		}
+	}
+	return "", ""
+}
+
+func TestStripManifestFence(t *testing.T) {
+	question := fenceQuestion("json", fenceManifestJSON)
+	stripped := stripManifestFence(question)
+	if strings.Contains(stripped, "```") || strings.Contains(stripped, "packs") {
+		t.Errorf("fence not stripped: %q", stripped)
+	}
+	if !strings.Contains(stripped, "I propose") {
+		t.Errorf("leading prose lost: %q", stripped)
+	}
+	if got := stripManifestFence("No fence here."); got != "No fence here." {
+		t.Errorf("non-manifest question mutated: %q", got)
+	}
+}
+
+func TestRewriteChatStreamAskUserFenceStripsManifest(t *testing.T) {
+	question := fenceQuestion("json", fenceManifestJSON)
+	out := rewrite(t, askUserStream(t, question, nil))
+	qhtml, phtml := questionEventFields(t, out)
+	if phtml == "" {
+		t.Fatalf("proposalHtml missing: %s", out)
+	}
+	if strings.Contains(qhtml, "packs") {
+		t.Errorf("manifest fence still rendered in questionHtml:\n%s", qhtml)
+	}
+	if !strings.Contains(qhtml, "I propose") {
+		t.Errorf("question prose lost:\n%s", qhtml)
+	}
+}
+
+func TestRenderHistoryHTMLFenceStripsManifest(t *testing.T) {
+	question := fenceQuestion("json", fenceManifestJSON)
+	items := []json.RawMessage{mustJSON(map[string]any{
+		"kind":       "tool_call",
+		"tool_name":  "ask_user",
+		"tool_input": map[string]any{"question": question},
+	})}
+	out := renderHistoryHTML(items)
+	var m map[string]any
+	if err := json.Unmarshal(out[0], &m); err != nil {
+		t.Fatal(err)
+	}
+	in, _ := m["tool_input"].(map[string]any)
+	qhtml, _ := in["question_html"].(string)
+	ph, _ := in["proposal_html"].(string)
+	if ph == "" {
+		t.Fatalf("proposal_html missing: %v", in)
+	}
+	if strings.Contains(qhtml, "packs") {
+		t.Errorf("manifest fence still rendered in question_html:\n%s", qhtml)
+	}
+}
+
+func TestRenderHistoryHTMLFenceFallbackNullProposal(t *testing.T) {
+	items := []json.RawMessage{mustJSON(map[string]any{
+		"kind":       "tool_call",
+		"tool_name":  "ask_user",
+		"tool_input": map[string]any{"question": fenceQuestion("json", fenceManifestJSON), "proposal": nil},
+	})}
+	out := renderHistoryHTML(items)
+	var m map[string]any
+	if err := json.Unmarshal(out[0], &m); err != nil {
+		t.Fatal(err)
+	}
+	in, _ := m["tool_input"].(map[string]any)
+	ph, _ := in["proposal_html"].(string)
+	if !strings.Contains(ph, "Device") {
+		t.Errorf("null proposal should fall back to the fence, got proposal_html %q", ph)
+	}
+}
+
+func TestRenderHistoryHTMLFenceFallbackEmptyProposal(t *testing.T) {
+	var proposal map[string]any
+	if err := json.Unmarshal([]byte(`{"kind":"blueprint","summary":"Empty","body":{}}`), &proposal); err != nil {
+		t.Fatal(err)
+	}
+	items := []json.RawMessage{mustJSON(map[string]any{
+		"kind":       "tool_call",
+		"tool_name":  "ask_user",
+		"tool_input": map[string]any{"question": fenceQuestion("json", fenceManifestJSON), "proposal": proposal},
+	})}
+	out := renderHistoryHTML(items)
+	var m map[string]any
+	if err := json.Unmarshal(out[0], &m); err != nil {
+		t.Fatal(err)
+	}
+	in, _ := m["tool_input"].(map[string]any)
+	ph, _ := in["proposal_html"].(string)
+	if !strings.Contains(ph, "Device") {
+		t.Errorf("empty structured proposal should fall back to the fence, got proposal_html %q", ph)
+	}
+}
+
 func TestRenderHistoryHTMLFenceFallbackStructuredWins(t *testing.T) {
 	var proposal map[string]any
 	if err := json.Unmarshal([]byte(`{"kind":"skill","summary":"Add a summarize skill","body":{"name":"summarize","prompt":"Summarize."}}`), &proposal); err != nil {

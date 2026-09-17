@@ -14,8 +14,12 @@ When a question has no structured `proposal`, the conversation UI SHALL derive a
 - **THEN** the question SHALL render as markdown, unchanged from current behaviour
 
 #### Scenario: Structured proposal wins over a fence
-- **WHEN** a question carries both a structured `proposal` and a fenced manifest in its text
+- **WHEN** a question carries both a structured `proposal` that renders a card and a fenced manifest in its text
 - **THEN** the structured `proposal` card SHALL render and the fence SHALL NOT produce a second card
+
+#### Scenario: A present-but-empty proposal still falls back
+- **WHEN** a question carries a structured `proposal` that does not render a card (`null`, malformed, or an empty body) and a fenced manifest in its text
+- **THEN** the fenced manifest SHALL render the proposal card, identically at the live and history render sites
 
 ### Requirement: ask_user advertises the optional proposal argument
 

@@ -432,15 +432,21 @@ func renderProposalCardHTML(card *ProposalCard) string {
 	return buf.String()
 }
 
-// fallbackProposalHTML renders the proposal HTML for an ask_user input: the
-// structured proposal when present and valid, otherwise a card derived from a
-// fenced manifest in the question text when one is derivable, otherwise ""
-// (plain markdown, unchanged from today).
-func fallbackProposalHTML(proposal json.RawMessage, question string) string {
+// askUserQuestionHTML renders the question markdown and proposal HTML for an
+// ask_user input. A structured proposal that renders a card always wins and the
+// question markdown is untouched. Otherwise a fenced blueprint manifest in the
+// question text produces the same card via the fence fallback, and the
+// recognized fence is stripped from the question markdown so the manifest is
+// not shown twice (raw code fence beneath the card). With neither, the question
+// renders as markdown with no proposal, unchanged from today.
+func askUserQuestionHTML(proposal json.RawMessage, question string) (questionHTML, proposalHTML string) {
 	if html := renderProposalHTML(proposal); html != "" {
-		return html
+		return renderMarkdown(question), html
 	}
-	return renderProposalCardHTML(proposalFromQuestionText(question))
+	if card := proposalFromQuestionText(question); card != nil {
+		return renderMarkdown(stripManifestFence(question)), renderProposalCardHTML(card)
+	}
+	return renderMarkdown(question), ""
 }
 
 // proposalFromQuestionText derives a proposal card from a fenced blueprint
@@ -451,40 +457,40 @@ func fallbackProposalHTML(proposal json.RawMessage, question string) string {
 // markdown path. The card is built through the same blueprint builder the
 // structured envelope uses, so the two render visually identically.
 func proposalFromQuestionText(question string) *ProposalCard {
-	lang, body := firstManifestFence(question)
-	if body == "" {
+	manifest, _, _, ok := manifestFence(question)
+	if !ok {
 		return nil
 	}
-	var manifest map[string]any
-	switch lang {
-	case "json":
-		if err := json.Unmarshal([]byte(body), &manifest); err != nil {
-			return nil
-		}
-	case "yaml", "yml":
-		if err := yaml.Unmarshal([]byte(body), &manifest); err != nil {
-			return nil
-		}
-	}
-	if manifest == nil {
-		return nil
-	}
-	cardBody := blueprintManifestBody(manifest)
-	if cardBody == nil {
-		return nil
-	}
-	return buildBlueprintCard("blueprint", blueprintManifestSummary(manifest), cardBody)
+	return buildBlueprintCard("blueprint", blueprintManifestSummary(manifest), blueprintManifestBody(manifest))
 }
 
-// firstManifestFence returns the language and content of the first fenced code
-// block in question whose info string is json, yaml, or yml. Bare fences (no
-// info string) and other languages are skipped to limit false positives; an
-// unterminated fence is ignored.
-func firstManifestFence(question string) (lang, body string) {
+// stripManifestFence removes the recognized manifest fence from question and
+// returns the re-joined text. It is called only after proposalFromQuestionText
+// found a manifest, so the fence is present; on any miss it returns the
+// question unchanged. Blank lines left by the removal are trimmed so the
+// stripped markdown stays clean.
+func stripManifestFence(question string) string {
+	_, start, end, ok := manifestFence(question)
+	if !ok {
+		return question
+	}
+	lines := strings.Split(question, "\n")
+	lines = append(lines[:start], lines[end+1:]...)
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// manifestFence locates the first fenced blueprint manifest in question: a
+// json/yaml/yml fence whose content decodes to a manifest carrying object or
+// relationship types. It returns the decoded manifest and the inclusive line
+// span of the fence (open .. close), or ok=false when none qualifies. A
+// json/yaml/yml fence that does not decode to a manifest is skipped so a later
+// real manifest is still found; bare/other-language/unterminated fences are
+// ignored.
+func manifestFence(question string) (manifest map[string]any, start, end int, ok bool) {
 	lines := strings.Split(question, "\n")
 	for i := range lines {
-		info, ok := strings.CutPrefix(strings.TrimSpace(lines[i]), "```")
-		if !ok {
+		info, isFence := strings.CutPrefix(strings.TrimSpace(lines[i]), "```")
+		if !isFence {
 			continue
 		}
 		info = strings.TrimSpace(info)
@@ -492,10 +498,10 @@ func firstManifestFence(question string) (lang, body string) {
 			continue
 		}
 		var b strings.Builder
-		closed := false
+		closedAt := -1
 		for j := i + 1; j < len(lines); j++ {
 			if strings.HasPrefix(strings.TrimSpace(lines[j]), "```") {
-				closed = true
+				closedAt = j
 				break
 			}
 			if b.Len() > 0 {
@@ -503,12 +509,26 @@ func firstManifestFence(question string) (lang, body string) {
 			}
 			b.WriteString(lines[j])
 		}
-		if !closed {
+		if closedAt < 0 {
 			continue
 		}
-		return info, b.String()
+		var m map[string]any
+		switch info {
+		case "json":
+			if err := json.Unmarshal([]byte(b.String()), &m); err != nil {
+				continue
+			}
+		case "yaml", "yml":
+			if err := yaml.Unmarshal([]byte(b.String()), &m); err != nil {
+				continue
+			}
+		}
+		if blueprintManifestBody(m) == nil {
+			continue
+		}
+		return m, i, closedAt, true
 	}
-	return "", ""
+	return nil, 0, 0, false
 }
 
 // blueprintManifestBody normalizes a decoded blueprint manifest into the
