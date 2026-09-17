@@ -23,7 +23,7 @@ import (
 // run-control surfaces (pending-work dock cards, session todos) so the dock and
 // todo card exist before chat.js runs. uiChat supplies it when ?c= names a
 // conversation; other callers omit it.
-templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string, runControl ...chatRunControl) {
+templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string, runControl ...chatRunControl) {
 	<div class="h-full">
 		if loadErr != nil {
 			@layout.Container(layout.ContainerLG, nil) {
@@ -44,7 +44,7 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, agentNa
 				})
 			}
 		} else {
-			@chatWorkspace(agents, convs, agentNames, schedRuns, preselect, convID, prompt, voiceEnabled, modelWarnings, chatRunControlOrZero(runControl))
+			@chatWorkspace(agents, convs, appearances, schedRuns, preselect, convID, prompt, voiceEnabled, modelWarnings, chatRunControlOrZero(runControl))
 		}
 	</div>
 }
@@ -53,7 +53,7 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, agentNa
 // left, and the streaming conversation (header, log, composer) on the right.
 // chat.js drives resume + streaming via the /api/* endpoints. runControl holds
 // the active conversation's server-rendered dock cards and session todos.
-templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
+templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
 	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
 		<aside id="chat-rail" class="bg-base-100 border-base-content/5 relative hidden w-full shrink-0 flex-col border-r md:flex md:w-72">
 			<!-- Drag-to-resize grip on the right edge (desktop only; below md the
@@ -105,7 +105,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 				</select>
 			</div>
 			<div id="chat-rail-list" data-testid="session-list" class="min-h-0 grow overflow-y-auto p-2">
-				@chatRailList(convs, agentNames, schedRuns, convID)
+				@chatRailList(convs, appearances, schedRuns, convID)
 			</div>
 		</aside>
 		<div class="flex min-w-0 grow flex-col">
@@ -367,14 +367,14 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 // chatRailList renders the session rail's list portion: the two empty states
 // plus (when there are rows) a ui.List of sessionRailItem + scheduledRailItem.
 // Rendered by both the full chat page and the /partial/chat-rail refresh.
-templ chatRailList(convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, convID string) {
+templ chatRailList(convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, convID string) {
 	{{ hasRows := (convs != nil && len(convs.Conversations) > 0) || len(schedRuns) > 0 }}
 	@chatRailEmpty(hasRows)
 	if hasRows {
 		@ui.List(ui.ListProps{}) {
 			if convs != nil {
 				for _, c := range convs.Conversations {
-					@sessionRailItem(c, agentNames[c.AgentDefinitionID], c.ID == convID)
+					@sessionRailItem(c, appearances[c.AgentDefinitionID], c.ID == convID)
 				}
 			}
 			for _, r := range schedRuns {
@@ -386,8 +386,9 @@ templ chatRailList(convs *ConversationList, agentNames map[string]string, schedR
 
 // sessionRailItem is one resumable conversation in the session rail.
 // Clicking it asks chat.js to load the transcript and continue it. All
-// conversations are on-demand, so their origin is "manual".
-templ sessionRailItem(c Conversation, agentName string, active bool) {
+// conversations are on-demand, so their origin is "manual". The agent's own
+// glyph leads the row (ap carries its declared icon/color, or the neutral bot).
+templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 	{{
 		attrs := templ.Attributes{
 			"data-action":            "resume-session",
@@ -405,8 +406,8 @@ templ sessionRailItem(c Conversation, agentName string, active bool) {
 	}}
 	@ui.ListRow(ui.ListRowProps{
 		Title:    c.Title,
-		Subtitle: railSubtitle(agentName, c.UpdatedAt),
-		Leading:  ui.IconSpan("lucide--messages-square", "size-4 text-base-content/40"),
+		Subtitle: railSubtitle(ap.Name, c.UpdatedAt),
+		Leading:  agentInlineGlyph(ap.Icon, ap.Color),
 		Trailing: []templ.Component{
 			railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions),
 			ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25"),
@@ -438,7 +439,7 @@ templ railStatusBadge(bucket string, pendingApprovals, pendingQuestions int) {
 // not resumable conversations, but clicking one opens its transcript in the
 // chat workspace (data-action="open-run", handled by chat.js → resumeRun,
 // which renders /api/runs/{id}/history as normal chat bubbles so a paused run
-// can be continued in place).
+// can be continued in place). The run agent's own glyph leads the row.
 templ scheduledRailItem(r scheduledRunRow) {
 	{{
 		attrs := templ.Attributes{
@@ -452,7 +453,7 @@ templ scheduledRailItem(r scheduledRunRow) {
 	@ui.ListRow(ui.ListRowProps{
 		Title:    r.AgentName,
 		Subtitle: railRunSubtitle(r),
-		Leading:  ui.IconSpan("lucide--calendar-clock", "size-4 text-base-content/40"),
+		Leading:  agentInlineGlyph(r.Icon, r.Color),
 		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")},
 		Attrs:    attrs,
 	})

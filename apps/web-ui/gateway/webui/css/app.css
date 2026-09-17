@@ -595,7 +595,7 @@ div:has(> #_layout-topbar) {
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
 }
 .dock-count {
   display: inline-flex;
@@ -767,7 +767,13 @@ div:has(> #_layout-topbar) {
   text-decoration: line-through;
 }
 
-/* session rail run-state badge + pending count */
+/* session rail run-state badge + pending count.
+   Label text is the bucket accent rendered on a translucent accent tint, so its
+   contrast is not static: the rail row underneath is base-100, lightened on
+   hover and by the primary tint when active. Accents dark enough to fail AA
+   at this size (error, and the muted done grey) are lightened for the label
+   only — the accent still drives the border and the tint, and the count pill
+   keeps its own solid-token pair. */
 .memory-rail-badge {
   display: inline-flex;
   align-items: center;
@@ -788,7 +794,7 @@ div:has(> #_layout-topbar) {
   border-color: color-mix(in oklab, var(--color-warning) 40%, transparent);
 }
 .memory-rail-badge[data-bucket="failed"] {
-  color: var(--color-error);
+  color: color-mix(in oklab, var(--color-error) 60%, var(--color-base-content));
   background: color-mix(in oklab, var(--color-error) 14%, transparent);
   border-color: color-mix(in oklab, var(--color-error) 38%, transparent);
 }
@@ -798,7 +804,7 @@ div:has(> #_layout-topbar) {
   border-color: color-mix(in oklab, var(--color-primary) 34%, transparent);
 }
 .memory-rail-badge[data-bucket="done"] {
-  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
   background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
   border-color: color-mix(in oklab, var(--color-base-content) 12%, transparent);
 }
