@@ -597,6 +597,10 @@ definitions:
         items:
           type: string
         type: array
+      uiConfig:
+        items:
+          type: integer
+        type: array
       updatedAt:
         type: string
       visibility:
@@ -638,6 +642,10 @@ definitions:
         type: array
       toolCount:
         type: integer
+      uiConfig:
+        items:
+          type: integer
+        type: array
       updatedAt:
         type: string
       visibility:
@@ -5715,6 +5723,8 @@ definitions:
         type: string
       name:
         type: string
+      registered:
+        type: boolean
       type:
         $ref: '#/definitions/domain_sandbox.ProviderType'
     type: object
@@ -8220,7 +8230,7 @@ info:
   license:
     name: Proprietary
   title: Memory API
-  version: 0.80.0
+  version: 0.82.0
 paths:
   /.well-known/oauth-protected-resource:
     get:

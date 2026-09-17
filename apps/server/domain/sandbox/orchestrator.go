@@ -4,26 +4,35 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
+// knownProviderTypes is the stable, deterministic order in which providers are
+// reported by ListProviders and enumerated in selection errors.
+var knownProviderTypes = []ProviderType{ProviderGVisor, ProviderFirecracker, ProviderE2B}
+
 // Orchestrator manages provider registration, selection, fallback, and health monitoring.
 type Orchestrator struct {
-	mu        sync.RWMutex
-	providers map[ProviderType]Provider
-	health    map[ProviderType]*HealthStatus
-	log       *slog.Logger
-	stopCh    chan struct{}
+	mu           sync.RWMutex
+	providers    map[ProviderType]Provider
+	health       map[ProviderType]*HealthStatus
+	displayNames map[ProviderType]string
+	log          *slog.Logger
+	stopCh       chan struct{}
+	stopOnce     sync.Once
 }
 
 // NewOrchestrator creates a new workspace orchestrator.
 func NewOrchestrator(log *slog.Logger) *Orchestrator {
 	return &Orchestrator{
-		providers: make(map[ProviderType]Provider),
-		health:    make(map[ProviderType]*HealthStatus),
-		log:       log.With("component", "workspace-orchestrator"),
-		stopCh:    make(chan struct{}),
+		providers:    make(map[ProviderType]Provider),
+		health:       make(map[ProviderType]*HealthStatus),
+		displayNames: make(map[ProviderType]string),
+		log:          log.With("component", "workspace-orchestrator"),
+		stopCh:       make(chan struct{}),
 	}
 }
 
@@ -42,27 +51,87 @@ func (o *Orchestrator) DeregisterProvider(providerType ProviderType) {
 	defer o.mu.Unlock()
 	delete(o.providers, providerType)
 	delete(o.health, providerType)
+	delete(o.displayNames, providerType)
 	o.log.Info("provider deregistered", "type", providerType)
 }
 
-// ListProviders returns all registered providers with their health status.
+// MarkUnavailable records a known-but-unavailable provider without registering it.
+// The provider's display name and reason are stored in the health map only; it is
+// never added to the providers map, so selection behaviour is unchanged.
+func (o *Orchestrator) MarkUnavailable(pt ProviderType, displayName, reason string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Never clobber an already-registered provider.
+	if _, exists := o.providers[pt]; exists {
+		return
+	}
+
+	o.displayNames[pt] = displayName
+	o.health[pt] = &HealthStatus{Healthy: false, Message: reason}
+	o.log.Info("provider marked unavailable", "type", pt, "reason", reason)
+}
+
+// orderedProviderTypes returns the stable reporting order: the known types first
+// (in knownProviderTypes order), then any additionally registered types in
+// deterministic (sorted) order. Must be called with o.mu held (read or write).
+func (o *Orchestrator) orderedProviderTypes() []ProviderType {
+	order := make([]ProviderType, 0, len(o.providers)+len(o.displayNames))
+	seen := make(map[ProviderType]bool, len(o.providers)+len(o.displayNames))
+
+	for _, pt := range knownProviderTypes {
+		if _, ok := o.providers[pt]; ok {
+			order = append(order, pt)
+			seen[pt] = true
+		} else if _, ok := o.displayNames[pt]; ok {
+			order = append(order, pt)
+			seen[pt] = true
+		}
+	}
+
+	var leftovers []ProviderType
+	for pt := range o.providers {
+		if !seen[pt] {
+			leftovers = append(leftovers, pt)
+		}
+	}
+	sort.Slice(leftovers, func(i, j int) bool { return leftovers[i] < leftovers[j] })
+	order = append(order, leftovers...)
+
+	return order
+}
+
+// providerStatusLocked builds a ProviderStatusResponse for a provider type.
+// Must be called with o.mu held (read or write).
+func (o *Orchestrator) providerStatusLocked(pt ProviderType) ProviderStatusResponse {
+	status := ProviderStatusResponse{Type: pt}
+
+	if p, registered := o.providers[pt]; registered {
+		status.Registered = true
+		status.Name = p.Capabilities().Name
+		status.Capabilities = p.Capabilities()
+	} else {
+		status.Name = o.displayNames[pt]
+	}
+
+	if h, ok := o.health[pt]; ok {
+		status.Healthy = h.Healthy
+		status.Message = h.Message
+		status.ActiveCount = h.ActiveCount
+	}
+	return status
+}
+
+// ListProviders returns every known provider (registered or marked unavailable)
+// plus any additional registered providers, in a stable order with availability.
 func (o *Orchestrator) ListProviders() []ProviderStatusResponse {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
-	result := make([]ProviderStatusResponse, 0, len(o.providers))
-	for pt, p := range o.providers {
-		status := ProviderStatusResponse{
-			Name:         p.Capabilities().Name,
-			Type:         pt,
-			Capabilities: p.Capabilities(),
-		}
-		if h, ok := o.health[pt]; ok {
-			status.Healthy = h.Healthy
-			status.Message = h.Message
-			status.ActiveCount = h.ActiveCount
-		}
-		result = append(result, status)
+	order := o.orderedProviderTypes()
+	result := make([]ProviderStatusResponse, 0, len(order))
+	for _, pt := range order {
+		result = append(result, o.providerStatusLocked(pt))
 	}
 	return result
 }
@@ -100,7 +169,7 @@ func (o *Orchestrator) SelectProvider(containerType ContainerType, deploymentMod
 		return p, pt, nil
 	}
 
-	return nil, "", fmt.Errorf("no healthy providers available")
+	return nil, "", fmt.Errorf("no healthy providers available: %s", o.rejectionReasons())
 }
 
 // SelectProviderWithFallback tries the primary provider and falls back on failure.
@@ -127,7 +196,31 @@ func (o *Orchestrator) SelectProviderWithFallback(containerType ContainerType, d
 		}
 	}
 
-	return nil, "", fmt.Errorf("no healthy providers available (fallback exhausted)")
+	return nil, "", fmt.Errorf("no healthy providers available (fallback exhausted): %s", o.rejectionReasons())
+}
+
+// rejectionReasons builds a deterministic, one-line summary of why each candidate
+// provider was rejected during selection, in the same order as ListProviders.
+// Must be called with o.mu held (read or write).
+func (o *Orchestrator) rejectionReasons() string {
+	var parts []string
+	for _, pt := range o.orderedProviderTypes() {
+		if _, registered := o.providers[pt]; registered {
+			if h, ok := o.health[pt]; ok && !h.Healthy {
+				parts = append(parts, fmt.Sprintf("%s: unhealthy: %s", pt, h.Message))
+			}
+		} else {
+			msg := ""
+			if h, ok := o.health[pt]; ok {
+				msg = h.Message
+			}
+			parts = append(parts, fmt.Sprintf("%s: not registered: %s", pt, msg))
+		}
+	}
+	if len(parts) == 0 {
+		return "no providers registered"
+	}
+	return strings.Join(parts, "; ")
 }
 
 // GetProvider returns a specific provider by type.
@@ -143,31 +236,46 @@ func (o *Orchestrator) GetProvider(providerType ProviderType) (Provider, error) 
 }
 
 // StartHealthMonitoring begins a background goroutine that checks provider health every 30 seconds.
+// The monitoring goroutine lives for the whole process lifetime and is independent of the
+// caller's context; it is only stopped by StopHealthMonitoring.
 func (o *Orchestrator) StartHealthMonitoring(ctx context.Context) {
+	o.startHealthMonitoring(ctx, 30*time.Second)
+}
+
+// startHealthMonitoring starts the health monitoring goroutine with the given interval.
+// It detaches from the caller's context so the monitor keeps running for the process
+// lifetime regardless of when the caller's context is canceled. Shutdown is driven
+// exclusively by stopCh (closed in StopHealthMonitoring).
+func (o *Orchestrator) startHealthMonitoring(ctx context.Context, interval time.Duration) {
+	// Detach from the caller's context (e.g. the fx OnStart hook ctx, which is
+	// canceled ~15s after startup) so health checks keep running forever.
+	monitorCtx := context.WithoutCancel(ctx)
+
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		// Initial health check
-		o.checkAllHealth(ctx)
+		o.checkAllHealth(monitorCtx)
 
 		for {
 			select {
 			case <-ticker.C:
-				o.checkAllHealth(ctx)
+				o.checkAllHealth(monitorCtx)
 			case <-o.stopCh:
-				return
-			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-	o.log.Info("provider health monitoring started (30s interval)")
+	o.log.Info("provider health monitoring started", "interval", interval)
 }
 
 // StopHealthMonitoring stops the background health check goroutine.
+// It is idempotent and safe to call multiple times.
 func (o *Orchestrator) StopHealthMonitoring() {
-	close(o.stopCh)
+	o.stopOnce.Do(func() {
+		close(o.stopCh)
+	})
 }
 
 // checkAllHealth runs health checks on all registered providers.

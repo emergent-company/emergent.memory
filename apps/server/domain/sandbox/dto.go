@@ -178,9 +178,10 @@ type GitResponse struct {
 type ProviderStatusResponse struct {
 	Name         string                `json:"name"`
 	Type         ProviderType          `json:"type"`
+	Registered   bool                  `json:"registered"`
 	Healthy      bool                  `json:"healthy"`
 	Message      string                `json:"message,omitempty"`
-	Capabilities *ProviderCapabilities `json:"capabilities"`
+	Capabilities *ProviderCapabilities `json:"capabilities,omitempty"`
 	ActiveCount  int                   `json:"active_count"`
 }
 
