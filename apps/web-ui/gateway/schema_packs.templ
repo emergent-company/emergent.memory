@@ -140,7 +140,7 @@ templ schemaPackMeta(pack *schemaPackSummary) {
 		Margin:    "mb-6",
 		BodyClass: "p-5",
 	}) {
-		<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+		@components.MetaGrid() {
 			@schemaPackMetaRow("Pack id", pack.ID, true)
 			@schemaPackMetaRow("Owner", pack.ownerLabel(), false)
 			if pack.Source != "" {
@@ -152,7 +152,7 @@ templ schemaPackMeta(pack *schemaPackSummary) {
 					<a class="text-primary font-medium hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(pack.Provenance.BlueprintID)) }>{ typeProvenanceLabel(pack.Provenance) }</a>
 				}
 			}
-		</dl>
+		}
 	}
 }
 

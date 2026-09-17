@@ -621,37 +621,32 @@ func hasChipDiff(cd ChipDiff) bool {
 // deriveVersionDialog forks a new draft version of the current blueprint from
 // the project's effective object types.
 templ deriveVersionDialog(d *BlueprintDetail) {
-	<dialog id="derive-version-modal" class="modal" aria-labelledby="derive-version-title">
-		<div class="modal-box max-w-md">
-			<div class="flex items-start gap-3">
-				<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
-					@ui.IconSpan("lucide--git-branch", "size-5")
-				</div>
-				<div>
-					<h3 id="derive-version-title" class="text-lg font-semibold">Save as new version</h3>
-					<p class="text-base-content/55 mt-0.5 text-sm">Create a new draft version of { d.Name } from the object types currently in this project.</p>
-				</div>
+	@modalShell("derive-version-modal", "", "max-w-md", templ.Attributes{"aria-labelledby": "derive-version-title"}) {
+		<div class="flex items-start gap-3">
+			<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--git-branch", "size-5")
 			</div>
-			<form method="post" action={ templ.URL("/schema/blueprints/" + url.PathEscape(d.ID) + "/versions/derive") } hx-boost="false" class="mt-4 flex flex-col gap-4">
-				<input type="hidden" name="_ui" value="1"/>
-				@form.FormControl("derive-version-label", "Version", form.LabelAbove, "A label for the new draft version.", "", nil) {
-					<input id="derive-version-label" name="version" type="text" required value={ d.SuggestedVersion } placeholder="e.g. 1.2.4" class="input w-full font-mono"/>
-				}
-				@form.FormControl("derive-version-description", "Description", form.LabelAbove, "Optional. What changed in this version.", "", nil) {
-					<textarea id="derive-version-description" name="description" rows="2" placeholder="Derived from the current project schema." class="textarea w-full resize-none"></textarea>
-				}
-				@form.FormActions("", "") {
-					<button type="button" class="btn btn-ghost btn-sm" data-dialog-close="derive-version-modal">Cancel</button>
-					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--save"}) {
-						Create version
-					}
-				}
-			</form>
+			<div>
+				<h3 id="derive-version-title" class="text-lg font-semibold">Save as new version</h3>
+				<p class="text-base-content/55 mt-0.5 text-sm">Create a new draft version of { d.Name } from the object types currently in this project.</p>
+			</div>
 		</div>
-		<form method="dialog" class="modal-backdrop">
-			<button>close</button>
+		<form method="post" action={ templ.URL("/schema/blueprints/" + url.PathEscape(d.ID) + "/versions/derive") } hx-boost="false" class="mt-4 flex flex-col gap-4">
+			<input type="hidden" name="_ui" value="1"/>
+			@form.FormControl("derive-version-label", "Version", form.LabelAbove, "A label for the new draft version.", "", nil) {
+				<input id="derive-version-label" name="version" type="text" required value={ d.SuggestedVersion } placeholder="e.g. 1.2.4" class="input w-full font-mono"/>
+			}
+			@form.FormControl("derive-version-description", "Description", form.LabelAbove, "Optional. What changed in this version.", "", nil) {
+				<textarea id="derive-version-description" name="description" rows="2" placeholder="Derived from the current project schema." class="textarea w-full resize-none"></textarea>
+			}
+			@form.FormActions("", "") {
+				<button type="button" class="btn btn-ghost btn-sm" data-dialog-close="derive-version-modal">Cancel</button>
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--save"}) {
+					Create version
+				}
+			}
 		</form>
-	</dialog>
+	}
 }
 
 templ blueprintDetailMeta(d *BlueprintDetail) {

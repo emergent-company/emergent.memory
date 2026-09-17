@@ -156,9 +156,7 @@ templ mcpShareStatusBadge(inst MCPShareInstance) {
 templ mcpShareRevokeDialog(inst MCPShareInstance) {
 	@modalShell("mcp-share-revoke-"+inst.ID, "", "max-w-sm") {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--trash-2", "size-5")
-			</div>
+			@components.ConfirmIcon("")
 			<div>
 				<h3 class="text-lg font-semibold">Revoke share?</h3>
 				<p class="text-base-content/55 mt-1 text-sm">

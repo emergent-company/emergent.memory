@@ -677,11 +677,11 @@ templ voicePanel(v voiceSettings) {
 @components.ToggleField("allow_interruptions", "Allow interruptions", "When on, you can interrupt the agent mid-response.", v.AllowInterruptions, templ.Attributes{"hx-post": "/settings/voice/allow_interruptions", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 @components.ToggleField("preemptive_generation", "Preemptive generation", "When on, the agent drafts its reply while you are still speaking.", v.PreemptiveGeneration, templ.Attributes{"hx-post": "/settings/voice/preemptive_generation", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 			</div>
-			<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+			@components.MetaGrid() {
 				@voiceSecretRow("Cartesia API key", v.CartesiaKeySet)
 				@voiceSecretRow("Deepgram API key", v.DeepgramKeySet)
 				@voiceSecretRow("LiveKit API secret", v.LiveKitSecretSet)
-			</dl>
+			}
 		</div>
 	}
 }
@@ -1237,9 +1237,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 templ providerConfigSaveErrorModal(err error) {
 	@modalShell("provider-save-error-modal", "", "max-w-md", components.DialogAutoOpen()) {
 		<div class="mb-3 flex items-start gap-3">
-			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--alert-triangle", "size-5")
-			</div>
+			@components.ConfirmIcon("lucide--alert-triangle")
 			<h3 class="text-lg font-semibold">Couldn't save provider</h3>
 		</div>
 		<p class="text-base-content/55 text-sm">Your entries are still in the form below — nothing was lost.</p>

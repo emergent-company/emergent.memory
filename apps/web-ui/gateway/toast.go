@@ -1,8 +1,8 @@
 package main
 
-// toastQueueState returns the Alpine x-data for the toast queue: an empty
-// toasts array. go-daisy's alpine.ToastQueueState marshals a nil slice as
-// JSON null, which breaks the queue's push — so we seed [] explicitly.
+// toastQueueState returns the Alpine x-data for the toast queue. The toasts
+// slice is seeded as a non-nil empty slice so it marshals to JSON [] rather
+// than null — Alpine cannot push onto a null array.
 func toastQueueState() map[string]any {
 	return map[string]any{"toasts": []any{}}
 }

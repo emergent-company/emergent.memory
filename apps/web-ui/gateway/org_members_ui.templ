@@ -429,7 +429,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 				Margin:    "mb-6",
 				BodyClass: "p-5",
 			}) {
-				<dl class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+				@components.MetaGrid(components.MetaGridOpts{GapY: "gap-y-4"}) {
 					@memberDetailRow("Display name", memberDisplayName(m))
 					@memberDetailRow("Email", m.Email)
 					@memberDetailRow("First name", m.FirstName)
@@ -438,7 +438,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 						@roleBadge(m.Role)
 					}
 					@memberDetailRow("Joined", relTime(m.JoinedAt))
-				</dl>
+				}
 			}
 			@memberRoleChangeSection(m, data.CanChangeRole)
 		}
