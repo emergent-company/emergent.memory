@@ -763,20 +763,23 @@ type cardListProps struct {
 }
 
 // cardList renders a bordered card with a divide-y row list. When title is
-// non-empty it renders a titled ui.Section (with optional empty state);
-// otherwise a bare ui.CardRaw. Children are the list rows.
+// non-empty it renders a titled ui.Section (with optional empty state and the
+// Rows divide-y wrapper); otherwise a bare ui.CardRaw (ui.Section always emits
+// a <section> wrapper, which the bare variant never had, so it stays CardRaw
+// to preserve output).
 templ cardList(title string, props cardListProps) {
 	if title != "" {
 		@ui.Section(title, ui.SectionProps{
-			Margin:    props.Margin,
-			CardClass: "card-border overflow-hidden",
-			BodyClass: "p-0",
-			Empty:     props.Empty,
-			EmptyIcon: props.EmptyIcon, EmptyTitle: props.EmptyTitle, EmptyDesc: props.EmptyDesc,
+			Margin:     props.Margin,
+			CardClass:  "card-border overflow-hidden",
+			BodyClass:  "p-0",
+			Empty:      props.Empty,
+			EmptyIcon:  props.EmptyIcon,
+			EmptyTitle: props.EmptyTitle,
+			EmptyDesc:  props.EmptyDesc,
+			Rows:       true,
 		}) {
-			<div class="divide-y divide-base-200">
-				{ children... }
-			</div>
+			{ children... }
 		}
 	} else {
 		@ui.CardRaw("card-border overflow-hidden", "p-0", nil) {
