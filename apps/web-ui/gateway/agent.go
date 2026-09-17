@@ -1011,6 +1011,22 @@ func agentModelName(agent *AgentDefinition, fallbackDefault string) (name string
 	return "", false
 }
 
+// agentAutoModelName returns the model the agent would fall back to when the
+// Auto option is selected (i.e. only when the agent has no explicit model),
+// or "" when the agent is explicitly pinned or nothing resolves. It keeps the
+// model picker's Auto label identical to what the dashboard shows for auto
+// agents.
+func agentAutoModelName(agent *AgentDefinition, pinnedDefault string) string {
+	if agent == nil {
+		return ""
+	}
+	if agent.Model != nil && agent.Model.Name != "" {
+		return ""
+	}
+	name, _ := agentModelName(agent, pinnedDefault)
+	return name
+}
+
 // projectProviderNames returns the provider keys of the project's configured
 // providers (ps[i].Provider), e.g. "openai" for openai/deepseek-v4-pro, in
 // list order.
