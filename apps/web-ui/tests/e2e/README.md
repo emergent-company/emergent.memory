@@ -233,11 +233,13 @@ provider row carries the LiteLLM base URL. Env-gated on `E2E_OPENAI_API_KEY`
 (default base URL `http://litellm:4000/v1`); skips fast when the key is unset
 or the memory backend rejects the live-validated save.
 
-Scenario (agent proposal card): `agent-proposal-card.spec.ts` drives a chat turn
-where an agent calls `ask_user` with a structured `proposal` (kind `blueprint`)
-and asserts the gateway renders the reviewable proposal card — "Proposed
-changes" header + kind badge, the read-only "Object types" preview, the proposed
-type name, and the Accept/Reject answer controls. The ask_user tool pauses the
+Scenario (agent proposal card): `agent-proposal-card.spec.ts` is parametrized over
+every first-class proposal kind (`blueprint`, `skill`, `agent`, `mcp_server`,
+`provider`) — each case drives a chat turn where an agent calls `ask_user` with a
+structured `proposal` of that kind and asserts the gateway renders the reviewable
+proposal card — "Proposed changes" header + kind badge, the kind's structured
+preview (a body-field value unique to that kind), and the Accept/Reject answer
+controls. The ask_user tool pauses the
 run, so completion is detected on the `.proposal-card` in the DOM rather than a
 closed SSE stream. Env-gated on `E2E_SCENARIO_LLM_API_KEY`; the spec skips fast
 on a run error, when the model never asked (no `question` SSE event), or on a
