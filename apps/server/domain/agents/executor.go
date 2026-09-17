@@ -1926,6 +1926,11 @@ func (ae *AgentExecutor) runPipeline(
 		return nil, nil
 	}
 
+	// Build the tool name→scope map once for the run so group policy resolution
+	// matches the read DTO for dynamic tools (e.g. document-* → documents). This
+	// is an in-memory catalog read, not a per-tool-call DB scan.
+	toolScopes := ae.toolPool.ToolScopes()
+
 	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
 	beforeToolCb := func(tCtx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
 		if req.StreamCallback != nil {
@@ -1936,11 +1941,13 @@ func (ae *AgentExecutor) runPipeline(
 			})
 		}
 
-		// Resolve the effective tool policy (explicit entry, else the agent default).
+		// Resolve the effective tool policy (explicit entry → group → default),
+		// using the catalog's RequiredScope so dynamic tools resolve to the same
+		// group the read DTO reports.
 		var policy ToolPolicy
 		var hasPolicy bool
 		if req.AgentDefinition != nil {
-			policy, hasPolicy = req.AgentDefinition.effectiveToolPolicy(t.Name())
+			policy, hasPolicy = req.AgentDefinition.effectiveToolPolicyFor(t.Name(), toolScopes[t.Name()])
 		}
 
 		// Disabled (deny): hard-block the tool before execution (policy enforcement).

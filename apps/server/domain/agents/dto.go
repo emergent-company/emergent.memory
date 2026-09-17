@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/agents/toolgroups"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
@@ -303,6 +305,19 @@ type AgentWithDefinitionDTO struct {
 
 // --- Agent Definition DTOs ---
 
+// ToolGroupDTO is the computed catalog entry for one tool group. It is derived
+// on read from the definition's Tools/BannedTools and its stored @group: policy
+// (never persisted). Policy is "" (inherit default), "allow", "ask", or "deny";
+// Enabled means at least one member is in Tools and not banned.
+type ToolGroupDTO struct {
+	ID          string   `json:"id"`
+	Label       string   `json:"label"`
+	Description string   `json:"description"`
+	Policy      string   `json:"policy"`
+	Enabled     bool     `json:"enabled"`
+	Tools       []string `json:"tools"`
+}
+
 // AgentDefinitionDTO is the full response DTO for an agent definition
 type AgentDefinitionDTO struct {
 	ID                string                `json:"id"`
@@ -331,6 +346,10 @@ type AgentDefinitionDTO struct {
 	UIConfig          json.RawMessage       `json:"uiConfig,omitempty"`
 	CreatedAt         time.Time             `json:"createdAt"`
 	UpdatedAt         time.Time             `json:"updatedAt"`
+	// ToolGroups is the computed capability-group catalog (server-owned
+	// taxonomy) rendered by the gateway. Read-only; groups with no non-banned
+	// member tools are omitted.
+	ToolGroups []ToolGroupDTO `json:"toolGroups,omitempty"`
 	// EffectiveModel is the resolved generative model this definition would run
 	// with (per-agent override, else project config → provider-credential
 	// generative model). Only populated on GET /agent-definitions/:id, not on
@@ -447,7 +466,10 @@ type AgentRunStepDTO struct {
 
 // --- ToDTO methods ---
 
-// ToDTO converts an AgentDefinition entity to AgentDefinitionDTO
+// ToDTO converts an AgentDefinition entity to AgentDefinitionDTO. It computes
+// ToolGroups with agent-referenced-tools-only membership (no catalog); callers
+// that hold the tool catalog should call ToolGroupsWithCatalog and assign the
+// result to ToolGroups.
 func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 	return &AgentDefinitionDTO{
 		ID:                d.ID,
@@ -476,6 +498,97 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		UIConfig:          d.UIConfig,
 		CreatedAt:         d.CreatedAt,
 		UpdatedAt:         d.UpdatedAt,
+		ToolGroups:        d.ToolGroupsWithCatalog(nil),
+	}
+}
+
+// ToolGroupsWithCatalog computes the group catalog for the definition. Each
+// group's `tools` is its full membership — the union of the group's catalog
+// tools and the agent's own Tools ∪ BannedTools — so a group the agent has
+// fully switched off still renders (with enabled=false) and can be re-enabled.
+// Groups with zero members are omitted. A nil catalog degrades to
+// agent-referenced-tools-only membership (never dropping a tool present in
+// def.Tools or def.BannedTools).
+func (d *AgentDefinition) ToolGroupsWithCatalog(catalog []mcp.ToolDefinition) []ToolGroupDTO {
+	banned := make(map[string]bool, len(d.BannedTools))
+	for _, t := range d.BannedTools {
+		banned[t] = true
+	}
+	enabled := make(map[string]bool, len(d.Tools))
+	for _, t := range d.Tools {
+		enabled[t] = true
+	}
+
+	membership := make(map[string][]string)
+	seen := make(map[string]bool)
+
+	// 1. Catalog tools (deterministic catalog order) — full group membership for
+	//    built-in and dynamic tools, resolved from the catalog's RequiredScope.
+	for _, td := range catalog {
+		if td.Name == "" || seen[td.Name] {
+			continue
+		}
+		g := toolgroups.GroupForScope(td.RequiredScope, td.Name)
+		membership[g] = append(membership[g], td.Name)
+		seen[td.Name] = true
+	}
+
+	// 2. Agent-referenced tools (Tools then BannedTools) not already covered by
+	//    the catalog — workspace tools, external/relay names, or anything the
+	//    catalog missed. A tool the agent references must never be dropped.
+	for _, t := range append(append([]string{}, d.Tools...), d.BannedTools...) {
+		if t == "" || seen[t] {
+			continue
+		}
+		g := toolgroups.GroupForTool(t)
+		membership[g] = append(membership[g], t)
+		seen[t] = true
+	}
+
+	var out []ToolGroupDTO
+	for _, g := range toolgroups.Groups {
+		tools := membership[g.ID]
+		if len(tools) == 0 {
+			continue
+		}
+		p, present := d.ToolPolicies[toolGroupPolicyPrefix+g.ID]
+		out = append(out, ToolGroupDTO{
+			ID:          g.ID,
+			Label:       g.Label,
+			Description: g.Description,
+			Policy:      groupPolicyString(p, present),
+			Enabled:     groupEnabled(tools, enabled, banned),
+			Tools:       tools,
+		})
+	}
+	return out
+}
+
+// groupEnabled reports whether at least one member tool is in Tools and not in
+// BannedTools.
+func groupEnabled(tools []string, enabled, banned map[string]bool) bool {
+	for _, t := range tools {
+		if enabled[t] && !banned[t] {
+			return true
+		}
+	}
+	return false
+}
+
+// groupPolicyString maps a stored group policy to the frozen DTO policy value:
+// "deny" when Disabled, "ask" when Confirm, "allow" when stored-but-neither,
+// and "" when no group entry exists (inherit the default).
+func groupPolicyString(p ToolPolicy, present bool) string {
+	if !present {
+		return ""
+	}
+	switch {
+	case p.Disabled:
+		return "deny"
+	case p.Confirm:
+		return "ask"
+	default:
+		return "allow"
 	}
 }
 

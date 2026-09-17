@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/agents/toolgroups"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
 
 // AgentTriggerType defines how an agent is triggered
@@ -382,11 +385,34 @@ type AgentDefinition struct {
 	UpdatedAt         time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
-// effectiveToolPolicy returns the policy that governs toolName: the explicit
-// ToolPolicies entry when present, otherwise the policy derived from
-// DefaultToolPolicy. The bool is false when the effective policy is "allow".
+// toolGroupPolicyPrefix is the reserved key prefix for group-level tool
+// policies stored in AgentDefinition.ToolPolicies. Tool names are validated
+// identifiers that cannot begin with '@', so the prefix cannot collide with a
+// real tool name.
+const toolGroupPolicyPrefix = "@group:"
+
+// effectiveToolPolicy is the catalog-less wrapper for effectiveToolPolicyFor. It
+// resolves the tool's scope via the static mcp.LookupToolScope map (static core
+// tools only), falling back to the unscoped static map for workspace/web tools.
+// Enforcement callers that already hold the tool catalog should call
+// effectiveToolPolicyFor with the catalog's RequiredScope so dynamic tools
+// resolve to the same group the read DTO reports.
 func (d *AgentDefinition) effectiveToolPolicy(toolName string) (ToolPolicy, bool) {
+	scope, _ := mcp.LookupToolScope(toolName)
+	return d.effectiveToolPolicyFor(toolName, scope)
+}
+
+// effectiveToolPolicyFor returns the policy that governs toolName, resolved in
+// the order: explicit ToolPolicies[toolName] → group policy
+// ToolPolicies["@group:<id>"] (where <id> = toolgroups.GroupForScope(scope,
+// toolName)) → DefaultToolPolicy. An empty scope degrades to the unscoped static
+// mapping. The bool is false only for the "allow / non-disabled" default result;
+// an explicit or group entry (including an empty `{}` entry) returns true.
+func (d *AgentDefinition) effectiveToolPolicyFor(toolName, scope string) (ToolPolicy, bool) {
 	if p, ok := d.ToolPolicies[toolName]; ok {
+		return p, true
+	}
+	if p, ok := d.ToolPolicies[toolGroupPolicyPrefix+toolgroups.GroupForScope(scope, toolName)]; ok {
 		return p, true
 	}
 	switch d.DefaultToolPolicy {

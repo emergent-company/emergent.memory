@@ -51,6 +51,7 @@ var Module = fx.Module("agents",
 		registerOrphanRecovery,
 		registerWorkerPool,
 		registerHandlerMCPToolHandler,
+		registerHandlerMCPService,
 		registerRelayToolPoolInvalidator,
 		registerAgentToolHandler,
 		registerToolPoolInvalidator,
@@ -151,6 +152,13 @@ func registerAgentToolHandler(mcpService *mcp.Service, handler *MCPToolHandler) 
 // remember-status endpoint.
 func registerHandlerMCPToolHandler(h *Handler, mcpToolHandler *MCPToolHandler) {
 	h.WithMCPToolHandler(mcpToolHandler)
+}
+
+// registerHandlerMCPService injects the MCP service into the REST Handler so the
+// agent-definition read path can compute the full tool-group catalog (dynamic
+// tool scope resolution) without a per-request DB scan.
+func registerHandlerMCPService(h *Handler, mcpService *mcp.Service) {
+	h.WithMCPService(mcpService)
 }
 
 // provideSessionTitleHandlerForMCP exposes the Repository as mcp.SessionTitleHandler

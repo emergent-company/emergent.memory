@@ -15,6 +15,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -34,6 +35,7 @@ type Handler struct {
 	sandboxStore  sandboxStoreLookup
 	modelResolver modelResolverLookup // optional; nil when modelconfig not available
 	mcpTools      *MCPToolHandler     // remember-status tool handler; wired via WithMCPToolHandler
+	mcpService    *mcp.Service        // tool catalog source for the computed toolGroups; wired via WithMCPService
 }
 
 // usageLookup is the internal interface for looking up project spend.
@@ -78,6 +80,15 @@ func (h *Handler) WithModelResolver(mr modelResolverLookup) {
 // fx Invoke (registerHandlerMCPToolHandler).
 func (h *Handler) WithMCPToolHandler(mt *MCPToolHandler) {
 	h.mcpTools = mt
+}
+
+// WithMCPService attaches the MCP service to the REST Handler so the
+// agent-definition read path can compute the full tool-group catalog (scope
+// resolution for dynamic tools). Called from fx Invoke
+// (registerHandlerMCPService). When unset, the read path degrades to
+// agent-referenced-tools-only membership.
+func (h *Handler) WithMCPService(s *mcp.Service) {
+	h.mcpService = s
 }
 
 // getWorkspaceInfo loads sandbox details for a run, returning nil if unavailable.
@@ -1369,7 +1380,7 @@ func (h *Handler) GetDefinition(c echo.Context) error {
 		return apperror.NewNotFound("AgentDefinition", id)
 	}
 
-	dto := def.ToDTO()
+	dto := h.toDefinitionDTO(def)
 
 	// Effective model = what this definition will run with. The per-agent
 	// override is honored by the executor regardless of project config, so it
@@ -1400,6 +1411,18 @@ func pickEffectiveModel(override, projectDefault string) string {
 		return override
 	}
 	return projectDefault
+}
+
+// toDefinitionDTO converts an agent definition to its full response DTO,
+// enriching the computed toolGroups with the full tool catalog when the MCP
+// service is attached. When the catalog is unavailable it degrades gracefully
+// to agent-referenced-tools-only membership (via ToDTO) rather than failing.
+func (h *Handler) toDefinitionDTO(def *AgentDefinition) *AgentDefinitionDTO {
+	dto := def.ToDTO()
+	if h.mcpService != nil {
+		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetToolDefinitions())
+	}
+	return dto
 }
 
 // normalizeUIConfig maps the documented "no appearance" wire value to the
@@ -1528,7 +1551,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		return apperror.NewInternal("failed to create agent definition", err)
 	}
 
-	return c.JSON(http.StatusCreated, SuccessResponse(def.ToDTO()))
+	return c.JSON(http.StatusCreated, SuccessResponse(h.toDefinitionDTO(def)))
 }
 
 // UpdateDefinition handles PATCH /api/projects/:projectId/agent-definitions/:id
@@ -1631,7 +1654,7 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		return apperror.NewInternal("failed to update agent definition", err)
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(def.ToDTO()))
+	return c.JSON(http.StatusOK, SuccessResponse(h.toDefinitionDTO(def)))
 }
 
 // DeleteDefinition handles DELETE /api/projects/:projectId/agent-definitions/:id
