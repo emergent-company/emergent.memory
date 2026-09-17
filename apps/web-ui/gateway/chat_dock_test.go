@@ -485,7 +485,10 @@ func TestUiChatDock(t *testing.T) {
 func TestDockPanelRender(t *testing.T) {
 	html := renderHTML(t, DockPanel("c1",
 		[]ApprovalCard{{QuestionID: "a1", ToolName: "web_search", ArgsSummary: `{"q":"x"}`, ConversationID: "c1"}},
-		[]QuestionCard{{QuestionID: "q1", Prompt: "Pick one", Kind: "buttons", Options: []string{"Alpha", "Beta"}}},
+		[]QuestionCard{{QuestionID: "q1", Prompt: "Pick one", Kind: "buttons", Options: []AgentQuestionOption{
+			{Label: "Alpha", Value: "alpha"},
+			{Label: "Beta", Value: "beta"},
+		}}},
 	))
 	for _, want := range []string{
 		`data-testid="chat-dock"`,
@@ -503,6 +506,40 @@ func TestDockPanelRender(t *testing.T) {
 	}
 	if got := renderHTML(t, DockPanel("c1", nil, nil)); got != "" {
 		t.Errorf("empty DockPanel must render nothing, got %q", got)
+	}
+}
+
+// TestDockPanelOptionExposesValue pins the label-vs-value fix: an ask_user
+// option whose label differs from its value must render the label as the button
+// text and expose the value on data-dock-option-value — never the label as the
+// submitted value. This fails on the old behaviour, which exposed the label in
+// data-dock-option and had no value attribute.
+func TestDockPanelOptionExposesValue(t *testing.T) {
+	html := renderHTML(t, DockPanel("c1", nil, []QuestionCard{{
+		QuestionID: "q1",
+		Prompt:     "Pick one",
+		Kind:       "buttons",
+		Options: []AgentQuestionOption{
+			{Label: "Yes, please", Value: "yes"},
+			{Label: "No thanks", Value: "no"},
+		},
+	}}))
+
+	if !strings.Contains(html, `data-dock-option-value="yes"`) {
+		t.Errorf("option value must be exposed on data-dock-option-value:\n%s", html)
+	}
+	if !strings.Contains(html, `data-dock-option-value="no"`) {
+		t.Errorf("second option value must be exposed on data-dock-option-value:\n%s", html)
+	}
+	if strings.Contains(html, `data-dock-option-value="Yes, please"`) {
+		t.Errorf("option label leaked into the value attribute:\n%s", html)
+	}
+	if strings.Contains(html, `data-dock-option="`) {
+		t.Errorf("legacy data-dock-option (label-as-value) attribute still rendered:\n%s", html)
+	}
+	// The label is still the visible button text.
+	if !strings.Contains(html, "Yes, please") || !strings.Contains(html, "No thanks") {
+		t.Errorf("option labels must render as button text:\n%s", html)
 	}
 }
 

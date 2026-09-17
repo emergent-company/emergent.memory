@@ -1452,6 +1452,17 @@
     updateDockSubmitState(card);
   }
 
+  // dockOptionValue resolves the answer value for one checked option button:
+  // the option's value (data-dock-option-value) when present, else the button's
+  // label text. This mirrors the inline renderQuestion, which keys selection on
+  // opt.value and only falls back to the label for a valueless option — the dock
+  // must never submit a display label as the answer when a value exists.
+  function dockOptionValue(btn) {
+    var v = btn.getAttribute("data-dock-option-value");
+    if (v !== null && v !== "") return v;
+    return btn.textContent ? btn.textContent.trim() : "";
+  }
+
   // dockAnswerValue mirrors the inline renderQuestion's answerValue(): free text
   // for a text question, a JSON array for multi-select, and the single chosen
   // option otherwise. Null when nothing valid is selected yet.
@@ -1464,10 +1475,10 @@
     var type = card.getAttribute("data-dock-type") || "";
     if (type === "multi_select") {
       var vals = [];
-      for (var i = 0; i < checked.length; i++) vals.push(checked[i].getAttribute("data-dock-option") || "");
+      for (var i = 0; i < checked.length; i++) vals.push(dockOptionValue(checked[i]));
       return JSON.stringify(vals);
     }
-    return checked[0].getAttribute("data-dock-option") || null;
+    return dockOptionValue(checked[0]) || null;
   }
 
   function updateDockSubmitState(card) {

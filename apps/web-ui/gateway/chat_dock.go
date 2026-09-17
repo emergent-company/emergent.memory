@@ -19,11 +19,14 @@ type ApprovalCard struct {
 }
 
 // QuestionCard is one pending ask_user question rendered in the chat dock.
+// Options carries the server's full option shape (label + value + description)
+// so the dock can display the label and submit the value — the same contract
+// the inline question card uses (chat-stream.js keys selection on opt.value).
 type QuestionCard struct {
 	QuestionID string
 	Prompt     string
 	Kind       string
-	Options    []string
+	Options    []AgentQuestionOption
 }
 
 // TodoItem is one session todo rendered by the todo card.
@@ -127,15 +130,11 @@ func (s *Server) pendingDockCards(ctx context.Context, convID string) (approvals
 		if !ok {
 			continue
 		}
-		opts := make([]string, 0, len(q.Options))
-		for _, o := range q.Options {
-			opts = append(opts, questionOptionLabel(o))
-		}
 		questions = append(questions, QuestionCard{
 			QuestionID: qid,
 			Prompt:     q.Question,
 			Kind:       q.InteractionType,
-			Options:    opts,
+			Options:    q.Options,
 		})
 	}
 	return approvals, questions
