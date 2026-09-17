@@ -4,6 +4,7 @@ Index of future work, follow-ups, and deferred ideas. See `docs/tasks/README.md`
 
 | Status | Slug | Title | Source | Created |
 |---|---|---|---|---|
+| proposed | cli-agent-appearance | CLI `--icon`/`--color` + blueprint `ui` passthrough for agent appearance (blocked on next SDK module tag) | [PR #541](https://github.com/emergent-company/emergent.memory/pull/541) | 2026-09-17 |
 | proposed | mcp-shares-browser-verify | Browser-verify MCP sharing + per-agent share UIs (create/rotate/revoke, scoped tools) | [2026-09-13-mcp-share-surfaces](sessions/2026-09-13-mcp-share-surfaces.md) | 2026-09-13 |
 | proposed | mcp-shares-postgres-e2e | Apply MCP-share migrations + run DB/HTTP e2e against Postgres | [2026-09-13-mcp-share-surfaces](sessions/2026-09-13-mcp-share-surfaces.md) | 2026-09-13 |
 | proposed | mcp-share-agent-exec-tool-policy | Revisit agent-execution tools in tool-restricted shares + async/session/rate-limit semantics | [2026-09-13-mcp-share-surfaces](sessions/2026-09-13-mcp-share-surfaces.md) | 2026-09-13 |
