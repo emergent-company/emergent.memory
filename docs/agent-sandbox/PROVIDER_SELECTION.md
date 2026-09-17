@@ -39,6 +39,7 @@ If the selected provider fails during workspace creation:
 1. The system tries the next provider in priority order
 2. If the request explicitly specified a provider (e.g., `"provider": "firecracker"`), no fallback is attempted
 3. Failed providers are marked unhealthy and excluded from selection for 30 seconds
+4. Unhealthy or unregistered providers are skipped during selection and reported (with an availability reason) via `GET /api/v1/agent/sandboxes/providers` — never silently absent from the list
 
 ## When to Use Each Provider
 

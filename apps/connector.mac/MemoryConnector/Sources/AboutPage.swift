@@ -2,8 +2,14 @@ import AppKit
 import SwiftUI
 
 /// About page: app/engine versions, instance identity, and attribution.
+///
+/// This is also the app's only surface that offers Development sign-in — a
+/// non-prominent developer affordance below the cards, deliberately unlike the
+/// primary Production sign-in shown everywhere else.
 struct AboutPage: View {
     @EnvironmentObject private var settings: ConnectorSettings
+    @EnvironmentObject private var accountStore: AccountStore
+    @EnvironmentObject private var projectStore: ProjectStore
     @ObservedObject private var statusMonitor = StatusMonitor.shared
 
     var body: some View {
@@ -42,6 +48,7 @@ struct AboutPage: View {
                         }
                     }
                 }
+                developmentSignIn
             }
             .padding(24)
             .frame(maxWidth: 720, alignment: .leading)
@@ -65,6 +72,72 @@ struct AboutPage: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: - Development sign-in
+
+    /// The Development environment this page offers, derived from the shared
+    /// per-surface policy rather than named directly.
+    private var developmentEnvironment: Environment? {
+        Environment.signInEnvironments(for: .about).first { $0 != Environment.primary }
+    }
+
+    /// Developer escape hatch: sign in to the internal Development environment.
+    ///
+    /// Kept subordinate on purpose — no card, caption-sized secondary/link
+    /// styling, and placed last on the page — so it never reads as a primary
+    /// action next to the Production sign-in used by the rest of the app.
+    @ViewBuilder
+    private var developmentSignIn: some View {
+        if let environment = developmentEnvironment {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Development")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text("Development sign-in targets \(environment.name) at \(environment.serverURLString).")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+
+                Button {
+                    signInToDevelopment(environment)
+                } label: {
+                    if accountStore.isSigningIn {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Signing in…")
+                        }
+                    } else {
+                        Text("Sign in to Development")
+                    }
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .disabled(accountStore.isSigningIn)
+
+                if let message = accountStore.lastError {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    /// Signs in to the Development environment and reloads projects, matching
+    /// the other sign-in surfaces. `AccountStore.signIn` records any failure in
+    /// `lastError`, surfaced inline above; a cancelled or failed Dev sign-in
+    /// must not disturb the page.
+    private func signInToDevelopment(_ environment: Environment) {
+        Task {
+            guard (try? await accountStore.signIn(environment: environment)) != nil else { return }
+            let token = (try? await accountStore.currentAccessToken()) ?? ""
+            await projectStore.loadProjects(accessToken: token)
         }
     }
 

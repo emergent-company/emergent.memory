@@ -11,8 +11,6 @@ struct ConnectionPage: View {
     @EnvironmentObject private var projectStore: ProjectStore
 
     @State private var alertMessage: String?
-    /// Environment chosen on the signed-out sign-in surface.
-    @State private var selectedEnvironment: Environment = .prod
 
     var body: some View {
         Form {
@@ -75,6 +73,8 @@ struct ConnectionPage: View {
         }
     }
 
+    /// One prominent sign-in action for the page's location; no environment
+    /// choice is offered here.
     private var signInControl: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Sign in with Memory to connect your account and projects.")
@@ -82,23 +82,9 @@ struct ConnectionPage: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Picker("Environment", selection: $selectedEnvironment) {
-                ForEach(Environment.all) { environment in
-                    Text(environment.shortLabel).tag(environment)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Text(selectedEnvironment.serverURLString)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
             HStack {
                 Button {
-                    signIn(selectedEnvironment)
+                    signIn(signInEnvironment)
                 } label: {
                     if accountStore.isSigningIn {
                         HStack(spacing: 6) {
@@ -134,6 +120,12 @@ struct ConnectionPage: View {
     private var activeInitials: String { activeAccount?.initials ?? "" }
 
     // MARK: - Actions
+
+    /// The environment this page's sign-in action targets, from the shared
+    /// per-surface policy.
+    private var signInEnvironment: Environment {
+        Environment.signInEnvironments(for: .connectionPage).first ?? Environment.primary
+    }
 
     private func signIn(_ environment: Environment) {
         Task {

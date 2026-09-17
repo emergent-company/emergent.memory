@@ -657,6 +657,13 @@
     return status === "failed" || status === "error";
   }
 
+  // isActiveRunStatus reports whether a run status means the run is still in
+  // flight (queued, running, or cancelling) rather than stopped (completed,
+  // failed, cancelled, skipped, or paused awaiting input).
+  function isActiveRunStatus(status) {
+    return status === "working" || status === "submitted" || status === "cancelling";
+  }
+
   // runDurationMs derives a turn's wall-clock duration from the run's
   // completed_at − created_at, falling back to the run_end's duration_ms.
   // Returns null when the run has not ended (no duration is shown then).
@@ -1134,7 +1141,7 @@
     setStreaming(true);
     openAssistantBubble();
 
-    var baseline = await countRunEnds(currentScopeId());
+    var baseline = await resumeBaseline(currentScopeId());
 
     var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/respond", { response: answerValue });
     if (!result.ok) {
@@ -1174,7 +1181,7 @@
   // on it would silently drop every inline decision.
   async function postDecision(questionId, payload) {
     if (!questionId) return false;
-    var baseline = await countRunEnds(currentScopeId());
+    var baseline = await resumeBaseline(currentScopeId());
     var action = payload ? "respond" : "cancel";
     var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/" + action, payload);
     if (!result.ok) {
@@ -1195,40 +1202,70 @@
     return true;
   }
 
-  // countRunEnds returns the number of completed runs in a conversation's
-  // transcript — or, for a scheduled run scope (which has no run_end items),
-  // the number of transcript items (messages + tool calls). -1 when the
+  // resumeBaseline snapshots the conversation's resume-progress watermark: the
+  // newest run id in the transcript for a conversation, or the transcript item
+  // count for a scheduled run scope (which has no run_end items). null when the
   // history can't be read.
-  async function countRunEnds(id) {
+  async function resumeBaseline(id) {
     try {
       var r = await fetch(scopeHistoryUrl(id));
-      if (!r.ok) return -1;
+      if (!r.ok) return null;
       var data = await r.json();
       var items = data.items || [];
       if (currentScopeIsRun()) return items.length;
-      var n = 0;
+      var newest = "";
       for (var i = 0; i < items.length; i++) {
-        if (items[i].kind === "run_end") n++;
+        if (items[i] && items[i].run_id) newest = items[i].run_id;
       }
-      return n;
+      return newest;
     } catch (e) {
-      reportError(e, "run ends count failed");
-      return -1;
+      reportError(e, "resume baseline failed");
+      return null;
     }
   }
 
-  // waitForResume polls until a new run_end appears (conversation scope) or the
-  // run transcript grows (run scope) — the resumed run finished/progressed — or
-  // a timeout elapses (~60s). Resolves either way: the caller re-renders.
+  // resumeProgressed reports whether a conversation has moved past its baseline
+  // watermark: a run other than the baseline's newest run has stopped (completed,
+  // failed, cancelled, skipped, or paused on input-required). A still-"working"
+  // run does not count — the server emits a run_end for the pre-created resume
+  // run the moment an answer lands, and the prior paused run is flipped back to
+  // "working" on resume, neither of which is actual progress.
+  async function resumeProgressed(id, baseline) {
+    if (baseline === null) return false;
+    try {
+      var r = await fetch(scopeHistoryUrl(id));
+      if (!r.ok) return false;
+      var data = await r.json();
+      var items = data.items || [];
+      if (currentScopeIsRun()) return items.length > baseline;
+      var newestEnd = "";
+      var newestEndRun = "";
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (!it || it.kind !== "run_end") continue;
+        newestEnd = it.run_status || "";
+        newestEndRun = it.run_id || "";
+      }
+      if (!newestEndRun || newestEndRun === baseline) return false;
+      return !isActiveRunStatus(newestEnd);
+    } catch (e) {
+      reportError(e, "resume progress check failed");
+      return false;
+    }
+  }
+
+  // waitForResume polls until the resumed run progresses (conversation scope) or
+  // the run transcript grows (run scope) — or a timeout elapses (~60s).
+  // Resolves either way: the caller re-renders.
   function waitForResume(id, baseline) {
     return new Promise(function (resolve) {
       var attempts = 0;
       var maxAttempts = 40; // 40 * 1.5s
       var timer = setInterval(function () {
         attempts++;
-        countRunEnds(id)
-          .then(function (n) {
-            if ((baseline >= 0 && n > baseline) || attempts >= maxAttempts) {
+        resumeProgressed(id, baseline)
+          .then(function (progressed) {
+            if (progressed || attempts >= maxAttempts) {
               clearInterval(timer);
               resolve();
             }
