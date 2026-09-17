@@ -233,6 +233,16 @@ provider row carries the LiteLLM base URL. Env-gated on `E2E_OPENAI_API_KEY`
 (default base URL `http://litellm:4000/v1`); skips fast when the key is unset
 or the memory backend rejects the live-validated save.
 
+Scenario (agent proposal card): `agent-proposal-card.spec.ts` drives a chat turn
+where an agent calls `ask_user` with a structured `proposal` (kind `blueprint`)
+and asserts the gateway renders the reviewable proposal card — "Proposed
+changes" header + kind badge, the read-only "Object types" preview, the proposed
+type name, and the Accept/Reject answer controls. The ask_user tool pauses the
+run, so completion is detected on the `.proposal-card` in the DOM rather than a
+closed SSE stream. Env-gated on `E2E_SCENARIO_LLM_API_KEY`; skips fast on a run
+error, a missing card, or a summary-only degradation (non-deterministic model
+tool-use is annotated and skipped, never failed).
+
 Document extraction: `specs/documents/document-extraction-ui.spec.ts` uploads a
 document through the form and triggers extraction from the document detail page,
 asserting the PRG round-trip (`?uploaded=1` → `?extracted=1`) un-gated. A second
