@@ -1234,23 +1234,6 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   max-height: 48rem;
 }
 
-/* ---------- Toast countdown bar ---------- */
-/* width is driven by the inline animation-duration (per-toast duration); the
-   inline animation-play-state pauses it while hovered. */
-@keyframes toast-shrink {
-  from { width: 100%; }
-  to { width: 0; }
-}
-.toast-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  height: 3px;
-  background: currentColor;
-  opacity: 0.5;
-  animation: toast-shrink linear forwards;
-}
-
 /* ---------- PWA: standalone display-mode hooks ---------- */
 /* Installed launches ("Add to Home Screen" on iOS, installed on Android) run
    in a standalone window with no browser chrome. Future PWA-only styling —
@@ -1277,5 +1260,4 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   .memory-caret { animation: none; opacity: 0.6; }
   .memory-typing span { animation: none; }
   .memory-run-status[data-state="working"] .memory-run-status-dot { animation: none; }
-  .toast-bar { animation: none; }
 }

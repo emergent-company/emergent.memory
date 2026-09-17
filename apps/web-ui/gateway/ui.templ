@@ -79,7 +79,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<!-- Modal container -->
 			<div id="modal-container"></div>
 			<!-- Toast container -->
-			@toastQueue()
+			@ui.ToastQueueWithProps(ui.ToastQueueProps{Position: ui.ToastQueueBottomCenter, PauseOnHover: true, Countdown: true})
 			@spotlightSearch(agents)
 			<div class="flex h-screen overflow-hidden">
 				<input
