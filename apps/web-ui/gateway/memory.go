@@ -433,6 +433,22 @@ type ToolPolicy struct {
 	Disabled bool   `json:"disabled,omitempty"`
 }
 
+// ToolGroup is the server-computed capability group on an agent definition
+// (read-only: the gateway renders it, never derives it). Tools is the group's
+// FULL membership — the project catalog for the group unioned with the agent's
+// allowed and banned tools — so a fully disabled group still carries every
+// member. Enabled reports whether at least one member is currently allowed and
+// not banned. Policy is the stored group policy as "" (inherit), "allow",
+// "ask", or "deny".
+type ToolGroup struct {
+	ID          string   `json:"id"`
+	Label       string   `json:"label"`
+	Description string   `json:"description,omitempty"`
+	Policy      string   `json:"policy,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	Tools       []string `json:"tools"`
+}
+
 type AgentDefinition struct {
 	ID           string       `json:"id"`
 	ProjectID    string       `json:"projectId"`
@@ -449,20 +465,37 @@ type AgentDefinition struct {
 	BannedTools       []string              `json:"bannedTools,omitempty"`
 	ToolPolicies      map[string]ToolPolicy `json:"toolPolicies,omitempty"`
 	DefaultToolPolicy string                `json:"defaultToolPolicy,omitempty"`
-	Skills            []string              `json:"skills"`
-	Config            map[string]any        `json:"config"`
-	Delegation        *Delegation           `json:"delegation,omitempty"`
-	FlowType          string                `json:"flowType,omitempty"`
-	Visibility        string                `json:"visibility,omitempty"`
-	DispatchMode      string                `json:"dispatchMode,omitempty"`
-	Enabled           bool                  `json:"enabled"`
-	ToolCount         int                   `json:"toolCount,omitempty"`
-	CreatedAt         string                `json:"createdAt,omitempty"`
-	UpdatedAt         string                `json:"updatedAt,omitempty"`
+	// ToolGroups is the server-computed capability taxonomy for the Tools
+	// picker. Read-only: it is populated on GET, and sanitizeAgentWrite clears
+	// it before a create/update is serialized (group policies live under
+	// "@group:<id>" keys in ToolPolicies). Omitted when an older memory does not
+	// send it.
+	ToolGroups   []ToolGroup    `json:"toolGroups,omitempty"`
+	Skills       []string       `json:"skills"`
+	Config       map[string]any `json:"config"`
+	Delegation   *Delegation    `json:"delegation,omitempty"`
+	FlowType     string         `json:"flowType,omitempty"`
+	Visibility   string         `json:"visibility,omitempty"`
+	DispatchMode string         `json:"dispatchMode,omitempty"`
+	Enabled      bool           `json:"enabled"`
+	ToolCount    int            `json:"toolCount,omitempty"`
+	CreatedAt    string         `json:"createdAt,omitempty"`
+	UpdatedAt    string         `json:"updatedAt,omitempty"`
 	// UIConfig is the agent's user-picked appearance blob
 	// ({"icon":"<kebab-lucide-name>","color":"<CSS color>"}); absent/{} means no
 	// appearance. Parsed by agentUIOf; see agent_ui.go.
 	UIConfig json.RawMessage `json:"uiConfig,omitempty"`
+}
+
+// sanitizeAgentWrite clears server-computed, read-only fields from an agent
+// definition before it is sent to memory. ToolGroups is computed on read from
+// the stored policies + catalog; the gateway must never depend on it
+// round-tripping, so the write path drops it rather than relying on the server
+// to ignore an unknown field.
+func sanitizeAgentWrite(def *AgentDefinition) {
+	if def != nil {
+		def.ToolGroups = nil
+	}
 }
 
 // applyDelegation maps the gateway-only Delegation field onto memory's A2A

@@ -241,9 +241,47 @@ dispatching a tool, independent of the model's behaviour.
 - **Policy per tool** — `allow` (run silently), `ask` (intercept + require
   approval), `deny` (block). An agent definition carries `ToolPolicies`
   (per-tool overrides) and a `DefaultToolPolicy` (fallback for unlisted tools).
-- **UI** — agent → Settings → Tools: each tool row has an on/off toggle and a
-  policy dropdown (Inherit / Allow / Ask / Deny); a "Default approval" select
-  sits above the groups. The dropdown is disabled/dimmed while the tool is off.
+- **Policy per capability group** — memory groups tools by capability domain
+  (`Graph · Write`, `Schema · Migrate`, `Workspace · Execute`, …) and exposes
+  the catalog on the agent definition as `toolGroups` (`id`, `label`,
+  `description`, `policy`, `enabled`, `tools`). A group policy applies to every
+  member tool that has no explicit per-tool override — the statement a user
+  actually wants ("all destructive graph writes require approval") without
+  configuring each tool. Group policies are stored under reserved
+  `"@group:<id>"` keys in the existing `ToolPolicies` map, so there is no
+  schema migration. The gateway renders the server-computed catalog (it never
+  re-derives the taxonomy) and writes the group form fields back. `toolGroups`
+  is read-only and each group's `tools` is its **full membership** — the
+  project catalog for that group unioned with the agent's allowed and banned
+  tools — so a group the agent has fully disabled still reports every member
+  (`enabled: false`) and can be switched back on. The gateway strips the
+  computed `toolGroups` before serializing the definition back, so the write
+  path never depends on it round-tripping.
+- **Resolution order** — `tool_policies[tool]` (explicit override, wins) →
+  `tool_policies["@group:"+group]` (group policy) → `default_tool_policy`
+  (fallback). A tool in no known group falls through to the default; a group
+  with no stored entry (or `Inherit`) likewise falls through. All three levels
+  resolve at the single `AgentDefinition.effectiveToolPolicy` chokepoint.
+- **Enable/disable vs deny** — they are different things. The **group enable
+  switch** is a membership operation: off removes every member from `Tools` and
+  records it in `BannedTools` (a hard filter, so a later tool-list change cannot
+  silently re-enable it); on is the inverse. `Disabled` (`Deny` at the policy
+  level) is weaker — the tool stays in context and the executor rejects the call
+  with a structured error. Delegation-managed tools (`spawn_agents`,
+  `list_available_agents`) are never fanned out by a group switch; the
+  Delegation toggle owns them.
+- **UI** — agent → Settings → Tools: a "Default approval" select sits at the
+  top; tools render inside collapsible capability groups, each header carrying a
+  group enable switch and a policy dropdown (Inherit / Allow / Ask / Deny). The
+  MCP-server and relay-node listings are nested as sub-groups inside the
+  capability group that owns their tools, keeping their labels and the
+  agent-facing `<instance>_<tool>` relay names. Each tool row keeps its own
+  on/off toggle and policy dropdown (disabled/dimmed while the tool is off), and
+  shows what it inherits ("Inherits Graph · Write · Ask") unless it carries an
+  explicit override, which it shows instead. Groups with no member tools are not
+  rendered; a group with enabled members opens by default, idle groups collapse.
+  When memory reports no `toolGroups` the panel falls back to the previous
+  source-only grouping.
 - **Interception** — when an `ask`-policy tool is called, the executor pauses the
   run, emits an in-stream `approval` event, and records a pending
   `agent_tool_approvals` row. The gateway renders an approval card (tool + args)
