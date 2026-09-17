@@ -1,6 +1,6 @@
 # Tasks — refactor-webui-component-adoption
 
-Pure markup refactor: every item preserves rendered output. Run commands from `apps/web-ui/gateway` unless stated otherwise. Generated `*_templ.go` are gitignored — run `templ generate`, never stage the output.
+Pure markup refactor: every item preserves rendered output except two intentional, documented shell normalizations (migrated dialogs gain `hx-boost="false"` on the `<dialog>` root via `modalShell`; the two agent MCP endpoint lists move to `TableCard`'s standard card shell). Run commands from `apps/web-ui/gateway` unless stated otherwise. Generated `*_templ.go` are gitignored — run `templ generate`, never stage the output.
 
 ## 1 — EmptyDash dedup
 
@@ -18,11 +18,11 @@ Pure markup refactor: every item preserves rendered output. Run commands from `a
 
 ## 4 — Raw modal shells → modalShell
 
-- [x] 4.1 Convert `deriveVersionDialog` (`blueprints.templ`), `deriveWarningDialog` and `deriveBlueprintDialog` (`schema.templ`) to `ui.templ` `modalShell`, passing the `aria-labelledby`/`aria-describedby` via attrs. Preserve every id, `data-dialog-open`/`data-dialog-close` wiring, and the `data-requires-confirm` opener. Verify: `schema_ui_test.go` assertions (ids, `data-dialog-open`, `action=`) green.
+- [x] 4.1 Convert `deriveVersionDialog` (`blueprints.templ`), `deriveWarningDialog` and `deriveBlueprintDialog` (`schema.templ`) to `ui.templ` `modalShell`, passing the `aria-labelledby`/`aria-describedby` via attrs. Preserve every id, `data-dialog-open`/`data-dialog-close` wiring, and the `data-requires-confirm` opener. The dialogs now carry `hx-boost="false"` on the `<dialog>` root (modalShell's contract); behaviour is unchanged — the inner forms are `method="dialog"` close forms or already `hx-boost="false"`. Verify: `schema_ui_test.go` assertions (ids, `data-dialog-open`, `action=`) green.
 
 ## 5 — Raw bordered table shells → TableCard
 
-- [x] 5.1 Convert the `agent_mcp_endpoint.templ` key-list and session-list shells (`rounded-box border-base-200 border`) to `components.TableCard`, preserving `data-testid` (via attrs) and the `mt-4`/`mt-3` margin (via a wrapper). Keep the raw `<table class="table table-sm">` markup — the go-daisy `table.*` primitives would add a `w-full` and a nesting level, changing output. Verify: `agent_mcp_endpoint_handlers_test.go` list assertions green.
+- [x] 5.1 Convert the `agent_mcp_endpoint.templ` key-list and session-list shells (`rounded-box border-base-200 border`) to `components.TableCard`, normalizing them to the app's standard card shell (`card bg-base-100 card-border overflow-hidden shadow-sm` + `card-body p-0`). Preserve `data-testid` (via attrs) and the `mt-4`/`mt-3` margin (via a wrapper). Keep the raw `<table class="table table-sm">` markup — the go-daisy `table.*` primitives would add a `w-full` and a nesting level, changing output. Verify: `agent_mcp_endpoint_handlers_test.go` list assertions green.
 
 ## 6 — ToggleField adoption (skipped where shape doesn't fit)
 

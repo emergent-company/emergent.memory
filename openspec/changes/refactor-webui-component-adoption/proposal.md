@@ -15,13 +15,13 @@ Each remaining copy is a drift generator. This change finishes the adoption so e
 
 ## What Changes
 
-Nine edits, all markup-preserving (no route, handler, schema, or user-visible behavior change):
+Nine edits, all behavior-preserving (no route, handler, schema, or user-visible behavior change). Markup is preserved except for two intentional shell normalizations — migrated dialogs gain `hx-boost="false"` on the `<dialog>` root via `modalShell`, and the two agent MCP endpoint lists move to `TableCard`'s standard card shell (both documented in the delta spec):
 
 1. Delete the local `emptyDash` and repoint its four callers at `components.EmptyDash`.
 2. Add `components.ConfirmIcon(icon string)` (defaults to the trash glyph via `cmp.Or`) and replace the six inline icon circles.
 3. Add `components.MetaGrid(opts ...MetaGridOpts)` and replace the four definition-list grids, preserving each grid's exact class order and gap.
-4. Convert the three raw `<dialog class="modal">` shells to `ui.templ` `modalShell`, preserving ids and `aria-*` wiring.
-5. Convert the two raw bordered table shells in `agent_mcp_endpoint.templ` to `components.TableCard`, preserving `data-testid` and the margin.
+4. Convert the three raw `<dialog class="modal">` shells to `ui.templ` `modalShell`, preserving ids and `aria-*` wiring. These dialogs now carry `hx-boost="false"` on the `<dialog>` root — `modalShell`'s deliberate, pre-existing contract — with unchanged behaviour (their inner forms are `method="dialog"` close forms or already carry `hx-boost="false"`).
+5. Convert the two raw bordered table shells in `agent_mcp_endpoint.templ` to `components.TableCard`, normalizing them to the app's standard card shell (`card bg-base-100 card-border overflow-hidden shadow-sm` + `card-body p-0`); `data-testid` and the margin are preserved.
 6. Adopt `components.ToggleField` where its shape fits — the four audited toggle rows are all bare checkboxes (form-submit, property-editor, or `data-*` toolbar toggles) and stay local (see tasks).
 7. Convert the two raw `<optgroup>` loops in `migrations.templ` to `components.SelectOptionGroups` via a call-site adapter.
 8. Convert the raw "Revoked" `@ui.Badge` in `api_tokens.templ` to `components.StatusBadge`.
@@ -35,7 +35,7 @@ None.
 
 ### Modified Capabilities
 
-- `web-ui-components`: extends the shared component package with `ConfirmIcon` and `MetaGrid`, and finishes adoption of the already-shared `EmptyDash`, `TableCard`, `modalShell`, `StatusBadge`, and `SelectOptionGroups`. No capability behavior changes; the delta records only the newly single-sourced markup and the no-regression requirement.
+- `web-ui-components`: extends the shared component package with `ConfirmIcon` and `MetaGrid`, and finishes adoption of the already-shared `EmptyDash`, `TableCard`, `modalShell`, `StatusBadge`, and `SelectOptionGroups`. No capability behavior changes; the delta records the newly single-sourced markup, the two documented shell normalizations (`modalShell`'s `hx-boost="false"` and `TableCard`'s standard card shell), and the no-regression requirement.
 
 ## Impact
 

@@ -44,12 +44,27 @@ The last hand-rolled copies of already-shared patterns SHALL be replaced by call
 
 ### Requirement: Adoption preserves rendered output
 
-Adopting a shared component SHALL NOT change rendered output. Where a component's fixed shape does not fit a call site (bare checkbox toggles, a bordered settings grid that carries extra classes), the call site SHALL remain local rather than change its markup.
+Adopting a shared component SHALL preserve every id, `data-testid`, `aria-*` attribute, `data-dialog-open`/`data-dialog-close` wiring, form `action`/`method`, and submit behaviour. Where a component's fixed shape does not fit a call site (bare checkbox toggles, a bordered settings grid that carries extra classes), the call site SHALL remain local rather than change its markup.
 
-#### Scenario: Page markup is unchanged
+Two shell normalizations are intentional and documented, not regressions:
+
+- Migrated dialog shells render through `modalShell`, which always emits `hx-boost="false"` on the `<dialog>` root — `modalShell`'s deliberate, pre-existing contract (locked by `TestRefactorOutputExact`). The affected dialogs' behaviour is unchanged: their inner forms are `method="dialog"` close forms or already carry `hx-boost="false"`.
+- The two agent MCP endpoint lists render through `TableCard`'s standard card shell (`card bg-base-100 card-border overflow-hidden shadow-sm` + `card-body p-0`) instead of the hand-rolled `rounded-box border-base-200 border`; their `data-testid` and margin are preserved.
+
+#### Scenario: Identity, ARIA, and form wiring are unchanged
 
 - **WHEN** an affected page is rendered after adoption
-- **THEN** its markup matches the pre-adoption markup (ids, `data-testid`, `aria-*`, `data-dialog-open`/`data-dialog-close`, and form actions are preserved)
+- **THEN** its ids, `data-testid`, `aria-*`, `data-dialog-open`/`data-dialog-close`, and form `action`/`method` match the pre-adoption markup
+
+#### Scenario: Migrated dialog shells carry hx-boost="false"
+
+- **WHEN** `deriveVersionDialog`, `deriveWarningDialog`, or `deriveBlueprintDialog` is rendered
+- **THEN** each renders through `modalShell` and carries `hx-boost="false"` on its `<dialog>` root, with its `aria-labelledby`/`aria-describedby` preserved (the exact `modalShell` output is locked by `TestRefactorOutputExact`)
+
+#### Scenario: Agent MCP endpoint lists render the standard card shell
+
+- **WHEN** the agent MCP key list or session list is rendered
+- **THEN** each renders through `TableCard`'s standard card shell (`card bg-base-100 card-border overflow-hidden shadow-sm`, `card-body p-0`) and keeps its `data-testid` (`agent-mcp-key-list` / `agent-mcp-session-list`) and margin
 
 #### Scenario: Existing render tests pass
 
