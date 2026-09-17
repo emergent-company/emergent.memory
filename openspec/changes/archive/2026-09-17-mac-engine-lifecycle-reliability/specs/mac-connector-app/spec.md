@@ -87,6 +87,11 @@ reconcile SHALL happen after the connector CLI has rewritten the engine config
 for the new scope. While a scope change is in flight, transitions of the
 connected-project id SHALL NOT each trigger their own reconcile. A config
 belonging to the previous scope SHALL never be used to start the engine.
+Overlapping scope changes SHALL settle in the order they began, each waiting for
+the previous one to settle, so that the last change's config rewrite and
+reconcile are the ones that stand. The project reload that accompanies an
+account change SHALL NOT reconcile the engine a second time; the scope swap's
+own settle is the single reconcile.
 
 #### Scenario: Switching accounts reconciles once
 
@@ -104,6 +109,18 @@ belonging to the previous scope SHALL never be used to start the engine.
 - **WHEN** a second account change begins before the first has settled
 - **THEN** connected-project-id transitions remain suppressed until the last
   scope change settles, and the final reconcile reflects the settled state
+
+#### Scenario: Overlapping scope changes settle in order
+
+- **WHEN** two account changes overlap
+- **THEN** the second settles after the first, and the last change's config
+  rewrite and reconcile are the ones that stand
+
+#### Scenario: The account-change reload does not double-reconcile
+
+- **WHEN** the active account changes
+- **THEN** the engine is reconciled by the scope swap's settle alone, and the
+  accompanying project reload does not reconcile it again
 
 #### Scenario: Direct connect and disconnect still reconcile
 

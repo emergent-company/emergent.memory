@@ -8,7 +8,20 @@ Lets a Memory user run the connector engine from a small native menu-bar Mac app
 
 ### Requirement: Embed and supervise the connector engine
 
-The app SHALL bundle the connector engine binary in its resources and run it as a direct child process (not via launchd or LaunchServices), restarting it with a circuit breaker if it exits, and stopping it cleanly (SIGTERM) when the app quits.
+The app SHALL bundle the connector engine binary in its resources and run it as a
+direct child process (not via launchd or LaunchServices), restarting it with a
+circuit breaker if it exits, and stopping it cleanly (SIGTERM) when the app
+quits. The engine SHALL run only when the on-disk engine config binds the
+**connected** project — and, when the active account's server is known, that
+server. A config that exists but binds a different project SHALL be treated as a
+configuration error: the engine is not started (or is stopped if running) and a
+message naming both project ids is reported. The circuit breaker's window SHALL
+reset only for a restart caused by a genuine configuration change, so an
+app-driven stop/start oscillation can still trip it. The app SHALL refuse to
+spawn when the loopback management port is already held by another process, and
+SHALL surface the engine's own management-port bind failure rather than leaving
+it only in a log file. Start and stop transitions SHALL be logged only when a
+process is actually started or terminated.
 
 #### Scenario: App launch starts the engine
 
@@ -30,6 +43,47 @@ The app SHALL bundle the connector engine binary in its resources and run it as 
 - **WHEN** the engine writes to stdout/stderr
 - **THEN** the app streams those lines to its log file
 
+#### Scenario: Config binds a different project
+
+- **WHEN** a project is connected and the engine config on disk binds a
+  different project id (or an empty one)
+- **THEN** the engine is not started, and a configuration error naming the
+  connected and configured project ids is reported
+
+#### Scenario: Config binds a different server
+
+- **WHEN** the config's project matches but its server URL does not match the
+  active account's server, and the expected server is known
+- **THEN** the engine is not started, and the same configuration error is reported
+
+#### Scenario: Config matches the connected project
+
+- **WHEN** the config's project id matches the connected project, and either no
+  expected server was supplied or the server URLs match
+- **THEN** the engine runs
+
+#### Scenario: Circuit breaker bounds an oscillation
+
+- **WHEN** the engine exits unexpectedly several times within the breaker window
+  without an intervening configuration change
+- **THEN** the app stops restarting it and reports that auto-restart stopped
+
+#### Scenario: Management port already held
+
+- **WHEN** the app has no live engine child and something else is already
+  listening on the loopback management port
+- **THEN** it does not spawn a second engine, and reports that the port is in use
+
+#### Scenario: Engine cannot bind the management port
+
+- **WHEN** the engine's stderr reports the management API could not bind
+- **THEN** the app surfaces that failure instead of leaving it only in the log file
+
+#### Scenario: No process stopped
+
+- **WHEN** the app stops an engine that is not running
+- **THEN** no stop transition is logged
+
 ### Requirement: Require sign-in and connect a project
 
 The app SHALL require connector CLI sign-in before the connector can run and
@@ -41,7 +95,8 @@ and per-project profiles.
 #### Scenario: Signed out
 
 - **WHEN** no account is signed in
-- **THEN** the Connection page shows the sign-in affordance and offers no token entry
+- **THEN** the Connection page shows a single prominent sign-in action for the
+  Production environment and offers no token entry and no environment choice
 
 #### Scenario: Connect a project
 
@@ -324,14 +379,157 @@ The app SHALL show the connected Memory project and organisation by NAME (not ra
 
 ### Requirement: Account control in the window header
 
-The window header SHALL show an account control at the top right: a properly padded "Sign in" button when not effectively signed in, and — when effectively signed in — a control that opens the account switcher (see "Accounts are listed by email and switching uses the effective signed-in state").
+The window header SHALL show an account control at the top right: a properly padded "Sign in" button when not effectively signed in, and — when effectively signed in — a control that opens the account switcher (see "Accounts are listed by email and switching uses the effective signed-in state"). The signed-out "Sign in" button SHALL start sign-in directly for the Production environment and SHALL NOT present an environment choice.
 
 #### Scenario: Signed out
 
 - **WHEN** the user is not effectively signed in
-- **THEN** the top-right shows a padded, right-aligned "Sign in" control that starts sign-in
+- **THEN** the top-right shows a padded, right-aligned "Sign in" control that starts Production sign-in in one click, with no Prod/Dev menu or picker
 
 #### Scenario: Signed in
 
 - **WHEN** the user is effectively signed in
 - **THEN** the top-right control opens the account switcher, listing the signed-in accounts by email with the active account checkmarked
+
+### Requirement: Single Production sign-in on every signed-out surface
+
+Every surface that can start a sign-in SHALL offer exactly one prominent
+sign-in action, and that action SHALL target the Production environment. No
+signed-out surface SHALL render two sign-in buttons, an environment picker, or
+an environment menu. The window header, the menu-bar popover, the Connection
+page, and the Project & Account page are all covered by this rule; the
+environment that any surface offers SHALL be resolved from one shared
+per-surface policy rather than enumerated ad hoc in each view.
+
+#### Scenario: Menu-bar popover while signed out
+
+- **WHEN** the user left-clicks the menu-bar item with no account signed in
+- **THEN** the popover shows one prominent sign-in button and no second sign-in
+  button and no environment choice
+
+#### Scenario: Connection page while signed out
+
+- **WHEN** the Connection page renders with no account signed in
+- **THEN** it shows one prominent sign-in button, no segmented Prod/Dev picker,
+  and no environment menu
+
+#### Scenario: Adding an account
+
+- **WHEN** the user asks to add an account from an account menu while already
+  signed in
+- **THEN** the action signs in to Production directly and offers no environment
+  choice
+
+#### Scenario: A surface cannot opt itself into Development
+
+- **WHEN** the per-surface sign-in policy is queried for any surface other than
+  About
+- **THEN** it returns Production only
+
+### Requirement: Development sign-in is available only from the About page
+
+The app SHALL offer sign-in to the Development environment only from the About
+page, and only as a non-prominent, secondary control accompanied by text naming
+the environment it targets. No other surface — the window header, the menu-bar
+popover, the Connection page, the Project & Account page, the Dashboard, or the
+MCP/permissions pages — SHALL offer a Development sign-in action. Development
+remains a first-class environment for accounts that are already signed in:
+existing Dev accounts SHALL still appear in the account switcher with their
+`Dev` badge, remain selectable, and keep their connector session.
+
+The About-only rule governs *selecting* an environment for a new sign-in.
+Re-authentication of an existing account — including an expired Dev account —
+SHALL target that account's own environment and is not an environment choice;
+the Project & Account page and the window project switcher SHALL re-auth against
+the active account's environment regardless of whether it is Production or
+Development.
+
+#### Scenario: About page offers Development
+
+- **WHEN** the user opens the About page
+- **THEN** a non-prominent control offers sign-in to the Development
+  environment, labelled so the target environment is unambiguous, and it is the
+  only place in the app that offers it
+
+#### Scenario: Other surfaces do not offer Development
+
+- **WHEN** the user is signed out and looks at the window header, the menu-bar
+  popover, the Connection page, or the Project & Account page
+- **THEN** none of them offers a Development sign-in action
+
+#### Scenario: A signed-in Dev account keeps working
+
+- **WHEN** an account signed in to the Development environment exists
+- **THEN** it is still listed by email with its `Dev` badge, remains switchable,
+  and its session is untouched by this change
+
+### Requirement: Reconcile the engine once per account scope change
+
+Changing the active account SHALL reconcile the engine exactly once, and that
+reconcile SHALL happen after the connector CLI has rewritten the engine config
+for the new scope. While a scope change is in flight, transitions of the
+connected-project id SHALL NOT each trigger their own reconcile. A config
+belonging to the previous scope SHALL never be used to start the engine.
+Overlapping scope changes SHALL settle in the order they began, each waiting for
+the previous one to settle, so that the last change's config rewrite and
+reconcile are the ones that stand. The project reload that accompanies an
+account change SHALL NOT reconcile the engine a second time; the scope swap's
+own settle is the single reconcile.
+
+#### Scenario: Switching accounts reconciles once
+
+- **WHEN** the active account changes and the new scope's config has been written
+- **THEN** the engine is reconciled once — not once per connected-project-id transition
+
+#### Scenario: Stale config is never started
+
+- **WHEN** the connected-project id changes during a scope swap, before the new
+  config has been written
+- **THEN** the engine is not started against the previous scope's config
+
+#### Scenario: Overlapping scope changes stay suppressed
+
+- **WHEN** a second account change begins before the first has settled
+- **THEN** connected-project-id transitions remain suppressed until the last
+  scope change settles, and the final reconcile reflects the settled state
+
+#### Scenario: Overlapping scope changes settle in order
+
+- **WHEN** two account changes overlap
+- **THEN** the second settles after the first, and the last change's config
+  rewrite and reconcile are the ones that stand
+
+#### Scenario: The account-change reload does not double-reconcile
+
+- **WHEN** the active account changes
+- **THEN** the engine is reconciled by the scope swap's settle alone, and the
+  accompanying project reload does not reconcile it again
+
+#### Scenario: Direct connect and disconnect still reconcile
+
+- **WHEN** the user connects or disconnects a project with no account change in flight
+- **THEN** the engine is reconciled as before
+
+### Requirement: Engine lifecycle is observable in the log
+
+The app SHALL log the account-scope and engine-lifecycle transitions needed to
+tell an autonomous reconcile loop apart from user-driven sign-in, account switch,
+and sign-out. Each account change SHALL be logged with its source, and each scope
+apply with the account, its environment, and the previously connected project.
+These lines SHALL be distinguishable from the engine's own output.
+
+#### Scenario: Account change is attributable
+
+- **WHEN** the active account changes (sign-in, switch, or sign-out)
+- **THEN** the log records the change with its source and the resulting account
+
+#### Scenario: Scope apply is attributable
+
+- **WHEN** a scope is applied for an account
+- **THEN** the log records the account, its environment, and the previously
+  connected project id
+
+#### Scenario: Autonomous churn is distinguishable
+
+- **WHEN** scope applies appear in the log without a preceding account-change line
+- **THEN** the reconcile churn can be identified as not user-driven
