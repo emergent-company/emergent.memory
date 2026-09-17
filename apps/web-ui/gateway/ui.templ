@@ -593,10 +593,28 @@ type detailHeaderOpts struct {
 	Bare bool
 	// SubtitleFull renders the subtitle at full width (no max-w-2xl).
 	SubtitleFull bool
+	// Leading renders before the title block on the same flex row — e.g. an
+	// agent icon tile. Nil (the default) keeps the header markup byte-identical
+	// for every existing caller.
+	Leading templ.Component
 	// TitleAdornment renders inline next to the h1 (same flex line), e.g. a
 	// version badge. Nil (the default) keeps the h1 markup byte-identical for
 	// every existing caller.
 	TitleAdornment templ.Component
+}
+
+// detailHeaderTitleRow wraps a detail-header title column in a leading row when
+// a leading component (e.g. an agent icon tile) is supplied. Without one it
+// renders its children unchanged, so every existing header stays byte-identical.
+templ detailHeaderTitleRow(leading templ.Component) {
+	if leading != nil {
+		<div class="flex items-center gap-3">
+			@leading
+			{ children... }
+		</div>
+	} else {
+		{ children... }
+	}
 }
 
 // detailHeader renders a detail-page header: breadcrumb trail (scrolls on
@@ -636,36 +654,40 @@ templ detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, 
 					}
 				}}
 				if o.Dashboard {
-					<div>
-						if o.TitleAdornment != nil {
-							<div class="flex flex-wrap items-center gap-2">
+					@detailHeaderTitleRow(o.Leading) {
+						<div>
+							if o.TitleAdornment != nil {
+								<div class="flex flex-wrap items-center gap-2">
+									<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+									@o.TitleAdornment
+								</div>
+							} else {
 								<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-								@o.TitleAdornment
-							</div>
-						} else {
-							<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-						}
-						if subtitle != "" {
-							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
-						}
-					</div>
+							}
+							if subtitle != "" {
+								<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
+							}
+						</div>
+					}
 				} else {
-					<div class="min-w-0">
-						if kicker != "" {
-							@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
-						}
-						if o.TitleAdornment != nil {
-							<div class="flex flex-wrap items-center gap-2">
+					@detailHeaderTitleRow(o.Leading) {
+						<div class="min-w-0">
+							if kicker != "" {
+								@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
+							}
+							if o.TitleAdornment != nil {
+								<div class="flex flex-wrap items-center gap-2">
+									<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
+									@o.TitleAdornment
+								</div>
+							} else {
 								<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-								@o.TitleAdornment
-							</div>
-						} else {
-							<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-						}
-						if subtitle != "" {
-							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
-						}
-					</div>
+							}
+							if subtitle != "" {
+								<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
+							}
+						</div>
+					}
 				}
 				{ children... }
 			</div>

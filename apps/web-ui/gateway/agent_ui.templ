@@ -47,12 +47,12 @@ templ agentNameChip(label string, variant ui.BadgeIntent, icon string, color str
 	}
 }
 
-// agentTitleGlyph is a small inline agent glyph for a detail-page title
-// adornment: just the agent icon, tinted with its color when one is declared.
-// Callers pass it as detailHeaderOpts.TitleAdornment only when an appearance
-// exists, so an appearance-less agent's header markup is unchanged.
-templ agentTitleGlyph(icon string, color string) {
-	<span class="inline-flex shrink-0 items-center" style={ typeColorStyle(color) }>
-		@agentGlyph(icon, "size-5", "text-xl")
+// agentInlineGlyph renders an agent's icon as a bare inline glyph — no tile, no
+// border, no badge — for tight meta rows where the agent name is small text
+// (e.g. the chat session rail). A declared color tints the glyph; without one
+// it stays the neutral muted bot, matching the generic icon it replaces.
+templ agentInlineGlyph(icon string, color string) {
+	<span class={ "inline-flex shrink-0 items-center", templ.KV("text-base-content/40", color == "") } style={ typeColorStyle(color) }>
+		@agentGlyph(icon, "size-4", "text-base")
 	</span>
 }
