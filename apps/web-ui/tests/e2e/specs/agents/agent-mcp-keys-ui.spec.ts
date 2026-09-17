@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { expectAppPage } from '../../helpers/page';
 import { createAgentViaModal } from '../../helpers/agents';
 import { memoryAuthHeaders } from '../../helpers/objects';
+import { readBootstrap } from '../../helpers/bootstrap';
 import { STORAGE_STATE } from '../../constants/storage';
 
 // Agent-scoped MCP endpoint UI (gateway/agent_mcp_endpoint.templ +
@@ -41,16 +42,21 @@ interface AgentMCPKeyRow {
 let agentId = '';
 let agentName = '';
 let endpointId = '';
+let runtimeAgentId = '';
 let backendReady = true;
 let backendGateReason = '';
 
 /**
  * Probe whether the upstream memory backend exposes the agent MCP endpoint API.
- * A POST to the route with a placeholder agent id answers with a domain error
- * when the route exists, and with Echo's generic `not_found` when it does not —
- * a side-effect-free way to distinguish "route missing" from "agent missing".
- * Any failure to classify assumes support, so a real feature gap fails loudly
- * rather than being masked.
+ * The route is auth-gated, so a POST to it WITHOUT credentials answers with
+ * Echo's auth error (401 missing_token) before it ever inspects the path
+ * params, while an unregistered route falls through to Echo's generic 404 —
+ * a side-effect-free way to distinguish "route missing" from "route present".
+ * Any non-404 status proves the route matched; only 404 means it is absent.
+ * (The old authed probe with a placeholder agent id was ambiguous: the app's
+ * "agent not found" 404 shares Echo's `not_found` error shape.) Any failure to
+ * classify assumes support, so a real feature gap fails loudly rather than
+ * being masked.
  */
 async function probeAgentMCPBackend(page: Page): Promise<{ ok: boolean; reason: string }> {
   let version = 'unknown';
@@ -61,26 +67,24 @@ async function probeAgentMCPBackend(page: Page): Promise<{ ok: boolean; reason: 
     // best-effort only
   }
   try {
-    const headers = await memoryAuthHeaders(page);
     const resp = await page.request.post(
-      `${MEMORY_API_URL}/api/projects/${headers['X-Project-ID']}/agents/00000000-0000-0000-0000-000000000000/mcp-endpoint`,
-      { headers, failOnStatusCode: false },
+      `${MEMORY_API_URL}/api/projects/00000000-0000-0000-0000-000000000000/agents/00000000-0000-0000-0000-000000000000/mcp-endpoint`,
+      { failOnStatusCode: false },
     );
-    if (resp.status() === 404) {
-      const body = (await resp.json().catch(() => ({}))) as { error?: { code?: string } };
-      if (body?.error?.code === 'not_found') {
-        return {
-          ok: false,
-          reason:
-            `the memory backend behind the gateway (${MEMORY_API_URL}, version ${version}) does not ` +
-            'expose the agent MCP endpoint API yet: POST ' +
-            '/api/projects/:projectId/agents/:agentId/mcp-endpoint answers 404 not_found, so the ' +
-            'endpoint/key/session lifecycle cannot run. Deploy a backend that contains the ' +
-            'agent-scoped endpoint routes, then re-run this spec.',
-        };
-      }
+    // Route matched → anything except Echo's 404. Unauthenticated, the auth
+    // middleware rejects with 401 before the project/agent params are read.
+    if (resp.status() !== 404) {
+      return { ok: true, reason: '' };
     }
-    return { ok: true, reason: '' };
+    return {
+      ok: false,
+      reason:
+        `the memory backend behind the gateway (${MEMORY_API_URL}, version ${version}) does not ` +
+        'expose the agent MCP endpoint API yet: an unauthenticated POST to ' +
+        '/api/projects/:projectId/agents/:agentId/mcp-endpoint answers 404 not_found, so the ' +
+        'endpoint/key/session lifecycle cannot run. Deploy a backend that contains the ' +
+        'agent-scoped endpoint routes, then re-run this spec.',
+    };
   } catch {
     return { ok: true, reason: '' };
   }
@@ -93,6 +97,62 @@ function requireAgentMCPBackend(): void {
   // reports and not only on the console.
   test.info().annotations.push({ type: 'skipped-backend', description: backendGateReason });
   test.skip(true, backendGateReason);
+}
+
+/**
+ * Materialize a runtime agent for the agent definition so the per-agent MCP
+ * endpoint write paths can resolve it. The UI "New agent" flow creates only an
+ * agent DEFINITION; the endpoint surface requires a runtime agent linked to it
+ * (resolveAgentShareTarget → FindAgentRefsByDefinitionID) or every write answers
+ * 422 "has no runtime agent in this project yet". Creates the runtime agent via
+ * the real API (POST /api/projects/:projectId/agents) linking agentDefinitionId,
+ * mirroring the spawn path (agents/coordination_tools.go). Idempotent: reuses an
+ * existing runtime agent already linked to the definition rather than failing.
+ */
+async function materializeRuntimeAgent(page: Page, agentDefinitionId: string): Promise<string> {
+  const projectId = readBootstrap()?.projectId;
+  if (!projectId) {
+    throw new Error('materializeRuntimeAgent: bootstrap state has no projectId');
+  }
+  const headers = await memoryAuthHeaders(page);
+
+  // Reuse an existing runtime agent linked to this definition (idempotent).
+  const list = await page.request.get(`${MEMORY_API_URL}/api/projects/${projectId}/agents`, {
+    headers,
+    failOnStatusCode: false,
+  });
+  if (list.ok()) {
+    const body = (await list.json().catch(() => ({}))) as {
+      data?: Array<{ id: string; agentDefinitionId?: string | null }>;
+    };
+    const existing = (body.data ?? []).find((a) => a.agentDefinitionId === agentDefinitionId);
+    if (existing) return existing.id;
+  }
+
+  const resp = await page.request.post(`${MEMORY_API_URL}/api/projects/${projectId}/agents`, {
+    headers,
+    data: {
+      projectId,
+      name: `Runtime agent for ${agentName}`,
+      strategyType: 'definition',
+      triggerType: 'manual',
+      cronSchedule: '0 0 1 1 *',
+      enabled: true,
+      agentDefinitionId: agentDefinitionId,
+    },
+    failOnStatusCode: false,
+  });
+  if (!resp.ok()) {
+    throw new Error(
+      `materializeRuntimeAgent: POST /api/projects/${projectId}/agents failed ` +
+        `(HTTP ${resp.status()}): ${await resp.text()}`,
+    );
+  }
+  const created = (await resp.json()) as { data?: { id: string } };
+  if (!created.data?.id) {
+    throw new Error(`materializeRuntimeAgent: no agent id in response: ${JSON.stringify(created)}`);
+  }
+  return created.data.id;
 }
 
 /** The endpoint's keys via the gateway JSON surface (metadata only). */
@@ -152,6 +212,9 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
       const probe = await probeAgentMCPBackend(page);
       backendReady = probe.ok;
       backendGateReason = probe.reason;
+      if (backendReady) {
+        runtimeAgentId = await materializeRuntimeAgent(page, agentId);
+      }
     } finally {
       await context.close();
     }
@@ -170,6 +233,20 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
           await page.request.delete(`/api/agent-mcp-keys/${k.id}`).catch(() => {});
         }
         await page.request.delete(`/api/agent-mcp-endpoints/${endpointId}`).catch(() => {});
+      }
+      // Remove the materialized runtime agent (the definition's FK is ON DELETE
+      // SET NULL, so deleting the definition alone would orphan it), then the
+      // definition itself. Best-effort so a failing assertion cannot strand rows.
+      try {
+        const projectId = readBootstrap()?.projectId;
+        if (runtimeAgentId && projectId) {
+          await page.request.delete(
+            `${MEMORY_API_URL}/api/projects/${projectId}/agents/${runtimeAgentId}`,
+            { headers: await memoryAuthHeaders(page), failOnStatusCode: false },
+          );
+        }
+      } catch {
+        // Best-effort only.
       }
       await page.request.delete(`/api/agents/${agentId}`).catch(() => {});
     } finally {
