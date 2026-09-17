@@ -25,6 +25,7 @@ type mockProvider struct {
 	supportsSnapshots bool
 	createCount       atomic.Int64
 	destroyCount      atomic.Int64
+	healthCount       atomic.Int64
 }
 
 func (m *mockProvider) Create(_ context.Context, _ *CreateContainerRequest) (*CreateContainerResult, error) {
@@ -75,6 +76,7 @@ func (m *mockProvider) CreateFromSnapshot(_ context.Context, snapshotID string, 
 	return &CreateContainerResult{ProviderID: id}, nil
 }
 func (m *mockProvider) Health(_ context.Context) (*HealthStatus, error) {
+	m.healthCount.Add(1)
 	return &HealthStatus{Healthy: m.healthy, Message: m.name + " health"}, nil
 }
 func (m *mockProvider) Capabilities() *ProviderCapabilities {

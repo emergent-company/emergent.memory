@@ -15,7 +15,7 @@
         "license": {
             "name": "Proprietary"
         },
-        "version": "0.80.0"
+        "version": "0.82.0"
     },
     "host": "localhost:5300",
     "basePath": "/",
@@ -21507,6 +21507,12 @@
                         "type": "string"
                     }
                 },
+                "uiConfig": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "updatedAt": {
                     "type": "string"
                 },
@@ -21561,6 +21567,12 @@
                 },
                 "toolCount": {
                     "type": "integer"
+                },
+                "uiConfig": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "updatedAt": {
                     "type": "string"
@@ -28947,6 +28959,9 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "registered": {
+                    "type": "boolean"
                 },
                 "type": {
                     "$ref": "#/definitions/domain_sandbox.ProviderType"

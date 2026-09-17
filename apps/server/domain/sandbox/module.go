@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -141,6 +142,7 @@ func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, cfg *config.
 			}
 			gvisorProvider, err := NewGVisorProvider(log, gvisorCfg)
 			if err != nil {
+				orchestrator.MarkUnavailable(ProviderGVisor, "gVisor (Docker)", fmt.Sprintf("provider construction failed: %v", err))
 				log.Warn("failed to create gVisor provider", "error", err)
 			} else {
 				orchestrator.RegisterProvider(ProviderGVisor, gvisorProvider)
@@ -149,10 +151,12 @@ func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, cfg *config.
 			// Register Firecracker provider (requires KVM — skip if unavailable)
 			fcProvider, err := NewFirecrackerProvider(log, &FirecrackerProviderConfig{})
 			if err != nil {
+				orchestrator.MarkUnavailable(ProviderFirecracker, "Firecracker", err.Error())
 				log.Warn("failed to create Firecracker provider", "error", err)
 			} else if fcProvider.IsKVMAvailable() {
 				orchestrator.RegisterProvider(ProviderFirecracker, fcProvider)
 			} else {
+				orchestrator.MarkUnavailable(ProviderFirecracker, "Firecracker", "KVM not available on this host")
 				log.Info("Firecracker provider not registered — KVM not available")
 			}
 
@@ -162,11 +166,13 @@ func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, cfg *config.
 					APIKey: cfg.Sandbox.E2BAPIKey,
 				})
 				if err != nil {
+					orchestrator.MarkUnavailable(ProviderE2B, "E2B", err.Error())
 					log.Warn("failed to create E2B provider", "error", err)
 				} else {
 					orchestrator.RegisterProvider(ProviderE2B, e2bProvider)
 				}
 			} else {
+				orchestrator.MarkUnavailable(ProviderE2B, "E2B", "E2B_API_KEY not set")
 				log.Info("E2B provider not registered — E2B_API_KEY not set")
 			}
 
