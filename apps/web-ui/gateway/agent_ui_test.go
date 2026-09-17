@@ -273,7 +273,7 @@ func TestRenderAgentsPageSkillsPicker(t *testing.T) {
 		{Name: "recall-memory"},
 	}
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, AgentsPage(agents, nil, skills, nil))
+	html := renderHTML(t, AgentsPage(agents, nil, skills, "", nil))
 	for _, want := range []string{
 		`name="skill"`, `value="summarize-email"`, `value="recall-memory"`,
 		"summarize-email", "Condenses threads", "recall-memory",
@@ -294,7 +294,7 @@ func TestRenderAgentsPageSkillsPicker(t *testing.T) {
 	}
 
 	// no skills → empty note with a link, no checkboxes
-	htmlEmpty := renderHTML(t, AgentsPage(agents, nil, nil, nil))
+	htmlEmpty := renderHTML(t, AgentsPage(agents, nil, nil, "", nil))
 	if !strings.Contains(htmlEmpty, "No skills yet") || !strings.Contains(htmlEmpty, `href="/skills"`) {
 		t.Error("empty skill state missing")
 	}
@@ -352,7 +352,7 @@ func TestAgentModelDisplay(t *testing.T) {
 		{ID: "a2", Name: "milo"},
 		{ID: "a3", Name: "reggie"},
 	}
-	html := renderHTML(t, AgentsPage(agents, nil, nil, nil))
+	html := renderHTML(t, AgentsPage(agents, nil, nil, "", nil))
 
 	// both breakpoint wrappers present: table desktop-only, cards mobile-only.
 	for _, want := range []string{`class="hidden md:block"`, `class="md:hidden"`} {
@@ -545,6 +545,22 @@ func TestAgentModelWarnings(t *testing.T) {
 		if strings.Contains(hs, bad) {
 			t.Error("settings must not warn when a default model resolves")
 		}
+	}
+
+	// settings: the Auto option names the resolved default when the agent has
+	// no explicit model, and stays generic when nothing resolves.
+	if !strings.Contains(hs, `<option value="">Auto — openai/gpt-4o (default)</option>`) {
+		t.Error("settings Auto option should name the resolved default model")
+	}
+	hs = settings(noModel, "", true, []string{"openai"})
+	if !strings.Contains(hs, `<option value="">Auto — default model</option>`) {
+		t.Error("settings Auto option should stay generic when no default resolves")
+	}
+	// an explicitly pinned agent keeps the generic label (its model is the
+	// selected catalog option, not the Auto fallback).
+	hs = settings(pinned, "openai/gpt-4o", true, []string{"openai"})
+	if !strings.Contains(hs, `<option value="">Auto — default model</option>`) {
+		t.Error("settings Auto option should stay generic for a pinned agent")
 	}
 
 	// settings, explicit model, no providers → pinned zero-provider error
