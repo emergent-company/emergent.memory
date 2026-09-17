@@ -22,6 +22,12 @@ const PROVIDER = process.env.E2E_SCENARIO_LLM_PROVIDER || 'openai';
 const API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
 const BASE_URL = process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
 const MODEL = process.env.E2E_SCENARIO_LLM_MODEL || 'openai/deepseek-v4-flash';
+// base_url is rendered only for the OpenAI-compatible provider, so pass it only
+// then (mirrors the other live scenarios). AGENT_MODEL prefixes an unprefixed
+// MODEL env with the configured provider, so a non-OpenAI run can supply a
+// bare model name instead of a hard-coded `openai/` catalog value.
+const PROVIDER_BASE_URL = PROVIDER === 'openai' ? BASE_URL : undefined;
+const AGENT_MODEL = MODEL.includes('/') ? MODEL : `${PROVIDER}/${MODEL}`;
 
 function requireBootstrap() {
   const bootstrap = readBootstrap();
@@ -72,7 +78,7 @@ test.describe('Chat agent-switch navigation scenario', () => {
       // must know the provider; the key must be usable against the base URL). A
       // rejection is an environment problem, not a product regression — skip
       // with the backend's copy so a dev-memory hiccup never reddens the suite.
-      const saved = await addProvider(page, PROVIDER, API_KEY, BASE_URL);
+      const saved = await addProvider(page, PROVIDER, API_KEY, PROVIDER_BASE_URL);
       if (saved !== 'saved') {
         let detail = "couldn't save provider";
         const modal = page.locator('#provider-save-error-modal');
@@ -89,9 +95,10 @@ test.describe('Chat agent-switch navigation scenario', () => {
 
       // 3. AGENTS (UI): two agents in the scratch project. Both carry the same
       // explicit model; each will own one conversation in the rail.
-      const agentA = await createAgentViaModal(page, `${name} A`, MODEL, '*');
-      const agentB = await createAgentViaModal(page, `${name} B`, MODEL, '*');
-      agentIds.push(agentA, agentB);
+      const agentA = await createAgentViaModal(page, `${name} A`, AGENT_MODEL, '*');
+      agentIds.push(agentA);
+      const agentB = await createAgentViaModal(page, `${name} B`, AGENT_MODEL, '*');
+      agentIds.push(agentB);
 
       // 4. CHAT WITH A (UI): pick A in the welcome hero and complete one turn.
       // The fresh workspace has no conversation, so the empty state (and its
