@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Minimal lifecycle logger. Appends `[lifecycle]`-prefixed lines to the SAME
@@ -6,8 +7,9 @@ import Foundation
 /// be correlated in one place.
 ///
 /// Open/append/close per line — no long-lived handle to leak, and independent of
-/// `EngineManager`'s streaming handle. Best-effort: failures are swallowed,
-/// because logging must never fail an account transition.
+/// `EngineManager`'s streaming handle. Both handles open with `O_APPEND` so the
+/// two writers cannot reorder or overwrite each other's bytes. Best-effort:
+/// failures are swallowed, because logging must never fail an account transition.
 enum ConnectorLog {
 
     /// Appends a `[lifecycle]` line (with a trailing newline).
@@ -22,12 +24,12 @@ enum ConnectorLog {
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            if !FileManager.default.fileExists(atPath: url.path) {
-                FileManager.default.createFile(atPath: url.path, contents: nil)
-            }
-            let handle = try FileHandle(forWritingTo: url)
+            // O_APPEND makes every write an atomic append, so this per-line
+            // handle cannot race `EngineManager`'s streaming handle.
+            let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+            guard fd >= 0 else { return }
+            let handle = FileHandle(fileDescriptor: fd)
             defer { try? handle.close() }
-            handle.seekToEndOfFile()
             handle.write(Data(line.utf8))
         } catch {
             // Best-effort: never surface a logging failure to the caller.

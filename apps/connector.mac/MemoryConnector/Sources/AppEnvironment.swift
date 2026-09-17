@@ -36,6 +36,13 @@ final class AppEnvironment: ObservableObject {
     /// and the single reconcile.
     private var scopeSwapGate = ScopeSwapGate()
 
+    /// Serializes the scope-swap settle pipeline. Each swap's settle awaits the
+    /// previous swap's settle before running `reassertConnection()` → reconcile
+    /// → gate-end, so the last swap's `projects use` write and reconcile are
+    /// strictly final. Without this, two overlapping swaps can race the shared
+    /// config path and the later swap can reconcile against a stale config.
+    private var settleChain: Task<Void, Never>?
+
     /// - Parameter legacyMigrator: injectable override for tests. `nil` builds
     ///   the real migrator (unless the process is a hosted test run).
     init(legacyMigrator: LegacyMigrator? = nil) {
@@ -157,7 +164,9 @@ final class AppEnvironment: ObservableObject {
             return
         }
         applyScope(for: account)
-        Task { await reloadActiveAccountData() }
+        // The scope swap already reconciles once after the config rewrite, so
+        // the reload must not reconcile again (it would race the rewrite).
+        Task { await reloadActiveAccountData(reconcileEngine: false) }
     }
 
     /// Points `ProjectStore` at `account`'s storage/environment and reconciles
@@ -177,7 +186,12 @@ final class AppEnvironment: ObservableObject {
         // reconcile the engine exactly once. The CLI call is async, so defer
         // it. `reassertConnection` never throws (it catches internally), so the
         // trailing reconcile and decrement always run.
-        Task { [weak self] in
+        //
+        // Chained so overlapping swaps settle in spawn order: each settle awaits
+        // the previous one, so the last swap's config rewrite + reconcile win.
+        let previous = settleChain
+        settleChain = Task { [weak self] in
+            await previous?.value
             guard let self else { return }
             _ = await self.projectStore.reassertConnection()
             self.syncEngineWithConnection()
@@ -186,8 +200,12 @@ final class AppEnvironment: ObservableObject {
     }
 
     /// Loads the active account's projects (which also resolves organisations)
-    /// and identity, then reconciles the engine.
-    private func reloadActiveAccountData() async {
+    /// and identity, then (by default) reconciles the engine.
+    ///
+    /// - Parameter reconcileEngine: when `false`, the trailing reconcile is
+    ///   skipped — used from `handleActiveAccountChange`, where the scope swap's
+    ///   own settle already reconciles once after the config rewrite.
+    private func reloadActiveAccountData(reconcileEngine: Bool = true) async {
         guard accountStore.activeAccount != nil else { return }
         // Reconcile the effective signed-in state from the connector CLI
         // session (self-healing a wedged index via a best-effort session
@@ -204,7 +222,9 @@ final class AppEnvironment: ObservableObject {
             await identity.load(serverURL: accountStore.activeEnvironment?.serverURLString ?? settings.serverURL,
                                 token: token)
         }
-        syncEngineWithConnection()
+        if reconcileEngine {
+            syncEngineWithConnection()
+        }
     }
 
     // MARK: - Engine lifecycle gating

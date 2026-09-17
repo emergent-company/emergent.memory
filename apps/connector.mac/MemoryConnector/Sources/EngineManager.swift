@@ -95,6 +95,10 @@ final class EngineManager: ObservableObject {
     private var process: Process?
     private var policy = RestartPolicy()
     private var stoppedByUser = false
+    /// A configuration error reported while a child is still terminating.
+    /// `reportConfigurationError` cannot set `.failed` until the child exits, so
+    /// it records the message here and `processDidExit` applies it.
+    private var pendingConfigurationError: String?
     /// Append-only handle for engine output. Written from Process
     /// readability/termination callbacks (background threads), which are not
     /// actor-isolated, so this is deliberately not a @MainActor property.
@@ -152,6 +156,7 @@ final class EngineManager: ObservableObject {
         }
         lastExitCode = nil
         lastError = nil
+        pendingConfigurationError = nil
 
         let proc = Process()
         proc.executableURL = url
@@ -216,12 +221,15 @@ final class EngineManager: ObservableObject {
     }
 
     /// Surfaces a configuration error without spawning anything — e.g. a
-    /// connected project's engine config is missing. Never starts a process;
-    /// no-op while a process is already running.
+    /// connected project's engine config is missing. Never starts a process.
+    /// When a child is still terminating, the error is recorded and applied by
+    /// `processDidExit` once the process is gone, so it is never silently
+    /// dropped (the caller has already called `stop()` in this path).
     func reportConfigurationError(_ message: String) {
+        lastError = message
+        pendingConfigurationError = message
         guard process == nil else { return }
         state = .failed
-        lastError = message
     }
 
     /// Restarts the engine with the current configuration: if one is running
@@ -260,8 +268,16 @@ final class EngineManager: ObservableObject {
         lastExitCode = exitCode
 
         if stoppedByUser {
-            state = .stopped
-            appendToLog("engine exited \(exitCode) after user stop\n")
+            // A configuration error reported while the child was terminating is
+            // applied here once the process is gone, so it is never dropped.
+            if let pending = pendingConfigurationError {
+                state = .failed
+                lastError = pending
+                appendToLog("engine stopped (configuration error): \(pending)\n")
+            } else {
+                state = .stopped
+                appendToLog("engine exited \(exitCode) after user stop\n")
+            }
             return
         }
 
@@ -312,12 +328,14 @@ final class EngineManager: ObservableObject {
                 at: Self.logFileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            if !FileManager.default.fileExists(atPath: Self.logFileURL.path) {
-                FileManager.default.createFile(atPath: Self.logFileURL.path, contents: nil)
+            // O_APPEND makes every write an atomic append, so the Process pipe
+            // callbacks cannot race `ConnectorLog`'s per-line append handle.
+            let fd = open(Self.logFileURL.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+            guard fd >= 0 else {
+                lastError = "cannot open engine log: \(String(cString: strerror(errno)))"
+                return
             }
-            let handle = try FileHandle(forWritingTo: Self.logFileURL)
-            handle.seekToEndOfFile()
-            logHandle = handle
+            logHandle = FileHandle(fileDescriptor: fd)
         } catch {
             lastError = "cannot open engine log: \(error.localizedDescription)"
         }
