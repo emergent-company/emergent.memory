@@ -193,6 +193,12 @@ type fakeMemory struct {
 	runQuestionsErr    error                          // failure for GetRunQuestions
 	agentRuns          map[string]*AgentRun           // returned by GetAgentRun per run id
 	agentRunErr        error                          // failure for GetAgentRun
+	sessionTodos       []SessionTodo                  // returned by ListSessionTodos
+	sessionTodosErr    error                          // failure for ListSessionTodos
+	lastTodosSessionID string                         // last session id passed to ListSessionTodos
+	cancelAgentID      string                         // last agent id passed to CancelAgentRun
+	cancelRunID        string                         // last run id passed to CancelAgentRun
+	cancelAgentRunErr  error                          // failure for CancelAgentRun
 
 	usageSummary *UsageSummaryResponse    // returned by GetProjectUsageSummary
 	usageSeries  *UsageTimeSeriesResponse // returned by GetProjectUsageTimeSeries
@@ -519,6 +525,20 @@ func (f *fakeMemory) CancelQuestion(ctx context.Context, questionID string) (*Re
 
 func (f *fakeMemory) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error) {
 	return f.approvals, nil
+}
+
+func (f *fakeMemory) CancelAgentRun(ctx context.Context, agentID, runID string) error {
+	f.cancelAgentID = agentID
+	f.cancelRunID = runID
+	return f.cancelAgentRunErr
+}
+
+func (f *fakeMemory) ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error) {
+	f.lastTodosSessionID = sessionID
+	if f.sessionTodosErr != nil {
+		return nil, f.sessionTodosErr
+	}
+	return f.sessionTodos, nil
 }
 
 func (f *fakeMemory) ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error) {

@@ -270,6 +270,7 @@
     }
 
     // meta behaves as in addUserMessage: appended under the bubble only when set.
+    // Returns the message wrapper so the host can attach a turn footer.
     function addAssistantMessage(html, name, silent, meta) {
       ctx.hideEmpty();
       var wrap = document.createElement("div");
@@ -282,8 +283,10 @@
           ? '<div class="chat-footer mt-1 text-[11px] text-base-content/35 font-mono">' + escapeHTML(meta) + "</div>"
           : "");
       wrap.querySelector(".memory-md").innerHTML = html;
+      if (MemoryChatComponents.enhanceMessage) MemoryChatComponents.enhanceMessage(wrap);
       ctx.messages.appendChild(wrap);
       if (!silent) ctx.scrollToBottom();
+      return wrap;
     }
 
     function openAssistantBubble() {
@@ -883,9 +886,14 @@
 
     function finishStream(reason) {
       ctx.streaming = false;
-      ctx.onStreamFinish(); // chat: finalizeThinking; sidepanel: recordHistory+persist
+      ctx.onStreamFinish(reason); // chat: finalize + refresh (+ queue release); sidepanel: recordHistory
       updateBubbleText();
       ctx.setStreaming(false);
+      // A finished bubble is now final: add copy affordances (message + code
+      // blocks) without waiting for a history re-render.
+      if (ctx.bubble && MemoryChatComponents.enhanceMessage) {
+        MemoryChatComponents.enhanceMessage(ctx.bubble);
+      }
       ctx.scrollToBottom();
       if (reason === "aborted" && ctx.bubble && !ctx.bubbleHTML) {
         var el = ctx.bubble.querySelector(".memory-md");

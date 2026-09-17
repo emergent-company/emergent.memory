@@ -233,23 +233,29 @@ provider row carries the LiteLLM base URL. Env-gated on `E2E_OPENAI_API_KEY`
 (default base URL `http://litellm:4000/v1`); skips fast when the key is unset
 or the memory backend rejects the live-validated save.
 
-Scenario (agent proposal card): `agent-proposal-card.spec.ts` drives a chat turn
-where an agent calls `ask_user` with a structured `proposal` (kind `blueprint`)
-and asserts the gateway renders the reviewable proposal card — "Proposed
-changes" header + kind badge, the read-only "Object types" preview, the proposed
-type name, and the Accept/Reject answer controls. The ask_user tool pauses the
-run, so completion is detected on the `.proposal-card` in the DOM rather than a
-closed SSE stream. Env-gated on `E2E_SCENARIO_LLM_API_KEY`; the spec skips fast
-on a run error, when the model never asked (no `question` SSE event), or on a
-markdown-fallback degradation (a `question` event with an empty/absent
-`proposalHtml`, i.e. the proposal body was empty or malformed) — those are
-non-deterministic model deviations, annotated and skipped. Note an unknown-kind
-proposal still renders a summary-only _card_ with a non-empty `proposalHtml`: a
-missing card for it hard-fails, while a rendered summary-only card is still
-skipped at the structured-preview check. But when the server emitted a `question` event carrying a non-empty
-`proposalHtml` and no `.proposal-card` rendered, the spec HARD-FAILS: a fetch
-interceptor tees the `/api/chat` SSE stream and records the `question` events,
-so a gateway render regression can no longer masquerade as a skip.
+Scenario (agent proposal card): `agent-proposal-card.spec.ts` is parametrized over
+the writable first-class proposal kinds (`blueprint`, `skill`, `agent`,
+`mcp_server`, `provider`) — each case drives a chat turn where an agent calls
+`ask_user` with a structured `proposal` of that kind and asserts the gateway
+renders the reviewable proposal card — "Proposed changes" header + kind badge,
+the kind's structured preview, and the Accept/Reject answer controls. The
+structured preview is proved two ways: the model-independent
+`[data-proposal-kind="<kind>"]` section hook the card carries, and a body-field
+value unique to that kind. `object` is excluded — the operator cannot emit
+`object` proposals until the graph-write scope grant lands, so its renderer is
+unit-tested only. The ask_user tool pauses the run, so completion is detected on
+the `.proposal-card` in the DOM rather than a closed SSE stream. Env-gated on
+`E2E_SCENARIO_LLM_API_KEY`; the spec skips fast on a run error, when the model
+never asked (no `question` SSE event), on a markdown-fallback degradation (a
+`question` event with an empty/absent `proposalHtml`, i.e. the proposal body was
+empty or malformed), on a different kind, or on a different pinned body value —
+those are non-deterministic model deviations, annotated and skipped. It
+HARD-FAILS on the gateway regressions: a `question` event carrying a non-empty
+`proposalHtml` with no `.proposal-card` rendered, or a card carrying the
+requested kind's badge without that kind's `[data-proposal-kind]` section (a
+registered kind degraded to a summary-only card). A fetch interceptor tees the
+`/api/chat` SSE stream and records the `question` events, so a gateway render
+regression can no longer masquerade as a skip.
 
 Document extraction: `specs/documents/document-extraction-ui.spec.ts` uploads a
 document through the form and triggers extraction from the document detail page,

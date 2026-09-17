@@ -384,7 +384,9 @@ func (s *Server) uiAgents(c echo.Context) error {
 
 // chatRailData loads the session-rail data (agents, agent name map, past
 // conversations, and scheduled-run rows) shared by the full chat page and the
-// /partial/chat-rail refresh endpoint.
+// /partial/chat-rail refresh endpoint. Each conversation row also carries its
+// derived run bucket and pending-work counts (best-effort: a failed history
+// fetch leaves the row at the "done" bucket with zero counts).
 func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSummary, agentNames map[string]string, convs *ConversationList, schedRuns []scheduledRunRow, err error) {
 	agents, err = s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
@@ -397,6 +399,29 @@ func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSumm
 	convs, cerr := s.memory.ListConversations(ctx)
 	if cerr != nil {
 		convs = &ConversationList{}
+	}
+	// Project-wide snapshots fetched once for every row (not once per
+	// conversation), mirroring the poller's grouping; conversationState reuses
+	// them so each row only adds one history fetch.
+	approvals, aErr := s.memory.ListToolApprovals(ctx)
+	if aErr != nil {
+		captureError(aErr)
+		approvals = nil
+	}
+	questions, qErr := s.memory.ListAgentQuestions(ctx)
+	if qErr != nil {
+		captureError(qErr)
+		questions = nil
+	}
+	for i := range convs.Conversations {
+		st, serr := s.conversationState(ctx, convs.Conversations[i].ID, approvals, questions)
+		if serr != nil {
+			convs.Conversations[i].Bucket = runBucketDone
+			continue
+		}
+		convs.Conversations[i].Bucket = st.bucket
+		convs.Conversations[i].PendingApprovals = len(st.pendingApprovals)
+		convs.Conversations[i].PendingQuestions = len(st.pendingQuestions)
 	}
 	schedRuns = s.chatScheduledRuns(ctx, agentNames)
 	return agents, agentNames, convs, schedRuns, nil
@@ -452,6 +477,45 @@ func (s *Server) chatModelWarnings(ctx context.Context, agents []AgentDefinition
 	return warnings
 }
 
+// chatRunControl carries the active conversation's server-rendered run-control
+// surfaces — the pending-work dock and the session todo card — into ChatPage so
+// they exist before chat.js runs. It is threaded through ChatPage as an
+// optional variadic so existing callers stay source-compatible.
+type chatRunControl struct {
+	Approvals []ApprovalCard
+	Questions []QuestionCard
+	Todos     []TodoItem
+}
+
+// chatRunControlOrZero returns the supplied run-control data, or the zero
+// value when the caller passed none.
+func chatRunControlOrZero(opts []chatRunControl) chatRunControl {
+	if len(opts) > 0 {
+		return opts[0]
+	}
+	return chatRunControl{}
+}
+
+// chatRunControlFor resolves the active conversation's pending-work dock cards
+// and session todos for server-side pre-render. Best-effort: an empty
+// conversation id, a missing ACP session, or any fetch failure degrades to zero
+// data rather than an error.
+func (s *Server) chatRunControlFor(ctx context.Context, convID string) chatRunControl {
+	if convID == "" {
+		return chatRunControl{}
+	}
+	approvals, questions := s.pendingDockCards(ctx, convID)
+	var todos []TodoItem
+	if detail, err := s.memory.GetConversation(ctx, convID); err == nil && detail.ACPSessionID != "" {
+		if items, terr := s.memory.ListSessionTodos(ctx, detail.ACPSessionID); terr == nil {
+			todos = todoItems(items)
+		} else {
+			captureError(terr)
+		}
+	}
+	return chatRunControl{Approvals: approvals, Questions: questions, Todos: todos}
+}
+
 // uiChat renders the chat workspace (the primary sessions surface):
 // agent picker, streaming log, and a resumable session list.
 // ?agent=<id> preselects an agent, ?c=<conversationId> resumes a conversation,
@@ -463,7 +527,8 @@ func (s *Server) uiChat(c echo.Context) error {
 		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, "", "", "", err, true, nil))
 	}
 	modelWarnings := s.chatModelWarnings(ctx, agents)
-	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, agentNames, schedRuns, c.QueryParam("agent"), c.QueryParam("c"), c.QueryParam("prompt"), nil, s.voiceEnabled(c.Request().Context()), modelWarnings))
+	convID := c.QueryParam("c")
+	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, agentNames, schedRuns, c.QueryParam("agent"), convID, c.QueryParam("prompt"), nil, s.voiceEnabled(ctx), modelWarnings, s.chatRunControlFor(ctx, convID)))
 }
 
 // uiChatRail returns the session-rail list HTML as a fragment, so chat.js can
