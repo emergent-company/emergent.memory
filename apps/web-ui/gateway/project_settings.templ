@@ -1235,7 +1235,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 // providers". The modal body uses the backend's message as-is — it already
 // reads like plain-language guidance (e.g. base_url reachability hints).
 templ providerConfigSaveErrorModal(err error) {
-	@modalShell("provider-save-error-modal", "", "max-w-md", components.DialogAutoOpen()) {
+	@ui.Dialog(ui.DialogProps{ID: "provider-save-error-modal", BoxClass: "max-w-md", Attrs: components.DialogAutoOpen()}) {
 		<div class="mb-3 flex items-start gap-3">
 			@components.ConfirmIcon("lucide--alert-triangle")
 			<h3 class="text-lg font-semibold">Couldn't save provider</h3>

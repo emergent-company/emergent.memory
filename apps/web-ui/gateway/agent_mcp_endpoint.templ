@@ -147,7 +147,7 @@ templ agentMCPEndpointBody(data agentSettingsData) {
 
 // agentMCPEndpointRevokeDialog confirms endpoint revocation before POSTing.
 templ agentMCPEndpointRevokeDialog(agentID string) {
-	@modalShell("agent-mcp-endpoint-revoke-dialog", "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-endpoint-revoke-dialog", BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
 			@components.ConfirmIcon("")
 			<div>
@@ -329,7 +329,7 @@ templ agentMCPKeyRevokeDialog(agentID string, k AgentMCPKey) {
 	if label == "" {
 		label = "this key"
 	} }}
-	@modalShell("agent-mcp-key-revoke-"+k.ID, "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-key-revoke-" + k.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
 			@components.ConfirmIcon("")
 			<div>
@@ -368,7 +368,7 @@ templ agentMCPKeyRotateDialog(agentID string, k AgentMCPKey) {
 	if label == "" {
 		label = "this key"
 	} }}
-	@modalShell("agent-mcp-key-rotate-"+k.ID, "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-key-rotate-" + k.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
 			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
 				@ui.IconSpan("lucide--refresh-cw", "size-5")

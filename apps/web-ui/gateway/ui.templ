@@ -433,7 +433,7 @@ templ agentRow(a AgentDefinitionSummary) {
 // ones this agent may hand off to. defaultModel names the model the dialog's
 // "Auto" option resolves to (project pinned default; "" when none is pinned).
 templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []Skill, defaultModel string) {
-	@modalShell("agent-form-modal", "", "w-full max-w-lg") {
+	@ui.Dialog(ui.DialogProps{ID: "agent-form-modal", BoxClass: "w-full max-w-lg"}) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
 				<h3 id="agent-form-title" class="text-lg font-semibold">New agent</h3>
@@ -787,7 +787,8 @@ templ cardList(title string, props cardListProps) {
 	}
 }
 
-// modalBoxAttrs returns the optional id for a modal-box element ("" omits it).
+// modalBoxAttrs returns the optional id for an element ("" omits it). Shared by
+// checkboxPicker's wrapped variant, which sets an optional wrapper id.
 func modalBoxAttrs(boxID string) templ.Attributes {
 	if boxID == "" {
 		return nil
@@ -795,31 +796,12 @@ func modalBoxAttrs(boxID string) templ.Attributes {
 	return templ.Attributes{"id": boxID}
 }
 
-// modalShell renders the shared native <dialog class="modal"> shell: a
-// modal-box (boxClass e.g. "max-w-sm", boxID when set) and the standard
-// backdrop form. Children are the modal-box content. attrs is optional extra
-// attributes for the dialog element (e.g. components.DialogAutoOpen()).
-templ modalShell(id, boxID, boxClass string, attrs ...templ.Attributes) {
-	{{ var extra templ.Attributes
-	if len(attrs) > 0 {
-		extra = attrs[0]
-	} }}
-	<dialog id={ id } class="modal" hx-boost="false" { extra... }>
-		<div { modalBoxAttrs(boxID)... } class={ "modal-box", templ.KV(boxClass, boxClass != "") }>
-			{ children... }
-		</div>
-		<form method="dialog" class="modal-backdrop">
-			<button>close</button>
-		</form>
-	</dialog>
-}
-
 // confirmDeleteDialog renders the shared delete-confirmation modal shell:
 // error icon circle, "Delete <noun>?" heading, and the backdrop. description
 // is the detail paragraph (rendered under the heading); children are the
 // action buttons (outside the icon/title row, directly in the modal box).
 templ confirmDeleteDialog(id, noun string, description templ.Component) {
-	@modalShell(id, "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: id, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
 			@components.ConfirmIcon("")
 			<div>

@@ -621,7 +621,7 @@ func hasChipDiff(cd ChipDiff) bool {
 // deriveVersionDialog forks a new draft version of the current blueprint from
 // the project's effective object types.
 templ deriveVersionDialog(d *BlueprintDetail) {
-	@modalShell("derive-version-modal", "", "max-w-md", templ.Attributes{"aria-labelledby": "derive-version-title"}) {
+	@ui.Dialog(ui.DialogProps{ID: "derive-version-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "derive-version-title"}}) {
 		<div class="flex items-start gap-3">
 			<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
 				@ui.IconSpan("lucide--git-branch", "size-5")

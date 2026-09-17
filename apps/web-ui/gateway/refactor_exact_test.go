@@ -79,14 +79,14 @@ func TestRefactorOutputExact(t *testing.T) {
 	want = `<section class="mb-8"><h2 class="mb-3 text-lg font-semibold tracking-tight">Installed</h2><div class="card bg-base-100 card-border"><div class="card-body "><div class="flex flex-col items-center justify-center py-16 text-center px-4"><span class="iconify size-12 text-base-content/20 mb-4 lucide--library"></span><h3 class="text-base font-semibold text-base-content mb-1">No blueprints installed</h3><p class="text-sm text-base-content/50 mb-4">Install a blueprint to extend the graph schema.</p></div></div></div></section>`
 	check("cardList empty", got, want)
 
-	// modalShell
-	got = render(modalShell("spotlight-modal", "", "p-0 max-w-lg"), "<p>x</p>")
+	// ui.Dialog (was the local modalShell — same markup)
+	got = render(ui.Dialog(ui.DialogProps{ID: "spotlight-modal", BoxClass: "p-0 max-w-lg"}), "<p>x</p>")
 	want = `<dialog id="spotlight-modal" class="modal" hx-boost="false"><div class="modal-box p-0 max-w-lg"><p>x</p></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
-	check("modalShell", got, want)
+	check("ui.Dialog", got, want)
 
-	got = render(modalShell("sidepanel-modal", "sidepanel-modal-box", ""), "<p>x</p>")
+	got = render(ui.Dialog(ui.DialogProps{ID: "sidepanel-modal", BoxID: "sidepanel-modal-box"}), "<p>x</p>")
 	want = `<dialog id="sidepanel-modal" class="modal" hx-boost="false"><div id="sidepanel-modal-box" class="modal-box"><p>x</p></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
-	check("modalShell boxid", got, want)
+	check("ui.Dialog boxid", got, want)
 
 	// confirmDeleteDialog
 	got = render(confirmDeleteDialog("delete-confirm-modal", "agent", deleteAgentDescription()),
