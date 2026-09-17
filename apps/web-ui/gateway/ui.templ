@@ -778,43 +778,36 @@ templ countBadgeLabel(label, icon string) {
 }
 
 // cardListProps configures the optional aspects of cardList (mirrors
-// ui.SectionProps for the titled variant).
+// ui.SectionProps).
 type cardListProps struct {
-	// Margin is the section wrapper's margin class, e.g. "mt-6" or "mb-8"
-	// (ignored when Title is "").
+	// Margin is the section wrapper's margin class, e.g. "mt-6" or "mb-8".
+	// In the wrapperless (title-empty) branch it applies to the card element.
 	Margin string
-	// Empty switches to the section's empty state (ignored when Title is "").
+	// Empty switches to the section's empty state (still honoured when
+	// wrapperless).
 	Empty      bool
 	EmptyIcon  string
 	EmptyTitle string
 	EmptyDesc  string
 }
 
-// cardList renders a bordered card with a divide-y row list. When title is
-// non-empty it renders a titled ui.Section (with optional empty state and the
-// Rows divide-y wrapper); otherwise a bare ui.CardRaw (ui.Section always emits
-// a <section> wrapper, which the bare variant never had, so it stays CardRaw
-// to preserve output).
+// cardList renders a bordered card with a divide-y row list via ui.Section: the
+// titled branch is a normal Section, the title-empty branch is Section with
+// Wrapperless (Section always emitted a <section> wrapper before Wrapperless,
+// which the bare variant never had — Wrapperless drops it to preserve output).
 templ cardList(title string, props cardListProps) {
-	if title != "" {
-		@ui.Section(title, ui.SectionProps{
-			Margin:     props.Margin,
-			CardClass:  "card-border overflow-hidden",
-			BodyClass:  "p-0",
-			Empty:      props.Empty,
-			EmptyIcon:  props.EmptyIcon,
-			EmptyTitle: props.EmptyTitle,
-			EmptyDesc:  props.EmptyDesc,
-			Rows:       true,
-		}) {
-			{ children... }
-		}
-	} else {
-		@ui.CardRaw("card-border overflow-hidden", "p-0", nil) {
-			<div class="divide-y divide-base-200">
-				{ children... }
-			</div>
-		}
+	@ui.Section(title, ui.SectionProps{
+		Margin:      props.Margin,
+		CardClass:   "card-border overflow-hidden",
+		BodyClass:   "p-0",
+		Empty:       props.Empty,
+		EmptyIcon:   props.EmptyIcon,
+		EmptyTitle:  props.EmptyTitle,
+		EmptyDesc:   props.EmptyDesc,
+		Rows:        true,
+		Wrapperless: title == "",
+	}) {
+		{ children... }
 	}
 }
 
