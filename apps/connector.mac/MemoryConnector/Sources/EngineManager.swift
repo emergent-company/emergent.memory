@@ -103,6 +103,11 @@ final class EngineManager: ObservableObject {
     /// readability/termination callbacks (background threads), which are not
     /// actor-isolated, so this is deliberately not a @MainActor property.
     private nonisolated(unsafe) var logHandle: FileHandle?
+    /// Pending stderr bytes not yet terminated by a newline. Written from the
+    /// Process stderr readability callback (a background thread), so it is
+    /// `nonisolated(unsafe)` like `logHandle`; line-frames the bind-failure scan
+    /// so a diagnostic split across reads is not missed.
+    private nonisolated(unsafe) var stderrBuffer = Data()
 
     init(configPath: String) {
         self.configPath = configPath
@@ -136,9 +141,10 @@ final class EngineManager: ObservableObject {
         openLogIfNeeded()
 
         // Fail fast when the management port is already held by another
-        // process. Only probed when we hold no live child, so restart()'s
-        // just-SIGTERM'd child cannot false-positive the probe.
-        if process == nil,
+        // process. Only probed when no live child exists (`isRunning`), so a
+        // just-SIGTERM'd-but-still-running child cannot false-positive the
+        // probe, while a stopped-but-not-yet-cleared child is still probed.
+        if process?.isRunning != true,
            Self.shouldAbortStartForPortConflict(hasLiveProcess: false,
                                                 portInUse: Self.managementPortInUse()) {
             state = .failed
@@ -146,8 +152,6 @@ final class EngineManager: ObservableObject {
             appendToLog("=== memory-connector engine start aborted: management port \(Self.managementAPIPort) already in use ===\n")
             return
         }
-
-        appendToLog("=== memory-connector engine start ===\n")
 
         state = .starting
         if resetBreaker {
@@ -157,6 +161,7 @@ final class EngineManager: ObservableObject {
         lastExitCode = nil
         lastError = nil
         pendingConfigurationError = nil
+        stderrBuffer = Data()
 
         let proc = Process()
         proc.executableURL = url
@@ -177,11 +182,7 @@ final class EngineManager: ObservableObject {
             let data = handle.availableData
             guard !data.isEmpty else { return }
             self?.appendToLog(data)
-            if Self.looksLikeManagementPortBindFailure(in: data) {
-                Task { @MainActor [weak self] in
-                    self?.surfaceManagementPortBindFailure()
-                }
-            }
+            self?.scanStderrForBindFailure(data)
         }
 
         proc.terminationHandler = { [weak self] terminated in
@@ -199,6 +200,7 @@ final class EngineManager: ObservableObject {
             try proc.run()
             process = proc
             state = .running
+            appendToLog("=== memory-connector engine start ===\n")
             appendToLog("engine running (pid \(proc.processIdentifier))\n")
         } catch {
             state = .failed
@@ -311,6 +313,24 @@ final class EngineManager: ObservableObject {
         guard let text = String(data: chunk, encoding: .utf8)?.lowercased() else { return false }
         return text.contains("management api")
             && (text.contains("address already in use") || text.contains("bind:"))
+    }
+
+    /// Line-frames raw stderr chunks and surfaces a management-port bind failure
+    /// once a complete line matches. `availableData` is not line-framed, so a
+    /// bind error split across reads would otherwise be missed (the engine keeps
+    /// running with a dead management API while `lastError` stays unset). The
+    /// trailing unterminated bytes stay buffered for the next chunk.
+    private nonisolated func scanStderrForBindFailure(_ chunk: Data) {
+        stderrBuffer.append(chunk)
+        let newline = Data([0x0A])
+        while let range = stderrBuffer.range(of: newline) {
+            let line = stderrBuffer.subdata(in: stderrBuffer.startIndex..<range.lowerBound)
+            stderrBuffer.removeSubrange(stderrBuffer.startIndex...range.lowerBound)
+            guard Self.looksLikeManagementPortBindFailure(in: line) else { continue }
+            Task { @MainActor [weak self] in
+                self?.surfaceManagementPortBindFailure()
+            }
+        }
     }
 
     /// Surfaces a management-port bind failure (marker line + `lastError`).
