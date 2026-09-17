@@ -16,6 +16,7 @@ Two root causes make provider availability invisible and frozen:
 - **Lifetime health monitoring:** the monitor goroutine detaches from the caller's context and runs for the whole process lifetime; shutdown is driven solely by an idempotent `StopHealthMonitoring`.
 - **Always report every known provider:** `ListProviders` returns all three known provider types in a stable order, each with live health or an "unavailable + reason" status. Providers skipped at startup (KVM missing, API key unset, constructor failure) are recorded as known-but-unavailable via `Orchestrator.MarkUnavailable`.
 - **Actionable selection errors:** `SelectProvider` / `SelectProviderWithFallback` append per-candidate rejection reasons so the failure message explains *why* each provider was rejected.
+- **Availability-driven provider picker:** the agent Sandbox settings page renders its provider `<select>` from the providers endpoint. `Auto` stays the default; unavailable providers are shown as disabled options labelled as unavailable; each provider's availability and reason are listed; a stored provider is never dropped from the form when the endpoint does not report it; and a failed/empty provider list renders an explicit warning instead of an unmarked list.
 
 ## Capabilities
 
@@ -31,6 +32,9 @@ Two root causes make provider availability invisible and frozen:
 - `apps/server/domain/sandbox/dto.go`
 - `apps/server/domain/sandbox/orchestrator_health_test.go` (new)
 - `apps/server/domain/sandbox/orchestrator_test.go` (health-counting in test mock)
+- `apps/web-ui/gateway/agent.templ` + `agent.go` (availability-driven provider picker, availability status list, provider-list warning)
+- `apps/web-ui/gateway/memory_agents.go` (`registered` field on `SandboxProvider`)
+- `apps/web-ui/gateway/agent_ui_test.go`, `handlers_test.go` (availability rendering tests + fake failure mode)
 
 ### API Changes
 - `GET /api/v1/agent/sandboxes/providers` now returns all known providers, adds a `registered` field per entry, and omits `capabilities` for unregistered providers.

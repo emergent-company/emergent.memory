@@ -48,3 +48,35 @@ When no provider can be selected, the returned error SHALL explain why each cand
 - **WHEN** automatic provider selection runs and no healthy provider exists
 - **THEN** the error SHALL contain `"no healthy providers available"`
 - **AND** the error SHALL enumerate `gvisor: unhealthy`, `firecracker: not registered: KVM not available`, and `e2b: not registered: E2B_API_KEY not set`
+
+### Requirement: The agent Sandbox settings UI SHALL derive provider choices from reported availability
+
+The agent Sandbox settings page (`/agents/:id/sandbox`) SHALL render its provider `<select>` from the providers endpoint instead of a hardcoded list. `Auto` SHALL remain the default option. Providers reported as unavailable SHALL be rendered as non-selectable options labelled as unavailable, and the page SHALL show each provider's availability with the reported reason. A provider stored in the agent's sandbox config SHALL never be dropped from the form because the endpoint did not list it.
+
+#### Scenario: Unavailable provider is visible but not selectable
+- **GIVEN** the providers endpoint reports `gvisor` as healthy
+- **AND** reports `firecracker` as unregistered with reason `"KVM not available (/dev/kvm missing)"`
+- **WHEN** a user opens the agent Sandbox settings page
+- **THEN** the `gvisor` option SHALL be selectable
+- **AND** the `firecracker` option SHALL be rendered `disabled` and labelled as unavailable
+- **AND** the reported reason SHALL be exposed to the user (for example as the option's tooltip and in the availability status list)
+
+#### Scenario: Stored provider is preserved when it is not reported
+- **GIVEN** an agent's sandbox config stores provider `firecracker`
+- **AND** the providers endpoint does not include a `firecracker` entry
+- **WHEN** the user opens the Sandbox settings page and submits the unchanged form
+- **THEN** the rendered form SHALL still contain a selected `firecracker` option marked unavailable
+- **AND** the stored provider SHALL remain `firecracker` after the update
+
+#### Scenario: Provider availability cannot be determined
+- **GIVEN** the providers request fails, or returns an empty list
+- **WHEN** a user opens the agent Sandbox settings page
+- **THEN** the page SHALL still render
+- **AND** it SHALL display an inline warning that provider availability could not be determined
+- **AND** it SHALL NOT present an unmarked list of selectable providers
+
+#### Scenario: Availability status is shown per provider
+- **GIVEN** the providers endpoint reports a mix of available and unavailable providers
+- **WHEN** the Sandbox settings page is rendered
+- **THEN** each reported provider SHALL be listed with an availability indicator
+- **AND** every unavailable provider SHALL display its reason text
