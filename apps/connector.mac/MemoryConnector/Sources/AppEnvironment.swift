@@ -30,6 +30,12 @@ final class AppEnvironment: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
+    /// Suppresses the connected-project-id sink while a scope swap is in flight
+    /// (see `ScopeSwapGate`). Bumped synchronously on this `@MainActor` thread
+    /// before `applyScope` mutates the id; decremented after the config rewrite
+    /// and the single reconcile.
+    private var scopeSwapGate = ScopeSwapGate()
+
     /// - Parameter legacyMigrator: injectable override for tests. `nil` builds
     ///   the real migrator (unless the process is a hosted test run).
     init(legacyMigrator: LegacyMigrator? = nil) {
@@ -85,11 +91,16 @@ final class AppEnvironment: ObservableObject {
 
         // Keep the engine + status polling aligned with the connected project.
         // `dropFirst()` skips the current value so init never starts anything;
-        // only real connect/disconnect/sign-out transitions reconcile.
+        // only real connect/disconnect/sign-out transitions reconcile. A scope
+        // swap in flight suppresses these so the swap's own single reconcile
+        // (after the config rewrite) is the only one that runs.
         projectStore.$connectedProjectID
             .dropFirst()
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.syncEngineWithConnection() }
+            .sink { [weak self] _ in
+                guard let self, self.scopeSwapGate.mayReconcile else { return }
+                self.syncEngineWithConnection()
+            }
             .store(in: &cancellables)
 
         // The active account drives the ProjectStore scope: switching accounts
@@ -153,14 +164,24 @@ final class AppEnvironment: ObservableObject {
     /// the engine so only this account's connected project can run.
     private func applyScope(for account: Account) {
         guard let scope = accountStore.projectScope(for: account.id) else { return }
+        let previousConnected = projectStore.connectedProjectID
+        ConnectorLog.lifecycle(
+            "applyScope account=\(account.id) environment=\(account.environmentID) previousConnected=\(previousConnected ?? "nil")")
+        // Suppress the connected-project-id sink for the whole swap: the id
+        // transitions (nil → restored value) must not reconcile against the
+        // stale config. The single reconcile below runs after the rewrite.
+        scopeSwapGate.begin()
         projectStore.applyScope(scope)
         // Rewrite the shared engine config from this account's own CLI session
         // so a previous account's config can never linger into this scope, then
-        // reconcile the engine. The CLI call is async, so defer it.
+        // reconcile the engine exactly once. The CLI call is async, so defer
+        // it. `reassertConnection` never throws (it catches internally), so the
+        // trailing reconcile and decrement always run.
         Task { [weak self] in
             guard let self else { return }
             _ = await self.projectStore.reassertConnection()
             self.syncEngineWithConnection()
+            self.scopeSwapGate.end()
         }
     }
 
@@ -188,26 +209,25 @@ final class AppEnvironment: ObservableObject {
 
     // MARK: - Engine lifecycle gating
 
-    /// The single source of truth for "may the engine run?" — a project must be
-    /// connected AND its engine config must exist. Testable; used at launch and
-    /// after sign-in/bootstrap.
-    func shouldStartEngine() -> Bool {
-        EngineLifecyclePolicy.shouldRun(connectedProjectID: projectStore.connectedProjectID,
-                                        configURL: EngineConfigSync.configURL)
-    }
-
     /// Reconciles the engine process with the connected-project state:
     ///
-    /// - connected + config exists → ensure it is running;
+    /// - connected + config exists and binds the connected project (and the
+    ///   expected server, when known) → ensure it is running;
     /// - no connected project → stop it (a stale config must never reconnect);
     /// - connected but config missing → stop and surface an error (never start
-    ///   a stale/other project's config).
+    ///   a stale/other project's config);
+    /// - config binds a different project/server → stop and surface a
+    ///   configuration error naming both project ids (never start it).
     ///
     /// Safe to call repeatedly (`start()` no-ops while running, `stop()` is
     /// idempotent).
     func syncEngineWithConnection() {
-        let decision = EngineLifecyclePolicy.decision(connectedProjectID: projectStore.connectedProjectID,
-                                                      configURL: EngineConfigSync.configURL)
+        let expectedServer = accountStore.activeEnvironment?.serverURLString ?? settings.serverURL
+        let expectedServerTrimmed = expectedServer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let decision = EngineLifecyclePolicy.decision(
+            connectedProjectID: projectStore.connectedProjectID,
+            configURL: EngineConfigSync.configURL,
+            expectedServerURL: expectedServerTrimmed.isEmpty ? nil : expectedServerTrimmed)
         switch decision {
         case .run:
             engine.start()
@@ -222,6 +242,25 @@ final class AppEnvironment: ObservableObject {
             statusMonitor.markStopped()
             engine.reportConfigurationError(
                 "Engine config for connected project \(projectID) is missing; not starting.")
+        case .wrongProject(let projectID, let configured):
+            engine.stop()
+            statusMonitor.stop()
+            statusMonitor.markStopped()
+            // The decision carries no mismatch kind, so distinguish by shape:
+            // a nil configured id means the config binds no project, and a
+            // configured id equal to the connected one can only be a server
+            // mismatch (the project itself matched).
+            let reason: String
+            switch configured {
+            case .none:
+                reason = "the engine config binds no project"
+            case .some(let configuredID) where configuredID == projectID:
+                reason = "the engine config binds a different server for project \(projectID)"
+            case .some(let configuredID):
+                reason = "the engine config binds project \(configuredID)"
+            }
+            engine.reportConfigurationError(
+                "Engine config does not match the connected project \(projectID): \(reason); not starting.")
         }
     }
 

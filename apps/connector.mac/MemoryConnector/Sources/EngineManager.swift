@@ -1,4 +1,5 @@
 import Combine
+import Darwin
 import Foundation
 
 /// Supervises the embedded `memory-connector` engine process.
@@ -48,6 +49,43 @@ final class EngineManager: ObservableObject {
         ["relay", "--config", configPath, "--api-port", String(managementAPIPort)]
     }
 
+    /// Injectable probe: true when something is already listening on the
+    /// loopback management port. Settable so tests can stub the socket probe;
+    /// the default attempts a TCP connect to `127.0.0.1:8931`.
+    nonisolated(unsafe) static var managementPortInUse: () -> Bool = {
+        EngineManager.tcpConnect(host: "127.0.0.1", port: UInt16(EngineManager.managementAPIPort))
+    }
+
+    /// The pure "may we spawn?" decision for a held management port: abort only
+    /// when there is no live child AND the port is in use. A live child (e.g.
+    /// `restart()`'s just-SIGTERM'd process) never aborts, so its lingering
+    /// socket cannot false-positive the probe.
+    nonisolated static func shouldAbortStartForPortConflict(hasLiveProcess: Bool,
+                                                            portInUse: Bool) -> Bool {
+        !hasLiveProcess && portInUse
+    }
+
+    /// Best-effort synchronous TCP connect probe: true when the connect
+    /// succeeds (something is listening on `host:port`).
+    nonisolated private static func tcpConnect(host: String, port: UInt16) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = inet_addr(host)
+
+        let result = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return result == 0
+    }
+
     @Published private(set) var state: State = .stopped
     @Published private(set) var restartCount = 0
     @Published private(set) var lastExitCode: Int32?
@@ -70,7 +108,13 @@ final class EngineManager: ObservableObject {
 
     /// Locates the embedded engine binary and spawns it as a direct child.
     /// Safe to call from `.stopped`, `.failed`, and `.restarting`.
-    func start() {
+    ///
+    /// - Parameter resetBreaker: when `true`, the restart circuit breaker
+    ///   (`policy`/`restartCount`) is reset — reserved for a genuine
+    ///   configuration-change restart (`restart()`). The exit-retry and
+    ///   reconcile paths pass the default `false` so a crash oscillation can
+    ///   still accumulate toward `giveUp`.
+    func start(resetBreaker: Bool = false) {
         guard state == .stopped || state == .failed || state == .restarting else { return }
         stoppedByUser = false
 
@@ -86,11 +130,26 @@ final class EngineManager: ObservableObject {
         }
 
         openLogIfNeeded()
+
+        // Fail fast when the management port is already held by another
+        // process. Only probed when we hold no live child, so restart()'s
+        // just-SIGTERM'd child cannot false-positive the probe.
+        if process == nil,
+           Self.shouldAbortStartForPortConflict(hasLiveProcess: false,
+                                                portInUse: Self.managementPortInUse()) {
+            state = .failed
+            lastError = "management port \(Self.managementAPIPort) is already in use; not starting the engine"
+            appendToLog("=== memory-connector engine start aborted: management port \(Self.managementAPIPort) already in use ===\n")
+            return
+        }
+
         appendToLog("=== memory-connector engine start ===\n")
 
         state = .starting
-        policy = RestartPolicy()
-        restartCount = 0
+        if resetBreaker {
+            policy = RestartPolicy()
+            restartCount = 0
+        }
         lastExitCode = nil
         lastError = nil
 
@@ -111,7 +170,13 @@ final class EngineManager: ObservableObject {
         }
         stderrHandle.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if !data.isEmpty { self?.appendToLog(data) }
+            guard !data.isEmpty else { return }
+            self?.appendToLog(data)
+            if Self.looksLikeManagementPortBindFailure(in: data) {
+                Task { @MainActor [weak self] in
+                    self?.surfaceManagementPortBindFailure()
+                }
+            }
         }
 
         proc.terminationHandler = { [weak self] terminated in
@@ -140,12 +205,12 @@ final class EngineManager: ObservableObject {
     /// Stops the engine and disables auto-restart. Idempotent.
     func stop() {
         stoppedByUser = true
-        appendToLog("=== memory-connector engine stop (SIGTERM) ===\n")
         guard let proc = process, proc.isRunning else {
             process = nil
             state = .stopped
             return
         }
+        appendToLog("=== memory-connector engine stop (SIGTERM) ===\n")
         state = .stopped
         proc.terminate() // SIGTERM — engine exits cleanly; handler confirms below
     }
@@ -167,9 +232,9 @@ final class EngineManager: ObservableObject {
         switch state {
         case .running, .starting, .restarting:
             stop()
-            start()
+            start(resetBreaker: true)
         case .stopped, .failed:
-            start()
+            start(resetBreaker: true)
         }
     }
 
@@ -217,6 +282,25 @@ final class EngineManager: ObservableObject {
                 self.start()
             }
         }
+    }
+
+    // MARK: - Management port bind failure surfacing
+
+    /// Detects the engine's own management-API bind failure in a stderr chunk:
+    /// the engine prints "listening" unconditionally and keeps running with a
+    /// dead management API after a failed bind, so the failure must be surfaced
+    /// rather than left only in the raw log. Matches "management API" together
+    /// with "address already in use" or "bind:".
+    nonisolated private static func looksLikeManagementPortBindFailure(in chunk: Data) -> Bool {
+        guard let text = String(data: chunk, encoding: .utf8)?.lowercased() else { return false }
+        return text.contains("management api")
+            && (text.contains("address already in use") || text.contains("bind:"))
+    }
+
+    /// Surfaces a management-port bind failure (marker line + `lastError`).
+    private func surfaceManagementPortBindFailure() {
+        lastError = "engine management API could not bind port \(Self.managementAPIPort)"
+        appendToLog("=== engine management API bind failure: port \(Self.managementAPIPort) already in use ===\n")
     }
 
     // MARK: - Logging
