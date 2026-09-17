@@ -147,6 +147,23 @@ func TestBuildProposalCardObject(t *testing.T) {
 	}
 }
 
+func TestBuildProposalCardObjectNilProperty(t *testing.T) {
+	card := buildProposalCard(json.RawMessage(`{"kind":"object","summary":"Create a person","body":{"entities":[{"type":"person","key":"alice","properties":{"name":"Alice","nickname":null}}]}}`))
+	if card == nil || len(card.Entities) != 1 {
+		t.Fatalf("object proposal should parse, got %+v", card)
+	}
+	props := card.Entities[0].Properties
+	if props["name"] != "Alice" {
+		t.Errorf("string property lost: %+v", props)
+	}
+	if got, ok := props["nickname"]; !ok || got != "" {
+		t.Errorf("nil property should render as empty string, got %q (present=%v)", got, ok)
+	}
+	if html := renderProposalHTML(json.RawMessage(`{"kind":"object","summary":"Create a person","body":{"entities":[{"type":"person","key":"alice","properties":{"name":"Alice","nickname":null}}]}}`)); strings.Contains(html, "null") {
+		t.Errorf("nil property must not render as the literal \"null\":\n%s", html)
+	}
+}
+
 func TestBuildProposalCardEmptyKindBodies(t *testing.T) {
 	for name, raw := range map[string]string{
 		"skill-no-name":  `{"kind":"skill","summary":"s","body":{"description":"d"}}`,

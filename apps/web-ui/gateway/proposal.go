@@ -376,6 +376,9 @@ func stringMap(v any) map[string]string {
 // stringifyValue renders a scalar property value as a string: strings pass
 // through, everything else is JSON-encoded (nil → "").
 func stringifyValue(v any) string {
+	if v == nil {
+		return ""
+	}
 	if s, ok := v.(string); ok {
 		return s
 	}
