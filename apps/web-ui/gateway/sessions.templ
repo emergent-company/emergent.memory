@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -53,7 +54,7 @@ templ sessionsList(convs []Conversation) {
 }
 
 templ sessionRow(c Conversation) {
-	@listRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
+	@components.ListRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
 		if c.AgentDefinitionID != "" {
 			@ui.Badge(ui.BadgeProps{
 				Label:   shortID(c.AgentDefinitionID),
@@ -342,7 +343,7 @@ templ runStatusBadge(status string) {
 	} else if status == "running" || status == "pending" {
 		intent = ui.BadgeInfo
 	} }}
-	@ui.Badge(ui.BadgeProps{Label: status, Variant: intent, Size: ui.BadgeSizeXS, Dot: true})
+	@components.StatusBadge(status, intent, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 }
 
 // toolStatusBadge colors a tool-call status; an empty status renders a dash.
@@ -356,7 +357,7 @@ templ toolStatusBadge(status string) {
 		} else if status == "error" || status == "failed" {
 			intent = ui.BadgeError
 		} }}
-		@ui.Badge(ui.BadgeProps{Label: status, Variant: intent, Size: ui.BadgeSizeXS, Dot: true})
+		@components.StatusBadge(status, intent, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 	}
 }
 

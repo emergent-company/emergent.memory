@@ -128,7 +128,7 @@ func TestProfileAvatarTriggerWiring(t *testing.T) {
 	for _, want := range []string{
 		`<dialog id="profile-avatar-modal" class="modal"`,
 		`aria-label="Edit profile photo"`,
-		`document.getElementById('profile-avatar-modal').showModal()`,
+		`window.MemoryApp.openDialog('profile-avatar-modal')`,
 		`<img src="/api/user/avatar?v=k1"`,
 		`lucide--pencil`,
 		`action="/profile/avatar"`,

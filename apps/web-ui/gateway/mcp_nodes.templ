@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -112,7 +113,7 @@ templ mcpNodeRow(node mcpNodeView, selected bool) {
 			Icon:       "lucide--trash-2",
 			ExtraClass: "text-error hover:text-error",
 			AriaLabel:  "Remove node " + node.InstanceID,
-			OnClick:    openMCPNodeRemove(node.InstanceID),
+			OnClick:    templ.JSFuncCall("openDialogByID", "mcp-node-remove-"+node.InstanceID),
 		})
 		@mcpNodeRemoveDialog(node)
 	</div>
@@ -125,19 +126,15 @@ templ mcpNodeRow(node mcpNodeView, selected bool) {
 // near-black text on the near-black dark surface.
 templ mcpNodeStateBadge(live bool) {
 	if live {
-		@ui.Badge(ui.BadgeProps{
-			Label:   "Connected",
-			Variant: ui.BadgeSuccess,
-			Style:   ui.BadgeStyleSoft,
-			Size:    ui.BadgeSizeXS,
-			Dot:     true,
+		@components.StatusBadge("Connected", ui.BadgeSuccess, "", components.StatusBadgeOpts{
+			Style: ui.BadgeStyleSoft,
+			Size:  ui.BadgeSizeXS,
+			Dot:   true,
 		})
 	} else {
-		@ui.Badge(ui.BadgeProps{
-			Label:   "Disconnected",
-			Variant: ui.BadgeNeutral,
-			Size:    ui.BadgeSizeXS,
-			Dot:     true,
+		@components.StatusBadge("Disconnected", ui.BadgeNeutral, "", components.StatusBadgeOpts{
+			Size: ui.BadgeSizeXS,
+			Dot:  true,
 		})
 	}
 }
@@ -184,12 +181,6 @@ templ mcpNodeRemoveDialog(node mcpNodeView) {
 			</div>
 		</form>
 	}
-}
-
-// openMCPNodeRemove opens one row's remove-confirm dialog.
-script openMCPNodeRemove(instanceID string) {
-	var d = document.getElementById("mcp-node-remove-" + instanceID);
-	if (d) d.showModal();
 }
 
 // mcpNodeByID looks up a node's rendered row view by instance id, letting the

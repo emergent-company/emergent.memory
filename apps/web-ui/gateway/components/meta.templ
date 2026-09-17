@@ -1,0 +1,55 @@
+package components
+
+// MetaRowOpts tunes a MetaRow.
+type MetaRowOpts struct {
+	// Mono renders the value in the monospace treatment.
+	Mono bool
+	// NoEmptyDash suppresses the shared em-dash fallback so a caller can render
+	// status copy instead of a value.
+	NoEmptyDash bool
+}
+
+// MetaRow renders one label/value pair of a definition list. Every meta row in
+// the UI renders through this component so the label style has a single
+// definition; before extraction there were four implementations and two
+// divergent label classes.
+templ MetaRow(label, value string, opts ...MetaRowOpts) {
+	{{ var o MetaRowOpts
+	if len(opts) > 0 {
+		o = opts[0]
+	} }}
+	<div>
+		<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
+		<dd class="text-base-content/85 mt-1 text-sm break-words">
+			@metaRowValue(value, o)
+		</dd>
+	</div>
+}
+
+// MetaRowCustom renders a label with caller-supplied content in the value slot,
+// for rows that show status copy rather than a plain value. MetaRowOpts is
+// accepted for symmetry with MetaRow; the slot content is always rendered, so
+// NoEmptyDash has no effect here.
+templ MetaRowCustom(label string, opts ...MetaRowOpts) {
+	<div>
+		<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
+		<dd class="text-base-content/85 mt-1 text-sm break-words">
+			{ children... }
+		</dd>
+	</div>
+}
+
+templ metaRowValue(value string, o MetaRowOpts) {
+	if value == "" && !o.NoEmptyDash {
+		@EmptyDash()
+	} else if o.Mono {
+		<span class="font-mono text-xs">{ value }</span>
+	} else {
+		{ value }
+	}
+}
+
+// EmptyDash renders the muted em-dash fallback for an absent value.
+templ EmptyDash() {
+	<span class="text-base-content/30 text-sm">—</span>
+}

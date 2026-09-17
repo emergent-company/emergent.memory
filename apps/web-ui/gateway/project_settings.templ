@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -29,10 +30,10 @@ templ settingsField(name, label, tip, hint string, attrs templ.Attributes) {
 // mirroring agentSubNav. It stacks horizontally on small screens and becomes a
 // sticky left rail on desktop.
 templ settingsSubNav(active string, providersMissing bool) {
-	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Settings sections">
-		@subNavItem("/settings", active == "general", "lucide--settings", "General")
-		@subNavItem("/settings/assistant", active == "assistant", "lucide--bot", "Assistant")
-		@subNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
+	@components.SubNav("Settings sections") {
+		@components.SubNavItem("/settings", active == "general", "lucide--settings", "General")
+		@components.SubNavItem("/settings/assistant", active == "assistant", "lucide--bot", "Assistant")
+		@components.SubNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
 		{{ activeP := active == "providers" }}
 		<a
 			class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !activeP) }
@@ -51,10 +52,10 @@ templ settingsSubNav(active string, providersMissing bool) {
 				<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured" title="No provider configured"></span>
 			}
 		</a>
-		@subNavItem("/settings/voice", active == "voice", "lucide--mic", "Voice")
-		@subNavItem("/settings/devices", active == "devices", "lucide--smartphone", "Devices")
-		@subNavItem("/settings/mcp-nodes", active == "mcp-nodes", "lucide--radio", "MCP nodes")
-	</nav>
+		@components.SubNavItem("/settings/voice", active == "voice", "lucide--mic", "Voice")
+		@components.SubNavItem("/settings/devices", active == "devices", "lucide--smartphone", "Devices")
+		@components.SubNavItem("/settings/mcp-nodes", active == "mcp-nodes", "lucide--radio", "MCP nodes")
+	}
 }
 
 // ProjectSettingsPage renders the General section of project settings: the
@@ -178,20 +179,8 @@ templ projectInfoPanel(p *Project) {
 				<textarea id="chat-prompt-template" name="chat_prompt_template" rows="3" placeholder="You are chatting within {project_name}…" class="textarea w-full resize-none" hx-post="/settings/project/chat_prompt_template" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none">{ p.ChatPromptTemplate }</textarea>
 			}
 			<div class="flex flex-wrap gap-x-8 gap-y-2">
-				<label class="cursor-pointer label justify-start gap-3">
-					<input type="checkbox" name="auto_extract_objects" class="toggle" checked?={ p.AutoExtractObjects != nil && *p.AutoExtractObjects } hx-post="/settings/project/auto_extract_objects" hx-trigger="change" hx-include="this" hx-swap="none"/>
-					<span class="label-text flex items-center gap-1.5">
-						<span>Auto-extract objects from new documents</span>
-						@ui.InfoTip("When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually.")
-					</span>
-				</label>
-				<label class="cursor-pointer label justify-start gap-3">
-					<input type="checkbox" name="auto_merge_extraction_branches" class="toggle" checked?={ p.AutoMergeExtractionBranches != nil && *p.AutoMergeExtractionBranches } hx-post="/settings/project/auto_merge_extraction_branches" hx-trigger="change" hx-include="this" hx-swap="none"/>
-					<span class="label-text flex items-center gap-1.5">
-						<span>Auto-merge extraction branches</span>
-						@ui.InfoTip("When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked.")
-					</span>
-				</label>
+@components.ToggleField("auto_extract_objects", "Auto-extract objects from new documents", "When on, newly uploaded documents run LLM extraction automatically. Keeps the graph current but spends tokens on every upload; when off you trigger extraction manually.", p.AutoExtractObjects != nil && *p.AutoExtractObjects, templ.Attributes{"hx-post": "/settings/project/auto_extract_objects", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
+@components.ToggleField("auto_merge_extraction_branches", "Auto-merge extraction branches", "When on, extraction staging branches merge into the main graph automatically once extraction completes. Saves a manual merge but skips the review step — bad extractions reach the main graph unchecked.", p.AutoMergeExtractionBranches != nil && *p.AutoMergeExtractionBranches, templ.Attributes{"hx-post": "/settings/project/auto_merge_extraction_branches", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 			</div>
 			@settingsField("budget-usd", "Budget (USD)", "Monthly LLM spend cap. Once exceeded, agent runs are rejected (402 budget exceeded) until the cycle resets. Empty means no cap.", "Monthly budget cap, if any.", nil) {
 				<input id="budget-usd" name="budget_usd" type="number" step="0.01" min="0" value={ budgetInputValue(p.BudgetUSD) } placeholder="e.g. 25.00" class="input w-full" hx-post="/settings/project/budget_usd" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
@@ -479,22 +468,7 @@ templ voicePanel(v voiceSettings) {
 			// Master enable toggle: a single-field save (enabled). A checked
 			// toggle posts enabled=on; unchecked sends no value, and the
 			// handler stores false either way.
-			<label class="cursor-pointer label justify-start gap-3">
-				<input
-					type="checkbox"
-					id="enabled"
-					name="enabled"
-					class="toggle"
-					checked?={ v.Enabled }
-					hx-post="/settings/voice/enabled"
-					hx-trigger="change"
-					hx-include="this" hx-swap="none"
-				/>
-				<span class="label-text flex items-center gap-1.5">
-					<span>Enable voice</span>
-					@ui.InfoTip("Master switch for voice. When off, the chat page hides its voice controls and voice is disabled for the project.")
-				</span>
-			</label>
+@components.ToggleField("enabled", "Enable voice", "Master switch for voice. When off, the chat page hides its voice controls and voice is disabled for the project.", v.Enabled, templ.Attributes{"hx-post": "/settings/voice/enabled", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 
 			// TTS provider/model/voice are a coupled group: any change saves
 			// all three atomically to /settings/voice/group/tts. Choosing a
@@ -700,38 +674,8 @@ templ voicePanel(v voiceSettings) {
 			};
 			</script>
 			<div class="flex flex-col gap-2">
-				<label class="cursor-pointer label justify-start gap-3">
-					<input
-						type="checkbox"
-						id="allow-interruptions"
-						name="allow_interruptions"
-						class="toggle"
-						checked?={ v.AllowInterruptions }
-						hx-post="/settings/voice/allow_interruptions"
-						hx-trigger="change"
-						hx-include="this" hx-swap="none"
-					/>
-					<span class="label-text flex items-center gap-1.5">
-						<span>Allow interruptions</span>
-						@ui.InfoTip("When on, you can interrupt the agent mid-response.")
-					</span>
-				</label>
-				<label class="cursor-pointer label justify-start gap-3">
-					<input
-						type="checkbox"
-						id="preemptive-generation"
-						name="preemptive_generation"
-						class="toggle"
-						checked?={ v.PreemptiveGeneration }
-						hx-post="/settings/voice/preemptive_generation"
-						hx-trigger="change"
-						hx-include="this" hx-swap="none"
-					/>
-					<span class="label-text flex items-center gap-1.5">
-						<span>Preemptive generation</span>
-						@ui.InfoTip("When on, the agent drafts its reply while you are still speaking.")
-					</span>
-				</label>
+@components.ToggleField("allow_interruptions", "Allow interruptions", "When on, you can interrupt the agent mid-response.", v.AllowInterruptions, templ.Attributes{"hx-post": "/settings/voice/allow_interruptions", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
+@components.ToggleField("preemptive_generation", "Preemptive generation", "When on, the agent drafts its reply while you are still speaking.", v.PreemptiveGeneration, templ.Attributes{"hx-post": "/settings/voice/preemptive_generation", "hx-trigger": "change", "hx-include": "this", "hx-swap": "none"})
 			</div>
 			<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
 				@voiceSecretRow("Cartesia API key", v.CartesiaKeySet)
@@ -744,16 +688,13 @@ templ voicePanel(v voiceSettings) {
 
 // voiceSecretRow renders a secret's set/not-set state without leaking it.
 templ voiceSecretRow(label string, set bool) {
-	<div>
-		<dt class="text-base-content/45 text-xs">{ label }</dt>
-		<dd class="mt-0.5 text-sm">
-			if set {
-				<span class="text-success">set</span>
-			} else {
-				<span class="text-base-content/45">not set</span>
-			}
-		</dd>
-	</div>
+	@components.MetaRowCustom(label, components.MetaRowOpts{NoEmptyDash: true}) {
+		if set {
+			<span class="text-success">set</span>
+		} else {
+			<span class="text-base-content/45">not set</span>
+		}
+	}
 }
 
 // providersPanel lists the LLM providers configured for this project, their
@@ -868,13 +809,7 @@ templ defaultModelSelect(name, label, current string, models []Model) {
 	@settingsField("", label, "Provider-prefixed model name (configured provider), e.g. openai/deepseek-v4-pro.", "", nil) {
 		<select name={ name } class="select w-full">
 			<option value="" selected?={ current == "" }>None — no default</option>
-			for _, g := range modelGroups(models) {
-				<optgroup label={ g.Provider }>
-					for _, m := range g.Models {
-						<option value={ m.Provider + "/" + m.ModelName } selected?={ current == m.Provider+"/"+m.ModelName }>{ modelDisplay(m) }</option>
-					}
-				</optgroup>
-			}
+			@components.SelectOptionGroups(modelOptionGroupsFor(models, current))
 		</select>
 	}
 }
@@ -887,13 +822,7 @@ templ providerModelSelect(name, label, current string, models []Model) {
 	@settingsField("", label, "Provider-prefixed model name (e.g. openai/deepseek-v4-flash). Fallback used when the project has no default.", "", nil) {
 		<select name={ name } class="select w-full">
 			<option value="" selected?={ current == "" }>None — auto-select</option>
-			for _, g := range modelGroups(models) {
-				<optgroup label={ g.Provider }>
-					for _, m := range g.Models {
-						<option value={ m.Provider + "/" + m.ModelName } selected?={ current == m.Provider+"/"+m.ModelName }>{ modelDisplay(m) }</option>
-					}
-				</optgroup>
-			}
+			@components.SelectOptionGroups(modelOptionGroupsFor(models, current))
 			if current != "" && !prefixedModelInCatalog(models, current) {
 				<option value={ current } selected>{ current } (current)</option>
 			}
@@ -1306,7 +1235,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 // providers". The modal body uses the backend's message as-is — it already
 // reads like plain-language guidance (e.g. base_url reachability hints).
 templ providerConfigSaveErrorModal(err error) {
-	@modalShell("provider-save-error-modal", "", "max-w-md") {
+	@modalShell("provider-save-error-modal", "", "max-w-md", components.DialogAutoOpen()) {
 		<div class="mb-3 flex items-start gap-3">
 			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
 				@ui.IconSpan("lucide--alert-triangle", "size-5")
@@ -1328,12 +1257,6 @@ templ providerConfigSaveErrorModal(err error) {
 			</form>
 		</div>
 	}
-	<script type="text/javascript">
-		(function () {
-			var d = document.getElementById('provider-save-error-modal');
-			if (d && typeof d.showModal === 'function') d.showModal();
-		})();
-	</script>
 }
 
 // providerConfigPage is the add/edit provider form page shell.

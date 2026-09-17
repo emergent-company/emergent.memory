@@ -1,0 +1,14 @@
+package main
+
+// snippetCode renders a client snippet's code for components.SnippetCard's code
+// slot: syntax-highlighted when it parses as JSON, escaped plain text otherwise.
+// Highlighting stays here because the highlighter is shared with the other JSON
+// surfaces on this page group.
+templ snippetCode(code string) {
+	{{ hl, ok := highlightJSONSnippet(code) }}
+	if ok {
+		@templ.Raw(hl)
+	} else {
+		{ code }
+	}
+}

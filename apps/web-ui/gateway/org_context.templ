@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -121,8 +122,7 @@ templ OrgLandingPage(data orgPageData) {
 					if (hidden) hidden.value = btn.getAttribute('data-project-id') || '';
 					var label = document.getElementById('transfer-project-name');
 					if (label) label.textContent = btn.getAttribute('data-project-name') || 'project';
-					var d = document.getElementById('transfer-project-modal');
-					if (d) d.showModal();
+					window.MemoryApp.openDialog('transfer-project-modal');
 					var s = document.getElementById('transfer-destination-org');
 					if (s) s.focus();
 				}
@@ -163,7 +163,7 @@ templ OrgLandingPage(data orgPageData) {
 					}
 					var p = document.getElementById('project-delete-detail');
 					if (p) p.textContent = detail;
-					d.showModal();
+					window.MemoryApp.openDialog('project-delete-modal');
 					var confirm = d.querySelector('form [data-project-delete-busy]');
 					if (confirm && typeof confirm.focus === 'function') confirm.focus();
 				}
@@ -274,7 +274,7 @@ templ OrgLandingPage(data orgPageData) {
 					@projectsPendingRefreshNote(data.Org.ID, pendingCount)
 				}
 				@ui.Section("Projects", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
-					@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+					@components.TableCard(nil) {
 						<form method="post" action="/projects/delete" x-data="{ count: 0 }">
 							<input type="hidden" name="orgId" value={ data.Org.ID }/>
 							<div class="flex min-h-11 items-center gap-3 border-b border-base-200 px-4">
@@ -599,7 +599,7 @@ templ OrgMembersPage(data orgMembersPageData) {
 					Class:       "py-12",
 				})
 			} else {
-				@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+				@components.TableCard(nil) {
 					@table.TableWithProps(table.TableProps{Bordered: false}) {
 						@table.TableHead() {
 							@table.TableHeadRow() {
@@ -665,7 +665,7 @@ templ OrgInvitePage(data orgInvitePageData) {
 			{{ subtitle := "An email invitation carrying the org admin role — they join " + data.Org.Name + " once they accept." }}
 			@detailHeader(crumbsActive(nav.Crumbs("Organization", "/orgs/"+url.PathEscape(data.Org.ID), "Invite a member")), "", "Invite a member", subtitle) {}
 			@flashToasts("", data.FlashErr)
-			@ui.CardRaw("card-border", "p-5", nil) {
+			@components.PanelCard("", nil) {
 				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/invite") } hx-boost="false" class="flex flex-col gap-4">
 					<input type="hidden" name="orgId" value={ data.Org.ID }/>
 					@form.FormControl("org-invite-email", "Email", form.LabelAbove, "Start typing to match a registered user, or type any email address.", "", nil) {
@@ -710,11 +710,11 @@ templ OrgInvitePage(data orgInvitePageData) {
 // hub (Tools / Danger zone), mirroring settingsSubNav. It stacks horizontally
 // on small screens and becomes a sticky left rail on desktop.
 templ orgSettingsSubNav(orgID string, active string) {
-	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Organization settings sections">
-		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/general", active == "general", "lucide--building-2", "General")
-		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings", active == "tools", "lucide--sliders-horizontal", "Tools")
-		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", active == "danger-zone", "lucide--shield-alert", "Danger zone")
-	</nav>
+	@components.SubNav("Organization settings sections") {
+		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/general", active == "general", "lucide--building-2", "General")
+		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings", active == "tools", "lucide--sliders-horizontal", "Tools")
+		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", active == "danger-zone", "lucide--shield-alert", "Danger zone")
+	}
 }
 
 // OrgSettingsPage renders the Tools section of the org Settings hub (GET
@@ -738,7 +738,7 @@ templ OrgSettingsPage(data orgSettingsPageData) {
 				})
 			} else {
 					@ui.Section("Tools", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
-						@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+						@components.TableCard(nil) {
 							<div class="divide-y divide-base-200">
 								for _, s := range data.Settings {
 									@orgToolSettingRow(data.Org, s)

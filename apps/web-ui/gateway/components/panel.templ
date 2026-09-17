@@ -1,0 +1,17 @@
+package components
+
+import (
+	"strings"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// PanelCard renders the standard bordered panel with the shared body padding.
+// extraClass is appended to the panel classes for an intentional accent (for
+// example "border-primary/20" on a one-time secret panel); the standard
+// treatment is always applied.
+templ PanelCard(extraClass string, attrs templ.Attributes) {
+	@ui.CardRaw(strings.TrimSpace("card-border "+extraClass), "p-5", attrs) {
+		{ children... }
+	}
+}
