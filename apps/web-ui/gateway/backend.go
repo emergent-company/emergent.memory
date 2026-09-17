@@ -36,6 +36,8 @@ type MemoryBackend interface {
 	CancelQuestion(ctx context.Context, questionID string) (*RespondQuestionResult, error)
 	ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error)
 	ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error)
+	CancelAgentRun(ctx context.Context, agentID, runID string) error
+	ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error)
 	ListConversations(ctx context.Context) (*ConversationList, error)
 	CreateObjectConversation(ctx context.Context, canonicalID, title, message string) (string, error)
 	GetConversation(ctx context.Context, id string) (*ConversationDetail, error)

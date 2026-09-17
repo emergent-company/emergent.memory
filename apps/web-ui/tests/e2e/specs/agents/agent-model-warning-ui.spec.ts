@@ -11,7 +11,8 @@ import { expectAppPage } from '../../helpers/page';
 
 // Agent-model config warnings (gateway 9c573b7): an agent with no explicit
 // model and no resolvable default renders a severity alert on the agent
-// dashboard (/agents/:id) and the agent settings (/agents/:id/settings):
+// dashboard (/agents/:id) and the agent settings Model subpage
+// (/agents/:id/settings/model):
 // "error" when the project has no configured provider, "warning" when
 // providers exist but no project default generative model is pinned. Each
 // alert carries a link to /settings/providers. Providers and the project
@@ -135,7 +136,7 @@ test('error severity: no explicit model on a provider-less project', async ({ pa
     await expect(dashLink).toHaveAttribute('href', '/settings/providers');
 
     // Settings: settings-flavored error text + the same link.
-    await page.goto(`/agents/${agentId}/settings`);
+    await page.goto(`/agents/${agentId}/settings/model`);
     await expectAppPage(page, title);
     const setAlert = page.getByRole('alert').filter({ hasText: 'This agent has no model' });
     await expect(setAlert).toBeVisible();
@@ -180,7 +181,7 @@ test('warning severity: provider configured, no default model pinned', async ({ 
     await expect(dashLink).toHaveAttribute('href', '/settings/providers');
 
     // Settings: settings-flavored warning text + the same link.
-    await page.goto(`/agents/${agentId}/settings`);
+    await page.goto(`/agents/${agentId}/settings/model`);
     await expectAppPage(page, title);
     const setAlert = page
       .getByRole('alert')
@@ -257,7 +258,7 @@ test('error severity: explicit model on a provider-less project', async ({ page 
     await expect(dashLink).toHaveAttribute('href', '/settings/providers');
 
     // Settings: settings-flavored error text ("pinned") + the same link.
-    await page.goto(`/agents/${agentId}/settings`);
+    await page.goto(`/agents/${agentId}/settings/model`);
     await expectAppPage(page, title);
     const setAlert = page.getByRole('alert').filter({ hasText: 'This agent is pinned to' });
     await expect(setAlert).toBeVisible();
@@ -330,7 +331,7 @@ test("no alert when the explicit model's provider is configured", async ({ page 
     // Settings renders no model-config alert and the model select is pinned to
     // the explicit model (catalog match or the "(current)" fallback both give
     // the select the stored model name as its value).
-    await page.goto(`/agents/${agentId}/settings`);
+    await page.goto(`/agents/${agentId}/settings/model`);
     await expectAppPage(page, title);
     await expect(page.getByRole('alert')).toHaveCount(0);
     await expect(page.locator('#agent-settings-model')).toHaveValue(MODEL_NAME);

@@ -474,14 +474,19 @@ func applyDelegation(def *AgentDefinition) error {
 		return nil
 	}
 	if def.Delegation.Enabled {
-		if len(def.Delegation.Targets) == 0 {
-			return fmt.Errorf("delegation.targets must not be empty when delegation is enabled")
-		}
 		def.Tools = appendUnique(def.Tools, "spawn_agents", "list_available_agents")
 		if def.Config == nil {
 			def.Config = map[string]any{}
 		}
-		def.Config["spawnPolicy"] = map[string]any{"allow": def.Delegation.Targets}
+		if len(def.Delegation.Targets) == 0 {
+			// No targets means the open policy: every agent is spawnable. The
+			// server treats an absent Config["spawnPolicy"] as open (see
+			// apps/server/domain/agents/coordination_tools.go), so deleting the
+			// key keeps deriveDelegation→applyDelegation round-trips idempotent.
+			delete(def.Config, "spawnPolicy")
+		} else {
+			def.Config["spawnPolicy"] = map[string]any{"allow": def.Delegation.Targets}
+		}
 	} else {
 		def.Tools = removeItems(def.Tools, "spawn_agents", "list_available_agents")
 		if def.Tools == nil {

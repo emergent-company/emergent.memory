@@ -1,0 +1,117 @@
+package main
+
+import "strconv"
+
+// DockPanel renders the pending-work dock for one conversation: its pending
+// tool approvals and pending ask_user questions. It renders nothing when both
+// are empty. The approve/reject/answer controls carry data-dock-action /
+// data-dock-option-value attributes; chat.js's delegated handler posts them to
+// the existing approval/question response routes (the same ones the inline
+// cards use), so this component lays out the cards and their controls only.
+// Each option button shows the option's label and exposes its value on
+// data-dock-option-value, so chat.js submits the value — not the label —
+// exactly like the inline question card.
+//
+// The fragment root deliberately carries no id: the chat page's mount point
+// owns #chat-dock, and an id here would nest a duplicate #chat-dock inside it.
+templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCard) {
+	if len(approvals) > 0 || len(questions) > 0 {
+		{{ total := len(approvals) + len(questions) }}
+		<div class="chat-dock" data-conv={ convID } data-testid="chat-dock">
+			if total > 1 {
+				<div class="dock-head" data-testid="dock-head">
+					<span class="dock-count" data-testid="dock-count">{ strconv.Itoa(total) }</span>
+					<span class="dock-count-label">pending</span>
+				</div>
+			}
+			for _, a := range approvals {
+				<div class="dock-card dock-approval" data-testid="dock-approval" data-dock-kind="approval" data-question-id={ a.QuestionID } data-conversation-id={ a.ConversationID }>
+					<div class="dock-card-main">
+						<span class="dock-card-kind">Approval</span>
+						<span class="dock-card-tool">{ a.ToolName }</span>
+						if a.ArgsSummary != "" {
+							<span class="dock-card-args">{ a.ArgsSummary }</span>
+						}
+					</div>
+					<div class="dock-card-controls">
+						<input
+							type="text"
+							class="dock-approval-msg input input-sm"
+							placeholder="Reason (optional)"
+							maxlength="500"
+							aria-label="Rejection reason (optional)"
+						/>
+						<button type="button" class="dock-approval-cancel btn btn-ghost btn-xs" data-dock-action="cancel" data-question-id={ a.QuestionID }>Cancel</button>
+						<button type="button" class="dock-approval-reject btn btn-ghost btn-xs text-error" data-dock-action="reject" data-question-id={ a.QuestionID }>Reject</button>
+						<button type="button" class="dock-approval-approve btn btn-primary btn-xs" data-dock-action="approve" data-question-id={ a.QuestionID }>Approve</button>
+					</div>
+				</div>
+			}
+			for _, q := range questions {
+				{{ isText := q.Kind == "text" || len(q.Options) == 0 }}
+				{{ isMulti := q.Kind == "multi_select" }}
+				{{ optRole := "radio" }}
+				if isMulti {
+					{{ optRole = "checkbox" }}
+				}
+				<div class="dock-card dock-question" data-testid="dock-question" data-dock-kind="question" data-dock-type={ q.Kind } data-question-id={ q.QuestionID }>
+					<div class="dock-card-main">
+						<span class="dock-card-kind">Question</span>
+						<span class="dock-card-prompt">{ q.Prompt }</span>
+					</div>
+					if !isText {
+						<div class="dock-card-options" role="group" aria-label={ q.Prompt }>
+							for _, o := range q.Options {
+								<button type="button" class="dock-question-option" role={ optRole } aria-checked="false" data-dock-option-value={ o.Value }>{ questionOptionLabel(o) }</button>
+							}
+						</div>
+					} else {
+						<input
+							type="text"
+							class="dock-question-input input input-sm w-full"
+							placeholder="Type your answer"
+							autocomplete="off"
+							aria-label={ q.Prompt }
+						/>
+					}
+					<div class="dock-card-controls">
+						<button type="button" class="dock-question-cancel btn btn-ghost btn-xs" data-dock-action="cancel" data-question-id={ q.QuestionID }>Cancel</button>
+						<button type="button" class="dock-question-submit btn btn-primary btn-xs" data-dock-action="answer" data-question-id={ q.QuestionID } disabled>Submit</button>
+					</div>
+				</div>
+			}
+		</div>
+	}
+}
+
+// TodoCard renders one conversation's session todos as a collapsed-by-default
+// card. It renders nothing when there are no todos.
+templ TodoCard(todos []TodoItem) {
+	if len(todos) > 0 {
+		<div class="todo-card" data-testid="todo-card">
+			<button type="button" class="todo-card-toggle" data-testid="todo-card-toggle" aria-expanded="false">
+				Plan
+			</button>
+			<ul class="todo-card-list" data-testid="todo-card-list">
+				for _, t := range todos {
+					<li class="todo-item" data-testid="todo-item" data-status={ t.Status } data-order={ strconv.Itoa(t.Order) }>
+						<span class="todo-item-status">{ t.Status }</span>
+						<span class="todo-item-content">{ t.Content }</span>
+					</li>
+				}
+			</ul>
+		</div>
+	}
+}
+
+// RailStatusBadge renders the session-rail run-state badge for one row: the
+// machine-readable bucket and pending-work counts plus a human label. Lane B
+// places this inside each rail row (sessionRailItem).
+templ RailStatusBadge(bucket string, pendingApprovals, pendingQuestions int) {
+	<span
+		class="rail-status-badge"
+		data-bucket={ bucket }
+		data-pending-approvals={ strconv.Itoa(pendingApprovals) }
+		data-pending-questions={ strconv.Itoa(pendingQuestions) }
+	>{ railBucketLabel(bucket) }</span>
+}

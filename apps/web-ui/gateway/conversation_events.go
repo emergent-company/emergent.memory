@@ -240,6 +240,87 @@ func sessionKey(sc *sessionContext) string {
 	return sc.Token + "\x00" + sc.ProjectID
 }
 
+// Run buckets derived by the gateway from a conversation's newest run
+// lifecycle item plus its pending approvals/questions. They reference the
+// acp-run-lifecycle status vocabulary rather than redefining it: the ordering
+// (needs_input > failed > running > done) mirrors that capability's
+// aggregation rule.
+const (
+	runBucketNeedsInput = "needs_input"
+	runBucketFailed     = "failed"
+	runBucketRunning    = "running"
+	runBucketDone       = "done"
+)
+
+// conversationRunState is the derived run-control state for one conversation,
+// produced from the single history fetch the poller already performs plus the
+// already-fetched project-wide approval/question snapshots. It feeds both the
+// SSE change-detection fingerprint and the refresh payload the rail/dock
+// consume.
+type conversationRunState struct {
+	runEndCount      int
+	pendingApprovals []string
+	pendingQuestions []string
+	activeRunID      string
+	activeRunStatus  string
+	bucket           string
+}
+
+// refreshPayload is the shape broadcast to conversation subscribers. Existing
+// consumers that only read {"type":"refresh"} keep working: the extra fields
+// are additive and ignored by anything that does not decode them.
+type refreshPayload struct {
+	Type             string `json:"type"`
+	Bucket           string `json:"bucket"`
+	RunID            string `json:"runId"`
+	RunStatus        string `json:"runStatus"`
+	PendingApprovals int    `json:"pendingApprovals"`
+	PendingQuestions int    `json:"pendingQuestions"`
+}
+
+// refreshFrame marshals the per-conversation refresh payload. A marshal
+// failure (impossible with this struct) degrades to the bare refresh frame so
+// the change-detection fan-out never breaks.
+func refreshFrame(st *conversationRunState) []byte {
+	if st == nil {
+		return []byte(`{"type":"refresh"}`)
+	}
+	b, err := json.Marshal(refreshPayload{
+		Type:             "refresh",
+		Bucket:           st.bucket,
+		RunID:            st.activeRunID,
+		RunStatus:        st.activeRunStatus,
+		PendingApprovals: len(st.pendingApprovals),
+		PendingQuestions: len(st.pendingQuestions),
+	})
+	if err != nil {
+		return []byte(`{"type":"refresh"}`)
+	}
+	return b
+}
+
+// deriveRunBucket maps a conversation's newest run status (and its pending
+// decisions) onto a single bucket. A pending approval or ask_user question
+// forces needs_input regardless of status — a pending human decision outranks
+// a failure because the failure is already resolved by the time the user acts,
+// whereas a pending decision blocks the run. An input-required status is itself
+// "waiting on the user". No run lifecycle item yields done.
+func deriveRunBucket(status string, pendingApprovals, pendingQuestions []string) string {
+	if len(pendingApprovals) > 0 || len(pendingQuestions) > 0 {
+		return runBucketNeedsInput
+	}
+	switch status {
+	case "failed":
+		return runBucketFailed
+	case "submitted", "working", "cancelling":
+		return runBucketRunning
+	case "input-required":
+		return runBucketNeedsInput
+	default:
+		return runBucketDone
+	}
+}
+
 // broadcastConversationChanges computes a fingerprint per subscribed
 // conversation from one project-wide snapshot per session group and pushes
 // refresh frames to those whose state moved on. convs maps each subscribed
@@ -247,7 +328,6 @@ func sessionKey(sc *sessionContext) string {
 // no-session subscribers). Errors are non-fatal: a failed snapshot is skipped
 // and retried on the next tick.
 func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[string]*sessionContext) {
-	msg := []byte(`{"type":"refresh"}`)
 	// Group conversations by session identity so each session's
 	// question/approval snapshot is fetched once per tick, not once per
 	// conversation.
@@ -287,35 +367,49 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 			if groupSC != nil {
 				cc = withSessionContext(ctx, groupSC)
 			}
-			runEndCount, pendingApprovals, pendingQuestions, err := s.conversationState(cc, id, approvals, questions)
+			st, err := s.conversationState(cc, id, approvals, questions)
 			if err != nil {
 				// Per-conversation failures are expected (deleted/not-yet-visible
 				// conversation) and are skipped; log for triage, never capture.
 				log.Printf("conversation poll: conversation state (%s): %v", pollLogContext(id, groupSC), err)
 				continue
 			}
-			fp := fmt.Sprintf("%d|%v|%v", runEndCount, pendingApprovals, pendingQuestions)
+			// The fingerprint must cover every run-state transition — bucket,
+			// active run id, and active run status included — so a completed run
+			// followed by a new run_start (runEndCount unchanged) still
+			// re-broadcasts instead of leaving the rail stuck at "done".
+			fp := fmt.Sprintf("%d|%s|%s|%s|%v|%v", st.runEndCount, st.bucket, st.activeRunID, st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
 			if !s.hub.updateFingerprint(id, fp) {
 				continue
 			}
-			s.hub.broadcast(id, msg)
+			s.hub.broadcast(id, refreshFrame(st))
 		}
 	}
 }
 
 // conversationState fingerprints the parts of a conversation's state the chat
 // page cares about: completed runs, pending tool approvals, and unanswered
-// ask_user questions. approvals/questions are the already-fetched project-wide
-// snapshots so the poller only hits memory once per session group per tick.
-func (s *Server) conversationState(ctx context.Context, id string, approvals []ToolApprovalItem, questions []AgentQuestionItem) (runEndCount int, pendingApprovals, pendingQuestions []string, err error) {
+// ask_user questions — plus the derived run bucket and the active run's id and
+// status from the newest run_start/run_end lifecycle item. approvals/questions
+// are the already-fetched project-wide snapshots so the poller only hits
+// memory once per session group per tick (plus the single history fetch per
+// conversation).
+func (s *Server) conversationState(ctx context.Context, id string, approvals []ToolApprovalItem, questions []AgentQuestionItem) (*conversationRunState, error) {
 	hist, err := s.conversationTimeline(ctx, id)
 	if err != nil {
-		return 0, nil, nil, err
+		return nil, err
 	}
+	st := &conversationRunState{bucket: runBucketDone}
 	items := parseTimeline(hist.Items)
 	for _, it := range items {
-		if it.Kind == "run_end" {
-			runEndCount++
+		switch it.Kind {
+		case "run_end":
+			st.runEndCount++
+			st.activeRunID = it.RunID
+			st.activeRunStatus = it.RunStatus
+		case "run_start":
+			st.activeRunID = it.RunID
+			st.activeRunStatus = it.RunStatus
 		}
 	}
 	answered := make(map[string]bool, len(questions))
@@ -326,7 +420,7 @@ func (s *Server) conversationState(ctx context.Context, id string, approvals []T
 	}
 	for _, a := range approvals {
 		if a.ConversationID == id && a.Decision == "pending" {
-			pendingApprovals = append(pendingApprovals, a.QuestionID)
+			st.pendingApprovals = append(st.pendingApprovals, a.QuestionID)
 		}
 	}
 	// Mirror injectQuestionAnswers' question_id correlation: an ask_user tool
@@ -343,9 +437,10 @@ func (s *Server) conversationState(ctx context.Context, id string, approvals []T
 		if qid == "" || answered[qid] {
 			continue
 		}
-		pendingQuestions = append(pendingQuestions, qid)
+		st.pendingQuestions = append(st.pendingQuestions, qid)
 	}
-	return runEndCount, pendingApprovals, pendingQuestions, nil
+	st.bucket = deriveRunBucket(st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
+	return st, nil
 }
 
 // conversationEvents is the SSE endpoint a chat page subscribes to. It sends an
