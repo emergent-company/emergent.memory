@@ -46,6 +46,10 @@ import { addProvider } from '../helpers/providers';
 const PROVIDER = process.env.E2E_SCENARIO_LLM_PROVIDER || 'openai';
 const API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
 const BASE_URL = process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
+// The add-provider form renders the base_url field only for the OpenAI-
+// compatible provider; passing a base URL for any other provider would make
+// fillProviderForm wait on a non-existent field and time out.
+const PROVIDER_BASE_URL = PROVIDER === 'openai' ? BASE_URL : undefined;
 // The scenario suite treats E2E_SCENARIO_LLM_MODEL as the already-prefixed
 // "provider/model" catalog value (see blueprint-object-chat / mcp-servers-tool-call).
 // Tolerate a bare value too, but never double-prefix.
@@ -129,7 +133,7 @@ test.describe('ask_user proposal card scenario', () => {
       // 2. PROVIDER (UI): live-validated save; rejection is an environment
       // problem (invalid key / unreachable base URL), not a product regression
       // — skip with the backend's copy.
-      const saved = await addProvider(page, PROVIDER, API_KEY, BASE_URL);
+      const saved = await addProvider(page, PROVIDER, API_KEY, PROVIDER_BASE_URL);
       if (saved !== 'saved') {
         let detail = "couldn't save provider";
         const modal = page.locator('#provider-save-error-modal');
@@ -245,7 +249,7 @@ test.describe('ask_user proposal card scenario', () => {
       await expect(card.getByText('Proposed changes')).toBeVisible();
       await expect(card.getByText(/blueprint/i)).toBeVisible();
       await expect(card.getByText(/object\s*types/i)).toBeVisible();
-      await expect(card.getByText(PROSED_TYPE_NAME)).toBeVisible();
+      await expect(card.getByText(PROPOSED_TYPE_NAME)).toBeVisible();
 
       // The interactive answer controls render alongside the card (buttons
       // interaction type → Accept/Reject radio rows), proving the question card
