@@ -97,9 +97,12 @@ async function cleanup(page: Page, agentId: string, projectId: string): Promise<
 }
 
 // One parsed `question` SSE event, captured from the tee'd `/api/chat` stream by
-// the fetch interceptor below. `hasProposalHtml` distinguishes a real proposal
-// (non-empty `proposalHtml` — the gateway must render it) from a summary-only /
-// unknown-kind degradation (empty or absent `proposalHtml` — model deviation).
+// the fetch interceptor below. `hasProposalHtml` distinguishes a proposal the
+// gateway rendered into a card (non-empty `proposalHtml` — an unknown-kind
+// proposal still renders a summary-only card, so the gateway must produce a
+// `.proposal-card`) from the nil-card markdown fallback (empty/absent
+// `proposalHtml` — the gateway emitted the question with no card because the
+// proposal body was empty/malformed).
 type ProposalSseEvent = {
   questionId: string | null;
   hasProposalHtml: boolean;
@@ -123,18 +126,22 @@ async function installProposalSseInterceptor(page: Page): Promise<void> {
       init?: RequestInit,
     ): Promise<Response> => {
       const response = await originalFetch(input, init);
-      let url = '';
+      let pathname = '';
       try {
-        url =
+        const href =
           typeof input === 'string'
             ? input
             : input instanceof URL
               ? input.href
               : (input as Request).url || '';
+        // Path-boundary match: chat-stream.js fetches the literal "/api/chat",
+        // so a substring test would also tee unrelated URLs that merely
+        // contain it.
+        pathname = new URL(href, window.location.origin).pathname;
       } catch {
         /* ignore */
       }
-      if (url.indexOf('/api/chat') !== -1 && response.body) {
+      if (pathname === '/api/chat' && response.body) {
         try {
           void recordQuestionEvents(response.clone());
         } catch {
@@ -196,6 +203,7 @@ async function readProposalSseEvents(page: Page): Promise<ProposalSseEvent[]> {
 // with a non-empty `proposalHtml` but no `.proposal-card` appeared, FAIL with a
 // clear message naming the gateway render path.
 async function failOnUnrenderedProposal(page: Page): Promise<void> {
+  if ((await page.locator('.proposal-card').count()) > 0) return; // card rendered; not a render regression
   const sse = await readProposalSseEvents(page);
   const withProposal = sse.filter((e) => e.hasProposalHtml);
   expect(

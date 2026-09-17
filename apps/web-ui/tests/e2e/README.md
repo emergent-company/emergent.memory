@@ -241,9 +241,11 @@ type name, and the Accept/Reject answer controls. The ask_user tool pauses the
 run, so completion is detected on the `.proposal-card` in the DOM rather than a
 closed SSE stream. Env-gated on `E2E_SCENARIO_LLM_API_KEY`; the spec skips fast
 on a run error, when the model never asked (no `question` SSE event), or on a
-summary-only degradation (a `question` event with an empty/absent
-`proposalHtml`) — those are non-deterministic model tool-use, annotated and
-skipped. But when the server emitted a `question` event carrying a non-empty
+markdown-fallback degradation (a `question` event with an empty/absent
+`proposalHtml`, i.e. the proposal body was empty or malformed) — those are
+non-deterministic model deviations, annotated and skipped. Note an unknown-kind
+proposal still renders a summary-only _card_ with a non-empty `proposalHtml`, so
+it is asserted, not skipped. But when the server emitted a `question` event carrying a non-empty
 `proposalHtml` and no `.proposal-card` rendered, the spec HARD-FAILS: a fetch
 interceptor tees the `/api/chat` SSE stream and records the `question` events,
 so a gateway render regression can no longer masquerade as a skip.
