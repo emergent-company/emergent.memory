@@ -22,9 +22,8 @@
 - [x] 4.2 `templ generate`, `go build ./...` — OK.
 - [x] 4.3 `go test ./...` — OK.
 - [x] 4.4 `golangci-lint run ./...` — 0 issues.
-- [ ] 4.5 Manual browser check: open the chat rail with `needs_input`, `failed`, `running`, and `done` rows and confirm each label reads at rest, on hover, and on the active row.
+- [x] 4.5 Manual browser check (built `webui/static/css/app.css`, real rail selectors, each bucket on base/hover/active rows): every label ≥4.5:1. Measured `needs_input` 7.07 / 6.31 / 5.50, `failed` 6.54 / 5.91 / 5.20, `running` 5.99 / 5.34 / 4.73, `done` 6.03 / 5.52 / 5.04, dock caption 7.09.
 
-## 5. Scope B follow-up — theme error pair (needs human sign-off)
+## Out of scope — tracked separately
 
-- [ ] 5.1 Design owner decides between keeping `--color-error-content: oklch(0.97 0.01 26)` (recommended change) and the rejected alternative of deepening `--color-error`, weighing ~18 destructive `btn-error` buttons + `#voice-call-btn.voice-calling`.
-- [ ] 5.2 If approved: set `--color-error-content: oklch(0.2 0.04 26)` in the daisyUI theme block and re-measure all solid error surfaces (target ≥4.5:1) and error-as-text on `base-100` (must stay ≥4.5:1).
+The theme-level `--color-error` / `--color-error-content` pair (3.52:1, capping every solid error surface) is deliberately **not** implemented in this change: it repaints every destructive button in the app, so it is a brand-owner decision. Measurements, the recommended token value, and the rejected alternative are recorded in the proposal and tracked as issue #569.

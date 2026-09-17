@@ -46,7 +46,7 @@ Recommended fix: change **only the foreground**, `--color-error-content: oklch(0
 
 Rejected alternative: deepening `--color-error` (e.g. `oklch(0.55 0.2 26)` gives 4.91:1 on solid surfaces) drops error-as-text on `--color-base-100` from 4.55 → **3.26:1**, regressing ~25 passing surfaces. Any deepening that keeps error-as-text readable would need a chroma reduction — a real palette shift.
 
-Both options repaint every destructive button in the app, so this is a brand-owner decision and is flagged, not applied. Because the recommendation keeps `--color-error` unchanged, the Scope A label mixes (which derive from `--color-error`) stay valid.
+Both options repaint every destructive button in the app, so this is a brand-owner decision and is flagged, not applied — tracked as issue #569. Because the recommendation keeps `--color-error` unchanged, the Scope A label mixes (which derive from `--color-error`) stay valid.
 
 ## Impact
 
