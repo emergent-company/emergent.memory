@@ -127,6 +127,14 @@ branches, journal, documents, skills, agents, projects, chat, admin,
 workspace-read, workspace-exec, web, other
 ```
 
+The `web` group covers the web MCP tools (`web-search-brave`, `web-fetch`,
+`web-search-reddit`) — "Web search and fetch." The Google-native tools
+(`google_search`, `url_context`, `code_execution`) are **out of scope** for
+group policy: they are configured under `Model.NativeTools` and injected
+directly into `genConfig.Tools` in the executor, bypassing the tool-policy
+callback, so they belong to no group. `other` is display-only — it never carries
+a group policy, and external/relay tools fall through to the default.
+
 ```json
 "toolGroups": [
   { "id": "graph-write", "label": "Graph · Write",

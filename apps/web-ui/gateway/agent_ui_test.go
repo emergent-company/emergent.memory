@@ -1617,8 +1617,9 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 			ID: "a1", Name: "diane", ToolGroups: groups,
 			Tools: []string{"entity-create", "entity-delete"},
 		})
-		// Rendered but switched off: the policy field is present, groupEnabled is not.
-		post(newServer(f), "tool=entity-create&tool=entity-delete&groupPolicy.graph-write=inherit")
+		// Rendered ON (both members enabled) then switched off: the policy field
+		// is present, the enable switch is absent, and the baseline is "true".
+		post(newServer(f), "tool=entity-create&tool=entity-delete&groupPolicy.graph-write=inherit&groupWasEnabled.graph-write=true")
 		u := f.updatedAgent
 		if containsString(u.Tools, "entity-create") || containsString(u.Tools, "entity-delete") {
 			t.Errorf("disabled group members must leave Tools: %v", u.Tools)
@@ -1633,7 +1634,7 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 			ID: "a1", Name: "diane", ToolGroups: groups,
 			BannedTools: []string{"entity-create", "entity-delete"},
 		})
-		post(newServer(f), "groupPolicy.graph-write=allow&groupEnabled.graph-write=on")
+		post(newServer(f), "groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
 		u := f.updatedAgent
 		if !containsString(u.Tools, "entity-create") || !containsString(u.Tools, "entity-delete") {
 			t.Errorf("enabled group members must be in Tools: %v", u.Tools)
@@ -1645,7 +1646,7 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 
 	t.Run("per-tool override still wins alongside a group policy", func(t *testing.T) {
 		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
-		post(newServer(f), "tool=entity-create&toolPolicy.entity-create=deny&groupPolicy.graph-write=ask&groupEnabled.graph-write=on")
+		post(newServer(f), "tool=entity-create&toolPolicy.entity-create=deny&groupPolicy.graph-write=ask&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
 		u := f.updatedAgent
 		if p := u.ToolPolicies["entity-create"]; !p.Disabled {
 			t.Errorf("explicit tool override must survive: %+v", u.ToolPolicies)
@@ -1662,7 +1663,7 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 		// enabling a group that (wrongly) lists delegation tools must not add
 		// them, and disabling must not ban them.
 		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
-		post(newServer(f), "groupPolicy.agents=ask&groupEnabled.agents=on&groupPolicy.graph-write=ask&groupEnabled.graph-write=on")
+		post(newServer(f), "groupPolicy.agents=ask&groupEnabled.agents=on&groupWasEnabled.agents=false&groupPolicy.graph-write=ask&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
 		u := f.updatedAgent
 		if containsString(u.Tools, "spawn_agents") || containsString(u.Tools, "list_available_agents") {
 			t.Errorf("group enable must not add delegation tools: %v", u.Tools)
@@ -1675,7 +1676,7 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 			ID: "a1", Name: "diane", ToolGroups: groups,
 			Tools: []string{"spawn_agents", "list_available_agents"},
 		})
-		post(newServer(f2), "groupPolicy.agents=inherit")
+		post(newServer(f2), "groupPolicy.agents=inherit&groupWasEnabled.agents=true")
 		u2 := f2.updatedAgent
 		if containsString(u2.BannedTools, "spawn_agents") || containsString(u2.BannedTools, "list_available_agents") {
 			t.Errorf("group disable must not ban delegation tools: %v", u2.BannedTools)
@@ -1687,7 +1688,7 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 			ID: "a1", Name: "diane", ToolGroups: groups,
 			Tools: []string{"entity-create"},
 		})
-		post(newServer(f), "tool=entity-create&groupPolicy.graph-write=allow&groupEnabled.graph-write=on")
+		post(newServer(f), "tool=entity-create&groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
 		u := f.updatedAgent
 		if containsString(u.BannedTools, "web_search") {
 			t.Errorf("an unrendered group must not be disabled: %v", u.BannedTools)
@@ -1697,6 +1698,64 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 		}
 		if _, ok := u.ToolPolicies["@group:web"]; ok {
 			t.Errorf("an unrendered group must write no policy: %+v", u.ToolPolicies)
+		}
+	})
+
+	t.Run("no-op group save does not fan out the full group", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"}, // partial: entity-delete not enabled
+		})
+		// The switch is rendered ON (entity-create is enabled) and submitted
+		// unchanged; a no-op save must not add the full-catalog remainder.
+		post(newServer(f), "tool=entity-create&groupEnabled.graph-write=on&groupWasEnabled.graph-write=true")
+		u := f.updatedAgent
+		if containsString(u.Tools, "entity-delete") {
+			t.Errorf("a no-op group save must not fan out the full group: %v", u.Tools)
+		}
+		if !containsString(u.Tools, "entity-create") {
+			t.Errorf("the enabled member must survive a no-op save: %v", u.Tools)
+		}
+	})
+
+	t.Run("toggling a partially-enabled group off bans its members", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"},
+		})
+		// Switch rendered ON (entity-create enabled) but submitted OFF: every
+		// member (including the not-currently-enabled entity-delete) is banned.
+		post(newServer(f), "tool=entity-create&groupWasEnabled.graph-write=true")
+		u := f.updatedAgent
+		if containsString(u.Tools, "entity-create") {
+			t.Errorf("toggling off must remove enabled members: %v", u.Tools)
+		}
+		if !containsString(u.BannedTools, "entity-create") || !containsString(u.BannedTools, "entity-delete") {
+			t.Errorf("toggling off must ban all group members: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("save preserves existing per-tool and group policies", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"},
+			ToolPolicies: map[string]ToolPolicy{
+				"entity-delete":   {Confirm: true},
+				"some_other_tool": {Disabled: true},
+				"@group:web":      {Disabled: true},
+			},
+		})
+		// A no-touch save: no toolPolicy.* or groupPolicy.* control submitted.
+		post(newServer(f), "tool=entity-create&groupEnabled.graph-write=on&groupWasEnabled.graph-write=true&groupWasEnabled.web=false&groupWasEnabled.agents=false")
+		u := f.updatedAgent
+		if p, ok := u.ToolPolicies["entity-delete"]; !ok || !p.Confirm {
+			t.Errorf("existing per-tool override must survive a no-touch save: %+v", u.ToolPolicies)
+		}
+		if p, ok := u.ToolPolicies["some_other_tool"]; !ok || !p.Disabled {
+			t.Errorf("unrendered per-tool entry must survive: %+v", u.ToolPolicies)
+		}
+		if p, ok := u.ToolPolicies["@group:web"]; !ok || !p.Disabled {
+			t.Errorf("existing @group: entry must survive a no-touch save: %+v", u.ToolPolicies)
 		}
 	})
 }
@@ -1811,7 +1870,7 @@ func TestApplyAgentToolsSectionGroupsFullMembership(t *testing.T) {
 			// full membership; the agent currently allows none of it
 			ToolGroups: []ToolGroup{{ID: "graph-write", Label: "Graph · Write", Enabled: false, Tools: []string{"entity-create", "entity-delete"}}},
 		}}}
-		post(newServer(f), "groupPolicy.graph-write=allow&groupEnabled.graph-write=on")
+		post(newServer(f), "groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
 		u := f.updatedAgent
 		if !containsString(u.Tools, "entity-create") || !containsString(u.Tools, "entity-delete") {
 			t.Errorf("enabling a disabled group must restore its full membership: %v", u.Tools)
@@ -1853,7 +1912,7 @@ func TestGroupWritePathIgnoresToolGroups(t *testing.T) {
 	e := echo.New()
 	e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader("tool=entity-create&groupPolicy.web=deny&groupEnabled.web=on"))
+	req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader("tool=entity-create&groupPolicy.web=deny&groupEnabled.web=on&groupWasEnabled.web=false"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
 

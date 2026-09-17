@@ -48,7 +48,7 @@ The Settings Tools panel SHALL let the user pick tools as checkboxes, SHALL orga
 
 ### Requirement: Group-level enable and approval controls
 
-Each rendered tool group header SHALL carry an enable control that turns the whole group on or off and a policy control offering `Inherit`, `Allow`, `Ask`, and `Deny`. Turning a group off SHALL remove its members from the agent's tools and ban them; turning it on SHALL restore them. The policy control SHALL write the group policy without writing a per-tool entry for each member.
+Each rendered tool group header SHALL carry an enable control that turns the whole group on or off. A policy control offering `Inherit`, `Allow`, `Ask`, and `Deny` SHALL be rendered on every capability group except the fallback group, which carries the enable control only (it is display-only and never a policy source). External MCP-server and relay-node sub-groups SHALL offer enable/disable only, with no group policy control. Turning a group off SHALL remove its members from the agent's tools and ban them; turning it on SHALL restore them. The policy control SHALL write the group policy without writing a per-tool entry for each member.
 
 #### Scenario: Group enable control reflects state
 

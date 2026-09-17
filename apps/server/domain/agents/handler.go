@@ -1380,7 +1380,7 @@ func (h *Handler) GetDefinition(c echo.Context) error {
 		return apperror.NewNotFound("AgentDefinition", id)
 	}
 
-	dto := h.toDefinitionDTO(def)
+	dto := h.toDefinitionDTO(c.Request().Context(), def)
 
 	// Effective model = what this definition will run with. The per-agent
 	// override is honored by the executor regardless of project config, so it
@@ -1414,13 +1414,14 @@ func pickEffectiveModel(override, projectDefault string) string {
 }
 
 // toDefinitionDTO converts an agent definition to its full response DTO,
-// enriching the computed toolGroups with the full tool catalog when the MCP
-// service is attached. When the catalog is unavailable it degrades gracefully
-// to agent-referenced-tools-only membership (via ToDTO) rather than failing.
-func (h *Handler) toDefinitionDTO(def *AgentDefinition) *AgentDefinitionDTO {
+// enriching the computed toolGroups with the project-resolved tool catalog when
+// the MCP service is attached. When the catalog is unavailable it degrades
+// gracefully to agent-referenced-tools-only membership (via ToDTO) rather than
+// failing.
+func (h *Handler) toDefinitionDTO(ctx context.Context, def *AgentDefinition) *AgentDefinitionDTO {
 	dto := def.ToDTO()
 	if h.mcpService != nil {
-		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetToolDefinitions())
+		dto.ToolGroups = def.ToolGroupsWithCatalog(h.mcpService.GetToolDefinitionsForProject(ctx, def.ProjectID))
 	}
 	return dto
 }
@@ -1551,7 +1552,7 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		return apperror.NewInternal("failed to create agent definition", err)
 	}
 
-	return c.JSON(http.StatusCreated, SuccessResponse(h.toDefinitionDTO(def)))
+	return c.JSON(http.StatusCreated, SuccessResponse(h.toDefinitionDTO(c.Request().Context(), def)))
 }
 
 // UpdateDefinition handles PATCH /api/projects/:projectId/agent-definitions/:id
@@ -1654,7 +1655,7 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		return apperror.NewInternal("failed to update agent definition", err)
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(h.toDefinitionDTO(def)))
+	return c.JSON(http.StatusOK, SuccessResponse(h.toDefinitionDTO(c.Request().Context(), def)))
 }
 
 // DeleteDefinition handles DELETE /api/projects/:projectId/agent-definitions/:id

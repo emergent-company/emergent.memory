@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -388,8 +389,13 @@ func applyAgentModelSection(def *AgentDefinition, c echo.Context) error {
 
 // applyAgentToolsSection maps the Tools form onto the definition: the allowed
 // tool list, un-banning any newly allowed tool, the default approval policy,
-// per-tool policy overrides (ask/deny/allow), and the capability-group policy +
-// enable/disable controls, iterating only over the tools in this section's form.
+// per-tool policy overrides (ask/deny/allow/inherit), and the capability-group
+// policy + enable/disable controls.
+//
+// Per-tool and group policy keys are written only when their form control is
+// actually present (a per-tool select submits for both checked and unchecked
+// tools; a group select submits only for non-"other" groups), so keys whose
+// control is absent are preserved verbatim rather than wiped.
 //
 // Group enable/disable is a membership operation (D4), not a policy: enabling a
 // group adds every member to Tools and un-bans it; disabling removes members
@@ -401,17 +407,32 @@ func applyAgentToolsSection(def *AgentDefinition, c echo.Context) error {
 	def.Tools = form["tool"]
 	def.BannedTools = removeItems(def.BannedTools, def.Tools...)
 	def.DefaultToolPolicy = strings.TrimSpace(c.FormValue("defaultToolPolicy"))
-	policies := map[string]ToolPolicy{}
-	// Per-tool overrides are read first and win: a tool that carries an
-	// explicit "toolPolicy.<tool>" entry always writes its own entry.
-	for _, tool := range def.Tools {
-		switch c.FormValue("toolPolicy." + tool) {
+
+	// Start from the existing policies so per-tool overrides and @group: entries
+	// for tools/groups this save does not render are preserved, not deleted.
+	policies := maps.Clone(def.ToolPolicies)
+	if policies == nil {
+		policies = map[string]ToolPolicy{}
+	}
+
+	// Per-tool overrides are read first and win: a tool that carries an explicit
+	// "toolPolicy.<tool>" entry always writes its own entry; "inherit" deletes it.
+	// Iterate the submitted keys (not def.Tools) so a policy select for an
+	// unchecked tool is still honored.
+	for key := range form {
+		tool, ok := strings.CutPrefix(key, "toolPolicy.")
+		if !ok {
+			continue
+		}
+		switch form.Get(key) {
 		case "ask":
 			policies[tool] = ToolPolicy{Confirm: true}
 		case "deny":
 			policies[tool] = ToolPolicy{Disabled: true}
 		case "allow":
 			policies[tool] = ToolPolicy{}
+		case "inherit":
+			delete(policies, tool)
 		}
 	}
 	applyToolGroups(def, form, policies)
@@ -421,13 +442,21 @@ func applyAgentToolsSection(def *AgentDefinition, c echo.Context) error {
 
 // applyToolGroups writes the group-level policy entries and applies each
 // rendered group's enable/disable fan-out. A group is "rendered" when the form
-// carries either of its controls; a group with no controls at all (never shown
-// to the user) is left untouched rather than implicitly disabled.
+// carries its baseline groupWasEnabled.<id> field (emitted next to the enable
+// switch). The enable/disable fan-out runs only when the submitted switch state
+// differs from that baseline, so a no-op save or unchecking a single child does
+// not fan out the entire full-catalog group.
 //
 // Delegation-managed tools are never fanned out: the enable switch must not add
 // or ban spawn_agents / list_available_agents, which the delegation toggle owns.
 func applyToolGroups(def *AgentDefinition, form url.Values, policies map[string]ToolPolicy) {
+	// Group policy: only when the form explicitly submits a value for the group
+	// (the policy select is rendered for every non-"other" group). "inherit"
+	// clears the key; an absent control leaves the stored entry untouched.
 	for _, g := range def.ToolGroups {
+		if !form.Has("groupPolicy." + g.ID) {
+			continue
+		}
 		switch form.Get("groupPolicy." + g.ID) {
 		case "ask":
 			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{Confirm: true}
@@ -435,11 +464,20 @@ func applyToolGroups(def *AgentDefinition, form url.Values, policies map[string]
 			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{Disabled: true}
 		case "allow":
 			policies[toolGroupPolicyKey(g.ID)] = ToolPolicy{}
-			// "inherit"/absent clears the key: no entry is written.
+		case "inherit":
+			delete(policies, toolGroupPolicyKey(g.ID))
 		}
 	}
+
+	// Enable/disable fan-out: only when the submitted switch state differs from
+	// the rendered baseline.
 	for _, g := range def.ToolGroups {
-		if !form.Has("groupPolicy."+g.ID) && !form.Has("groupEnabled."+g.ID) {
+		if !form.Has("groupWasEnabled." + g.ID) {
+			continue
+		}
+		wasEnabled := form.Get("groupWasEnabled."+g.ID) == "true"
+		nowEnabled := form.Has("groupEnabled." + g.ID)
+		if wasEnabled == nowEnabled {
 			continue
 		}
 		members := make([]string, 0, len(g.Tools))
@@ -449,7 +487,7 @@ func applyToolGroups(def *AgentDefinition, form url.Values, policies map[string]
 			}
 			members = append(members, t)
 		}
-		if form.Has("groupEnabled." + g.ID) {
+		if nowEnabled {
 			def.Tools = appendUnique(def.Tools, members...)
 			def.BannedTools = removeItems(def.BannedTools, members...)
 		} else {
@@ -666,6 +704,12 @@ func toolPolicyValue(agent *AgentDefinition, tool string) string {
 // cannot collide with a per-tool entry.
 const toolGroupPolicyPrefix = "@group:"
 
+// toolGroupOtherID is the display-only fallback group id (server's
+// toolgroups.GroupOther). It is never a policy source: it gets an enable switch
+// but no group policy select, and its nested relay/server sub-groups get no
+// per-tool policy control.
+const toolGroupOtherID = "other"
+
 // toolGroupPolicyKey returns the ToolPolicies key for a group id.
 func toolGroupPolicyKey(groupID string) string {
 	return toolGroupPolicyPrefix + groupID
@@ -684,6 +728,16 @@ func groupPolicyFormValue(v string) string {
 		return "inherit"
 	}
 	return v
+}
+
+// groupWasEnabledValue renders the boolean baseline for the hidden
+// groupWasEnabled.<id> field emitted next to each group enable switch, so the
+// applier can tell whether the switch actually toggled.
+func groupWasEnabledValue(enabled bool) string {
+	if enabled {
+		return "true"
+	}
+	return "false"
 }
 
 // policyTitle renders a policy value for an inheritance hint ("Ask", "Deny").
@@ -838,7 +892,9 @@ func buildToolGroupViews(data agentSettingsData, groups []ToolGroup) []toolGroup
 				Count:           len(names),
 				Open:            anyChecked(agent, names),
 				Tools:           toolRows(agent, names, descriptions, g.Label, policy),
-				WithPolicy:      true,
+				// External MCP-server tools (the "other" group) get enable/disable
+				// only; built-in capability groups keep per-tool policy controls.
+				WithPolicy: g.ID != toolGroupOtherID,
 			})
 		}
 		for _, node := range relayPickerGroups(data.RelayNodes) {
@@ -858,13 +914,19 @@ func buildToolGroupViews(data agentSettingsData, groups []ToolGroup) []toolGroup
 				Count:           len(names),
 				Open:            anyChecked(agent, names),
 				Tools:           toolRows(agent, names, descriptions, g.Label, policy),
-				WithPolicy:      true,
+				// Relay-node tools get enable/disable only, no policy control
+				// (deferred non-goal).
+				WithPolicy: false,
 			})
 		}
 		// Direct member rows: group members no server or relay offers (native
 		// tools) still belong to the group and render inline. A member is only
-		// skipped here when an earlier source already claimed it.
+		// skipped here when an earlier source already claimed it, or when it is
+		// delegation-managed (never rendered inside a capability group).
 		for _, t := range g.Tools {
+			if isDelegationTool(t) {
+				continue
+			}
 			if rendered[t] {
 				continue
 			}

@@ -61,7 +61,7 @@ var Groups = []Group{
 	{ID: GroupAdmin, Label: "Admin", Description: "Administrative operations requiring elevated scope."},
 	{ID: GroupWorkspaceRead, Label: "Workspace · Read", Description: "Read files and search the workspace."},
 	{ID: GroupWorkspaceExec, Label: "Workspace · Execute", Description: "Run commands and write files in the workspace."},
-	{ID: GroupWeb, Label: "Web", Description: "Web search, fetch, and native browser tools."},
+	{ID: GroupWeb, Label: "Web", Description: "Web search and fetch."},
 	{ID: GroupOther, Label: "Other", Description: "Tools without a specific capability group."},
 }
 
@@ -98,26 +98,29 @@ var scopeToGroup = map[string]string{
 
 // staticToolGroup maps unscoped, agent-facing tool names to a group. These use
 // the LLM-facing names from domain/agents/workspace_tools.go (workspace_bash,
-// workspace_read, …) and the native/web tool names — NOT sandbox.ValidToolNames,
+// workspace_read, …) and the web MCP tool names — NOT sandbox.ValidToolNames,
 // which are config keys for the sandbox allowlist.
+//
+// The Google-native tools (google_search, url_context, code_execution) are
+// intentionally absent: they are configured under Model.NativeTools and injected
+// directly into genConfig.Tools in executor.go, bypassing the tool-policy
+// callback, so group policy cannot govern them. They never belong to the web
+// group (or any group).
 var staticToolGroup = map[string]string{
-	"workspace_read":  GroupWorkspaceRead,
-	"workspace_glob":  GroupWorkspaceRead,
-	"workspace_grep":  GroupWorkspaceRead,
-	"ast_grep":        GroupWorkspaceRead,
-	"workspace_write": GroupWorkspaceExec,
-	"workspace_edit":  GroupWorkspaceExec,
-	"workspace_git":   GroupWorkspaceExec,
-	"workspace_bash":  GroupWorkspaceExec,
-	"run_python":      GroupWorkspaceExec,
-	"run_go":          GroupWorkspaceExec,
+	"workspace_read":     GroupWorkspaceRead,
+	"workspace_glob":     GroupWorkspaceRead,
+	"workspace_grep":     GroupWorkspaceRead,
+	"workspace_ast_grep": GroupWorkspaceRead,
+	"workspace_write":    GroupWorkspaceExec,
+	"workspace_edit":     GroupWorkspaceExec,
+	"workspace_git":      GroupWorkspaceExec,
+	"workspace_bash":     GroupWorkspaceExec,
+	"run_python":         GroupWorkspaceExec,
+	"run_go":             GroupWorkspaceExec,
 
-	"google_search":  GroupWeb,
-	"url_context":    GroupWeb,
-	"code_execution": GroupWeb,
-	"webfetch":       GroupWeb,
-	"brave_search":   GroupWeb,
-	"reddit_search":  GroupWeb,
+	"web-fetch":         GroupWeb,
+	"web-search-brave":  GroupWeb,
+	"web-search-reddit": GroupWeb,
 }
 
 // GroupForScope returns the group id for a tool given its required scope (the
@@ -141,7 +144,7 @@ func GroupForScope(scope, toolName string) string {
 // available (the no-catalog fallback). It resolves in order:
 //
 //  1. the tool's required scope via mcp.LookupToolScope (static core tools only);
-//  2. the static mapping for unscoped workspace / web / native tools;
+//  2. the static mapping for unscoped workspace / web tools;
 //  3. GroupOther for dynamic tools, external MCP tools, relay tools, and
 //     anything unmatched.
 //
@@ -159,8 +162,10 @@ func GroupForTool(tool string) string {
 }
 
 // groupForUnscopedTool resolves a tool with no required scope: the static
-// workspace / web / native map, then GroupOther for external/relay names and
-// anything unmatched.
+// workspace / web map, then GroupOther for external/relay names and anything
+// unmatched. GroupOther is display/membership only — it is never a group-policy
+// source (see AgentDefinition.effectiveToolPolicyFor), so an external or relay
+// tool falls through to the default policy regardless of any @group:other entry.
 func groupForUnscopedTool(tool string) string {
 	if g, ok := staticToolGroup[tool]; ok {
 		return g

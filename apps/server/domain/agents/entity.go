@@ -405,15 +405,21 @@ func (d *AgentDefinition) effectiveToolPolicy(toolName string) (ToolPolicy, bool
 // effectiveToolPolicyFor returns the policy that governs toolName, resolved in
 // the order: explicit ToolPolicies[toolName] → group policy
 // ToolPolicies["@group:<id>"] (where <id> = toolgroups.GroupForScope(scope,
-// toolName)) → DefaultToolPolicy. An empty scope degrades to the unscoped static
-// mapping. The bool is false only for the "allow / non-disabled" default result;
-// an explicit or group entry (including an empty `{}` entry) returns true.
+// toolName)) → DefaultToolPolicy. The group lookup is skipped when the resolved
+// group is GroupOther: `other` is display-only and never a policy source, so an
+// external/relay/unmatched tool falls through to DefaultToolPolicy. An empty
+// scope degrades to the unscoped static mapping. The bool is false only for the
+// "allow / non-disabled" default result; an explicit or group entry (including
+// an empty `{}` entry) returns true.
 func (d *AgentDefinition) effectiveToolPolicyFor(toolName, scope string) (ToolPolicy, bool) {
 	if p, ok := d.ToolPolicies[toolName]; ok {
 		return p, true
 	}
-	if p, ok := d.ToolPolicies[toolGroupPolicyPrefix+toolgroups.GroupForScope(scope, toolName)]; ok {
-		return p, true
+	g := toolgroups.GroupForScope(scope, toolName)
+	if g != toolgroups.GroupOther {
+		if p, ok := d.ToolPolicies[toolGroupPolicyPrefix+g]; ok {
+			return p, true
+		}
 	}
 	switch d.DefaultToolPolicy {
 	case ToolPolicyDefaultDeny:
@@ -423,6 +429,14 @@ func (d *AgentDefinition) effectiveToolPolicyFor(toolName, scope string) (ToolPo
 	default:
 		return ToolPolicy{}, false
 	}
+}
+
+// toolPolicyBlocks reports whether the resolved tool policy hard-blocks a tool
+// before execution (the executor's beforeToolCb deny chokepoint). It is the
+// single source of truth for the disabled check so the executor and its tests
+// cannot drift.
+func toolPolicyBlocks(policy ToolPolicy, hasPolicy bool) bool {
+	return hasPolicy && policy.Disabled
 }
 
 // AgentRunMessage stores a single LLM message exchanged during an agent run.

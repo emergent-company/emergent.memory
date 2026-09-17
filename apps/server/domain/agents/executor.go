@@ -1951,7 +1951,7 @@ func (ae *AgentExecutor) runPipeline(
 		}
 
 		// Disabled (deny): hard-block the tool before execution (policy enforcement).
-		if hasPolicy && policy.Disabled {
+		if toolPolicyBlocks(policy, hasPolicy) {
 			ae.log.Info("tool_policy: tool disabled by policy, blocking call",
 				slog.String("run_id", run.ID),
 				slog.String("tool", t.Name()),

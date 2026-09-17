@@ -742,6 +742,11 @@ templ agentToolCapabilityGroup(gv toolGroupView) {
 			</div>
 			<div class="flex shrink-0 items-center gap-2">
 				<div class="flex shrink-0 items-center gap-2" onclick="event.stopPropagation()">
+					<input
+						type="hidden"
+						name={ "groupWasEnabled." + gv.Group.ID }
+						value={ groupWasEnabledValue(gv.Enabled) }
+					/>
 					<label class="flex cursor-pointer items-center gap-1.5" title="Turn every tool in this group on or off">
 						<input
 							type="checkbox"
@@ -751,20 +756,24 @@ templ agentToolCapabilityGroup(gv toolGroupView) {
 								checked
 							}
 							class="toggle toggle-sm"
+							aria-label={ "Enable " + gv.Group.Label + " tools" }
 							data-testid={ "tool-group-enabled-" + gv.Group.ID }
 							onchange="this.closest('[data-tool-group]').querySelectorAll('input[name=tool]').forEach(function(cb){cb.checked=this.checked;cb.dispatchEvent(new Event('change'))},this)"
 						/>
 					</label>
-					<select
-						name={ "groupPolicy." + gv.Group.ID }
-						class="select select-xs w-24"
-						data-testid={ "tool-group-policy-" + gv.Group.ID }
-					>
-						<option value="inherit" if gv.Policy == "inherit" { selected }>Inherit</option>
-						<option value="allow" if gv.Policy == "allow" { selected }>Allow</option>
-						<option value="ask" if gv.Policy == "ask" { selected }>Ask</option>
-						<option value="deny" if gv.Policy == "deny" { selected }>Deny</option>
-					</select>
+					if gv.Group.ID != "other" {
+						<select
+							name={ "groupPolicy." + gv.Group.ID }
+							class="select select-xs w-24"
+							aria-label={ gv.Group.Label + " approval policy" }
+							data-testid={ "tool-group-policy-" + gv.Group.ID }
+						>
+							<option value="inherit" if gv.Policy == "inherit" { selected }>Inherit</option>
+							<option value="allow" if gv.Policy == "allow" { selected }>Allow</option>
+							<option value="ask" if gv.Policy == "ask" { selected }>Ask</option>
+							<option value="deny" if gv.Policy == "deny" { selected }>Deny</option>
+						</select>
+					}
 				</div>
 				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-base-content/40 transition-transform group-open/cap:rotate-180")
 			</div>

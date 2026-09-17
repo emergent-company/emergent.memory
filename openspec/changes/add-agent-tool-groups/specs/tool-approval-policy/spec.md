@@ -40,6 +40,11 @@ Every tool an agent can call SHALL belong to exactly one tool group identified b
 - **WHEN** a tool matches no group by scope or static mapping
 - **THEN** the tool belongs to the fallback group and remains controllable
 
+#### Scenario: Fallback group is display-only
+
+- **WHEN** a tool belongs to the fallback group (unmatched, external MCP, or relay tool)
+- **THEN** the fallback group is used for display and membership only and never carries a group policy; its effective policy resolves to the tool's explicit entry or the default
+
 #### Scenario: Group ids are not display labels
 
 - **WHEN** a group's display label changes
@@ -47,7 +52,7 @@ Every tool an agent can call SHALL belong to exactly one tool group identified b
 
 ### Requirement: Group approval policy
 
-A tool group SHALL be able to carry an approval policy of `allow`, `ask`, or `deny`, stored on the agent. The group policy SHALL apply to every member tool that has no explicit policy entry, without writing a policy entry per member tool. A newly available tool that joins a group SHALL be governed by that group's policy without the agent being re-saved.
+A tool group SHALL be able to carry an approval policy of `allow`, `ask`, or `deny`, stored on the agent. The group policy SHALL apply to every member tool that has no explicit policy entry, without writing a policy entry per member tool. A newly available tool that joins a group SHALL be governed by that group's policy without the agent being re-saved. The fallback group SHALL NOT carry a group policy, and external MCP-server, relay-node, and native (Google `Model.NativeTools`) tools are out of scope for group policy: they fall through to their explicit entry or the default.
 
 #### Scenario: Group policy applies to members without explicit entries
 

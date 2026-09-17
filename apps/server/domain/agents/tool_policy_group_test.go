@@ -103,24 +103,27 @@ func TestEffectiveToolPolicy_OtherToolFallsToDefault(t *testing.T) {
 	assert.False(t, p.Disabled)
 }
 
-func TestEffectiveToolPolicy_OtherGroupPolicyApplies(t *testing.T) {
-	// A stored @group:other policy governs otherwise-unmatched tools.
+func TestEffectiveToolPolicy_OtherGroupPolicyDoesNotGovern(t *testing.T) {
+	// A stored @group:other entry is DISPLAY-ONLY and never a policy source:
+	// an unmatched tool must fall through to the default, not pick up the
+	// disabled @group:other entry.
 	d := &AgentDefinition{
+		DefaultToolPolicy: ToolPolicyDefaultAllow,
 		ToolPolicies: map[string]ToolPolicy{
 			"@group:other": {Disabled: true},
 		},
 	}
 	p, ok := d.effectiveToolPolicy("totally-unknown-tool")
-	require.True(t, ok)
-	assert.True(t, p.Disabled)
+	assert.False(t, ok, "an unmatched tool must not resolve to a stored @group:other entry")
+	assert.False(t, p.Disabled, "@group:other must not disable an unmatched tool")
 }
 
 // --- Executor boundary: a group-disabled tool is rejected before execution ---
 
-// TestGroupDisabledRejectedBeforeExecution mirrors the exact disabled-check
-// pattern in executor.go beforeToolCb: resolve effectiveToolPolicy, then block
-// when hasPolicy && policy.Disabled. A tool covered only by a group
-// {disabled:true} must be rejected without executing.
+// The executor's beforeToolCb deny check is extracted into toolPolicyBlocks so
+// the real chokepoint logic (not a re-typed approximation) is what these tests
+// exercise. A full executor setup (tool pool + model + repo) is too heavy for a
+// unit test; the helper is the exact expression beforeToolCb evaluates.
 func TestGroupDisabledRejectedBeforeExecution(t *testing.T) {
 	def := &AgentDefinition{
 		ToolPolicies: map[string]ToolPolicy{
@@ -129,7 +132,7 @@ func TestGroupDisabledRejectedBeforeExecution(t *testing.T) {
 	}
 
 	policy, hasPolicy := def.effectiveToolPolicy("entity-delete")
-	blocked := hasPolicy && policy.Disabled
+	blocked := toolPolicyBlocks(policy, hasPolicy)
 	assert.True(t, blocked, "group-disabled tool must be blocked before execution")
 }
 
@@ -220,9 +223,10 @@ func TestEffectiveToolPolicyFor_ExplicitBeatsGroupDynamic(t *testing.T) {
 	assert.False(t, p.Disabled)
 }
 
-// TestDynamicGroupDenyRejectedBeforeExecution mirrors the beforeToolCb
-// disabled-check for a dynamic tool: with the catalog scope supplied, a
-// @group:documents deny blocks document-create before it executes.
+// TestDynamicGroupDenyRejectedBeforeExecution exercises the beforeToolCb deny
+// chokepoint (extracted as toolPolicyBlocks) for a dynamic tool: with the
+// catalog scope supplied, a @group:documents deny blocks document-create before
+// it executes.
 func TestDynamicGroupDenyRejectedBeforeExecution(t *testing.T) {
 	def := &AgentDefinition{
 		ToolPolicies: map[string]ToolPolicy{
@@ -231,7 +235,7 @@ func TestDynamicGroupDenyRejectedBeforeExecution(t *testing.T) {
 	}
 	// toolScopes supplies documents:write at the chokepoint.
 	policy, hasPolicy := def.effectiveToolPolicyFor("document-create", "documents:write")
-	blocked := hasPolicy && policy.Disabled
+	blocked := toolPolicyBlocks(policy, hasPolicy)
 	assert.True(t, blocked, "dynamic group-disabled tool must be blocked before execution")
 }
 

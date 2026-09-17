@@ -2,30 +2,46 @@ package toolgroups
 
 import (
 	"testing"
+
+	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
 
-// The static scopes that appear as values in mcp.toolRequiredScope. This list
-// must stay in sync with that map: adding a scope there without a group here
-// must fail the assertion below rather than silently land a tool in "other".
-var staticRequiredScopes = []string{
-	"graph:read",
-	"admin",
-	"schema:read",
-	"schema:write",
-	"schema:migrate",
-	"graph:write",
-	"branches:read",
-	"branches:write",
-	"search",
-	"journal:read",
-	"journal:write",
-}
-
+// TestEveryStaticRequiredScopeMapsToKnownGroup derives the scope set from the
+// real source (mcp.ToolScopes) instead of a hand-maintained literal, so a new
+// scope added to toolRequiredScope without a group mapping fails this assertion
+// rather than silently landing in "other".
 func TestEveryStaticRequiredScopeMapsToKnownGroup(t *testing.T) {
-	for _, scope := range staticRequiredScopes {
+	for _, scope := range mcp.ToolScopes() {
 		g, ok := scopeToGroup[scope]
 		if !ok || g == "" || g == GroupOther {
 			t.Errorf("scope %q maps to %q, want a known non-other group", scope, g)
+		}
+	}
+}
+
+// dynamicRequiredScopes are the scopes set at definition time in the *_tools.go
+// files (documents, skills, agents, projects, chat) rather than in
+// mcp.toolRequiredScope. They are enumerated manually because they are not
+// reachable through mcp.ToolScopes(); asserting them here keeps the dynamic
+// scope→group table honest too.
+var dynamicRequiredScopes = []string{
+	"documents:read",
+	"documents:write",
+	"skills:read",
+	"skills:write",
+	"agents:read",
+	"agents:write",
+	"projects:read",
+	"projects:write",
+	"chat:use",
+	"chat:admin",
+}
+
+func TestEveryDynamicRequiredScopeMapsToKnownGroup(t *testing.T) {
+	for _, scope := range dynamicRequiredScopes {
+		g, ok := scopeToGroup[scope]
+		if !ok || g == "" || g == GroupOther {
+			t.Errorf("dynamic scope %q maps to %q, want a known non-other group", scope, g)
 		}
 	}
 }
@@ -77,15 +93,14 @@ func TestGroupForTool_ScopeDerived(t *testing.T) {
 func TestGroupForTool_StaticMappings(t *testing.T) {
 	workspaceRead := map[string]bool{
 		"workspace_read": true, "workspace_glob": true,
-		"workspace_grep": true, "ast_grep": true,
+		"workspace_grep": true, "workspace_ast_grep": true,
 	}
 	workspaceExec := map[string]bool{
 		"workspace_write": true, "workspace_edit": true, "workspace_git": true,
 		"workspace_bash": true, "run_python": true, "run_go": true,
 	}
 	web := map[string]bool{
-		"google_search": true, "url_context": true, "code_execution": true,
-		"webfetch": true, "brave_search": true, "reddit_search": true,
+		"web-fetch": true, "web-search-brave": true, "web-search-reddit": true,
 	}
 
 	for tool := range workspaceRead {
@@ -120,7 +135,7 @@ func TestWorkspaceSandboxKeysMapToWorkspaceGroups(t *testing.T) {
 		"git":        "workspace_git",
 		"run_python": "run_python",
 		"run_go":     "run_go",
-		"ast_grep":   "ast_grep",
+		"ast_grep":   "workspace_ast_grep",
 	}
 	for sandboxKey, agentName := range cases {
 		got := GroupForTool(agentName)
@@ -162,7 +177,7 @@ func TestGroupForScope(t *testing.T) {
 		{"admin:all", "x", "admin"},
 		{"graph:write", "entity-delete", "graph-write"},
 		{"", "workspace_bash", "workspace-exec"},
-		{"", "webfetch", "web"},
+		{"", "web-fetch", "web"},
 		{"", "unknown-tool", "other"},
 		{"data:read", "whatever", "other"}, // umbrella scope, never a tool's RequiredScope
 		{"account:read", "account-key-list", "other"},

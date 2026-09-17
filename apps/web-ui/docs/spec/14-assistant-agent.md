@@ -257,6 +257,15 @@ dispatching a tool, independent of the model's behaviour.
   (`enabled: false`) and can be switched back on. The gateway strips the
   computed `toolGroups` before serializing the definition back, so the write
   path never depends on it round-tripping.
+- **Which tools group policy governs** — a group policy applies to member tools
+  that have no explicit per-tool override. The `other` group is **display-only**:
+  it never carries a group policy, so external MCP-server, relay-node, and
+  otherwise-unmatched tools always fall through to their explicit entry or the
+  default. Those external/relay sections get enable/disable only. Google-native
+  tools (`google_search`, `url_context`, `code_execution` via
+  `Model.NativeTools`) are **out of scope** for group policy — they are injected
+  directly into the model's tools and bypass the tool-policy callback, so they
+  belong to no group.
 - **Resolution order** — `tool_policies[tool]` (explicit override, wins) →
   `tool_policies["@group:"+group]` (group policy) → `default_tool_policy`
   (fallback). A tool in no known group falls through to the default; a group

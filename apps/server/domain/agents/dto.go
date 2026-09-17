@@ -347,8 +347,9 @@ type AgentDefinitionDTO struct {
 	CreatedAt         time.Time             `json:"createdAt"`
 	UpdatedAt         time.Time             `json:"updatedAt"`
 	// ToolGroups is the computed capability-group catalog (server-owned
-	// taxonomy) rendered by the gateway. Read-only; groups with no non-banned
-	// member tools are omitted.
+	// taxonomy) rendered by the gateway. Read-only; groups with no member tools
+	// at all are omitted — a fully-disabled group still renders (with
+	// enabled=false) so it can be re-enabled.
 	ToolGroups []ToolGroupDTO `json:"toolGroups,omitempty"`
 	// EffectiveModel is the resolved generative model this definition would run
 	// with (per-agent override, else project config → provider-credential
@@ -502,13 +503,23 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 	}
 }
 
+// workspaceToolNames are the agent-facing workspace tool names (LLM/MCP names,
+// not sandbox config keys). They are injected at execution time from
+// SandboxConfig and live outside both the MCP catalog and def.Tools, so
+// ToolGroupsWithCatalog adds them explicitly when the workspace is enabled.
+var workspaceToolNames = []string{
+	"workspace_bash", "workspace_read", "workspace_write", "workspace_edit",
+	"workspace_glob", "workspace_grep", "workspace_git", "workspace_ast_grep",
+	"run_python", "run_go",
+}
+
 // ToolGroupsWithCatalog computes the group catalog for the definition. Each
 // group's `tools` is its full membership — the union of the group's catalog
-// tools and the agent's own Tools ∪ BannedTools — so a group the agent has
-// fully switched off still renders (with enabled=false) and can be re-enabled.
-// Groups with zero members are omitted. A nil catalog degrades to
-// agent-referenced-tools-only membership (never dropping a tool present in
-// def.Tools or def.BannedTools).
+// tools, the agent's own Tools ∪ BannedTools, and (when the workspace is
+// enabled) the workspace tool names — so a group the agent has fully switched
+// off still renders (with enabled=false) and can be re-enabled. Groups with
+// zero members are omitted. A nil catalog degrades to agent-referenced-tools-only
+// membership (never dropping a tool present in def.Tools or def.BannedTools).
 func (d *AgentDefinition) ToolGroupsWithCatalog(catalog []mcp.ToolDefinition) []ToolGroupDTO {
 	banned := make(map[string]bool, len(d.BannedTools))
 	for _, t := range d.BannedTools {
@@ -534,8 +545,8 @@ func (d *AgentDefinition) ToolGroupsWithCatalog(catalog []mcp.ToolDefinition) []
 	}
 
 	// 2. Agent-referenced tools (Tools then BannedTools) not already covered by
-	//    the catalog — workspace tools, external/relay names, or anything the
-	//    catalog missed. A tool the agent references must never be dropped.
+	//    the catalog — external/relay names, or anything the catalog missed. A
+	//    tool the agent references must never be dropped.
 	for _, t := range append(append([]string{}, d.Tools...), d.BannedTools...) {
 		if t == "" || seen[t] {
 			continue
@@ -545,18 +556,40 @@ func (d *AgentDefinition) ToolGroupsWithCatalog(catalog []mcp.ToolDefinition) []
 		seen[t] = true
 	}
 
+	// 3. Workspace tools: present when the definition has a non-empty
+	//    SandboxConfig (workspace enabled). They are not MCP catalog tools and
+	//    are not stored in def.Tools, so without this step the workspace groups
+	//    never render and cannot be governed.
+	if len(d.SandboxConfig) > 0 {
+		for _, t := range workspaceToolNames {
+			if seen[t] {
+				continue
+			}
+			g := toolgroups.GroupForTool(t)
+			membership[g] = append(membership[g], t)
+			seen[t] = true
+		}
+	}
+
 	var out []ToolGroupDTO
 	for _, g := range toolgroups.Groups {
 		tools := membership[g.ID]
 		if len(tools) == 0 {
 			continue
 		}
-		p, present := d.ToolPolicies[toolGroupPolicyPrefix+g.ID]
+		// The `other` group is display-only: it never reads a stored
+		// @group:other entry, so external/relay/unmatched tools always inherit
+		// the default policy.
+		policy := ""
+		if g.ID != toolgroups.GroupOther {
+			p, present := d.ToolPolicies[toolGroupPolicyPrefix+g.ID]
+			policy = groupPolicyString(p, present)
+		}
 		out = append(out, ToolGroupDTO{
 			ID:          g.ID,
 			Label:       g.Label,
 			Description: g.Description,
-			Policy:      groupPolicyString(p, present),
+			Policy:      policy,
 			Enabled:     groupEnabled(tools, enabled, banned),
 			Tools:       tools,
 		})
