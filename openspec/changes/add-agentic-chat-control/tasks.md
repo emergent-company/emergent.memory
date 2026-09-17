@@ -26,7 +26,7 @@
 
 ## 5. UI: queue lane
 
-- [x] 5.1 Add the queue lane to the composer in `apps/web-ui/gateway/chat.templ` with queued rows exposing edit and "send now" actions; verify queued rows render and an empty queue renders nothing
+- [x] 5.1 Add the queue lane to the composer in `apps/web-ui/gateway/chat.templ` with queued rows exposing edit and "send next" actions; verify queued rows render and an empty queue renders nothing
 - [x] 5.2 Implement queue state, edit, send-now, and ordered auto-release on turn end in `chat.js`; verify enqueue, edit, send-now promotion, ordered release, and clearing after release
 - [x] 5.3 Scope the queue by conversation id so a rail switch never delivers a parked message into another conversation, and reopen restores it; verify switch-away, switch-back, and no cross-conversation delivery
 - [x] 5.4 Wire `Enter` to follow turn state and `Cmd/Ctrl+Enter` to always queue; verify both key paths in both turn states

@@ -1794,11 +1794,11 @@
     renderQueue();
   }
 
-  // sendNow releases a queued row ahead of the rest. When the composer is idle
-  // it sends immediately; while a turn is running the shared engine cannot start
-  // a second turn without clobbering the live bubble (steer is deferred by
-  // design), so the row is promoted to the head and released the moment the
-  // current turn ends — ahead of every other queued row.
+  // sendNow promotes a queued row to the head of the queue ("Send next"). When
+  // the composer is idle it sends immediately; while a turn is running the
+  // shared engine cannot start a second turn without clobbering the live bubble
+  // (steer is deferred by design), so the row is promoted to the head and
+  // released the moment the current turn ends — ahead of every other queued row.
   function sendNow(id) {
     var q = activeQueue();
     var idx = -1;
@@ -1822,7 +1822,7 @@
     q.armed = true;
     persistQueue();
     renderQueue();
-    notify("info", "Will send as soon as this turn finishes.");
+    notify("info", "Will send next, as soon as this turn finishes.");
   }
 
   // pumpQueue releases an armed queue in order, one turn at a time: each
@@ -1910,7 +1910,7 @@
     send.className = "memory-queue-send";
     send.setAttribute("data-queue-action", "send");
     send.setAttribute("data-queue-id", item.id);
-    send.textContent = "Send now";
+    send.textContent = "Send next";
 
     var rm = document.createElement("button");
     rm.type = "button";

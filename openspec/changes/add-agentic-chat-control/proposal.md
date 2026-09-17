@@ -18,7 +18,7 @@ This change gives the chat the run-control surface it is missing, using only dat
 - **Real interrupt.** The stop button keeps its local abort and additionally calls a new gateway route that proxies the existing upstream run-cancel endpoint, so the server-side run is actually cancelled.
 - **Pending-work dock.** Pending approvals and questions move out of the transcript into a dock anchored above the composer, with counts surfaced on the rail row and header and a badge when more than one is pending. Approval/question semantics are unchanged — this is presentation and placement only.
 - **Session todo card.** A collapsible todo card in the transcript, resolved through conversation → `acpSessionId` → session todos.
-- **Composer queue.** A client-side queue lane: park a follow-up while a turn runs, edit or release it with "Send now", auto-released when the turn ends. `Enter` follows turn state; `Cmd/Ctrl+Enter` always queues.
+- **Composer queue.** A client-side queue lane: park a follow-up while a turn runs, edit it or promote it to the head with "Send next", auto-released when the turn ends. `Enter` follows turn state; `Cmd/Ctrl+Enter` always queues.
 - **Turn footer.** Per-turn model, wall-clock duration from the run's `completed_at − created_at`, end timestamp on hover, and a copy-turn action.
 - **Copy affordances.** Copy a whole assistant message and copy a fenced code block.
 - **Typed run markers.** `run_start`/`run_end` render as turn boundaries with status; distinct treatment for `failed` and `input-required` ("waiting on you") runs.

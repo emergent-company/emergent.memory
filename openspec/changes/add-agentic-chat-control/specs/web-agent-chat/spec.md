@@ -91,7 +91,7 @@ The gateway SHALL resolve the active conversation's ACP session id and fetch tha
 - **THEN** the refresh event re-renders the todo card with the new state
 
 ### Requirement: Queue messages while a turn is running
-The composer SHALL maintain a client-side queue that holds follow-up messages while a turn is running. Queued rows SHALL be editable and SHALL offer a "send now" action. Queued messages SHALL NOT be sent to the server until released, SHALL be released automatically in order when the running turn ends, and SHALL survive a rail-driven conversation switch only for the conversation they were queued against. `Enter` SHALL follow the current turn state (send when idle, queue when running) and `Cmd/Ctrl+Enter` SHALL always queue.
+The composer SHALL maintain a client-side queue that holds follow-up messages while a turn is running. Queued rows SHALL be editable and SHALL offer a "send next" action that promotes the row to the head of the queue. Queued messages SHALL NOT be sent to the server until released, SHALL be released automatically in order when the running turn ends, and SHALL survive a rail-driven conversation switch only for the conversation they were queued against. `Enter` SHALL follow the current turn state (send when idle, queue when running) and `Cmd/Ctrl+Enter` SHALL always queue.
 
 #### Scenario: Queue a follow-up while running
 - **WHEN** the user submits a message while a turn is streaming
@@ -101,9 +101,13 @@ The composer SHALL maintain a client-side queue that holds follow-up messages wh
 - **WHEN** the running turn ends with two queued messages
 - **THEN** the queued messages are sent in order and their rows are cleared
 
-#### Scenario: Send now releases immediately
-- **WHEN** the user activates "send now" on a queued row while a turn is still running
-- **THEN** that message is sent immediately irrespective of queue order
+#### Scenario: Send next releases ahead of the queue
+- **WHEN** the user activates "send next" on a queued row while a turn is still running
+- **THEN** that message is promoted ahead of the rest of the queue and released first when the running turn ends
+
+#### Scenario: Send next sends immediately when idle
+- **WHEN** the user activates "send next" on a queued row while no turn is running
+- **THEN** that message is sent immediately
 
 #### Scenario: Cmd/Ctrl+Enter always queues
 - **WHEN** the user presses `Cmd/Ctrl+Enter` while no turn is running
