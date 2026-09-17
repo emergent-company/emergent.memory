@@ -29,8 +29,9 @@ async function openPicker(page: Page): Promise<void> {
   await expect(page.locator(PANEL)).toHaveAttribute('data-gd-popover-open', 'true');
   await expect(page.locator(TRIGGER)).toHaveAttribute('aria-expanded', 'true');
   // The runtime clears any stale search on open from a requestAnimationFrame;
-  // let that settle before typing so the filter observes our value.
-  await page.waitForTimeout(150);
+  // assert the search input is empty (a deterministic precondition) rather than
+  // sleeping for the frame to settle.
+  await expect(page.locator(SEARCH)).toHaveValue('');
 }
 
 async function pick(page: Page, value: string): Promise<void> {
