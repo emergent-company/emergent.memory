@@ -83,3 +83,78 @@ Adopting a go-daisy component SHALL NOT change rendered output; the exact-render
 
 - **WHEN** `templ generate ./...`, `go build ./...`, `go test ./...`, and `task lint` are run from `apps/web-ui/gateway`
 - **THEN** all succeed
+
+### Requirement: Detail-page headers render through nav.PageHeading
+
+The detail-page header (breadcrumb trail, kicker eyebrow, h1, subtitle, right-side actions) SHALL render through `nav.PageHeading`, and the gateway's `detailHeader` SHALL become a thin adapter delegating to it. The list-page `pageHeader` SHALL stay local because `nav.PageHeading` cannot reproduce it byte-for-byte.
+
+#### Scenario: detailHeader delegates to PageHeading
+
+- **WHEN** a detail header is rendered in its default, dashboard, bare, kicker, subtitle-full, or title-adornment variant
+- **THEN** it emits the same breadcrumbs, title column, subtitle, and actions markup, with the header's children forwarded into `PageHeading`'s `Actions` slot
+
+#### Scenario: Leading variant stays local
+
+- **WHEN** a detail header uses the `Leading` option (an agent icon tile before the title column)
+- **THEN** it keeps the pre-adoption markup, because `PageHeading` has no pre-title slot (`TitleAdornment` renders after the h1)
+
+#### Scenario: pageHeader stays local
+
+- **WHEN** the list-page `pageHeader` is rendered
+- **THEN** it emits no breadcrumbs region, no `mt-2` on its flex row, and always renders the kicker eyebrow — which `PageHeading` cannot reproduce (it always emits a breadcrumbs region, adds `mt-2`, and drops the eyebrow in its Dashboard variant)
+
+### Requirement: Sidebar nav rows render through layout.SidebarNavItem
+
+The sidebar nav link SHALL render through `layout.SidebarNavItem`, and the gateway SHALL NOT carry its own `sidebarNavRow` or `sidebarIndicatorID`.
+
+#### Scenario: Nav row markup is single-sourced
+
+- **WHEN** the gateway templates are searched for a local `sidebarNavRow` or `sidebarIndicatorID`
+- **THEN** no local definition remains, and the app sidebar calls `layout.SidebarNavItem`
+
+#### Scenario: Provider warning renders through the Warn slot
+
+- **WHEN** the project has no LLM provider configured
+- **THEN** the "Project" entry renders the app-specific warning indicator via `SidebarItem.Warn`, keeping the copy at the call site rather than baking it into the library
+
+#### Scenario: htmx attributes are preserved
+
+- **WHEN** a sidebar nav row is rendered
+- **THEN** it carries the same `hx-target="#main-content"`, `hx-swap`, `hx-push-url`, and `hx-indicator` attributes as before
+
+### Requirement: Account avatar sizes initials via AvatarFull TextClass
+
+The account-menu avatar SHALL render through `ui.AvatarFull` with `TextClass` sizing the initials, instead of carrying the font-size class on an outer wrapper.
+
+#### Scenario: Initials font-size is applied via TextClass
+
+- **WHEN** the account avatar renders an initials fallback
+- **THEN** the font-size class is applied to the initials text via `AvatarProps.TextClass`
+
+#### Scenario: shrink-0 wrapper is preserved
+
+- **WHEN** the account avatar is rendered
+- **THEN** the outer `shrink-0` wrapper remains (AvatarFull has no shrink slot), so the avatar does not collapse in the flex menu rows
+
+### Requirement: Type accents render through IconTile/Badge Color and Glyph
+
+The schema-declared type icon tile and name chip SHALL render through `ui.IconTile` (`Color`, `Glyph`) and `ui.Badge` (`Color`, `Glyph`, `LabelClass`), while the app-specific icon catalog and name normalisation SHALL stay local.
+
+#### Scenario: Color tint and glyph branch delegate to library props
+
+- **WHEN** a type declares a color and/or a text/emoji glyph
+- **THEN** the tile/chip renders the arbitrary CSS colour via the library `Color` prop and the glyph via the `Glyph` prop
+
+#### Scenario: Icon catalog stays local
+
+- **WHEN** a schema-declared icon name is resolved
+- **THEN** the gateway's `supportedTypeIconClasses`/`typeIconClass`/`normalizeIconName` catalog remains local, because it exists for the Tailwind `@source` scan
+
+### Requirement: Bare card lists render through Section.Wrapperless
+
+The bare (title-empty) card list SHALL render through `ui.Section` with `Wrapperless: true`, instead of a hand-written `ui.CardRaw` branch.
+
+#### Scenario: Wrapperless bare card output is unchanged
+
+- **WHEN** a title-empty `cardList` is rendered
+- **THEN** it emits the same bare card + `divide-y` rows without a `<section>` wrapper, via `Section`'s `Wrapperless` option

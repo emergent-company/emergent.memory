@@ -35,3 +35,39 @@ Pure markup-preserving refactor: every item preserves rendered output. Run comma
 ## 8 — Verification
 
 - [x] 8.1 `templ generate ./...` && `go build ./...` && `go test ./...` && `task lint` (or golangci-lint/go vet/templ -check directly if lefthook is unavailable) — all clean.
+
+## 9 — Second lane: bump pin again
+
+- [x] 9.1 `go get github.com/emergent-company/go-daisy@8ce69ca` + `go mod tidy` + `GOWORK=off go mod vendor`; confirm `go.mod` pins `8ce69ca4cdd1`. Verify: `go build ./...` green.
+
+## 10 — Detail/page headers onto nav.PageHeading
+
+- [x] 10.1 `detailHeader` → thin adapter over `nav.PageHeading` (Margin/Dashboard/Bare/SubtitleFull/TitleAdornment + children actions slot). `Leading` variant stays local (`detailHeaderLeading`). `pageHeader` stays local. Verify: `go test ./...` green, `refactor_exact_test.go` unchanged.
+
+## 11 — Sidebar row onto layout.SidebarNavItem
+
+- [x] 11.1 Delete `sidebarNavRow`/`sidebarIndicatorID`; call `layout.SidebarNavItem` and pass the provider warning via `SidebarItem.Warn` (`sidebarProviderWarning`). Verify: `go test ./...` green.
+
+## 12 — Account avatar onto AvatarFull TextClass
+
+- [x] 12.1 `accountAvatar` passes the initials font-size via `AvatarProps.TextClass`, keeping the `shrink-0` wrapper. Verify: `go test ./...` green.
+
+## 13 — Type accents onto IconTile/Badge Color+Glyph
+
+- [x] 13.1 `typeIconTile`/`typeNameChip` resolve the catalog then delegate to `ui.IconTile`/`ui.Badge` `Color`/`Glyph`/`LabelClass`; keep `typeIconClass`/`normalizeIconName` local. Verify: `go test ./...` green.
+
+## 14 — Agent tool disclosure (stays local)
+
+- [x] 14.1 Keep `agentToolDisclosure` local: `ui.Disclosure` has no summary-attributes slot, hardcodes `bg-base-200/40` on the details, and hardcodes `gap-2 border-base-content/10 p-3` on the body — none match the source-group variant. Verify: `agent_ui_test.go` unchanged and green.
+
+## 15 — cardList onto Section.Wrapperless
+
+- [x] 15.1 Collapse `cardList` onto `ui.Section` using `Wrapperless: title == ""` and `Rows: true`. Verify: `go test ./...` green.
+
+## 16 — OpenSpec (extend existing change)
+
+- [x] 16.1 Extend `adopt-go-daisy-library-components` (proposal, tasks, delta spec) with this lane. Verify: `openspec validate adopt-go-daisy-library-components` clean.
+
+## 17 — Verification (second lane)
+
+- [x] 17.1 `task css` (from gateway) && `templ generate ./...` && `go build ./...` && `go test ./...` && `task lint` — all clean.
