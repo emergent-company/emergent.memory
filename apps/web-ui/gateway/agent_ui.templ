@@ -49,10 +49,17 @@ templ agentNameChip(label string, variant ui.BadgeIntent, icon string, color str
 
 // agentInlineGlyph renders an agent's icon as a bare inline glyph — no tile, no
 // border, no badge — for tight meta rows where the agent name is small text
-// (e.g. the chat session rail). A declared color tints the glyph; without one
+// (e.g. the chat session rail). A declared color tints the glyph text only
+// (agentInlineGlyphStyle, not typeColorStyle — no background tint); without one
 // it stays the neutral muted bot, matching the generic icon it replaces.
 templ agentInlineGlyph(icon string, color string) {
-	<span class={ "inline-flex shrink-0 items-center", templ.KV("text-base-content/40", color == "") } style={ typeColorStyle(color) }>
-		@agentGlyph(icon, "size-4", "text-base")
-	</span>
+	if style := agentInlineGlyphStyle(color); style != "" {
+		<span class="inline-flex shrink-0 items-center" style={ style }>
+			@agentGlyph(icon, "size-4", "text-base")
+		</span>
+	} else {
+		<span class="inline-flex shrink-0 items-center text-base-content/40">
+			@agentGlyph(icon, "size-4", "text-base")
+		</span>
+	}
 }

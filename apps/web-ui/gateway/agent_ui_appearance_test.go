@@ -142,24 +142,31 @@ func TestRenderAgentNameChip(t *testing.T) {
 }
 
 func TestRenderAgentInlineGlyph(t *testing.T) {
-	// No appearance: a bare muted bot glyph — no tile frame, no border, no badge.
+	// No appearance: a bare muted bot glyph — no tile frame, no border, no badge,
+	// and no style attribute at all (the fallback path only sets the muted class).
 	html := renderHTML(t, agentInlineGlyph("", ""))
 	for _, want := range []string{"lucide--bot", "size-4", "text-base-content/40"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("default inline glyph missing %q: %s", want, html)
 		}
 	}
-	for _, bad := range []string{"rounded-lg", "badge", "border", "bg-primary"} {
+	for _, bad := range []string{"rounded-lg", "badge", "border", "bg-primary", "style="} {
 		if strings.Contains(html, bad) {
 			t.Errorf("inline glyph must be bare (found %q): %s", bad, html)
 		}
 	}
 
-	// Declared icon + color: the agent icon tinted with its color, still bare.
+	// Declared icon + color: the agent icon tinted with its text color ONLY —
+	// no background/border tint behind it (that is the framed tile's job).
 	html = renderHTML(t, agentInlineGlyph("database", "#2563EB"))
 	for _, want := range []string{"lucide--database", "color:#2563EB"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("accented inline glyph missing %q: %s", want, html)
+		}
+	}
+	for _, bad := range []string{"background-color", "border-color", "style=\"\""} {
+		if strings.Contains(html, bad) {
+			t.Errorf("accented inline glyph must tint the glyph only (found %q): %s", bad, html)
 		}
 	}
 

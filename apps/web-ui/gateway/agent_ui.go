@@ -57,6 +57,18 @@ func agentIcon(raw json.RawMessage) string { return agentUIOf(raw).Icon }
 // agentColor returns the agent's declared color, or "" when none is set.
 func agentColor(raw json.RawMessage) string { return agentUIOf(raw).Color }
 
+// agentInlineGlyphStyle is the inline style for agentInlineGlyph: it tints the
+// glyph's text color only, unlike typeColorStyle (which also paints the tile
+// background and border for the framed surfaces). Empty when no color is
+// declared, trimmed like typeColorStyle so a whitespace-only value counts as
+// undeclared.
+func agentInlineGlyphStyle(color string) string {
+	if c := strings.TrimSpace(color); c != "" {
+		return "color:" + c
+	}
+	return ""
+}
+
 // agentUIConfig builds the uiConfig blob from an editor's icon/color values.
 // Both empty yields "{}" (an explicit no-appearance declaration) rather than
 // nil/omitted, so clearing the pickers on a PATCH actually removes a
