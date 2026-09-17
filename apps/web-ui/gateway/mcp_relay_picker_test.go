@@ -18,6 +18,7 @@ const relayGroupBorder = "border-primary/25"
 
 func relaySettingsData() agentSettingsData {
 	return agentSettingsData{
+		Section: "tools",
 		Agent: &AgentDefinition{
 			ID:    "a1",
 			Name:  "diane",
@@ -84,8 +85,9 @@ func TestRenderAgentSettingsRelayTools(t *testing.T) {
 // picker renders the relay groups instead of the "No tools available" state.
 func TestRenderAgentSettingsRelayOnlyTools(t *testing.T) {
 	data := agentSettingsData{
-		Agent:  &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"mac-ada_notes_search"}},
-		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		Section: "tools",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"mac-ada_notes_search"}},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 		RelayNodes: []relayNode{
 			{Session: RelaySession{InstanceID: "mac-ada"}, Tools: []RelayTool{{Name: "notes_search"}}},
 		},
@@ -100,6 +102,7 @@ func TestRenderAgentSettingsRelayOnlyTools(t *testing.T) {
 
 	// empty node (no tools) renders no group and no empty state regression
 	data = agentSettingsData{
+		Section:    "tools",
 		Agent:      &AgentDefinition{ID: "a1", Name: "diane"},
 		Agents:     []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 		RelayNodes: []relayNode{{Session: RelaySession{InstanceID: "empty-node"}}},
@@ -139,8 +142,9 @@ func TestRenderAgentSettingsNoRelayNodes(t *testing.T) {
 // never drops it.
 func TestRelayToolPreservedWhenNodeOffline(t *testing.T) {
 	data := agentSettingsData{
-		Agent:  &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"web_search", "mac-ada_notes_search", "ha_get_state"}},
-		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		Section: "tools",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"web_search", "mac-ada_notes_search", "ha_get_state"}},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 		MCPServers: []MCPServer{
 			{Name: "builtin", ToolCount: 1, Tools: []MCPTool{{ToolName: "web_search"}}},
 		},
@@ -167,7 +171,7 @@ func TestUIAgentSettingsRouteRelayNodes(t *testing.T) {
 	newServer := func(f *fakeMemory) *echo.Echo {
 		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 		e := echo.New()
-		e.GET("/agents/:id/settings", s.uiAgentSettings)
+		e.GET("/agents/:id/settings/:section", s.uiAgentSettingsSection)
 		return e
 	}
 	agent := &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"mac-ada_notes_search"}}
@@ -181,7 +185,7 @@ func TestUIAgentSettingsRouteRelayNodes(t *testing.T) {
 	}
 	e := newServer(f)
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/settings", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/settings/tools", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("nodes-present status %d", rec.Code)
 	}
@@ -200,7 +204,7 @@ func TestUIAgentSettingsRouteRelayNodes(t *testing.T) {
 	}
 	e = newServer(f)
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/settings", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/settings/tools", nil))
 	body = rec.Body.String()
 	if strings.Contains(body, relayGroupBorder) {
 		t.Error("no connected nodes → no relay group")
@@ -221,7 +225,7 @@ func TestUIAgentSettingsRouteRelayNodes(t *testing.T) {
 	}
 	e = newServer(f)
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/settings", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/settings/tools", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("relay-error status %d", rec.Code)
 	}

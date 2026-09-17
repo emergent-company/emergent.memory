@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -31,10 +30,10 @@ import (
 // revoke/rotate, and session list proxies behind the shared auth boundary. The
 // raw secret appears ONLY in create-key and rotate-key responses.
 
-// agentMCPSettingsPath is the agent settings page — the configuration surface
-// the MCP section lives on.
+// agentMCPSettingsPath is the agent settings MCP-sharing subpage — the
+// configuration surface the MCP section lives on.
 func agentMCPSettingsPath(agentID string) string {
-	return "/agents/" + url.PathEscape(agentID) + "/settings"
+	return agentSettingsSectionPath(agentID, sectionMCP)
 }
 
 // agentMCPActionErr is a create/revoke/rotate failure surfaced inline in the
@@ -350,6 +349,7 @@ func (s *Server) loadAgentMCP(ctx context.Context, agentID string, data *agentSe
 func (s *Server) renderAgentSettingsWithMCP(c echo.Context, agentID string, extra agentSettingsData) error {
 	ctx := c.Request().Context()
 	data := extra
+	data.Section = sectionMCP
 	if err := s.loadAgentSettings(ctx, agentID, &data); err != nil {
 		data.LoadErr = err
 		return s.page(c, pageTitle("Agent settings"), AgentSettingsPage(data))

@@ -532,7 +532,7 @@ func TestAgentModelWarnings(t *testing.T) {
 
 	// settings page: warning renders above the model picker
 	settings := func(agent *AgentDefinition, defaultModel string, hasProviders bool, providerNames []string) string {
-		return renderHTML(t, AgentSettingsPage(agentSettingsData{Agent: agent, DefaultModel: defaultModel, ModelConfigKnown: true, HasProviders: hasProviders, ProviderNames: providerNames}))
+		return renderHTML(t, AgentSettingsPage(agentSettingsData{Section: "model", Agent: agent, DefaultModel: defaultModel, ModelConfigKnown: true, HasProviders: hasProviders, ProviderNames: providerNames}))
 	}
 	hs := settings(noModel, "", false, nil)
 	for _, want := range []string{errSettings, "so chats will fail", providersURL, "Configure a provider"} {
@@ -615,9 +615,11 @@ func TestUIAgentsRouteSkills(t *testing.T) {
 	}
 }
 
-// TestRenderAgentSettingsPage covers the in-page edit form: every field renders
-// its current value, delegation + skill checkboxes reflect stored state, self
-// is excluded from delegation targets, and the sub-nav links are present.
+// TestRenderAgentSettingsPage covers the split in-page edit subpages: each
+// section renders its own panel with the current values, the settings nav
+// renders as a group with all six children (active child highlighted), and the
+// per-section regression guards hold (bare boolean attrs, unlisted tools,
+// delegation-managed tool exclusion, synthetic current model).
 func TestRenderAgentSettingsPage(t *testing.T) {
 	agent := &AgentDefinition{
 		ID:           "a1",
@@ -641,59 +643,129 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 		},
 		Skills: []Skill{{Name: "recall-memory", Description: "recall stuff"}, {Name: "summarize-email"}},
 	}
-	html := renderHTML(t, AgentSettingsPage(data))
+	render := func(section string) string {
+		d := data
+		d.Section = section
+		return renderHTML(t, AgentSettingsPage(d))
+	}
+
+	// Every settings subpage renders the six-item settings nav group (General /
+	// Model / Tools / Skills / Delegation / MCP sharing) plus the sibling rail
+	// items (Dashboard / Settings / Sandbox / Sessions).
+	settingsNavHrefs := []string{
+		`href="/agents/a1"`, `href="/agents/a1/settings"`,
+		`href="/agents/a1/settings/model"`, `href="/agents/a1/settings/tools"`,
+		`href="/agents/a1/settings/skills"`, `href="/agents/a1/settings/delegation"`,
+		`href="/agents/a1/settings/mcp"`,
+		`href="/agents/a1/sandbox"`, `href="/agents/a1/sessions"`,
+	}
+	for _, section := range []string{"", "general", "model", "tools", "skills", "delegation", "mcp"} {
+		h := render(section)
+		for _, want := range settingsNavHrefs {
+			if !strings.Contains(h, want) {
+				t.Errorf("settings section %q nav missing %q", section, want)
+			}
+		}
+	}
+
+	// General page: name, system prompt, language, and its POST target.
+	general := render("general")
 	for _, want := range []string{
 		`name="name"`, `value="diane"`,
 		`name="systemPrompt"`, "be terse",
+		`name="language"`,
+		`/agents/a1/settings/general`,
+	} {
+		if !strings.Contains(general, want) {
+			t.Errorf("general settings page missing %q", want)
+		}
+	}
+
+	// Model page: model picker + temperature + max tokens.
+	model := render("model")
+	for _, want := range []string{
 		`name="modelName"`, `value="openai/gpt-4o"`,
 		`name="temperature"`, `value="0.7"`,
 		`name="maxTokens"`, `value="4096"`,
-		`name="tool"`, `value="web_search"`, `value="memory_lookup"`, `value="code_exec"`,
-		"General", "Model", "Tools", "Skills", "Delegation",
-		`name="skill"`, `value="recall-memory"`, `value="summarize-email"`,
-		`name="delegationEnabled"`,
-		`name="delegation-target"`, `value="milo"`,
-		`/agents/a1/update`, `href="/agents/a1/settings"`, `href="/agents/a1/sessions"`, `href="/agents/a1"`,
+		`/agents/a1/settings/model`,
 	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("settings page missing %q", want)
+		if !strings.Contains(model, want) {
+			t.Errorf("model settings page missing %q", want)
 		}
 	}
-	// self is excluded from the delegation-target picker
-	if strings.Contains(html, `name="delegation-target" type="checkbox" value="diane"`) {
+
+	// Tools page: grouped tool checkboxes reflect stored state.
+	tools := render("tools")
+	for _, want := range []string{
+		`name="tool"`, `value="web_search"`, `value="memory_lookup"`, `value="code_exec"`,
+		`value="web_search" checked`,
+		`/agents/a1/settings/tools`,
+	} {
+		if !strings.Contains(tools, want) {
+			t.Errorf("tools settings page missing %q", want)
+		}
+	}
+	if strings.Contains(tools, `value="code_exec" checked`) {
+		t.Error("unselected tool must not render checked")
+	}
+
+	// Skills page: skill checkboxes reflect stored state.
+	skills := render("skills")
+	for _, want := range []string{
+		`name="skill"`, `value="recall-memory"`, `value="summarize-email"`,
+		`value="recall-memory" checked`,
+		`/agents/a1/settings/skills`,
+	} {
+		if !strings.Contains(skills, want) {
+			t.Errorf("skills settings page missing %q", want)
+		}
+	}
+	if strings.Contains(skills, `value="summarize-email" checked`) {
+		t.Error("unselected skill must not render checked")
+	}
+
+	// Delegation page: enable toggle + target picker; self is excluded.
+	delegation := render("delegation")
+	for _, want := range []string{
+		`name="delegationEnabled"`,
+		`name="delegation-target"`, `value="milo"`,
+		`/agents/a1/settings/delegation`,
+	} {
+		if !strings.Contains(delegation, want) {
+			t.Errorf("delegation settings page missing %q", want)
+		}
+	}
+	if strings.Contains(delegation, `name="delegation-target" type="checkbox" value="diane"`) {
 		t.Error("self must not appear in delegation targets")
+	}
+
+	// MCP page: the non-form MCP section block.
+	if mcp := render("mcp"); !strings.Contains(mcp, `data-testid="agent-mcp-section"`) {
+		t.Error("mcp settings page missing the MCP section")
 	}
 
 	// regression: boolean attrs must render bare `selected`/`checked`, never
 	// `selected="false"`/`checked="false"` (HTML treats the latter as true).
 	// The leading space avoids matching the pickers' aria-selected="false".
-	if strings.Contains(html, ` selected="false"`) {
-		t.Error("model options must not render selected=\"false\" (boolean-attribute bug)")
+	for _, section := range []string{"model", "tools", "skills"} {
+		h := render(section)
+		if strings.Contains(h, ` selected="false"`) {
+			t.Errorf("section %q must not render selected=\"false\" (boolean-attribute bug)", section)
+		}
+		if strings.Contains(h, ` checked="false"`) {
+			t.Errorf("section %q must not render checked=\"false\" (boolean-attribute bug)", section)
+		}
 	}
-	if strings.Contains(html, ` checked="false"`) {
-		t.Error("checkboxes must not render checked=\"false\" (boolean-attribute bug)")
-	}
-	if !strings.Contains(html, `value="openai/gpt-4o" selected>`) {
+	if !strings.Contains(model, `value="openai/gpt-4o" selected>`) {
 		t.Error("stored model option should be selected")
-	}
-	if !strings.Contains(html, `value="recall-memory" checked`) {
-		t.Error("stored skill should be checked")
-	}
-	if strings.Contains(html, `value="summarize-email" checked`) {
-		t.Error("unselected skill must not render checked")
-	}
-	if !strings.Contains(html, `value="web_search" checked`) {
-		t.Error("allowed tool should be checked")
-	}
-	if strings.Contains(html, `value="code_exec" checked`) {
-		t.Error("unselected tool must not render checked")
 	}
 
 	// empty model → no selected attribute at all (Auto — default model stays first)
 	emptyModel := agentSettingsData{
-		Agent:  &AgentDefinition{ID: "a1", Name: "diane"},
-		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
-		Models: []Model{{Provider: "openai", ModelName: "gpt-4o"}},
+		Section: "model",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane"},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		Models:  []Model{{Provider: "openai", ModelName: "gpt-4o"}},
 	}
 	if h := renderHTML(t, AgentSettingsPage(emptyModel)); strings.Contains(h, " selected") {
 		t.Error("empty model must not render any selected option")
@@ -701,6 +773,7 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 
 	// tools from no registered server → "Other" group, preserved checked
 	unlisted := agentSettingsData{
+		Section:    "tools",
 		Agent:      &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"web_search", "ha_get_state"}},
 		Agents:     []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 1, Tools: []MCPTool{{ToolName: "web_search"}}}},
@@ -711,8 +784,9 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 
 	// delegation-managed tools are never listed (managed by the delegation toggle)
 	delOnly := agentSettingsData{
-		Agent:  &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"spawn_agents", "list_available_agents"}},
-		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		Section: "tools",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"spawn_agents", "list_available_agents"}},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 	}
 	if h := renderHTML(t, AgentSettingsPage(delOnly)); strings.Contains(h, "spawn_agents") {
 		t.Error("delegation-managed tools must not render in the picker")
@@ -720,19 +794,20 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 
 	// model absent from catalog → synthetic "(current)" option
 	unknown := agentSettingsData{
-		Agent:  &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "gpt-5"}},
-		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
-		Models: []Model{{Provider: "openai", ModelName: "gpt-4o"}},
+		Section: "model",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "gpt-5"}},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		Models:  []Model{{Provider: "openai", ModelName: "gpt-4o"}},
 	}
 	if h := renderHTML(t, AgentSettingsPage(unknown)); !strings.Contains(h, "gpt-5 (current)") {
 		t.Error("synthetic current-model option missing")
 	}
 
 	// flash + error + load-error states
-	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{Agent: agent, FlashMsg: "Agent updated."})); !strings.Contains(h, "Agent updated.") {
+	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{Section: "general", Agent: agent, FlashMsg: "Agent updated."})); !strings.Contains(h, "Agent updated.") {
 		t.Error("flash success missing")
 	}
-	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{Agent: agent, FlashErr: errTest})); !strings.Contains(h, "backend unreachable") {
+	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{Section: "general", Agent: agent, FlashErr: errTest})); !strings.Contains(h, "backend unreachable") {
 		t.Error("flash error should render the real error, missing")
 	}
 	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{LoadErr: errTest})); !strings.Contains(h, "Agent unavailable") {
@@ -766,9 +841,11 @@ func TestRenderAgentSessionsPage(t *testing.T) {
 	}
 }
 
-// TestUIAgentSettingsRoute exercises the settings GET route against the fake
-// backend, including deriveDelegation reconstructing delegation from Tools +
-// Config.spawnPolicy (the memory representation).
+// TestUIAgentSettingsRoute exercises the settings GET routes against the fake
+// backend: the General landing route (name/prompt/language) and each subpage
+// route (model/tools/skills/delegation), including deriveDelegation
+// reconstructing delegation from Tools + Config.spawnPolicy (the memory
+// representation) and an unknown section returning 404.
 func TestUIAgentSettingsRoute(t *testing.T) {
 	f := &fakeMemory{
 		defs: map[string]*AgentDefinition{
@@ -786,20 +863,52 @@ func TestUIAgentSettingsRoute(t *testing.T) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.GET("/agents/:id/settings", s.uiAgentSettings)
+	e.GET("/agents/:id/settings/:section", s.uiAgentSettingsSection)
 
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/settings", nil))
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+
+	// General landing page: name, system prompt, language — no model/tools/etc.
+	rec := get("/agents/a1/settings")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("settings status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{
-		`value="diane"`, "hi", `value="gpt-4o"`, `value="0.7"`,
-		`name="delegation-target" type="checkbox" value="milo"`, "recall-memory",
-	} {
+	for _, want := range []string{`value="diane"`, "hi", `name="language"`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("settings route missing %q", want)
+			t.Errorf("general settings route missing %q", want)
 		}
+	}
+	if strings.Contains(body, `name="modelName"`) {
+		t.Error("general settings page must not render the model picker")
+	}
+
+	// Model subpage carries the stored model.
+	body = get("/agents/a1/settings/model").Body.String()
+	for _, want := range []string{`value="gpt-4o"`, `value="0.7"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("model settings route missing %q", want)
+		}
+	}
+
+	// Delegation subpage reconstructs the persisted delegation targets.
+	body = get("/agents/a1/settings/delegation").Body.String()
+	if !strings.Contains(body, `name="delegation-target" type="checkbox" value="milo"`) {
+		t.Error("delegation route missing derived target milo")
+	}
+
+	// Skills subpage renders the stored skill.
+	body = get("/agents/a1/settings/skills").Body.String()
+	if !strings.Contains(body, "recall-memory") {
+		t.Error("skills route missing stored skill")
+	}
+
+	// Unknown section → 404.
+	if rec := get("/agents/a1/settings/nope"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown section status = %d, want 404", rec.Code)
 	}
 }
 
@@ -831,90 +940,212 @@ func TestUIAgentSessionsRoute(t *testing.T) {
 	}
 }
 
-// TestUIAgentUpdateRoute exercises the settings form POST (PRG): form fields
-// map onto the agent definition (mirroring the old modal's JSON mapping),
-// delegation is applied via applyDelegation, and success redirects to
-// ?updated=1 while validation failures redirect to ?err=1.
+// TestUIAgentUpdateRoute exercises the split per-section POST handlers (PRG):
+// each handler maps only its own fields onto the definition, delegation is
+// applied via applyDelegation, and success redirects to the section's ?updated=1
+// while validation failures redirect to ?err=<msg>. The back-compat
+// POST /agents/:id/update still works as the General alias.
 func TestUIAgentUpdateRoute(t *testing.T) {
-	f := &fakeMemory{
-		defs: map[string]*AgentDefinition{
-			"a1": {ID: "a1", Name: "diane"},
-			"a2": {ID: "a2", Name: "milo"},
-		},
-		agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/update", s.uiAgentUpdateGeneral)
+		e.POST("/agents/:id/settings/general", s.uiAgentUpdateGeneral)
+		e.POST("/agents/:id/settings/model", s.uiAgentUpdateModel)
+		e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+		e.POST("/agents/:id/settings/skills", s.uiAgentUpdateSkills)
+		e.POST("/agents/:id/settings/delegation", s.uiAgentUpdateDelegation)
+		return e
 	}
-	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
-	e := echo.New()
-	e.POST("/agents/:id/update", s.uiAgentUpdate)
-
-	post := func(body string) *httptest.ResponseRecorder {
+	post := func(e *echo.Echo, path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/agents/a1/update", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		e.ServeHTTP(rec, req)
 		return rec
 	}
 
-	rec := post("name=diane&systemPrompt=be+terse&language=Spanish&modelName=gpt-4o&temperature=0.7&maxTokens=4096&tool=web_search&tool=memory_lookup&skill=recall-memory&delegationEnabled=on&delegation-target=milo")
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("update status %d, want 303", rec.Code)
-	}
-	if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings?updated=1" {
-		t.Errorf("redirect = %q, want settings?updated=1", loc)
-	}
+	t.Run("general maps name/prompt/language", func(t *testing.T) {
+		f := &fakeMemory{
+			defs:   map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/general", "name=diane&systemPrompt=be+terse&language=Spanish")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("status %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings?updated=1" {
+			t.Errorf("redirect = %q, want general?updated=1", loc)
+		}
+		u := f.updatedAgent
+		if u == nil {
+			t.Fatal("UpdateAgentDefinition not called")
+		}
+		if u.Name != "diane" || u.SystemPrompt != "be terse" || u.Config["language"] != "Spanish" {
+			t.Errorf("general mapping wrong: %+v", u)
+		}
+	})
 
-	u := f.updatedAgent
-	if u == nil {
-		t.Fatal("UpdateAgentDefinition not called")
-	}
-	if u.Name != "diane" || u.SystemPrompt != "be terse" {
-		t.Errorf("name/prompt mapping wrong: %+v", u)
-	}
-	if u.Model == nil || u.Model.Name != "gpt-4o" || u.Model.Temperature != 0.7 || u.Model.MaxTokens != 4096 {
-		t.Errorf("model mapping wrong: %+v", u.Model)
-	}
-	if !containsString(u.Tools, "web_search") || !containsString(u.Tools, "spawn_agents") || !containsString(u.Tools, "list_available_agents") {
-		t.Errorf("tools mapping wrong: %v", u.Tools)
-	}
-	if len(u.Skills) != 1 || u.Skills[0] != "recall-memory" {
-		t.Errorf("skills mapping wrong: %v", u.Skills)
-	}
-	if u.Delegation != nil {
-		t.Errorf("Delegation should be cleared after applyDelegation: %+v", u.Delegation)
-	}
-	if got := u.Config["language"]; got != "Spanish" {
-		t.Errorf("Config[language] = %v, want Spanish", got)
-	}
-	sp, ok := u.Config["spawnPolicy"].(map[string]any)
-	if !ok {
-		t.Fatalf("spawnPolicy missing from config: %+v", u.Config)
-	}
-	if allow, _ := sp["allow"].([]string); len(allow) != 1 || allow[0] != "milo" {
-		t.Errorf("spawnPolicy.allow = %v, want [milo]", allow)
-	}
+	t.Run("general clears empty language and preserves delegation", func(t *testing.T) {
+		f := &fakeMemory{
+			defs: map[string]*AgentDefinition{"a1": {
+				ID: "a1", Name: "diane",
+				Tools:  []string{"spawn_agents", "list_available_agents"},
+				Config: map[string]any{"spawnPolicy": map[string]any{"allow": []any{"milo"}}, "language": "Spanish"},
+			}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/general", "name=diane&systemPrompt=be+terse&language=+++")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("status %d, want 303", rec.Code)
+		}
+		u := f.updatedAgent
+		if _, ok := u.Config["language"]; ok {
+			t.Errorf("Config[language] should be deleted on empty value: %+v", u.Config)
+		}
+		if _, ok := u.Config["spawnPolicy"]; !ok {
+			t.Errorf("spawnPolicy should survive language clear: %+v", u.Config)
+		}
+		if !containsString(u.Tools, "spawn_agents") {
+			t.Errorf("delegation tools should survive a general save: %v", u.Tools)
+		}
+	})
 
-	// empty/whitespace language deletes Config["language"] while preserving
-	// the other config keys (spawnPolicy) set by applyDelegation.
-	if rec := post("name=diane&systemPrompt=be+terse&language=+++&delegationEnabled=on&delegation-target=milo"); rec.Code != http.StatusSeeOther {
-		t.Fatalf("second update status %d, want 303", rec.Code)
-	}
-	u2 := f.updatedAgent
-	if _, ok := u2.Config["language"]; ok {
-		t.Errorf("Config[language] should be deleted on empty value: %+v", u2.Config)
-	}
-	if _, ok := u2.Config["spawnPolicy"]; !ok {
-		t.Errorf("spawnPolicy should survive language clear: %+v", u2.Config)
-	}
+	t.Run("update alias targets general", func(t *testing.T) {
+		f := &fakeMemory{
+			defs:   map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/update", "name=renamed&systemPrompt=x")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings?updated=1" {
+			t.Fatalf("alias redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.updatedAgent == nil || f.updatedAgent.Name != "renamed" {
+			t.Errorf("alias should map the name, got %+v", f.updatedAgent)
+		}
+	})
 
-	// empty name → error redirect carrying the real message
-	if rec := post("name=&systemPrompt=x"); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings?err=name+is+required" {
-		t.Errorf("empty name should redirect with the error, got %d %q", rec.Code, rec.Header().Get("Location"))
-	}
+	t.Run("empty name errors", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/general", "name=&systemPrompt=x")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings?err=name+is+required" {
+			t.Errorf("empty name redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+	})
 
-	// delegation enabled without targets → error redirect carrying the real message
-	if rec := post("name=diane&delegationEnabled=on"); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings?err=delegation+requires+at+least+one+target" {
-		t.Errorf("delegation without targets should redirect with the error, got %d %q", rec.Code, rec.Header().Get("Location"))
-	}
+	t.Run("model maps explicit and auto", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/model", "modelName=gpt-4o&temperature=0.7&maxTokens=4096")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/model?updated=1" {
+			t.Fatalf("model redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		u := f.updatedAgent
+		if u.Model == nil || u.Model.Name != "gpt-4o" || u.Model.Temperature != 0.7 || u.Model.MaxTokens != 4096 {
+			t.Errorf("model mapping wrong: %+v", u.Model)
+		}
+		// empty model name clears the override
+		_ = post(e, "/agents/a1/settings/model", "modelName=")
+		if f.updatedAgent.Model != nil {
+			t.Errorf("empty model name should clear the override, got %+v", f.updatedAgent.Model)
+		}
+	})
+
+	t.Run("tools preserves name/model/skills", func(t *testing.T) {
+		f := &fakeMemory{
+			defs: map[string]*AgentDefinition{"a1": {
+				ID: "a1", Name: "diane", SystemPrompt: "be terse",
+				Model:  &ModelConfig{Name: "gpt-4o"},
+				Tools:  []string{"web_search"},
+				Skills: []string{"recall-memory"},
+			}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/tools", "defaultToolPolicy=ask&tool=web_search&tool=memory_lookup&toolPolicy.web_search=deny")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/tools?updated=1" {
+			t.Fatalf("tools redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		u := f.updatedAgent
+		// the section only touches tools/policies — name/model/skills survive
+		if u.Name != "diane" || u.SystemPrompt != "be terse" {
+			t.Errorf("tools save must not clear name/prompt: %+v", u)
+		}
+		if u.Model == nil || u.Model.Name != "gpt-4o" {
+			t.Errorf("tools save must not clear the model: %+v", u.Model)
+		}
+		if len(u.Skills) != 1 || u.Skills[0] != "recall-memory" {
+			t.Errorf("tools save must not clear skills: %v", u.Skills)
+		}
+		if !containsString(u.Tools, "web_search") || !containsString(u.Tools, "memory_lookup") {
+			t.Errorf("tools mapping wrong: %v", u.Tools)
+		}
+		if u.DefaultToolPolicy != "ask" {
+			t.Errorf("defaultToolPolicy = %q, want ask", u.DefaultToolPolicy)
+		}
+		if p := u.ToolPolicies["web_search"]; !p.Disabled {
+			t.Errorf("web_search policy should be deny (Disabled), got %+v", p)
+		}
+	})
+
+	t.Run("skills preserves tools", func(t *testing.T) {
+		f := &fakeMemory{
+			defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane", Tools: []string{"web_search"}}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/skills", "skill=recall-memory")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/skills?updated=1" {
+			t.Fatalf("skills redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		u := f.updatedAgent
+		if len(u.Skills) != 1 || u.Skills[0] != "recall-memory" {
+			t.Errorf("skills mapping wrong: %v", u.Skills)
+		}
+		if !containsString(u.Tools, "web_search") {
+			t.Errorf("skills save must not clear tools: %v", u.Tools)
+		}
+		// empty skills list clears skills
+		_ = post(e, "/agents/a1/settings/skills", "")
+		if len(f.updatedAgent.Skills) != 0 {
+			t.Errorf("empty skills should clear, got %v", f.updatedAgent.Skills)
+		}
+	})
+
+	t.Run("delegation validates and applies", func(t *testing.T) {
+		f := &fakeMemory{
+			defs:   map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+		}
+		e := newServer(f)
+		// enabled without targets → error redirect
+		rec := post(e, "/agents/a1/settings/delegation", "delegationEnabled=on")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/delegation?err=delegation+requires+at+least+one+target" {
+			t.Errorf("delegation without targets redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		// enabled with a target → success + spawnPolicy + delegation tools
+		rec = post(e, "/agents/a1/settings/delegation", "delegationEnabled=on&delegation-target=milo")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/delegation?updated=1" {
+			t.Fatalf("delegation redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		u := f.updatedAgent
+		if u.Delegation != nil {
+			t.Errorf("Delegation should be cleared after applyDelegation: %+v", u.Delegation)
+		}
+		if !containsString(u.Tools, "spawn_agents") || !containsString(u.Tools, "list_available_agents") {
+			t.Errorf("delegation tools missing: %v", u.Tools)
+		}
+		sp, ok := u.Config["spawnPolicy"].(map[string]any)
+		if !ok {
+			t.Fatalf("spawnPolicy missing: %+v", u.Config)
+		}
+		if allow, _ := sp["allow"].([]string); len(allow) != 1 || allow[0] != "milo" {
+			t.Errorf("spawnPolicy.allow = %v, want [milo]", allow)
+		}
+	})
 }
 
 // TestRenderAgentSandboxPage covers the sandbox config form: the enabled

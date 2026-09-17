@@ -20,7 +20,7 @@ import { STORAGE_STATE } from '../../constants/storage';
 // The sessions assertion only depends on a brand-new endpoint having no
 // sessions — it never needs a live agent run to produce one.
 
-const SETTINGS = (id: string) => `/agents/${encodeURIComponent(id)}/settings`;
+const SETTINGS = (id: string) => `/agents/${encodeURIComponent(id)}/settings/mcp`;
 const SHARES_NEW = '/settings/mcp-servers/shares/new';
 const SHARES = '/settings/mcp-servers/shares';
 

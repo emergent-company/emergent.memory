@@ -17,7 +17,7 @@ import (
 // does (agent_mcp_endpoint_handlers.go).
 func agentMCPTestServer(s *Server) *echo.Echo {
 	e := echo.New()
-	e.GET("/agents/:id/settings", s.uiAgentSettings)
+	e.GET("/agents/:id/settings/:section", s.uiAgentSettingsSection)
 	e.POST("/agents/:id/mcp-endpoint", s.uiAgentMCPEndpointCreate)
 	e.POST("/agents/:id/mcp-endpoint/revoke", s.uiAgentMCPEndpointRevoke)
 	e.POST("/agents/:id/mcp-endpoint/keys", s.uiAgentMCPKeyCreate)
@@ -85,7 +85,7 @@ func TestAgentSettingsRendersMCPEndpoint(t *testing.T) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := agentMCPTestServer(s)
 
-	rec := agentMCPGet(e, "/agents/a1/settings")
+	rec := agentMCPGet(e, "/agents/a1/settings/mcp")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -119,7 +119,7 @@ func TestAgentSettingsMCPEmptyState(t *testing.T) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := agentMCPTestServer(s)
 
-	body := agentMCPGet(e, "/agents/a1/settings").Body.String()
+	body := agentMCPGet(e, "/agents/a1/settings/mcp").Body.String()
 	for _, want := range []string{"No MCP endpoint yet", `data-testid="agent-mcp-create-endpoint"`, "/agents/a1/mcp-endpoint"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("empty endpoint state missing %q", want)
@@ -139,7 +139,7 @@ func TestAgentSettingsMCPKeysAndSessionsEmptyStates(t *testing.T) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := agentMCPTestServer(s)
 
-	body := agentMCPGet(e, "/agents/a1/settings").Body.String()
+	body := agentMCPGet(e, "/agents/a1/settings/mcp").Body.String()
 	for _, want := range []string{"No keys yet", "No sessions yet", `data-testid="agent-mcp-sessions-empty"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("empty state missing %q", want)
@@ -168,7 +168,7 @@ func TestAgentSettingsMCPLoadErrorsAreInline(t *testing.T) {
 			s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 			e := agentMCPTestServer(s)
 
-			rec := agentMCPGet(e, "/agents/a1/settings")
+			rec := agentMCPGet(e, "/agents/a1/settings/mcp")
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d", rec.Code)
 			}
@@ -217,7 +217,7 @@ func TestAgentMCPKeyCreateRendersSecretOnce(t *testing.T) {
 	}
 
 	// The secret is a one-response value: a fresh settings load must not carry it.
-	list := agentMCPGet(e, "/agents/a1/settings").Body.String()
+	list := agentMCPGet(e, "/agents/a1/settings/mcp").Body.String()
 	if strings.Contains(list, "emt_secret_once") {
 		t.Error("secret leaked into a later list load")
 	}
@@ -297,7 +297,7 @@ func TestAgentMCPKeyRevokeRedirects(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings?keyRevoked=1#mcp" {
+	if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings/mcp?keyRevoked=1#mcp" {
 		t.Errorf("location = %q", loc)
 	}
 	if f.lastMCPKeyID != "k1" {
@@ -313,7 +313,7 @@ func TestAgentMCPKeyRevokedHasNoActions(t *testing.T) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := agentMCPTestServer(s)
 
-	body := agentMCPGet(e, "/agents/a1/settings").Body.String()
+	body := agentMCPGet(e, "/agents/a1/settings/mcp").Body.String()
 	if !strings.Contains(body, "revoked") {
 		t.Error("revoked status not rendered")
 	}
@@ -335,7 +335,7 @@ func TestAgentMCPEndpointCreateRedirects(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings?mcpCreated=1#mcp" {
+	if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings/mcp?mcpCreated=1#mcp" {
 		t.Errorf("location = %q", loc)
 	}
 	if f.lastMCPAgentID != "a1" {
@@ -371,7 +371,7 @@ func TestAgentMCPEndpointRevokeRedirects(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings?mcpRevoked=1#mcp" {
+	if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings/mcp?mcpRevoked=1#mcp" {
 		t.Errorf("location = %q", loc)
 	}
 	if f.lastMCPEndpointID != "ep1" {

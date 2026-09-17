@@ -88,6 +88,9 @@ func (s *Server) createAgent(c echo.Context) error {
 	if err := c.Bind(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
 	}
+	if in.Delegation != nil && in.Delegation.Enabled && len(in.Delegation.Targets) == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "delegation.targets must not be empty when delegation is enabled"})
+	}
 	if err := applyDelegation(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
@@ -103,6 +106,9 @@ func (s *Server) updateAgent(c echo.Context) error {
 	var in AgentDefinition
 	if err := c.Bind(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+	}
+	if in.Delegation != nil && in.Delegation.Enabled && len(in.Delegation.Targets) == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "delegation.targets must not be empty when delegation is enabled"})
 	}
 	if err := applyDelegation(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
