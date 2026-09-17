@@ -29,8 +29,10 @@
 ## 5. Availability-driven provider picker (web-ui)
 
 - [x] 5.1 Add `registered` to the gateway `SandboxProvider` client struct
-- [x] 5.2 Render the provider `<select>` from `data.Providers` (`Auto` first; unavailable options `disabled` + labelled; reason via tooltip)
+- [x] 5.2 Render the provider `<select>` from `data.Providers` (`Auto` first; non-stored unavailable options `disabled` + labelled; reason via tooltip)
 - [x] 5.3 Preserve a stored provider that the endpoint does not report (synthetic selected option)
 - [x] 5.4 Add the per-provider availability status list (semantic daisyUI colors) and drop the old `Available:` note
 - [x] 5.5 Surface a provider-fetch failure as an inline warning instead of a silent empty list
 - [x] 5.6 Update/extend `agent_ui_test.go` + fake harness for healthy, unavailable, stored-but-unreported, and failed-list cases
+- [x] 5.7 Keep the stored provider's option selectable (not `disabled`) so an unchanged submit preserves it; `disabled` only for unavailable providers that are not stored
+- [x] 5.8 Add submit regression tests: stored unavailable provider round-trips (reported and unreported), stored Auto round-trips, explicit Auto persists with no hidden-value leak

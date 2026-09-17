@@ -51,22 +51,36 @@ When no provider can be selected, the returned error SHALL explain why each cand
 
 ### Requirement: The agent Sandbox settings UI SHALL derive provider choices from reported availability
 
-The agent Sandbox settings page (`/agents/:id/sandbox`) SHALL render its provider `<select>` from the providers endpoint instead of a hardcoded list. `Auto` SHALL remain the default option. Providers reported as unavailable SHALL be rendered as non-selectable options labelled as unavailable, and the page SHALL show each provider's availability with the reported reason. A provider stored in the agent's sandbox config SHALL never be dropped from the form because the endpoint did not list it.
+The agent Sandbox settings page (`/agents/:id/sandbox`) SHALL render its provider `<select>` from the providers endpoint instead of a hardcoded list. `Auto` SHALL remain the default option. Providers reported as unavailable SHALL be rendered as non-selectable options labelled as unavailable, and the page SHALL show each provider's availability with the reported reason. The provider currently stored in the agent's sandbox config SHALL be the exception: its option SHALL remain selectable (still labelled unavailable) so that submitting an unchanged form preserves it, because browsers omit a disabled selected option from the submitted form data. A provider stored in the agent's sandbox config SHALL never be dropped from the form because the endpoint did not list it.
 
-#### Scenario: Unavailable provider is visible but not selectable
+#### Scenario: Unavailable provider that is not stored is visible but not selectable
 - **GIVEN** the providers endpoint reports `gvisor` as healthy
 - **AND** reports `firecracker` as unregistered with reason `"KVM not available (/dev/kvm missing)"`
+- **AND** the agent's stored provider is not `firecracker`
 - **WHEN** a user opens the agent Sandbox settings page
 - **THEN** the `gvisor` option SHALL be selectable
 - **AND** the `firecracker` option SHALL be rendered `disabled` and labelled as unavailable
 - **AND** the reported reason SHALL be exposed to the user (for example as the option's tooltip and in the availability status list)
 
+#### Scenario: Stored unavailable provider is selectable and round-trips
+- **GIVEN** an agent's sandbox config stores provider `firecracker`
+- **AND** the providers endpoint reports `firecracker` as unavailable with a reason
+- **WHEN** the user opens the Sandbox settings page and submits the unchanged form
+- **THEN** the rendered `firecracker` option SHALL be `selected`, SHALL NOT be `disabled`, and SHALL be labelled as unavailable
+- **AND** the stored provider SHALL remain `firecracker` after the update
+
 #### Scenario: Stored provider is preserved when it is not reported
 - **GIVEN** an agent's sandbox config stores provider `firecracker`
 - **AND** the providers endpoint does not include a `firecracker` entry
 - **WHEN** the user opens the Sandbox settings page and submits the unchanged form
-- **THEN** the rendered form SHALL still contain a selected `firecracker` option marked unavailable
+- **THEN** the rendered form SHALL still contain a selected, selectable `firecracker` option marked unavailable
 - **AND** the stored provider SHALL remain `firecracker` after the update
+
+#### Scenario: An explicit Auto choice persists
+- **GIVEN** the sandbox form renders a stored-but-unavailable provider
+- **WHEN** the user selects `Auto` and submits, sending an empty provider value
+- **THEN** no fallback SHALL re-inject the stored provider
+- **AND** the stored provider SHALL be cleared (Auto)
 
 #### Scenario: Provider availability cannot be determined
 - **GIVEN** the providers request fails, or returns an empty list
