@@ -626,3 +626,47 @@ func TestChatRailDataCarriesBucket(t *testing.T) {
 		t.Errorf("c2 row = bucket %q approvals %d questions %d, want needs_input/1/0", got.Bucket, got.PendingApprovals, got.PendingQuestions)
 	}
 }
+
+// TestChatScheduledRunsResolveAppearance asserts the scheduled-run plumbing in
+// chatScheduledRuns resolves each run row's Icon/Color from its agent
+// definition id. A broken lookup here would silently fall back to the neutral
+// bot glyph while the render-level tests (which pass Icon/Color in directly)
+// still pass — so this exercises the production data path end to end.
+func TestChatScheduledRunsResolveAppearance(t *testing.T) {
+	defID := "a1"
+	f := &fakeMemory{
+		scheduledAgents: []ScheduledAgent{
+			{ID: "s1", Name: "Daily briefing", TriggerType: "schedule", AgentDefinitionID: &defID},
+			{ID: "s2", Name: "Legacy scheduled", TriggerType: "schedule"}, // no definition link
+		},
+		scheduledRuns: map[string][]ScheduledAgentRun{
+			"s1": {{ID: "r1", Status: "completed", StartedAt: "2026-08-27T08:00:00Z"}},
+			"s2": {{ID: "r2", Status: "completed", StartedAt: "2026-08-27T09:00:00Z"}},
+		},
+	}
+	s := &Server{memory: f}
+	appearances := map[string]agentAppearance{"a1": {Name: "memory", Icon: "database", Color: "#2563EB"}}
+
+	rows := s.chatScheduledRuns(t.Context(), appearances)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	byID := map[string]scheduledRunRow{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	got, ok := byID["r1"]
+	if !ok {
+		t.Fatal("missing r1 run row")
+	}
+	if got.Icon != "database" || got.Color != "#2563EB" {
+		t.Errorf("linked run appearance = %q/%q, want database/#2563EB", got.Icon, got.Color)
+	}
+	got, ok = byID["r2"]
+	if !ok {
+		t.Fatal("missing r2 run row")
+	}
+	if got.Icon != "" || got.Color != "" {
+		t.Errorf("unlinked run appearance = %q/%q, want empty (neutral bot)", got.Icon, got.Color)
+	}
+}
