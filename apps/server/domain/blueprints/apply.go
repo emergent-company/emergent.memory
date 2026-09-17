@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -609,15 +610,23 @@ func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest)
 // absent or has no non-empty icon/color, so callers leave ui_config at the DB
 // default '{}' (create) or preserve the existing value (update).
 func agentUIConfig(ui *AgentUIManifest) json.RawMessage {
-	if ui == nil || (ui.Icon == "" && ui.Color == "") {
+	if ui == nil {
+		return nil
+	}
+	// Trim to match the web-UI editor semantics: whitespace-only values are
+	// "not declared" rather than junk that would overwrite an existing
+	// appearance on update.
+	icon := strings.TrimSpace(ui.Icon)
+	color := strings.TrimSpace(ui.Color)
+	if icon == "" && color == "" {
 		return nil
 	}
 	m := map[string]string{}
-	if ui.Icon != "" {
-		m["icon"] = ui.Icon
+	if icon != "" {
+		m["icon"] = icon
 	}
-	if ui.Color != "" {
-		m["color"] = ui.Color
+	if color != "" {
+		m["color"] = color
 	}
 	raw, err := json.Marshal(m)
 	if err != nil {

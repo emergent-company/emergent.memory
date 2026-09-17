@@ -176,6 +176,23 @@
     try { return JSON.parse(s); } catch (e) { return null; }
   }
 
+  // agentIconifyClass maps a stored agent icon to an iconify class compiled
+  // into app.css. Values are normally bare Lucide kebab names ("bot"), but
+  // blueprint manifests and the API also accept prefixed ("lucide--bot",
+  // "lucide:bot") or camelCase/underscore spellings, which the server
+  // normalizes. Mirroring that normalization here avoids emitting a broken
+  // "lucide--lucide--bot" glyph and keeps the live chat avatar consistent with
+  // the server-rendered tiles.
+  function agentIconifyClass(icon, fallbackIcon) {
+    var s = String(icon || "").trim();
+    if (!s) return fallbackIcon;
+    if (/^lucide--[a-z0-9-]+$/.test(s)) return s;
+    s = s.replace(/^lucide:/, "");
+    s = s.replace(/[_\s]+/g, "-").replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+    s = s.replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+    return /^[a-z0-9-]+$/.test(s) ? "lucide--" + s : fallbackIcon;
+  }
+
   // agentAvatarHTML builds an assistant chat-image avatar. When the selected
   // agent declares an appearance (icon/color, read from its <option>'s
   // data-icon/data-color via ctx.currentAgentUI) the avatar uses that icon and
@@ -186,7 +203,7 @@
   function agentAvatarHTML(ui, fallbackIcon, fallbackClasses) {
     var icon = ui && ui.icon ? String(ui.icon) : "";
     var color = ui && ui.color ? String(ui.color) : "";
-    var glyph = /^[a-z0-9-]+$/.test(icon) ? "lucide--" + icon : fallbackIcon;
+    var glyph = agentIconifyClass(icon, fallbackIcon);
     var style = "";
     if (/^#[0-9a-fA-F]{3,8}$/.test(color)) {
       style =
