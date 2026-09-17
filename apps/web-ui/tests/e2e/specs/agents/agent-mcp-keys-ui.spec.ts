@@ -1,7 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { expectAppPage } from '../../helpers/page';
 import { createAgentViaModal } from '../../helpers/agents';
-import { memoryAuthHeaders } from '../../helpers/objects';
 import { STORAGE_STATE } from '../../constants/storage';
 
 // Agent-scoped MCP endpoint UI (gateway/agent_mcp_endpoint.templ +
@@ -46,11 +45,15 @@ let backendGateReason = '';
 
 /**
  * Probe whether the upstream memory backend exposes the agent MCP endpoint API.
- * A POST to the route with a placeholder agent id answers with a domain error
- * when the route exists, and with Echo's generic `not_found` when it does not —
- * a side-effect-free way to distinguish "route missing" from "agent missing".
- * Any failure to classify assumes support, so a real feature gap fails loudly
- * rather than being masked.
+ * The route is auth-gated, so a POST to it WITHOUT credentials answers with
+ * Echo's auth error (401 missing_token) before it ever inspects the path
+ * params, while an unregistered route falls through to Echo's generic 404 —
+ * a side-effect-free way to distinguish "route missing" from "route present".
+ * Any non-404 status proves the route matched; only 404 means it is absent.
+ * (The old authed probe with a placeholder agent id was ambiguous: the app's
+ * "agent not found" 404 shares Echo's `not_found` error shape.) Any failure to
+ * classify assumes support, so a real feature gap fails loudly rather than
+ * being masked.
  */
 async function probeAgentMCPBackend(page: Page): Promise<{ ok: boolean; reason: string }> {
   let version = 'unknown';
@@ -61,26 +64,24 @@ async function probeAgentMCPBackend(page: Page): Promise<{ ok: boolean; reason: 
     // best-effort only
   }
   try {
-    const headers = await memoryAuthHeaders(page);
     const resp = await page.request.post(
-      `${MEMORY_API_URL}/api/projects/${headers['X-Project-ID']}/agents/00000000-0000-0000-0000-000000000000/mcp-endpoint`,
-      { headers, failOnStatusCode: false },
+      `${MEMORY_API_URL}/api/projects/00000000-0000-0000-0000-000000000000/agents/00000000-0000-0000-0000-000000000000/mcp-endpoint`,
+      { failOnStatusCode: false },
     );
-    if (resp.status() === 404) {
-      const body = (await resp.json().catch(() => ({}))) as { error?: { code?: string } };
-      if (body?.error?.code === 'not_found') {
-        return {
-          ok: false,
-          reason:
-            `the memory backend behind the gateway (${MEMORY_API_URL}, version ${version}) does not ` +
-            'expose the agent MCP endpoint API yet: POST ' +
-            '/api/projects/:projectId/agents/:agentId/mcp-endpoint answers 404 not_found, so the ' +
-            'endpoint/key/session lifecycle cannot run. Deploy a backend that contains the ' +
-            'agent-scoped endpoint routes, then re-run this spec.',
-        };
-      }
+    // Route matched → anything except Echo's 404. Unauthenticated, the auth
+    // middleware rejects with 401 before the project/agent params are read.
+    if (resp.status() !== 404) {
+      return { ok: true, reason: '' };
     }
-    return { ok: true, reason: '' };
+    return {
+      ok: false,
+      reason:
+        `the memory backend behind the gateway (${MEMORY_API_URL}, version ${version}) does not ` +
+        'expose the agent MCP endpoint API yet: an unauthenticated POST to ' +
+        '/api/projects/:projectId/agents/:agentId/mcp-endpoint answers 404 not_found, so the ' +
+        'endpoint/key/session lifecycle cannot run. Deploy a backend that contains the ' +
+        'agent-scoped endpoint routes, then re-run this spec.',
+    };
   } catch {
     return { ok: true, reason: '' };
   }
