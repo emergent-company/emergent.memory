@@ -57,6 +57,25 @@ func newHubTestServer(m MemoryBackend) *Server {
 	return s
 }
 
+// scriptedMemory returns a fixed sequence of conversation histories, one per
+// GetConversationHistory call, so a test can drive two poller ticks with
+// different timeline state. It embeds fakeMemory for the project-wide
+// ListAgentQuestions/ListToolApprovals (both empty).
+type scriptedMemory struct {
+	*fakeMemory
+	histories []*ConversationHistory
+	calls     int
+}
+
+func (m *scriptedMemory) GetConversationHistory(ctx context.Context, id string) (*ConversationHistory, error) {
+	if m.calls < len(m.histories) {
+		h := m.histories[m.calls]
+		m.calls++
+		return h, nil
+	}
+	return &ConversationHistory{ConversationID: id, Items: []json.RawMessage{}}, nil
+}
+
 // assertSessionProject asserts ctx carries a sessionContext with the expected
 // session identity (the memory client maps it to X-Project-ID/X-Org-ID headers).
 func assertSessionProject(t *testing.T, ctx context.Context, wantToken, wantProject string) {
@@ -297,5 +316,55 @@ func TestPollFailureKeyExcludesToken(t *testing.T) {
 	}
 	if got := pollFailureKey(nil); got != "no-session" {
 		t.Fatalf("pollFailureKey(nil) = %q, want %q", got, "no-session")
+	}
+}
+
+// TestHubPollerRebroadcastsOnNewRunWithSamePendingState asserts the poller
+// fingerprint covers the bucket + active run id/status, so a completed run
+// followed by a new run_start (runEndCount and pending approvals/questions both
+// unchanged) still re-broadcasts a refresh frame. Without that coverage the
+// rail would stay stuck at "done".
+func TestHubPollerRebroadcastsOnNewRunWithSamePendingState(t *testing.T) {
+	runEnd := json.RawMessage(`{"kind":"run_end","run_id":"r1","run_status":"completed"}`)
+	runStart := json.RawMessage(`{"kind":"run_start","run_id":"r2","run_status":"working"}`)
+	m := &scriptedMemory{
+		fakeMemory: &fakeMemory{},
+		histories: []*ConversationHistory{
+			{ConversationID: "c1", Items: []json.RawMessage{runEnd}},
+			{ConversationID: "c1", Items: []json.RawMessage{runEnd, runStart}},
+		},
+	}
+	s := newHubTestServer(m)
+
+	ch := s.hub.subscribe("c1", nil)
+	defer s.hub.unsubscribe("c1", ch)
+
+	// First tick: only the completed run_end. Its fingerprint differs from the
+	// empty baseline, so a refresh frame is broadcast.
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	first := <-ch
+	var p1 refreshPayload
+	if err := json.Unmarshal(first, &p1); err != nil {
+		t.Fatalf("first-tick payload is not a refresh frame: %v (%s)", err, first)
+	}
+	if p1.Bucket != runBucketDone || p1.RunID != "r1" {
+		t.Errorf("first-tick payload = %+v, want done bucket with run r1", p1)
+	}
+
+	// Second tick: a new run_start follows the completed run with no pending
+	// approvals/questions. runEndCount is unchanged, so only the bucket and
+	// active run id/status in the fingerprint can trigger the re-broadcast.
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+	select {
+	case msg := <-ch:
+		var p2 refreshPayload
+		if err := json.Unmarshal(msg, &p2); err != nil {
+			t.Fatalf("second-tick payload is not a refresh frame: %v (%s)", err, msg)
+		}
+		if p2.Bucket != runBucketRunning || p2.RunID != "r2" || p2.RunStatus != "working" {
+			t.Errorf("second-tick payload = %+v, want running bucket with run r2 status working", p2)
+		}
+	default:
+		t.Error("new run must re-broadcast a refresh frame even with unchanged pending state")
 	}
 }

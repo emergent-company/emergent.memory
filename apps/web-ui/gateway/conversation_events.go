@@ -374,7 +374,11 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 				log.Printf("conversation poll: conversation state (%s): %v", pollLogContext(id, groupSC), err)
 				continue
 			}
-			fp := fmt.Sprintf("%d|%v|%v", st.runEndCount, st.pendingApprovals, st.pendingQuestions)
+			// The fingerprint must cover every run-state transition — bucket,
+			// active run id, and active run status included — so a completed run
+			// followed by a new run_start (runEndCount unchanged) still
+			// re-broadcasts instead of leaving the rail stuck at "done".
+			fp := fmt.Sprintf("%d|%s|%s|%s|%v|%v", st.runEndCount, st.bucket, st.activeRunID, st.activeRunStatus, st.pendingApprovals, st.pendingQuestions)
 			if !s.hub.updateFingerprint(id, fp) {
 				continue
 			}
