@@ -37,6 +37,7 @@ var supportedTypeIconClasses = []string{
 	"lucide--bell",
 	"lucide--book",
 	"lucide--book-open",
+	"lucide--bot",
 	"lucide--briefcase",
 	"lucide--calendar",
 	"lucide--camera",

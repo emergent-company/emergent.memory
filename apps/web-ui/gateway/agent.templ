@@ -49,8 +49,12 @@ templ agentDashboardHeader(a *AgentDefinition, section string) {
 	{{ crumbs := crumbsActive(nav.Crumbs("Agents", "/agents", a.Name, "/agents/"+url.PathEscape(a.ID)))
 	if section != "" {
 		crumbs = crumbsActive(nav.Crumbs("Agents", "/agents", a.Name, "/agents/"+url.PathEscape(a.ID), section))
+	}
+	var adorn templ.Component
+	if icon, color := agentIcon(a.UIConfig), agentColor(a.UIConfig); icon != "" || color != "" {
+		adorn = agentTitleGlyph(icon, color)
 	} }}
-	@detailHeader(crumbs, "", a.Name, a.Description, detailHeaderOpts{Margin: "mb-6", Dashboard: true}) {
+	@detailHeader(crumbs, "", a.Name, a.Description, detailHeaderOpts{Margin: "mb-6", Dashboard: true, TitleAdornment: adorn}) {
 		@ui.Badge(ui.BadgeProps{
 			Label:   "updated " + relTime(a.UpdatedAt),
 			Variant: ui.BadgeGhost,
@@ -64,7 +68,7 @@ templ agentSummaryCard(data agentDashboardData) {
 	@components.PanelCard("", nil) {
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<div class="flex items-center gap-3">
-				@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+				@agentIconTile(agentIcon(data.Agent.UIConfig), agentColor(data.Agent.UIConfig))
 				<h2 class="text-lg font-semibold">{ data.Agent.Name }</h2>
 			</div>
 			@ui.Badge(ui.BadgeProps{
@@ -329,6 +333,37 @@ templ agentSettingsForm(data agentSettingsData) {
 						}
 					</select>
 				}
+			</div>
+		}
+		@ui.Section("Appearance", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
+					@form.FormControl("agent-settings-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
+						@ui.IconPicker(ui.IconPickerProps{
+							ID:           "agent-settings-icon",
+							Name:         "icon",
+							Value:        agentIcon(data.Agent.UIConfig),
+							Options:      supportedIconPickerOptions(),
+							DefaultValue: "",
+							DefaultLabel: "Default icon",
+							DefaultClass: "lucide--bot",
+						})
+					}
+				</div>
+				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
+					@form.FormControl("agent-settings-color", "Color", form.LabelAbove, "Any CSS color; tints the agent tile and chip (e.g. #4F46E5).", "", nil) {
+						@ui.ColorPicker(ui.ColorPickerProps{
+							ID:         "agent-settings-color",
+							Name:       "color",
+							Value:      agentColor(data.Agent.UIConfig),
+							AllowEmpty: true,
+							Presets:    schemaColorPresets,
+						})
+					}
+				</div>
 			</div>
 		}
 		@ui.Section("Model", ui.SectionProps{

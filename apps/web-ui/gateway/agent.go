@@ -302,6 +302,9 @@ func (s *Server) uiAgentUpdate(c echo.Context) error {
 	}
 	def.Name = name
 	def.SystemPrompt = c.FormValue("systemPrompt")
+	// Appearance (icon + color) persists to the uiConfig blob; both empty
+	// clears it so the agent falls back to the default bot tile.
+	def.UIConfig = agentUIConfig(c.FormValue("icon"), c.FormValue("color"))
 	// Language persists to Config["language"]; the memory service reads it at
 	// runtime. Empty clears it so the model default applies.
 	lang := strings.TrimSpace(c.FormValue("language"))

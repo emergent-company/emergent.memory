@@ -51,40 +51,42 @@ func (c *Client) SetContext(orgID, projectID string) {
 
 // AgentDefinition represents a full agent definition.
 type AgentDefinition struct {
-	ID             string         `json:"id"`
-	ProductID      *string        `json:"productId,omitempty"`
-	ProjectID      string         `json:"projectId"`
-	Name           string         `json:"name"`
-	Description    *string        `json:"description,omitempty"`
-	SystemPrompt   *string        `json:"systemPrompt,omitempty"`
-	Model          *ModelConfig   `json:"model,omitempty"`
-	Tools          []string       `json:"tools"`
-	Skills         []string       `json:"skills,omitempty"`
-	AutoLoadSkills bool           `json:"autoLoadSkills"`
-	FlowType       string         `json:"flowType"`
-	IsDefault      bool           `json:"isDefault"`
-	MaxSteps       *int           `json:"maxSteps,omitempty"`
-	DefaultTimeout *int           `json:"defaultTimeout,omitempty"`
-	Visibility     string         `json:"visibility"`
-	DispatchMode   string         `json:"dispatchMode,omitempty"`
-	ACPConfig      *ACPConfig     `json:"acpConfig,omitempty"`
-	Config         map[string]any `json:"config,omitempty"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	UpdatedAt      time.Time      `json:"updatedAt"`
+	ID             string          `json:"id"`
+	ProductID      *string         `json:"productId,omitempty"`
+	ProjectID      string          `json:"projectId"`
+	Name           string          `json:"name"`
+	Description    *string         `json:"description,omitempty"`
+	SystemPrompt   *string         `json:"systemPrompt,omitempty"`
+	Model          *ModelConfig    `json:"model,omitempty"`
+	Tools          []string        `json:"tools"`
+	Skills         []string        `json:"skills,omitempty"`
+	AutoLoadSkills bool            `json:"autoLoadSkills"`
+	FlowType       string          `json:"flowType"`
+	IsDefault      bool            `json:"isDefault"`
+	MaxSteps       *int            `json:"maxSteps,omitempty"`
+	DefaultTimeout *int            `json:"defaultTimeout,omitempty"`
+	Visibility     string          `json:"visibility"`
+	DispatchMode   string          `json:"dispatchMode,omitempty"`
+	ACPConfig      *ACPConfig      `json:"acpConfig,omitempty"`
+	Config         map[string]any  `json:"config,omitempty"`
+	UIConfig       json.RawMessage `json:"uiConfig,omitempty"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
 }
 
 // AgentDefinitionSummary is a lightweight representation for list responses.
 type AgentDefinitionSummary struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"projectId"`
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	FlowType    string    `json:"flowType"`
-	Visibility  string    `json:"visibility"`
-	IsDefault   bool      `json:"isDefault"`
-	ToolCount   int       `json:"toolCount"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID          string          `json:"id"`
+	ProjectID   string          `json:"projectId"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description,omitempty"`
+	FlowType    string          `json:"flowType"`
+	Visibility  string          `json:"visibility"`
+	IsDefault   bool            `json:"isDefault"`
+	ToolCount   int             `json:"toolCount"`
+	UIConfig    json.RawMessage `json:"uiConfig,omitempty"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
 }
 
 // ModelConfig contains model configuration for an agent definition.
@@ -137,6 +139,7 @@ type CreateAgentDefinitionRequest struct {
 	ACPConfig      *ACPConfig            `json:"acpConfig,omitempty"`
 	Config         map[string]any        `json:"config,omitempty"`
 	ToolPolicies   map[string]ToolPolicy `json:"toolPolicies,omitempty"`
+	UIConfig       json.RawMessage       `json:"uiConfig,omitempty"`
 }
 
 // UpdateAgentDefinitionRequest is the request body for updating an agent definition.
@@ -157,6 +160,7 @@ type UpdateAgentDefinitionRequest struct {
 	ACPConfig      *ACPConfig            `json:"acpConfig,omitempty"`
 	Config         map[string]any        `json:"config,omitempty"`
 	ToolPolicies   map[string]ToolPolicy `json:"toolPolicies,omitempty"`
+	UIConfig       json.RawMessage       `json:"uiConfig,omitempty"`
 }
 
 // --- Internal helpers ---

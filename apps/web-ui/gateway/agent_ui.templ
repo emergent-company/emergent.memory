@@ -1,0 +1,58 @@
+package main
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- agent-level ui accent rendering ---
+//
+// These partials render an agent definition's user-picked icon + color (its
+// uiConfig blob) wherever an agent is shown. They delegate to the object-type
+// typeGlyph/typeIconTile/typeNameChip/typeColorStyle partials so there is
+// exactly one tile implementation; the only agent-specific rule is the
+// fallback glyph: agents default to "lucide--bot" (object types default to
+// "lucide--box"), and an agent with no declared appearance keeps today's
+// neutral primary bot tile byte-for-byte.
+
+// agentGlyph renders one agent icon value inside a tile, chip, or avatar.
+// Undeclared icons fall back to the bot glyph (see agentIconName).
+templ agentGlyph(icon, iconClass, glyphClass string) {
+	@typeGlyph(agentIconName(icon), iconClass, glyphClass)
+}
+
+// agentIconTile renders the leading icon tile for an agent list row / summary.
+// Without a declared appearance it is the default primary bot tile (identical
+// to today's rows); a declared icon/color delegates to the shared type tile.
+templ agentIconTile(icon string, color string) {
+	if icon == "" && color == "" {
+		@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
+	} else {
+		@typeIconTile(agentIconName(icon), color)
+	}
+}
+
+// agentNameChip renders an agent-name chip: the label with the agent's icon
+// prefix and color accent. Without a declaration it is the same badge with the
+// bot icon as before (variant carries the badge tone, e.g. primary or ghost).
+templ agentNameChip(label string, variant ui.BadgeIntent, icon string, color string) {
+	if icon == "" && color == "" {
+		@ui.Badge(ui.BadgeProps{
+			Label:   label,
+			Variant: variant,
+			Size:    ui.BadgeSizeSM,
+			Icon:    "lucide--bot",
+		})
+	} else {
+		@typeNameChip(label, variant, agentIconName(icon), color)
+	}
+}
+
+// agentTitleGlyph is a small inline agent glyph for a detail-page title
+// adornment: just the agent icon, tinted with its color when one is declared.
+// Callers pass it as detailHeaderOpts.TitleAdornment only when an appearance
+// exists, so an appearance-less agent's header markup is unchanged.
+templ agentTitleGlyph(icon string, color string) {
+	<span class="inline-flex shrink-0 items-center" style={ typeColorStyle(color) }>
+		@agentGlyph(icon, "size-5", "text-xl")
+	</span>
+}

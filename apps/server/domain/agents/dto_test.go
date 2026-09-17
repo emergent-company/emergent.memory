@@ -27,6 +27,31 @@ func TestAgentDefinitionToSummaryDTOIncludesSkills(t *testing.T) {
 	require.Equal(t, []string{"diane.meetings", "research"}, s.Skills)
 }
 
+// TestAgentDefinitionDTOUIConfigRoundTrip locks the ui_config contract: the
+// entity's raw JSON appearance blob must flow through both ToDTO (full) and
+// ToSummaryDTO (list/picker) as uiConfig, and serialize as the same JSON the
+// client sent in.
+func TestAgentDefinitionDTOUIConfigRoundTrip(t *testing.T) {
+	raw := json.RawMessage(`{"icon":"bot","color":"#FF00AA"}`)
+	d := &AgentDefinition{
+		ID:       "ad-1",
+		UIConfig: raw,
+	}
+
+	full := d.ToDTO()
+	require.Equal(t, raw, full.UIConfig)
+	require.JSONEq(t, `{"icon":"bot","color":"#FF00AA"}`, string(full.UIConfig))
+
+	summary := d.ToSummaryDTO()
+	require.Equal(t, raw, summary.UIConfig)
+
+	// nil uiConfig -> omitted from the JSON payload (omitempty), treated as
+	// "no appearance" by clients.
+	bare, err := json.Marshal((&AgentDefinition{ID: "ad-2"}).ToDTO())
+	require.NoError(t, err)
+	require.NotContains(t, string(bare), "uiConfig")
+}
+
 // TestAgentToDTOIncludesAgentDefinitionID ensures the response DTO exposes the
 // linked agent definition so clients can read back a scheduled agent's
 // definition after create/update. The field was previously absent from

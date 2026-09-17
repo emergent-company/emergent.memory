@@ -74,6 +74,14 @@ type AgentManifest struct {
 	Config          map[string]any             `json:"config,omitempty"`
 	WorkspaceConfig map[string]any             `json:"workspaceConfig,omitempty"`
 	ToolPolicies    map[string]AgentToolPolicy `json:"toolPolicies,omitempty"`
+	UI              *AgentUIManifest           `json:"ui,omitempty"`
+}
+
+// AgentUIManifest describes an agent's inline appearance block, mirroring the
+// object-type registry's inline ui block. Both fields optional.
+type AgentUIManifest struct {
+	Icon  string `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Color string `json:"color,omitempty" yaml:"color,omitempty"`
 }
 
 // AgentModelManifest describes the model config for an agent.
