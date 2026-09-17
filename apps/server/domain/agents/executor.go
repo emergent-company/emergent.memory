@@ -421,6 +421,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	createOpts := CreateRunOptions{
 		AgentID:         ae.resolveAgentID(req),
 		ParentRunID:     req.ParentRunID,
+		RootRunID:       req.RootRunID,
 		MaxSteps:        &maxSteps,
 		TriggerSource:   req.TriggerSource,
 		TriggerMetadata: req.TriggerMetadata,
@@ -452,9 +453,8 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	}
 
 	// Establish root_run_id: top-level runs own it; sub-agents receive it from the parent.
-	if req.RootRunID == nil {
-		req.RootRunID = &run.ID
-	}
+	rootRunID := resolveRootRunID(run, req.RootRunID)
+	req.RootRunID = &rootRunID
 
 	// Start OTel span now that we have the run ID
 	agentName := ae.resolveAgentName(req)
@@ -474,14 +474,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 
 	// Persist trace_id and root_run_id back to the run row so the reverse link
 	// (run → trace, run → orchestration root) is queryable without OTEL.
-	if sc := span.SpanContext(); sc.IsValid() {
-		if err := ae.repo.UpdateTraceAndRootRun(dbCtx, run.ID, sc.TraceID().String(), *req.RootRunID); err != nil {
-			ae.log.Warn("failed to persist trace_id/root_run_id on agent run",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
+	ae.persistRunLinkage(dbCtx, run.ID, *req.RootRunID, span.SpanContext())
 
 	ae.log.Info("executing agent",
 		slog.String("run_id", run.ID),
@@ -639,9 +632,10 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	}
 
 	// Establish root_run_id: top-level runs own it; sub-agents receive it from the parent.
-	if req.RootRunID == nil {
-		req.RootRunID = &run.ID
-	}
+	// Prefer the caller's override, then the root already persisted on the run row
+	// (e.g. a re-enqueued queued run), then self-root for a top-level run.
+	rootRunID := resolveRootRunID(run, req.RootRunID)
+	req.RootRunID = &rootRunID
 
 	// Start OTel span
 	agentName := ae.resolveAgentName(req)
@@ -661,14 +655,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 
 	// Persist trace_id and root_run_id back to the run row so the reverse link
 	// (run → trace, run → orchestration root) is queryable without OTEL.
-	if sc := span.SpanContext(); sc.IsValid() {
-		if err := ae.repo.UpdateTraceAndRootRun(ctx, run.ID, sc.TraceID().String(), *req.RootRunID); err != nil {
-			ae.log.Warn("failed to persist trace_id/root_run_id on agent run",
-				slog.String("run_id", run.ID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
+	ae.persistRunLinkage(ctx, run.ID, *req.RootRunID, span.SpanContext())
 
 	// Persist the resolved model name on the run record for observability (#141)
 	if modelName != "" {
@@ -1455,9 +1442,41 @@ func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.
 	}
 }
 
+// resolveRootRunID determines the orchestration root for a run. It prefers the
+// caller's override (propagated unchanged through spawned children), then the
+// root already persisted on the run row (e.g. a re-enqueued queued run), then
+// the run's own ID (top-level runs, whose root is only known after creation).
+func resolveRootRunID(run *AgentRun, reqRoot *string) string {
+	if reqRoot != nil && *reqRoot != "" {
+		return *reqRoot
+	}
+	if run.RootRunID != nil && *run.RootRunID != "" {
+		return *run.RootRunID
+	}
+	return run.ID
+}
+
+// persistRunLinkage writes the run's trace_id and root_run_id back to the DB row.
+// root_run_id is always persisted so the orchestration tree survives even when
+// tracing is disabled; trace_id is empty (written as NULL) unless the span
+// context is valid. Persistence failures are logged, not returned.
+func (ae *AgentExecutor) persistRunLinkage(ctx context.Context, runID, rootRunID string, sc trace.SpanContext) {
+	traceID := ""
+	if sc.IsValid() {
+		traceID = sc.TraceID().String()
+	}
+	if err := ae.repo.UpdateTraceAndRootRun(ctx, runID, traceID, rootRunID); err != nil {
+		ae.log.Warn("failed to persist trace_id/root_run_id on agent run",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
 func (ae *AgentExecutor) getRootRunID(ctx context.Context, run *AgentRun) string {
-	// root_run_id is stored on creation (see CreateRunWithOptions) so we can
-	// read it directly without walking the resumed-from chain.
+	// root_run_id is persisted on the run row (at insert for spawned/queued runs,
+	// via a follow-up UPDATE for top-level runs) so we can read it directly
+	// without walking the resumed-from chain.
 	if run.RootRunID != nil && *run.RootRunID != "" {
 		return *run.RootRunID
 	}

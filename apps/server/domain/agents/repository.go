@@ -1463,6 +1463,7 @@ func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOpt
 		StartedAt:         time.Now(),
 		Summary:           make(map[string]any),
 		ParentRunID:       opts.ParentRunID,
+		RootRunID:         opts.RootRunID,
 		MaxSteps:          opts.MaxSteps,
 		ResumedFrom:       opts.ResumedFrom,
 		StepCount:         opts.InitialStepCount,
@@ -2267,11 +2268,13 @@ func (r *Repository) FindADKSessionByIDForProject(ctx context.Context, sessionID
 // agent_run_jobs row in the same transaction. Returns the new run.
 func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAttempts int, opts ...CreateRunQueuedOptions) (*AgentRun, error) {
 	var parentRunID *string
+	var rootRunID *string
 	var triggerMessage *string
 	var triggerMetadata map[string]any
 	var maxPendingJobs int
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
+		rootRunID = opts[0].RootRunID
 		triggerMessage = opts[0].TriggerMessage
 		triggerMetadata = opts[0].TriggerMetadata
 		maxPendingJobs = opts[0].MaxPendingJobs
@@ -2283,6 +2286,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 		StartedAt:       time.Now(),
 		Summary:         make(map[string]any),
 		ParentRunID:     parentRunID,
+		RootRunID:       rootRunID,
 		TriggerMessage:  triggerMessage,
 		TriggerMetadata: triggerMetadata,
 		Tools:           []string{},

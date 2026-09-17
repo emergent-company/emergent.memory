@@ -319,6 +319,7 @@ func (p *WorkerPool) reenqueueParent(ctx context.Context, log *slog.Logger, run 
 	_, err = p.repo.CreateRunQueued(ctx, parentRun.AgentID, 1, CreateRunQueuedOptions{
 		TriggerMessage:  &triggerMsg,
 		ParentRunID:     parentRun.ParentRunID, // propagate grandparent so the chain continues
+		RootRunID:       parentRun.RootRunID,   // propagate orchestration root so the tree is not split
 		TriggerMetadata: parentRun.TriggerMetadata,
 		MaxPendingJobs:  p.executor.safeguards.MaxPendingJobs,
 	})

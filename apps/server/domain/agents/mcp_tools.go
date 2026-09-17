@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -567,6 +568,9 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		}
 		if callerRunID := callerRunIDFromContext(ctx); callerRunID != "" {
 			queuedOpts.ParentRunID = &callerRunID
+		}
+		if rootRunID := provider.RootRunIDFromContext(ctx); rootRunID != "" {
+			queuedOpts.RootRunID = &rootRunID
 		}
 		run, err := h.repo.CreateRunQueued(ctx, agent.ID, 1, queuedOpts)
 		if err != nil {
