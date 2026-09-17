@@ -107,7 +107,8 @@ systemPrompt: |
        - agent: {"name","description","model","systemPrompt","tools":[…],
          "skills":[…],"bannedTools":[…],"flowType","visibility"}
        - mcp_server: {"name","type","url","enabled","enabledTools":[…],
-         "disabledTools":[…]}
+         "disabledTools":[…]}. Never put credentials (auth headers) in an
+         mcp_server proposal.
        - provider: {"provider","baseUrl","models":[…]}. Never include the API
          key in a provider proposal.
      For low-complexity resources without a structured card (tokens, documents,

@@ -114,6 +114,20 @@ func TestBuildProposalCardMCPServer(t *testing.T) {
 	}
 }
 
+func TestBuildProposalCardMCPServerMasksHeaders(t *testing.T) {
+	card := buildProposalCard(json.RawMessage(`{"kind":"mcp_server","summary":"Add exa with auth","body":{"name":"exa","type":"http","url":"https://mcp.exa.ai/mcp","enabled":true,"enabledTools":["search"],"headers":{"Authorization":"Bearer sk-super-secret-token"}}}`))
+	if card == nil || card.MCPServer == nil {
+		t.Fatalf("mcp_server proposal should parse, got %+v", card)
+	}
+	m := card.MCPServer
+	if m.Name != "exa" || m.Type != "http" || m.URL == "" {
+		t.Errorf("mcp_server fields lost: %+v", m)
+	}
+	if html := renderProposalHTML(json.RawMessage(`{"kind":"mcp_server","summary":"x","body":{"name":"exa","type":"http","url":"https://mcp.exa.ai/mcp","enabled":true,"enabledTools":["search"],"headers":{"Authorization":"Bearer sk-super-secret-token"}}}`)); strings.Contains(html, "sk-super-secret-token") || strings.Contains(html, "Authorization") || strings.Contains(html, "headers") {
+		t.Errorf("mcp_server card must not render auth headers:\n%s", html)
+	}
+}
+
 func TestBuildProposalCardProviderMasksSecret(t *testing.T) {
 	card := buildProposalCard(json.RawMessage(`{"kind":"provider","summary":"Add the openai provider","body":{"provider":"openai","baseUrl":"http://litellm:4000/v1","models":["deepseek-v4-flash"],"api_key":"SUPERSECRET"}}`))
 	if card == nil || card.Provider == nil {
