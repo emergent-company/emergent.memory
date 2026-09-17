@@ -573,7 +573,15 @@
       "border-color:color-mix(in oklab,var(--color-base-content) 12%,transparent)}" +
       ".memory-rail-badge .memory-rail-count{display:inline-flex;align-items:center;justify-content:center;" +
       "min-width:1rem;height:1rem;padding:0 .2rem;border-radius:9999px;font-size:.5625rem;" +
-      "background:currentColor;color:var(--color-base-100)}";
+      "background:var(--color-base-content);color:var(--color-base-100)}" +
+      ".memory-rail-badge[data-bucket='needs_input'] .memory-rail-count{background:var(--color-warning);" +
+      "color:var(--color-warning-content)}" +
+      ".memory-rail-badge[data-bucket='failed'] .memory-rail-count{background:var(--color-error);" +
+      "color:var(--color-error-content)}" +
+      ".memory-rail-badge[data-bucket='running'] .memory-rail-count{background:var(--color-primary);" +
+      "color:var(--color-primary-content)}" +
+      ".memory-rail-badge[data-bucket='done'] .memory-rail-count{background:var(--color-base-content);" +
+      "color:var(--color-base-100)}";
     document.head.appendChild(st);
   }
 
