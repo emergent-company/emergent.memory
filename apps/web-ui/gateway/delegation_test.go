@@ -92,16 +92,44 @@ func TestApplyDelegationEnabled(t *testing.T) {
 	}
 }
 
-// 2.3 enabled with empty targets: error.
-func TestApplyDelegationEnabledEmptyTargets(t *testing.T) {
+// 2.3 enabled with empty targets: open policy (no error). An enabled
+// delegation with zero targets means every agent is spawnable, so the
+// spawn_agents/list_available_agents tools are added but no spawnPolicy
+// allowlist is set.
+func TestApplyDelegationEnabledEmptyTargetsIsOpenPolicy(t *testing.T) {
 	def := &AgentDefinition{}
 	def.Delegation = &Delegation{Enabled: true}
-	err := applyDelegation(def)
-	if err == nil {
-		t.Fatal("want error for enabled with empty targets")
+	if err := applyDelegation(def); err != nil {
+		t.Fatalf("applyDelegation(enabled, no targets) = %v, want nil (open policy)", err)
 	}
-	if err.Error() != "delegation.targets must not be empty when delegation is enabled" {
-		t.Errorf("unexpected error: %v", err)
+	for _, tool := range []string{"spawn_agents", "list_available_agents"} {
+		if !contains(def.Tools, tool) {
+			t.Errorf("Tools missing %s: %v", tool, def.Tools)
+		}
+	}
+	if _, ok := def.Config["spawnPolicy"]; ok {
+		t.Errorf("open policy must not set spawnPolicy: %v", def.Config)
+	}
+	if def.Delegation != nil {
+		t.Error("Delegation should be nil after applyDelegation")
+	}
+
+	// Companion: enabled with non-empty targets sets the spawnPolicy.allow
+	// allowlist to the exact targets list.
+	def2 := &AgentDefinition{}
+	def2.Delegation = &Delegation{Enabled: true, Targets: []string{"B", "C"}}
+	if err := applyDelegation(def2); err != nil {
+		t.Fatal(err)
+	}
+	sp, ok := def2.Config["spawnPolicy"].(map[string]any)
+	if !ok {
+		t.Fatalf("Config[\"spawnPolicy\"] not set: %v", def2.Config)
+	}
+	if !reflect.DeepEqual(sp["allow"], []string{"B", "C"}) {
+		t.Errorf("spawnPolicy.allow = %#v, want [B C]", sp["allow"])
+	}
+	if def2.Delegation != nil {
+		t.Error("Delegation should be nil after applyDelegation")
 	}
 }
 
