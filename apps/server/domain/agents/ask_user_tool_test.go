@@ -47,6 +47,22 @@ func TestBuildAskUserTool_Success(t *testing.T) {
 	assert.Contains(t, tool.Description(), "question")
 }
 
+func TestBuildAskUserTool_DescriptionAdvertisesProposal(t *testing.T) {
+	deps := AskUserToolDeps{
+		Logger:     slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+		PauseState: &AskPauseState{},
+	}
+
+	tool, err := BuildAskUserTool(deps)
+	require.NoError(t, err)
+
+	// The tool description must advertise the optional structured `proposal`
+	// argument so agents can discover it instead of pasting a raw manifest fence.
+	assert.Contains(t, tool.Description(), "proposal")
+	assert.Contains(t, tool.Description(), "objectTypes")
+	assert.Contains(t, tool.Description(), "blueprint")
+}
+
 func TestBuildAskUserTool_NameIsConstant(t *testing.T) {
 	deps := AskUserToolDeps{
 		Logger:     slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
