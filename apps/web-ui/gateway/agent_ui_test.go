@@ -963,13 +963,13 @@ func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
 			loaded := map[string]bool{}
 			for _, m := range tc.loads {
 				loaded[m] = true
-				if got := f.catalogCalls[m]; got != 1 {
+				if got := f.catalogCallCount(m); got != 1 {
 					t.Errorf("%s section: expected %s to be fetched exactly once, got %d calls", tc.section, m, got)
 				}
 			}
 			for _, m := range allCatalogs {
-				if f.catalogCalls[m] != 0 && !loaded[m] {
-					t.Errorf("%s section: %s fetched %d times, want 0", tc.section, m, f.catalogCalls[m])
+				if got := f.catalogCallCount(m); got != 0 && !loaded[m] {
+					t.Errorf("%s section: %s fetched %d times, want 0", tc.section, m, got)
 				}
 			}
 		})

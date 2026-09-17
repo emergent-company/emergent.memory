@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,11 +25,22 @@ type triggerAgentCall struct {
 }
 
 // recordCatalog bumps the named catalog fetch counter (see catalogCalls).
+// Guarded by catalogMu: some handlers (e.g. uiAgents) fetch catalogs from
+// concurrent goroutines.
 func (f *fakeMemory) recordCatalog(method string) {
+	f.catalogMu.Lock()
+	defer f.catalogMu.Unlock()
 	if f.catalogCalls == nil {
 		f.catalogCalls = map[string]int{}
 	}
 	f.catalogCalls[method]++
+}
+
+// catalogCallCount reports how many times method was fetched.
+func (f *fakeMemory) catalogCallCount(method string) int {
+	f.catalogMu.Lock()
+	defer f.catalogMu.Unlock()
+	return f.catalogCalls[method]
 }
 
 // fakeMemory is an in-memory MemoryBackend for tests.
@@ -40,7 +52,9 @@ type fakeMemory struct {
 
 	// catalogCalls counts backend catalog fetches (keyed by method name) so
 	// tests can assert the settings loader only fetches a section's catalogs.
+	// Writes go through recordCatalog; reads through catalogCallCount.
 	catalogCalls map[string]int
+	catalogMu    sync.Mutex
 
 	// MCP relay (external nodes): relaySessions is returned by
 	// ListRelaySessions; relayTools holds per-instance tool lists (an empty
