@@ -548,6 +548,40 @@ templ AgentSandboxPage(data agentSandboxData) {
 	}
 }
 
+// sandboxProviderAvailability renders the compact per-provider availability
+// list under the provider select: a colour-coded badge plus the reason for
+// unavailable providers. When the provider list is empty (fetch failed or
+// sandboxes disabled) it shows an inline warning instead of implying anything
+// is available.
+templ sandboxProviderAvailability(data agentSandboxData) {
+	<div id="agent-sandbox-provider-status" class="flex flex-col gap-2">
+		if len(data.Providers) == 0 {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--alert-triangle",
+				Message: sandboxProviderWarning(data),
+			})
+		} else {
+			<ul class="flex flex-col gap-1.5">
+				for _, p := range data.Providers {
+					<li class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+						<span class="text-base-content/70 font-medium">{ sandboxProviderDisplayName(p) }</span>
+						if p.Healthy {
+							@ui.Badge(ui.BadgeProps{Label: "available", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+						} else {
+							@ui.Badge(ui.BadgeProps{Label: "unavailable", Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Dot: true})
+							if p.Message != "" {
+								<span class="text-base-content/60">{ p.Message }</span>
+							}
+						}
+					</li>
+				}
+			</ul>
+		}
+	</div>
+}
+
 // agentSandboxForm is the sandbox edit form (PRG → POST
 // /agents/:id/sandbox/update). Empty tools means "all allowed"; repo_source
 // url is only honored for a fixed source.
@@ -565,13 +599,17 @@ templ agentSandboxForm(data agentSandboxData) {
 					</label>
 				}
 				@form.FormControl("agent-sandbox-provider", "Provider", form.LabelAbove, "Sandbox runtime. Auto picks a healthy provider.", "", nil) {
-					<select id="agent-sandbox-provider" name="provider" class="select w-full">
+					<select id="agent-sandbox-provider" name="provider" class="select w-full" aria-describedby="agent-sandbox-provider-status">
 						<option value="" selected?={ sandboxConfigProvider(data.Config) == "" }>Auto</option>
-						<option value="gvisor" selected?={ sandboxConfigProvider(data.Config) == "gvisor" }>gVisor (Docker)</option>
-						<option value="firecracker" selected?={ sandboxConfigProvider(data.Config) == "firecracker" }>Firecracker</option>
-						<option value="e2b" selected?={ sandboxConfigProvider(data.Config) == "e2b" }>E2B</option>
+						for _, p := range data.Providers {
+							<option value={ p.Type } selected?={ sandboxConfigProvider(data.Config) == p.Type } disabled?={ !p.Healthy } title={ p.Message }>{ sandboxProviderOptionLabel(p) }</option>
+						}
+						if saved := sandboxConfigProvider(data.Config); saved != "" && !sandboxProviderListed(data.Providers, saved) {
+							<option value={ saved } disabled selected title="The server no longer reports this provider.">{ sandboxSavedProviderLabel(saved) }</option>
+						}
 					</select>
 				}
+				@sandboxProviderAvailability(data)
 				@form.FormControl("agent-sandbox-base-image", "Base image", form.LabelAbove, "Container image for the workspace.", "", nil) {
 					<input id="agent-sandbox-base-image" name="baseImage" type="text" value={ sandboxBaseImage(data.Config) } placeholder="memory-workspace:latest" class="input w-full" list="sandbox-base-images"/>
 					<datalist id="sandbox-base-images">
@@ -579,9 +617,6 @@ templ agentSandboxForm(data agentSandboxData) {
 							<option value={ img.Name }></option>
 						}
 					</datalist>
-				}
-				if healthy := sandboxHealthyProviders(data.Providers); healthy != "" {
-					<p class="text-base-content/50 text-xs">Available: { healthy }</p>
 				}
 			</div>
 		}

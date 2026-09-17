@@ -1214,7 +1214,9 @@ func TestUIAgentUpdateRoute(t *testing.T) {
 
 // TestRenderAgentSandboxPage covers the sandbox config form: the enabled
 // toggle, provider/base-image/repo/resource fields reflecting stored state,
-// the tool whitelist checkboxes, and the section layout.
+// the provider availability list (enabled healthy options, disabled
+// unavailable ones with their reason), the tool whitelist checkboxes, and the
+// section layout.
 func TestRenderAgentSandboxPage(t *testing.T) {
 	cfg := &AgentSandboxConfig{
 		Enabled:  true,
@@ -1234,8 +1236,8 @@ func TestRenderAgentSandboxPage(t *testing.T) {
 		Agent:  &AgentDefinition{ID: "a1", Name: "diane"},
 		Config: cfg,
 		Providers: []SandboxProvider{
-			{Name: "gVisor (Docker)", Type: "gvisor", Healthy: true},
-			{Name: "E2B", Type: "e2b", Healthy: false},
+			{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true},
+			{Name: "E2B", Type: "e2b", Healthy: false, Message: "E2B_API_KEY not set"},
 		},
 		Images: []SandboxImage{{ID: "img-1", Name: "memory-workspace:latest"}},
 	}
@@ -1252,16 +1254,22 @@ func TestRenderAgentSandboxPage(t *testing.T) {
 		`name="setupCommands"`, "pip install -r requirements.txt",
 		`name="envVars"`, "FOO=bar",
 		"If none selected, all tools are allowed.",
-		"Available: gVisor (Docker)",
+		// availability list: healthy enabled, unavailable disabled + reason
+		`value="gvisor" selected`, `>available<`,
+		`value="e2b" disabled`, "E2B — unavailable", "E2B_API_KEY not set",
 		`/agents/a1/sandbox/update`, `href="/agents/a1/sandbox"`, "Sandbox",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("sandbox page missing %q", want)
 		}
 	}
+	// a healthy provider must not be marked unavailable
+	if strings.Contains(html, "gVisor (Docker) — unavailable") {
+		t.Error("healthy provider must not be marked unavailable")
+	}
 
 	// empty config → Auto selected by default, nothing checked, no
-	// healthy-provider note, no env content (placeholder is static text)
+	// provider list → availability-unknown warning, no env content
 	empty := agentSandboxData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}}
 	h := renderHTML(t, AgentSandboxPage(empty))
 	if strings.Contains(h, `value="gvisor" selected`) || strings.Contains(h, `value="firecracker" selected`) || strings.Contains(h, `value="e2b" selected`) {
@@ -1273,11 +1281,32 @@ func TestRenderAgentSandboxPage(t *testing.T) {
 	if strings.Contains(h, "checked") {
 		t.Error("empty config must not render checked attributes")
 	}
-	if strings.Contains(h, "Available:") {
-		t.Error("no healthy providers → note must be omitted")
+	if !strings.Contains(h, "No sandbox providers were reported") {
+		t.Error("empty provider list must render the availability warning")
 	}
 	if strings.Contains(h, "FOO=bar</textarea>") {
 		t.Error("empty config must not render env vars as content")
+	}
+
+	// failed provider fetch → same warning, but explaining the fetch failure
+	warnErr := agentSandboxData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}, ProviderListErr: true}
+	if h := renderHTML(t, AgentSandboxPage(warnErr)); !strings.Contains(h, "Could not load sandbox provider availability") {
+		t.Error("provider fetch failure must render the availability warning")
+	}
+
+	// saved provider missing from the API list → synthetic option stays
+	// selected (saving the form never silently resets the stored provider)
+	missing := agentSandboxData{
+		Agent:     &AgentDefinition{ID: "a1", Name: "diane"},
+		Config:    &AgentSandboxConfig{Provider: "firecracker"},
+		Providers: []SandboxProvider{{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true}},
+	}
+	hm := renderHTML(t, AgentSandboxPage(missing))
+	if !strings.Contains(hm, `value="firecracker" disabled selected`) {
+		t.Error("saved provider missing from the list must render selected")
+	}
+	if !strings.Contains(hm, "Firecracker — unavailable") {
+		t.Error("saved provider missing from the list must be marked unavailable")
 	}
 
 	// load-error → whole-page error state
@@ -1315,10 +1344,26 @@ func TestUIAgentSandboxRoutes(t *testing.T) {
 		t.Fatalf("sandbox GET status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"diane", `name="enabled"`, "Available: gVisor (Docker)", `value="memory-workspace:latest"`} {
+	for _, want := range []string{"diane", `name="enabled"`, `value="gvisor"`, "gVisor (Docker)", ">available<", `value="memory-workspace:latest"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("sandbox GET missing %q", want)
 		}
+	}
+	if strings.Contains(body, "gVisor (Docker) — unavailable") {
+		t.Error("healthy provider must not be marked unavailable")
+	}
+
+	// GET with a failing provider fetch: the page still renders (no whole-page
+	// error) and shows the availability warning.
+	f.providersErr = errTest
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sandbox", nil))
+	f.providersErr = nil
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sandbox GET with provider error status %d", rec.Code)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "Could not load sandbox provider availability") {
+		t.Error("provider fetch failure should render the availability warning")
 	}
 
 	// POST: full form maps onto AgentSandboxConfig, redirects to ?updated=1
