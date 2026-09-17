@@ -50,6 +50,11 @@ in that turn.
 - **WHEN** the live turn cannot complete for provider or model-access reasons
 - **THEN** the spec reports a skip with the reason instead of a delegation failure
 
+#### Scenario: A completed turn that was never offered the spawn tool fails
+
+- **WHEN** a delegator's turn completes without invoking the spawn tool AND the delegator's run did not have the spawn tool in its resolved tool set
+- **THEN** the spec fails rather than skipping, naming the missing tool as the unmet expectation
+
 ### Requirement: A spawn is verifiable as a real child run
 
 The spec SHALL verify a spawn by the run it produced, not only by the tool

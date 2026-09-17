@@ -6,17 +6,23 @@ import { memoryAuthHeaders } from '../helpers/objects';
 import { MEMORY_API_URL } from '../helpers/tokens';
 
 // Full agent-delegation value loop: seed a fresh scratch project, create a
-// TARGET agent (B) and a DELEGATOR agent (A) with an explicit model and no
-// tools, enable delegation on A through the real settings page (target picker
-// → B), and prove the whole chain end to end:
+// TARGET agent (B), a DELEGATOR agent (A), and a REJECT agent (C) — each with
+// an explicit model and no tools — then exercise the delegation surface end to
+// end:
 //
 //   persist  → GET /api/agents/:A round-trips `spawn_agents` +
 //              `list_available_agents` in `tools` and `config.spawnPolicy.allow`
 //              == [B's name];
+//   reject   → enabling delegation on C with no target selected is refused with
+//              a readable error, and C gains neither delegation tool nor a
+//              spawnPolicy;
+//   disable  → unchecking the toggle on A strips both delegation tools and the
+//              spawnPolicy; re-enabling restores them so the live turn below
+//              still runs delegated;
 //   live     → one real chat turn against A forces a `spawn_agents` call, the
 //              raw SSE body names the tool, and the spawn is a REAL child run
 //              (parentRunId == A's run) that completes and whose transcript
-//              contains PINEAPPLE.
+//              contains PINEAPPLE in an assistant message.
 //
 // Why the child run is the proof, not just the tool chip: the gateway only
 // *lists* cached state (the delegation toggle, the target picker); whether A
@@ -59,31 +65,40 @@ import { MEMORY_API_URL } from '../helpers/tokens';
 //      agent state is project-scoped, so the scratch project makes the loop real;
 //   2. PROVIDER (UI): add the live provider from env vars (live-validated save,
 //      invalid key / unreachable base URL skips with the backend's copy);
-//   3. AGENTS (API): create B (target) and A (delegator), both explicit model
-//      + `tools: []` (creating via API is allowed; the settings-page tool
-//      picker is covered elsewhere). E2E_SCENARIO_LLM_MODEL is the already-
-//      prefixed "provider/model" catalog value, passed through as-is (never
-//      double-prefixed);
+//   3. AGENTS (API): create B (target), A (delegator), and C (reject), each
+//      explicit model + `tools: []` (creating via API is allowed; the
+//      settings-page tool picker is covered elsewhere). E2E_SCENARIO_LLM_MODEL
+//      is the already-prefixed "provider/model" catalog value, passed through
+//      as-is (never double-prefixed);
 //   4. DELEGATION (UI): /agents/:A/settings → check `#agent-settings-
 //      delegation-enabled`, tick `input[name="delegation-target"][value=B]`,
 //      submit via the real "Save changes" button (PRG → /agents/:A/settings
 //      ?updated=1);
 //   5. PERSIST (API): GET /api/agents/:A → tools contain spawn_agents +
 //      list_available_agents and config.spawnPolicy.allow == [B];
-//   6. CHAT (UI): /chat?agent=A → one forced prompt naming B → parse the raw
+//   6. NO-TARGET REJECTION (UI+API): on /agents/:C/settings check the toggle
+//      only (select no target), submit → PRG → ?err=<message>; decode the err
+//      query param and assert it names the missing target. GET /api/agents/:C
+//      confirms neither delegation tool nor a spawnPolicy was written;
+//   7. DISABLE (UI+API): on /agents/:A/settings uncheck the toggle, submit →
+//      ?updated=1; GET /api/agents/:A confirms both delegation tools and the
+//      spawnPolicy are gone. Then RE-ENABLE A (toggle + target box + save) and
+//      re-assert the persisted tools/allow so the live chat turn below still
+//      runs delegated;
+//   8. CHAT (UI): /chat?agent=A → one forced prompt naming B → parse the raw
 //      SSE for the spawn_agents tool events: assert the started event names B
 //      and read the child run id from the completed event's result. A turn
 //      that errors before the model runs is surfaced from memory's `error` SSE
 //      event; a turn that completes with no provider error but no spawn call
-//      skips with an annotation (model tool-use is non-deterministic);
-//   7. CHILD RUN (API): GET /agent-runs/:id with the child run id read from the
+//      first proves the delegator run was OFFERED spawn_agents (fail if not),
+//      then skips with an annotation (model tool-use is non-deterministic);
+//   9. CHILD RUN (API): GET /agent-runs/:id with the child run id read from the
 //      completed tool result → assert B's definition id + `completed` status +
 //      non-empty parentRunId; fetch the parent run by that id to prove the
 //      linkage (rootRunId cross-checked only when both runs carry one); read
-//      /full and assert the transcript contains
-//      PINEAPPLE;
-//   8. CLEANUP (finally): delete both agents + reactivate the bootstrap project
-//      + delete the scratch project (cascade removes the provider).
+//      /full and assert an ASSISTANT message contains PINEAPPLE;
+//   10. CLEANUP (finally): delete all three agents + reactivate the bootstrap
+//       project + delete the scratch project (cascade removes the provider).
 //
 // Env vars (all reused — see tests/e2e/.env.e2e.example, no new keys):
 //   E2E_SCENARIO_LLM_PROVIDER/API_KEY/BASE_URL/MODEL  live provider for the
@@ -112,6 +127,8 @@ interface AgentRunDTO {
   status: string;
   parentRunId?: string;
   rootRunId?: string;
+  startedAt?: string;
+  tools?: string[];
 }
 
 /** The subset of the gateway's GET /api/agents/:id response we assert. */
@@ -199,10 +216,11 @@ function parseSpawnEvents(raw: string): SpawnParse {
 }
 
 // All steps best-effort: idempotent across repeated runs, skips, and failures.
-async function cleanup(page: Page, targetId: string, delegatorId: string, projectId: string): Promise<void> {
+async function cleanup(page: Page, targetId: string, delegatorId: string, rejectId: string, projectId: string): Promise<void> {
   const bootstrap = readBootstrap();
   if (targetId) await page.request.delete(`/api/agents/${targetId}`).catch(() => {});
   if (delegatorId) await page.request.delete(`/api/agents/${delegatorId}`).catch(() => {});
+  if (rejectId) await page.request.delete(`/api/agents/${rejectId}`).catch(() => {});
   if (bootstrap?.projectId) {
     await page.request.post(`/api/projects/${bootstrap.projectId}/activate`).catch(() => {});
   }
@@ -229,9 +247,11 @@ test.describe('Agent delegation scenario', () => {
     const stamp = `${Date.now()}`;
     const targetName = `E2E Delegation Target ${stamp}`;
     const delegatorName = `E2E Delegation Source ${stamp}`;
+    const rejectName = `E2E Delegation Reject ${stamp}`;
     let projectId = '';
     let targetId = '';
     let delegatorId = '';
+    let rejectId = '';
 
     try {
       // 1. SEED (API): a fresh project isolates provider/agent state.
@@ -294,6 +314,27 @@ test.describe('Agent delegation scenario', () => {
       expect(delegator.id, 'delegator agent create must return an id').toBeTruthy();
       delegatorId = delegator.id;
 
+      // C (reject): a third agent, same shape as B/A, used only to prove the
+      // no-target rejection path — the sole difference is that no target is
+      // ever selected for it.
+      const rejectSystem =
+        'You are a worker agent used only to verify delegation validation. ' +
+        'Never run a live turn.';
+      const createReject = await page.request.post('/api/agents', {
+        data: {
+          name: rejectName,
+          systemPrompt: rejectSystem,
+          tools: [],
+          skills: [],
+          defaultToolPolicy: 'allow',
+          model: { name: AGENT_MODEL, temperature: 0, maxTokens: 4096 },
+        },
+      });
+      expect(createReject.ok(), `create reject agent failed (HTTP ${createReject.status()})`).toBeTruthy();
+      const reject = (await createReject.json()) as { id: string };
+      expect(reject.id, 'reject agent create must return an id').toBeTruthy();
+      rejectId = reject.id;
+
       // 4. DELEGATION (UI): enable the toggle, pick B, submit via the real
       // "Save changes" button. The settings form is a plain PRG form (action
       // /agents/:id/update), so the submit control navigates + 303-redirects
@@ -325,6 +366,92 @@ test.describe('Agent delegation scenario', () => {
         `config.spawnPolicy.allow must equal [${targetName}] after delegation is enabled`,
       ).toEqual([targetName]);
 
+      // (b) NO-TARGET REJECTION: enabling delegation with no target selected
+      // must be refused with a readable error, and C must gain neither
+      // delegation tool nor a spawn policy.
+      await page.goto(`/agents/${rejectId}/settings`);
+      await expectAppPage(page, /Settings/);
+      await page.locator('#agent-settings-delegation-enabled').check();
+      await page.getByRole('button', { name: 'Save changes' }).click();
+      await page.waitForURL(/settings\?err=/, { timeout: 15_000 });
+      const errMsg = new URL(page.url()).searchParams.get('err') ?? '';
+      expect(
+        errMsg,
+        'enabling delegation with no target must surface the no-target error',
+      ).toContain('delegation requires at least one target');
+
+      const rejectResp = await page.request.get(`/api/agents/${rejectId}`);
+      expect(
+        rejectResp.ok(),
+        `fetch reject agent after no-target save failed (HTTP ${rejectResp.status()})`,
+      ).toBeTruthy();
+      const rejectDef = (await rejectResp.json()) as AgentDefinitionJSON;
+      expect(
+        rejectDef.tools ?? [],
+        'no-target delegation must not add spawn_agents',
+      ).not.toContain('spawn_agents');
+      expect(
+        rejectDef.tools ?? [],
+        'no-target delegation must not add list_available_agents',
+      ).not.toContain('list_available_agents');
+      expect(
+        rejectDef.config?.spawnPolicy,
+        'no-target delegation must not write a spawnPolicy',
+      ).toBeUndefined();
+
+      // (c) DISABLE: unchecking the toggle must strip both delegation tools
+      // and the spawnPolicy from A's stored definition.
+      await page.goto(`/agents/${delegatorId}/settings`);
+      await expectAppPage(page, /Settings/);
+      await page.locator('#agent-settings-delegation-enabled').uncheck();
+      await page.getByRole('button', { name: 'Save changes' }).click();
+      await page.waitForURL(/settings\?updated=1/, { timeout: 15_000 });
+
+      const disabledResp = await page.request.get(`/api/agents/${delegatorId}`);
+      expect(
+        disabledResp.ok(),
+        `fetch delegator after disable failed (HTTP ${disabledResp.status()})`,
+      ).toBeTruthy();
+      const disabled = (await disabledResp.json()) as AgentDefinitionJSON;
+      expect(
+        disabled.tools ?? [],
+        'disabling delegation must remove spawn_agents',
+      ).not.toContain('spawn_agents');
+      expect(
+        disabled.tools ?? [],
+        'disabling delegation must remove list_available_agents',
+      ).not.toContain('list_available_agents');
+      expect(
+        disabled.config?.spawnPolicy,
+        'disabling delegation must remove the spawnPolicy',
+      ).toBeUndefined();
+
+      // Re-enable A so the live chat turn below still runs delegated.
+      await page.goto(`/agents/${delegatorId}/settings`);
+      await expectAppPage(page, /Settings/);
+      await page.locator('#agent-settings-delegation-enabled').check();
+      await page.locator(`input[name="delegation-target"][value="${targetName}"]`).check();
+      await page.getByRole('button', { name: 'Save changes' }).click();
+      await page.waitForURL(/settings\?updated=1/, { timeout: 15_000 });
+
+      // Light re-assert: tools contain both + spawnPolicy.allow deep-equals the
+      // target name. The full persist assert already ran above; this only
+      // proves the re-enable round-trip restored the surface.
+      const reResp = await page.request.get(`/api/agents/${delegatorId}`);
+      expect(
+        reResp.ok(),
+        `fetch delegator after re-enable failed (HTTP ${reResp.status()})`,
+      ).toBeTruthy();
+      const re = (await reResp.json()) as AgentDefinitionJSON;
+      expect(
+        re.tools ?? [],
+        're-enabled delegation must restore spawn_agents and list_available_agents',
+      ).toEqual(expect.arrayContaining(['spawn_agents', 'list_available_agents']));
+      expect(
+        re.config?.spawnPolicy?.allow,
+        `re-enabled delegation must restore config.spawnPolicy.allow == [${targetName}]`,
+      ).toEqual([targetName]);
+
       // 6. CHAT (UI): one forced turn against the delegator. Completion is
       // detected on the POST /api/chat SSE stream itself (the dev reasoner can
       // answer entirely inside its reasoning stream, so waiting on bubble text
@@ -339,7 +466,7 @@ test.describe('Agent delegation scenario', () => {
 
       const message =
         `Call the spawn_agents tool now, exactly once, with ` +
-        `agents=[{"agent_name":"${targetName}","task":"Reply with the single word PINEAPPLE."}]. ` +
+        `agents=[{"agent_name":"${targetName}","task":"Reply with your single-word answer now."}]. ` +
         `You must call the tool before writing any final answer, and do not answer the task yourself.`;
       const chatStream = page.waitForResponse(
         (r) => r.url().includes('/api/chat') && r.request().method() === 'POST',
@@ -389,12 +516,59 @@ test.describe('Agent delegation scenario', () => {
       // value (no server prefix), unlike pooled MCP tools.
       const spawn = parseSpawnEvents(raw);
 
+      // The memory API is project-scoped by path, so point X-Project-ID at the
+      // scratch project (the auth token comes from the signed-in session).
+      // Defined up front because both the "tool not offered" guard below and
+      // the child-run assertions after it read the run listing / detail.
+      const headers = await memoryAuthHeaders(page);
+      headers['X-Project-ID'] = projectId;
+
+      const listRuns = async (): Promise<AgentRunDTO[]> => {
+        const resp = await page.request.get(
+          `${MEMORY_API_URL}/api/projects/${projectId}/agent-runs?limit=100`,
+          { headers },
+        );
+        if (!resp.ok()) return [];
+        const body = (await resp.json()) as { success?: boolean; data?: { items?: AgentRunDTO[] } };
+        return body?.data?.items ?? [];
+      };
+
+      const getRun = async (runId: string): Promise<AgentRunDTO | null> => {
+        const resp = await page.request.get(
+          `${MEMORY_API_URL}/api/projects/${projectId}/agent-runs/${runId}`,
+          { headers },
+        );
+        if (!resp.ok()) return null;
+        const body = (await resp.json()) as { success?: boolean; data?: AgentRunDTO };
+        return body?.data ?? null;
+      };
+
       if (!spawn.invoked) {
         // The stream completed with no error event, so the provider call
-        // succeeded and the model ran — but it never invoked spawn_agents. We
-        // cannot tell "backend never offered it" from "model chose not to call
-        // it" here, so quote the visible transcript and skip rather than fail
-        // on non-deterministic model tool-use.
+        // succeeded — but the model never invoked spawn_agents. Before treating
+        // that as non-deterministic model tool-use (skip), prove the tool was
+        // actually offered to the delegator: a completed turn whose run was
+        // never offered spawn_agents is a delegation regression, not model
+        // choice. This ordering deliberately separates "tool not offered"
+        // (fail) from "model declined" (skip).
+        const delegatorRuns = (await listRuns()).filter(
+          (r) => r.agentDefinitionId === delegatorId,
+        );
+        // Newest first by startedAt; fall back to list order when startedAt is
+        // missing.
+        delegatorRuns.sort((x, y) => (y.startedAt ?? '').localeCompare(x.startedAt ?? ''));
+        const latest = delegatorRuns[0];
+        expect(
+          latest,
+          'the chat turn must have created an agent run for the delegator (A) — no run means the turn never executed',
+        ).toBeTruthy();
+        expect(
+          latest?.tools ?? [],
+          'the delegator run must have been OFFERED the spawn_agents tool (run.tools) — a missing tool is a delegation regression, not model non-determinism',
+        ).toContain('spawn_agents');
+
+        // The run WAS offered the tool but the model declined to call it —
+        // honest skip, not a failure. Quote the visible transcript and skip.
         const transcript = (await page.locator('#chat-messages').innerText().catch(() => ''))
           .replace(/\s+/g, ' ')
           .slice(0, 300);
@@ -402,13 +576,14 @@ test.describe('Agent delegation scenario', () => {
           type: 'skipped-step',
           description:
             `model completed the turn without calling spawn_agents (no stream error; ` +
-            `tool offered vs model declined is indistinguishable here; ` +
-            `transcript excerpt: "${transcript}")`,
+            `the delegator run's resolved tools included spawn_agents, so the model ` +
+            `declined rather than being unoffered; transcript excerpt: "${transcript}")`,
         });
         test.skip(
           true,
-          `no spawn_agents tool call in a completed turn — the model did not ` +
-            `delegate (no provider error). Transcript excerpt: "${transcript}"`,
+          `no spawn_agents tool call in a completed turn — the model was offered ` +
+            `spawn_agents but did not delegate (no provider error). ` +
+            `Transcript excerpt: "${transcript}"`,
         );
         return;
       }
@@ -434,23 +609,6 @@ test.describe('Agent delegation scenario', () => {
       // prove the parent→child linkage and that B actually ran the task.
       const childRunId = spawn.childRunId as string;
 
-      // The memory API is project-scoped by path, so point X-Project-ID at the
-      // scratch project (the auth token comes from the signed-in session).
-      const headers = await memoryAuthHeaders(page);
-      headers['X-Project-ID'] = projectId;
-
-      const getRun = async (runId: string): Promise<AgentRunDTO | null> => {
-        const resp = await page.request.get(
-          `${MEMORY_API_URL}/api/projects/${projectId}/agent-runs/${runId}`,
-          { headers },
-        );
-        if (!resp.ok()) return null;
-        const body = (await resp.json()) as { success?: boolean; data?: AgentRunDTO };
-        return body?.data ?? null;
-      };
-
-      // spawn_agents is synchronous, so the child run is already terminal when
-      // the tool result landed — the poll is a safety net against read-path lag.
       // spawn_agents is synchronous, so the child run is already terminal when
       // the tool result landed — the poll is a safety net against read-path lag.
       await expect
@@ -495,9 +653,10 @@ test.describe('Agent delegation scenario', () => {
         ).toBe(child!.rootRunId);
       }
 
-      // The child run's full transcript must contain B's sentinel answer —
-      // this proves B actually ran the delegated task, not just that a row
-      // was created.
+      // The child run's full transcript must contain B's sentinel answer in an
+      // ASSISTANT message — this proves B actually produced its delegated
+      // answer (not merely that the task was received in a user message), not
+      // just that a row was created.
       const fullResp = await page.request.get(
         `${MEMORY_API_URL}/api/projects/${projectId}/agent-runs/${childRunId}/full`,
         { headers },
@@ -506,13 +665,21 @@ test.describe('Agent delegation scenario', () => {
         fullResp.ok(),
         `fetch child run full transcript failed (HTTP ${fullResp.status()})`,
       ).toBeTruthy();
-      const fullText = await fullResp.text();
+      const full = (await fullResp.json()) as {
+        data?: {
+          messages?: Array<{ role?: string; content?: Record<string, unknown> }>;
+        };
+      };
+      const assistantText = (full.data?.messages ?? [])
+        .filter((m) => m.role === 'assistant')
+        .map((m) => String((m.content ?? {})['text'] ?? ''))
+        .join('\n');
       expect(
-        fullText,
-        'the child run transcript must contain PINEAPPLE (the target completed its delegated task)',
+        assistantText,
+        'the child run must contain PINEAPPLE in an ASSISTANT message (the target actually produced its delegated answer, not just received the task)',
       ).toContain('PINEAPPLE');
     } finally {
-      await cleanup(page, targetId, delegatorId, projectId);
+      await cleanup(page, targetId, delegatorId, rejectId, projectId);
     }
   });
 });

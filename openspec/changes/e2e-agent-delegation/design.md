@@ -114,10 +114,11 @@ regression.
 
 ### D4 — Isolated project, always cleaned up
 
-The spec seeds a fresh, uniquely named project and both agents in it (mirroring
-the MCP scenario), so it never races other specs on the shared bootstrap tenant.
-`finally` deletes both agents and the project via `page.request`, each
-`.catch(() => {})`, and reactivates the bootstrap project if the template does.
+The spec seeds a fresh, uniquely named project and all three agents in it
+(mirroring the MCP scenario), so it never races other specs on the shared
+bootstrap tenant. `finally` deletes all three agents and the project via
+`page.request`, each `.catch(() => {})`, and reactivates the bootstrap project
+if the template does.
 
 ### D5 — Forced prompt, bounded waits
 
@@ -127,11 +128,32 @@ final answer, mirroring how the MCP scenario forces its tool use. All waiting is
 explicit timeout messages; no `waitForTimeout` is used as a correctness
 mechanism.
 
+### D6 — Validate the rejection and disable paths too
+
+The happy-path loop does not exercise the delegation surface's two
+failure/teardown paths, so the spec covers both through the same UI + API
+pattern:
+
+- **No-target rejection**: a third agent C enables the toggle with no target
+  selected and submits; the PRG redirect carries `?err=<message>`, the decoded
+  error must name the missing target, and `GET /api/agents/:C` must show neither
+  delegation tool nor a `spawnPolicy`.
+- **Disable removes the surface**: unchecking the toggle on A strips both
+  delegation tools and the `spawnPolicy` from the stored definition; the spec
+  then re-enables A and re-asserts the persisted tools/allow so the live chat
+  turn still runs delegated.
+
 ## Risks
 
 - **Model non-compliance**: the model may answer instead of calling the tool. The
   forced prompt plus the same skip-on-error handling used by the MCP scenario
   keeps this from being recorded as a product regression.
+- **Unoffered tool masquerading as model non-compliance**: a completed turn that
+  never calls `spawn_agents` could be either "the model declined" or "the tool
+  was never offered". The skip branch therefore first asserts the delegator run's
+  resolved `tools` contains `spawn_agents` — an unoffered tool is a delegation
+  regression and fails instead of skipping; only a genuinely offered but declined
+  tool skips.
 - **Run visibility lag**: child runs may not be listed the instant the turn ends,
   which is why the child-run assertions poll with a bounded timeout and fail with
   the last observed status.

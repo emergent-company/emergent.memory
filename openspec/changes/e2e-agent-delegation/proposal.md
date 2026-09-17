@@ -18,17 +18,24 @@ run linkage would therefore ship silently.
 Add one Playwright scenario spec,
 `apps/web-ui/tests/e2e/scenarios/agent-delegation.spec.ts`, that:
 
-- seeds an isolated project, a target agent B, and a source agent A;
+- seeds an isolated project, a target agent B, a source agent A, and a reject
+  agent C;
 - enables delegation on A **through the agent Settings UI**, selecting B as the
   target, and asserts via `GET /api/agents/:id` that the toggle persisted
   `spawn_agents` and `list_available_agents` into `tools` and B's name into
   `config.spawnPolicy.allow`;
+- proves the two validation paths: enabling delegation on C with **no target**
+  is refused with a readable error and writes neither delegation tool nor a
+  `spawnPolicy`, and unchecking the toggle on A strips both delegation tools and
+  the `spawnPolicy` (re-enabling A restores them so the live turn still runs);
 - sends a forced live chat turn to A instructing it to call `spawn_agents` for B,
   and asserts the tool invocation appears in the chat stream;
-- verifies the spawn is a **real child run**: a run exists for B whose
-  `parentRunId` is A's run, it reaches a terminal `completed` status, and B's
-  transcript carries the result of the delegated task;
-- cleans up its project and both agents in `finally`, pass or fail.
+- verifies the spawn is a **real child run**: the child run id is read from the
+  completed `spawn_agents` tool result (`result.results[0].run_id`), the run is
+  fetched by that id, its parent run is fetched by `parentRunId`, it reaches a
+  terminal `completed` status, and B's transcript carries the delegated task's
+  result in an assistant message;
+- cleans up its project and all three agents in `finally`, pass or fail.
 
 The spec is live-LLM dependent, so it is env-gated exactly like the existing
 `mcp-servers-tool-call` scenario: it skips (never fails) when the scenario LLM

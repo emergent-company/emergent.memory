@@ -49,8 +49,23 @@
       run the child points at. `rootRunId` is cross-checked only when both runs
       carry one (see F2). The child's `/full` transcript must contain the
       delegated sentinel result.
-- [x] 1.9 `finally` cleanup: delete both agents, reactivate the bootstrap
-      project, delete the scratch project (`.catch(() => {})` on each).
+- [x] 1.9 `finally` cleanup: delete all three agents (target, delegator, and
+      reject), reactivate the bootstrap project, delete the scratch project
+      (`.catch(() => {})` on each).
+- [x] 1.10 No-target rejection scenario: a third agent C (`tools: []`) enables
+      the toggle with no target selected, the save redirects to `?err=<message>`,
+      the decoded error names the missing target, and `GET /api/agents/:C`
+      confirms neither delegation tool nor a `spawnPolicy` was written.
+- [x] 1.11 Disable-removes scenario: unchecking the toggle on A strips both
+      delegation tools and the `spawnPolicy`; re-enabling restores them and the
+      persisted `tools`/`spawnPolicy.allow` are re-asserted so the live turn
+      still runs delegated.
+- [x] 1.12 Child-run correlation from the tool result + parent-run guard: the
+      child run id is read from the completed `spawn_agents` result
+      (`result.results[0].run_id`); a completed turn that never invoked the tool
+      first asserts the delegator run's resolved `tools` contains `spawn_agents`
+      (fail when unoffered) before skipping as "model declined"; PINEAPPLE is
+      asserted in an ASSISTANT message of the `/full` bundle.
 
 ## 2. Verification
 
@@ -60,13 +75,13 @@
 - [x] 2.2 `npx playwright test --list scenarios/agent-delegation.spec.ts` lists
       the spec in the `scenarios` project without executing it.
 - [x] 2.3 `openspec validate e2e-agent-delegation --strict` passes.
-- [x] 2.4 Live run against dev with real credentials: **2 passed** (setup +
-      scenario, 26.4s). The scenario found the spawn tool result run id, verified
-      the child run against B's definition, fetched the parent run by
-      `parentRunId`, and confirmed B's `/full` transcript contained the delegated
-      sentinel. Two environmental failures preceded the pass (`memory-server`
-      container restart → 502 in `setup`; login SPA timeout) — both cleared
-      without a spec change (F3).
+- [ ] 2.4 Live run against dev with real credentials. The earlier `2 passed`
+      observation predates the parent-run `tools`-offered guard, the
+      assistant-message PINEAPPLE assertion, and the no-target-rejection /
+      disable-removes scenarios, so it no longer describes this spec. Not
+      runnable from this checkout: `tests/e2e/.env.e2e` is absent and no
+      `E2E_SCENARIO_LLM_*` variables are set, so the spec reports its documented
+      skip.
 - [x] 2.5 Confirm no product code, gateway, or Playwright config file changed:
       `git status` in the worktree shows only the new spec and this change
       directory.
