@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strconv"
+
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
 	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -16,7 +18,12 @@ import (
 // voice setting. modelWarnings maps agentID → the error-level "model can't be
 // served" message shown by the chat workspace's warning banner for agents
 // whose chats cannot run (nil/empty when none apply).
-templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string) {
+//
+// runControl optionally carries the active conversation's server-rendered
+// run-control surfaces (pending-work dock cards, session todos) so the dock and
+// todo card exist before chat.js runs. uiChat supplies it when ?c= names a
+// conversation; other callers omit it.
+templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string, runControl ...chatRunControl) {
 	<div class="h-full">
 		if loadErr != nil {
 			@layout.Container(layout.ContainerLG, nil) {
@@ -37,15 +44,16 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, agentNa
 				})
 			}
 		} else {
-			@chatWorkspace(agents, convs, agentNames, schedRuns, preselect, convID, prompt, voiceEnabled, modelWarnings)
+			@chatWorkspace(agents, convs, agentNames, schedRuns, preselect, convID, prompt, voiceEnabled, modelWarnings, chatRunControlOrZero(runControl))
 		}
 	</div>
 }
 
 // chatWorkspace is the full chat surface: a resumable session rail on the
 // left, and the streaming conversation (header, log, composer) on the right.
-// chat.js drives resume + streaming via the /api/* endpoints.
-templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string) {
+// chat.js drives resume + streaming via the /api/* endpoints. runControl holds
+// the active conversation's server-rendered dock cards and session todos.
+templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, agentNames map[string]string, schedRuns []scheduledRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
 	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
 		<aside id="chat-rail" class="bg-base-100 border-base-content/5 relative hidden w-full shrink-0 flex-col border-r md:flex md:w-72">
 			<!-- Drag-to-resize grip on the right edge (desktop only; below md the
@@ -125,6 +133,9 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 						</p>
 					</div>
 				</div>
+				<!-- Live turn status (working / waiting-on-you / failed), filled in
+				     place by chat.js from the refresh payload's run status. -->
+				<div id="chat-run-status" class="memory-run-status hidden" role="status" aria-live="polite"></div>
 			</div>
 			@chatModelWarningBanner(modelWarnings[defaultAgentID(agents, preselect)])
 			<div id="chat-log" class="min-h-0 grow overflow-y-auto">
@@ -150,12 +161,29 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 									@chatSuggestion("Help me draft a status update")
 								</div>
 							}
+							<!-- Session todo card. Pre-rendered when the active
+							     conversation's ACP session has todos; chat.js
+							     refreshes it in place from /partial/chat-todos. -->
+							<div id="chat-todos" class={ templ.KV("hidden", len(runControl.Todos) == 0) }>@TodoCard(runControl.Todos)</div>
 							<div id="chat-messages" class="flex flex-col gap-3"></div>
 						</div>
 					}
 				</div>
 			</div>
 			<div class="border-base-content/5 border-t bg-base-100">
+				<!-- Pending-work dock mount. With scripting, chat.js owns
+				     #chat-dock and fills it from /partial/chat-dock, so the mount
+				     starts empty + hidden. The server-rendered DockPanel lives in
+				     <noscript> as the no-JS fallback — keeping it out of the live
+				     DOM is what guarantees the pre-render and chat.js's refresh
+				     can never both render the same cards (chat.js's fallback when
+				     the dock route fails is the transcript's inline approval
+				     path, not a second copy in the dock). -->
+				<div id="chat-dock" aria-live="polite" class="hidden"></div>
+				<noscript>@DockPanel(convID, runControl.Approvals, runControl.Questions)</noscript>
+				<!-- Composer queue lane; chat.js renders queued rows here and
+				     toggles the hidden class. -->
+				<div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>
 				<form id="chat-form" hx-boost="false">
 					<!-- Width + gutter come from the shared Container, so the composer
 					     can never drift from the message column above. -->
@@ -310,6 +338,25 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ag
 			<script src={ templ.SafeURL(webui.AssetPath("/js/vendor/livekit-client.umd.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/voice.js")) }></script>
 		}
+		<!-- TodoCard (chat_dock.templ) renders a plain toggle button plus a list;
+		     chat.js's applyTodoCollapse only understands daisyUI <details>/
+		     collapse markup, so wire the button here. Delegated on document so
+		     it survives a swap of #chat-root, and guarded so it binds once.
+		     Visibility is CSS-driven off aria-expanded. -->
+		<script>
+			(function () {
+				if (window.__memoryTodoToggleWired) return;
+				window.__memoryTodoToggleWired = true;
+				document.addEventListener("click", function (ev) {
+					var toggle = ev.target && ev.target.closest ? ev.target.closest(".todo-card-toggle") : null;
+					var mount = toggle && toggle.closest ? toggle.closest("#chat-todos") : null;
+					if (!toggle || !mount) return;
+					var open = toggle.getAttribute("aria-expanded") !== "true";
+					toggle.setAttribute("aria-expanded", open ? "true" : "false");
+					mount.dataset.expanded = open ? "1" : "0";
+				});
+			})();
+		</script>
 		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
 		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
 		<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
@@ -343,11 +390,14 @@ templ chatRailList(convs *ConversationList, agentNames map[string]string, schedR
 templ sessionRailItem(c Conversation, agentName string, active bool) {
 	{{
 		attrs := templ.Attributes{
-			"data-action": "resume-session",
-			"data-id":     c.ID,
-			"data-agent":  c.AgentDefinitionID,
-			"data-origin": "manual",
-			"data-testid": "session-row",
+			"data-action":            "resume-session",
+			"data-id":                c.ID,
+			"data-agent":             c.AgentDefinitionID,
+			"data-origin":            "manual",
+			"data-testid":            "session-row",
+			"data-bucket":            c.Bucket,
+			"data-pending-approvals": strconv.Itoa(c.PendingApprovals),
+			"data-pending-questions": strconv.Itoa(c.PendingQuestions),
 		}
 		if active {
 			attrs["data-active"] = "true"
@@ -357,9 +407,31 @@ templ sessionRailItem(c Conversation, agentName string, active bool) {
 		Title:    c.Title,
 		Subtitle: railSubtitle(agentName, c.UpdatedAt),
 		Leading:  ui.IconSpan("lucide--messages-square", "size-4 text-base-content/40"),
-		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")},
-		Attrs:    attrs,
+		Trailing: []templ.Component{
+			railStatusBadge(c.Bucket, c.PendingApprovals, c.PendingQuestions),
+			ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25"),
+		},
+		Attrs: attrs,
 	})
+}
+
+// railStatusBadge wraps lane A's RailStatusBadge in the node chat.js updates in
+// place. RailStatusBadge owns only the bucket data and its label; its frozen
+// signature cannot carry data-rail-badge, so this slot provides it — otherwise
+// applyRailBadges would not find the server-rendered badge and would append a
+// second one on every rail re-render. The slot reuses the badge's own classes
+// so it looks identical before chat.js restyles it.
+templ railStatusBadge(bucket string, pendingApprovals, pendingQuestions int) {
+	{{ show := railBucketLabel(bucket) != "" || pendingApprovals+pendingQuestions > 0 }}
+	<span
+		class={ "memory-rail-badge", templ.KV("hidden", !show) }
+		data-rail-badge
+		data-bucket={ bucket }
+		data-pending-approvals={ strconv.Itoa(pendingApprovals) }
+		data-pending-questions={ strconv.Itoa(pendingQuestions) }
+	>
+		@RailStatusBadge(bucket, pendingApprovals, pendingQuestions)
+	</span>
 }
 
 // scheduledRailItem is one scheduled-agent run in the session rail. Runs are

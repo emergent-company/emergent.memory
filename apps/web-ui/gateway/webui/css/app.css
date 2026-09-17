@@ -583,12 +583,132 @@ div:has(> #_layout-topbar) {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
+/* chat.js swaps the /partial/chat-dock fragment into the mount, and DockPanel
+   carries its own id="chat-dock" on that fragment root — suppress the inner
+   node's duplicated container chrome so only one divider/band is drawn. */
+#chat-dock #chat-dock {
+  border-bottom: 0;
+  background: transparent;
+}
+/* dock cards — pending tool approvals and ask_user questions */
+.dock-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin: 0.5rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  background: var(--color-base-100);
+}
+.dock-approval { border-left: 3px solid var(--color-warning); }
+.dock-question { border-left: 3px solid var(--color-primary); }
+.dock-card-kind {
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+}
+.dock-card-tool {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.dock-card-prompt { font-size: 0.8125rem; }
+.dock-card-args {
+  flex-basis: 100%;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  overflow-wrap: anywhere;
+}
+.dock-card-options {
+  flex-basis: 100%;
+  margin: 0.1rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.75rem;
+  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
+  list-style: disc;
+}
 
 /* session todo card */
 #chat-todos { margin-bottom: 0.25rem; }
 #chat-todos :is(summary, button, input, select, a):focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+.todo-card {
+  overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  background: color-mix(in oklab, var(--color-base-200) 40%, transparent);
+}
+.todo-card-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+}
+.todo-card-toggle::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.todo-card-toggle[aria-expanded="true"]::before { transform: rotate(45deg); }
+/* collapsed by default: the list only shows once the toggle reports expanded */
+.todo-card-toggle[aria-expanded="false"] ~ .todo-card-list { display: none; }
+.todo-card-list {
+  margin: 0;
+  padding: 0 0 0.35rem;
+  list-style: none;
+}
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8125rem;
+}
+.todo-item-status {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  border: 1px solid transparent;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+.todo-item[data-status="in_progress"] .todo-item-status {
+  color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 13%, transparent);
+}
+.todo-item[data-status="completed"] .todo-item-status {
+  color: var(--color-success);
+  background: color-mix(in oklab, var(--color-success) 13%, transparent);
+}
+.todo-item[data-status="completed"] .todo-item-content {
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  text-decoration: line-through;
 }
 
 /* session rail run-state badge + pending count */

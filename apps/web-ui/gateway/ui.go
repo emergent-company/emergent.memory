@@ -476,6 +476,45 @@ func (s *Server) chatModelWarnings(ctx context.Context, agents []AgentDefinition
 	return warnings
 }
 
+// chatRunControl carries the active conversation's server-rendered run-control
+// surfaces — the pending-work dock and the session todo card — into ChatPage so
+// they exist before chat.js runs. It is threaded through ChatPage as an
+// optional variadic so existing callers stay source-compatible.
+type chatRunControl struct {
+	Approvals []ApprovalCard
+	Questions []QuestionCard
+	Todos     []TodoItem
+}
+
+// chatRunControlOrZero returns the supplied run-control data, or the zero
+// value when the caller passed none.
+func chatRunControlOrZero(opts []chatRunControl) chatRunControl {
+	if len(opts) > 0 {
+		return opts[0]
+	}
+	return chatRunControl{}
+}
+
+// chatRunControlFor resolves the active conversation's pending-work dock cards
+// and session todos for server-side pre-render. Best-effort: an empty
+// conversation id, a missing ACP session, or any fetch failure degrades to zero
+// data rather than an error.
+func (s *Server) chatRunControlFor(ctx context.Context, convID string) chatRunControl {
+	if convID == "" {
+		return chatRunControl{}
+	}
+	approvals, questions := s.pendingDockCards(ctx, convID)
+	var todos []TodoItem
+	if detail, err := s.memory.GetConversation(ctx, convID); err == nil && detail.ACPSessionID != "" {
+		if items, terr := s.memory.ListSessionTodos(ctx, detail.ACPSessionID); terr == nil {
+			todos = todoItems(items)
+		} else {
+			captureError(terr)
+		}
+	}
+	return chatRunControl{Approvals: approvals, Questions: questions, Todos: todos}
+}
+
 // uiChat renders the chat workspace (the primary sessions surface):
 // agent picker, streaming log, and a resumable session list.
 // ?agent=<id> preselects an agent, ?c=<conversationId> resumes a conversation,
@@ -487,7 +526,8 @@ func (s *Server) uiChat(c echo.Context) error {
 		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, "", "", "", err, true, nil))
 	}
 	modelWarnings := s.chatModelWarnings(ctx, agents)
-	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, agentNames, schedRuns, c.QueryParam("agent"), c.QueryParam("c"), c.QueryParam("prompt"), nil, s.voiceEnabled(c.Request().Context()), modelWarnings))
+	convID := c.QueryParam("c")
+	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, agentNames, schedRuns, c.QueryParam("agent"), convID, c.QueryParam("prompt"), nil, s.voiceEnabled(ctx), modelWarnings, s.chatRunControlFor(ctx, convID)))
 }
 
 // uiChatRail returns the session-rail list HTML as a fragment, so chat.js can
