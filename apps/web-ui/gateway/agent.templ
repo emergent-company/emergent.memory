@@ -435,7 +435,7 @@ templ agentModelSettingsForm(data agentSettingsData) {
 		}) {
 			<div class="flex flex-col gap-4">
 				@agentModelSettingsWarning(data)
-				@modelSelect("agent-settings-model", data.Models, data.Agent.Model, nil)
+				@modelSelect("agent-settings-model", data.Models, data.Agent.Model, agentAutoModelName(data.Agent, data.DefaultModel), nil)
 				@modelParamsGrid("agent-settings", data.Agent.Model)
 			</div>
 		}
