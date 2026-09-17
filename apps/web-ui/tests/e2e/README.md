@@ -257,6 +257,13 @@ registered kind degraded to a summary-only card). A fetch interceptor tees the
 `/api/chat` SSE stream and records the `question` events, so a gateway render
 regression can no longer masquerade as a skip.
 
+Scenario (chat agent switch): `chat-agent-switch.spec.ts` proves the chat area's
+navigation on a fresh scratch project — start a conversation with agent A, switch
+to agent B via "New chat", then resume A's conversation from the session rail. It
+asserts A's row is active after the first turn, that both A and B coexist in the
+rail after the second, and that resuming A switches the `#chat-agent` picker back
+to A and loads A's (not B's) transcript. Env-gated on `E2E_SCENARIO_LLM_API_KEY`.
+
 Document extraction: `specs/documents/document-extraction-ui.spec.ts` uploads a
 document through the form and triggers extraction from the document detail page,
 asserting the PRG round-trip (`?uploaded=1` → `?extracted=1`) un-gated. A second
