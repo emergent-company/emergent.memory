@@ -154,7 +154,7 @@ templ mcpShareStatusBadge(inst MCPShareInstance) {
 
 // mcpShareRevokeDialog confirms revocation before POST .../shares/:id/revoke.
 templ mcpShareRevokeDialog(inst MCPShareInstance) {
-	@modalShell("mcp-share-revoke-"+inst.ID, "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "mcp-share-revoke-" + inst.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
 			@components.ConfirmIcon("")
 			<div>
@@ -189,7 +189,7 @@ templ mcpShareRevokeDialog(inst MCPShareInstance) {
 
 // mcpShareRotateDialog confirms rotation before POST .../shares/:id/rotate.
 templ mcpShareRotateDialog(inst MCPShareInstance) {
-	@modalShell("mcp-share-rotate-"+inst.ID, "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "mcp-share-rotate-" + inst.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
 			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
 				@ui.IconSpan("lucide--refresh-cw", "size-5")

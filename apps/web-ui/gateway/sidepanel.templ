@@ -150,7 +150,7 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 		<!-- Modal window mode: sidepanel.js moves #sidepanel-panel into
 		     #sidepanel-modal-box (same DOM, same conversation state). Closing
 		     via X / Escape / backdrop returns it to the drawer. -->
-		@modalShell("sidepanel-modal", "sidepanel-modal-box", "") {
+		@ui.Dialog(ui.DialogProps{ID: "sidepanel-modal", BoxID: "sidepanel-modal-box"}) {
 			<!-- #sidepanel-panel is appended here by sidepanel.js (openModal) -->
 		}
 	</div>

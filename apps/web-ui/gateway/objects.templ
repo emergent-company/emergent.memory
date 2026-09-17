@@ -390,7 +390,7 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 // type, confirm the source object (defaults to the current object), and pick
 // the target via search. Posts to /objects/{id}/relationships.
 templ objectConnectDialog(obj *GraphObject, relTypes []CompiledType) {
-	@modalShell("object-connect-modal", "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "object-connect-modal", BoxClass: "max-w-sm"}) {
 		<h3 class="text-lg font-semibold">Connect object</h3>
 		<p class="text-base-content/50 mb-4 text-sm">Link this object to another one in the knowledge graph.</p>
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/relationships") }>

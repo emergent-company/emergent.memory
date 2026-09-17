@@ -529,7 +529,7 @@ templ schemaPropertyRow(p PropertyDetail) {
 // dismissing keeps the entered values and posts nothing.
 templ deriveWarningDialog(view *SchemaEditView) {
 	{{ p := view.Provenance }}
-	@modalShell("derive-warning-modal", "", "max-w-md", templ.Attributes{"aria-labelledby": "derive-warning-title", "aria-describedby": "derive-warning-desc"}) {
+	@ui.Dialog(ui.DialogProps{ID: "derive-warning-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "derive-warning-title", "aria-describedby": "derive-warning-desc"}}) {
 		<div class="flex items-start gap-3">
 			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
 				@ui.IconSpan("lucide--alert-triangle", "size-5")
@@ -558,7 +558,7 @@ templ deriveWarningDialog(view *SchemaEditView) {
 // blueprint from the project's current effective object types. Used by the
 // Schema page and the blueprints gallery.
 templ deriveBlueprintDialog() {
-	@modalShell("derive-blueprint-modal", "", "max-w-md", templ.Attributes{"aria-labelledby": "derive-blueprint-title"}) {
+	@ui.Dialog(ui.DialogProps{ID: "derive-blueprint-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "derive-blueprint-title"}}) {
 		<div class="flex items-start gap-3">
 			<div class="bg-primary/10 text-primary grid size-10 shrink-0 place-items-center rounded-full">
 				@ui.IconSpan("lucide--save", "size-5")

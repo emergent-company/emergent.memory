@@ -495,10 +495,10 @@ templ OrgLandingPage(data orgPageData) {
 // script fills the heading, the detail line and the hidden projectId fields
 // before showing it, so one dialog serves both paths. Cancel uses
 // formmethod="dialog" to close without submitting; Delete submits to
-// /projects/delete (modalShell disables hx-boost, so the handler's PRG
+// /projects/delete (ui.Dialog disables hx-boost, so the handler's PRG
 // redirect lands back with the flash).
 templ projectDeleteDialog(orgID string) {
-	@confirmDeleteDialog("project-delete-modal", "project", projectDeleteDialogDescription()) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "project-delete-modal", Noun: "project"}, projectDeleteDialogDescription()) {
 		<form id="project-delete-form" method="post" action="/projects/delete" onsubmit="return submitProjectDelete(event)">
 			<input type="hidden" name="orgId" value={ orgID }/>
 			<div id="project-delete-ids" hidden></div>
@@ -884,11 +884,11 @@ templ OrgSettingsDangerZonePage(data orgSettingsDangerZonePageData) {
 // <select> lists only orgs the acting user belongs to other than the source
 // (orgPageData.TransferOrgs), so the source can never be selected and exactly
 // one destination is required. The form posts projectId + orgId + destinationOrgId
-// to /projects/transfer — a plain POST: modalShell disables hx-boost (like the
+// to /projects/transfer — a plain POST: ui.Dialog disables hx-boost (like the
 // new-project dialog), so the browser submits normally and the handler's PRG
 // 303 sends the user back to the source org view with the flash.
 templ transferProjectModal(sourceOrgID string, orgs []Org) {
-	@modalShell("transfer-project-modal", "", "w-full max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "transfer-project-modal", BoxClass: "w-full max-w-sm"}) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
 				<h3 class="text-lg font-semibold">Transfer <span id="transfer-project-name" class="text-base-content"></span></h3>
