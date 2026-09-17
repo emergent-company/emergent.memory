@@ -757,9 +757,12 @@ templ agentToolPicker(data agentSettingsData) {
 // leading block and trailing controls (rendered before the chevron); the body
 // is passed as children.
 templ agentToolDisclosure(groupName, detailsClass, summaryClass string, detailsAttrs, summaryAttrs templ.Attributes, open bool, leading, controls templ.Component) {
+	// Keep both chevron class strings literal so Tailwind's source scan finds
+	// them: a dynamically concatenated `group-open/<name>:rotate-180` would not
+	// be discovered and the capability-group chevron would stop rotating.
 	{{ chevron := "group-open:rotate-180"
-	if groupName != "" {
-		chevron = "group-open/" + groupName + ":rotate-180"
+	if groupName == "cap" {
+		chevron = "group-open/cap:rotate-180"
 	} }}
 	<details
 		class={ detailsClass }
@@ -1004,8 +1007,18 @@ templ agentToolGroup(p agentToolGroupProps) {
 // per-tool policy select, and the non-interactive inheritance hint ("" hides
 // it). The toggle's onchange disables/dims the policy select while the tool is
 // off.
-templ agentToolRowView(t agentToolRow, withPolicy bool) {
-	<div class="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-base-200/50" data-tool-row>
+//
+// Two row variants exist. The default (`px-3` + hover background) suits rows
+// inside a plain group body, where the surrounding container has no horizontal
+// padding. The "Other" fallback container already supplies `p-3`, so its rows
+// pass the legacy inset-free class (no `px-3`, no hover background) to keep the
+// pre-refactor alignment with the "Other" eyebrow.
+templ agentToolRowView(t agentToolRow, withPolicy bool, rowClass ...string) {
+	{{ cls := "flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-base-200/50"
+	if len(rowClass) > 0 {
+		cls = rowClass[0]
+	} }}
+	<div class={ cls } data-tool-row>
 		<label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
 			<input
 				name="tool"
@@ -1110,7 +1123,7 @@ templ agentToolRelayGroup(node relayNode, agent *AgentDefinition) {
 templ agentToolOtherGroup(tools []string, agent *AgentDefinition) {
 	@agentToolOtherContainer("Not from a registered MCP server — kept so existing tools aren't dropped on save.", false) {
 		for _, t := range tools {
-			@agentToolRowView(agentToolRow{Name: t, Checked: true, PolicyValue: toolPolicyValue(agent, t)}, true)
+			@agentToolRowView(agentToolRow{Name: t, Checked: true, PolicyValue: toolPolicyValue(agent, t)}, true, "flex items-center gap-2.5 py-2")
 		}
 	}
 }

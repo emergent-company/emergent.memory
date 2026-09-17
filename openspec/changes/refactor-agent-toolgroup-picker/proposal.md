@@ -11,7 +11,7 @@ The agent tool-group picker markup in `gateway/agent.templ` repeats several bloc
 - Make `agentToolOtherGroup` reuse `agentToolRowView` instead of re-implementing the row inline (removing the now-dead `toolPolicySelect` wrapper).
 - Convert the two sandbox availability dots to the shared `components.StatusBadge`.
 
-No rendered markup change: every `data-testid`, `name`, `value="on"`/`checked`, and option `value` survives byte-identically.
+No rendered markup change: every `data-testid`, `name`, `value="on"`/`checked`, and option `value` survives byte-identically, and each row's class is preserved. The shared `agentToolRowView` carries the padded default (`px-3` + hover background) used by plain group bodies; the "Other" fallback rows keep the legacy inset-free class (no `px-3`, no hover background) via a variadic row-class override so they stay aligned with the container's "Other" eyebrow.
 
 ## Capabilities
 
