@@ -1,10 +1,7 @@
 package main
 
 import (
-	"strings"
-
 	"github.com/emergent-company/go-daisy/components/layout"
-	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
 // --- Sidebar ---
@@ -37,9 +34,10 @@ templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 					if group.Label != "" {
 						<p class={ "menu-label px-2.5 pb-1.5", templ.KV("pt-5", i > 0), templ.KV("pt-0", i == 0) }>{ group.Label }</p>
 					}
-					for _, item := range group.Items {
-						@sidebarNavRow(item, providersMissing && item.Href == "/settings")
-					}
+				for _, item := range group.Items {
+					{{ if providersMissing && item.Href == "/settings" { item.Warn = sidebarProviderWarning() } }}
+					@layout.SidebarNavItem(item)
+				}
 				}
 			</div>
 		</div>
@@ -86,35 +84,10 @@ templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 	</script>
 }
 
-// sidebarIndicatorID generates a valid HTML id for a nav link's htmx loading
-// spinner (mirrors go-daisy's layout.sidebarIndicatorID).
-func sidebarIndicatorID(href string) string {
-	return "si_" + strings.ReplaceAll(strings.TrimLeft(href, "/"), "/", "_")
-}
-
-// sidebarNavRow renders one flat sidebar nav link (mirrors go-daisy's
-// layout.sidebarNavItem markup so .sidebar-menu CSS applies unchanged). When
-// warn is true the row gains a warning indicator after the label — used to
-// flag that no LLM provider is configured yet and the user should open
-// Project settings.
-templ sidebarNavRow(item layout.SidebarItem, warn bool) {
-	<a
-		{ item.Attrs... }
-		href={ templ.URL(item.Href) }
-		hx-get={ item.Href }
-		hx-target="#main-content"
-		hx-swap="innerHTML"
-		hx-push-url="true"
-		hx-indicator={ "#" + sidebarIndicatorID(item.Href) }
-		class={ "menu-item", templ.KV("active", item.Active) }
-	>
-		if item.Icon != "" {
-			<span class={ "iconify size-4 " + item.Icon }></span>
-		}
-		<span class="grow">{ item.Label }</span>
-		if warn {
-			<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured — open Project settings" title="No provider configured — open Project settings"></span>
-		}
-		@ui.HTMXIndicator(sidebarIndicatorID(item.Href))
-	</a>
+// sidebarProviderWarning is the app-specific warning indicator shown after the
+// "Project" sidebar entry when the project has no LLM provider configured yet.
+// It is passed through layout.SidebarItem.Warn; the copy stays local (go-daisy's
+// SidebarNavItem only carries the slot, not this copy).
+templ sidebarProviderWarning() {
+	<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured — open Project settings" title="No provider configured — open Project settings"></span>
 }
