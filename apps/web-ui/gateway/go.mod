@@ -6,7 +6,7 @@ require (
 	github.com/a-h/templ v0.3.1020
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/emergent-company/go-daisy v0.12.1-0.20260917190249-d0849e42b8a9
+	github.com/emergent-company/go-daisy v0.12.1-0.20260917193528-8ce69ca4cdd1
 	github.com/getsentry/sentry-go v0.49.0
 	github.com/labstack/echo/v4 v4.15.1
 	github.com/livekit/protocol v1.50.4

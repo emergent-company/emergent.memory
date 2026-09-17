@@ -31,21 +31,28 @@ templ typeGlyph(icon, iconClass, glyphClass string) {
 
 // typeIconTile renders the leading icon tile for an object/type list row:
 // colored rounded square with the type's declared icon. Without a declaration
-// it is the generic primary box tile (identical to today's rows).
+// it is the generic primary box tile (identical to today's rows). A declared
+// icon/color resolves through the catalog then delegates to ui.IconTile's
+// Color/Glyph props.
 templ typeIconTile(icon string, color string) {
 	if icon == "" && color == "" {
 		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "primary"})
 	} else {
-		<div class={ "grid shrink-0 place-items-center rounded-lg border size-9", templ.KV("bg-primary/10 text-primary border-primary/15", color == "") } style={ typeColorStyle(color) }>
-			@typeGlyph(icon, "size-4.5", "text-lg")
-		</div>
+		{{ cls := typeIconClass(icon)
+			glyph := ""
+			if cls == "" {
+				glyph = icon
+			} }}
+		@ui.IconTile(cls, ui.IconTileProps{Color: color, Glyph: glyph})
 	}
 }
 
 // typeNameChip renders the type-name chip used on object/type detail headers:
 // the type's name with its declared icon prefix and color accent. Without a
 // declaration it is the same badge with the generic box icon as before
-// (variant carries the badge tone, e.g. primary or ghost).
+// (variant carries the badge tone, e.g. primary or ghost). A declared
+// icon/color resolves through the catalog then delegates to ui.Badge's
+// Color/Glyph/LabelClass props.
 templ typeNameChip(label string, variant ui.BadgeIntent, icon string, color string) {
 	if icon == "" && color == "" {
 		@ui.Badge(ui.BadgeProps{
@@ -55,9 +62,23 @@ templ typeNameChip(label string, variant ui.BadgeIntent, icon string, color stri
 			Icon:    "lucide--box",
 		})
 	} else {
-		<span class={ "badge gap-1 badge-sm", templ.KV(string(variant), color == "") } style={ typeColorStyle(color) }>
-			@typeGlyph(icon, "size-3", "text-[13px]")
-			<span class={ templ.KV("text-base-content", color != "") }>{ label }</span>
-		</span>
+		{{ cls := typeIconClass(icon)
+			glyph := ""
+			if cls == "" {
+				glyph = icon
+			}
+			labelClass := ""
+			if color != "" {
+				labelClass = "text-base-content"
+			} }}
+		@ui.Badge(ui.BadgeProps{
+			Label:      label,
+			Variant:    variant,
+			Size:       ui.BadgeSizeSM,
+			Color:      color,
+			Icon:       cls,
+			Glyph:      glyph,
+			LabelClass: labelClass,
+		})
 	}
 }

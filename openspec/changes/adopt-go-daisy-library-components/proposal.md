@@ -30,3 +30,24 @@ Bump the go-daisy pin to `d0849e4` (contains the upstreamed components) and repo
 - `apps/web-ui/gateway/webui/css/app.css` — delete the duplicate `.toast-bar` + `@keyframes toast-shrink` (now sourced from go-daisy `custom.css`).
 - `apps/web-ui/gateway/refactor_exact_test.go` — repoint the `modalShell`/`confirmDeleteDialog` exact-render assertions at `ui.Dialog`/`ui.ConfirmDialog` (the `want` strings are unchanged: output is preserved).
 - Net effect: ~180 gateway lines deleted; no route, handler, API, schema, or user-visible behavior change.
+
+## Second adoption lane (pin `8ce69ca`)
+
+A follow-up lane bumps the pin once more and adopts the remaining gateway-local components now upstream, again preserving rendered output:
+
+1. `detailHeader` (46 call sites) → thin adapter over `nav.PageHeading` (`PageHeadingProps`), mapping Margin / Dashboard / Bare / SubtitleFull / TitleAdornment plus the children actions slot. `pageHeader` (25 call sites) stays local — `PageHeading` always emits a breadcrumbs region, adds `mt-2` to its flex row, and drops the eyebrow in Dashboard mode, none of which the list-page header has. The `Leading` variant (agent icon tile before the title, 1 call site) also stays local because `PageHeading` has no pre-title slot.
+2. `sidebarNavRow` / `sidebarIndicatorID` → `layout.SidebarNavItem` / `layout.SidebarIndicatorID`, with the app-specific provider warning passed through `SidebarItem.Warn`.
+3. `accountAvatar` → `ui.AvatarFull` with `TextClass`; the outer `shrink-0` wrapper stays (AvatarFull has no shrink slot).
+4. `typeIconTile` / `typeNameChip` → `ui.IconTile` `Color`/`Glyph` and `ui.Badge` `Color`/`Glyph`/`LabelClass`; the closed icon catalog + name normalisation stay local.
+5. `agentToolDisclosure` stays local — `ui.Disclosure` has no summary-attributes slot (the `data-testid="tool-group-header-*"` marker), hardcodes `bg-base-200/40` on the details, and hardcodes `gap-2 border-base-content/10 p-3` on the body, none of which the source-group variant uses.
+6. `cardList` (23 call sites) collapses onto `ui.Section` using `Wrapperless` for the title-empty branch (and `Rows` for the divide-y rows).
+
+### Impact (second lane)
+
+- `apps/web-ui/gateway/go.mod`, `go.sum` — go-daisy pin `d0849e42b8a9` → `8ce69ca4cdd1`.
+- `apps/web-ui/gateway/ui.templ` — `detailHeader` becomes a `PageHeading` adapter; `cardList` collapses onto `Section.Wrapperless`; `pageHeader` + `detailHeaderLeading` stay local (documented above).
+- `apps/web-ui/gateway/sidebar_user.templ` — delete `sidebarNavRow`/`sidebarIndicatorID`; add `sidebarProviderWarning`.
+- `apps/web-ui/gateway/account_menu.templ` — `accountAvatar` uses `TextClass`.
+- `apps/web-ui/gateway/type_ui.templ` — `typeIconTile`/`typeNameChip` resolve the catalog then delegate to `IconTile`/`Badge`.
+- `apps/web-ui/gateway/agent.templ` — `agentToolDisclosure` stays local (documented above).
+- No route, handler, API, schema, or user-visible behavior change.
