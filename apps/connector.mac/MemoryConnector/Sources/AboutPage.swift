@@ -135,7 +135,7 @@ struct AboutPage: View {
     /// must not disturb the page.
     private func signInToDevelopment(_ environment: Environment) {
         Task {
-            _ = try? await accountStore.signIn(environment: environment)
+            guard (try? await accountStore.signIn(environment: environment)) != nil else { return }
             let token = (try? await accountStore.currentAccessToken()) ?? ""
             await projectStore.loadProjects(accessToken: token)
         }

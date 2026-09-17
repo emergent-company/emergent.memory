@@ -86,6 +86,13 @@ remains a first-class environment for accounts that are already signed in:
 existing Dev accounts SHALL still appear in the account switcher with their
 `Dev` badge, remain selectable, and keep their connector session.
 
+The About-only rule governs *selecting* an environment for a new sign-in.
+Re-authentication of an existing account — including an expired Dev account —
+SHALL target that account's own environment and is not an environment choice;
+the Project & Account page and the window project switcher SHALL re-auth against
+the active account's environment regardless of whether it is Production or
+Development.
+
 #### Scenario: About page offers Development
 
 - **WHEN** the user opens the About page

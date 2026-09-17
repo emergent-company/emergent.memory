@@ -10,7 +10,7 @@
 - [x] 2.2 `AccountToolbarView`: replace the signed-out sign-in `Menu` (which listed Prod/Dev) with a single padded, right-aligned sign-in button that starts sign-in for the location's environment; keep the padding/stroke styling, `isSigningIn` spinner, and `.help(...)`; the signed-in account switcher keeps its accounts list but its "Add account" submenu drops the environment choice
 - [x] 2.3 `MenuBarView`: replace the "Sign in to Prod" / "Sign in to Dev" button pair in the signed-out state with ONE prominent `borderedProminent` button; keep the "Not signed in" copy, the `isSigningIn` row, and the disabled-while-signing-in behaviour
 - [x] 2.4 `ProjectAccountPage`: collapse the "Add account" `Menu` (which listed Prod/Dev) to a single Production sign-in action; leave the signed-out prompt and the expired-session re-auth prompt as single-action controls
-- [x] 2.5 Verify by inspection that no view enumerates `Environment.all` for sign-in selection any more — every sign-in affordance resolves its environment through the location policy
+- [x] 2.5 Verify by inspection that no view enumerates `Environment.all` for *new* sign-in selection any more — every sign-in affordance resolves its environment through the location policy. (Exception: the expired-session re-auth paths in `ProjectAccountPage` and `ProjectSwitcherView` still resolve the *active account's* own environment, so a Dev account re-auths against Dev — an intentional exception, not an environment choice.)
 
 ## 3. Development sign-in on About only
 
