@@ -745,9 +745,14 @@ func modalBoxAttrs(boxID string) templ.Attributes {
 
 // modalShell renders the shared native <dialog class="modal"> shell: a
 // modal-box (boxClass e.g. "max-w-sm", boxID when set) and the standard
-// backdrop form. Children are the modal-box content.
-templ modalShell(id, boxID, boxClass string) {
-	<dialog id={ id } class="modal" hx-boost="false">
+// backdrop form. Children are the modal-box content. attrs is optional extra
+// attributes for the dialog element (e.g. components.DialogAutoOpen()).
+templ modalShell(id, boxID, boxClass string, attrs ...templ.Attributes) {
+	{{ var extra templ.Attributes
+	if len(attrs) > 0 {
+		extra = attrs[0]
+	} }}
+	<dialog id={ id } class="modal" hx-boost="false" { extra... }>
 		<div { modalBoxAttrs(boxID)... } class={ "modal-box", templ.KV(boxClass, boxClass != "") }>
 			{ children... }
 		</div>

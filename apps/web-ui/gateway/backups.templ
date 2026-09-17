@@ -259,7 +259,7 @@ templ backupRow(b Backup) {
 					Icon:       "lucide--trash-2",
 					ExtraClass: "text-error hover:text-error",
 					AriaLabel:  "Delete backup " + shortID(b.ID),
-					OnClick:    openBackupDelete(b.ID),
+					OnClick:    templ.JSFuncCall("openDialogByID", "backup-delete-"+b.ID),
 				})
 			</div>
 		}
@@ -298,12 +298,6 @@ templ backupDeleteDialog(b Backup) {
 			}
 		</form>
 	}
-}
-
-// openBackupDelete opens one row's delete-confirm dialog.
-script openBackupDelete(id string) {
-	var d = document.getElementById("backup-delete-" + id);
-	if (d) d.showModal();
 }
 
 // backupTitle names a backup row: the project name when known, else a generic
@@ -396,7 +390,7 @@ templ backupDetailHeader(b *Backup) {
 					Size:       ui.ButtonSM,
 					Icon:       "lucide--trash-2",
 					ExtraClass: "text-error hover:text-error",
-					OnClick:    openBackupDelete(b.ID),
+					OnClick:    templ.JSFuncCall("openDialogByID", "backup-delete-"+b.ID),
 				}) {
 					Delete
 				}

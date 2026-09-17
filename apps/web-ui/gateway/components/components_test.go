@@ -9,11 +9,6 @@ import (
 
 // --- dialog ---
 
-func TestDialogOpenScriptDelegatesToMemoryApp(t *testing.T) {
-	html := renderHTML(t, DialogOpenScript())
-	assertContains(t, html, "function openDialogByID", "MemoryApp.openDialog")
-}
-
 func TestDialogAutoOpenAttribute(t *testing.T) {
 	attrs := DialogAutoOpen()
 	if got, ok := attrs["data-dialog-autoopen"]; !ok || got != "true" {

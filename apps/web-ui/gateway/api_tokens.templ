@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -425,46 +426,34 @@ templ apiTokenScopePickerContent(selected []string) {
 // regenerate responses: the full token value, a copy affordance, and a Done
 // link back to the list.
 templ apiTokenRevealContent(r apiTokenReveal) {
-	@ui.CardRaw("card-border border-primary/20", "p-5", templ.Attributes{"data-testid": "token-secret-panel"}) {
-		<div class="flex items-center gap-3">
-			@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary"})
-			<div class="min-w-0">
-				<p class="text-sm font-semibold">{ r.Heading }</p>
-				<p class="text-base-content/50 mt-0.5 text-xs">
-					if r.Name != "" {
-						{ r.Name } — this value is shown only once. Store it somewhere safe.
-					} else {
-						This value is shown only once. Store it somewhere safe.
-					}
-				</p>
-			</div>
-		</div>
-		<div class="mt-4 flex flex-wrap items-center gap-2">
-			<div id="api-token-secret" class="min-w-0 flex-1 rounded-box border border-base-content/15 bg-base-200/50 px-3 py-2 font-mono text-xs break-all">{ r.Token }</div>
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeButton,
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--copy",
-				Attrs:   templ.Attributes{"data-copy-target": "#api-token-secret"},
-			}) {
-				Copy
-			}
-		</div>
-		<p class="text-base-content/45 mt-2 text-xs">This token will not appear on any list or detail view again.</p>
-		<div class="mt-4 flex flex-wrap items-center gap-2">
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    r.DismissHref,
-				Variant: ui.ButtonGhost,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--x",
-			}) {
-				Done
-			}
-		</div>
-		@apiTokenCopyScript()
-	}
+	@components.SecretRevealPanel(components.SecretRevealProps{
+		Heading:   r.Heading,
+		Name:      r.Name,
+		Noun:      "value",
+		CopyLabel: "Copy",
+		SecretID:  "api-token-secret",
+		Secret:    r.Token,
+		Attrs:     templ.Attributes{"data-testid": "token-secret-panel"},
+		CardClass: "border-primary/20",
+		Footer:    apiTokenRevealFooter(r.DismissHref),
+	})
+	@apiTokenCopyScript()
+}
+
+// apiTokenRevealFooter is the reveal panel's dismissive note and Done action.
+templ apiTokenRevealFooter(dismissHref string) {
+	<p class="text-base-content/45 mt-2 text-xs">This token will not appear on any list or detail view again.</p>
+	<div class="mt-4 flex flex-wrap items-center gap-2">
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    dismissHref,
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Done
+		}
+	</div>
 }
 
 // apiTokenCopyScript wires every [data-copy-target] button on the page to copy

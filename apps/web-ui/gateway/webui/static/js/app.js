@@ -509,6 +509,15 @@
   }
 
   /*
+   * openDialogByID opens a dialog whose id is computed at render time, matching
+   * the row-dialog convention: openDialogByID("backup-delete-" + id). Used by
+   * inline handlers that cannot call openDialog with a literal id.
+   */
+  function openDialogByID(id) {
+    openDialog(id);
+  }
+
+  /*
    * openAutoOpenDialogs opens every dialogs marked with
    * data-dialog-autoopen. Called on load and after htmx swaps (components
    * .DialogAutoOpen replaces the per-page showModal() IIFEs that used to
@@ -528,6 +537,7 @@
     openAgentForm: openAgentForm,
     openDeleteConfirm: openDeleteConfirm,
     openDialog: openDialog,
+    openDialogByID: openDialogByID,
     openAutoOpenDialogs: openAutoOpenDialogs,
     toast: toast,
   };

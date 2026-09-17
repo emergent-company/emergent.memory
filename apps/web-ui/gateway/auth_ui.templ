@@ -255,8 +255,7 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 	function openNewProjectModal() {
 		var t = document.activeElement;
 		if (t && typeof t.blur === "function") t.blur();
-		var d = document.getElementById("new-project-modal");
-		if (d) d.showModal();
+		window.MemoryApp.openDialog("new-project-modal");
 		var i = document.getElementById("new-project-name");
 		if (i) i.focus();
 	}

@@ -1307,7 +1307,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 // providers". The modal body uses the backend's message as-is — it already
 // reads like plain-language guidance (e.g. base_url reachability hints).
 templ providerConfigSaveErrorModal(err error) {
-	@modalShell("provider-save-error-modal", "", "max-w-md") {
+	@modalShell("provider-save-error-modal", "", "max-w-md", components.DialogAutoOpen()) {
 		<div class="mb-3 flex items-start gap-3">
 			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
 				@ui.IconSpan("lucide--alert-triangle", "size-5")
@@ -1329,12 +1329,6 @@ templ providerConfigSaveErrorModal(err error) {
 			</form>
 		</div>
 	}
-	<script type="text/javascript">
-		(function () {
-			var d = document.getElementById('provider-save-error-modal');
-			if (d && typeof d.showModal === 'function') d.showModal();
-		})();
-	</script>
 }
 
 // providerConfigPage is the add/edit provider form page shell.

@@ -313,7 +313,7 @@ templ skillDeleteSection(s *Skill) {
 				Size:      ui.ButtonSM,
 				Icon:      "lucide--trash-2",
 				AriaLabel: "Delete " + s.Name,
-				OnClick:   openSkillDelete(),
+				OnClick:   templ.JSFuncCall("MemoryApp.openDialog", "skill-delete-modal"),
 			}) {
 				Delete
 			}
@@ -357,7 +357,3 @@ templ skillDeleteDialog(s *Skill) {
 	}
 }
 
-script openSkillDelete() {
-	var d = document.getElementById("skill-delete-modal");
-	if (d) d.showModal();
-}

@@ -4,6 +4,7 @@ import (
 	"net/url"
 
 	"github.com/emergent-company/go-daisy/components/form"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -64,7 +65,7 @@ templ MCPServersPage(data mcpServersPageData) {
 				ActionIcon:  "lucide--plus",
 			})
 		} else {
-			@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+			@components.TableCard(nil) {
 				<div class="flex flex-col divide-y divide-base-200">
 					for _, srv := range data.Servers {
 						@mcpServerRow(srv)
@@ -190,7 +191,7 @@ templ mcpServerRowActions(srv MCPServer) {
 				Icon:      "lucide--trash-2",
 				ExtraClass: "text-error hover:text-error",
 				AriaLabel: "Delete " + srv.Name,
-				OnClick:   openMCPDelete(srv.ID),
+				OnClick:   templ.JSFuncCall("openDialogByID", "mcp-server-delete-"+srv.ID),
 			})
 		</div>
 	</div>
@@ -299,12 +300,6 @@ templ mcpServerDeleteDialog(srv MCPServer) {
 			}
 		</form>
 	}
-}
-
-// openMCPDelete opens one row's delete-confirm dialog.
-script openMCPDelete(serverID string) {
-	var d = document.getElementById("mcp-server-delete-" + serverID);
-	if (d) d.showModal();
 }
 
 // MCPServerNewPage renders the create page (GET /settings/mcp-servers/new):

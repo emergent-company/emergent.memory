@@ -459,7 +459,7 @@ script openObjectConnect() {
 				.catch(function () { /* autocomplete is best-effort */ });
 		});
 	}
-	d.showModal();
+	window.MemoryApp.openDialog("object-connect-modal");
 }
 
 templ objectRelationshipRow(obj *GraphObject, r GraphRelationship, related []GraphObject) {

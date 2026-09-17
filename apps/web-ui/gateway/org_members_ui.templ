@@ -697,7 +697,7 @@ templ profileAvatar(p *UserProfileDto) {
 			type="button"
 			class="group relative cursor-pointer rounded-full border-0 bg-transparent p-0 outline-none transition focus-visible:ring-2 focus-visible:ring-primary/60"
 			aria-label="Edit profile photo"
-			onclick="document.getElementById('profile-avatar-modal').showModal()"
+			onclick="window.MemoryApp.openDialog('profile-avatar-modal')"
 		>
 			<div class="shrink-0 text-lg">
 				@ui.AvatarFull(ui.AvatarProps{
@@ -719,7 +719,7 @@ templ profileAvatar(p *UserProfileDto) {
 // /profile/avatar): a multipart upload field whose action row pairs the
 // "Remove photo" button (form="profile-avatar-remove-form", only when an
 // override exists) on the left with the "Upload photo" submit on the right.
-// Opened by the identity-card avatar trigger via showModal(); the header X
+// Opened by the identity-card avatar trigger via MemoryApp.openDialog; the header X
 // (method="dialog" submit) and the backdrop form both close it natively.
 templ profileAvatarModal(p *UserProfileDto) {
 	@modalShell("profile-avatar-modal", "", "max-w-sm") {

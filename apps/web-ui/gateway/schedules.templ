@@ -321,7 +321,7 @@ templ scheduleDangerZone(a *ScheduledAgent) {
 				Size:      ui.ButtonSM,
 				Icon:      "lucide--trash-2",
 				AriaLabel: "Delete " + a.Name,
-				OnClick:   openScheduleDelete(),
+				OnClick:   templ.JSFuncCall("MemoryApp.openDialog", "schedule-delete-modal"),
 			}) {
 				Delete
 			}
@@ -415,7 +415,3 @@ templ scheduleCreateForm(defs []AgentDefinitionSummary) {
 	}
 }
 
-script openScheduleDelete() {
-	var d = document.getElementById("schedule-delete-modal");
-	if (d) d.showModal();
-}

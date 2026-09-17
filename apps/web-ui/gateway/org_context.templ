@@ -122,8 +122,7 @@ templ OrgLandingPage(data orgPageData) {
 					if (hidden) hidden.value = btn.getAttribute('data-project-id') || '';
 					var label = document.getElementById('transfer-project-name');
 					if (label) label.textContent = btn.getAttribute('data-project-name') || 'project';
-					var d = document.getElementById('transfer-project-modal');
-					if (d) d.showModal();
+					window.MemoryApp.openDialog('transfer-project-modal');
 					var s = document.getElementById('transfer-destination-org');
 					if (s) s.focus();
 				}
@@ -164,7 +163,7 @@ templ OrgLandingPage(data orgPageData) {
 					}
 					var p = document.getElementById('project-delete-detail');
 					if (p) p.textContent = detail;
-					d.showModal();
+					window.MemoryApp.openDialog('project-delete-modal');
 					var confirm = d.querySelector('form [data-project-delete-busy]');
 					if (confirm && typeof confirm.focus === 'function') confirm.focus();
 				}
