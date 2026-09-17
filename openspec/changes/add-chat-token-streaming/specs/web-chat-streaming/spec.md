@@ -21,7 +21,7 @@ The gateway SHALL forward each upstream `token` event to the client as a `{"type
 
 ### Requirement: Emit one authoritative markdown snapshot per turn
 
-Immediately before the gateway passes the upstream `done` event through, it SHALL emit a single `{"type":"html", …}` event containing the markdown render of the turn's accumulated text. That snapshot SHALL be produced by the same renderer and sanitizer used for conversation history, so that the live final render and the history render of the same text are identical.
+Immediately before the gateway passes the upstream `done` event through, it SHALL emit a single `{"type":"html", …}` event containing the markdown render of the turn's accumulated text. That snapshot SHALL be produced by the same renderer and sanitizer used for conversation history, so that the live final render is not a weaker or differently sanitized render than the history render of the same text.
 
 #### Scenario: Snapshot precedes done
 
@@ -31,7 +31,7 @@ Immediately before the gateway passes the upstream `done` event through, it SHAL
 #### Scenario: Snapshot matches history
 
 - **WHEN** the same turn text is rendered by the final snapshot and later by the conversation history renderer
-- **THEN** both outputs are byte-identical, because both call the same sanitized markdown renderer
+- **THEN** both outputs come from the same sanitized markdown renderer, and match except where the history renderer additionally splits a leading chain-of-thought line
 
 #### Scenario: Snapshot ordering is explicit in the event sequence
 

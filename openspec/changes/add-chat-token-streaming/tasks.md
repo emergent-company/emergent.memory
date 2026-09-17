@@ -37,6 +37,6 @@
 
 ## 6. Remaining before merge
 
-- [ ] 6.1 Rebase onto the merge result of `add-agentic-chat-control` (unmerged; touches adjacent regions of `chat-stream.js` and `chat-host.js` — the `assistant_message`/`finishStream` path and the `copyText`/`formatDuration` helpers)
-- [ ] 6.2 Browser verification of the live delta path in both hosts: confirm plain text streams, the caret behaves, the turn ends on the rendered snapshot, and the sidepanel retains the formatted reply after a reload
+- [x] 6.1 Rebased onto the merge result of `add-agentic-chat-control` (#549, merged 2026-09-17): clean, no conflicts; `go build ./...`, `go test ./...`, `node --check` all pass on the rebased tip
+- [ ] 6.2 Browser verification of the live delta path in both hosts: confirm plain text streams, the caret behaves, the turn ends on the rendered snapshot, and the sidepanel retains the formatted reply after a reload — not run in the merge session: the Playwright suite targets the dev installation (which serves `main`), not this branch. The delta path is covered by the gateway SSE tests (`sse_markdown_test.go`) plus an independent code-path review
 - [ ] 6.3 Note for review: this repo has no JS unit harness, so the client-side assertions in 3.x and 4.x are verified by `node --check` plus code-path inspection rather than automated tests. Adding a JS test harness is out of scope for this change
