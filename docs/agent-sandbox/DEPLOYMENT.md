@@ -153,7 +153,7 @@ Warm pool containers consume resources even when idle. Size according to your ex
 
 The system performs automatic health checks:
 
-- **Provider health:** Checked every 30 seconds. Unhealthy providers are removed from the selection pool
+- **Provider health:** Re-checked every 30 seconds for the process lifetime. Every known provider is always listed with an availability reason; unavailable providers are never selected
 - **Cleanup job:** Runs hourly (configurable) to destroy expired sandboxes
 - **Resource alerts:** Warning logged when aggregate usage exceeds the threshold
 

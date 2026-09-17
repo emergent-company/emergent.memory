@@ -21509,6 +21509,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "uiConfig": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "updatedAt": {
                     "type": "string"
                 },
@@ -21563,6 +21569,12 @@ const docTemplate = `{
                 },
                 "toolCount": {
                     "type": "integer"
+                },
+                "uiConfig": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "updatedAt": {
                     "type": "string"
@@ -28950,6 +28962,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "registered": {
+                    "type": "boolean"
+                },
                 "type": {
                     "$ref": "#/definitions/domain_sandbox.ProviderType"
                 }
@@ -32653,7 +32668,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.80.0",
+	Version:          "0.82.0",
 	Host:             "localhost:5300",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},

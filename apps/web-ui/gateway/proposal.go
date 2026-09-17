@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // proposalEnvelope is the optional `proposal` argument an agent attaches to
@@ -412,7 +415,13 @@ func bodyField(body map[string]any, key string) json.RawMessage {
 // payload is absent/invalid (the question then keeps the markdown questionHtml
 // path exactly as today).
 func renderProposalHTML(raw json.RawMessage) string {
-	card := buildProposalCard(raw)
+	return renderProposalCardHTML(buildProposalCard(raw))
+}
+
+// renderProposalCardHTML renders a ProposalCard to sanitized HTML, or "" for a
+// nil card (or a render failure). renderProposalHTML routes through this so the
+// structured envelope and the fence fallback share one render path.
+func renderProposalCardHTML(card *ProposalCard) string {
 	if card == nil {
 		return ""
 	}
@@ -421,6 +430,197 @@ func renderProposalHTML(raw json.RawMessage) string {
 		return ""
 	}
 	return buf.String()
+}
+
+// askUserQuestionHTML renders the question markdown and proposal HTML for an
+// ask_user input. A structured proposal that renders a card always wins and the
+// question markdown is untouched. Otherwise a fenced blueprint manifest in the
+// question text produces the same card via the fence fallback, and the
+// recognized fence is stripped from the question markdown so the manifest is
+// not shown twice (raw code fence beneath the card). With neither, the question
+// renders as markdown with no proposal, unchanged from today.
+func askUserQuestionHTML(proposal json.RawMessage, question string) (questionHTML, proposalHTML string) {
+	if html := renderProposalHTML(proposal); html != "" {
+		return renderMarkdown(question), html
+	}
+	if card := proposalFromQuestionText(question); card != nil {
+		return renderMarkdown(stripManifestFence(question)), renderProposalCardHTML(card)
+	}
+	return renderMarkdown(question), ""
+}
+
+// proposalFromQuestionText derives a proposal card from a fenced blueprint
+// manifest embedded in an ask_user question, for the legacy case where no
+// structured `proposal` is attached. It recognizes the first json/yaml/yml
+// fence whose content decodes to a blueprint manifest (a `packs` array or a
+// bare pack object); anything else yields nil so the question keeps its
+// markdown path. The card is built through the same blueprint builder the
+// structured envelope uses, so the two render visually identically.
+func proposalFromQuestionText(question string) *ProposalCard {
+	manifest, _, _, ok := manifestFence(question)
+	if !ok {
+		return nil
+	}
+	return buildBlueprintCard("blueprint", blueprintManifestSummary(manifest), blueprintManifestBody(manifest))
+}
+
+// stripManifestFence removes the recognized manifest fence from question and
+// returns the re-joined text. It is called only after proposalFromQuestionText
+// found a manifest, so the fence is present; on any miss it returns the
+// question unchanged. Blank lines left by the removal are trimmed so the
+// stripped markdown stays clean.
+func stripManifestFence(question string) string {
+	_, start, end, ok := manifestFence(question)
+	if !ok {
+		return question
+	}
+	lines := strings.Split(question, "\n")
+	lines = append(lines[:start], lines[end+1:]...)
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// manifestFence locates the first fenced blueprint manifest in question: a
+// json/yaml/yml fence whose content decodes to a manifest carrying object or
+// relationship types. It returns the decoded manifest and the inclusive line
+// span of the fence (open .. close), or ok=false when none qualifies. A
+// json/yaml/yml fence that does not decode to a manifest is skipped so a later
+// real manifest is still found; bare/other-language/unterminated fences are
+// ignored.
+func manifestFence(question string) (manifest map[string]any, start, end int, ok bool) {
+	lines := strings.Split(question, "\n")
+	for i := range lines {
+		info, isFence := strings.CutPrefix(strings.TrimSpace(lines[i]), "```")
+		if !isFence {
+			continue
+		}
+		info = strings.TrimSpace(info)
+		if info != "json" && info != "yaml" && info != "yml" {
+			continue
+		}
+		var b strings.Builder
+		closedAt := -1
+		for j := i + 1; j < len(lines); j++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[j]), "```") {
+				closedAt = j
+				break
+			}
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(lines[j])
+		}
+		if closedAt < 0 {
+			continue
+		}
+		var m map[string]any
+		switch info {
+		case "json":
+			if err := json.Unmarshal([]byte(b.String()), &m); err != nil {
+				continue
+			}
+		case "yaml", "yml":
+			if err := yaml.Unmarshal([]byte(b.String()), &m); err != nil {
+				continue
+			}
+		}
+		if blueprintManifestBody(m) == nil {
+			continue
+		}
+		return m, i, closedAt, true
+	}
+	return nil, 0, 0, false
+}
+
+// blueprintManifestBody normalizes a decoded blueprint manifest into the
+// {objectTypes, relationshipTypes} body shape the blueprint card builder
+// consumes, merging the type arrays across every pack. It returns nil when the
+// manifest carries no object or relationship types.
+func blueprintManifestBody(manifest map[string]any) map[string]any {
+	var packs []any
+	if p, ok := manifest["packs"].([]any); ok {
+		packs = p
+	} else if manifest["objectTypes"] != nil || manifest["relationshipTypes"] != nil {
+		// Bare pack object: top-level objectTypes/relationshipTypes.
+		packs = []any{manifest}
+	} else {
+		return nil
+	}
+	var objectTypes, relationshipTypes []any
+	for _, p := range packs {
+		pm, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		objectTypes = appendManifestItems(objectTypes, pm["objectTypes"])
+		relationshipTypes = appendManifestItems(relationshipTypes, pm["relationshipTypes"])
+	}
+	if len(objectTypes) == 0 && len(relationshipTypes) == 0 {
+		return nil
+	}
+	body := make(map[string]any, 2)
+	if len(objectTypes) > 0 {
+		body["objectTypes"] = objectTypes
+	}
+	if len(relationshipTypes) > 0 {
+		body["relationshipTypes"] = relationshipTypes
+	}
+	return body
+}
+
+// appendManifestItems appends the elements of v — a JSON/YAML-decoded array of
+// type maps — to dst, tolerating both []any and []map[string]any forms.
+func appendManifestItems(dst []any, v any) []any {
+	switch t := v.(type) {
+	case []any:
+		return append(dst, t...)
+	case []map[string]any:
+		for _, m := range t {
+			dst = append(dst, m)
+		}
+	}
+	return dst
+}
+
+// blueprintManifestSummary builds a human summary line for a decoded blueprint
+// manifest: the first pack's name + version, then a truncated description when
+// present, and a "+N more packs" note for multi-pack manifests. No type counts —
+// the card header chip reports those.
+func blueprintManifestSummary(manifest map[string]any) string {
+	name, version, description := "", "", ""
+	extraPacks := 0
+	if packs, ok := manifest["packs"].([]any); ok {
+		if len(packs) == 0 {
+			return ""
+		}
+		if first, ok := packs[0].(map[string]any); ok {
+			name, version, description = strAny(first["name"]), strAny(first["version"]), strAny(first["description"])
+		}
+		if len(packs) > 1 {
+			extraPacks = len(packs) - 1
+		}
+	} else {
+		name, version, description = strAny(manifest["name"]), strAny(manifest["version"]), strAny(manifest["description"])
+	}
+	if name == "" {
+		if description != "" {
+			return truncateRunes(description, 80)
+		}
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(name)
+	if version != "" {
+		b.WriteString(" ")
+		b.WriteString(version)
+	}
+	if description != "" {
+		b.WriteString(" — ")
+		b.WriteString(truncateRunes(description, 80))
+	}
+	if extraPacks > 0 {
+		fmt.Fprintf(&b, " (+%d more packs)", extraPacks)
+	}
+	return b.String()
 }
 
 // proposalKindIcon returns the lucide icon for a proposal kind's badge.

@@ -193,17 +193,19 @@ type agentSessionsData struct {
 }
 
 // agentSandboxData is the payload for AgentSandboxPage: the agent being
-// edited, its current sandbox config, and the provider/image catalogs
-// (best-effort; their fetch errors are ignored, only the agent/config
-// failures surface as the whole-page LoadErr).
+// edited, its current sandbox config, and the provider/image catalogs. The
+// catalogs are best-effort (only the agent/config failures surface as the
+// whole-page LoadErr); a provider-list failure sets ProviderListErr so the
+// form can show an inline warning instead of guessing at availability.
 type agentSandboxData struct {
-	Agent     *AgentDefinition
-	Config    *AgentSandboxConfig
-	Providers []SandboxProvider
-	Images    []SandboxImage
-	LoadErr   error
-	FlashMsg  string
-	FlashErr  error
+	Agent           *AgentDefinition
+	Config          *AgentSandboxConfig
+	Providers       []SandboxProvider
+	Images          []SandboxImage
+	ProviderListErr bool // provider list fetch failed; availability is unknown
+	LoadErr         error
+	FlashMsg        string
+	FlashErr        error
 }
 
 // Settings subpage keys. "general" is the landing page (/agents/:id/settings);
@@ -1311,8 +1313,9 @@ var sandboxToolNames = []string{"bash", "read", "write", "edit", "glob", "grep",
 
 // uiAgentSandbox renders the per-agent sandbox config page. ?updated=1 /
 // ?err=1 surface PRG feedback from the update flow, mirroring uiAgentSettings.
-// The provider and image catalogs are best-effort — their failures degrade to
-// empty lists, not the whole-page error.
+// The provider and image catalogs are best-effort — a provider-list failure
+// keeps the page rendering and raises an inline availability warning, not the
+// whole-page error.
 func (s *Server) uiAgentSandbox(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -1338,7 +1341,10 @@ func (s *Server) uiAgentSandbox(c echo.Context) error {
 	data.Config = cfg
 
 	providers, err := s.memory.ListSandboxProviders(ctx)
-	captureError(err)
+	if err != nil {
+		captureError(err)
+		data.ProviderListErr = true
+	}
 	data.Providers = providers
 
 	images, err := s.memory.ListSandboxImages(ctx)
@@ -1511,14 +1517,51 @@ func sandboxToolEnabled(cfg *AgentSandboxConfig, tool string) bool {
 	return cfg != nil && containsString(cfg.Tools, tool)
 }
 
-// sandboxHealthyProviders lists the names of healthy sandbox providers,
-// comma-separated, or "" when none are healthy (the template omits the note).
-func sandboxHealthyProviders(providers []SandboxProvider) string {
-	names := []string{}
-	for _, p := range providers {
-		if p.Healthy {
-			names = append(names, p.Name)
-		}
+// sandboxProviderDisplayName is the provider name shown in the status list,
+// falling back to the type when the API omits a name.
+func sandboxProviderDisplayName(p SandboxProvider) string {
+	if p.Name != "" {
+		return p.Name
 	}
-	return strings.Join(names, ", ")
+	return p.Type
+}
+
+// sandboxProviderOptionLabel is the option text for a provider: the plain name
+// when healthy, otherwise the name with an explicit unavailable suffix so the
+// disabled state is unmistakable without relying on colour alone.
+func sandboxProviderOptionLabel(p SandboxProvider) string {
+	name := sandboxProviderDisplayName(p)
+	if p.Healthy {
+		return name
+	}
+	return name + " — unavailable"
+}
+
+// sandboxProviderListed reports whether typ appears in the provider list.
+func sandboxProviderListed(providers []SandboxProvider, typ string) bool {
+	return slices.ContainsFunc(providers, func(p SandboxProvider) bool { return p.Type == typ })
+}
+
+// sandboxSavedProviderLabel is the option text for a stored provider the API
+// did not report: a friendly name when the type is known, else the raw type,
+// always marked unavailable because its state cannot be confirmed.
+func sandboxSavedProviderLabel(typ string) string {
+	name := map[string]string{
+		"gvisor":      "gVisor (Docker)",
+		"firecracker": "Firecracker",
+		"e2b":         "E2B",
+	}[typ]
+	if name == "" {
+		name = typ
+	}
+	return name + " — unavailable"
+}
+
+// sandboxProviderWarning explains why the availability list is empty, so the
+// user knows a failed fetch differs from "no providers configured".
+func sandboxProviderWarning(data agentSandboxData) string {
+	if data.ProviderListErr {
+		return "Could not load sandbox provider availability, so Auto may pick a provider that is not available."
+	}
+	return "No sandbox providers were reported. Sandbox workspaces may be disabled on this server."
 }

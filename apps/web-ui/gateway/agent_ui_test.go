@@ -1367,7 +1367,9 @@ func TestUIAgentUpdateRoute(t *testing.T) {
 
 // TestRenderAgentSandboxPage covers the sandbox config form: the enabled
 // toggle, provider/base-image/repo/resource fields reflecting stored state,
-// the tool whitelist checkboxes, and the section layout.
+// the provider availability list (enabled healthy options, disabled
+// unavailable ones with their reason), the tool whitelist checkboxes, and the
+// section layout.
 func TestRenderAgentSandboxPage(t *testing.T) {
 	cfg := &AgentSandboxConfig{
 		Enabled:  true,
@@ -1387,8 +1389,8 @@ func TestRenderAgentSandboxPage(t *testing.T) {
 		Agent:  &AgentDefinition{ID: "a1", Name: "diane"},
 		Config: cfg,
 		Providers: []SandboxProvider{
-			{Name: "gVisor (Docker)", Type: "gvisor", Healthy: true},
-			{Name: "E2B", Type: "e2b", Healthy: false},
+			{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true},
+			{Name: "E2B", Type: "e2b", Healthy: false, Message: "E2B_API_KEY not set"},
 		},
 		Images: []SandboxImage{{ID: "img-1", Name: "memory-workspace:latest"}},
 	}
@@ -1405,16 +1407,22 @@ func TestRenderAgentSandboxPage(t *testing.T) {
 		`name="setupCommands"`, "pip install -r requirements.txt",
 		`name="envVars"`, "FOO=bar",
 		"If none selected, all tools are allowed.",
-		"Available: gVisor (Docker)",
+		// availability list: healthy enabled, unavailable disabled + reason
+		`value="gvisor" selected`, `>available<`,
+		`value="e2b" disabled`, "E2B — unavailable", "E2B_API_KEY not set",
 		`/agents/a1/sandbox/update`, `href="/agents/a1/sandbox"`, "Sandbox",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("sandbox page missing %q", want)
 		}
 	}
+	// a healthy provider must not be marked unavailable
+	if strings.Contains(html, "gVisor (Docker) — unavailable") {
+		t.Error("healthy provider must not be marked unavailable")
+	}
 
 	// empty config → Auto selected by default, nothing checked, no
-	// healthy-provider note, no env content (placeholder is static text)
+	// provider list → availability-unknown warning, no env content
 	empty := agentSandboxData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}}
 	h := renderHTML(t, AgentSandboxPage(empty))
 	if strings.Contains(h, `value="gvisor" selected`) || strings.Contains(h, `value="firecracker" selected`) || strings.Contains(h, `value="e2b" selected`) {
@@ -1426,11 +1434,57 @@ func TestRenderAgentSandboxPage(t *testing.T) {
 	if strings.Contains(h, "checked") {
 		t.Error("empty config must not render checked attributes")
 	}
-	if strings.Contains(h, "Available:") {
-		t.Error("no healthy providers → note must be omitted")
+	if !strings.Contains(h, "No sandbox providers were reported") {
+		t.Error("empty provider list must render the availability warning")
 	}
 	if strings.Contains(h, "FOO=bar</textarea>") {
 		t.Error("empty config must not render env vars as content")
+	}
+
+	// failed provider fetch → same warning, but explaining the fetch failure
+	warnErr := agentSandboxData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}, ProviderListErr: true}
+	if h := renderHTML(t, AgentSandboxPage(warnErr)); !strings.Contains(h, "Could not load sandbox provider availability") {
+		t.Error("provider fetch failure must render the availability warning")
+	}
+
+	// saved provider missing from the API list → synthetic option stays
+	// selected and selectable, so the form still submits it
+	missing := agentSandboxData{
+		Agent:     &AgentDefinition{ID: "a1", Name: "diane"},
+		Config:    &AgentSandboxConfig{Provider: "firecracker"},
+		Providers: []SandboxProvider{{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true}},
+	}
+	hm := renderHTML(t, AgentSandboxPage(missing))
+	if !strings.Contains(hm, `value="firecracker" selected`) {
+		t.Error("saved provider missing from the list must render selected")
+	}
+	if strings.Contains(hm, "firecracker\" selected disabled") || strings.Contains(hm, "firecracker\" disabled") {
+		t.Error("saved provider option must stay selectable so it round-trips on submit")
+	}
+	if !strings.Contains(hm, "Firecracker — unavailable") {
+		t.Error("saved provider missing from the list must be marked unavailable")
+	}
+
+	// stored but reported-unavailable provider → its option stays selectable
+	// (a disabled selected option is omitted from form data); a different
+	// unavailable provider is still disabled.
+	storedUnavailable := agentSandboxData{
+		Agent:  &AgentDefinition{ID: "a1", Name: "diane"},
+		Config: &AgentSandboxConfig{Provider: "firecracker"},
+		Providers: []SandboxProvider{
+			{Name: "E2B", Type: "e2b", Healthy: false, Message: "E2B_API_KEY not set"},
+			{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
+		},
+	}
+	su := renderHTML(t, AgentSandboxPage(storedUnavailable))
+	if !strings.Contains(su, `value="firecracker" selected`) {
+		t.Error("stored unavailable provider must stay selected")
+	}
+	if strings.Contains(su, "firecracker\" selected disabled") || strings.Contains(su, "firecracker\" disabled") {
+		t.Error("stored unavailable provider option must stay selectable so it round-trips on submit")
+	}
+	if !strings.Contains(su, `value="e2b" disabled`) {
+		t.Error("a non-stored unavailable provider must still be disabled")
 	}
 
 	// load-error → whole-page error state
@@ -1468,10 +1522,26 @@ func TestUIAgentSandboxRoutes(t *testing.T) {
 		t.Fatalf("sandbox GET status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"diane", `name="enabled"`, "Available: gVisor (Docker)", `value="memory-workspace:latest"`} {
+	for _, want := range []string{"diane", `name="enabled"`, `value="gvisor"`, "gVisor (Docker)", ">available<", `value="memory-workspace:latest"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("sandbox GET missing %q", want)
 		}
+	}
+	if strings.Contains(body, "gVisor (Docker) — unavailable") {
+		t.Error("healthy provider must not be marked unavailable")
+	}
+
+	// GET with a failing provider fetch: the page still renders (no whole-page
+	// error) and shows the availability warning.
+	f.providersErr = errTest
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sandbox", nil))
+	f.providersErr = nil
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sandbox GET with provider error status %d", rec.Code)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "Could not load sandbox provider availability") {
+		t.Error("provider fetch failure should render the availability warning")
 	}
 
 	// POST: full form maps onto AgentSandboxConfig, redirects to ?updated=1
@@ -2225,5 +2295,164 @@ func TestGoldenToolGroupsFixtureContract(t *testing.T) {
 	}
 	if strings.Contains(html, `data-testid="tool-group-other"`) {
 		t.Error("no fixture member may leak into the Other fallback block")
+	}
+}
+
+// sandboxSelectedProvider parses the rendered provider <select> and returns the
+// value a browser would submit: the first selected option that is not disabled,
+// or "" when no such option exists (a disabled selected option contributes
+// nothing to the form data set).
+func sandboxSelectedProvider(t *testing.T, html string) string {
+	t.Helper()
+	start := strings.Index(html, `id="agent-sandbox-provider"`)
+	if start < 0 {
+		t.Fatal("provider select not found")
+	}
+	end := strings.Index(html[start:], "</select>")
+	if end < 0 {
+		t.Fatal("provider select not closed")
+	}
+	block := html[start : start+end]
+	for {
+		i := strings.Index(block, "<option")
+		if i < 0 {
+			return ""
+		}
+		j := strings.Index(block[i:], ">")
+		if j < 0 {
+			return ""
+		}
+		tag := block[i : i+j]
+		block = block[i+j+1:]
+		if !strings.Contains(tag, "selected") || strings.Contains(tag, "disabled") {
+			continue
+		}
+		v := strings.Index(tag, `value="`)
+		if v < 0 {
+			continue
+		}
+		v += len(`value="`)
+		e := strings.Index(tag[v:], `"`)
+		if e < 0 {
+			continue
+		}
+		return tag[v : v+e]
+	}
+}
+
+// TestUIAgentSandboxProviderRoundTripSubmit is the submit regression for the
+// disabled-option defect: saving an unchanged sandbox form must never drop a
+// stored-but-unavailable provider into Auto. The test mirrors what a browser
+// submits (selected option that is not disabled) and asserts the handler
+// persists that value.
+func TestUIAgentSandboxProviderRoundTripSubmit(t *testing.T) {
+	cases := []struct {
+		name       string
+		cfg        *AgentSandboxConfig
+		providers  []SandboxProvider
+		wantSubmit string // value a browser would send for the provider field
+		wantStored string // provider the handler must persist
+	}{
+		{
+			name: "stored unavailable provider round-trips",
+			cfg:  &AgentSandboxConfig{Enabled: true, Provider: "firecracker"},
+			providers: []SandboxProvider{
+				{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true},
+				{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
+				{Name: "E2B", Type: "e2b", Registered: false, Healthy: false, Message: "E2B_API_KEY not set"},
+			},
+			wantSubmit: "firecracker",
+			wantStored: "firecracker",
+		},
+		{
+			name: "stored provider absent from the list round-trips",
+			cfg:  &AgentSandboxConfig{Enabled: true, Provider: "firecracker"},
+			providers: []SandboxProvider{
+				{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true},
+			},
+			wantSubmit: "firecracker",
+			wantStored: "firecracker",
+		},
+		{
+			name: "stored Auto round-trips as Auto",
+			cfg:  &AgentSandboxConfig{Enabled: true},
+			providers: []SandboxProvider{
+				{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: false, Message: "docker daemon unreachable"},
+			},
+			wantSubmit: "",
+			wantStored: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{
+				defs:          map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+				sandboxConfig: tc.cfg,
+				providers:     tc.providers,
+			}
+			s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+			e := echo.New()
+			e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
+			e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
+
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sandbox", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("sandbox GET status %d", rec.Code)
+			}
+			html := rec.Body.String()
+
+			got := sandboxSelectedProvider(t, html)
+			if got != tc.wantSubmit {
+				t.Errorf("browser would submit provider %q, want %q", got, tc.wantSubmit)
+			}
+			// exactly one provider control: no hidden fallback that could
+			// override an explicit Auto choice
+			if n := strings.Count(html, `name="provider"`); n != 1 {
+				t.Errorf("expected exactly one provider control, got %d", n)
+			}
+
+			// submit the form unchanged (only the provider field matters here)
+			rec = httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&provider="+got))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("sandbox update status %d", rec.Code)
+			}
+			if f.sandboxConfig == nil {
+				t.Fatal("SetAgentSandboxConfig not called")
+			}
+			if f.sandboxConfig.Provider != tc.wantStored {
+				t.Errorf("stored provider = %q, want %q", f.sandboxConfig.Provider, tc.wantStored)
+			}
+		})
+	}
+}
+
+// TestUIAgentSandboxExplicitAutoSubmit is the control: a user who explicitly
+// picks Auto submits provider="" and Auto persists (nothing re-injects the
+// stored provider).
+func TestUIAgentSandboxExplicitAutoSubmit(t *testing.T) {
+	f := &fakeMemory{
+		defs:          map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+		sandboxConfig: &AgentSandboxConfig{Enabled: true, Provider: "firecracker"},
+		providers: []SandboxProvider{
+			{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&provider="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("sandbox update status %d", rec.Code)
+	}
+	if f.sandboxConfig == nil || f.sandboxConfig.Provider != "" {
+		t.Errorf("explicit Auto must persist an empty provider, got %+v", f.sandboxConfig)
 	}
 }

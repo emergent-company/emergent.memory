@@ -33,6 +33,7 @@ type ResourceLimits struct {
 type SandboxProvider struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
+	Registered  bool   `json:"registered"`
 	Healthy     bool   `json:"healthy"`
 	Message     string `json:"message"`
 	ActiveCount int    `json:"active_count"`

@@ -197,6 +197,7 @@ type fakeMemory struct {
 
 	sandboxConfig *AgentSandboxConfig // returned by GetAgentSandboxConfig
 	providers     []SandboxProvider   // returned by ListSandboxProviders
+	providersErr  error               // failure for ListSandboxProviders
 	images        []SandboxImage      // returned by ListSandboxImages
 
 	scheduledAgents    []ScheduledAgent               // returned by ListScheduledAgents
@@ -521,6 +522,9 @@ func (f *fakeMemory) SetAgentSandboxConfig(ctx context.Context, id string, cfg *
 }
 
 func (f *fakeMemory) ListSandboxProviders(ctx context.Context) ([]SandboxProvider, error) {
+	if f.providersErr != nil {
+		return nil, f.providersErr
+	}
 	return f.providers, nil
 }
 func (f *fakeMemory) ListSandboxImages(ctx context.Context) ([]SandboxImage, error) {
