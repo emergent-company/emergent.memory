@@ -1111,7 +1111,7 @@
   // JSON (not an SSE stream), so the assistant's continuation is read back from
   // history rather than streamed live.
   async function answerQuestion(questionId, answerValue) {
-    if (streaming || !questionId) return;
+    if (streaming || !questionId) return false;
     hideEmpty();
     setStreaming(true);
     openAssistantBubble();
@@ -1129,13 +1129,16 @@
         reportError(netErr, "answer send failed");
       }
       failStream("Could not send answer: " + result.error);
-      return;
+      return false;
     }
 
     await waitForResume(currentScopeId(), baseline);
     finishStream("done");
-    // Re-render the transcript so the resumed run's continuation appears.
+    // Pull the answered question out of the dock and re-render the transcript
+    // so the resumed run's continuation appears.
+    refreshDock();
     refreshActiveTranscript();
+    return true;
   }
 
   /* ---------- approval cards ---------- */
@@ -1145,8 +1148,14 @@
 
   // POSTs an approval decision to the gateway: payload is the respond body
   // ({response, message?}) or null to cancel. The resumed run is polled until
-  // it progresses, then the transcript re-renders.
+  // it progresses, then the dock drops the decided item and the transcript
+  // re-renders. Returns true when the decision was recorded (the dock's
+  // delegated handler uses this to re-enable its controls on failure). There is
+  // deliberately no `streaming` guard here: the inline approval cards set the
+  // streaming flag before calling in (to show the progress bubble), so guarding
+  // on it would silently drop every inline decision.
   async function postDecision(questionId, payload) {
+    if (!questionId) return false;
     var baseline = await countRunEnds(currentScopeId());
     var action = payload ? "respond" : "cancel";
     var result = await MemoryChatHost.postJSON("/api/chat/questions/" + encodeURIComponent(questionId) + "/" + action, payload);
@@ -1158,11 +1167,14 @@
         reportError(netErr, "decision send failed");
       }
       failStream("Could not send decision: " + result.error);
-      return;
+      return false;
     }
     await waitForResume(currentScopeId(), baseline);
     finishStream("done");
+    // Drop the decided item from the dock and re-render the transcript.
+    refreshDock();
     refreshActiveTranscript();
+    return true;
   }
 
   // countRunEnds returns the number of completed runs in a conversation's
@@ -1335,12 +1347,9 @@
       el = document.createElement("div");
       el.id = "chat-todos";
       el.className = "hidden";
-      // Preserve a user-expanded card across refresh-driven re-renders.
-      el.addEventListener("toggle", function (ev) {
-        if (ev.target && ev.target.tagName === "DETAILS") {
-          el.dataset.expanded = ev.target.open ? "1" : "0";
-        }
-      }, true);
+      // Collapse state is owned by mount.dataset.expanded (set by the delegated
+      // .todo-card-toggle bridge in chat.templ, reapplied by applyTodoCollapse
+      // on refresh). No separate listener here — one mechanism owns it.
       msgs.parentNode.insertBefore(el, msgs);
     }
     mounts.todos = el;
@@ -1404,11 +1413,148 @@
       });
   }
 
+  // --- dock decision controls ---------------------------------------------
+  // The dock is a server-rendered fragment swapped in by refreshDock, so its
+  // controls are wired by ONE delegated handler (bound on document at boot)
+  // rather than per-render listeners. Decisions reuse the inline path's exact
+  // request code: approvals go through postDecision (respond/cancel), questions
+  // through answerQuestion — both posting the existing /api/chat/questions/…
+  // routes. After success the dock + transcript refresh, which is what makes
+  // the decided item leave the dock (an empty fragment hides the mount).
+
+  function dockCard(el) {
+    return el && el.closest ? el.closest("[data-testid='dock-approval'], [data-testid='dock-question']") : null;
+  }
+
+  // setDockBusy disables a card's controls while its decision is in flight so a
+  // double-click can't post twice. On failure the handler re-enables them.
+  function setDockBusy(card, busy) {
+    if (!card) return;
+    var controls = card.querySelectorAll("button, input");
+    for (var i = 0; i < controls.length; i++) controls[i].disabled = !!busy;
+    if (busy) card.setAttribute("aria-busy", "true");
+    else card.removeAttribute("aria-busy");
+  }
+
+  // selectDockOption toggles one option button. Multi-select keeps independent
+  // checks; single-select is exclusive. aria-checked drives both the styling and
+  // the value read back on submit.
+  function selectDockOption(card, btn) {
+    var multi = card.getAttribute("data-dock-type") === "multi_select";
+    if (multi) {
+      btn.setAttribute("aria-checked", btn.getAttribute("aria-checked") === "true" ? "false" : "true");
+    } else {
+      var opts = card.querySelectorAll(".dock-question-option");
+      for (var i = 0; i < opts.length; i++) {
+        opts[i].setAttribute("aria-checked", opts[i] === btn ? "true" : "false");
+      }
+    }
+    updateDockSubmitState(card);
+  }
+
+  // dockAnswerValue mirrors the inline renderQuestion's answerValue(): free text
+  // for a text question, a JSON array for multi-select, and the single chosen
+  // option otherwise. Null when nothing valid is selected yet.
+  function dockAnswerValue(card) {
+    if (!card) return null;
+    var input = card.querySelector(".dock-question-input");
+    if (input) return input.value.trim();
+    var checked = card.querySelectorAll(".dock-question-option[aria-checked='true']");
+    if (!checked.length) return null;
+    var type = card.getAttribute("data-dock-type") || "";
+    if (type === "multi_select") {
+      var vals = [];
+      for (var i = 0; i < checked.length; i++) vals.push(checked[i].getAttribute("data-dock-option") || "");
+      return JSON.stringify(vals);
+    }
+    return checked[0].getAttribute("data-dock-option") || null;
+  }
+
+  function updateDockSubmitState(card) {
+    var submit = card.querySelector("[data-dock-action='answer']");
+    if (!submit) return;
+    var val = dockAnswerValue(card);
+    submit.disabled = val === null || val === "";
+  }
+
+  // runDockDecision kicks off the decision (showing the same progress bubble the
+  // inline cards use) and re-enables the controls if it did not go through.
+  function runDockDecision(card, decision) {
+    setDockBusy(card, true);
+    Promise.resolve(decision).then(
+      function (ok) { if (ok !== true) setDockBusy(card, false); },
+      function () { setDockBusy(card, false); }
+    );
+  }
+
+  function onDockClick(ev) {
+    var t = ev.target;
+    if (!t || !t.closest) return;
+    var option = t.closest(".dock-question-option");
+    if (option) {
+      var optCard = dockCard(option);
+      if (optCard) selectDockOption(optCard, option);
+      return;
+    }
+    var control = t.closest("[data-dock-action]");
+    if (!control) return;
+    var card = dockCard(control);
+    if (!card) return;
+    var qid = control.getAttribute("data-question-id") || card.getAttribute("data-question-id") || "";
+    if (!qid) return;
+    var action = control.getAttribute("data-dock-action");
+    if (action === "answer") {
+      var answer = dockAnswerValue(card);
+      if (answer === null || answer === "") return;
+      runDockDecision(card, answerQuestion(qid, answer));
+      return;
+    }
+    // approve / reject / cancel all begin the resumed turn the same way the
+    // inline approval card does (progress bubble + streaming flag).
+    hideEmpty();
+    setStreaming(true);
+    openAssistantBubble();
+    if (action === "approve") {
+      runDockDecision(card, postDecision(qid, { response: "approve" }));
+    } else if (action === "reject") {
+      var msgEl = card.querySelector(".dock-approval-msg");
+      runDockDecision(card, postDecision(qid, { response: "reject", message: msgEl ? msgEl.value.trim() : "" }));
+    } else if (action === "cancel") {
+      runDockDecision(card, postDecision(qid, null));
+    }
+  }
+
+  // Enter in a dock free-text answer submits it, matching the inline card.
+  function onDockKeydown(ev) {
+    if (ev.key !== "Enter" || ev.shiftKey) return;
+    var el = ev.target;
+    if (!el || !el.classList || !el.classList.contains("dock-question-input")) return;
+    var card = dockCard(el);
+    if (!card) return;
+    var answer = dockAnswerValue(card);
+    if (answer === null || answer === "") return;
+    ev.preventDefault();
+    runDockDecision(card, answerQuestion(card.getAttribute("data-question-id") || "", answer));
+  }
+
+  function onDockInput(ev) {
+    var el = ev.target;
+    if (!el || !el.classList || !el.classList.contains("dock-question-input")) return;
+    var card = dockCard(el);
+    if (card) updateDockSubmitState(card);
+  }
+
+
   // --- session todo card --------------------------------------------------
 
   function clearTodos() {
     var el = mounts.todos || document.getElementById("chat-todos");
-    if (el) { el.innerHTML = ""; el.classList.add("hidden"); }
+    if (el) {
+      el.innerHTML = "";
+      el.classList.add("hidden");
+      // Expansion is per-conversation, so a reset drops the remembered choice.
+      if (el.dataset) delete el.dataset.expanded;
+    }
   }
 
   function refreshTodos() {
@@ -1441,22 +1587,17 @@
       });
   }
 
-  // applyTodoCollapse keeps the card collapsed by default (unless the user had
-  // expanded it) and makes a non-native toggle reachable by keyboard.
+  // applyTodoCollapse reapplies the user's expand/collapse choice to the freshly
+  // swapped-in todo card. TodoCard renders a plain <button class="todo-card-toggle">
+  // whose aria-expanded drives the list's visibility (app.css), so this is the
+  // whole mechanism: the delegated click bridge in chat.templ flips the button
+  // and records the choice on the mount's data-expanded, and this function is the
+  // only writer on refresh — a refresh therefore never re-collapses a card the
+  // user expanded. The default (no remembered choice) stays collapsed.
   function applyTodoCollapse(mount, expanded) {
-    var details = mount.querySelectorAll("details");
-    for (var i = 0; i < details.length; i++) {
-      if (expanded) details[i].setAttribute("open", "");
-      else details[i].removeAttribute("open");
-    }
-    var toggles = mount.querySelectorAll("input.collapse-toggle, input[type='checkbox'].collapse");
-    for (var j = 0; j < toggles.length; j++) {
-      toggles[j].checked = expanded;
-      if (!toggles[j].getAttribute("aria-label")) toggles[j].setAttribute("aria-label", "Toggle todos");
-    }
-    var titles = mount.querySelectorAll(".collapse-title");
-    for (var k = 0; k < titles.length; k++) {
-      if (!titles[k].hasAttribute("tabindex")) titles[k].setAttribute("tabindex", "0");
+    var toggles = mount.querySelectorAll(".todo-card-toggle");
+    for (var i = 0; i < toggles.length; i++) {
+      toggles[i].setAttribute("aria-expanded", expanded ? "true" : "false");
     }
   }
 
@@ -1826,6 +1967,12 @@
     var t = ev.target.closest("[data-action='close-tool-panel']");
     if (t) closeToolPanel();
   });
+  // document-level: the pending-work dock is a swapped-in fragment, so its
+  // decision controls are delegated (and survive every refresh). Registered
+  // once here, like the tool panel above.
+  document.addEventListener("click", onDockClick);
+  document.addEventListener("keydown", onDockKeydown);
+  document.addEventListener("input", onDockInput);
   // window-level: re-clamp the session rail width when the viewport shrinks.
   // Registered once here (not in init()) so re-renders of #chat-root never
   // stack duplicate listeners.

@@ -525,6 +525,20 @@
       "#chat-dock{border-bottom:1px solid color-mix(in oklab,var(--color-base-content) 8%,transparent);" +
       "background:color-mix(in oklab,var(--color-base-200) 40%,transparent)}" +
       "#chat-dock :is(button,a,input,select,textarea):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +
+      ".dock-head{display:flex;align-items:center;gap:.4rem;margin:.45rem .75rem .1rem;font-size:.625rem;" +
+      "font-weight:600;letter-spacing:.09em;text-transform:uppercase;" +
+      "color:color-mix(in oklab,var(--color-base-content) 45%,transparent)}" +
+      ".dock-count{display:inline-flex;align-items:center;justify-content:center;min-width:1.05rem;height:1.05rem;" +
+      "padding:0 .3rem;border-radius:9999px;background:var(--color-warning);color:var(--color-warning-content);font-size:.5625rem}" +
+      ".dock-card-controls{display:flex;flex-basis:100%;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:.4rem}" +
+      ".dock-approval-msg{flex:1 1 12rem;min-width:0;margin-right:auto}" +
+      ".dock-question-input{flex-basis:100%}" +
+      ".dock-card-options{display:flex;flex-basis:100%;flex-wrap:wrap;gap:.35rem;margin:.1rem 0 0;padding:0}" +
+      ".dock-question-option{border:1px solid color-mix(in oklab,var(--color-base-content) 18%,transparent);" +
+      "border-radius:.5rem;padding:.25rem .6rem;background:var(--color-base-100);color:inherit;font-size:.75rem;cursor:pointer}" +
+      ".dock-question-option:hover{background:color-mix(in oklab,var(--color-base-content) 6%,transparent)}" +
+      ".dock-question-option[aria-checked='true']{border-color:var(--color-primary);" +
+      "background:color-mix(in oklab,var(--color-primary) 10%,transparent);color:var(--color-primary)}" +
       /* session todo card */
       "#chat-todos{margin-bottom:.25rem}" +
       "#chat-todos :is(summary,button,input,select,a):focus-visible{outline:2px solid var(--color-primary);outline-offset:2px}" +

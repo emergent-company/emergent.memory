@@ -4,32 +4,77 @@ import "strconv"
 
 // DockPanel renders the pending-work dock for one conversation: its pending
 // tool approvals and pending ask_user questions. It renders nothing when both
-// are empty. The approve/reject/answer controls are wired by lane B against the
-// existing approval/question response routes; this component only lays out the
-// cards and their data attributes.
+// are empty. The approve/reject/answer controls carry data-dock-action /
+// data-dock-option attributes; chat.js's delegated handler posts them to the
+// existing approval/question response routes (the same ones the inline cards
+// use), so this component lays out the cards and their controls only.
+//
+// The fragment root deliberately carries no id: the chat page's mount point
+// owns #chat-dock, and an id here would nest a duplicate #chat-dock inside it.
 templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCard) {
 	if len(approvals) > 0 || len(questions) > 0 {
-		<div id="chat-dock" class="chat-dock" data-conv={ convID } data-testid="chat-dock">
+		{{ total := len(approvals) + len(questions) }}
+		<div class="chat-dock" data-conv={ convID } data-testid="chat-dock">
+			if total > 1 {
+				<div class="dock-head" data-testid="dock-head">
+					<span class="dock-count" data-testid="dock-count">{ strconv.Itoa(total) }</span>
+					<span class="dock-count-label">pending</span>
+				</div>
+			}
 			for _, a := range approvals {
-				<div class="dock-card dock-approval" data-testid="dock-approval" data-question-id={ a.QuestionID } data-conversation-id={ a.ConversationID }>
-					<span class="dock-card-kind">Approval</span>
-					<span class="dock-card-tool">{ a.ToolName }</span>
-					if a.ArgsSummary != "" {
-						<span class="dock-card-args">{ a.ArgsSummary }</span>
-					}
+				<div class="dock-card dock-approval" data-testid="dock-approval" data-dock-kind="approval" data-question-id={ a.QuestionID } data-conversation-id={ a.ConversationID }>
+					<div class="dock-card-main">
+						<span class="dock-card-kind">Approval</span>
+						<span class="dock-card-tool">{ a.ToolName }</span>
+						if a.ArgsSummary != "" {
+							<span class="dock-card-args">{ a.ArgsSummary }</span>
+						}
+					</div>
+					<div class="dock-card-controls">
+						<input
+							type="text"
+							class="dock-approval-msg input input-sm"
+							placeholder="Reason (optional)"
+							maxlength="500"
+							aria-label="Rejection reason (optional)"
+						/>
+						<button type="button" class="dock-approval-cancel btn btn-ghost btn-xs" data-dock-action="cancel" data-question-id={ a.QuestionID }>Cancel</button>
+						<button type="button" class="dock-approval-reject btn btn-ghost btn-xs text-error" data-dock-action="reject" data-question-id={ a.QuestionID }>Reject</button>
+						<button type="button" class="dock-approval-approve btn btn-primary btn-xs" data-dock-action="approve" data-question-id={ a.QuestionID }>Approve</button>
+					</div>
 				</div>
 			}
 			for _, q := range questions {
-				<div class="dock-card dock-question" data-testid="dock-question" data-question-id={ q.QuestionID }>
-					<span class="dock-card-kind">Question</span>
-					<span class="dock-card-prompt">{ q.Prompt }</span>
-					if len(q.Options) > 0 {
-						<ul class="dock-card-options">
+				{{ isText := q.Kind == "text" || len(q.Options) == 0 }}
+				{{ isMulti := q.Kind == "multi_select" }}
+				{{ optRole := "radio" }}
+				if isMulti {
+					{{ optRole = "checkbox" }}
+				}
+				<div class="dock-card dock-question" data-testid="dock-question" data-dock-kind="question" data-dock-type={ q.Kind } data-question-id={ q.QuestionID }>
+					<div class="dock-card-main">
+						<span class="dock-card-kind">Question</span>
+						<span class="dock-card-prompt">{ q.Prompt }</span>
+					</div>
+					if !isText {
+						<div class="dock-card-options" role="group" aria-label={ q.Prompt }>
 							for _, o := range q.Options {
-								<li>{ o }</li>
+								<button type="button" class="dock-question-option" role={ optRole } aria-checked="false" data-dock-option={ o }>{ o }</button>
 							}
-						</ul>
+						</div>
+					} else {
+						<input
+							type="text"
+							class="dock-question-input input input-sm w-full"
+							placeholder="Type your answer"
+							autocomplete="off"
+							aria-label={ q.Prompt }
+						/>
 					}
+					<div class="dock-card-controls">
+						<button type="button" class="dock-question-cancel btn btn-ghost btn-xs" data-dock-action="cancel" data-question-id={ q.QuestionID }>Cancel</button>
+						<button type="button" class="dock-question-submit btn btn-primary btn-xs" data-dock-action="answer" data-question-id={ q.QuestionID } disabled>Submit</button>
+					</div>
 				</div>
 			}
 		</div>

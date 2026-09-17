@@ -583,14 +583,32 @@ div:has(> #_layout-topbar) {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-/* chat.js swaps the /partial/chat-dock fragment into the mount, and DockPanel
-   carries its own id="chat-dock" on that fragment root — suppress the inner
-   node's duplicated container chrome so only one divider/band is drawn. */
-#chat-dock #chat-dock {
-  border-bottom: 0;
-  background: transparent;
+/* dock cards — pending tool approvals and ask_user questions. The DockPanel
+   fragment root has no id (the mount owns #chat-dock), so the container chrome
+   above is drawn exactly once. */
+.dock-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.45rem 0.75rem 0.1rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
 }
-/* dock cards — pending tool approvals and ask_user questions */
+.dock-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.3rem;
+  border-radius: 9999px;
+  background: var(--color-warning);
+  color: var(--color-warning-content);
+  font-size: 0.5625rem;
+}
 .dock-card {
   display: flex;
   flex-wrap: wrap;
@@ -604,6 +622,14 @@ div:has(> #_layout-topbar) {
 }
 .dock-approval { border-left: 3px solid var(--color-warning); }
 .dock-question { border-left: 3px solid var(--color-primary); }
+.dock-card-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  min-width: 0;
+}
 .dock-card-kind {
   font-size: 0.5625rem;
   font-weight: 700;
@@ -625,14 +651,44 @@ div:has(> #_layout-topbar) {
   color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
   overflow-wrap: anywhere;
 }
-.dock-card-options {
+.dock-card-controls {
+  display: flex;
   flex-basis: 100%;
-  margin: 0.1rem 0 0;
-  padding-left: 1.1rem;
-  font-size: 0.75rem;
-  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
-  list-style: disc;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
 }
+/* the approval reason input takes the row's free space, controls sit right */
+.dock-approval-msg {
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin-right: auto;
+}
+.dock-card-options {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.1rem 0 0;
+  padding: 0;
+}
+.dock-question-option {
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 18%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.6rem;
+  background: var(--color-base-100);
+  color: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.dock-question-option:hover { background: color-mix(in oklab, var(--color-base-content) 6%, transparent); }
+.dock-question-option[aria-checked="true"] {
+  border-color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+}
+.dock-question-input { flex-basis: 100%; }
 
 /* session todo card */
 #chat-todos { margin-bottom: 0.25rem; }
