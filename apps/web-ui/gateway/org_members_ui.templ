@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -539,11 +540,11 @@ templ userSearchOptions(users []UserSearchResultDto) {
 // (Profile / Invitations / API tokens), mirroring settingsSubNav. It stacks
 // horizontally on small screens and becomes a sticky left rail on desktop.
 templ profileSubNav(active string) {
-	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Profile sections">
-		@subNavItem("/profile", active == "profile", "lucide--user", "Profile")
-		@subNavItem("/profile/invitations", active == "invitations", "lucide--mail-plus", "Invitations")
-		@subNavItem("/profile/tokens", active == "tokens", "lucide--key-round", "API tokens")
-	</nav>
+	@components.SubNav("Profile sections") {
+		@components.SubNavItem("/profile", active == "profile", "lucide--user", "Profile")
+		@components.SubNavItem("/profile/invitations", active == "invitations", "lucide--mail-plus", "Invitations")
+		@components.SubNavItem("/profile/tokens", active == "tokens", "lucide--key-round", "API tokens")
+	}
 }
 
 // profilePageFrame renders the Profile area's shared chrome: the account page

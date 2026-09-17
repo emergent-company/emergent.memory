@@ -36,7 +36,8 @@ Extraction preserves rendered markup, with a small set of intentional normalizat
 2. Snippet `<pre>` class order unifies on the `agent_mcp_endpoint.templ:653` order (`rounded-box bg-base-100 overflow-x-auto whitespace-pre-wrap …`).
 3. Panel cards unify on `card-border` + `p-5`; the one-off `card-border border-primary/20` variant (`api_tokens.templ:428`) becomes `PanelCard` with an appended `ExtraClass`.
 4. Tailwind class *order* differences that produce identical CSS (for example the secret element's `border`/`rounded-box` ordering between the two reveal dialogs) are dropped — only the set of classes matters.
-5. The reveal panel's heading becomes an `<h3>` (it was a `<p>`) so both reveal variants share one heading treatment.
+5. Insignificant inter-element whitespace inside a `<select>` is dropped by rendering the option groups from a component (`TestRefactorOutputExact` pins the old space between the default option and the first `<optgroup>`; the guard is updated). No CSS, DOM structure, or parse result changes.
+6. The reveal panel's heading becomes an `<h3>` (it was a `<p>`) so both reveal variants share one heading treatment.
 
 Anything else that renders differently — or any class that changes the rendered CSS — is a bug in the extraction, not an accepted drift.
 

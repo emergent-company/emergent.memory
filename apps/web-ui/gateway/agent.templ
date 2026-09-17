@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -36,29 +37,12 @@ templ AgentDashboardPage(data agentDashboardData) {
 // (dashboard / settings / sandbox / sessions). It stacks horizontally on small
 // screens and becomes a sticky left rail on desktop.
 templ agentSubNav(agentID string, active string) {
-	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Agent sections">
-		@subNavItem("/agents/"+url.PathEscape(agentID), active == "dashboard", "lucide--layout-dashboard", "Dashboard")
-		@subNavItem("/agents/"+url.PathEscape(agentID)+"/settings", active == "settings", "lucide--settings", "Settings")
-		@subNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
-		@subNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
-	</nav>
-}
-
-templ subNavItem(href string, isActive bool, icon string, label string) {
-	<a
-		class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", isActive), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !isActive) }
-		href={ templ.URL(href) }
-		if isActive {
-			aria-current="page"
-		}
-	>
-		if isActive {
-			@ui.IconSpan(icon, "size-4 shrink-0 text-primary")
-		} else {
-			@ui.IconSpan(icon, "size-4 shrink-0 text-base-content/40")
-		}
-		<span>{ label }</span>
-	</a>
+	@components.SubNav("Agent sections") {
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID), active == "dashboard", "lucide--layout-dashboard", "Dashboard")
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", active == "settings", "lucide--settings", "Settings")
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
+	}
 }
 
 templ agentDashboardHeader(a *AgentDefinition, section string) {
@@ -296,7 +280,7 @@ templ agentChatsSection(data agentDashboardData) {
 }
 
 templ chatLinkRow(c Conversation) {
-	@listRow(templ.URL("/chat?c=" + url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), relTime(c.UpdatedAt))
+	@components.ListRow(templ.URL("/chat?c="+url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-base-content/40"), chatTitle(c), relTime(c.UpdatedAt))
 }
 
 // --- Agent settings ---

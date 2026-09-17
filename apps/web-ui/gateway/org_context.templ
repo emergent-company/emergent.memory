@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -710,11 +711,11 @@ templ OrgInvitePage(data orgInvitePageData) {
 // hub (Tools / Danger zone), mirroring settingsSubNav. It stacks horizontally
 // on small screens and becomes a sticky left rail on desktop.
 templ orgSettingsSubNav(orgID string, active string) {
-	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Organization settings sections">
-		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/general", active == "general", "lucide--building-2", "General")
-		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings", active == "tools", "lucide--sliders-horizontal", "Tools")
-		@subNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", active == "danger-zone", "lucide--shield-alert", "Danger zone")
-	</nav>
+	@components.SubNav("Organization settings sections") {
+		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/general", active == "general", "lucide--building-2", "General")
+		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings", active == "tools", "lucide--sliders-horizontal", "Tools")
+		@components.SubNavItem("/orgs/"+url.PathEscape(orgID)+"/settings/danger-zone", active == "danger-zone", "lucide--shield-alert", "Danger zone")
+	}
 }
 
 // OrgSettingsPage renders the Tools section of the org Settings hub (GET

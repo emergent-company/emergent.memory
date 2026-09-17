@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/alpine"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
@@ -321,7 +322,7 @@ templ agentCard(a AgentDefinitionSummary) {
 // table used by the other resource pages. It is hidden below md, where
 // agentCardGrid takes over.
 templ agentsTable(agents []AgentDefinitionSummary) {
-	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+	@components.TableCard(nil) {
 		@table.TableWithProps(table.TableProps{Bordered: false}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
@@ -912,18 +913,7 @@ templ modelSelect(id string, models []Model, current *ModelConfig, attrs templ.A
 	@form.FormControl(id, "Model", form.LabelAbove, "Any model the bridge can reach — hosted or local.", "", nil) {
 		<select id={ id } { attrs... } name="modelName" class="select w-full">
 			<option value="">Auto — default model</option>
-			for _, g := range modelGroups(models) {
-				<optgroup label={ g.Provider }>
-					for _, m := range g.Models {
-						<option
-							value={ m.Provider + "/" + m.ModelName }
-							if current != nil && m.Provider+"/"+m.ModelName == current.Name {
-								selected
-							}
-						>{ modelDisplay(m) }</option>
-					}
-				</optgroup>
-			}
+			@components.SelectOptionGroups(modelOptionGroups(models, current))
 			@modelCurrentOption(current, models)
 		</select>
 	}
@@ -1005,18 +995,4 @@ templ emptyDash() {
 // monoMeta renders a mono metadata line; pass the exact text color class.
 templ monoMeta(text, colorClass string) {
 	<span class={ "font-mono text-[11px] " + colorClass }>{ text }</span>
-}
-
-// listRow renders a clickable list-page row: a leading icon/tile, a grow
-// column (title + meta), trailing content (badges etc.), and an auto chevron.
-templ listRow(href templ.SafeURL, leading templ.Component, title, meta string) {
-	<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/50" href={ href }>
-		@leading
-		<div class="min-w-0 grow">
-			<p class="truncate text-sm font-medium">{ title }</p>
-			<p class="text-base-content/50 text-xs">{ meta }</p>
-		</div>
-		{ children... }
-		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-base-content/25")
-	</a>
 }

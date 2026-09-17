@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -29,10 +30,10 @@ templ settingsField(name, label, tip, hint string, attrs templ.Attributes) {
 // mirroring agentSubNav. It stacks horizontally on small screens and becomes a
 // sticky left rail on desktop.
 templ settingsSubNav(active string, providersMissing bool) {
-	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label="Settings sections">
-		@subNavItem("/settings", active == "general", "lucide--settings", "General")
-		@subNavItem("/settings/assistant", active == "assistant", "lucide--bot", "Assistant")
-		@subNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
+	@components.SubNav("Settings sections") {
+		@components.SubNavItem("/settings", active == "general", "lucide--settings", "General")
+		@components.SubNavItem("/settings/assistant", active == "assistant", "lucide--bot", "Assistant")
+		@components.SubNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
 		{{ activeP := active == "providers" }}
 		<a
 			class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !activeP) }
@@ -51,10 +52,10 @@ templ settingsSubNav(active string, providersMissing bool) {
 				<span class="iconify lucide--alert-triangle size-3.5 shrink-0 text-warning" role="img" aria-label="No provider configured" title="No provider configured"></span>
 			}
 		</a>
-		@subNavItem("/settings/voice", active == "voice", "lucide--mic", "Voice")
-		@subNavItem("/settings/devices", active == "devices", "lucide--smartphone", "Devices")
-		@subNavItem("/settings/mcp-nodes", active == "mcp-nodes", "lucide--radio", "MCP nodes")
-	</nav>
+		@components.SubNavItem("/settings/voice", active == "voice", "lucide--mic", "Voice")
+		@components.SubNavItem("/settings/devices", active == "devices", "lucide--smartphone", "Devices")
+		@components.SubNavItem("/settings/mcp-nodes", active == "mcp-nodes", "lucide--radio", "MCP nodes")
+	}
 }
 
 // ProjectSettingsPage renders the General section of project settings: the
