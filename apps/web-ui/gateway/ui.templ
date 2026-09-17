@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"io"
 	"net/url"
 	"strconv"
 
@@ -570,6 +572,11 @@ templ deleteConfirmDialog() {
 
 // pageHeader renders the standard list-page header: kicker eyebrow + title +
 // subtitle on the left, right-side actions/badges via children.
+//
+// It stays local: nav.PageHeading cannot reproduce it byte-for-byte. PageHeading
+// always emits a breadcrumbs region (even when empty), always adds mt-2 to its
+// flex row, and drops the kicker eyebrow in its Dashboard variant — while this
+// list-page header has no breadcrumbs, no mt-2, and always renders the eyebrow.
 templ pageHeader(kicker, title, subtitle string) {
 	<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
 		<div>
@@ -620,16 +627,50 @@ templ detailHeaderTitleRow(leading templ.Component) {
 	}
 }
 
-// detailHeader renders a detail-page header: breadcrumb trail (scrolls on
-// overflow), optional kicker eyebrow, h1 (+ optional subtitle), and right-side
-// badges/actions via children. Pass kicker="" to drop the eyebrow when the
-// breadcrumb already names the section.
-templ detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, opts ...detailHeaderOpts) {
-	{{
-		o := detailHeaderOpts{}
-		if len(opts) > 0 {
-			o = opts[0]
+// detailHeader renders a detail-page header: breadcrumb trail, optional kicker
+// eyebrow, h1 (+ optional subtitle), and right-side badges/actions via children.
+//
+// It is a plain Go function (not a templ component) because its children must be
+// forwarded into PageHeading's Actions slot, a templ.Component prop. templ
+// components clear their children context before the body runs, so `{ children... }`
+// cannot be converted into a Component value there; a hand-written ComponentFunc
+// reads GetChildren(ctx) directly. Leading (an agent icon tile before the title
+// column) has no PageHeading equivalent — PageHeading's TitleAdornment renders
+// after the h1 — so that one variant delegates to detailHeaderLeading.
+func detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, opts ...detailHeaderOpts) templ.Component {
+	o := detailHeaderOpts{}
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		if o.Leading != nil && !o.Bare {
+			return detailHeaderLeading(crumbs, kicker, title, subtitle, o).Render(ctx, w)
 		}
+		children := templ.GetChildren(ctx)
+		if children == nil {
+			children = templ.NopComponent
+		}
+		return nav.PageHeading(nav.PageHeadingProps{
+			Title:          title,
+			Breadcrumbs:    crumbs,
+			Kicker:         kicker,
+			Subtitle:       subtitle,
+			TitleAdornment: o.TitleAdornment,
+			Actions:        children,
+			Margin:         o.Margin,
+			Dashboard:      o.Dashboard,
+			Bare:           o.Bare,
+			SubtitleFull:   o.SubtitleFull,
+		}).Render(ctx, w)
+	})
+}
+
+// detailHeaderLeading renders the header variant whose title column is preceded
+// by a leading component (the agent icon tile). nav.PageHeading has no pre-title
+// slot, so this keeps the pre-adoption markup byte-for-byte. It mirrors the
+// pre-adoption detailHeader's non-Bare branches.
+templ detailHeaderLeading(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, o detailHeaderOpts) {
+	{{
 		margin := o.Margin
 		if margin == "" {
 			margin = "mb-4"
@@ -638,63 +679,50 @@ templ detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, 
 		if o.Dashboard {
 			itemsClass = "items-end"
 		}
+		subtitleClass := "text-base-content/55 mt-1"
+		if !o.SubtitleFull {
+			subtitleClass += " max-w-2xl"
+		}
 	}}
 	<div class={ margin }>
 		@nav.Breadcrumbs(crumbs, nav.BreadcrumbsDividerDefault)
-		if o.Bare {
-			<div class="mt-2">
-				<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-				if subtitle != "" {
-					<p class="text-base-content/55 mt-1 text-sm">{ subtitle }</p>
-				}
-			</div>
-		} else {
-			<div class={ "mt-2 flex flex-wrap", itemsClass, "justify-between gap-4" }>
-				{{
-					subtitleClass := "text-base-content/55 mt-1"
-					if !o.SubtitleFull {
-						subtitleClass += " max-w-2xl"
-					}
-				}}
+		<div class={ "mt-2 flex flex-wrap", itemsClass, "justify-between gap-4" }>
+			@detailHeaderTitleRow(o.Leading) {
 				if o.Dashboard {
-					@detailHeaderTitleRow(o.Leading) {
-						<div>
-							if o.TitleAdornment != nil {
-								<div class="flex flex-wrap items-center gap-2">
-									<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-									@o.TitleAdornment
-								</div>
-							} else {
+					<div>
+						if o.TitleAdornment != nil {
+							<div class="flex flex-wrap items-center gap-2">
 								<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-							}
-							if subtitle != "" {
-								<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
-							}
-						</div>
-					}
+								@o.TitleAdornment
+							</div>
+						} else {
+							<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+						}
+						if subtitle != "" {
+							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
+						}
+					</div>
 				} else {
-					@detailHeaderTitleRow(o.Leading) {
-						<div class="min-w-0">
-							if kicker != "" {
-								@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
-							}
-							if o.TitleAdornment != nil {
-								<div class="flex flex-wrap items-center gap-2">
-									<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-									@o.TitleAdornment
-								</div>
-							} else {
+					<div class="min-w-0">
+						if kicker != "" {
+							@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
+						}
+						if o.TitleAdornment != nil {
+							<div class="flex flex-wrap items-center gap-2">
 								<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-							}
-							if subtitle != "" {
-								<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
-							}
-						</div>
-					}
+								@o.TitleAdornment
+							</div>
+						} else {
+							<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
+						}
+						if subtitle != "" {
+							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
+						}
+					</div>
 				}
-				{ children... }
-			</div>
-		}
+			}
+			{ children... }
+		</div>
 	</div>
 }
 
