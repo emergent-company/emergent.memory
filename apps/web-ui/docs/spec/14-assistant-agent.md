@@ -194,10 +194,15 @@ Two modes, both already supported by the chat loop:
 
 ### A. Structured proposal (ask_user card)
 
-The assistant calls `ask_user` with a fenced-code-block question and
-`Accept` / `Reject` / named-alternative options. The gateway synthesizes a
-`question` event from the `ask_user` tool call and the UI renders the question
-card; the user clicks one option, the gateway
+The assistant calls `ask_user` with a short human-readable markdown question,
+`Accept` / `Reject` / named-alternative options, and a structured `proposal`
+argument — the envelope `{"kind","summary","body"}` with kinds
+`blueprint|skill|agent|mcp_server|provider|object`. The gateway renders the
+proposal as a structured card (side-effect summary + kind-specific preview)
+above the options. Legacy questions that paste a `json`/`yaml`/`yml` manifest
+fence into the question text (from a stale agent definition) render the same
+card from the fence as a presentation-only fallback; the structured envelope
+remains the primary path. The user clicks one option, the gateway
 `POST /api/chat/questions/:id/respond` proxies to Memory's
 `agent-questions/:id/respond`, Memory resumes the run in the background, and the
 client re-renders the transcript once the resumed run completes.
@@ -205,8 +210,10 @@ client re-renders the transcript once the resumed run completes.
 ```
 user: "create a skill that greets me in the morning"
   → assistant inspects existing skills, drafts content
-  → ask_user("Proposal — skill 'morning-greeting':
-      ```yaml …```", options=[Accept, Reject])
+  → ask_user(question="Proposal — add skill 'morning-greeting'",
+      proposal={"kind":"skill","summary":"Add skill morning-greeting",
+      "body":{"name":"morning-greeting","description":"…","prompt":"…"}},
+      options=[Accept, Reject])
   → [user clicks Accept]
   → assistant: skill-create(…) → skill-get(id) → "Done: skill <id>"
 ```
@@ -222,14 +229,16 @@ before any write.
 **v1 uses both**; the assistant's prompt decides which fits. No new backend is
 required for either.
 
-### C. Richer proposal card (UI enhancement, P2)
+### C. Proposal card (shipped)
 
-The existing `ask_user` card renders a text question + options. To make proposals
-first-class, extend the card to recognise a convention (fenced `yaml`/`json` block
-in the question) and render it as a **proposal card**: syntax-highlighted preview,
-scope badges (which setting type), and primary `Accept` / secondary `Reject` /
-`Edit…` actions (Edit feeds back as free text). This is presentation-only — it
-reuses `questionId` + `/respond` unchanged.
+The `ask_user` card renders the structured `proposal` as a **proposal card**:
+a side-effect summary chip (e.g. "Adds 2 object types, 3 relationship types"),
+a kind-specific read-only preview, and primary `Accept` / secondary `Reject`
+actions (free-text revision flows through a `text` question). This is
+presentation-only — it reuses `questionId` + `/respond` unchanged. A legacy
+question with a fenced `json`/`yaml`/`yml` manifest and no `proposal` renders
+the same card from the fence as a fallback; anything unrecognized stays
+markdown.
 
 ## Tool approval policy (enforcement)
 

@@ -125,7 +125,7 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 					QuestionID:      res.QuestionID,
 					Question:        askInput.Question,
 					QuestionHTML:    renderMarkdown(askInput.Question),
-					ProposalHTML:    renderProposalHTML(askInput.Proposal),
+					ProposalHTML:    fallbackProposalHTML(askInput.Proposal, askInput.Question),
 					InteractionType: askInput.InteractionType,
 					Options:         askInput.Options,
 					Placeholder:     askInput.Placeholder,
@@ -308,8 +308,9 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 			if toolName == "ask_user" {
 				if input, ok := m["tool_input"].(map[string]any); ok {
 					changed := false
-					if q, ok := input["question"].(string); ok && q != "" {
-						input["question_html"] = renderMarkdown(q)
+					question, _ := input["question"].(string)
+					if question != "" {
+						input["question_html"] = renderMarkdown(question)
 						changed = true
 					}
 					if p, ok := input["proposal"]; ok {
@@ -319,6 +320,11 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 								changed = true
 							}
 						}
+					} else if html := renderProposalCardHTML(proposalFromQuestionText(question)); html != "" {
+						// Legacy: no structured proposal — fall back to a fenced
+						// manifest in the question text.
+						input["proposal_html"] = html
+						changed = true
 					}
 					if changed {
 						if re, err := marshalNoEscape(m); err == nil {
