@@ -1,0 +1,69 @@
+package main
+
+import "strconv"
+
+// DockPanel renders the pending-work dock for one conversation: its pending
+// tool approvals and pending ask_user questions. It renders nothing when both
+// are empty. The approve/reject/answer controls are wired by lane B against the
+// existing approval/question response routes; this component only lays out the
+// cards and their data attributes.
+templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCard) {
+	if len(approvals) > 0 || len(questions) > 0 {
+		<div id="chat-dock" class="chat-dock" data-conv={ convID } data-testid="chat-dock">
+			for _, a := range approvals {
+				<div class="dock-card dock-approval" data-testid="dock-approval" data-question-id={ a.QuestionID } data-conversation-id={ a.ConversationID }>
+					<span class="dock-card-kind">Approval</span>
+					<span class="dock-card-tool">{ a.ToolName }</span>
+					if a.ArgsSummary != "" {
+						<span class="dock-card-args">{ a.ArgsSummary }</span>
+					}
+				</div>
+			}
+			for _, q := range questions {
+				<div class="dock-card dock-question" data-testid="dock-question" data-question-id={ q.QuestionID }>
+					<span class="dock-card-kind">Question</span>
+					<span class="dock-card-prompt">{ q.Prompt }</span>
+					if len(q.Options) > 0 {
+						<ul class="dock-card-options">
+							for _, o := range q.Options {
+								<li>{ o }</li>
+							}
+						</ul>
+					}
+				</div>
+			}
+		</div>
+	}
+}
+
+// TodoCard renders one conversation's session todos as a collapsed-by-default
+// card. It renders nothing when there are no todos.
+templ TodoCard(todos []TodoItem) {
+	if len(todos) > 0 {
+		<div class="todo-card" data-testid="todo-card">
+			<button type="button" class="todo-card-toggle" data-testid="todo-card-toggle" aria-expanded="false">
+				Plan
+			</button>
+			<ul class="todo-card-list" data-testid="todo-card-list">
+				for _, t := range todos {
+					<li class="todo-item" data-testid="todo-item" data-status={ t.Status } data-order={ strconv.Itoa(t.Order) }>
+						<span class="todo-item-status">{ t.Status }</span>
+						<span class="todo-item-content">{ t.Content }</span>
+					</li>
+				}
+			</ul>
+		</div>
+	}
+}
+
+// RailStatusBadge renders the session-rail run-state badge for one row: the
+// machine-readable bucket and pending-work counts plus a human label. Lane B
+// places this inside each rail row (sessionRailItem).
+templ RailStatusBadge(bucket string, pendingApprovals, pendingQuestions int) {
+	<span
+		class="rail-status-badge"
+		data-bucket={ bucket }
+		data-pending-approvals={ strconv.Itoa(pendingApprovals) }
+		data-pending-questions={ strconv.Itoa(pendingQuestions) }
+	>{ railBucketLabel(bucket) }</span>
+}

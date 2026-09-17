@@ -95,8 +95,16 @@ func TestHubPollerScopesCallsWithSession(t *testing.T) {
 	// First tick changed the (empty) fingerprint → a refresh frame is broadcast.
 	select {
 	case msg := <-ch:
-		if string(msg) != `{"type":"refresh"}` {
-			t.Errorf("broadcast payload = %q, want refresh frame", msg)
+		var p refreshPayload
+		if err := json.Unmarshal(msg, &p); err != nil {
+			t.Fatalf("broadcast payload is not a refresh frame: %v (%s)", err, msg)
+		}
+		if p.Type != "refresh" {
+			t.Errorf("broadcast type = %q, want refresh", p.Type)
+		}
+		// An empty history with no pending decisions derives the idle bucket.
+		if p.Bucket != runBucketDone || p.RunID != "" || p.RunStatus != "" || p.PendingApprovals != 0 || p.PendingQuestions != 0 {
+			t.Errorf("empty-history refresh payload = %+v, want done bucket with no run or pending counts", p)
 		}
 	default:
 		t.Error("changed fingerprint must broadcast a refresh frame")

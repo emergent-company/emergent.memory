@@ -383,7 +383,9 @@ func (s *Server) uiAgents(c echo.Context) error {
 
 // chatRailData loads the session-rail data (agents, agent name map, past
 // conversations, and scheduled-run rows) shared by the full chat page and the
-// /partial/chat-rail refresh endpoint.
+// /partial/chat-rail refresh endpoint. Each conversation row also carries its
+// derived run bucket and pending-work counts (best-effort: a failed history
+// fetch leaves the row at the "done" bucket with zero counts).
 func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSummary, agentNames map[string]string, convs *ConversationList, schedRuns []scheduledRunRow, err error) {
 	agents, err = s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
@@ -396,6 +398,29 @@ func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSumm
 	convs, cerr := s.memory.ListConversations(ctx)
 	if cerr != nil {
 		convs = &ConversationList{}
+	}
+	// Project-wide snapshots fetched once for every row (not once per
+	// conversation), mirroring the poller's grouping; conversationState reuses
+	// them so each row only adds one history fetch.
+	approvals, aErr := s.memory.ListToolApprovals(ctx)
+	if aErr != nil {
+		captureError(aErr)
+		approvals = nil
+	}
+	questions, qErr := s.memory.ListAgentQuestions(ctx)
+	if qErr != nil {
+		captureError(qErr)
+		questions = nil
+	}
+	for i := range convs.Conversations {
+		st, serr := s.conversationState(ctx, convs.Conversations[i].ID, approvals, questions)
+		if serr != nil {
+			convs.Conversations[i].Bucket = runBucketDone
+			continue
+		}
+		convs.Conversations[i].Bucket = st.bucket
+		convs.Conversations[i].PendingApprovals = len(st.pendingApprovals)
+		convs.Conversations[i].PendingQuestions = len(st.pendingQuestions)
 	}
 	schedRuns = s.chatScheduledRuns(ctx, agentNames)
 	return agents, agentNames, convs, schedRuns, nil
