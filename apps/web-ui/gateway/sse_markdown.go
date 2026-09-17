@@ -310,19 +310,20 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 				if input, ok := m["tool_input"].(map[string]any); ok {
 					changed := false
 					question, _ := input["question"].(string)
-					if question != "" {
-						var proposalRaw json.RawMessage
-						if p, ok := input["proposal"]; ok {
-							if raw, err := json.Marshal(p); err == nil {
-								proposalRaw = raw
-							}
+					var proposalRaw json.RawMessage
+					if p, ok := input["proposal"]; ok {
+						if raw, err := json.Marshal(p); err == nil {
+							proposalRaw = raw
 						}
-						questionHTML, proposalHTML := askUserQuestionHTML(proposalRaw, question)
+					}
+					questionHTML, proposalHTML := askUserQuestionHTML(proposalRaw, question)
+					if question != "" {
 						input["question_html"] = questionHTML
 						changed = true
-						if proposalHTML != "" {
-							input["proposal_html"] = proposalHTML
-						}
+					}
+					if proposalHTML != "" {
+						input["proposal_html"] = proposalHTML
+						changed = true
 					}
 					if changed {
 						if re, err := marshalNoEscape(m); err == nil {
