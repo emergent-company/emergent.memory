@@ -364,7 +364,7 @@ templ agentRow(a AgentDefinitionSummary) {
 			if a.EffectiveModel != "" {
 				<span class="font-mono text-[11px]">{ a.EffectiveModel }</span>
 			} else {
-				@emptyDash()
+				@components.EmptyDash()
 			}
 		}
 		@table.TableCell("", nil) {
@@ -376,7 +376,7 @@ templ agentRow(a AgentDefinitionSummary) {
 					Icon:    "lucide--wrench",
 				})
 			} else {
-				@emptyDash()
+				@components.EmptyDash()
 			}
 		}
 		@table.TableCell("", nil) {
@@ -821,9 +821,7 @@ templ modalShell(id, boxID, boxClass string, attrs ...templ.Attributes) {
 templ confirmDeleteDialog(id, noun string, description templ.Component) {
 	@modalShell(id, "", "max-w-sm") {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--trash-2", "size-5")
-			</div>
+			@components.ConfirmIcon("")
 			<div>
 				<h3 class="text-lg font-semibold">Delete { noun }?</h3>
 				@description
@@ -1051,11 +1049,6 @@ templ chatWelcomeHero(id, icon, wrapClass, title string, headingLevel int, headi
 		</div>
 		{ children... }
 	</div>
-}
-
-// emptyDash renders the muted em-dash fallback.
-templ emptyDash() {
-	<span class="text-base-content/30 text-sm">—</span>
 }
 
 // monoMeta renders a mono metadata line; pass the exact text color class.

@@ -49,6 +49,35 @@ func TestMetaRowRendersLabelAndValue(t *testing.T) {
 	})
 }
 
+// --- meta grid ---
+
+func TestMetaGridRendersDefaultGrid(t *testing.T) {
+	html := renderHTML(t, MetaGrid())
+	assertContains(t, html, `<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">`)
+}
+
+func TestMetaGridRendersGapAndCols(t *testing.T) {
+	html := renderHTML(t, MetaGrid(MetaGridOpts{GapY: "gap-y-4", ColsClass: "lg:grid-cols-3"}))
+	assertContains(t, html, `<dl class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">`)
+}
+
+// --- confirm ---
+
+func TestConfirmIconRendersDefaultTrashGlyph(t *testing.T) {
+	html := renderHTML(t, ConfirmIcon(""))
+	assertContains(t, html,
+		`class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"`,
+		"lucide--trash-2",
+		"size-5",
+	)
+}
+
+func TestConfirmIconRendersOverride(t *testing.T) {
+	html := renderHTML(t, ConfirmIcon("lucide--alert-triangle"))
+	assertContains(t, html, "lucide--alert-triangle")
+	assertNotContains(t, html, "lucide--trash-2")
+}
+
 // --- table ---
 
 func TestTableCardWrapsChildren(t *testing.T) {

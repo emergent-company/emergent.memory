@@ -1,5 +1,7 @@
 package components
 
+import "cmp"
+
 // MetaRowOpts tunes a MetaRow.
 type MetaRowOpts struct {
 	// Mono renders the value in the monospace treatment.
@@ -52,4 +54,33 @@ templ metaRowValue(value string, o MetaRowOpts) {
 // EmptyDash renders the muted em-dash fallback for an absent value.
 templ EmptyDash() {
 	<span class="text-base-content/30 text-sm">—</span>
+}
+
+// MetaGridOpts tunes a MetaGrid definition-list grid.
+type MetaGridOpts struct {
+	// GapY is the vertical row-gap utility class. Default "gap-y-3".
+	GapY string
+	// ColsClass optionally extends the responsive column count beyond the
+	// default two columns (for example "lg:grid-cols-3"). Empty keeps the
+	// default layout.
+	ColsClass string
+}
+
+// MetaGrid renders a definition-list grid of MetaRow / MetaRowCustom cells.
+// The layout is defined once here so the column/gap rhythm cannot drift per
+// page; callers vary only the row gap and any extra columns. Class order is
+// preserved exactly (grid → grid-cols → gap-x → gap-y → sm:grid-cols → extra)
+// because the exact-render tests pin the emitted attribute.
+templ MetaGrid(opts ...MetaGridOpts) {
+	{{ var o MetaGridOpts
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	class := "grid grid-cols-1 gap-x-6 " + cmp.Or(o.GapY, "gap-y-3") + " sm:grid-cols-2"
+	if o.ColsClass != "" {
+		class += " " + o.ColsClass
+	} }}
+	<dl class={ class }>
+		{ children... }
+	</dl>
 }
