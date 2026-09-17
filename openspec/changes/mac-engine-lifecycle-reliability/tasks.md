@@ -38,7 +38,7 @@
 ## 6. Verification
 
 - [x] 6.1 `xcodegen generate` + `xcodebuild -scheme MemoryConnector -destination 'platform=macOS' build` succeeds on the Mac build machine
-- [x] 6.2 `xcodebuild … test` runs the unit-test bundle green, including the new policy, gate, and port-conflict tests — 352 tests, 0 failures (up from 343; +9 new)
+- [x] 6.2 `xcodebuild … test` runs the unit-test bundle green, including the new policy, gate, and port-conflict tests — 358 tests, 0 failures (up from 343; +15 new: 5 policy, 6 gate, 4 port-conflict)
 - [ ] 6.3 Manual repro on the built app: sign in, switch between the dev and prod accounts, and connect a project — confirm the log shows one `engine start` per genuine change with no stop-storm, no `wrongProject` start, and no engine spawned into a held port. NOT RUN: this branch is based on `main` and does not contain the sign-in/padding work, so installing it would replace the app build currently under review on the build machine. Deferred until the lanes are combined, or run on request against a merged build.
 - [x] 6.4 Confirm the change is Swift-app-only: `git diff --stat` touches nothing under `apps/connector.linux/` or `apps/server/`
 - [x] 6.5 Spec stays in sync: the `mac-connector-app` delta spec in this change matches the shipped behaviour (`openspec validate … --strict` passes)
