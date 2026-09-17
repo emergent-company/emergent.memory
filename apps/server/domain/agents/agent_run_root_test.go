@@ -14,6 +14,7 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
@@ -74,13 +75,19 @@ func TestResolveRootRunID_EmptyFieldsSelfRoot(t *testing.T) {
 // =============================================================================
 
 type rootCaptureDriver struct {
-	mu      sync.Mutex
-	queries []string
+	mu        sync.Mutex
+	queries   []string
+	args      [][]driver.NamedValue
+	lastQuery string
+	lastArgs  []driver.NamedValue
 }
 
 func (d *rootCaptureDriver) reset() {
 	d.mu.Lock()
 	d.queries = nil
+	d.args = nil
+	d.lastQuery = ""
+	d.lastArgs = nil
 	d.mu.Unlock()
 }
 
@@ -90,6 +97,124 @@ func (d *rootCaptureDriver) queriesCopy() []string {
 	out := make([]string, len(d.queries))
 	copy(out, d.queries)
 	return out
+}
+
+// insertFor returns the most recent INSERT statement targeting the given table.
+func (d *rootCaptureDriver) insertFor(table string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	needle := `INSERT INTO "kb"."` + table + `"`
+	for i := len(d.queries) - 1; i >= 0; i-- {
+		if strings.Contains(d.queries[i], needle) {
+			return d.queries[i]
+		}
+	}
+	return ""
+}
+
+func (d *rootCaptureDriver) record(query string, args []driver.NamedValue) {
+	d.mu.Lock()
+	d.queries = append(d.queries, query)
+	d.args = append(d.args, args)
+	d.lastQuery = query
+	d.lastArgs = args
+	d.mu.Unlock()
+}
+
+// splitTopLevel splits a SQL value list on commas that are not inside string
+// literals or nested brackets.
+func splitTopLevel(s string) []string {
+	var out []string
+	var cur strings.Builder
+	depth := 0
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		switch {
+		case ch == '\'':
+			if inQuote && i+1 < len(s) && s[i+1] == '\'' {
+				cur.WriteString("''")
+				i++
+				continue
+			}
+			inQuote = !inQuote
+			cur.WriteByte(ch)
+		case inQuote:
+			cur.WriteByte(ch)
+		case ch == '(' || ch == '[':
+			depth++
+			cur.WriteByte(ch)
+		case ch == ')' || ch == ']':
+			depth--
+			cur.WriteByte(ch)
+		case ch == ',' && depth == 0:
+			out = append(out, strings.TrimSpace(cur.String()))
+			cur.Reset()
+		default:
+			cur.WriteByte(ch)
+		}
+	}
+	return append(out, strings.TrimSpace(cur.String()))
+}
+
+// rootColumnValue returns the literal written for the root_run_id column of the
+// last INSERT (e.g. "'root-1'", "DEFAULT", "NULL", "”"), and whether the column
+// was present at all. Bun inlines literals for this dialect, so the SQL text is
+// the source of truth for what the insert actually sends.
+func rootColumnValue(t *testing.T, query string) (string, bool) {
+	t.Helper()
+	up := strings.ToUpper(query)
+	insertAt := strings.Index(up, "INSERT INTO")
+	require.GreaterOrEqual(t, insertAt, 0, "expected an INSERT statement, got: %s", query)
+
+	openRel := strings.Index(query[insertAt:], "(")
+	require.GreaterOrEqual(t, openRel, 0, "expected a column list, got: %s", query)
+	open := insertAt + openRel
+	closeRel := strings.Index(query[open:], ")")
+	require.GreaterOrEqual(t, closeRel, 0, "expected a closed column list, got: %s", query)
+	columns := splitTopLevel(query[open+1 : open+closeRel])
+
+	valuesAt := strings.Index(up[open:], "VALUES")
+	require.GreaterOrEqual(t, valuesAt, 0, "expected a VALUES clause, got: %s", query)
+	valuesAt += open
+	valuesOpenRel := strings.Index(query[valuesAt:], "(")
+	require.GreaterOrEqual(t, valuesOpenRel, 0, "expected a values tuple, got: %s", query)
+	valuesOpen := valuesAt + valuesOpenRel
+	// Walk to the matching close paren, honouring string literals.
+	depth, inQuote, valuesClose := 0, false, -1
+	for i := valuesOpen; i < len(query); i++ {
+		switch query[i] {
+		case '\'':
+			inQuote = !inQuote
+		case '(':
+			if !inQuote {
+				depth++
+			}
+		case ')':
+			if !inQuote {
+				depth--
+				if depth == 0 {
+					valuesClose = i
+				}
+			}
+		}
+		if valuesClose >= 0 {
+			break
+		}
+	}
+	require.GreaterOrEqual(t, valuesClose, 0, "expected a closed values tuple, got: %s", query)
+	values := splitTopLevel(query[valuesOpen+1 : valuesClose])
+
+	for i, col := range columns {
+		if strings.Trim(strings.TrimSpace(col), `"`) != "root_run_id" {
+			continue
+		}
+		if i >= len(values) {
+			return "", false
+		}
+		return values[i], true
+	}
+	return "", false
 }
 
 func (d *rootCaptureDriver) Open(string) (driver.Conn, error) { return &rootCaptureConn{d: d}, nil }
@@ -102,17 +227,13 @@ func (c *rootCaptureConn) Prepare(string) (driver.Stmt, error) {
 func (c *rootCaptureConn) Close() error              { return nil }
 func (c *rootCaptureConn) Begin() (driver.Tx, error) { return rootCaptureTx{}, nil }
 
-func (c *rootCaptureConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
-	c.d.mu.Lock()
-	c.d.queries = append(c.d.queries, query)
-	c.d.mu.Unlock()
+func (c *rootCaptureConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.d.record(query, args)
 	return driver.RowsAffected(1), nil
 }
 
-func (c *rootCaptureConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
-	c.d.mu.Lock()
-	c.d.queries = append(c.d.queries, query)
-	c.d.mu.Unlock()
+func (c *rootCaptureConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.d.record(query, args)
 	return rootEmptyRows{}, nil
 }
 
@@ -217,4 +338,68 @@ func TestCreateRunQueued_PersistsRootAtInsert(t *testing.T) {
 	query := strings.Join(rootDriver.queriesCopy(), "\n")
 	require.NotEmpty(t, query, "CreateRunQueued must issue an INSERT")
 	assert.Contains(t, query, "root_run_id", "queued INSERT must include the root_run_id column, got: %s", query)
+}
+
+// A non-nil empty root means "absent". If it were written to the uuid column the
+// insert would fail, so it must be normalized to NULL at the create boundary.
+func TestCreateRunWithOptions_EmptyRootBecomesNull(t *testing.T) {
+	rootDriver.reset()
+	repo := newRootCaptureRepository(t)
+
+	_, _ = repo.CreateRunWithOptions(context.Background(), CreateRunOptions{
+		AgentID:   "agent-1",
+		RootRunID: strPtr(""),
+	})
+
+	query := rootDriver.insertFor("agent_runs")
+	value, present := rootColumnValue(t, query)
+	require.True(t, present, "root_run_id column must be present in the INSERT: %s", query)
+	assert.NotEqual(t, "''", value, "an empty root must never be written as an empty string literal")
+	assert.Contains(t, []string{"DEFAULT", "NULL"}, value, "an empty root must be written as NULL/default, got %s", value)
+}
+
+func TestCreateRunQueued_EmptyRootBecomesNull(t *testing.T) {
+	rootDriver.reset()
+	repo := newRootCaptureRepository(t)
+
+	_, _ = repo.CreateRunQueued(context.Background(), "agent-1", 1, CreateRunQueuedOptions{
+		RootRunID: strPtr(""),
+	})
+
+	query := rootDriver.insertFor("agent_runs")
+	value, present := rootColumnValue(t, query)
+	require.True(t, present, "root_run_id column must be present in the INSERT: %s", query)
+	assert.NotEqual(t, "''", value, "an empty root must never be written as an empty string literal")
+	assert.Contains(t, []string{"DEFAULT", "NULL"}, value, "an empty root must be written as NULL/default, got %s", value)
+}
+
+// The value really does reach the column when it is a real root: this pins the
+// column/argument alignment the empty-root tests rely on.
+func TestCreateRunWithOptions_RootValueBoundToColumn(t *testing.T) {
+	rootDriver.reset()
+	repo := newRootCaptureRepository(t)
+
+	_, _ = repo.CreateRunWithOptions(context.Background(), CreateRunOptions{
+		AgentID:   "agent-1",
+		RootRunID: strPtr("root-1"),
+	})
+
+	query := rootDriver.insertFor("agent_runs")
+	value, present := rootColumnValue(t, query)
+	require.True(t, present, "root_run_id column must be present in the INSERT: %s", query)
+	assert.Equal(t, "'root-1'", value)
+}
+
+// The delegation tool reads the delegator's root from context once and uses it
+// for both dispatch modes; empty means "no override", never a pointer to "".
+func TestRootOverrideFromContext(t *testing.T) {
+	assert.Nil(t, rootOverrideFromContext(context.Background()))
+
+	ctx := provider.ContextWithRootRunID(context.Background(), "root-1")
+	override := rootOverrideFromContext(ctx)
+	require.NotNil(t, override)
+	assert.Equal(t, "root-1", *override)
+
+	emptyCtx := provider.ContextWithRootRunID(context.Background(), "")
+	assert.Nil(t, rootOverrideFromContext(emptyCtx))
 }

@@ -30,10 +30,20 @@ unchanged.
 - **WHEN** an agent run spawns a sub-agent through the delegation tool
 - **THEN** the child's persisted orchestration root is the delegator's root, unchanged
 
+#### Scenario: Spawned child inherits the delegator's root in either dispatch mode
+
+- **WHEN** an agent run spawns a sub-agent through the delegation tool with synchronous (the default) or queued dispatch
+- **THEN** the child's persisted orchestration root is the delegator's root, unchanged in both cases
+
 #### Scenario: Caller override wins
 
 - **WHEN** a caller supplies an orchestration root for a run that also has a stored root
 - **THEN** the caller-supplied root is the one persisted
+
+#### Scenario: An empty supplied root is treated as absent
+
+- **WHEN** a caller supplies an empty orchestration root
+- **THEN** the run roots according to the normal precedence and no empty value is written to the run's root column
 
 ### Requirement: Root linkage does not depend on tracing
 

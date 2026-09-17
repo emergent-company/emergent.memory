@@ -57,13 +57,26 @@ is what stops a re-enqueued run from self-rooting to its new id — the exact
 behaviour that split trees before. Self-rooting is the last resort for a genuine
 top-level run.
 
-### D4 — Propagate the root through the queued path
+### D4 — Propagate the root through both dispatch modes
 
-The queued branch of `ExecuteTriggerAgent` now reads
-`provider.RootRunIDFromContext(ctx)` into the queued run, and
-`WorkerPool.reenqueueParent` passes `parentRun.RootRunID` through. Combined with
-D3's stored-root fallback, a run that survives a queue hop keeps its original
-orchestration root even if the context carries none.
+`ExecuteTriggerAgent` reads the caller's root from context once
+(`rootOverrideFromContext(ctx)`) and passes it to whichever branch runs: the
+queued branch copies it into `CreateRunQueuedOptions`, and the sync branch — the
+default dispatch mode — sets it on `ExecuteRequest`. Propagating only to the
+queued branch would leave the default path self-rooting its child and splitting
+the tree. `WorkerPool.reenqueueParent` also passes `parentRun.RootRunID` through,
+so combined with D3's stored-root fallback a run that survives a queue hop keeps
+its original root even if the context carries none.
+
+### D7 — Normalize an empty root to NULL at the create boundary
+
+`resolveRootRunID` treats `&""` as absent, so the value that reaches
+`CreateRunOptions.RootRunID` / `CreateRunQueuedOptions.RootRunID` must be
+normalized the same way: `nilIfEmpty` maps nil or `""` to nil on both insert
+paths. Without it an empty override is written as `''` into a `uuid` column and
+fails run creation — a failure mode that did not exist before the root was
+inserted at all. `rootOverrideFromContext` applies the same rule on the read
+side, so the delegation tool never builds a pointer to `""`.
 
 ### D5 — No backfill
 

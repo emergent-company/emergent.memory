@@ -1456,6 +1456,18 @@ func resolveRootRunID(run *AgentRun, reqRoot *string) string {
 	return run.ID
 }
 
+// rootOverrideFromContext returns the caller's orchestration root as a pointer,
+// or nil when the context carries none (tracing is not involved — the root is
+// injected by runPipeline for every run). Callers that build a child request or
+// a queued run use it so a delegated child inherits the delegator's root instead
+// of self-rooting.
+func rootOverrideFromContext(ctx context.Context) *string {
+	if rootRunID := provider.RootRunIDFromContext(ctx); rootRunID != "" {
+		return &rootRunID
+	}
+	return nil
+}
+
 // persistRunLinkage writes the run's trace_id and root_run_id back to the DB row.
 // root_run_id is always persisted so the orchestration tree survives even when
 // tracing is disabled; trace_id is empty (written as NULL) unless the span

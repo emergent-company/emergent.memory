@@ -35,12 +35,20 @@
 - [x] 1.4 `executor.go` — new `persistRunLinkage` writes `root_run_id`
       unconditionally and keeps `trace_id` gated on a valid span; both previous
       `if sc.IsValid()` write sites now call it. Failures remain logged warnings.
-- [x] 1.5 `mcp_tools.go` — the queued branch carries
-      `provider.RootRunIDFromContext(ctx)` into the queued run.
+- [x] 1.5 `mcp_tools.go` — `ExecuteTriggerAgent` resolves the caller's root from
+      context **once** and passes it into both dispatch modes: the queued run's
+      `CreateRunQueuedOptions` and the sync branch's `ExecuteRequest`. (The sync
+      branch is the default mode; without this the child self-rooted and the tree
+      still split.)
 - [x] 1.6 `worker_pool.go` — `reenqueueParent` propagates
       `parentRun.RootRunID`, so a re-enqueue no longer splits the tree.
 - [x] 1.7 `executor.go` — stale `getRootRunID` comment corrected.
 - [x] 1.8 No schema change: the column and migration `00060` already exist.
+- [x] 1.9 `repository.go` — `nilIfEmpty` normalizes a non-nil empty root to NULL
+      on both insert paths, so an empty override can never be written to the uuid
+      column (which would fail run creation). `executor.go` exposes
+      `rootOverrideFromContext` so the delegation tool never builds a pointer to
+      `""`.
 
 ## 2. Verification
 
@@ -51,7 +59,11 @@
       (`ask_user_tool_test.go`): with an **invalid** span the root is still
       written and `trace_id` is NULL (the regression this change fixes); with a
       valid span both are written.
-- [x] 2.3 Both insert paths are asserted to carry `root_run_id`.
+- [x] 2.3 Both insert paths are asserted to carry `root_run_id`; a supplied root
+      is asserted to reach the column, and an empty root is asserted to be
+      written as NULL/DEFAULT rather than `''` (verified to fail before fix 1.9).
+- [x] 2.3a `rootOverrideFromContext` is unit-tested for absent, present, and
+      empty-valued context roots.
 - [x] 2.4 `go build ./...` passes in `apps/server`.
 - [x] 2.5 `go test ./domain/agents/...` passes.
 - [x] 2.6 Lint (`golangci-lint run ./domain/agents/...`) reports no new findings
@@ -70,14 +82,23 @@
 - [ ] 3.2 After merge, `openspec archive fix-agent-run-root-linkage` and sync the
       delta into `openspec/specs/agent-run-linkage/`.
 
-## 4. Follow-ups (out of scope)
+## 4. PR review follow-ups (PR #551)
 
-- [ ] 4.1 No backfill of historical rows; their roots stay NULL. A backfill would
+- [x] 4.0a Sync delegation did not propagate the root (default dispatch mode): a
+      delegated child self-rooted. Fixed in 1.5 — both modes now read the context
+      root once.
+- [x] 4.0b A caller-supplied non-nil empty root was copied into the insert before
+      `resolveRootRunID` normalized it, so `&""` would have failed run creation
+      against the uuid column. Fixed in 1.9, with insert-path regression tests.
+
+## 5. Follow-ups (out of scope)
+
+- [ ] 5.1 No backfill of historical rows; their roots stay NULL. A backfill would
       have to infer roots from `parent_run_id` / `resumed_from` chains across
       arbitrary history with no way to validate the result.
-- [ ] 4.2 Once this is deployed and the delegation scenario passes with a root
+- [ ] 5.2 Once this is deployed and the delegation scenario passes with a root
       present, tighten `agent-delegation.spec.ts`: the `rootRunId` assertion there
       is currently a cross-check (it cannot require a root until this fix ships).
-- [ ] 4.3 `agent-run-preview`'s claim that "no memory-service code changes are
+- [ ] 5.3 `agent-run-preview`'s claim that "no memory-service code changes are
       needed" was wrong; its grouping-by-root design assumes this fix. Worth
       correcting in that change rather than here.

@@ -1455,6 +1455,16 @@ func (r *Repository) UpdateTraceAndRootRun(ctx context.Context, runID, traceID, 
 	return err
 }
 
+// nilIfEmpty returns nil for a nil or empty string pointer. Used for optional
+// uuid columns such as root_run_id: a caller-supplied empty string means
+// "absent", and writing "" to a uuid column would fail the insert instead.
+func nilIfEmpty(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
+}
+
 // CreateRunWithOptions creates a new agent run with coordination options.
 func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
 	run := &AgentRun{
@@ -1463,7 +1473,7 @@ func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOpt
 		StartedAt:         time.Now(),
 		Summary:           make(map[string]any),
 		ParentRunID:       opts.ParentRunID,
-		RootRunID:         opts.RootRunID,
+		RootRunID:         nilIfEmpty(opts.RootRunID),
 		MaxSteps:          opts.MaxSteps,
 		ResumedFrom:       opts.ResumedFrom,
 		StepCount:         opts.InitialStepCount,
@@ -2274,7 +2284,7 @@ func (r *Repository) CreateRunQueued(ctx context.Context, agentID string, maxAtt
 	var maxPendingJobs int
 	if len(opts) > 0 {
 		parentRunID = opts[0].ParentRunID
-		rootRunID = opts[0].RootRunID
+		rootRunID = nilIfEmpty(opts[0].RootRunID)
 		triggerMessage = opts[0].TriggerMessage
 		triggerMetadata = opts[0].TriggerMetadata
 		maxPendingJobs = opts[0].MaxPendingJobs
