@@ -151,7 +151,7 @@ function skipOnTurnDeviation(reason: string): void {
 }
 
 test.describe('chat run-control scenarios', () => {
-  test('dock renders a pending approval with decision controls and a count', async ({ page }) => {
+  test('dock renders a pending question with decision controls and a count', async ({ page }) => {
     // Provider save and the chat turn are both network-bound live calls.
     test.setTimeout(300_000);
     test.skip(
@@ -166,8 +166,9 @@ test.describe('chat run-control scenarios', () => {
     let agentId = '';
 
     try {
-      // defaultToolPolicy "ask" makes every tool call require human approval, so
-      // a single forced ask_user call surfaces as a pending decision in the dock.
+      // A single forced ask_user call surfaces as a pending QUESTION card in the
+      // dock (submit/cancel controls), not a tool approval — the tool-approval
+      // card path is not covered here.
       const systemPrompt =
         `Automated test of the chat pending-work dock. Your ONLY job in this turn is to ` +
         `call the "ask_user" tool exactly once with interaction_type "buttons" and options ` +
@@ -197,8 +198,8 @@ test.describe('chat run-control scenarios', () => {
         return;
       }
 
-      // The dock owns the pending decision: it renders a card with the
-      // approve/reject/cancel (approval) or submit/cancel (question) controls.
+      // The dock owns the pending decision. The selector accepts either card
+      // kind, but this scenario deterministically produces the question card.
       const dock = page.locator('#chat-dock');
       await expect(dock).toBeVisible();
       await expect(dock.locator('[data-testid="dock-approval"], [data-testid="dock-question"]').first()).toBeVisible();
