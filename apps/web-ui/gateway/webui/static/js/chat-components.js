@@ -277,15 +277,28 @@
     }
     // Host module absent (should not happen — loaded on every chat surface):
     // keep the same navigator.clipboard + textarea fallback inline.
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      try { navigator.clipboard.writeText(String(text)); return; } catch (e) {}
+    var value = String(text);
+    function copyTextFallback() {
+      var ta = document.createElement("textarea");
+      ta.value = value;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(ta);
     }
-    var ta = document.createElement("textarea");
-    ta.value = String(text);
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand("copy"); } catch (e) {}
-    document.body.removeChild(ta);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        var p = navigator.clipboard.writeText(value);
+        if (p && typeof p.then === "function") {
+          p.then(
+            function () {},
+            function () { copyTextFallback(); }
+          );
+        }
+        return;
+      } catch (e) { /* fall through to the textarea fallback */ }
+    }
+    copyTextFallback();
   }
 
   var COPY_ICON = '<span class="iconify lucide--copy size-3.5" aria-hidden="true"></span>';

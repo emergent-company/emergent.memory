@@ -66,16 +66,10 @@
 
   // Copy text to the clipboard using the same pattern as the API-token copy
   // script (api_tokens.templ): navigator.clipboard when available, otherwise a
-  // hidden textarea + execCommand fallback for older/insecure contexts.
-  function copyText(text) {
-    var value = text == null ? "" : String(text);
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      try {
-        var p = navigator.clipboard.writeText(value);
-        if (p && typeof p.catch === "function") p.catch(function () {});
-        return;
-      } catch (e) { /* fall through to the textarea fallback */ }
-    }
+  // hidden textarea + execCommand fallback for older/insecure contexts. A
+  // rejected clipboard write (permission denied / clipboard unavailable) also
+  // falls back to the textarea path rather than silently swallowing the error.
+  function copyTextFallback(value) {
     var ta = document.createElement("textarea");
     ta.value = value;
     ta.setAttribute("readonly", "");
@@ -86,6 +80,26 @@
     ta.select();
     try { document.execCommand("copy"); } catch (e) {}
     document.body.removeChild(ta);
+  }
+
+  function copyText(text) {
+    var value = text == null ? "" : String(text);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        var p = navigator.clipboard.writeText(value);
+        if (p && typeof p.then === "function") {
+          // Only skip the fallback after a successful write: a rejected promise
+          // (permission denied / clipboard unavailable) must still fall back to
+          // the textarea + execCommand path.
+          p.then(
+            function () {},
+            function () { copyTextFallback(value); }
+          );
+        }
+        return;
+      } catch (e) { /* fall through to the textarea fallback */ }
+    }
+    copyTextFallback(value);
   }
 
   // formatDuration renders a millisecond span as a compact wall-clock string
