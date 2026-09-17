@@ -39,31 +39,31 @@ templ AgentDashboardPage(data agentDashboardData) {
 templ agentSubNav(agentID string, active string, section string) {
 	@components.SubNav("Agent sections") {
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID), active == "dashboard", "lucide--layout-dashboard", "Dashboard")
-		@agentSettingsNavGroup(agentID, active, section)
+		@agentSettingsNavGroup(agentID, section)
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
 	}
 }
 
-// agentSettingsNavGroup renders the Settings rail entry. Off the settings
-// surface it is a plain link; on any settings subpage it becomes a group with
-// the six subpage children indented beneath it (active child highlighted).
-templ agentSettingsNavGroup(agentID string, active string, section string) {
-	if active != "settings" {
+// agentSettingsNavGroup renders the Settings rail entry together with its six
+// subpage children, always visible in the agent details rail. A child is active
+// when its section matches; the parent is a plain link into the settings hub and
+// is never marked current (the General child shares its destination, so marking
+// both would duplicate the current-page state). The children form a compact
+// bordered cluster beside the parent on the small-screen horizontal rail and
+// become an indented vertical column on the desktop rail.
+templ agentSettingsNavGroup(agentID string, section string) {
+	<div class="flex shrink-0 flex-row gap-1 lg:flex-col lg:gap-1">
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
-	} else {
-		<div class="flex flex-col gap-1">
-			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
-			<div class="flex flex-col gap-1 pl-4">
-				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
-				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
-				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
-				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/skills", section == "skills", "lucide--sparkles", "Skills")
-				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/delegation", section == "delegation", "lucide--users", "Delegation")
-				@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/mcp", section == "mcp", "lucide--plug", "MCP sharing")
-			</div>
+		<div class="flex shrink-0 flex-row gap-1 rounded-lg border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/skills", section == "skills", "lucide--sparkles", "Skills")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/delegation", section == "delegation", "lucide--users", "Delegation")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/mcp", section == "mcp", "lucide--plug", "MCP sharing")
 		</div>
-	}
+	</div>
 }
 
 templ agentDashboardHeader(a *AgentDefinition, section string) {
@@ -435,7 +435,7 @@ templ agentModelSettingsForm(data agentSettingsData) {
 		}) {
 			<div class="flex flex-col gap-4">
 				@agentModelSettingsWarning(data)
-				@modelSelect("agent-settings-model", data.Models, data.Agent.Model, nil)
+				@modelSelect("agent-settings-model", data.Models, data.Agent.Model, agentAutoModelName(data.Agent, data.DefaultModel), nil)
 				@modelParamsGrid("agent-settings", data.Agent.Model)
 			</div>
 		}

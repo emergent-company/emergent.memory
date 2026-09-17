@@ -352,34 +352,49 @@ func resolveAvatar(override, picture string) string {
 }
 
 // uiAgents renders the agents management page (list + create/edit/delete).
-// The model catalog and the skill list are best-effort: the create/edit
-// dialog falls back to a free-choice model list and an empty skill picker
-// when either is unreachable.
+// The model catalog, the skill list, and the project's pinned default model
+// are best-effort: the create/edit dialog falls back to a free-choice model
+// list, an empty skill picker, and the generic "Auto — default model" label
+// when any of them is unreachable.
 func (s *Server) uiAgents(c echo.Context) error {
 	ctx := c.Request().Context()
 	var (
-		agents    []AgentDefinitionSummary
-		agentsErr error
-		models    []Model
-		modelsErr error
-		skills    []Skill
-		skillsErr error
+		agents          []AgentDefinitionSummary
+		agentsErr       error
+		models          []Model
+		modelsErr       error
+		skills          []Skill
+		skillsErr       error
+		defaultModel    string
+		defaultModelErr error
 	)
 	var g errgroup.Group
 	g.Go(func() error { agents, agentsErr = s.memory.ListAgentDefinitions(ctx); return nil })
 	g.Go(func() error { models, modelsErr = s.memory.ListModels(ctx); return nil })
 	g.Go(func() error { skills, skillsErr = s.memory.ListSkills(ctx); return nil })
+	g.Go(func() error {
+		mc, err := s.memory.GetProjectModelConfig(ctx)
+		if err != nil {
+			defaultModelErr = err
+			return nil
+		}
+		if mc != nil {
+			defaultModel = mc.GenerativeModel
+		}
+		return nil
+	})
 	_ = g.Wait()
 	if agentsErr != nil {
-		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, nil, agentsErr))
+		return s.page(c, pageTitle("Agents"), AgentsPage(nil, nil, nil, "", agentsErr))
 	}
 	captureError(modelsErr)
 	captureError(skillsErr)
+	captureError(defaultModelErr)
 
 	// Per-agent model info rides on the list response now (memory reports
 	// effectiveModel per summary), so there is no per-agent GET round-trip
 	// here — the agents page renders the card grid straight from the list.
-	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, skills, nil))
+	return s.page(c, pageTitle("Agents"), AgentsPage(agents, models, skills, defaultModel, nil))
 }
 
 // chatRailData loads the session-rail data (agents, agent appearance map, past

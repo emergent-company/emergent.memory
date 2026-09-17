@@ -206,7 +206,9 @@ script openDeleteConfirm(id string, name string) {
 }
 
 // --- Agents ---
-templ AgentsPage(agents []AgentDefinitionSummary, models []Model, skills []Skill, loadErr error) {
+// defaultModel is the project's pinned default generative model ("" when none
+// is pinned) — it names the create/edit dialog's "Auto" option.
+templ AgentsPage(agents []AgentDefinitionSummary, models []Model, skills []Skill, defaultModel string, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@agentsHeader(len(agents), loadErr == nil)
 		if loadErr != nil {
@@ -221,7 +223,7 @@ templ AgentsPage(agents []AgentDefinitionSummary, models []Model, skills []Skill
 				@agentCardGrid(agents)
 			</div>
 		}
-		@agentFormDialog(agents, models, skills)
+		@agentFormDialog(agents, models, skills, defaultModel)
 		@deleteConfirmDialog()
 	}
 }
@@ -428,8 +430,9 @@ templ agentRow(a AgentDefinitionSummary) {
 // what the memory backend stores. The skills section lists every skill by name
 // (mirroring the delegation target picker) so the owner can attach them; the
 // delegation section lists every agent by name so the owner can pick which
-// ones this agent may hand off to.
-templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []Skill) {
+// ones this agent may hand off to. defaultModel names the model the dialog's
+// "Auto" option resolves to (project pinned default; "" when none is pinned).
+templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []Skill, defaultModel string) {
 	@modalShell("agent-form-modal", "", "w-full max-w-lg") {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
@@ -474,7 +477,7 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []
 					})
 				}
 			</div>
-			@modelSelect("agent-model", models, nil, templ.Attributes{"data-testid": "model-select"})
+			@modelSelect("agent-model", models, nil, defaultModel, templ.Attributes{"data-testid": "model-select"})
 			@modelParamsGrid("agent", nil)
 			@form.FormControl("agent-tools", "Tools", form.LabelAbove, "Comma-separated tool names the agent may use.", "", nil) {
 				<input id="agent-tools" name="tools" type="text" placeholder="web_search, code_exec, memory_lookup" class="input w-full"/>
@@ -962,11 +965,20 @@ templ modelCurrentOption(current *ModelConfig, models []Model) {
 // the "Auto — default model" option). Each catalog option's value is the
 // prefixed provider/model name; current is the agent's stored model — its
 // option renders selected, plus a "(current)" fallback when it is not in the
-// catalog (pass nil for a fresh form).
-templ modelSelect(id string, models []Model, current *ModelConfig, attrs templ.Attributes) {
+// catalog (pass nil for a fresh form). defaultName is the model the Auto
+// option resolves to (the project's pinned default, or the agent's
+// EffectiveModel); when non-empty the option is labelled
+// "Auto — <defaultName> (default)" so the picker names what auto means,
+// mirroring the dashboard's "name (default)" treatment. It keeps value=""
+// either way: submitting empty still means "no explicit model / auto".
+templ modelSelect(id string, models []Model, current *ModelConfig, defaultName string, attrs templ.Attributes) {
 	@form.FormControl(id, "Model", form.LabelAbove, "Any model the bridge can reach — hosted or local.", "", nil) {
 		<select id={ id } { attrs... } name="modelName" class="select w-full">
-			<option value="">Auto — default model</option>
+			if defaultName != "" {
+				<option value="">Auto — { defaultName } (default)</option>
+			} else {
+				<option value="">Auto — default model</option>
+			}
 			@components.SelectOptionGroups(modelOptionGroups(models, current))
 			@modelCurrentOption(current, models)
 		</select>
