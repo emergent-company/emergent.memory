@@ -89,6 +89,13 @@ Call-site swaps touch the same ~28 files repeatedly, so the component definition
 3. Phase 5 — verification sweep: `templ generate`, `go build ./...`, `go vet ./...`, `golangci-lint run ./...`, `go test ./...`, Playwright smoke on the affected pages.
 4. No data migration, no rollback concern: the branch is a pure refactor and reverting it restores the duplicated markup.
 
+## Deferred by measurement
+
+Two audit items turned out not to be output-preserving and are therefore not shipped in this change:
+
+- **Raw table markup → go-daisy table primitives.** `table.TableWithProps` always emits its own `overflow-x-auto` wrapper, and every gateway raw table already lives inside one, so adopting the primitive would add a nesting level. This needs an upstream `TableWithProps` option (or an accepted visual change) — tracked in `tasks.md` Deferred.
+- **Hand-rolled rows → `components.ListRow`.** Re-inspection showed none of the remaining rows is the `ListRow` shape (link, leading slot, grow column with title + meta, trailing children). The three genuine callers were migrated in phase 2; the rest would visually change.
+
 ## Open Questions
 
 - None blocking. Whether `TableCard` should be built on go-daisy `table.TableCardWrapper` was checked and rejected: that component's shell is `card bg-base-100 shadow-sm border border-base-200`, which is not the gateway shell (`card-border overflow-hidden shadow-sm`); unifying them would change rendered output, so `TableCard` stays a gateway-local component for now.

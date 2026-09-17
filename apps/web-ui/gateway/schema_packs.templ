@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -147,35 +148,23 @@ templ schemaPackMeta(pack *schemaPackSummary) {
 			}
 			@schemaPackMetaRow("Types", pack.typeCountLabel(), false)
 			if pack.Provenance != nil {
-				<div>
-					<dt class="text-base-content/45 text-xs">Owning blueprint</dt>
-					<dd class="mt-0.5 text-sm">
-						<a class="text-primary font-medium hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(pack.Provenance.BlueprintID)) }>{ typeProvenanceLabel(pack.Provenance) }</a>
-					</dd>
-				</div>
+				@components.MetaRowCustom("Owning blueprint", components.MetaRowOpts{NoEmptyDash: true}) {
+					<a class="text-primary font-medium hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(pack.Provenance.BlueprintID)) }>{ typeProvenanceLabel(pack.Provenance) }</a>
+				}
 			}
 		</dl>
 	}
 }
 
 templ schemaPackMetaRow(label, value string, mono bool) {
-	<div>
-		<dt class="text-base-content/45 text-xs">{ label }</dt>
-		<dd class="mt-0.5 text-sm">
-			if mono {
-				<span class="font-mono text-xs">{ value }</span>
-			} else {
-				{ value }
-			}
-		</dd>
-	</div>
+	@components.MetaRow(label, value, components.MetaRowOpts{Mono: mono})
 }
 
 // ownerBadge is the shared Global / Project marker for pack rows and detail.
 templ ownerBadge(pack schemaPackSummary, size ui.BadgeSize) {
 	if pack.global() {
-		@ui.Badge(ui.BadgeProps{Label: "Global", Variant: ui.BadgeNeutral, Size: size, Dot: true})
+		@components.StatusBadge("Global", ui.BadgeNeutral, "", components.StatusBadgeOpts{Size: size, Dot: true})
 	} else {
-		@ui.Badge(ui.BadgeProps{Label: "Project", Variant: ui.BadgePrimary, Size: size, Dot: true})
+		@components.StatusBadge("Project", ui.BadgePrimary, "", components.StatusBadgeOpts{Size: size, Dot: true})
 	}
 }

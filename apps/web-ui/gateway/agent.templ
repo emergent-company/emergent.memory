@@ -61,7 +61,7 @@ templ agentDashboardHeader(a *AgentDefinition, section string) {
 }
 
 templ agentSummaryCard(data agentDashboardData) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<div class="flex items-center gap-3">
 				@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary"})
@@ -868,7 +868,7 @@ templ memoryRow(id string, query string, m Memory) {
 }
 
 templ memoryDetail(id string, query string, m Memory) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<div class="flex flex-wrap items-center gap-2">
 			if m.Category != "" {
 				@ui.Badge(ui.BadgeProps{Label: m.Category, Variant: memoryCategoryIntent(m.Category), Size: ui.BadgeSizeSM})

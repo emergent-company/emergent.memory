@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/go-daisy/components/form"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/table"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -155,7 +156,7 @@ templ backupsEmpty() {
 // full details page; download is offered only for "ready" backups; every row
 // can be deleted via its confirm dialog.
 templ backupsTable(backups []Backup) {
-	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+	@components.TableCard(nil) {
 		@table.TableWithProps(table.TableProps{Bordered: false}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
@@ -401,10 +402,7 @@ templ backupDetailHeader(b *Backup) {
 
 // backupDetailField is one label/value cell in a <dl> detail grid.
 templ backupDetailField(label, value string) {
-	<div>
-		<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
-		<dd class="text-base-content/85 mt-1 text-sm break-words">{ value }</dd>
-	</div>
+	@components.MetaRow(label, value)
 }
 
 // backupDetailOverview is the identity/metadata grid.

@@ -547,6 +547,16 @@ func modelGroups(models []Model) []modelGroup {
 // renderer's shape, marking the agent's current model as selected. The
 // provider bucketing stays here; the markup lives in components.
 func modelOptionGroups(models []Model, current *ModelConfig) []components.SelectOptionGroup {
+	var name string
+	if current != nil {
+		name = current.Name
+	}
+	return modelOptionGroupsFor(models, name)
+}
+
+// modelOptionGroupsFor is modelOptionGroups for callers holding the current
+// model as a bare provider-prefixed name.
+func modelOptionGroupsFor(models []Model, current string) []components.SelectOptionGroup {
 	groups := modelGroups(models)
 	out := make([]components.SelectOptionGroup, 0, len(groups))
 	for _, g := range groups {
@@ -556,7 +566,7 @@ func modelOptionGroups(models []Model, current *ModelConfig) []components.Select
 			opts = append(opts, components.SelectOption{
 				Value:    value,
 				Label:    modelDisplay(m),
-				Selected: current != nil && value == current.Name,
+				Selected: current != "" && value == current,
 			})
 		}
 		out = append(out, components.SelectOptionGroup{Label: g.Provider, Options: opts})

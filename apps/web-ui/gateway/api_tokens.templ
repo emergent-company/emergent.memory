@@ -119,7 +119,7 @@ templ apiTokenTable(tokens []APIToken, actionBase, emptyTitle, emptyDesc string)
 			ActionIcon:  "lucide--plus",
 		})
 	} else {
-		@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+		@components.TableCard(nil) {
 			<div class="overflow-x-auto">
 				<table class="table table-sm">
 					<thead>
@@ -252,7 +252,7 @@ templ apiTokenCreateBody(actionBase string, reveal *apiTokenReveal) {
 			@apiTokenRevealContent(*reveal)
 		</div>
 	}
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		@apiTokenCreateFormContent(actionBase)
 	}
 }
@@ -348,7 +348,7 @@ templ AccountTokenEditPage(data apiTokenEditPageData) {
 // (name, prefix, created) above the scope picker pre-checked with the token's
 // current scopes, saving to actionBase + "/:id/scopes".
 templ apiTokenEditBody(actionBase string, t APIToken) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(t.ID) + "/scopes") } class="flex flex-col gap-4">
 			<div class="flex items-center gap-2.5 rounded-box border border-base-content/10 bg-base-200/40 px-3 py-2.5">
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary", Size: "size-9"})

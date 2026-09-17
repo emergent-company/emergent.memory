@@ -53,25 +53,30 @@ May run as two disjoint sub-lanes after phase 1; never in the same file set.
 
 **4A — settings/org**: `project_settings.templ`, `org_context.templ`, `org_members_ui.templ`, `schema_packs.templ`
 
-- [ ] 4.1 `MetaRow` at `backups.templ:409` (below), `org_members_ui.templ:509`, `project_settings.templ:746` (+ `voiceSecretRow` → `NoEmptyDash`), `schema_packs.templ:161`, and the 10 inlined `<dt>` sites; normalize the `text-xs` dialect per D2.
-- [ ] 4.2 `project_settings.templ:181-194,482-500,703-734` → `components.ToggleField`.
-- [ ] 4.3 `project_settings.templ:871-878,890-898` → `components.SelectOptionGroups`, keeping `modelGroups` as the domain adapter.
-- [ ] 4.4 `project_settings.templ`, `org_context.templ`, `org_members_ui.templ` panel shells → `components.PanelCard`; fold the `border-primary/20` variant into `ExtraClass`.
-- [ ] 4.5 `org_members_ui.templ:118` `roleBadge` + `schema_packs.templ:175` `ownerBadge` → `components.StatusBadge` adapters; org/member/profile table shells → `components.TableCard`.
-- [ ] 4.6 Verify 4A: `go test ./...` green; settings, org landing, members, schema packs pages render.
+- [x] 4.1 `MetaRow` at `backups.templ:409` (below), `org_members_ui.templ:509`, `project_settings.templ:746` (+ `voiceSecretRow` → `NoEmptyDash`), `schema_packs.templ:161`, and the 10 inlined `<dt>` sites; normalize the `text-xs` dialect per D2.
+- [x] 4.2 `project_settings.templ:181-194,482-500,703-734` → `components.ToggleField`.
+- [x] 4.3 `project_settings.templ:871-878,890-898` → `components.SelectOptionGroups`, keeping `modelGroups` as the domain adapter.
+- [x] 4.4 `project_settings.templ`, `org_context.templ`, `org_members_ui.templ` panel shells → `components.PanelCard`; fold the `border-primary/20` variant into `ExtraClass`.
+- [x] 4.5 `org_members_ui.templ:118` `roleBadge` + `schema_packs.templ:175` `ownerBadge` → `components.StatusBadge` adapters; org/member/profile table shells → `components.TableCard`.
+- [x] 4.6 Verify 4A: `go test ./...` green; settings, org landing, members, schema packs pages render.
 
 **4B — list/table surfaces**: `api_tokens.templ`, `backups.templ`, `schedules.templ`, `skills.templ`, `documents.templ`, `blueprints.templ`, `migrations.templ`, `objects.templ`
 
-- [ ] 4.7 `TableCard` at `api_tokens.templ:121`, `backups.templ:158`, `schedules.templ:70`, `skills.templ:133`; and the raw tables at `blueprints.templ:763`, `migrations.templ:334,431` → go-daisy `table.TableWithProps` inside `components.TableCard`.
-- [ ] 4.8 `MetaRow` at `backups.templ:409,429,442,448,568`; `PanelCard` at `api_tokens.templ:254,350,428`, `documents.templ:44,170`, `migrations.templ:152,167,179,370`.
-- [ ] 4.9 `StatusBadge` adapters for `documentStatusBadge` (`documents.templ:117`), `releaseBadge` (`blueprints.templ:288`), `scheduleEnabledBadge` (`schedules.templ:143`).
-- [ ] 4.10 Migrate hand-rolled rows to `components.ListRow`: `blueprints.templ:174,258,810`, `documents.templ:281,310`, `objects.templ:464,494`, `schema.templ:291`.
-- [ ] 4.11 Verify 4B: `go test ./...` green; tokens, backups, schedules, skills, documents, blueprints, migrations, objects pages render.
+- [ ] 4.7 (deferred — see Deferred below) `TableCard` at `api_tokens.templ:121`, `backups.templ:158`, `schedules.templ:70`, `skills.templ:133`; and the raw tables at `blueprints.templ:763`, `migrations.templ:334,431` → go-daisy `table.TableWithProps` inside `components.TableCard`.
+- [x] 4.8 `MetaRow` at `backups.templ:409,429,442,448,568`; `PanelCard` at `api_tokens.templ:254,350,428`, `documents.templ:44,170`, `migrations.templ:152,167,179,370`.
+- [x] 4.9 `StatusBadge` adapters for `documentStatusBadge` (`documents.templ:117`), `releaseBadge` (`blueprints.templ:288`), `scheduleEnabledBadge` (`schedules.templ:143`).
+- [ ] 4.10 (dropped — see Deferred below) Migrate hand-rolled rows to `components.ListRow`: `blueprints.templ:174,258,810`, `documents.templ:281,310`, `objects.templ:464,494`, `schema.templ:291`.
+- [x] 4.11 Verify 4B: `go test ./...` green; tokens, backups, schedules, skills, documents, blueprints, migrations, objects pages render.
 
 **4C — sessions/schema**: `sessions.templ`, `schema.templ`
 
-- [ ] 4.12 `runStatusBadge`/`toolStatusBadge` (`sessions.templ:336,349`) and `provenanceBadge` (`schema.templ:128`) → `components.StatusBadge` adapters; `schema.templ` panel shells → `components.PanelCard`; `schema.templ:291` row → `components.ListRow`.
-- [ ] 4.13 Verify 4C: `go test ./...` green; session/runs and schema pages render.
+- [x] 4.12 `runStatusBadge`/`toolStatusBadge` (`sessions.templ:336,349`) and `provenanceBadge` (`schema.templ:128`) → `components.StatusBadge` adapters; `schema.templ` panel shells → `components.PanelCard`; `schema.templ:291` row → `components.ListRow`.
+- [x] 4.13 Verify 4C: `go test ./...` green; session/runs and schema pages render.
+
+## Deferred / dropped
+
+- **4.7 raw tables → go-daisy table primitives — deferred, not doable output-preservingly at this pin.** `table.TableWithProps` always emits its own `overflow-x-auto` wrapper and builds its class list from `TableProps`; every gateway raw table already sits inside its own wrapper div (see `api_tokens.templ:122`, `migrations.templ:333`, `blueprints.templ:763`), so adopting the primitive adds a nesting level and would change rendered markup. Doing this needs either a go-daisy `TableWithProps` variant that omits the wrapper, or a deliberate, separately-reviewed visual change. Out of scope for a refactor that must not change output.
+- **4.10 hand-rolled rows → `components.ListRow` — dropped, no faithful conversions exist.** Re-inspecting the audit's candidates: `availableRow` (`blueprints.templ:174`) is a flex div holding an install form, the blueprint version row (`blueprints.templ:258`) is a `gap-2` link with an active-state ring, `objectRelationshipRow` (`objects.templ:464`) and the schema history row (`schema.templ:291`) are non-link flex divs, `similarObjectRow` (`objects.templ:494`) is a non-link card row with an action slot, and `extractedObjectRow` (`documents.templ:281`) is a `gap-2` link whose title is a span and whose trailing affordance is a `ml-auto` chevron. None is the `ListRow` shape (`gap-3` link, leading slot, grow column with title + meta paragraphs, trailing children, auto chevron), so migrating any of them would change rendered output. Item 12 closes with the three genuine callers relocated in 2.3.
 
 ## 5 — Verification sweep
 

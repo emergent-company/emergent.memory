@@ -343,7 +343,7 @@ templ runStatusBadge(status string) {
 	} else if status == "running" || status == "pending" {
 		intent = ui.BadgeInfo
 	} }}
-	@ui.Badge(ui.BadgeProps{Label: status, Variant: intent, Size: ui.BadgeSizeXS, Dot: true})
+	@components.StatusBadge(status, intent, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 }
 
 // toolStatusBadge colors a tool-call status; an empty status renders a dash.
@@ -357,7 +357,7 @@ templ toolStatusBadge(status string) {
 		} else if status == "error" || status == "failed" {
 			intent = ui.BadgeError
 		} }}
-		@ui.Badge(ui.BadgeProps{Label: status, Variant: intent, Size: ui.BadgeSizeXS, Dot: true})
+		@components.StatusBadge(status, intent, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 	}
 }
 

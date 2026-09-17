@@ -267,7 +267,7 @@ templ MCPShareEditPage(data mcpShareFormData) {
 
 // mcpShareFormBody is the shared create/edit form card.
 templ mcpShareFormBody(data mcpShareFormData, editing bool) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		{{ action := mcpShareSettingsBase + "/new"
 		if editing {
 			action = mcpShareSettingsBase + "/" + url.PathEscape(data.ID) + "/update"

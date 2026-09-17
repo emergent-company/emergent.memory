@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/go-daisy/components/form"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	"github.com/emergent-company/go-daisy/components/table"
@@ -130,7 +131,7 @@ templ skillsEmpty() {
 }
 
 templ skillsTable(skills []Skill, usedBy map[string]int) {
-	@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+	@components.TableCard(nil) {
 		@table.TableWithProps(table.TableProps{Bordered: false}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {

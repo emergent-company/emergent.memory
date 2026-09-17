@@ -347,7 +347,7 @@ templ MCPServerEditPage(data mcpServerFormData) {
 // transport radio group stays live (edit re-renders on a transport change
 // with an inline error — memory cannot change a server's transport).
 templ mcpServerFormBody(data mcpServerFormData, editing bool) {
-	@ui.CardRaw("card-border", "p-5", nil) {
+	@components.PanelCard("", nil) {
 		{{ action := mcpServerSettingsBase + "/new"
 		if editing {
 			action = mcpServerSettingsBase + "/" + url.PathEscape(data.ID) + "/update"

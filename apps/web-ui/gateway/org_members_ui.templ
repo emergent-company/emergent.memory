@@ -117,11 +117,7 @@ templ orgProjectRow(p ProjectAccessDto) {
 // roleBadge renders the shared role badge (label + colour derived from the
 // role enum).
 templ roleBadge(role string) {
-	@ui.Badge(ui.BadgeProps{
-		Label:   roleLabel(role),
-		Variant: roleIntent(role),
-		Size:    ui.BadgeSizeXS,
-	})
+	@components.StatusBadge(roleLabel(role), roleIntent(role), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS})
 }
 
 // OrgCreatePage renders the standalone create-organization page (/orgs/new):
@@ -131,7 +127,7 @@ templ OrgCreatePage(data orgCreatePageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Organizations", "/orgs", "New organization")), "", "New organization", "A home for projects and the people who work on them.") {}
 		@flashToasts("", data.FlashErr)
-		@ui.CardRaw("card-border", "p-5", nil) {
+		@components.PanelCard("", nil) {
 			<form method="post" action="/orgs" class="flex flex-col gap-4">
 				@form.FormControl("new-org-name", "Name", form.LabelAbove, "", "", nil) {
 					<input id="new-org-name" name="name" type="text" required placeholder="e.g. Acme" class="input w-full"/>
@@ -201,7 +197,7 @@ templ MembersPage(data membersPageData) {
 					ActionIcon:  "lucide--user-plus",
 				})
 			} else {
-				@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+				@components.TableCard(nil) {
 					@table.TableWithProps(table.TableProps{Bordered: false}) {
 						@table.TableHead() {
 							@table.TableHeadRow() {
@@ -344,11 +340,11 @@ templ MemberInvitePage(data memberInvitePageData) {
 		@detailHeader(crumbsActive(nav.Crumbs("Members", "/members", "Invite a member")), "", "Invite a member", subtitle) {}
 		@flashToasts("", data.FlashErr)
 		if !data.HasProject {
-			@ui.CardRaw("card-border", "p-5", nil) {
+			@components.PanelCard("", nil) {
 				<p class="text-base-content/50 text-sm">Select or create a project first — invitations are sent per project from the project you are in.</p>
 			}
 		} else {
-			@ui.CardRaw("card-border", "p-5", nil) {
+			@components.PanelCard("", nil) {
 				<form method="post" action="/members" class="flex flex-col gap-4">
 					@form.FormControl("invite-email", "Email", form.LabelAbove, "Start typing to match a registered user, or type any email address.", "", nil) {
 						<input
@@ -438,10 +434,9 @@ templ MemberDetailPage(data memberDetailPageData) {
 					@memberDetailRow("Email", m.Email)
 					@memberDetailRow("First name", m.FirstName)
 					@memberDetailRow("Last name", m.LastName)
-					<div>
-						<dt class="text-base-content/45 text-xs">Role</dt>
-						<dd class="mt-1">@roleBadge(m.Role)</dd>
-					</div>
+					@components.MetaRowCustom("Role", components.MetaRowOpts{NoEmptyDash: true}) {
+						@roleBadge(m.Role)
+					}
 					@memberDetailRow("Joined", relTime(m.JoinedAt))
 				</dl>
 			}
@@ -508,16 +503,7 @@ templ memberRoleChangeSection(m ProjectMemberDto, canChange bool) {
 // memberDetailRow is one label/value line of the member details definition
 // list. Empty values render an em dash.
 templ memberDetailRow(label, value string) {
-	<div>
-		<dt class="text-base-content/45 text-xs">{ label }</dt>
-		<dd class="text-base-content/85 mt-0.5 text-sm">
-			if value == "" {
-				@emptyDash()
-			} else {
-				{ value }
-			}
-		</dd>
-	</div>
+	@components.MetaRow(label, value)
 }
 
 // userSearchOptions is the htmx partial swapped into the invite form's

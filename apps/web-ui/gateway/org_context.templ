@@ -274,7 +274,7 @@ templ OrgLandingPage(data orgPageData) {
 					@projectsPendingRefreshNote(data.Org.ID, pendingCount)
 				}
 				@ui.Section("Projects", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
-					@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+					@components.TableCard(nil) {
 						<form method="post" action="/projects/delete" x-data="{ count: 0 }">
 							<input type="hidden" name="orgId" value={ data.Org.ID }/>
 							<div class="flex min-h-11 items-center gap-3 border-b border-base-200 px-4">
@@ -599,7 +599,7 @@ templ OrgMembersPage(data orgMembersPageData) {
 					Class:       "py-12",
 				})
 			} else {
-				@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+				@components.TableCard(nil) {
 					@table.TableWithProps(table.TableProps{Bordered: false}) {
 						@table.TableHead() {
 							@table.TableHeadRow() {
@@ -665,7 +665,7 @@ templ OrgInvitePage(data orgInvitePageData) {
 			{{ subtitle := "An email invitation carrying the org admin role — they join " + data.Org.Name + " once they accept." }}
 			@detailHeader(crumbsActive(nav.Crumbs("Organization", "/orgs/"+url.PathEscape(data.Org.ID), "Invite a member")), "", "Invite a member", subtitle) {}
 			@flashToasts("", data.FlashErr)
-			@ui.CardRaw("card-border", "p-5", nil) {
+			@components.PanelCard("", nil) {
 				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/invite") } hx-boost="false" class="flex flex-col gap-4">
 					<input type="hidden" name="orgId" value={ data.Org.ID }/>
 					@form.FormControl("org-invite-email", "Email", form.LabelAbove, "Start typing to match a registered user, or type any email address.", "", nil) {
@@ -738,7 +738,7 @@ templ OrgSettingsPage(data orgSettingsPageData) {
 				})
 			} else {
 					@ui.Section("Tools", ui.SectionProps{Margin: "mb-6", BodyClass: "p-0"}) {
-						@ui.CardRaw("card-border overflow-hidden shadow-sm", "p-0", nil) {
+						@components.TableCard(nil) {
 							<div class="divide-y divide-base-200">
 								for _, s := range data.Settings {
 									@orgToolSettingRow(data.Org, s)

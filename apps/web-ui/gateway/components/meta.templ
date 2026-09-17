@@ -26,6 +26,19 @@ templ MetaRow(label, value string, opts ...MetaRowOpts) {
 	</div>
 }
 
+// MetaRowCustom renders a label with caller-supplied content in the value slot,
+// for rows that show status copy rather than a plain value. MetaRowOpts is
+// accepted for symmetry with MetaRow; the slot content is always rendered, so
+// NoEmptyDash has no effect here.
+templ MetaRowCustom(label string, opts ...MetaRowOpts) {
+	<div>
+		<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">{ label }</dt>
+		<dd class="text-base-content/85 mt-1 text-sm break-words">
+			{ children... }
+		</dd>
+	</div>
+}
+
 templ metaRowValue(value string, o MetaRowOpts) {
 	if value == "" && !o.NoEmptyDash {
 		@EmptyDash()
