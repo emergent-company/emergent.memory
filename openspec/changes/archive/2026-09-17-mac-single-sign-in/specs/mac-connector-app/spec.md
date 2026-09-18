@@ -40,15 +40,18 @@ The window header SHALL show an account control at the top right: a properly pad
 
 ## ADDED Requirements
 
-### Requirement: Single Production sign-in on every signed-out surface
+### Requirement: Single Production sign-in on every primary signed-out surface
 
-Every surface that can start a sign-in SHALL offer exactly one prominent
-sign-in action, and that action SHALL target the Production environment. No
-signed-out surface SHALL render two sign-in buttons, an environment picker, or
-an environment menu. The window header, the menu-bar popover, the Connection
-page, and the Project & Account page are all covered by this rule; the
-environment that any surface offers SHALL be resolved from one shared
-per-surface policy rather than enumerated ad hoc in each view.
+Every primary signed-out surface SHALL offer exactly one prominent sign-in action
+for starting a new sign-in, and that action SHALL target the Production
+environment. The primary surfaces are the window header, the menu-bar popover,
+the Connection page, and the Project & Account page; none of these SHALL render
+two sign-in buttons, an environment picker, or an environment menu. The About
+page is the deliberate exception — its non-prominent Development control is
+governed by "Development sign-in is available only from the About page" and is
+not a primary sign-in action. The environment that any surface offers SHALL be
+resolved from one shared per-surface policy rather than enumerated ad hoc in each
+view.
 
 #### Scenario: Menu-bar popover while signed out
 
