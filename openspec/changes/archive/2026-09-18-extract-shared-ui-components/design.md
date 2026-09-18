@@ -26,7 +26,7 @@ The gateway is one `package main` at `apps/web-ui/gateway` (module `github.com/e
 
 Chosen over extending `ui.templ` (the current problem: a page file doubling as the shared kit) and over a nested `gateway/internal/...` (this module has no `internal/` convention today). Call sites read `@components.MetaRow(...)`, which is disambiguated from go-daisy's `@ui.*` by the import name.
 
-### D2 — Domain-free by construction; output preserved except three named drifts
+### D2 — Domain-free by construction; output preserved except the named drifts
 
 The package MUST NOT import gateway domain types, reference gateway route paths, or read gateway config. Anything that needs a domain type stays in `package main` as a thin adapter (see D4).
 
