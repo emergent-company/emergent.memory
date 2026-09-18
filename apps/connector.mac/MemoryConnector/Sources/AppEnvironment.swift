@@ -132,10 +132,12 @@ final class AppEnvironment: ObservableObject {
     /// Builds the real migrator against the shared legacy storage, or `nil`
     /// under hosted unit tests. Tests share the app process, so the default
     /// migrator must never touch the real Keychain/session/config from a test.
+    ///
+    /// Uses the shared `HostedTest` check — the same one that decides whether
+    /// lifecycle logging is suppressed — so the guards cannot drift apart.
     private static func defaultLegacyMigrator() -> LegacyMigrator? {
         let env = ProcessInfo.processInfo.environment
-        guard env["XCTestConfigurationFilePath"] == nil,
-              env["XCTestBundlePath"] == nil else {
+        guard !HostedTest.isRunning(environment: env) else {
             return nil
         }
         return LegacyMigrator(

@@ -179,7 +179,7 @@ Rows that show a leading element, a title, and trailing metadata as a link SHALL
 
 ### Requirement: Extraction preserves rendered output
 
-Extracting a pattern into the shared package SHALL NOT change rendered output, except for the three drifts explicitly normalized by the change (the meta-row label class, the snippet code-block class order, and the panel accent variant).
+Extracting a pattern into the shared package SHALL NOT change rendered output, except for the intentional normalizations enumerated in the change's design (D2): the meta-row label class and row spacing, the snippet code-block class order, the panel accent variant, class-order-only differences that produce identical CSS, insignificant inter-element whitespace inside grouped selects, and the reveal panel's heading element.
 
 #### Scenario: Page markup is unchanged
 

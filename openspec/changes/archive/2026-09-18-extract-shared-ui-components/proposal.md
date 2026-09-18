@@ -29,7 +29,7 @@ Create a real, importable component package for the gateway and extract the twel
   11. `PanelCard` — the standard `card-border` panel.
   12. `ListRow` — the existing shared list row relocates into the package; hand-rolled equivalents migrate to it.
 
-Rendered output is preserved. The only intentional markup changes are the three drifts normalized as part of unifying each pattern (dt label class, snippet `pre` class order, panel-card variant class), and those are called out in `design.md` D2.
+Rendered output is preserved. The only intentional markup changes are the normalizations enumerated in `design.md` D2.
 
 Out of scope (separate changes): replacing the twelve gateway components that already duplicate go-daisy, porting `Modal`/`ConfirmDialog`/`DescriptionList`/`Chip` upstream, moving the whole `ui.templ` kit, adopting `form.FormInput`/`FormSelect`/`Textarea` at the 120 raw-input sites, and splitting the four mega-templs.
 

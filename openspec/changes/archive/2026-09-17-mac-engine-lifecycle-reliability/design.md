@@ -117,10 +117,14 @@ The delayed exit-retry (`processDidExit`) and the reconcile path
 ### D5 — Fail fast on a held management port; surface the engine's bind failure
 
 `start()` probes `127.0.0.1:8931` before spawning, but only when the app has no
-live child (`process == nil`) so `restart()`'s just-SIGTERM'd child cannot
-false-positive. A held port sets `.failed` with a clear `lastError` and does not
-spawn. Independently, the engine's stderr is scanned for
-`management API` + `address already in use`/`bind:` and surfaced.
+*live* child (`process?.isRunning != true`) so `restart()`'s just-SIGTERM'd child
+cannot false-positive, while a child that has already exited is still probed. A
+held port sets `.failed` with a clear `lastError` and does not spawn.
+Independently, the engine's stderr is scanned for
+`management API` + `address already in use`/`bind:` and surfaced, line-framed
+across chunk boundaries so a diagnostic split across reads is not missed.
+*(Both refinements landed in #577, after this design was written: the predicate
+above and the line framing.)*
 
 - **Why:** the engine prints "listening" unconditionally and keeps running with
   a dead management API when the bind fails, so a duplicate engine is invisible
