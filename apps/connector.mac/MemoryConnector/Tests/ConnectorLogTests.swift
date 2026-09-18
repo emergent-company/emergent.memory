@@ -7,7 +7,7 @@ import XCTest
 /// `~/Library/Logs/memory-connector-app.log`.
 ///
 /// These tests inject both the destination and the suppression decision. A suite
-/// that only checked `isHostedTest` would stay green if the `guard` in `append`
+/// that only checked `HostedTest.isRunning` would stay green if the `guard` in `append`
 /// were deleted, leaving hosted runs free to pollute the real log again.
 final class ConnectorLogTests: XCTestCase {
 
@@ -37,25 +37,25 @@ final class ConnectorLogTests: XCTestCase {
     // MARK: - Environment detection
 
     func testHostedTestDetectedByConfigurationPath() {
-        XCTAssertTrue(ConnectorLog.isHostedTest(
+        XCTAssertTrue(HostedTest.isRunning(
             environment: ["XCTestConfigurationFilePath": "/tmp/x.xctestconfiguration"]))
     }
 
     func testHostedTestDetectedByBundlePath() {
-        XCTAssertTrue(ConnectorLog.isHostedTest(
+        XCTAssertTrue(HostedTest.isRunning(
             environment: ["XCTestBundlePath": "/tmp/MemoryConnectorTests.xctest"]))
     }
 
     func testRealRunIsNotAHostedTest() {
-        XCTAssertFalse(ConnectorLog.isHostedTest(environment: [:]))
-        XCTAssertFalse(ConnectorLog.isHostedTest(
+        XCTAssertFalse(HostedTest.isRunning(environment: [:]))
+        XCTAssertFalse(HostedTest.isRunning(
             environment: ["HOME": "/Users/someone", "PATH": "/usr/bin"]))
     }
 
     /// The running suite is itself a hosted test run, so the *default* decision
     /// must suppress here.
     func testCurrentProcessSuppressesByDefault() {
-        XCTAssertTrue(ConnectorLog.isHostedTest(environment: ProcessInfo.processInfo.environment))
+        XCTAssertTrue(HostedTest.isRunning(environment: ProcessInfo.processInfo.environment))
         XCTAssertTrue(ConnectorLog.isSuppressed())
     }
 
