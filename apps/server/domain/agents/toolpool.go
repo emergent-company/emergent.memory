@@ -1059,10 +1059,22 @@ func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error)
 			inputSchema.Type = "object"
 		}
 
+		var outputSchema *mcp.InputSchema
+		if os, ok := tMap["outputSchema"]; ok {
+			data, err := json.Marshal(os)
+			if err == nil {
+				var osd mcp.InputSchema
+				if err := json.Unmarshal(data, &osd); err == nil && osd.Type != "" {
+					outputSchema = &osd
+				}
+			}
+		}
+
 		defs = append(defs, mcp.ToolDefinition{
-			Name:        name,
-			Description: desc,
-			InputSchema: inputSchema,
+			Name:         name,
+			Description:  desc,
+			InputSchema:  inputSchema,
+			OutputSchema: outputSchema,
 		})
 	}
 

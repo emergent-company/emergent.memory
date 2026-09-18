@@ -297,8 +297,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-query",
-			Description: "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
+			Name:         "entity-query",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -632,8 +633,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-create",
-			Description: "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
+			Name:         "entity-create",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -658,8 +660,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "relationship-create",
-			Description: "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed schema. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead. IMPORTANT: source_id and target_id must be different entities — self-referential relationships (same entity as source and target) are not allowed.",
+			Name:         "relationship-create",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed schema. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead. IMPORTANT: source_id and target_id must be different entities — self-referential relationships (same entity as source and target) are not allowed.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -672,8 +675,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-update",
-			Description: "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property). Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "entity-update",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property). Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -710,8 +714,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-delete",
-			Description: "Soft-delete an entity. The entity can be restored later.",
+			Name:         "entity-delete",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Soft-delete an entity. The entity can be restored later.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -838,8 +843,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "search-hybrid",
-			Description: "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "search-hybrid",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -901,8 +907,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "search-semantic",
-			Description: "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "search-semantic",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1095,8 +1102,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "relationship-delete",
-			Description: "Soft-delete a relationship between two entities.",
+			Name:         "relationship-delete",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Soft-delete a relationship between two entities.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1342,6 +1350,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		Name:          "remember",
 		Description:   "Ingest a document, conversation, or knowledge snippet into the project knowledge graph. Runs the AI extraction pipeline: text → document → classify → extract → structured entities and relationships. Use for substantive content ingestion (meeting notes, documents, decisions). For lightweight observations, use entity-create instead.",
 		RequiredScope: "graph:write",
+		OutputSchema:  envelopeOutputSchema(),
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertySchema{
@@ -1369,6 +1378,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		Name:          "forget",
 		Description:   "Remove entities and relationships from the knowledge graph using a natural language query. Performs soft-delete (reversible via entity-restore). Use to clean up outdated or incorrect information from the graph.",
 		RequiredScope: "graph:write",
+		OutputSchema:  envelopeOutputSchema(),
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertySchema{
@@ -2092,6 +2102,12 @@ func relaySessionTools(sess *RelaySession) []ToolDefinition {
 		if schemaRaw, ok := m["inputSchema"]; ok {
 			if schemaBytes, err := json.Marshal(schemaRaw); err == nil {
 				_ = json.Unmarshal(schemaBytes, &td.InputSchema)
+			}
+		}
+		// Carry through outputSchema if present (MCP 2025-06-18).
+		if schemaRaw, ok := m["outputSchema"]; ok {
+			if schemaBytes, err := json.Marshal(schemaRaw); err == nil {
+				_ = json.Unmarshal(schemaBytes, &td.OutputSchema)
 			}
 		}
 		out = append(out, td)
@@ -4153,6 +4169,7 @@ func (s *Service) wrapResult(data any) (*ToolResult, error) {
 				Text: string(jsonBytes),
 			},
 		},
+		StructuredContent: structuredContentFromJSON(jsonBytes),
 	}, nil
 }
 

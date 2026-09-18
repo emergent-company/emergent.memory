@@ -899,9 +899,10 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 
 // DiscoveredTool represents a tool discovered from an external MCP server via tools/list.
 type DiscoveredTool struct {
-	Name        string         `json:"name"`
-	Description *string        `json:"description,omitempty"`
-	InputSchema map[string]any `json:"inputSchema,omitempty"`
+	Name         string         `json:"name"`
+	Description  *string        `json:"description,omitempty"`
+	InputSchema  map[string]any `json:"inputSchema,omitempty"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 }
 
 // schemaToMap converts an mcp.InputSchema to a generic map for JSONB storage.

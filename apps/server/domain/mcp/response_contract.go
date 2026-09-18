@@ -458,6 +458,19 @@ func slimSimilarResult(sr *graph.SimilarObjectResult, opts ResponseOpts) map[str
 	return out
 }
 
+// structuredContentFromJSON returns the JSON object encoded in jsonBytes as a
+// map[string]any, or nil when the top-level value is not a JSON object.
+// MCP 2025-06-18 requires structuredContent to be a root object; arrays and
+// primitives are intentionally left nil (spec-legal) while the text content
+// block still carries the serialized payload.
+func structuredContentFromJSON(jsonBytes []byte) map[string]any {
+	var obj map[string]any
+	if err := json.Unmarshal(jsonBytes, &obj); err != nil {
+		return nil
+	}
+	return obj
+}
+
 // wrapResultCompact is like wrapResult but marshals with json.Marshal (compact,
 // no indentation) for slimmer LLM-facing tool results.
 func (s *Service) wrapResultCompact(data any) (*ToolResult, error) {
@@ -473,5 +486,6 @@ func (s *Service) wrapResultCompact(data any) (*ToolResult, error) {
 				Text: string(jsonBytes),
 			},
 		},
+		StructuredContent: structuredContentFromJSON(jsonBytes),
 	}, nil
 }

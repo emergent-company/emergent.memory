@@ -284,9 +284,10 @@ type InspectCapabilitiesDTO struct {
 
 // InspectToolDTO describes a tool discovered during inspect.
 type InspectToolDTO struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	InputSchema map[string]any `json:"inputSchema,omitempty"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description,omitempty"`
+	InputSchema  map[string]any `json:"inputSchema,omitempty"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 }
 
 // InspectPromptDTO describes a prompt discovered during inspect.

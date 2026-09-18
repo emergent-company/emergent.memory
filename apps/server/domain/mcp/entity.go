@@ -331,6 +331,10 @@ type ToolDefinition struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	InputSchema InputSchema `json:"inputSchema"`
+	// OutputSchema is the JSON schema for the tool's structured result
+	// (MCP 2025-06-18 `outputSchema`). Nil for tools that do not declare
+	// structured output (e.g. prose or wrapResult-backed tools).
+	OutputSchema *InputSchema `json:"outputSchema,omitempty"`
 	// ConfigKeys lists setup-time configuration keys required by this tool
 	// (e.g. ["api_key"]). Empty for tools that need no configuration.
 	ConfigKeys []string `json:"configKeys,omitempty"`
@@ -370,6 +374,10 @@ type ToolsCallParams struct {
 type ToolResult struct {
 	Content []ContentBlock `json:"content"`
 	IsError bool           `json:"isError,omitempty"`
+	// StructuredContent is the structured JSON object result (MCP 2025-06-18
+	// `structuredContent`). It mirrors the JSON object serialized into the text
+	// content block and is only set when that payload is a JSON object.
+	StructuredContent map[string]any `json:"structuredContent,omitempty"`
 }
 
 // ContentBlock represents a piece of content in tool results
