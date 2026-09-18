@@ -18,13 +18,25 @@ import Foundation
 /// observability lines exist to make readable.
 enum ConnectorLog {
 
+    /// Destination for lifecycle lines. Defaults to the shared app log so the
+    /// lines interleave with the engine's own output; injectable so tests can
+    /// point it at a temporary file and assert on real writes.
+    nonisolated(unsafe) static var destinationURL: URL = EngineManager.logFileURL
+
+    /// Whether lifecycle writes are suppressed for this process. Defaults to the
+    /// hosted-test check; injectable because a test process is *always* a hosted
+    /// test run, so the write path would otherwise be unreachable from tests.
+    nonisolated(unsafe) static var isSuppressed: () -> Bool = {
+        ConnectorLog.isHostedTest(environment: ProcessInfo.processInfo.environment)
+    }
+
     /// Appends a `[lifecycle]` line (with a trailing newline).
     static func lifecycle(_ message: String) {
         append("[lifecycle] \(message)\n")
     }
 
-    /// Whether this process is a hosted unit-test run. Pure so it is
-    /// unit-testable; mirrors the hosted-test check
+    /// Whether the given environment describes a hosted unit-test run. Pure so it
+    /// is unit-testable; mirrors the hosted-test check
     /// `AppEnvironment.defaultLegacyMigrator()` uses to avoid touching real
     /// Keychain/config state from a test.
     static func isHostedTest(environment: [String: String]) -> Bool {
@@ -32,13 +44,9 @@ enum ConnectorLog {
             || environment["XCTestBundlePath"] != nil
     }
 
-    private static var isHostedTestRun: Bool {
-        isHostedTest(environment: ProcessInfo.processInfo.environment)
-    }
-
     private static func append(_ line: String) {
-        guard !isHostedTestRun else { return }
-        let url = EngineManager.logFileURL
+        guard !isSuppressed() else { return }
+        let url = destinationURL
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
