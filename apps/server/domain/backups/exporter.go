@@ -47,16 +47,24 @@ const (
 // tableConfig describes one NDJSON table export inside a backup archive.
 // The base table is always aliased as `t`; join tables use their own alias.
 type tableConfig struct {
-	name          string   // NDJSON filename (no extension), e.g. "documents"
-	table         string   // schema-qualified table, e.g. "kb.documents"; empty for derived files
-	join          string   // optional raw INNER JOIN clause (references alias t)
-	projectFilter string   // optional raw WHERE fragment scoping to a project (`?` binds ProjectID)
-	vectorColumns []string // columns of UDT vector/halfvec; cast ::text then parsed to []float32
-	deletedColumn string   // optional soft-delete column filtered out unless IncludeDeleted
-	extraWhere    string   // optional static WHERE fragment (no placeholders)
-	orderBy       string   // optional batching ORDER BY column; defaults to "id"
-	gate          exportGate
-	derived       bool // true when rows are derived in Go rather than streamed from `table`
+	name          string            // NDJSON filename (no extension), e.g. "documents"
+	table         string            // schema-qualified table, e.g. "kb.documents"; empty for derived files
+	join          string            // optional raw INNER JOIN clause (references alias t)
+	projectFilter string            // optional raw WHERE fragment scoping to a project (`?` binds ProjectID)
+	vectorColumns []string          // columns of UDT vector/halfvec; cast ::text then parsed to []float32
+	deletedColumn string            // optional soft-delete column filtered out unless IncludeDeleted
+	// columnExprs overrides the default `t."col"` SELECT expression for named
+	// columns. It is applied only when IncludeDeleted is false, so a plain
+	// column is exported when soft-deleted rows are included. Each value MUST
+	// alias its result AS "col" to keep the NDJSON key stable.
+	columnExprs map[string]string
+	// leftJoin is a raw LEFT JOIN clause appended only when columnExprs is
+	// active, supplying the aliases those expressions reference.
+	leftJoin   string
+	extraWhere string     // optional static WHERE fragment (no placeholders)
+	orderBy    string     // optional batching ORDER BY column; defaults to "id"
+	gate       exportGate
+	derived    bool // true when rows are derived in Go rather than streamed from `table`
 }
 
 // allExportTables returns the curated, ordered export surface (see openspec
@@ -72,7 +80,16 @@ func allExportTables() []tableConfig {
 			join: "INNER JOIN kb.documents d ON d.id = t.document_id", deletedColumn: "deleted_at"},
 		{name: "graph_objects", table: "kb.graph_objects", projectFilter: byProject, vectorColumns: []string{"embedding_v2"}, deletedColumn: "deleted_at"},
 		{name: "graph_relationships", table: "kb.graph_relationships", projectFilter: byProject, vectorColumns: []string{"embedding"}, deletedColumn: "deleted_at"},
-		{name: "chat_conversations", table: "kb.chat_conversations", projectFilter: byProject, deletedColumn: "deleted_at", gate: gateChat},
+		{name: "chat_conversations", table: "kb.chat_conversations", projectFilter: byProject, deletedColumn: "deleted_at", gate: gateChat,
+			leftJoin: "LEFT JOIN kb.graph_objects go ON go.id = t.object_id",
+			columnExprs: map[string]string{
+				// object_id → kb.graph_objects(id). A soft-deleted object is
+				// excluded from the archive, so a conversation pointing at one
+				// would dangle on restore and violate the FK. Null the optional
+				// pointer; keep the conversation. Not applied when soft-deleted
+				// rows are exported (IncludeDeleted), since the object is present.
+				"object_id": `CASE WHEN go.id IS NULL OR go.deleted_at IS NOT NULL THEN NULL ELSE t."object_id" END AS "object_id"`,
+			}},
 		{name: "chat_messages", table: "kb.chat_messages", projectFilter: "c.project_id = ?",
 			join: "INNER JOIN kb.chat_conversations c ON c.id = t.conversation_id", deletedColumn: "deleted_at", gate: gateChat},
 		{name: "object_extraction_jobs", table: "kb.object_extraction_jobs", projectFilter: byProject,
@@ -149,16 +166,10 @@ func (e *Exporter) exportTable(ctx context.Context, cfg tableConfig, w io.Writer
 	}
 
 	colSet := make(map[string]bool, len(cols))
-	exprs := make([]string, 0, len(cols))
-	var vectorCols []string
 	for _, col := range cols {
 		colSet[col.Name] = true
-		expr, isVector := selectColumnExpr(col, containsString(cfg.vectorColumns, col.Name))
-		exprs = append(exprs, expr)
-		if isVector {
-			vectorCols = append(vectorCols, col.Name)
-		}
 	}
+	exprs, vectorCols := projectionColumns(cols, cfg, opts.IncludeDeleted)
 
 	query := e.db.NewSelect().
 		TableExpr(cfg.table + " AS t").
@@ -167,13 +178,18 @@ func (e *Exporter) exportTable(ctx context.Context, cfg tableConfig, w io.Writer
 	if cfg.join != "" {
 		query = query.Join(cfg.join)
 	}
+	// leftJoin supplies the aliases referenced by columnExprs, which only apply
+	// when soft-deleted rows are excluded.
+	if cfg.leftJoin != "" && !opts.IncludeDeleted && len(cfg.columnExprs) > 0 {
+		query = query.Join(cfg.leftJoin)
+	}
 	if cfg.projectFilter != "" {
 		query = query.Where(cfg.projectFilter, opts.ProjectID)
 	}
 	// deletedColumn is only applied when the live schema actually has it, so
 	// legacy configs degrade gracefully on schemas without soft deletes.
-	if !opts.IncludeDeleted && cfg.deletedColumn != "" && colSet[cfg.deletedColumn] {
-		query = query.Where("t." + quoteIdent(cfg.deletedColumn) + " IS NULL")
+	if f := deletedColumnFilter(cfg, opts.IncludeDeleted, colSet); f != "" {
+		query = query.Where(f)
 	}
 	if cfg.extraWhere != "" {
 		query = query.Where(cfg.extraWhere)
@@ -204,6 +220,47 @@ func selectColumnExpr(col colInfo, vectorListed bool) (expr string, isVector boo
 		return fmt.Sprintf("t.%s::text AS %s", quoteIdent(col.Name), quoteIdent(col.Name)), false
 	}
 	return "t." + quoteIdent(col.Name), false
+}
+
+// softNullResolution computes the extra LEFT JOIN clauses and per-column SELECT
+// overrides for cfg's softNull entries. When includeDeleted is true the
+// referenced rows are exported too, so no join or override is produced.
+// Columns absent from colSet are skipped so legacy schemas degrade gracefully.
+func softNullResolution(cfg tableConfig, includeDeleted bool, colSet map[string]bool) (joins []string, exprs map[string]string) {
+	if includeDeleted || len(cfg.softNull) == 0 {
+		return nil, nil
+	}
+	exprs = make(map[string]string, len(cfg.softNull))
+	for col, ref := range cfg.softNull {
+		if !colSet[col] {
+			continue
+		}
+		joins = append(joins, ref.join)
+		exprs[col] = softNullCaseExpr(col, ref.alias)
+	}
+	if len(exprs) == 0 {
+		return nil, nil
+	}
+	return joins, exprs
+}
+
+// softNullCaseExpr builds the SELECT expression that emits a column as NULL
+// when the referenced row is missing or soft-deleted, and the raw column value
+// otherwise. The referenced row's identity and soft-delete columns are `id` and
+// `deleted_at` respectively.
+func softNullCaseExpr(col, alias string) string {
+	return fmt.Sprintf("CASE WHEN %s.id IS NULL OR %s.deleted_at IS NOT NULL THEN NULL ELSE t.%s END AS %s",
+		alias, alias, quoteIdent(col), quoteIdent(col))
+}
+
+// deletedColumnFilter returns the WHERE fragment that excludes soft-deleted
+// rows, or "" when there is nothing to filter (IncludeDeleted is true, no
+// deletedColumn is configured, or the live schema lacks the column).
+func deletedColumnFilter(cfg tableConfig, includeDeleted bool, colSet map[string]bool) string {
+	if includeDeleted || cfg.deletedColumn == "" || !colSet[cfg.deletedColumn] {
+		return ""
+	}
+	return "t." + quoteIdent(cfg.deletedColumn) + " IS NULL"
 }
 
 // branchRow is the minimal shape of kb.branches needed to re-derive lineage.
