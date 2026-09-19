@@ -573,21 +573,30 @@ templ deleteConfirmDialog() {
 // pageHeader renders the standard list-page header: kicker eyebrow + title +
 // subtitle on the left, right-side actions/badges via children.
 //
-// It stays local: nav.PageHeading cannot reproduce it byte-for-byte. PageHeading
-// always adds mt-2 to its flex row (this header has none), and the only
-// PageHeading variant with lg:text-3xl (Dashboard) drops the kicker eyebrow —
-// while this list-page header needs both the eyebrow and lg:text-3xl.
-templ pageHeader(kicker, title, subtitle string) {
-	<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
-		<div>
-			@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
-			<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-			if subtitle != "" {
-				<p class="text-base-content/55 mt-1 text-sm">{ subtitle }</p>
-			}
-		</div>
-		{ children... }
-	</div>
+// It is a thin delegate over nav.PageHeading (Flat + Dashboard + no-top-margin
+// variant), which reproduces this header's markup byte-for-byte. It is a plain
+// Go function (not a templ component) so its children forward into PageHeading's
+// Actions slot: templ components clear their children context before the body
+// runs, so a hand-written ComponentFunc reads GetChildren(ctx) directly.
+func pageHeader(kicker, title, subtitle string) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		children := templ.GetChildren(ctx)
+		if children == nil {
+			children = templ.NopComponent
+		}
+		return nav.PageHeading(nav.PageHeadingProps{
+			Title:           title,
+			Kicker:          kicker,
+			Subtitle:        subtitle,
+			Actions:         children,
+			Margin:          "mb-6",
+			Dashboard:       true,
+			SubtitleFull:    true,
+			HideBreadcrumbs: true,
+			NoTopMargin:     true,
+			Flat:            true,
+		}).Render(ctx, w)
+	})
 }
 
 // detailHeaderOpts configures detailHeader variants. All fields optional.
