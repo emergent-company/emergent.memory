@@ -204,3 +204,56 @@ func TestScalarHelpers(t *testing.T) {
 		t.Errorf("quoteArrayElement = %q", got)
 	}
 }
+
+func TestRemapRowUUIDsNullsOwnerUserID(t *testing.T) {
+	remap := map[string]string{}
+	cols := []dbColumn{
+		{Name: "id", DataType: "uuid", UDTName: "uuid"},
+		{Name: "owner_user_id", DataType: "uuid", UDTName: "uuid"},
+	}
+	row := map[string]any{
+		"id":            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		"owner_user_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+	}
+	remapRowUUIDs(row, remap, []string{"owner_user_id"}, cols)
+
+	if row["id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+		t.Error("row id was not remapped to a fresh UUID")
+	}
+	if row["owner_user_id"] != nil {
+		t.Errorf("owner_user_id = %v, want nil (foreign owner must be nulled on clone)", row["owner_user_id"])
+	}
+}
+
+func TestFilterCloneMembershipsDropsForeignUsers(t *testing.T) {
+	r := &Restorer{}
+	m := &membershipFilter{
+		sameOrg:         false, // imported archives always filter
+		targetOrgUsers:  map[string]bool{"member-1": true},
+		createdBy:       "restorer-1",
+		targetProjectID: "proj-1",
+	}
+	rows := []map[string]any{
+		{"user_id": "member-1", "role": "project_admin"},
+		{"user_id": "foreign-1", "role": "editor"},
+	}
+
+	got := r.filterCloneMemberships(rows, m)
+	if len(got) != 2 {
+		t.Fatalf("filterCloneMemberships returned %d rows, want 2 (member-1 + restorer-1)", len(got))
+	}
+
+	seen := map[string]bool{}
+	for _, row := range got {
+		seen[stringValue(row["user_id"])] = true
+	}
+	if !seen["member-1"] {
+		t.Error("expected member-1 to be retained")
+	}
+	if seen["foreign-1"] {
+		t.Error("expected foreign-1 to be dropped")
+	}
+	if !seen["restorer-1"] {
+		t.Error("expected restorer-1 to be added")
+	}
+}
