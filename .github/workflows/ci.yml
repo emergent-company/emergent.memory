@@ -6,6 +6,9 @@ name: Meta CI
 # reports for PRs that do not touch the listed paths, so the required check is
 # simply absent for those PRs and the whole required-check set becomes
 # unenforceable. (Pre-existing defect; fixed here deliberately.)
+#
+# The review-bot meta checks (script syntax + review-gate tests) moved to
+# emergent-company/emergent.memory.infra along with the review-bot apparatus.
 on:
   push:
     branches: [main]
@@ -21,7 +24,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Syntax-check scripts
-        run: python3 -m py_compile .github/scripts/*.py
-      - name: Review gate tests
-        run: bash .github/scripts/test_copilot_review_gate.sh
+      - name: Meta checks
+        run: 'echo "Meta CI: no meta checks remain in this repository."'
