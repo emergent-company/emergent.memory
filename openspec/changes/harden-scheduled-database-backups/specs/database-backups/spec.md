@@ -2,16 +2,21 @@
 
 ### Requirement: Packaged pg_dump client matches the database image major
 
-The server runtime image SHALL install a PostgreSQL client whose major version matches the major version of the database image the stock self-hosted compose files pair it with. The client major SHALL be selectable through a `PG_CLIENT_MAJOR` build argument (default `17`) rather than hard-coded, and the build entry points (`build.sh`, `docker-compose.local.yml`) SHALL pass that argument through.
+The server runtime image SHALL install a PostgreSQL client whose major version matches the major version of the database image the stock self-hosted compose files pair it with. The client major SHALL be selectable through a `PG_CLIENT_MAJOR` build argument (default `17`) rather than hard-coded, restricted to majors available in the base image's package repositories, and the build entry points (`build.sh`, `docker-compose.local.yml`) SHALL pass that argument through.
 
 #### Scenario: Stock image installs the matched client
 - **WHEN** the server image is built with the default build arguments
 - **THEN** the installed `pg_dump` client major SHALL equal the major of `pgvector/pgvector:pg17` (17)
 - **THEN** running `pg_dump --version` inside the image SHALL report major 17
 
-#### Scenario: Client major is overridable at build time
-- **WHEN** the image is built with `PG_CLIENT_MAJOR=18`
-- **THEN** the installed client package SHALL be the PostgreSQL 18 client
+#### Scenario: Available client major is overridable
+- **WHEN** the image is built with a `PG_CLIENT_MAJOR` whose client package exists in the base image's repositories (e.g. 16 on `alpine:3.21`)
+- **THEN** the installed client package SHALL be the PostgreSQL client of that major
+
+#### Scenario: Unavailable client major fails the build
+- **WHEN** the image is built with a `PG_CLIENT_MAJOR` whose client package does not exist in the base image's repositories (e.g. 18 on `alpine:3.21`)
+- **THEN** the image build SHALL fail at package install rather than producing an image with a mismatched client
+- **THEN** the operator SHALL bump the base image to one whose repositories ship that major
 
 #### Scenario: Compose files document the coupling
 - **WHEN** an operator reads `deploy/self-hosted/docker-compose.yml`

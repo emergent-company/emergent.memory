@@ -12,7 +12,7 @@ The client/server pairing can also drift apart again silently, because the datab
 
 ## What Changes
 
-- **Match the client to the database:** introduce a `PG_CLIENT_MAJOR` build arg (default `17`) in `Dockerfile.server`, install `postgresql${PG_CLIENT_MAJOR}-client`, and wire the arg through the build paths (`build.sh`, `docker-compose.local.yml`) with a sync comment at the compose database image.
+- **Match the client to the database:** introduce a `PG_CLIENT_MAJOR` build arg (default `17`) in `Dockerfile.server`, install `postgresql${PG_CLIENT_MAJOR}-client`, and wire the arg through the build paths (`build.sh`, `docker-compose.local.yml`) with a sync comment at the compose database image. The arg selects only among client majors shipped by the base image (`alpine:3.21` carries 15/16/17); a newer major requires bumping the base image first.
 - **Fail loudly on mismatch:** the backup task runs a `pg_dump` ↔ server version preflight before dumping. A mismatch is persisted on the backup record with an actionable message (naming `PG_CLIENT_MAJOR`) instead of a raw exit-status error.
 - **Retention always applies:** `enforceRetention` runs after every backup attempt, including failures, still log-only on error.
 - **No empty/untracked objects:** on `pg_dump` failure the stdout pipe is closed with the error so the uploader aborts, and any object that nevertheless landed is deleted defensively.

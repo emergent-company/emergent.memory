@@ -156,6 +156,10 @@ FROM alpine:3.21
 # compose files (pgvector/pgvector:pg17) because pg_dump refuses to dump a
 # server newer than itself. Override at build time with
 # --build-arg PG_CLIENT_MAJOR=<major> when the database image major changes.
+# PG_CLIENT_MAJOR must name a client major available in this base image's
+# package repositories (alpine:3.21 ships postgresql15/16/17-client; it does
+# NOT ship a 18 client). A newer major requires bumping the base image tag first
+# — `apk add postgresql18-client` will fail the build.
 ARG PG_CLIENT_MAJOR=17
 
 # Install runtime dependencies

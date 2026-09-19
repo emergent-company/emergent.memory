@@ -25,12 +25,19 @@ import (
 // Handler handles health check requests
 type Handler struct {
 	pool       *pgxpool.Pool
+	db         rowQuerier
 	cfg        *config.Config
 	storage    *storage.Service
 	kreuzberg  *kreuzberg.Client
 	whisper    *whisper.Client
 	embeddings *embeddings.Service
 	startAt    time.Time
+}
+
+// rowQuerier is the subset of *pgxpool.Pool used by databaseBackupCheck,
+// extracted so the check can be tested with a fake without a live database.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 // NewHandler creates a new health handler
@@ -44,6 +51,7 @@ func NewHandler(
 ) *Handler {
 	return &Handler{
 		pool:       pool,
+		db:         pool,
 		cfg:        cfg,
 		storage:    storageSvc,
 		kreuzberg:  kreuzbergClient,
@@ -333,26 +341,33 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		var (
-			status    string
-			errMsg    *string
-			startedAt *time.Time
-		)
-		err := h.pool.QueryRow(ctx,
-			"SELECT status, error, started_at FROM kb.database_backups ORDER BY created_at DESC LIMIT 1",
-		).Scan(&status, &errMsg, &startedAt)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			emit("database_backup", Check{Status: "healthy", Message: "no backups recorded yet"})
-		case err != nil:
-			emit("database_backup", Check{Status: "healthy", Message: "backup status unavailable: " + err.Error()})
-		default:
-			emit("database_backup", classifyDatabaseBackup(status, errMsg, startedAt, time.Now()))
-		}
+		emit("database_backup", h.databaseBackupCheck(ctx))
 	}()
 
 	wg.Wait()
 	return results
+}
+
+// databaseBackupCheck derives the database_backup health check from the newest
+// kb.database_backups row. A query error or missing table is reported healthy
+// so a probe never manufactures an outage.
+func (h *Handler) databaseBackupCheck(ctx context.Context) Check {
+	var (
+		status    string
+		errMsg    *string
+		startedAt *time.Time
+	)
+	err := h.db.QueryRow(ctx,
+		"SELECT status, error, started_at FROM kb.database_backups ORDER BY created_at DESC LIMIT 1",
+	).Scan(&status, &errMsg, &startedAt)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Check{Status: "healthy", Message: "no backups recorded yet"}
+	case err != nil:
+		return Check{Status: "healthy", Message: "backup status unavailable: " + err.Error()}
+	default:
+		return classifyDatabaseBackup(status, errMsg, startedAt, time.Now())
+	}
 }
 
 // Healthz returns a simple health check (for k8s liveness probe)

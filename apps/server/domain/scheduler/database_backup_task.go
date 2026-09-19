@@ -208,7 +208,11 @@ func (t *DatabaseBackupTask) preflightPgDump(ctx context.Context) error {
 // runBackup runs pg_dump and streams output to MinIO.
 func (t *DatabaseBackupTask) runBackup(ctx context.Context, record *DatabaseBackup) error {
 	dbCfg := t.cfg.Database
-	key := fmt.Sprintf("database-backups/%s.dump", time.Now().UTC().Format("2006-01-02_15-04-05"))
+	// Per-run unique key: the timestamp alone is only second-level precision and
+	// the scheduler has no skip-if-running guard, so overlapping runs could share
+	// a key and a failed run's cleanup could delete another run's object.
+	// record.ID is populated by the Returning("id") insert in Run.
+	key := fmt.Sprintf("database-backups/%s-%s.dump", time.Now().UTC().Format("2006-01-02_15-04-05"), record.ID)
 
 	// Build pg_dump command
 	cmd := exec.CommandContext(ctx,
@@ -280,21 +284,20 @@ func (t *DatabaseBackupTask) runBackup(ctx context.Context, record *DatabaseBack
 		stderr := string(stderrBuf)
 		pgDumpErr := fmt.Errorf("pg_dump failed: %w (stderr: %s)", cmdErr, stderr)
 
-		// Defensive cleanup: if pg_dump failed but the upload nevertheless
-		// reported success (e.g. an empty object landed), delete it so we never
-		// leave an untracked object. The pg_dump error is always the one
-		// returned — cleanup noise never replaces the real diagnostic.
-		if uploadErr == nil {
-			if delErr := t.storage.DeleteFromBucket(ctx, dbBackupBucket, key); delErr != nil {
-				t.log.Warn("failed to delete empty backup object after pg_dump failure",
-					slog.String("key", key),
-					slog.String("error", delErr.Error()),
-				)
-			} else {
-				t.log.Warn("deleted empty backup object left by failed pg_dump",
-					slog.String("key", key),
-				)
-			}
+		// Defensive cleanup: an S3 PutObject can commit before returning an
+		// error, so a failed pg_dump may still leave an object under this run's
+		// key. Delete unconditionally — deleting a missing key is a no-op — so
+		// a failed dump never leaves a stray object. The pg_dump error is always
+		// the one returned; cleanup noise never replaces the real diagnostic.
+		if delErr := t.storage.DeleteFromBucket(ctx, dbBackupBucket, key); delErr != nil {
+			t.log.Warn("failed to delete backup object after pg_dump failure",
+				slog.String("key", key),
+				slog.String("error", delErr.Error()),
+			)
+		} else {
+			t.log.Warn("deleted backup object left by failed pg_dump",
+				slog.String("key", key),
+			)
 		}
 		return pgDumpErr
 	}

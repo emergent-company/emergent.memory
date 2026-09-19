@@ -1,9 +1,13 @@
 package health
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/emergent-company/emergent.memory/internal/version"
 )
@@ -138,6 +142,102 @@ func TestClassifyDatabaseBackup(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := classifyDatabaseBackup(tt.status, tt.errMsg, tt.startedAt, now)
+			if got.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", got.Status, tt.wantStatus)
+			}
+			if tt.wantMsg != "" && got.Message != tt.wantMsg {
+				t.Errorf("message = %q, want %q", got.Message, tt.wantMsg)
+			}
+			if tt.msgHas != "" && !strings.Contains(got.Message, tt.msgHas) {
+				t.Errorf("message = %q, want it to contain %q", got.Message, tt.msgHas)
+			}
+		})
+	}
+}
+
+// fakeRow is a minimal pgx.Row whose Scan populates the same destinations as
+// the database_backup query (string, *string, *time.Time), or returns a canned
+// error (pgx.ErrNoRows, or an arbitrary query error).
+type fakeRow struct {
+	scanErr error
+	status  string
+	errMsg  *string
+	started *time.Time
+}
+
+func (r fakeRow) Scan(dest ...any) error {
+	if r.scanErr != nil {
+		return r.scanErr
+	}
+	if len(dest) > 0 {
+		if s, ok := dest[0].(*string); ok {
+			*s = r.status
+		}
+	}
+	if len(dest) > 1 {
+		if s, ok := dest[1].(**string); ok {
+			*s = r.errMsg
+		}
+	}
+	if len(dest) > 2 {
+		if s, ok := dest[2].(**time.Time); ok {
+			*s = r.started
+		}
+	}
+	return nil
+}
+
+type fakeRowQuerier struct {
+	row pgx.Row
+}
+
+func (f fakeRowQuerier) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
+	return f.row
+}
+
+func TestDatabaseBackupCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		row        pgx.Row
+		wantStatus string
+		wantMsg    string
+		msgHas     string
+	}{
+		{
+			name:       "no rows recorded",
+			row:        fakeRow{scanErr: pgx.ErrNoRows},
+			wantStatus: "healthy",
+			wantMsg:    "no backups recorded yet",
+		},
+		{
+			name:       "query error",
+			row:        fakeRow{scanErr: errors.New("db down")},
+			wantStatus: "healthy",
+			msgHas:     "backup status unavailable: db down",
+		},
+		{
+			name:       "completed backup",
+			row:        fakeRow{status: "completed"},
+			wantStatus: "healthy",
+		},
+		{
+			name:       "failed backup with nullable fields populated",
+			row:        fakeRow{status: "failed", errMsg: strPtr("connection refused"), started: timePtr(time.Now())},
+			wantStatus: "unhealthy",
+			msgHas:     "connection refused",
+		},
+		{
+			name:       "failed backup with null error",
+			row:        fakeRow{status: "failed"},
+			wantStatus: "unhealthy",
+			msgHas:     "database backup failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &Handler{db: fakeRowQuerier{row: tt.row}}
+			got := h.databaseBackupCheck(context.Background())
 			if got.Status != tt.wantStatus {
 				t.Errorf("status = %q, want %q", got.Status, tt.wantStatus)
 			}
