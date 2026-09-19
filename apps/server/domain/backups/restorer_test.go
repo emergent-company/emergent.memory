@@ -204,3 +204,71 @@ func TestScalarHelpers(t *testing.T) {
 		t.Errorf("quoteArrayElement = %q", got)
 	}
 }
+
+func TestApplyRefs(t *testing.T) {
+	sourceID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	targetID := "11111111-1111-1111-1111-111111111111"
+	unmapped := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	remap := map[string]string{sourceID: targetID}
+
+	t.Run("value in remap is remapped", func(t *testing.T) {
+		row := map[string]any{"schema_id": sourceID}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refSkip}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false for a resolvable reference")
+		}
+		if got := row["schema_id"]; got != targetID {
+			t.Errorf("schema_id = %v, want %s", got, targetID)
+		}
+	})
+
+	t.Run("unmapped refNull is nulled", func(t *testing.T) {
+		row := map[string]any{"parent_document_id": unmapped}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"parent_document_id": {action: refNull}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false for refNull")
+		}
+		if row["parent_document_id"] != nil {
+			t.Errorf("parent_document_id = %v, want nil", row["parent_document_id"])
+		}
+	})
+
+	t.Run("unmapped refSkip skips row", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refSkip}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !skip {
+			t.Fatal("expected skip=true for refSkip")
+		}
+	})
+
+	t.Run("unmapped refFail errors", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		_, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refFail}})
+		if err == nil {
+			t.Fatal("expected error for refFail")
+		}
+	})
+
+	t.Run("unmapped with no policy preserves raw value", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		skip, err := applyRefs(row, remap, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false")
+		}
+		if got := row["schema_id"]; got != unmapped {
+			t.Errorf("schema_id = %v, want %s", got, unmapped)
+		}
+	})
+}
