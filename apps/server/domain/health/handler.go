@@ -3,11 +3,14 @@ package health
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"runtime"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 
@@ -22,12 +25,19 @@ import (
 // Handler handles health check requests
 type Handler struct {
 	pool       *pgxpool.Pool
+	db         rowQuerier
 	cfg        *config.Config
 	storage    *storage.Service
 	kreuzberg  *kreuzberg.Client
 	whisper    *whisper.Client
 	embeddings *embeddings.Service
 	startAt    time.Time
+}
+
+// rowQuerier is the subset of *pgxpool.Pool used by databaseBackupCheck,
+// extracted so the check can be tested with a fake without a live database.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 // NewHandler creates a new health handler
@@ -41,6 +51,7 @@ func NewHandler(
 ) *Handler {
 	return &Handler{
 		pool:       pool,
+		db:         pool,
 		cfg:        cfg,
 		storage:    storageSvc,
 		kreuzberg:  kreuzbergClient,
@@ -92,6 +103,51 @@ type Check struct {
 	Message string `json:"message,omitempty"`
 }
 
+// databaseBackupStaleAfter is how long a running/pending backup may run before
+// the health check considers it wedged.
+const databaseBackupStaleAfter = 6 * time.Hour
+
+// classifyDatabaseBackup derives a health Check from the newest scheduled
+// database backup row. `completed` is healthy; `failed` is unhealthy with the
+// stored error message (truncated); a `running`/`pending` backup older than the
+// staleness window is unhealthy; anything else is healthy. An unknown status is
+// echoed as healthy so an unfamiliar value never manufactures an outage.
+func classifyDatabaseBackup(status string, errMsg *string, startedAt *time.Time, now time.Time) Check {
+	switch status {
+	case "completed":
+		return Check{Status: "healthy"}
+	case "failed":
+		msg := "database backup failed"
+		if errMsg != nil {
+			msg = *errMsg
+		}
+		return Check{Status: "unhealthy", Message: truncateMessage(msg, 200)}
+	case "running", "pending":
+		if startedAt != nil && now.Sub(*startedAt) > databaseBackupStaleAfter {
+			return Check{
+				Status:  "unhealthy",
+				Message: fmt.Sprintf("database backup %s since %s", status, startedAt.Format(time.RFC3339)),
+			}
+		}
+		return Check{Status: "healthy"}
+	default:
+		return Check{Status: "healthy", Message: status}
+	}
+}
+
+// truncateMessage returns s if it is no longer than limit, otherwise the first
+// limit runes followed by an ellipsis.
+func truncateMessage(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "..."
+}
+
 // Health returns the overall service health
 // @Summary      Get service health
 // @Description  Returns detailed health status including database, storage, auth, and service connectivity
@@ -108,9 +164,9 @@ func (h *Handler) Health(c echo.Context) error {
 	checks := h.runChecks(ctx)
 
 	// Critical components: database, storage, auth — 503 if any are unhealthy
-	// Optional components: kreuzberg, whisper, embeddings — 200 even if degraded
+	// Optional components: kreuzberg, whisper, embeddings, database_backup — 200 even if degraded
 	criticalComponents := []string{"database", "storage", "auth"}
-	optionalComponents := []string{"kreuzberg", "whisper", "embeddings"}
+	optionalComponents := []string{"kreuzberg", "whisper", "embeddings", "database_backup"}
 
 	overallStatus := "healthy"
 
@@ -159,7 +215,7 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 	var (
 		mu      sync.Mutex
 		wg      sync.WaitGroup
-		results = make(map[string]Check, 6)
+		results = make(map[string]Check, 7)
 	)
 
 	emit := func(name string, chk Check) {
@@ -279,8 +335,39 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 		}
 	}()
 
+	// Database backup (most recent scheduled backup). A probe must never
+	// manufacture an outage: a query error or a missing table is reported as
+	// healthy with an explanatory message.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		emit("database_backup", h.databaseBackupCheck(ctx))
+	}()
+
 	wg.Wait()
 	return results
+}
+
+// databaseBackupCheck derives the database_backup health check from the newest
+// kb.database_backups row. A query error or missing table is reported healthy
+// so a probe never manufactures an outage.
+func (h *Handler) databaseBackupCheck(ctx context.Context) Check {
+	var (
+		status    string
+		errMsg    *string
+		startedAt *time.Time
+	)
+	err := h.db.QueryRow(ctx,
+		"SELECT status, error, started_at FROM kb.database_backups ORDER BY created_at DESC LIMIT 1",
+	).Scan(&status, &errMsg, &startedAt)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Check{Status: "healthy", Message: "no backups recorded yet"}
+	case err != nil:
+		return Check{Status: "healthy", Message: "backup status unavailable: " + err.Error()}
+	default:
+		return classifyDatabaseBackup(status, errMsg, startedAt, time.Now())
+	}
 }
 
 // Healthz returns a simple health check (for k8s liveness probe)

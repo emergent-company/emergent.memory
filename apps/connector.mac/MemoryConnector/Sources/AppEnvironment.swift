@@ -18,6 +18,10 @@ final class AppEnvironment: ObservableObject {
     let projectStore: ProjectStore
     let appState = AppState()
     let identity = IdentityStore()
+    /// Sparkle-backed app updater. Created once here so the About page and any
+    /// future menu-bar surface share a single controller (starting a second one
+    /// would start a second update cycle).
+    let updater = UpdaterModel()
 
     /// The one-time legacy-session migrator, if one should run. Built by
     /// default against the shared legacy storage; `nil` when a migrator is

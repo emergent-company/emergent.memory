@@ -109,10 +109,16 @@ jobs:
         id: version
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            RAW="${{ github.ref_name }}"
           else
-            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+            # Parseable X.Y.Z fallback for forced workflow_dispatch builds
+            # (build-dmg.sh requires a semver it can encode monotonically).
+            RAW="0.0.0"
           fi
+          echo "version=$RAW" >> "$GITHUB_OUTPUT"
+          # Marketing version = semver without the leading 'v' (matches the DMG
+          # filename and CFBundleShortVersionString in build-dmg.sh).
+          echo "marketing=${RAW#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build, sign, notarize, package
         working-directory: apps/connector.mac
@@ -129,6 +135,73 @@ jobs:
           name: memory-mac-dmg
           path: apps/connector.mac/build/Memory-*.dmg
           retention-days: 7
+
+      - name: Generate Sparkle appcast
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: apps/connector.mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          # Sparkle CLI tools live in the SwiftPM artifacts dir of DerivedData;
+          # the DerivedData hash is not stable, so locate them dynamically.
+          GENERATE_APPCAST="$(find build/DerivedData -type f -path '*/artifacts/sparkle/Sparkle/bin/generate_appcast' 2>/dev/null | head -n 1 || true)"
+          if [ -z "$GENERATE_APPCAST" ]; then
+            echo "::error::generate_appcast not found under build/DerivedData"
+            exit 1
+          fi
+          echo "Using generate_appcast: $GENERATE_APPCAST"
+
+          UPDATES_DIR="build/appcast"
+          mkdir -p "$UPDATES_DIR"
+
+          # Download previously published archives from the rolling feed release.
+          # --skip-existing keeps already-cached DMGs; `|| true` because the
+          # first release has no memory-appcast release yet.
+          gh release download memory-appcast \
+            -p '*.dmg' -p '*.delta' -p 'appcast.xml' \
+            -D "$UPDATES_DIR" --skip-existing || true
+
+          # Copy the freshly built (and stapled) DMG into the feed directory.
+          DMG="build/Memory-${{ steps.version.outputs.marketing }}.dmg"
+          cp "$DMG" "$UPDATES_DIR/"
+
+          # Monotonicity guard: the new CFBundleVersion must be strictly greater
+          # than the largest sparkle:version already published. generate_appcast
+          # orders updates by sparkle:version, so a non-increasing value would
+          # silently reorder the feed and break update detection.
+          NEW_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "build/Export/Memory.app/Contents/Info.plist")"
+          PREV_APPCAST="$UPDATES_DIR/appcast.xml"
+          if [ -f "$PREV_APPCAST" ]; then
+            PREV_VERSION="$(grep -o '<sparkle:version>[0-9]*</sparkle:version>' "$PREV_APPCAST" | grep -o '[0-9]*' | sort -n | tail -n 1 || true)"
+            if [ -n "$PREV_VERSION" ] && [ "$NEW_VERSION" -le "$PREV_VERSION" ]; then
+              echo "::error::CFBundleVersion $NEW_VERSION is not greater than previously published $PREV_VERSION"
+              exit 1
+            fi
+          fi
+
+          # Generate the appcast. The EdDSA private key (base64 of the 32-byte
+          # seed) is piped to stdin and must never be echoed. Deltas (if any)
+          # are emitted alongside appcast.xml by generate_appcast.
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" \
+            --download-url-prefix "https://github.com/emergent-company/emergent.memory/releases/download/memory-appcast/" \
+            --ed-key-file - \
+            "$UPDATES_DIR"
+
+          echo "Appcast generated at $UPDATES_DIR/appcast.xml"
+
+      - name: Publish Sparkle appcast
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: apps/connector.mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view memory-appcast || gh release create memory-appcast \
+            --title "Mac update feed" \
+            --notes "Rolling Sparkle feed"
+          shopt -s nullglob
+          ASSETS=(build/appcast/appcast.xml build/appcast/Memory-*.dmg build/appcast/*.delta)
+          gh release upload memory-appcast "${ASSETS[@]}" --clobber
 
   release:
     name: Publish to shared release

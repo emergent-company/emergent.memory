@@ -22,6 +22,14 @@ settings:
     # debug dylib so Debug builds are a single normally-signed executable.
     ENABLE_DEBUG_DYLIB: "NO"
 
+# Sparkle 2 powers in-app updates: a signed appcast feed plus EdDSA-signed
+# archives. The package product is also named `Sparkle`, so the target
+# dependency below resolves without an explicit `product` key.
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.0
+
 targets:
   MemoryConnector:
     type: application
@@ -53,6 +61,8 @@ targets:
         Release: MemoryConnector.xcconfig
     entitlements:
       path: MemoryConnector.entitlements
+    dependencies:
+      - package: Sparkle
     preBuildScripts:
       - name: Build embedded engine binary
         path: Scripts/build-engine.sh

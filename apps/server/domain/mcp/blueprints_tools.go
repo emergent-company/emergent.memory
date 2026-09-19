@@ -28,6 +28,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:          "blueprint-create",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:write",
 			Description:   "Create a new blueprint draft, scoped to the caller's project (private). Returns the created blueprint with its id, name, version, and manifest. Publish it with blueprint-publish before applying it to a project. Global built-ins are readable and apply-able but immutable — fork one with blueprint-new-version to change it.",
 			InputSchema: InputSchema{
@@ -59,6 +60,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-list",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:read",
 			Description:   "List blueprints visible to the caller: global built-ins plus the caller's own private blueprints. Optionally filtered by name. Returns id, name, version, status, scope, and checksum for each blueprint.",
 			InputSchema: InputSchema{
@@ -74,6 +76,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-get",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:read",
 			Description:   "Get a single blueprint by id within the caller's read scope (global built-ins plus the caller's own private blueprints). Returns the full blueprint including its manifest.",
 			InputSchema: InputSchema{
@@ -89,6 +92,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-publish",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:write",
 			Description:   "Publish the caller's own private draft blueprint, computing a sha256 checksum over its manifest. Global built-ins are immutable — fork a version to change one. Returns the published blueprint.",
 			InputSchema: InputSchema{
@@ -104,6 +108,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-apply",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:write",
 			Description:   "Apply a blueprint to the current project, materializing its manifest: schema packs (create-or-skip, always assigned), agent definitions (create-or-update by name), global skills (create-or-update by name), and seed graph objects/relationships. Idempotent — re-applying converges. Returns per-type created/updated/skipped counts.",
 			InputSchema: InputSchema{
@@ -119,6 +124,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-unapply",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:write",
 			Description:   "Reverse a previous blueprint apply for the current project: removes agent definitions owned by the blueprint and pack assignments owned by it, leaving the global pack. Skills and seed graph objects are skipped (shared/global scope). Idempotent. Returns per-type removal counts.",
 			InputSchema: InputSchema{
@@ -134,6 +140,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-versions",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:read",
 			Description:   "List all versions of a blueprint name visible to the caller (global built-ins plus the caller's own private blueprints), newest first. Returns the full blueprint for each version.",
 			InputSchema: InputSchema{
@@ -149,6 +156,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-list-applied",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:read",
 			Description:   "List the blueprints currently applied to the current project. Returns blueprint id, name, version, and applied-at timestamp for each.",
 			InputSchema: InputSchema{
@@ -159,6 +167,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-new-version",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:write",
 			Description:   "Clone an existing blueprint into a new version as a draft. The source may be a global built-in or your own blueprint; the clone is created as a private draft in your project. Publish it (blueprint-publish) before applying.",
 			InputSchema: InputSchema{
@@ -178,6 +187,7 @@ func blueprintsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "blueprint-update",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:write",
 			Description:   "Update a draft blueprint's description, author, and/or manifest. Only your own private drafts can be updated — global blueprints are immutable; fork one with blueprint-new-version to change it.",
 			InputSchema: InputSchema{

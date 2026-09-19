@@ -115,6 +115,16 @@ func TestRefactorOutputExact(t *testing.T) {
 	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/schema" class="">Schema</a></li><li class="font-medium text-base-content"><span class="">Person</span></li></ul></div><div class="mt-2 flex flex-wrap items-center justify-between gap-4"><div class="min-w-0"><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Object type</p><h1 class="text-2xl font-bold tracking-tight">Person</h1></div></div></div>`
 	check("detailHeader kicker", got, want)
 
+	// pageHeader — full case (kicker + title + subtitle + one action)
+	got = render(pageHeader("Control plane", "Agents", "The personas Memory can become — pick a model, set the tone, grant tools."), "<span>action</span>")
+	want = `<div class="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Control plane</p><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Agents</h1><p class="text-base-content/55 mt-1 text-sm">The personas Memory can become — pick a model, set the tone, grant tools.</p></div><span>action</span></div>`
+	check("pageHeader full", got, want)
+
+	// pageHeader — empty subtitle, no actions
+	got = render(pageHeader("Kicker", "Title", ""))
+	want = `<div class="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Kicker</p><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Title</h1></div></div>`
+	check("pageHeader empty", got, want)
+
 	// checkboxPicker — skill, empty with id
 	got = render(checkboxPicker(checkboxPickerProps{
 		Name: "skill", EmptyID: "agent-skills-empty", EmptyNote: skillEmptyNote(),
