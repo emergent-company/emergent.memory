@@ -26,6 +26,8 @@ Install `postgresql${PG_CLIENT_MAJOR}-client` with `ARG PG_CLIENT_MAJOR=17` in t
 
 Alpine 3.21 repositories carry `postgresql17-client-17.11-r0` (verified), so the default needs no base-image change. The database image tag stays `pg17` — a mutable tag, but one whose major cannot change without a deliberate compose edit.
 
+The `PG_CLIENT_MAJOR` knob is bounded by the base image: it selects among the majors Alpine 3.21 actually ships (`postgresql15/16/17-client`), so a value like `18` fails the build at `apk add` rather than silently installing a mismatched client. Requesting a newer major therefore requires bumping the base image tag first.
+
 ### D2 — Preflight inside the task, recorded on the backup row
 
 `preflightPgDump` runs after the `running` row is inserted and before the dump: `exec.LookPath("pg_dump")`, parse `pg_dump --version`, read `current_setting('server_version_num')`, compare majors. On mismatch it returns an error naming both majors and `PG_CLIENT_MAJOR`, so the failure lands in `kb.database_backups.error` and is visible through the existing list endpoint without log access. Running it after the insert means the very first failed run is self-describing; running it before the insert would leave an empty history.
@@ -40,7 +42,7 @@ Alternative rejected: a startup-only check that refuses to boot. A version misma
 
 ### D4 — Abort the upload on failure, then delete defensively
 
-`runBackup` starts the MinIO upload concurrently with `pg_dump` (streaming by design, to avoid buffering a full dump). On `cmdErr != nil` the stdout pipe is closed with `pw.CloseWithError(cmdErr)` so the uploader observes a read failure and aborts mid-stream rather than finalizing a truncated or empty object. If the upload nevertheless reports success, the object under the computed key is deleted defensively, and any deletion error is logged — the original `pg_dump failed: … (stderr: …)` error is always the one returned, so diagnostics are never replaced by cleanup noise. Goroutine ordering is unchanged: wait for `pg_dump` → close writer (with error on failure) → close stderr writer → drain stderr → drain upload channel → close reader.
+`runBackup` pipes `pg_dump` stdout into the object uploader rather than buffering the dump in memory. With an unknown stream size the uploader spools the pipe to a temp file before calling `PutObject`, so nothing is uploaded until the dump has been fully read. On `cmdErr != nil` the stdout pipe is closed with `pw.CloseWithError(cmdErr)`, which makes that spool read fail and removes the temp file before `PutObject` is ever reached — a truncated or empty object is therefore never finalized. If the upload nevertheless reports success, the object under the computed key is deleted defensively, and any deletion error is logged — the original `pg_dump failed: … (stderr: …)` error is always the one returned, so diagnostics are never replaced by cleanup noise. The object key includes the inserted record's `id` (`database-backups/<timestamp>-<id>.dump`) so it is unique per run even when runs overlap or the scheduler fires more than once per second, ensuring the defensive delete can never remove another run's successful backup. Goroutine ordering is unchanged: wait for `pg_dump` → close writer (with error on failure) → close stderr writer → drain stderr → drain upload channel → close reader.
 
 ### D5 — Health check is optional (degraded), derived from the newest row
 
