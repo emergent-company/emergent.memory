@@ -29,6 +29,10 @@ func TestSchemaSQLApplies(t *testing.T) {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
+	// Match SetupTestDB: pick up .env / .env.local so local credentials are
+	// honored, otherwise this guard would skip on the default (wrong) DSN.
+	loadRepoEnvFiles()
+
 	baseCfg, err := config.NewConfig(log)
 	if err != nil {
 		t.Skipf("load config: %v", err)
