@@ -57,13 +57,19 @@ fi
 if [ -z "$RAW_VERSION" ]; then
     RAW_VERSION="$(awk '/^[[:space:]]*MARKETING_VERSION:/ {gsub(/"/, "", $2); print $2; exit}' "${PROJECT_DIR}/project.yml" 2>/dev/null || true)"
 fi
-if [ -z "$RAW_VERSION" ]; then
-    RAW_VERSION="0.1.0"
-fi
 if [[ "$RAW_VERSION" == v* ]]; then
     MARKETING_VERSION="${RAW_VERSION#v}"
 else
     MARKETING_VERSION="$RAW_VERSION"
+fi
+# Guard against an empty or unresolved build-setting placeholder (e.g.
+# "$(MARKETING_VERSION)") reaching semver validation. This only happens on
+# local runs where VERSION, a release tag, and a concrete project.yml
+# MARKETING_VERSION are all unavailable; treat it as a local/dev build with a
+# safe default rather than failing validation.
+if [[ -z "$MARKETING_VERSION" || "$MARKETING_VERSION" == \$\(* ]]; then
+    echo "warning: no release version resolvable — using local/dev version 0.0.0" >&2
+    MARKETING_VERSION="0.0.0"
 fi
 if [[ ! "$MARKETING_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
     echo "error: VERSION '$RAW_VERSION' is not a parseable X.Y.Z semver" >&2
