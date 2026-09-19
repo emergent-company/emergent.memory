@@ -9,12 +9,12 @@ The detail-page header (breadcrumb trail, optional kicker eyebrow, h1, optional 
 - **WHEN** a detail header is rendered in its default, dashboard, bare, kicker, subtitle-full, or title-adornment variant
 - **THEN** it emits the same breadcrumbs, title column, subtitle, and actions markup, with the header's children forwarded into `PageHeading`'s `Actions` slot
 
-#### Scenario: Leading variant stays local
+#### Scenario: Leading variant forwards to PageHeading
 
 - **WHEN** a detail header uses the `Leading` option (an agent icon tile before the title column)
 - **THEN** the gateway has no local `detailHeaderLeading`, and the leading component is forwarded into `PageHeading`'s `Leading` slot (rendered before the breadcrumbs and the h1), with `Leading` ignored when `Bare`
 
-#### Scenario: pageHeader stays local
+#### Scenario: pageHeader delegates to PageHeading
 
 - **WHEN** the list-page `pageHeader` is rendered
 - **THEN** the gateway has no local `pageHeader` markup — `pageHeader` is a thin adapter over `nav.PageHeading` (Flat + Dashboard + no-top-margin variant) that emits the same single `<div class="mb-6 flex flex-wrap items-end justify-between gap-4">` wrapper, the kicker eyebrow and `lg:text-3xl` title, no breadcrumbs region, no `mt-2`, and the subtitle rendered full-width (`text-base-content/55 mt-1 text-sm`, no `max-w-2xl`)
