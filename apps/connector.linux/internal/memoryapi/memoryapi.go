@@ -6,11 +6,13 @@ package memoryapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
 	sdk "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 )
 
 // Project is the connector-owned view of a Memory project.
@@ -153,4 +155,12 @@ func (c *Client) RevokeToken(ctx context.Context, projectID, tokenID string) err
 		return fmt.Errorf("memoryapi: revoke token: %w", err)
 	}
 	return nil
+}
+
+// IsTokenNameExists reports whether err is the API's project-token name
+// conflict (HTTP 409, code token_name_exists).
+func IsTokenNameExists(err error) bool {
+	var apiErr *sdkerrors.Error
+	return errors.As(err, &apiErr) &&
+		(apiErr.Code == "token_name_exists" || (apiErr.StatusCode == 409 && apiErr.Code == ""))
 }

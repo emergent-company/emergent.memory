@@ -11,6 +11,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 )
 
 type fakeSessions struct {
@@ -29,17 +30,22 @@ func signedInSessions(serverURL, token string) fakeSessions {
 
 // fakeDeps records calls and returns canned results.
 type fakeDeps struct {
-	projects    []memoryapi.Project
-	createErr   error
-	revokeErr   error
-	createCalls int
-	revokeCalls int
-	lastServer  string
-	lastAccess  string
-	lastProject string
-	lastName    string
-	lastScopes  []string
-	lastTokenID string
+	projects      []memoryapi.Project
+	tokens        []memoryapi.Token
+	listErr       error
+	createErr     error
+	createErrOnce error
+	revokeErr     error
+	createCalls   int
+	listCalls     int
+	revokeCalls   int
+	revoked       []string
+	lastServer    string
+	lastAccess    string
+	lastProject   string
+	lastName      string
+	lastScopes    []string
+	lastTokenID   string
 }
 
 func (f *fakeDeps) deps() Deps {
@@ -48,10 +54,22 @@ func (f *fakeDeps) deps() Deps {
 			f.lastServer, f.lastAccess = serverURL, accessToken
 			return f.projects, nil
 		},
+		ListTokens: func(_ context.Context, serverURL, accessToken, projectID string) ([]memoryapi.Token, error) {
+			f.listCalls++
+			f.lastServer, f.lastAccess = serverURL, accessToken
+			f.lastProject = projectID
+			if f.listErr != nil {
+				return nil, f.listErr
+			}
+			return f.tokens, nil
+		},
 		CreateToken: func(_ context.Context, serverURL, accessToken, projectID, name string, scopes []string) (memoryapi.CreatedToken, error) {
 			f.createCalls++
 			f.lastServer, f.lastAccess = serverURL, accessToken
 			f.lastProject, f.lastName, f.lastScopes = projectID, name, scopes
+			if f.createErrOnce != nil && f.createCalls == 1 {
+				return memoryapi.CreatedToken{}, f.createErrOnce
+			}
 			if f.createErr != nil {
 				return memoryapi.CreatedToken{}, f.createErr
 			}
@@ -61,6 +79,7 @@ func (f *fakeDeps) deps() Deps {
 			f.revokeCalls++
 			f.lastServer, f.lastAccess = serverURL, accessToken
 			f.lastProject, f.lastTokenID = projectID, tokenID
+			f.revoked = append(f.revoked, tokenID)
 			return f.revokeErr
 		},
 	}
@@ -174,8 +193,8 @@ func TestEnsureTokenUsesLeastPrivilegeScopesAndName(t *testing.T) {
 	if !reflect.DeepEqual(fd.lastScopes, []string{"data:read"}) {
 		t.Errorf("scopes = %v, want [data:read]", fd.lastScopes)
 	}
-	if fd.lastName != m.TokenName() || !strings.HasPrefix(fd.lastName, "connector-") {
-		t.Errorf("token name = %q, want %q", fd.lastName, m.TokenName())
+	if fd.lastName != m.TokenName("p1") || !strings.HasPrefix(fd.lastName, "connector-") {
+		t.Errorf("token name = %q, want %q", fd.lastName, m.TokenName("p1"))
 	}
 }
 
@@ -268,7 +287,79 @@ func TestClearAccountTokensOnlyForAccount(t *testing.T) {
 
 func TestTokenName(t *testing.T) {
 	m := NewManagerWithDeps(t.TempDir(), fakeSessions{}, (&fakeDeps{}).deps())
-	if name := m.TokenName(); !strings.HasPrefix(name, "connector-") || len(name) <= len("connector-") {
-		t.Errorf("TokenName() = %q, want connector-<hostname>", name)
+	if name := m.TokenName("p1"); !strings.HasPrefix(name, "connector-") || len(name) <= len("connector-") {
+		t.Errorf("TokenName(\"p1\") = %q, want connector-<hostname>-p1", name)
+	}
+}
+
+func TestTokenNameIsProjectScoped(t *testing.T) {
+	m := NewManagerWithDeps(t.TempDir(), fakeSessions{}, (&fakeDeps{}).deps())
+	n1 := m.TokenName("p1")
+	n2 := m.TokenName("p2")
+	if n1 == n2 {
+		t.Errorf("TokenName(\"p1\") == TokenName(\"p2\") == %q, want distinct", n1)
+	}
+	for _, tc := range []struct{ id, name string }{{"p1", n1}, {"p2", n2}} {
+		if !strings.HasPrefix(tc.name, "connector-") {
+			t.Errorf("TokenName(%q) = %q, want connector- prefix", tc.id, tc.name)
+		}
+		if !strings.Contains(tc.name, tc.id) {
+			t.Errorf("TokenName(%q) = %q, want to contain project id", tc.id, tc.name)
+		}
+	}
+}
+
+func TestEnsureTokenRecoversFromNameConflict(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://srv.test"
+	fd := &fakeDeps{
+		createErrOnce: &sdkerrors.Error{StatusCode: 409, Code: "token_name_exists", Message: "already exists"},
+	}
+	m := NewManagerWithDeps(dir, signedInSessions(serverURL, "at"), fd.deps())
+
+	name := m.TokenName("p1")
+	revokedAt := "2026-01-01T00:00:00Z"
+	fd.tokens = []memoryapi.Token{
+		{ID: "stale", Name: name},
+		{ID: "other", Name: "connector-other-name"},
+		{ID: "revoked-stale", Name: name, RevokedAt: &revokedAt},
+	}
+
+	token, err := m.EnsureToken(context.Background(), serverURL, "p1")
+	if err != nil {
+		t.Fatalf("EnsureToken: %v", err)
+	}
+	if token != "emt_p1" {
+		t.Errorf("token = %q, want freshly minted emt_p1", token)
+	}
+	if fd.createCalls != 2 {
+		t.Errorf("CreateToken calls = %d, want 2", fd.createCalls)
+	}
+	if fd.listCalls != 1 {
+		t.Errorf("ListTokens calls = %d, want 1", fd.listCalls)
+	}
+	if fd.revokeCalls != 1 {
+		t.Fatalf("RevokeToken calls = %d, want 1", fd.revokeCalls)
+	}
+	if len(fd.revoked) != 1 || fd.revoked[0] != "stale" {
+		t.Errorf("revoked token ids = %v, want [stale]", fd.revoked)
+	}
+}
+
+func TestEnsureTokenDoesNotRecoverNonConflictError(t *testing.T) {
+	fd := &fakeDeps{createErr: errors.New("boom")}
+	m := NewManagerWithDeps(t.TempDir(), signedInSessions("https://srv.test", "at"), fd.deps())
+
+	if _, err := m.EnsureToken(context.Background(), "https://srv.test", "p1"); err == nil {
+		t.Fatal("EnsureToken: expected error, got nil")
+	}
+	if fd.createCalls != 1 {
+		t.Errorf("CreateToken calls = %d, want 1", fd.createCalls)
+	}
+	if fd.listCalls != 0 {
+		t.Errorf("ListTokens calls = %d, want 0", fd.listCalls)
+	}
+	if fd.revokeCalls != 0 {
+		t.Errorf("RevokeToken calls = %d, want 0", fd.revokeCalls)
 	}
 }

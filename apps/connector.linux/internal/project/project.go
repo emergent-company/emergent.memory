@@ -42,6 +42,8 @@ type Sessions interface {
 type Deps struct {
 	// ListProjects lists projects visible to the account access token.
 	ListProjects func(ctx context.Context, serverURL, accessToken string) ([]memoryapi.Project, error)
+	// ListTokens lists the API tokens registered for a project.
+	ListTokens func(ctx context.Context, serverURL, accessToken, projectID string) ([]memoryapi.Token, error)
 	// CreateToken mints a project-scoped token with the given name/scopes.
 	CreateToken func(ctx context.Context, serverURL, accessToken, projectID, name string, scopes []string) (memoryapi.CreatedToken, error)
 	// RevokeToken revokes a project token by id.
@@ -57,6 +59,13 @@ func DefaultDeps() Deps {
 				return nil, err
 			}
 			return c.ListProjects(ctx)
+		},
+		ListTokens: func(ctx context.Context, serverURL, accessToken, projectID string) ([]memoryapi.Token, error) {
+			c, err := memoryapi.NewBearerClient(serverURL, accessToken)
+			if err != nil {
+				return nil, err
+			}
+			return c.ListTokens(ctx, projectID)
 		},
 		CreateToken: func(ctx context.Context, serverURL, accessToken, projectID, name string, scopes []string) (memoryapi.CreatedToken, error) {
 			c, err := memoryapi.NewBearerClient(serverURL, accessToken)
@@ -216,7 +225,7 @@ func (m *Manager) saveToken(serverURL, projectID string, rec tokenRecord) error 
 
 // EnsureToken returns the connector's project token for projectID, reusing a
 // stored one when present and otherwise minting a least-privilege token
-// (scopes TokenScopes) named TokenName().
+// (scopes TokenScopes) named TokenName(projectID).
 func (m *Manager) EnsureToken(ctx context.Context, serverURL, projectID string) (string, error) {
 	if projectID == "" {
 		return "", errors.New("project: project id is required")
@@ -228,9 +237,23 @@ func (m *Manager) EnsureToken(ctx context.Context, serverURL, projectID string) 
 	if err != nil {
 		return "", err
 	}
-	created, err := m.deps.CreateToken(ctx, serverURL, accessToken, projectID, m.TokenName(), append([]string(nil), TokenScopes...))
+	name := m.TokenName(projectID)
+	created, err := m.deps.CreateToken(ctx, serverURL, accessToken, projectID, name, append([]string(nil), TokenScopes...))
 	if err != nil {
-		return "", fmt.Errorf("project: mint token for %s: %w", projectID, err)
+		if memoryapi.IsTokenNameExists(err) {
+			// A token with this project-scoped name already exists on the
+			// server but no local record is stored (e.g. it was cleared on
+			// sign-out). Revoke the conflicting token and re-mint once.
+			if rerr := m.revokeConflictingTokens(ctx, serverURL, accessToken, projectID, name); rerr != nil {
+				return "", fmt.Errorf("project: mint token for %s: %w", projectID, rerr)
+			}
+			created, err = m.deps.CreateToken(ctx, serverURL, accessToken, projectID, name, append([]string(nil), TokenScopes...))
+			if err != nil {
+				return "", fmt.Errorf("project: mint token for %s: %w", projectID, err)
+			}
+		} else {
+			return "", fmt.Errorf("project: mint token for %s: %w", projectID, err)
+		}
 	}
 	rec := tokenRecord{
 		ServerURL: serverURL,
@@ -245,6 +268,27 @@ func (m *Manager) EnsureToken(ctx context.Context, serverURL, projectID string) 
 		return "", err
 	}
 	return rec.Token, nil
+}
+
+// revokeConflictingTokens revokes active project tokens named name so the
+// name can be reused. The plaintext secret of an existing token is not
+// recoverable, so a conflicting token that this connector no longer holds
+// must be replaced. Only tokens for this project (the ListTokens scope) and
+// matching name are touched.
+func (m *Manager) revokeConflictingTokens(ctx context.Context, serverURL, accessToken, projectID, name string) error {
+	tokens, err := m.deps.ListTokens(ctx, serverURL, accessToken, projectID)
+	if err != nil {
+		return err
+	}
+	for _, t := range tokens {
+		if t.RevokedAt != nil || t.Name != name {
+			continue
+		}
+		if err := m.deps.RevokeToken(ctx, serverURL, accessToken, projectID, t.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Revoke revokes the stored project token (best-effort) and deletes it
@@ -284,11 +328,17 @@ func (m *Manager) ClearAccountTokens(serverURL string) error {
 }
 
 // TokenName is the name given to connector-minted project tokens:
-// connector-<hostname>.
-func (m *Manager) TokenName() string {
+// connector-<hostname>-<projectID>. The project id suffix keeps the name
+// unique across projects: the server enforces UNIQUE (user_id, name) over all
+// of a user's active tokens, so a bare connector-<hostname> would collide when
+// the same host connects a second project.
+func (m *Manager) TokenName(projectID string) string {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		host = "unknown"
 	}
-	return "connector-" + host
+	if projectID == "" {
+		return "connector-" + host
+	}
+	return "connector-" + host + "-" + projectID
 }

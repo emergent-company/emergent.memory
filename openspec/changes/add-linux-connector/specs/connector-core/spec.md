@@ -148,6 +148,14 @@ The core SHALL obtain a project-scoped connector token for the active project, S
 - **WHEN** the core mints a connector token
 - **THEN** it requests the least privilege the relay needs (read-only data access) rather than a broad or administrative scope
 
+#### Scenario: Project-scoped token name
+- **WHEN** the same connector host connects a second project with no stored token
+- **THEN** it mints a token whose name includes the project id, so it does not collide with any token minted for another project by the same user
+
+#### Scenario: Stale token recovery
+- **WHEN** the server already has an active connector token with the connector's project-scoped name but no local token is stored
+- **THEN** the core revokes that conflicting token and mints a fresh one, instead of failing
+
 ### Requirement: Store secrets on local disk
 
 The core SHALL store sessions, project tokens, and manual tokens in files with mode 0600 inside a directory with mode 0700, using atomic writes, SHALL be identity-independent so secrets persist across rebuilds and upgrades, and SHALL NOT require an OS keychain.
