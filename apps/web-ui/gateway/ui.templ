@@ -574,9 +574,9 @@ templ deleteConfirmDialog() {
 // subtitle on the left, right-side actions/badges via children.
 //
 // It stays local: nav.PageHeading cannot reproduce it byte-for-byte. PageHeading
-// always emits a breadcrumbs region (even when empty), always adds mt-2 to its
-// flex row, and drops the kicker eyebrow in its Dashboard variant — while this
-// list-page header has no breadcrumbs, no mt-2, and always renders the eyebrow.
+// always adds mt-2 to its flex row (this header has none), and the only
+// PageHeading variant with lg:text-3xl (Dashboard) drops the kicker eyebrow —
+// while this list-page header needs both the eyebrow and lg:text-3xl.
 templ pageHeader(kicker, title, subtitle string) {
 	<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
 		<div>
@@ -603,28 +603,14 @@ type detailHeaderOpts struct {
 	Bare bool
 	// SubtitleFull renders the subtitle at full width (no max-w-2xl).
 	SubtitleFull bool
-	// Leading renders before the title block on the same flex row — e.g. an
-	// agent icon tile. Nil (the default) keeps the header markup byte-identical
-	// for every existing caller.
+	// Leading forwards into PageHeading's Leading slot — rendered before the
+	// breadcrumbs and the h1, e.g. an agent icon tile. Nil (the default) keeps
+	// the header markup byte-identical for every existing caller.
 	Leading templ.Component
 	// TitleAdornment renders inline next to the h1 (same flex line), e.g. a
 	// version badge. Nil (the default) keeps the h1 markup byte-identical for
 	// every existing caller.
 	TitleAdornment templ.Component
-}
-
-// detailHeaderTitleRow wraps a detail-header title column in a leading row when
-// a leading component (e.g. an agent icon tile) is supplied. Without one it
-// renders its children unchanged, so every existing header stays byte-identical.
-templ detailHeaderTitleRow(leading templ.Component) {
-	if leading != nil {
-		<div class="flex items-center gap-3">
-			@leading
-			{ children... }
-		</div>
-	} else {
-		{ children... }
-	}
 }
 
 // detailHeader renders a detail-page header: breadcrumb trail, optional kicker
@@ -634,27 +620,30 @@ templ detailHeaderTitleRow(leading templ.Component) {
 // forwarded into PageHeading's Actions slot, a templ.Component prop. templ
 // components clear their children context before the body runs, so `{ children... }`
 // cannot be converted into a Component value there; a hand-written ComponentFunc
-// reads GetChildren(ctx) directly. Leading (an agent icon tile before the title
-// column) has no PageHeading equivalent — PageHeading's TitleAdornment renders
-// after the h1 — so that one variant delegates to detailHeaderLeading.
+// reads GetChildren(ctx) directly. Leading (an agent icon tile) forwards into
+// PageHeading's Leading slot, rendered before the breadcrumbs and the h1.
 func detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, opts ...detailHeaderOpts) templ.Component {
 	o := detailHeaderOpts{}
 	if len(opts) > 0 {
 		o = opts[0]
 	}
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
-		if o.Leading != nil && !o.Bare {
-			return detailHeaderLeading(crumbs, kicker, title, subtitle, o).Render(ctx, w)
-		}
 		children := templ.GetChildren(ctx)
 		if children == nil {
 			children = templ.NopComponent
+		}
+		// Leading is ignored when Bare, matching the pre-adoption behaviour
+		// (the leading tile only appears on the dashboard header, never bare).
+		leading := o.Leading
+		if o.Bare {
+			leading = nil
 		}
 		return nav.PageHeading(nav.PageHeadingProps{
 			Title:          title,
 			Breadcrumbs:    crumbs,
 			Kicker:         kicker,
 			Subtitle:       subtitle,
+			Leading:        leading,
 			TitleAdornment: o.TitleAdornment,
 			Actions:        children,
 			Margin:         o.Margin,
@@ -663,67 +652,6 @@ func detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, o
 			SubtitleFull:   o.SubtitleFull,
 		}).Render(ctx, w)
 	})
-}
-
-// detailHeaderLeading renders the header variant whose title column is preceded
-// by a leading component (the agent icon tile). nav.PageHeading has no pre-title
-// slot, so this keeps the pre-adoption markup byte-for-byte. It mirrors the
-// pre-adoption detailHeader's non-Bare branches.
-templ detailHeaderLeading(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, o detailHeaderOpts) {
-	{{
-		margin := o.Margin
-		if margin == "" {
-			margin = "mb-4"
-		}
-		itemsClass := "items-center"
-		if o.Dashboard {
-			itemsClass = "items-end"
-		}
-		subtitleClass := "text-base-content/55 mt-1"
-		if !o.SubtitleFull {
-			subtitleClass += " max-w-2xl"
-		}
-	}}
-	<div class={ margin }>
-		@nav.Breadcrumbs(crumbs, nav.BreadcrumbsDividerDefault)
-		<div class={ "mt-2 flex flex-wrap", itemsClass, "justify-between gap-4" }>
-			@detailHeaderTitleRow(o.Leading) {
-				if o.Dashboard {
-					<div>
-						if o.TitleAdornment != nil {
-							<div class="flex flex-wrap items-center gap-2">
-								<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-								@o.TitleAdornment
-							</div>
-						} else {
-							<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-						}
-						if subtitle != "" {
-							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
-						}
-					</div>
-				} else {
-					<div class="min-w-0">
-						if kicker != "" {
-							@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
-						}
-						if o.TitleAdornment != nil {
-							<div class="flex flex-wrap items-center gap-2">
-								<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-								@o.TitleAdornment
-							</div>
-						} else {
-							<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-						}
-						if subtitle != "" {
-							<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
-						}
-					</div>
-				}
-			}
-			{ children... }
-		</div>
-	</div>
 }
 
 // crumbsActive marks the trailing crumb as the current page (active styling).
