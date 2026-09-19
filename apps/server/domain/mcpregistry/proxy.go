@@ -794,13 +794,20 @@ func convertToolInputSchema(schema mcpgo.ToolInputSchema) map[string]any {
 
 // convertToolOutputSchema converts an mcp-go ToolOutputSchema to a map[string]any,
 // mirroring convertToolInputSchema so discovered tools forward their outputSchema
-// (MCP 2025-06-18). Returns nil when the schema has no type (i.e. undeclared).
+// (MCP 2025-06-18). Returns nil when the schema declares nothing. A valid JSON
+// Schema may omit the top-level "type", so a schema is considered declared when
+// it carries a type OR any of properties/required/additionalProperties.
 func convertToolOutputSchema(schema mcpgo.ToolOutputSchema) map[string]any {
-	if schema.Type == "" {
+	declared := schema.Type != "" ||
+		schema.Properties != nil ||
+		len(schema.Required) > 0 ||
+		schema.AdditionalProperties != nil
+	if !declared {
 		return nil
 	}
-	m := map[string]any{
-		"type": schema.Type,
+	m := map[string]any{}
+	if schema.Type != "" {
+		m["type"] = schema.Type
 	}
 	if schema.Properties != nil {
 		m["properties"] = schema.Properties

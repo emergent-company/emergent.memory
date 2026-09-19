@@ -2049,11 +2049,20 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 					if err != nil {
 						return nil, fmt.Errorf("relay tool %q: %w", toolName, err)
 					}
-					// Convert the relay result map to a ToolResult.
+					// Convert the relay result map to a ToolResult. The text block is
+					// the fallback payload; structuredContent/isError are forwarded
+					// when the relay result carries them (MCP 2025-06-18).
 					resultBytes, _ := json.Marshal(result)
-					return &ToolResult{
+					tr := &ToolResult{
 						Content: []ContentBlock{{Type: "text", Text: string(resultBytes)}},
-					}, nil
+					}
+					if sc, ok := result["structuredContent"]; ok {
+						tr.StructuredContent = normalizeStructuredContent(sc)
+					}
+					if isErr, ok := result["isError"].(bool); ok {
+						tr.IsError = isErr
+					}
+					return tr, nil
 				}
 			}
 		}

@@ -204,8 +204,9 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 		} else {
 			for _, bt := range builtinTools {
 				td := mcp.ToolDefinition{
-					Name:        bt.ToolName,
-					InputSchema: mapToInputSchema(bt.InputSchema),
+					Name:         bt.ToolName,
+					InputSchema:  mapToInputSchema(bt.InputSchema),
+					OutputSchema: mapToOutputSchema(bt.OutputSchema),
 				}
 				if bt.Description != nil {
 					td.Description = *bt.Description
@@ -253,9 +254,10 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 					desc = *et.Description
 				}
 				td := mcp.ToolDefinition{
-					Name:        prefixedName,
-					Description: desc,
-					InputSchema: mapToInputSchema(et.InputSchema),
+					Name:         prefixedName,
+					Description:  desc,
+					InputSchema:  mapToInputSchema(et.InputSchema),
+					OutputSchema: mapToOutputSchema(et.OutputSchema),
 				}
 				cache.toolDefs[prefixedName] = td
 				cache.toolNames = append(cache.toolNames, prefixedName)
@@ -294,9 +296,10 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 				// whitelists by the gateway relay agent picker.
 				fullName := sess.InstanceID + "_" + rt.Name
 				cache.toolDefs[fullName] = mcp.ToolDefinition{
-					Name:        fullName,
-					Description: rt.Description,
-					InputSchema: rt.InputSchema,
+					Name:         fullName,
+					Description:  rt.Description,
+					InputSchema:  rt.InputSchema,
+					OutputSchema: rt.OutputSchema,
 				}
 				cache.toolNames = append(cache.toolNames, fullName)
 				cache.relayToolInstance[fullName] = sess.InstanceID
@@ -994,6 +997,26 @@ func mapToInputSchema(m map[string]any) mcp.InputSchema {
 	return schema
 }
 
+// mapToOutputSchema converts a generic map[string]any (from JSONB) back to a
+// *mcp.InputSchema used as a tool's outputSchema (MCP 2025-06-18). Unlike
+// mapToInputSchema it preserves an absent top-level "type" (a valid JSON Schema
+// may omit it), so it never forces Type:"object". Returns nil when the source
+// map is empty or nil (i.e. no outputSchema was declared/persisted).
+func mapToOutputSchema(m map[string]any) *mcp.InputSchema {
+	if len(m) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	var schema mcp.InputSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return nil
+	}
+	return &schema
+}
+
 // wrapHiddenBuiltin creates an ADK tool for a hidden built-in tool (one that is always
 // available but never listed in tools/list or any discovery endpoint).
 // The schema is passed as a plain map and converted internally.
@@ -1061,11 +1084,13 @@ func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error)
 
 		var outputSchema *mcp.InputSchema
 		if os, ok := tMap["outputSchema"]; ok {
-			data, err := json.Marshal(os)
-			if err == nil {
-				var osd mcp.InputSchema
-				if err := json.Unmarshal(data, &osd); err == nil && osd.Type != "" {
-					outputSchema = &osd
+			if osMap, ok := os.(map[string]any); ok && relayOutputSchemaDeclared(osMap) {
+				data, err := json.Marshal(os)
+				if err == nil {
+					var osd mcp.InputSchema
+					if err := json.Unmarshal(data, &osd); err == nil {
+						outputSchema = &osd
+					}
 				}
 			}
 		}
@@ -1079,6 +1104,26 @@ func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error)
 	}
 
 	return defs, nil
+}
+
+// relayOutputSchemaDeclared reports whether a relay tools/list outputSchema map
+// declares any schema content, mirroring mcpregistry.convertToolOutputSchema's
+// leniency: a valid JSON Schema may omit the top-level "type" yet still declare
+// properties/required/additionalProperties. Empty or absent maps are undeclared.
+func relayOutputSchemaDeclared(m map[string]any) bool {
+	if t, _ := m["type"].(string); t != "" {
+		return true
+	}
+	if p, ok := m["properties"]; ok && p != nil {
+		return true
+	}
+	if r, ok := m["required"].([]any); ok && len(r) > 0 {
+		return true
+	}
+	if ap, ok := m["additionalProperties"]; ok && ap != nil {
+		return true
+	}
+	return false
 }
 
 // convertRelayResponse converts a raw relay tool result map into the shape

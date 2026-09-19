@@ -24,4 +24,4 @@ Memory's MCP tools already return a uniform, machine-classifiable envelope (`{ok
 
 - Server (Go): `domain/mcp/entity.go`, `domain/mcp/envelope.go`, `domain/mcp/response_contract.go`, `domain/mcp/service.go`, `domain/mcpregistry/proxy.go`, `domain/mcpregistry/entity.go`, `domain/mcpregistry/service.go`, `domain/agents/toolpool.go`.
 - Tests: `domain/mcp/structured_content_test.go` plus existing envelope/registry tests.
-- Compatibility: additive and non-breaking. Text `content` JSON is byte-identical; new fields (`outputSchema`, `structuredContent`) are additive. No tool names, input schemas, or payload field names change.
+- Compatibility: additive and non-breaking. Text `content` JSON is semantically identical to `structuredContent`; new fields (`outputSchema`, `structuredContent`) are additive. No tool names, input schemas, or payload field names change.

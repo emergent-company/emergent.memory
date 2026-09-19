@@ -31,12 +31,12 @@ For every envelope tool, the server SHALL return a `structuredContent` field in 
 
 ### Requirement: Text content block remains for backward compatibility
 
-For every tool that returns `structuredContent`, the server SHALL continue to return the equivalent human-readable payload in the text `content` block (MCP's backward-compatibility SHOULD). The serialized text JSON SHALL be identical to the `structuredContent` object, so existing text-parsing consumers are unaffected.
+For every tool that returns `structuredContent`, the server SHALL continue to return the equivalent human-readable payload in the text `content` block (MCP's backward-compatibility SHOULD). The serialized text JSON SHALL encode the same JSON object (semantically equal) as the `structuredContent` object, so existing text-parsing consumers are unaffected.
 
 #### Scenario: Text and structured content are equivalent
 
 - **WHEN** a client calls an envelope tool
-- **THEN** the `content` array SHALL still contain a text block whose JSON is byte-equivalent to `structuredContent`
+- **THEN** the `content` array SHALL still contain a text block whose JSON encodes the same JSON object as `structuredContent`
 
 ### Requirement: isError stays reserved for call failure
 

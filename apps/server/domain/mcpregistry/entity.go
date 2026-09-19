@@ -67,13 +67,14 @@ type MCPServer struct {
 type MCPServerTool struct {
 	bun.BaseModel `bun:"table:kb.mcp_server_tools,alias:mst"`
 
-	ID          string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	ServerID    string         `bun:"server_id,type:uuid,notnull" json:"serverId"`
-	ToolName    string         `bun:"tool_name,notnull" json:"toolName"`
-	Description *string        `bun:"description" json:"description,omitempty"`
-	InputSchema map[string]any `bun:"input_schema,type:jsonb,default:'{}'" json:"inputSchema"`
-	Enabled     bool           `bun:"enabled,notnull,default:true" json:"enabled"`
-	Config      map[string]any `bun:"config,type:jsonb" json:"config,omitempty"`
+	ID           string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	ServerID     string         `bun:"server_id,type:uuid,notnull" json:"serverId"`
+	ToolName     string         `bun:"tool_name,notnull" json:"toolName"`
+	Description  *string        `bun:"description" json:"description,omitempty"`
+	InputSchema  map[string]any `bun:"input_schema,type:jsonb,default:'{}'" json:"inputSchema"`
+	OutputSchema map[string]any `bun:"output_schema,type:jsonb" json:"outputSchema,omitempty"`
+	Enabled      bool           `bun:"enabled,notnull,default:true" json:"enabled"`
+	Config       map[string]any `bun:"config,type:jsonb" json:"config,omitempty"`
 	// ConfigKeys lists setup-time configuration keys required by this tool (e.g. ["api_key"]).
 	ConfigKeys []string  `bun:"config_keys,array,default:'{}'" json:"configKeys,omitempty"`
 	CreatedAt  time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
@@ -114,6 +115,7 @@ type MCPServerToolDTO struct {
 	ToolName      string         `json:"toolName"`
 	Description   *string        `json:"description,omitempty"`
 	InputSchema   map[string]any `json:"inputSchema,omitempty"`
+	OutputSchema  map[string]any `json:"outputSchema,omitempty"`
 	Enabled       bool           `json:"enabled"`
 	Config        map[string]any `json:"config,omitempty"`
 	ConfigKeys    []string       `json:"configKeys,omitempty"`
@@ -398,15 +400,16 @@ func (s *MCPServer) ToDetailDTO() *MCPServerDetailDTO {
 // ToDTO converts an MCPServerTool entity to MCPServerToolDTO.
 func (t *MCPServerTool) ToDTO() *MCPServerToolDTO {
 	return &MCPServerToolDTO{
-		ID:          t.ID,
-		ServerID:    t.ServerID,
-		ToolName:    t.ToolName,
-		Description: t.Description,
-		InputSchema: t.InputSchema,
-		Enabled:     t.Enabled,
-		Config:      t.Config,
-		ConfigKeys:  t.ConfigKeys,
-		CreatedAt:   t.CreatedAt,
+		ID:           t.ID,
+		ServerID:     t.ServerID,
+		ToolName:     t.ToolName,
+		Description:  t.Description,
+		InputSchema:  t.InputSchema,
+		OutputSchema: t.OutputSchema,
+		Enabled:      t.Enabled,
+		Config:       t.Config,
+		ConfigKeys:   t.ConfigKeys,
+		CreatedAt:    t.CreatedAt,
 	}
 }
 

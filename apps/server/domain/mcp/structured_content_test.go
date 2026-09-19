@@ -10,8 +10,8 @@ import (
 
 // TestEnvelopeResultSetsStructuredContent pins that the structuredContent of an
 // envelope result is the SAME JSON object serialized into the text content block
-// (issue #586): programmatic consumers can read structuredContent and get an
-// object byte-identical to the human-readable text.
+// (issue #586): programmatic consumers can read structuredContent and get the
+// same JSON object as the human-readable text.
 func TestEnvelopeResultSetsStructuredContent(t *testing.T) {
 	data := map[string]any{
 		"results": []any{
@@ -25,7 +25,9 @@ func TestEnvelopeResultSetsStructuredContent(t *testing.T) {
 	require.NotNil(t, res)
 	require.Len(t, res.Content, 1)
 
-	// structuredContent must be present and match the text JSON exactly.
+	// structuredContent must be present and encode the same JSON object as the
+	// text block. The contract is semantic equivalence (assert.JSONEq), not
+	// exact string/byte equality.
 	require.NotNil(t, res.StructuredContent, "structuredContent must be set for envelope results")
 	structured, err := json.Marshal(res.StructuredContent)
 	require.NoError(t, err)
@@ -133,4 +135,37 @@ func TestWrapResultStructuredContentIsObjectOnly(t *testing.T) {
 	prim, err := svc.wrapResultCompact("plain string")
 	require.NoError(t, err)
 	assert.Nil(t, prim.StructuredContent, "primitive payload must not produce structuredContent")
+}
+
+// TestAgentEndpointToolDefinitionsDeclareOutputSchema pins Fix 4: the four
+// session tools return envelope-shaped results (via sessionEnvelope →
+// envelopeResult), so they must declare the shared envelope output schema.
+// call_agent returns a bare text reply (not an envelope), so it stays nil.
+func TestAgentEndpointToolDefinitionsDeclareOutputSchema(t *testing.T) {
+	defs := agentEndpointToolDefinitions("")
+
+	var byName = make(map[string]ToolDefinition, len(defs))
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+
+	for _, name := range []string{
+		agentStartSessionToolName,
+		agentContinueSessionToolName,
+		agentGetSessionToolName,
+		agentListSessionsToolName,
+	} {
+		td, ok := byName[name]
+		require.Truef(t, ok, "session tool %q must be present", name)
+		require.NotNilf(t, td.OutputSchema, "session tool %q must declare outputSchema", name)
+		assert.Equal(t, "object", td.OutputSchema.Type)
+		assert.Contains(t, td.OutputSchema.Properties, "ok")
+		assert.Contains(t, td.OutputSchema.Properties, "data")
+	}
+
+	// call_agent produces a bare text reply / agentRunErrorResult, not an
+	// envelope, so it must NOT declare an outputSchema.
+	callAgent, ok := byName[agentCallToolName]
+	require.True(t, ok)
+	assert.Nil(t, callAgent.OutputSchema, "call_agent must not declare an outputSchema (non-envelope result)")
 }

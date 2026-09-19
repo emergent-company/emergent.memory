@@ -394,11 +394,12 @@ func (s *Service) SyncServerTools(ctx context.Context, serverID string, discover
 
 	for _, dt := range discoveredTools {
 		tools = append(tools, &MCPServerTool{
-			ServerID:    serverID,
-			ToolName:    dt.Name,
-			Description: dt.Description,
-			InputSchema: dt.InputSchema,
-			Enabled:     true,
+			ServerID:     serverID,
+			ToolName:     dt.Name,
+			Description:  dt.Description,
+			InputSchema:  dt.InputSchema,
+			OutputSchema: dt.OutputSchema,
+			Enabled:      true,
 		})
 		currentNames = append(currentNames, dt.Name)
 	}
