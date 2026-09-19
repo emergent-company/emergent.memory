@@ -252,7 +252,8 @@ CREATE TABLE core.api_tokens (
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
     token_encrypted text,
-    expires_at timestamp with time zone
+    expires_at timestamp with time zone,
+    CONSTRAINT api_tokens_pkey PRIMARY KEY (id)
 );
 
 
@@ -2848,14 +2849,6 @@ ALTER TABLE ONLY core.user_profiles
 
 ALTER TABLE ONLY core.user_emails
     ADD CONSTRAINT "PK_3ef6c4be97ba94ea3ba65362ad0" PRIMARY KEY (id);
-
-
---
--- Name: api_tokens api_tokens_pkey; Type: CONSTRAINT; Schema: core; Owner: -
---
-
-ALTER TABLE ONLY core.api_tokens
-    ADD CONSTRAINT api_tokens_pkey PRIMARY KEY (id);
 
 
 --
