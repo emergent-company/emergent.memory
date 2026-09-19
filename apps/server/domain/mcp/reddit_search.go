@@ -233,9 +233,10 @@ func (s *Service) doRedditPublicRequest(ctx context.Context, endpoint string) ([
 // getRedditSearchToolDefinition returns the MCP tool definition for Reddit search
 func getRedditSearchToolDefinition() ToolDefinition {
 	return ToolDefinition{
-		Name:        "web-search-reddit",
-		AgentOnly:   true,
-		Description: "Search Reddit posts or browse subreddit listings. Returns post titles, URLs, scores, comment counts, and authors. Use 'query' to search all of Reddit, 'subreddit' to browse a specific community, or both to search within a subreddit. No API key required.",
+		Name:         "web-search-reddit",
+		OutputSchema: objectOutputSchema(),
+		AgentOnly:    true,
+		Description:  "Search Reddit posts or browse subreddit listings. Returns post titles, URLs, scores, comment counts, and authors. Use 'query' to search all of Reddit, 'subreddit' to browse a specific community, or both to search within a subreddit. No API key required.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertySchema{
