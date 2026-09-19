@@ -1,6 +1,9 @@
 package backups
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSelectColumnExpr(t *testing.T) {
 	tests := []struct {
@@ -95,34 +98,58 @@ func chatConversationsConfig(t *testing.T) tableConfig {
 	return tableConfig{}
 }
 
-func TestSoftNullResolution(t *testing.T) {
+func TestProjectionColumnsColumnExprs(t *testing.T) {
 	cfg := chatConversationsConfig(t)
-	colSet := map[string]bool{"object_id": true}
 
-	t.Run("nulls reference when deleted excluded", func(t *testing.T) {
-		joins, exprs := softNullResolution(cfg, false, colSet)
-		if len(joins) != 1 || joins[0] != "LEFT JOIN kb.graph_objects go ON go.id = t.object_id" {
-			t.Errorf("joins = %v, want [LEFT JOIN kb.graph_objects go ON go.id = t.object_id]", joins)
-		}
+	cols := []colInfo{
+		{Name: "id", DataType: "uuid", UDTName: "uuid"},
+		{Name: "title", DataType: "text", UDTName: "text"},
+		{Name: "object_id", DataType: "uuid", UDTName: "uuid"},
+	}
+
+	t.Run("excluded soft-deleted overrides object_id", func(t *testing.T) {
+		exprs, vectorCols := projectionColumns(cols, cfg, false)
 		want := `CASE WHEN go.id IS NULL OR go.deleted_at IS NOT NULL THEN NULL ELSE t."object_id" END AS "object_id"`
-		if exprs["object_id"] != want {
-			t.Errorf("object_id expr = %q, want %q", exprs["object_id"], want)
+		if exprs[0] != `t."id"` {
+			t.Errorf("id expr = %q, want %q", exprs[0], `t."id"`)
+		}
+		if exprs[1] != `t."title"` {
+			t.Errorf("title expr = %q, want %q", exprs[1], `t."title"`)
+		}
+		if exprs[2] != want {
+			t.Errorf("object_id expr = %q, want %q", exprs[2], want)
+		}
+		if len(vectorCols) != 0 {
+			t.Errorf("vectorCols = %v, want empty", vectorCols)
 		}
 	})
 
-	t.Run("keeps reference when deleted included", func(t *testing.T) {
-		joins, exprs := softNullResolution(cfg, true, colSet)
-		if joins != nil || exprs != nil {
-			t.Errorf("joins=%v exprs=%v, want nil/nil", joins, exprs)
+	t.Run("included soft-deleted keeps plain object_id", func(t *testing.T) {
+		exprs, vectorCols := projectionColumns(cols, cfg, true)
+		if exprs[2] != `t."object_id"` {
+			t.Errorf("object_id expr = %q, want %q", exprs[2], `t."object_id"`)
+		}
+		if len(vectorCols) != 0 {
+			t.Errorf("vectorCols = %v, want empty", vectorCols)
 		}
 	})
+}
 
-	t.Run("skips column absent from live schema", func(t *testing.T) {
-		joins, exprs := softNullResolution(cfg, false, map[string]bool{"id": true})
-		if joins != nil || exprs != nil {
-			t.Errorf("joins=%v exprs=%v, want nil/nil", joins, exprs)
-		}
-	})
+func TestChatConversationsConfigGuardsDanglingObjectRef(t *testing.T) {
+	cfg := chatConversationsConfig(t)
+
+	if cfg.columnExprs == nil {
+		t.Fatal("chat_conversations columnExprs is nil")
+	}
+	if _, ok := cfg.columnExprs["object_id"]; !ok {
+		t.Errorf("chat_conversations columnExprs lacks object_id key: %v", cfg.columnExprs)
+	}
+	if cfg.leftJoin == "" {
+		t.Fatal("chat_conversations leftJoin is empty")
+	}
+	if !strings.Contains(cfg.leftJoin, "kb.graph_objects") {
+		t.Errorf("chat_conversations leftJoin %q does not reference kb.graph_objects", cfg.leftJoin)
+	}
 }
 
 func TestDeletedColumnFilter(t *testing.T) {

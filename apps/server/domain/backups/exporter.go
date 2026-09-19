@@ -47,12 +47,12 @@ const (
 // tableConfig describes one NDJSON table export inside a backup archive.
 // The base table is always aliased as `t`; join tables use their own alias.
 type tableConfig struct {
-	name          string            // NDJSON filename (no extension), e.g. "documents"
-	table         string            // schema-qualified table, e.g. "kb.documents"; empty for derived files
-	join          string            // optional raw INNER JOIN clause (references alias t)
-	projectFilter string            // optional raw WHERE fragment scoping to a project (`?` binds ProjectID)
-	vectorColumns []string          // columns of UDT vector/halfvec; cast ::text then parsed to []float32
-	deletedColumn string            // optional soft-delete column filtered out unless IncludeDeleted
+	name          string   // NDJSON filename (no extension), e.g. "documents"
+	table         string   // schema-qualified table, e.g. "kb.documents"; empty for derived files
+	join          string   // optional raw INNER JOIN clause (references alias t)
+	projectFilter string   // optional raw WHERE fragment scoping to a project (`?` binds ProjectID)
+	vectorColumns []string // columns of UDT vector/halfvec; cast ::text then parsed to []float32
+	deletedColumn string   // optional soft-delete column filtered out unless IncludeDeleted
 	// columnExprs overrides the default `t."col"` SELECT expression for named
 	// columns. It is applied only when IncludeDeleted is false, so a plain
 	// column is exported when soft-deleted rows are included. Each value MUST
@@ -61,8 +61,8 @@ type tableConfig struct {
 	// leftJoin is a raw LEFT JOIN clause appended only when columnExprs is
 	// active, supplying the aliases those expressions reference.
 	leftJoin   string
-	extraWhere string     // optional static WHERE fragment (no placeholders)
-	orderBy    string     // optional batching ORDER BY column; defaults to "id"
+	extraWhere string // optional static WHERE fragment (no placeholders)
+	orderBy    string // optional batching ORDER BY column; defaults to "id"
 	gate       exportGate
 	derived    bool // true when rows are derived in Go rather than streamed from `table`
 }
@@ -205,6 +205,28 @@ func (e *Exporter) exportTable(ctx context.Context, cfg tableConfig, w io.Writer
 	return e.streamQuery(ctx, query, w, cfg.name, vectorCols)
 }
 
+// projectionColumns builds the SELECT expressions for a table's columns, applying
+// conditional columnExprs overrides, and returns the columns serialized as vectors.
+func projectionColumns(cols []colInfo, cfg tableConfig, includeDeleted bool) (exprs []string, vectorCols []string) {
+	overrides := cfg.columnExprs
+	if includeDeleted {
+		overrides = nil
+	}
+	exprs = make([]string, 0, len(cols))
+	for _, col := range cols {
+		if expr, ok := overrides[col.Name]; ok {
+			exprs = append(exprs, expr)
+			continue
+		}
+		expr, isVector := selectColumnExpr(col, containsString(cfg.vectorColumns, col.Name))
+		exprs = append(exprs, expr)
+		if isVector {
+			vectorCols = append(vectorCols, col.Name)
+		}
+	}
+	return exprs, vectorCols
+}
+
 // selectColumnExpr returns the SELECT expression for a column and whether it is
 // a vector column (needing post-parse to []float32). jsonb/json/array columns
 // are cast ::text because pgx scans them into any as raw []byte, which
@@ -220,37 +242,6 @@ func selectColumnExpr(col colInfo, vectorListed bool) (expr string, isVector boo
 		return fmt.Sprintf("t.%s::text AS %s", quoteIdent(col.Name), quoteIdent(col.Name)), false
 	}
 	return "t." + quoteIdent(col.Name), false
-}
-
-// softNullResolution computes the extra LEFT JOIN clauses and per-column SELECT
-// overrides for cfg's softNull entries. When includeDeleted is true the
-// referenced rows are exported too, so no join or override is produced.
-// Columns absent from colSet are skipped so legacy schemas degrade gracefully.
-func softNullResolution(cfg tableConfig, includeDeleted bool, colSet map[string]bool) (joins []string, exprs map[string]string) {
-	if includeDeleted || len(cfg.softNull) == 0 {
-		return nil, nil
-	}
-	exprs = make(map[string]string, len(cfg.softNull))
-	for col, ref := range cfg.softNull {
-		if !colSet[col] {
-			continue
-		}
-		joins = append(joins, ref.join)
-		exprs[col] = softNullCaseExpr(col, ref.alias)
-	}
-	if len(exprs) == 0 {
-		return nil, nil
-	}
-	return joins, exprs
-}
-
-// softNullCaseExpr builds the SELECT expression that emits a column as NULL
-// when the referenced row is missing or soft-deleted, and the raw column value
-// otherwise. The referenced row's identity and soft-delete columns are `id` and
-// `deleted_at` respectively.
-func softNullCaseExpr(col, alias string) string {
-	return fmt.Sprintf("CASE WHEN %s.id IS NULL OR %s.deleted_at IS NOT NULL THEN NULL ELSE t.%s END AS %s",
-		alias, alias, quoteIdent(col), quoteIdent(col))
 }
 
 // deletedColumnFilter returns the WHERE fragment that excludes soft-deleted
