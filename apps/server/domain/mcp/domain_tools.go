@@ -89,6 +89,7 @@ func domainToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:          "classify-document",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:read",
 			Description:   "Classify a document against installed domain schema packs. Returns the matched schema, label, confidence, and classification stage. Read-only — does not write to the document.",
 			InputSchema: InputSchema{
@@ -108,6 +109,7 @@ func domainToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "list-installed-schemas",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:read",
 			Description:   "List all domain schema packs installed in a project, including their names, descriptions, and keywords used for classification.",
 			InputSchema: InputSchema{
@@ -123,6 +125,7 @@ func domainToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "finalize-discovery",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "schema:write",
 			Description:   "Finalize domain discovery by creating a new schema pack or extending an existing one. Provide document_id to create a new discovery job on the fly (no job_id needed). job_id is only needed when resuming an existing pending discovery job.",
 			InputSchema: InputSchema{
@@ -172,6 +175,7 @@ func domainToolDefinitions() []ToolDefinition {
 			Name:          "queue-reextraction",
 			RequiredScope: "schema:write",
 			Description:   "Queue a document for re-extraction using a specific domain schema pack. Use after domain discovery to enrich an existing document with typed entities.",
+			OutputSchema:  typedObjectOutputSchema(map[string]PropertySchema{"job_id": {Type: "string"}}, []string{"job_id"}),
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -212,8 +216,7 @@ func (s *Service) executeClassifyDocument(ctx context.Context, projectID string,
 		return errorResult(fmt.Sprintf("classification failed: %s", err)), nil
 	}
 
-	out, _ := json.Marshal(result)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(result)
 }
 
 func (s *Service) executeListInstalledSchemas(ctx context.Context, projectID string) (*ToolResult, error) {
@@ -226,8 +229,7 @@ func (s *Service) executeListInstalledSchemas(ctx context.Context, projectID str
 		return errorResult(fmt.Sprintf("list schemas failed: %s", err)), nil
 	}
 
-	out, _ := json.Marshal(entries)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(entries)
 }
 
 func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -328,6 +330,7 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 		return errorResult(fmt.Sprintf("finalize discovery failed: %s", err)), nil
 	}
 
+	data := resp
 	out, _ := json.Marshal(resp)
 
 	// Auto-queue reextraction when a schema was created or enriched for a specific document.
@@ -358,14 +361,12 @@ func (s *Service) executeFinalizeDiscovery(ctx context.Context, projectID string
 				)
 				// Append reextraction job ID to the response so the agent can report it.
 				respMap["reextraction_job_id"] = jobID
-				if b, err := json.Marshal(respMap); err == nil {
-					out = b
-				}
+				data = respMap
 			}
 		}
 	}
 
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(data)
 }
 
 func (s *Service) executeQueueReextraction(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -384,8 +385,7 @@ func (s *Service) executeQueueReextraction(ctx context.Context, projectID string
 		return errorResult(fmt.Sprintf("queue reextraction failed: %s", err)), nil
 	}
 
-	out, _ := json.Marshal(map[string]string{"job_id": jobID})
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(map[string]string{"job_id": jobID})
 }
 
 // errorResult returns a ToolResult with an error message.
