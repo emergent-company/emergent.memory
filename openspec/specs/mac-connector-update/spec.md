@@ -22,7 +22,7 @@ The app SHALL discover available versions by fetching a published update feed ov
 #### Scenario: Feed is unreachable
 
 - **WHEN** the feed cannot be fetched or is malformed
-- **THEN** the app reports no update rather than failing, and the installed app continues to run
+- **THEN** the check is reported as failed while the installed app continues to run
 
 ### Requirement: The installed app must be code-signed by the same identity
 
