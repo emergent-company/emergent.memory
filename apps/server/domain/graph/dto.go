@@ -16,6 +16,8 @@ type CreateGraphObjectRequest struct {
 	Labels     []string       `json:"labels,omitempty" validate:"omitempty,max=32,dive,max=64"`
 	BranchID   *uuid.UUID     `json:"branch_id,omitempty"`
 	Namespace  *string        `json:"namespace,omitempty" validate:"omitempty,max=128"`
+
+	ExtractionJobID *uuid.UUID `json:"extraction_job_id,omitempty"`
 }
 
 // PatchGraphObjectRequest is the request body for patching a graph object.
