@@ -24,17 +24,19 @@ Add `https://github.com/sparkle-project/Sparkle` as a SwiftPM package (2.x, curr
 
 ### D2 — Host the feed at a rolling release tag, not `releases/latest`
 
-`SUFeedURL` points at a permanent URL backed by a dedicated rolling release (working name `mac-appcast`) in this public repository, e.g. `https://github.com/emergent-company/emergent.memory/releases/download/mac-appcast/appcast.xml`. Rationale: this monorepo tags `v*` frequently for the server/CLI, and `mac-release.yml` *skips* the Mac build when `apps/connector.mac/**` is unchanged — so a per-tag feed would frequently not exist, and `releases/latest` is mutable (older feed entries' enclosure URLs would 404 after the next release). The rolling release holds `appcast.xml` plus all historical `Memory-*.dmg` / delta archives so any older install can update directly.
+`SUFeedURL` points at a permanent URL backed by a dedicated rolling release tagged **`memory-appcast`** in this public repository: `https://github.com/emergent-company/emergent.memory/releases/download/memory-appcast/appcast.xml`. Rationale: this monorepo tags `v*` frequently for the server/CLI, and `mac-release.yml` *skips* the Mac build when `apps/connector.mac/**` is unchanged — so a per-tag feed would frequently not exist, and `releases/latest` is mutable (older feed entries' enclosure URLs would 404 after the next release). The rolling release holds `appcast.xml` plus all historical `Memory-*.dmg` / delta archives so any older install can update directly.
 
 Alternatives considered: GitHub Pages for the feed (fine, but adds a publishing surface and repo-size concerns); per-tag feed + `latest` alias (rejected: mutable).
 
 ### D3 — Appcast generation in CI
 
-Run Sparkle's `generate_appcast` over an `updates/` directory containing the newly built DMG plus previously published archives, with `--download-url-prefix` targeting the rolling release and `--ed-key-file -` reading the private key from stdin. Regenerating with history preserved is what makes stable enclosure URLs and delta updates work.
+Run Sparkle's `generate_appcast` over a `build/appcast/` directory containing the newly built DMG plus previously published archives, with `--download-url-prefix` targeting the rolling release and `--ed-key-file -` reading the private key from stdin. The tool lives in the SwiftPM artifacts directory (`<DerivedData>/**/artifacts/sparkle/Sparkle/bin/`), which is why the workflow locates it dynamically rather than hardcoding a DerivedData hash. Regenerating with history preserved is what makes stable enclosure URLs and delta updates work.
 
 ### D4 — EdDSA key management
 
-Generate the key pair once on a trusted Mac (`generate_keys`). Commit only the **public** key into `Info.plist` as `SUPublicEDKey`; store the **private** key as a CI secret and pass it to `generate_appcast` on stdin. With `SUVerifyUpdateBeforeExtraction` enabled, an EdDSA key rotation is only accepted when the update archive is a Developer-ID-signed DMG, so rotation is possible but deliberate. Key loss means users must reinstall manually.
+Generate the key pair once on a trusted Mac (`generate_keys`). Commit only the **public** key into `Info.plist` as `SUPublicEDKey`; store the **private** key as a CI secret and pass it to `generate_appcast` on stdin.
+
+Resolved: the pair was generated on `mcj-mini` with the version-matched Sparkle 2.10.0 tools, through a throwaway keychain so the user's login keychain was untouched. Public key `PmNdMg8V1L//noPSUCvjjmBy14WQfnlyeVPAFySIE2A=`; the private key lives only at `mcj-mini:~/.config/sparkle/ed25519-private.key` (mode 600) and in the CI secret `SPARKLE_PRIVATE_KEY`. Because generation used a throwaway keychain there is **no keychain copy on the Mac** — local `sign_update`/`generate_appcast` runs need `-f`/`--ed-key-file` until someone imports it (`generate_keys -f`) from an unlocked login session. With `SUVerifyUpdateBeforeExtraction` enabled, an EdDSA key rotation is only accepted when the update archive is a Developer-ID-signed DMG, so rotation is possible but deliberate. Key loss means users must reinstall manually.
 
 ### D5 — Signing and notarization ordering
 
@@ -42,7 +44,7 @@ Any byte change after signing invalidates the signature and notarization ticket,
 
 ### D6 — Tag-driven, monotonic versioning
 
-`CFBundleShortVersionString` must reflect the released tag, and `CFBundleVersion` must strictly increase on every published app release because Sparkle orders updates by the build number (the appcast `sparkle:version`), not the marketing string. Derive both in the release job (e.g. marketing version from the tag, build number from a monotonic encoding of the tag or the commit count) and remove the static `0.1.0` / `1` values. Optionally failsafe: refuse to publish an appcast whose build number is not greater than the previous entry.
+`CFBundleShortVersionString` must reflect the released tag, and `CFBundleVersion` must strictly increase on every published app release because Sparkle orders updates by the build number (the appcast `sparkle:version`), not the marketing string. Derive both in the release job and pass them to `xcodebuild archive` as build settings (they override the static `0.1.0` / `1` in `project.yml`). Resolved encoding: marketing version = the tag minus `v`; build number = `major*1000000 + minor*1000 + patch` (e.g. `v0.2.0` → `2000`), and the release job fails if the new `CFBundleVersion` is not strictly greater than the largest `sparkle:version` already published. Optionally failsafe: refuse to publish an appcast whose build number is not greater than the previous entry.
 
 ### D7 — Pin the embedded engine
 

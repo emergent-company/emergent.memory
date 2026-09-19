@@ -10,6 +10,7 @@ struct AboutPage: View {
     @EnvironmentObject private var settings: ConnectorSettings
     @EnvironmentObject private var accountStore: AccountStore
     @EnvironmentObject private var projectStore: ProjectStore
+    @EnvironmentObject private var updater: UpdaterModel
     @ObservedObject private var statusMonitor = StatusMonitor.shared
 
     var body: some View {
@@ -24,6 +25,38 @@ struct AboutPage: View {
                         IdentifierInfoRow(label: "Instance", identifier: instanceID)
                         if !settings.serverURL.isEmpty {
                             ConnectorInfoRow(label: "Server", value: settings.serverURL)
+                        }
+                    }
+                }
+                ConnectorCard(title: "Updates", systemImage: "arrow.triangle.2.circlepath") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ConnectorInfoRow(label: "Current version", value: "\(appVersion) (\(buildNumber))")
+
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text("Status")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 130, alignment: .leading)
+                            HStack(spacing: 6) {
+                                updateStatusIndicator
+                                Text(updater.statusText)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                        }
+
+                        Toggle("Automatically check for updates", isOn: $updater.automaticallyChecksForUpdates)
+                            .font(.subheadline)
+                            .disabled(!updater.isUpdaterAvailable)
+
+                        HStack {
+                            Button("Check for Updates…") {
+                                updater.checkForUpdates()
+                            }
+                            .disabled(!updater.canCheckForUpdates)
+                            Spacer(minLength: 0)
                         }
                     }
                 }
@@ -72,6 +105,40 @@ struct AboutPage: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: - Updates
+
+    /// Leading glyph for the update status line. A running check shows a
+    /// spinner; a failed check is the only one to use the warning colour, which
+    /// matches the Development sign-in error styling on this page.
+    @ViewBuilder
+    private var updateStatusIndicator: some View {
+        switch updater.state {
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+        case .upToDate:
+            Image(systemName: "checkmark.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .updateAvailable:
+            Image(systemName: "arrow.down.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .installing:
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle")
+                .font(.subheadline)
+                .foregroundStyle(.orange)
+        case .idle, .unavailable:
+            Image(systemName: "circle.dashed")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
         }
     }
 

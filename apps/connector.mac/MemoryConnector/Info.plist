@@ -45,6 +45,26 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<!-- Sparkle 2 auto-update configuration. The rolling `mac-appcast` release
+	     URL is permanent by design so an install several releases behind can
+	     still resolve the newest archive. The public EdDSA key pairs with the
+	     private key held only in the release pipeline. Sandbox XPC keys are
+	     intentionally absent — the app is not sandboxed. -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/emergent-company/emergent.memory/releases/download/memory-appcast/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>PmNdMg8V1L//noPSUCvjjmBy14WQfnlyeVPAFySIE2A=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<!-- Prompt before installing; never silently install in the background. -->
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Emergent Company. Licensed under the MIT License (Diane-derived).</string>
 	<key>NSPrincipalClass</key>
