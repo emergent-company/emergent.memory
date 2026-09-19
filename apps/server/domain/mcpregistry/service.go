@@ -114,12 +114,13 @@ func (s *Service) EnsureBuiltinServer(ctx context.Context, projectID string) err
 		inputSchema := schemaToMap(td.InputSchema)
 		desc := td.Description
 		tools = append(tools, &MCPServerTool{
-			ServerID:    serverID,
-			ToolName:    td.Name,
-			Description: &desc,
-			InputSchema: inputSchema,
-			Enabled:     true,
-			ConfigKeys:  td.ConfigKeys,
+			ServerID:     serverID,
+			ToolName:     td.Name,
+			Description:  &desc,
+			InputSchema:  inputSchema,
+			OutputSchema: schemaPtrToMap(td.OutputSchema),
+			Enabled:      true,
+			ConfigKeys:   td.ConfigKeys,
 		})
 	}
 
@@ -918,6 +919,16 @@ func schemaToMap(schema mcp.InputSchema) map[string]any {
 		return map[string]any{}
 	}
 	return result
+}
+
+// schemaPtrToMap is schemaToMap for an optional schema (e.g. a tool's
+// outputSchema): it returns nil when the pointer is nil, so no outputSchema is
+// persisted rather than an empty object.
+func schemaPtrToMap(schema *mcp.InputSchema) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	return schemaToMap(*schema)
 }
 
 // splitSecrets separates secret entries from a plaintext env/headers map and
