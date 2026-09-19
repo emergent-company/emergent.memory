@@ -17,6 +17,7 @@ func skillsToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:          "skill-list",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "skills:read",
 			Description:   "List skills available to the current project. Returns id, name, description, and scope — use skill-get to retrieve full content for a specific skill.",
 			InputSchema: InputSchema{
@@ -27,6 +28,7 @@ func skillsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "skill-get",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "skills:read",
 			Description:   "Get a single skill by its UUID or name. Returns the full skill including content, description, scope, and metadata.",
 			InputSchema: InputSchema{
@@ -42,6 +44,7 @@ func skillsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "skill-create",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "skills:write",
 			Description:   "Create a new project-scoped skill. Returns the created skill's id, name, description, and scope.",
 			InputSchema: InputSchema{
@@ -65,6 +68,7 @@ func skillsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "skill-update",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "skills:write",
 			Description:   "Update an existing skill's description, content, or metadata.",
 			InputSchema: InputSchema{
@@ -88,6 +92,7 @@ func skillsToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "skill-delete",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "skills:write",
 			Description:   "Delete a skill by its UUID.",
 			InputSchema: InputSchema{

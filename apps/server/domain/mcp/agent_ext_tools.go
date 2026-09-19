@@ -14,6 +14,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		// --- Questions ---
 		{
 			Name:          "agent-question-list",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:read",
 			Description:   "List all questions asked by an agent during a specific run. Returns question text, status, and any response.",
 			InputSchema: InputSchema{
@@ -29,6 +30,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "agent-question-list-project",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:read",
 			Description:   "List agent questions across all runs in the current project. Optionally filter by status.",
 			InputSchema: InputSchema{
@@ -45,6 +47,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "agent-question-respond",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:write",
 			Description:   "Submit a response to a pending agent question. The agent will be resumed with the provided answer.",
 			InputSchema: InputSchema{
@@ -65,6 +68,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		// --- Hooks ---
 		{
 			Name:          "agent-hook-list",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:read",
 			Description:   "List all webhook hooks configured for an agent.",
 			InputSchema: InputSchema{
@@ -80,6 +84,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "agent-hook-create",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:write",
 			Description:   "Create a new webhook hook for an agent. Returns the hook id and a one-time token for authenticating webhook calls.",
 			InputSchema: InputSchema{
@@ -99,6 +104,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "agent-hook-delete",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:write",
 			Description:   "Delete a webhook hook by its ID.",
 			InputSchema: InputSchema{
@@ -115,6 +121,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		// --- ADK Sessions ---
 		{
 			Name:          "adk-session-list",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:read",
 			Description:   "List ADK (Agent Development Kit) sessions for the current project. Returns session IDs, app names, user IDs, state, and timestamps.",
 			InputSchema: InputSchema{
@@ -134,6 +141,7 @@ func agentExtToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "adk-session-get",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "agents:read",
 			Description:   "Get a single ADK session by its ID, including all events (messages, tool calls, etc.).",
 			InputSchema: InputSchema{
