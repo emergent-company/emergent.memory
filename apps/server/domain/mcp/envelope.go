@@ -39,9 +39,58 @@ func envelopeResult(ok bool, data any, meta map[string]any, errMsg string) (*Too
 		return nil, fmt.Errorf("marshal envelope result: %w", err)
 	}
 
+	// The structured content is the SAME object marshalled into the text block,
+	// so text and structuredContent are byte-identical JSON. This is a single
+	// source of truth (issue #586).
 	return &ToolResult{
-		Content: []ContentBlock{{Type: "text", Text: string(jsonBytes)}},
+		Content:           []ContentBlock{{Type: "text", Text: string(jsonBytes)}},
+		StructuredContent: env,
 	}, nil
+}
+
+// envelopeOutputSchema returns the JSON schema for the envelope-shaped result
+// produced by envelopeResult/envelopeSearchResponse. It is declared as the
+// `outputSchema` on every envelope-producing tool so programmatic consumers
+// can validate `structuredContent` against it.
+func envelopeOutputSchema() *InputSchema {
+	return &InputSchema{
+		Type: "object",
+		Properties: map[string]PropertySchema{
+			"ok":    {Type: "boolean"},
+			"error": {Type: "string"},
+			"data":  {Type: "object"},
+			"meta":  {Type: "object"},
+		},
+		Required: []string{"ok", "data"},
+	}
+}
+
+// objectOutputSchema is the permissive root-object schema for tools whose
+// top-level keys are dynamic or owned by another domain.
+func objectOutputSchema() *InputSchema {
+	tr := true
+	return &InputSchema{Type: "object", AdditionalProperties: &tr}
+}
+
+// typedObjectOutputSchema wraps known top-level keys; remaining keys allowed.
+func typedObjectOutputSchema(props map[string]PropertySchema, required []string) *InputSchema {
+	tr := true
+	return &InputSchema{Type: "object", Properties: props, Required: required, AdditionalProperties: &tr}
+}
+
+// proseOnlyTools lists tools whose result is prose/markdown text (not a JSON
+// object), so they intentionally do NOT declare an outputSchema.
+var proseOnlyTools = []string{
+	"project-get",
+	"schema-assign",
+	"schema-assignment-update",
+	"schema-uninstall",
+	"schema-create",
+	"schema-migration-preview",
+	"migration-archive-list",
+	"migration-archive-get",
+	"project-briefing",
+	"call_agent",
 }
 
 // envelopeSearchResponse wraps a graph search response in the uniform result

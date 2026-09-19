@@ -16,6 +16,7 @@ func providerToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:          "provider-list-org",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "List all LLM provider configurations for an organization. Returns provider name, model selections, and credential source.",
 			InputSchema: InputSchema{
@@ -31,6 +32,7 @@ func providerToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "provider-configure-org",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "Configure or update an LLM provider at the organization level (e.g. set Google AI API key).",
 			InputSchema: InputSchema{
@@ -66,6 +68,7 @@ func providerToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "provider-configure-project",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "Configure or update an LLM provider at the project level, overriding the org-level config.",
 			InputSchema: InputSchema{
@@ -97,6 +100,7 @@ func providerToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "provider-models-list",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "List available models for a given LLM provider. Optionally filter by model type (generative or embedding).",
 			InputSchema: InputSchema{
@@ -117,6 +121,7 @@ func providerToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "provider-test",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "Test an LLM provider configuration by sending a minimal generation request. Returns the model used and the response.",
 			InputSchema: InputSchema{
@@ -132,6 +137,7 @@ func providerToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "provider-usage-get",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "Get LLM usage statistics (token counts, costs) for the organization.",
 			InputSchema: InputSchema{

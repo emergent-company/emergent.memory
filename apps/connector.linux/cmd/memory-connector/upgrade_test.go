@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -165,6 +166,56 @@ func TestUpgradeDownloadsAndReplaces(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o111 == 0 {
 		t.Errorf("replaced binary is not executable: mode %v", info.Mode().Perm())
+	}
+}
+
+func TestUpgradeRefusesInsideAppBundle(t *testing.T) {
+	dir := t.TempDir()
+	bundleExe := filepath.Join(dir, "Foo.app", "Contents", "Resources", upgrade.BinaryName)
+	if err := os.MkdirAll(filepath.Dir(bundleExe), 0o755); err != nil {
+		t.Fatalf("mkdir bundle: %v", err)
+	}
+	original := []byte("signed-original-binary")
+	if err := os.WriteFile(bundleExe, original, 0o755); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	prevExec := upgrade.Executable
+	upgrade.Executable = func() (string, error) { return bundleExe, nil }
+	t.Cleanup(func() { upgrade.Executable = prevExec })
+
+	// The release server and client are wired up but must never be contacted.
+	srv, downloads := upgradeReleaseServer(t, "connector-v0.2.0", nil, "")
+	useUpgradeClient(t, &upgrade.Client{
+		HTTP:         srv.Client(),
+		APIBase:      srv.URL,
+		DownloadBase: srv.URL + "/releases/download",
+	})
+	setVersion(t, "0.1.0")
+
+	out, errOut, err := executeRoot("upgrade")
+	if err == nil {
+		t.Fatal("upgrade inside bundle: err = nil, want exit 1")
+	}
+	var ec exitError
+	if !errors.As(err, &ec) || ec.code != 1 {
+		t.Fatalf("err = %v, want exitError{1}", err)
+	}
+	if !strings.Contains(errOut, "update the app instead") {
+		t.Errorf("stderr = %q, want app-managed refusal message", errOut)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty", out)
+	}
+	if got := atomic.LoadInt32(downloads); got != 0 {
+		t.Errorf("downloads = %d, want 0", got)
+	}
+	got, err := os.ReadFile(bundleExe)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Errorf("target = %q, want unchanged %q", got, original)
 	}
 }
 

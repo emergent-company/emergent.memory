@@ -21,6 +21,7 @@ struct MemoryConnectorApp: App {
                 .environmentObject(environment.identity)
                 .environmentObject(environment.engine)
                 .environmentObject(environment.statusMonitor)
+                .environmentObject(environment.updater)
                 .background(WindowOpenBridge())
                 .task { await environment.bootstrap() }
         }

@@ -114,12 +114,13 @@ func (s *Service) EnsureBuiltinServer(ctx context.Context, projectID string) err
 		inputSchema := schemaToMap(td.InputSchema)
 		desc := td.Description
 		tools = append(tools, &MCPServerTool{
-			ServerID:    serverID,
-			ToolName:    td.Name,
-			Description: &desc,
-			InputSchema: inputSchema,
-			Enabled:     true,
-			ConfigKeys:  td.ConfigKeys,
+			ServerID:     serverID,
+			ToolName:     td.Name,
+			Description:  &desc,
+			InputSchema:  inputSchema,
+			OutputSchema: schemaPtrToMap(td.OutputSchema),
+			Enabled:      true,
+			ConfigKeys:   td.ConfigKeys,
 		})
 	}
 
@@ -394,11 +395,12 @@ func (s *Service) SyncServerTools(ctx context.Context, serverID string, discover
 
 	for _, dt := range discoveredTools {
 		tools = append(tools, &MCPServerTool{
-			ServerID:    serverID,
-			ToolName:    dt.Name,
-			Description: dt.Description,
-			InputSchema: dt.InputSchema,
-			Enabled:     true,
+			ServerID:     serverID,
+			ToolName:     dt.Name,
+			Description:  dt.Description,
+			InputSchema:  dt.InputSchema,
+			OutputSchema: dt.OutputSchema,
+			Enabled:      true,
 		})
 		currentNames = append(currentNames, dt.Name)
 	}
@@ -899,9 +901,10 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 
 // DiscoveredTool represents a tool discovered from an external MCP server via tools/list.
 type DiscoveredTool struct {
-	Name        string         `json:"name"`
-	Description *string        `json:"description,omitempty"`
-	InputSchema map[string]any `json:"inputSchema,omitempty"`
+	Name         string         `json:"name"`
+	Description  *string        `json:"description,omitempty"`
+	InputSchema  map[string]any `json:"inputSchema,omitempty"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 }
 
 // schemaToMap converts an mcp.InputSchema to a generic map for JSONB storage.
@@ -916,6 +919,16 @@ func schemaToMap(schema mcp.InputSchema) map[string]any {
 		return map[string]any{}
 	}
 	return result
+}
+
+// schemaPtrToMap is schemaToMap for an optional schema (e.g. a tool's
+// outputSchema): it returns nil when the pointer is nil, so no outputSchema is
+// persisted rather than an empty object.
+func schemaPtrToMap(schema *mcp.InputSchema) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	return schemaToMap(*schema)
 }
 
 // splitSecrets separates secret entries from a plaintext env/headers map and

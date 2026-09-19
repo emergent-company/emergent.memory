@@ -53,10 +53,18 @@ type tableConfig struct {
 	projectFilter string   // optional raw WHERE fragment scoping to a project (`?` binds ProjectID)
 	vectorColumns []string // columns of UDT vector/halfvec; cast ::text then parsed to []float32
 	deletedColumn string   // optional soft-delete column filtered out unless IncludeDeleted
-	extraWhere    string   // optional static WHERE fragment (no placeholders)
-	orderBy       string   // optional batching ORDER BY column; defaults to "id"
-	gate          exportGate
-	derived       bool // true when rows are derived in Go rather than streamed from `table`
+	// columnExprs overrides the default `t."col"` SELECT expression for named
+	// columns. It is applied only when IncludeDeleted is false, so a plain
+	// column is exported when soft-deleted rows are included. Each value MUST
+	// alias its result AS "col" to keep the NDJSON key stable.
+	columnExprs map[string]string
+	// leftJoin is a raw LEFT JOIN clause appended only when columnExprs is
+	// active, supplying the aliases those expressions reference.
+	leftJoin   string
+	extraWhere string // optional static WHERE fragment (no placeholders)
+	orderBy    string // optional batching ORDER BY column; defaults to "id"
+	gate       exportGate
+	derived    bool // true when rows are derived in Go rather than streamed from `table`
 }
 
 // allExportTables returns the curated, ordered export surface (see openspec
@@ -72,7 +80,16 @@ func allExportTables() []tableConfig {
 			join: "INNER JOIN kb.documents d ON d.id = t.document_id", deletedColumn: "deleted_at"},
 		{name: "graph_objects", table: "kb.graph_objects", projectFilter: byProject, vectorColumns: []string{"embedding_v2"}, deletedColumn: "deleted_at"},
 		{name: "graph_relationships", table: "kb.graph_relationships", projectFilter: byProject, vectorColumns: []string{"embedding"}, deletedColumn: "deleted_at"},
-		{name: "chat_conversations", table: "kb.chat_conversations", projectFilter: byProject, deletedColumn: "deleted_at", gate: gateChat},
+		{name: "chat_conversations", table: "kb.chat_conversations", projectFilter: byProject, deletedColumn: "deleted_at", gate: gateChat,
+			leftJoin: "LEFT JOIN kb.graph_objects go ON go.id = t.object_id",
+			columnExprs: map[string]string{
+				// object_id → kb.graph_objects(id). A soft-deleted object is
+				// excluded from the archive, so a conversation pointing at one
+				// would dangle on restore and violate the FK. Null the optional
+				// pointer; keep the conversation. Not applied when soft-deleted
+				// rows are exported (IncludeDeleted), since the object is present.
+				"object_id": `CASE WHEN go.id IS NULL OR go.deleted_at IS NOT NULL THEN NULL ELSE t."object_id" END AS "object_id"`,
+			}},
 		{name: "chat_messages", table: "kb.chat_messages", projectFilter: "c.project_id = ?",
 			join: "INNER JOIN kb.chat_conversations c ON c.id = t.conversation_id", deletedColumn: "deleted_at", gate: gateChat},
 		{name: "object_extraction_jobs", table: "kb.object_extraction_jobs", projectFilter: byProject,
@@ -149,16 +166,10 @@ func (e *Exporter) exportTable(ctx context.Context, cfg tableConfig, w io.Writer
 	}
 
 	colSet := make(map[string]bool, len(cols))
-	exprs := make([]string, 0, len(cols))
-	var vectorCols []string
 	for _, col := range cols {
 		colSet[col.Name] = true
-		expr, isVector := selectColumnExpr(col, containsString(cfg.vectorColumns, col.Name))
-		exprs = append(exprs, expr)
-		if isVector {
-			vectorCols = append(vectorCols, col.Name)
-		}
 	}
+	exprs, vectorCols := projectionColumns(cols, cfg, opts.IncludeDeleted)
 
 	query := e.db.NewSelect().
 		TableExpr(cfg.table + " AS t").
@@ -167,13 +178,18 @@ func (e *Exporter) exportTable(ctx context.Context, cfg tableConfig, w io.Writer
 	if cfg.join != "" {
 		query = query.Join(cfg.join)
 	}
+	// leftJoin supplies the aliases referenced by columnExprs, which only apply
+	// when soft-deleted rows are excluded.
+	if cfg.leftJoin != "" && !opts.IncludeDeleted && len(cfg.columnExprs) > 0 {
+		query = query.Join(cfg.leftJoin)
+	}
 	if cfg.projectFilter != "" {
 		query = query.Where(cfg.projectFilter, opts.ProjectID)
 	}
 	// deletedColumn is only applied when the live schema actually has it, so
 	// legacy configs degrade gracefully on schemas without soft deletes.
-	if !opts.IncludeDeleted && cfg.deletedColumn != "" && colSet[cfg.deletedColumn] {
-		query = query.Where("t." + quoteIdent(cfg.deletedColumn) + " IS NULL")
+	if f := deletedColumnFilter(cfg, opts.IncludeDeleted, colSet); f != "" {
+		query = query.Where(f)
 	}
 	if cfg.extraWhere != "" {
 		query = query.Where(cfg.extraWhere)
@@ -187,6 +203,28 @@ func (e *Exporter) exportTable(ctx context.Context, cfg tableConfig, w io.Writer
 	}
 
 	return e.streamQuery(ctx, query, w, cfg.name, vectorCols)
+}
+
+// projectionColumns builds the SELECT expressions for a table's columns, applying
+// conditional columnExprs overrides, and returns the columns serialized as vectors.
+func projectionColumns(cols []colInfo, cfg tableConfig, includeDeleted bool) (exprs []string, vectorCols []string) {
+	overrides := cfg.columnExprs
+	if includeDeleted {
+		overrides = nil
+	}
+	exprs = make([]string, 0, len(cols))
+	for _, col := range cols {
+		if expr, ok := overrides[col.Name]; ok {
+			exprs = append(exprs, expr)
+			continue
+		}
+		expr, isVector := selectColumnExpr(col, containsString(cfg.vectorColumns, col.Name))
+		exprs = append(exprs, expr)
+		if isVector {
+			vectorCols = append(vectorCols, col.Name)
+		}
+	}
+	return exprs, vectorCols
 }
 
 // selectColumnExpr returns the SELECT expression for a column and whether it is
@@ -204,6 +242,16 @@ func selectColumnExpr(col colInfo, vectorListed bool) (expr string, isVector boo
 		return fmt.Sprintf("t.%s::text AS %s", quoteIdent(col.Name), quoteIdent(col.Name)), false
 	}
 	return "t." + quoteIdent(col.Name), false
+}
+
+// deletedColumnFilter returns the WHERE fragment that excludes soft-deleted
+// rows, or "" when there is nothing to filter (IncludeDeleted is true, no
+// deletedColumn is configured, or the live schema lacks the column).
+func deletedColumnFilter(cfg tableConfig, includeDeleted bool, colSet map[string]bool) string {
+	if includeDeleted || cfg.deletedColumn == "" || !colSet[cfg.deletedColumn] {
+		return ""
+	}
+	return "t." + quoteIdent(cfg.deletedColumn) + " IS NULL"
 }
 
 // branchRow is the minimal shape of kb.branches needed to re-derive lineage.

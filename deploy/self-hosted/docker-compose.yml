@@ -14,6 +14,7 @@
 
 services:
   db:
+    # This image major must stay in sync with PG_CLIENT_MAJOR in Dockerfile.server.
     image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-emergent}

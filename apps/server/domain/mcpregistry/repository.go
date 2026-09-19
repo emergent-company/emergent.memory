@@ -223,6 +223,7 @@ func (r *Repository) UpsertTool(ctx context.Context, tool *MCPServerTool) error 
 		On("CONFLICT (server_id, tool_name) DO UPDATE").
 		Set("description = EXCLUDED.description").
 		Set("input_schema = EXCLUDED.input_schema").
+		Set("output_schema = EXCLUDED.output_schema").
 		Set("enabled = EXCLUDED.enabled").
 		Set("config_keys = EXCLUDED.config_keys").
 		Returning("*").
@@ -240,6 +241,7 @@ func (r *Repository) BulkUpsertTools(ctx context.Context, tools []*MCPServerTool
 		On("CONFLICT (server_id, tool_name) DO UPDATE").
 		Set("description = EXCLUDED.description").
 		Set("input_schema = EXCLUDED.input_schema").
+		Set("output_schema = EXCLUDED.output_schema").
 		Set("config_keys = EXCLUDED.config_keys").
 		Returning("*").
 		Exec(ctx)
@@ -328,12 +330,13 @@ func (r *Repository) DeleteStaleTools(ctx context.Context, serverID string, curr
 
 // EnabledServerTool is a flat row combining server + tool info for ToolPool cache building.
 type EnabledServerTool struct {
-	ServerName  string         `bun:"server_name"`
-	ServerType  MCPServerType  `bun:"server_type"`
-	ToolName    string         `bun:"tool_name"`
-	Description *string        `bun:"description"`
-	InputSchema map[string]any `bun:"input_schema"`
-	Config      map[string]any `bun:"config"`
+	ServerName   string         `bun:"server_name"`
+	ServerType   MCPServerType  `bun:"server_type"`
+	ToolName     string         `bun:"tool_name"`
+	Description  *string        `bun:"description"`
+	InputSchema  map[string]any `bun:"input_schema"`
+	OutputSchema map[string]any `bun:"output_schema"`
+	Config       map[string]any `bun:"config"`
 }
 
 // FindAllEnabledTools returns all enabled tools from enabled servers for a project.
@@ -348,6 +351,7 @@ func (r *Repository) FindAllEnabledTools(ctx context.Context, projectID string) 
 		ColumnExpr("mst.tool_name AS tool_name").
 		ColumnExpr("mst.description AS description").
 		ColumnExpr("mst.input_schema AS input_schema").
+		ColumnExpr("mst.output_schema AS output_schema").
 		ColumnExpr("mst.config AS config").
 		Where("ms.project_id = ?", projectID).
 		Where("ms.enabled = true").
@@ -376,6 +380,7 @@ func (r *Repository) FindAllEnabledBuiltinTools(ctx context.Context, projectID s
 		ColumnExpr("mst.tool_name AS tool_name").
 		ColumnExpr("mst.description AS description").
 		ColumnExpr("mst.input_schema AS input_schema").
+		ColumnExpr("mst.output_schema AS output_schema").
 		ColumnExpr("mst.config AS config").
 		Where("ms.project_id = ?", projectID).
 		Where("ms.enabled = true").
