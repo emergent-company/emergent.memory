@@ -664,6 +664,10 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
+	if newVersion.ExtractionJobID == nil {
+		newVersion.ExtractionJobID = prevHead.ExtractionJobID
+	}
+
 	// Insert new version as HEAD
 	_, err = tx.NewInsert().
 		Model(newVersion).
@@ -718,22 +722,23 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 	now := time.Now()
 	actorType := "user"
 	tombstone := &GraphObject{
-		ID:           uuid.New(),
-		CanonicalID:  mainHead.CanonicalID,
-		ProjectID:    mainHead.ProjectID,
-		BranchID:     branchID,
-		Type:         mainHead.Type,
-		Key:          mainHead.Key,
-		Status:       mainHead.Status,
-		Properties:   mainHead.Properties,
-		Labels:       mainHead.Labels,
-		DeletedAt:    &now,
-		DeleteReason: reason,
-		ActorID:      actorID,
-		ActorType:    &actorType,
-		Version:      mainHead.Version + 1,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:              uuid.New(),
+		CanonicalID:     mainHead.CanonicalID,
+		ProjectID:       mainHead.ProjectID,
+		BranchID:        branchID,
+		Type:            mainHead.Type,
+		Key:             mainHead.Key,
+		Status:          mainHead.Status,
+		Properties:      mainHead.Properties,
+		Labels:          mainHead.Labels,
+		DeletedAt:       &now,
+		DeleteReason:    reason,
+		ActorID:         actorID,
+		ActorType:       &actorType,
+		Version:         mainHead.Version + 1,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ExtractionJobID: mainHead.ExtractionJobID,
 	}
 	tombstone.ContentHash = computeContentHash(tombstone.Properties, tombstone.Status, tombstone.Key, tombstone.Labels)
 
@@ -2543,6 +2548,7 @@ type BranchObjectHead struct {
 	// MergedToCanonicalID is non-nil when this source object was already cloned
 	// to a target branch by a prior merge (the merge ledger).
 	MergedToCanonicalID *uuid.UUID
+	ExtractionJobID     *uuid.UUID
 }
 
 // GetBranchObjectHeads returns HEAD versions of all objects on a branch.
@@ -2552,7 +2558,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 
 	q := r.db.NewSelect().
 		Model(&objects).
-		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id").
+		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL")
 
@@ -2581,6 +2587,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 			Properties:          obj.Properties,
 			DeletedAt:           obj.DeletedAt,
 			MergedToCanonicalID: obj.MergedToCanonicalID,
+			ExtractionJobID:     obj.ExtractionJobID,
 		}
 	}
 
@@ -2806,17 +2813,18 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 	batch := make([]*GraphObject, 0, 100)
 	for _, obj := range objects {
 		newObj := &GraphObject{
-			ID:          uuid.New(),
-			ProjectID:   projectID,
-			BranchID:    targetBranchID,
-			CanonicalID: obj.CanonicalID, // Preserve canonical ID for merge-back support
-			Version:     1,
-			Type:        obj.Type,
-			Key:         obj.Key,
-			Status:      obj.Status,
-			Properties:  obj.Properties,
-			Labels:      obj.Labels,
-			ContentHash: obj.ContentHash,
+			ID:              uuid.New(),
+			ProjectID:       projectID,
+			BranchID:        targetBranchID,
+			CanonicalID:     obj.CanonicalID, // Preserve canonical ID for merge-back support
+			Version:         1,
+			Type:            obj.Type,
+			Key:             obj.Key,
+			Status:          obj.Status,
+			Properties:      obj.Properties,
+			Labels:          obj.Labels,
+			ContentHash:     obj.ContentHash,
+			ExtractionJobID: obj.ExtractionJobID,
 		}
 		batch = append(batch, newObj)
 		copiedCanonicals[obj.CanonicalID] = true
