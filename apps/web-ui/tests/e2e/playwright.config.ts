@@ -43,6 +43,7 @@ export default defineConfig({
         /scenarios\/.*\.spec\.ts/,
         /-ui\.spec\.ts/,
         /specs\/connector\/.*\.spec\.ts/,
+        /specs\/share\/.*\.spec\.ts/,
       ],
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE },
       dependencies: ['setup'],

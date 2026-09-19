@@ -1,0 +1,627 @@
+package main
+
+import (
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// shareManageScriptOnce keeps the copy-button wiring to a single <script> per
+// page, even when several panels render.
+var shareManageScriptOnce = templ.NewOnceHandle()
+
+// --- Owner share-link management --------------------------------------------
+//
+// ShareLinksPanel is the owner-facing management surface for an agent's public
+// share links. It is designed to render inside the agent detail page (the wiring
+// lane passes it to a tab or section) and performs no I/O of its own: every
+// action is a real form POST so it works without JavaScript, and the client JS
+// on this file only adds the copy-link affordance.
+//
+// The wiring lane sets CreateAction + each row's RotateURL/RevokeURL to the
+// gateway routes it mounts. Nothing here assumes a route shape.
+
+// ShareLinkStatus is a share link's lifecycle status.
+type ShareLinkStatus string
+
+const (
+	ShareLinkActive  ShareLinkStatus = "active"
+	ShareLinkExpired ShareLinkStatus = "expired"
+	ShareLinkRevoked ShareLinkStatus = "revoked"
+)
+
+// ShareLinkRow is one existing share link.
+type ShareLinkRow struct {
+	ID    string
+	Label string
+	// URL is the full public link, including its key fragment.
+	URL string
+	// Status drives the row's badge and which actions are available.
+	Status ShareLinkStatus
+
+	CreatedAt        string
+	CreatedRelative  string
+	LastUsedAt       string
+	LastUsedRelative string
+	// ExpiresAt is empty when the link never expires.
+	ExpiresAt       string
+	ExpiresRelative string
+	ExpiresNever    bool
+
+	// Behaviour summary shown as chips.
+	RequireEmail       bool
+	ShowSessionList    bool
+	Sandbox            bool
+	MaxSessionsPerUser int
+	BudgetMessages     int
+	BudgetTokens       int
+
+	// RotateURL / RevokeURL are the POST endpoints for this link's actions.
+	// RotateURL empty hides the rotate action; RevokeURL empty hides revoke.
+	RotateURL string
+	RevokeURL string
+	// RevealURL is the on-demand key-recovery endpoint. When URL is empty (the
+	// key is not present at list time), the copy action fetches RevealURL to
+	// recover it instead of copying a blank value.
+	RevealURL string
+}
+
+// ShareToolOption is one tool the owner can allow on a link.
+type ShareToolOption struct {
+	ID          string
+	Label       string
+	Description string
+	Selected    bool
+	// Dangerous marks tools that can change data or reach the outside world.
+	Dangerous bool
+}
+
+// ShareLinkCreateValues carries the create form's values, so a failed submit
+// can re-render with the owner's input preserved. Numeric fields are strings to
+// survive validation errors without a separate parse state.
+type ShareLinkCreateValues struct {
+	Label              string
+	WelcomeMessage     string
+	ExpiryDays         int
+	NeverExpires       bool
+	ToolIDs            []string
+	RequireEmail       bool
+	ShowSessionList    bool
+	Sandbox            bool
+	MaxSessionsPerUser string
+	BudgetMessages     string
+	BudgetTokens       string
+}
+
+// ShareLinksPanelProps configures ShareLinksPanel.
+type ShareLinksPanelProps struct {
+	// AgentID is the owning agent's id (used for element ids/labels only).
+	AgentID string
+	// PublicBaseURL is the share host shown in the "public URL" banner
+	// (e.g. "https://memory.example.com/share"). Empty hides the banner.
+	PublicBaseURL string
+	// CreateAction is where the create form POSTs.
+	CreateAction string
+	// Links are the agent's existing share links, newest first.
+	Links []ShareLinkRow
+	// Tools is the tool allowlist picker's options.
+	Tools []ShareToolOption
+	// Values preserves the create form across a failed submit.
+	Values ShareLinkCreateValues
+	// Error is a form-level error shown above the create form.
+	Error string
+}
+
+// ShareLinksPanel renders the full share-link management surface: the public
+// URL banner, the existing links (or empty state), and the create form.
+templ ShareLinksPanel(props ShareLinksPanelProps) {
+	<section class="space-y-6" data-testid="share-links-panel" aria-labelledby="share-links-heading">
+		@ShareLinksHeader(props)
+		@SharePublicURLBanner(props.PublicBaseURL)
+		if props.Error != "" {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--alert-circle",
+				Message: props.Error,
+				Attrs:   templ.Attributes{"data-testid": "share-links-error"},
+			})
+		}
+		@ShareLinksList(props.Links)
+		@ShareLinkCreateForm(props)
+	</section>
+}
+
+// ShareLinksHeader labels the section.
+templ ShareLinksHeader(_ ShareLinksPanelProps) {
+	<div class="flex flex-wrap items-start justify-between gap-3">
+		<div>
+			<h2 id="share-links-heading" class="text-lg font-semibold tracking-tight">Share links</h2>
+			<p class="text-base-content/55 mt-1 max-w-xl text-sm">
+				Let people outside your workspace chat with this agent. Each link has its own settings, and you can turn one off at any time.
+			</p>
+		</div>
+	</div>
+}
+
+// SharePublicURLBanner shows the public share host with a copy affordance.
+templ SharePublicURLBanner(base string) {
+	if base != "" {
+		<div class="card card-border bg-base-100" data-testid="share-public-url">
+			<div class="card-body flex flex-wrap items-center gap-3 p-4 sm:flex-nowrap">
+				@ui.IconTile("lucide--globe", ui.IconTileProps{Tone: "primary", Size: "size-9"})
+				<div class="min-w-0 grow">
+					<p class="text-base-content/50 text-xs font-semibold tracking-wider uppercase">Public share URL</p>
+					<p class="truncate font-mono text-sm">{ base }</p>
+				</div>
+				@shareCopyButton(base, "share-public-url-copy", "Copy base URL")
+			</div>
+		</div>
+	}
+}
+
+// ShareLinksList renders the existing links or the empty state.
+templ ShareLinksList(links []ShareLinkRow) {
+	<div data-testid="share-links-list">
+		if len(links) == 0 {
+			@shareLinksEmpty()
+		}
+		if len(links) > 0 {
+			<div class="space-y-4">
+				for _, link := range links {
+					@shareLinkRowItem(link)
+				}
+			</div>
+		}
+	</div>
+}
+
+// shareLinksEmpty is the no-links empty state.
+templ shareLinksEmpty() {
+	<div data-testid="share-links-empty">
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--share-2",
+			Title:       "No share links yet",
+			Description: "Create a link below to let someone outside your workspace chat with this agent.",
+			IconStyle:   ui.EmptyStateIconTile,
+			Bordered:    true,
+		})
+	</div>
+}
+
+// shareLinkRowItem is one link's card: status, metadata, behaviour chips, and
+// the copy / rotate / revoke actions.
+templ shareLinkRowItem(link ShareLinkRow) {
+	<div class="card card-border bg-base-100" data-testid="share-link-row" data-link-id={ link.ID }>
+		<div class="card-body gap-4 p-4">
+			<div class="flex flex-wrap items-start justify-between gap-3">
+				<div class="min-w-0">
+					<div class="flex items-center gap-2">
+						<h3 class="truncate text-sm font-semibold">{ shareLinkTitle(link) }</h3>
+						@shareLinkStatusBadge(link.Status)
+					</div>
+					<p class="text-base-content/45 mt-0.5 truncate font-mono text-xs" data-share-link-url>{ link.URL }</p>
+				</div>
+				<div class="flex shrink-0 items-center gap-1">
+					if link.URL != "" {
+						@shareCopyButton(link.URL, "share-copy-link", "Copy link")
+					} else if link.RevealURL != "" && link.Status != ShareLinkRevoked {
+						@shareRevealCopyButton(link.RevealURL, "Copy link")
+					}
+					if link.RotateURL != "" && link.Status == ShareLinkActive {
+						<form method="post" action={ templ.URL(link.RotateURL) } hx-confirm="Rotate this link? The old URL stops working immediately and a new one is issued.">
+							@ui.Button(ui.ButtonProps{
+								Type:      ui.ButtonTypeSubmit,
+								Variant:   ui.ButtonGhost,
+								Size:      ui.ButtonSM,
+								Shape:     ui.ButtonShapeSquare,
+								Icon:      "lucide--refresh-cw",
+								AriaLabel: "Rotate " + shareLinkTitle(link),
+								Attrs:     templ.Attributes{"data-testid": "share-rotate-link", "title": "Issue a new URL and revoke this one"},
+							})
+						</form>
+					}
+					if link.RevokeURL != "" && link.Status != ShareLinkRevoked {
+						<form method="post" action={ templ.URL(link.RevokeURL) } hx-confirm="Revoke this link? It stops working immediately.">
+							@ui.Button(ui.ButtonProps{
+								Type:       ui.ButtonTypeSubmit,
+								Variant:    ui.ButtonGhost,
+								Size:       ui.ButtonSM,
+								Shape:      ui.ButtonShapeSquare,
+								Icon:       "lucide--ban",
+								ExtraClass: "text-error hover:text-error",
+								AriaLabel:  "Revoke " + shareLinkTitle(link),
+								Attrs:      templ.Attributes{"data-testid": "share-revoke-link", "title": "Revoke this link"},
+							})
+						</form>
+					}
+				</div>
+			</div>
+			<dl class="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
+				<div>
+					<dt class="text-base-content/45 text-xs">Created</dt>
+					<dd class="text-sm">{ shareTimeCell(link.CreatedAt, link.CreatedRelative) }</dd>
+				</div>
+				<div>
+					<dt class="text-base-content/45 text-xs">Last used</dt>
+					<dd class="text-sm">{ shareTimeCell(link.LastUsedAt, link.LastUsedRelative) }</dd>
+				</div>
+				<div>
+					<dt class="text-base-content/45 text-xs">Expires</dt>
+					<dd class="text-sm">
+						if link.ExpiresNever {
+							Never
+						} else {
+							{ shareTimeCell(link.ExpiresAt, link.ExpiresRelative) }
+						}
+					</dd>
+				</div>
+			</dl>
+			<div class="flex flex-wrap gap-1.5">
+				@shareBehaviourChip("lucide--mail", "Requires email", link.RequireEmail)
+				@shareBehaviourChip("lucide--history", "Shows session list", link.ShowSessionList)
+				@shareBehaviourChip("lucide--shield-alert", "Sandbox", link.Sandbox)
+				if link.MaxSessionsPerUser > 0 {
+					@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(link.MaxSessionsPerUser) + " sessions / person", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				}
+				if link.BudgetMessages > 0 {
+					@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(link.BudgetMessages) + " msg budget", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				}
+				if link.BudgetTokens > 0 {
+					@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(link.BudgetTokens) + " token budget", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				}
+			</div>
+		</div>
+	</div>
+}
+
+// shareLinkStatusBadge maps a link status to a badge.
+templ shareLinkStatusBadge(status ShareLinkStatus) {
+	{{
+		intent := ui.BadgeSuccess
+		label := "Active"
+		icon := "lucide--circle-check"
+		switch status {
+		case ShareLinkExpired:
+			intent, label, icon = ui.BadgeWarning, "Expired", "lucide--clock"
+		case ShareLinkRevoked:
+			intent, label, icon = ui.BadgeError, "Revoked", "lucide--ban"
+		}
+	}}
+	<span data-testid="share-link-status">
+		@ui.Badge(ui.BadgeProps{Label: label, Variant: intent, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: icon})
+	</span>
+}
+
+// ShareLinkCreateForm is the create-link form. It posts JSON-less form fields;
+// the wiring lane interprets them.
+templ ShareLinkCreateForm(props ShareLinksPanelProps) {
+	<form
+		id="share-create-link"
+		data-testid="share-create-form"
+		method="post"
+		action={ templ.URL(props.CreateAction) }
+		class="card card-border bg-base-100"
+	>
+		<div class="card-body gap-4 p-4">
+			<div>
+				<h3 class="text-sm font-semibold">Create a share link</h3>
+				<p class="text-base-content/50 mt-0.5 text-xs">New links start active. You can revoke one at any time.</p>
+			</div>
+			<div class="grid gap-4 sm:grid-cols-2">
+				@form.FormField(form.FormFieldProps{
+					Type:        form.FieldText,
+					Name:        "label",
+					Label:       "Label",
+					Value:       props.Values.Label,
+					Placeholder: "e.g. Product demo",
+					Required:    true,
+					Attrs:       templ.Attributes{"data-testid": "share-create-label"},
+				})
+				@form.FormField(form.FormFieldProps{
+					Type:    form.FieldSelect,
+					Name:    "expiryDays",
+					Label:   "Expires",
+					Value:   shareExpiryValue(props.Values),
+					Options: shareExpiryOptions(),
+					Attrs:   templ.Attributes{"data-testid": "share-create-expiry"},
+				})
+			</div>
+			@form.FormField(form.FormFieldProps{
+				Type:        form.FieldTextarea,
+				Name:        "welcomeMessage",
+				Label:       "Welcome message",
+				Value:       props.Values.WelcomeMessage,
+				Placeholder: "Shown at the top of the chat before the first message.",
+				Rows:        2,
+				Attrs:       templ.Attributes{"data-testid": "share-create-welcome"},
+			})
+			@shareToolPicker(props.Tools, props.Values.ToolIDs)
+			<div class="space-y-3">
+				@shareToggleRow("requireEmail", "Require email", "Ask visitors to enter an email before they can chat.", "lucide--mail", props.Values.RequireEmail, "share-create-require-email")
+				@shareToggleRow("showSessionList", "Show session list", "Let each visitor see and resume their own past chats from this link.", "lucide--history", props.Values.ShowSessionList, "share-create-show-sessions")
+				@shareSandboxToggle(props.Values.Sandbox)
+			</div>
+			<div class="grid gap-4 sm:grid-cols-3">
+				@form.FormField(form.FormFieldProps{
+					Type:        form.FieldNumber,
+					Name:        "maxSessionsPerUser",
+					Label:       "Max sessions per person",
+					Value:       props.Values.MaxSessionsPerUser,
+					Placeholder: "Unlimited",
+					Class:       "input-sm",
+					Attrs:       templ.Attributes{"data-testid": "share-create-max-sessions", "min": "0"},
+				})
+				@form.FormField(form.FormFieldProps{
+					Type:        form.FieldNumber,
+					Name:        "budgetMessages",
+					Label:       "Message budget",
+					Value:       props.Values.BudgetMessages,
+					Placeholder: "Unlimited",
+					Class:       "input-sm",
+					Attrs:       templ.Attributes{"data-testid": "share-create-budget-messages", "min": "0"},
+				})
+				@form.FormField(form.FormFieldProps{
+					Type:        form.FieldNumber,
+					Name:        "budgetTokens",
+					Label:       "Token budget",
+					Value:       props.Values.BudgetTokens,
+					Placeholder: "Unlimited",
+					Class:       "input-sm",
+					Attrs:       templ.Attributes{"data-testid": "share-create-budget-tokens", "min": "0"},
+				})
+			</div>
+			<div class="flex justify-end gap-2 pt-1">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--link",
+					Attrs:   templ.Attributes{"data-testid": "share-create-submit"},
+				}) {
+					Create link
+				}
+			</div>
+		</div>
+	</form>
+	@shareManageScript()
+}
+
+// shareToolPicker is the tool allowlist: a scrollable checkbox list. Leaving all
+// boxes unticked means "no tools" — the owner opts tools in explicitly.
+templ shareToolPicker(tools []ShareToolOption, selected []string) {
+	<fieldset class="rounded-lg border border-base-300 p-3" data-testid="share-create-tools">
+		<legend class="px-1 text-xs font-semibold tracking-wider uppercase text-base-content/50">Allowed tools</legend>
+		<p class="text-base-content/45 mb-2 text-xs">Only ticked tools can run. Leave empty to allow none.</p>
+		if len(tools) == 0 {
+			<p class="text-base-content/45 text-sm">This agent has no tools.</p>
+		}
+		if len(tools) > 0 {
+			<div class="max-h-56 space-y-1 overflow-y-auto pr-1">
+				for _, t := range tools {
+					<label class="hover:bg-base-200/60 flex cursor-pointer items-start gap-3 rounded-md px-2 py-1.5">
+						<input
+							type="checkbox"
+							name="toolIds"
+							value={ t.ID }
+							class="checkbox checkbox-sm mt-0.5"
+							checked?={ shareToolSelected(t, selected) }
+							data-testid="share-create-tool"
+						/>
+						<span class="min-w-0">
+							<span class="flex items-center gap-1.5 text-sm">
+								{ t.Label }
+								if t.Dangerous {
+									@ui.Badge(ui.BadgeProps{Label: "Can change data", Variant: ui.BadgeWarning, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+								}
+							</span>
+							if t.Description != "" {
+								<p class="text-base-content/45 text-xs">{ t.Description }</p>
+							}
+						</span>
+					</label>
+				}
+			</div>
+		}
+	</fieldset>
+}
+
+// shareToggleRow is a labelled toggle with a short explanation.
+templ shareToggleRow(name string, label string, help string, icon string, checked bool, testID string) {
+	<label class="flex cursor-pointer items-start gap-3" data-testid={ testID }>
+		<input type="checkbox" name={ name } value="true" class="toggle toggle-sm mt-0.5" checked?={ checked }/>
+		<span class="min-w-0">
+			<span class="flex items-center gap-1.5 text-sm font-medium">
+				@ui.IconSpan(icon, "size-4 text-base-content/50")
+				{ label }
+			</span>
+			<span class="text-base-content/50 block text-xs">{ help }</span>
+		</span>
+	</label>
+}
+
+// shareSandboxToggle is the sandbox toggle plus its explicit risk warning.
+templ shareSandboxToggle(checked bool) {
+	<div class="share-sandbox-row rounded-lg border border-warning/30 bg-warning/5 p-3">
+		<label class="flex cursor-pointer items-start gap-3" data-testid="share-create-sandbox">
+			<input type="checkbox" name="sandbox" value="true" class="toggle toggle-sm toggle-warning mt-0.5" checked?={ checked }/>
+			<span class="min-w-0">
+				<span class="flex items-center gap-1.5 text-sm font-medium">
+					@ui.IconSpan("lucide--shield-alert", "size-4 text-warning")
+					Sandbox mode
+				</span>
+				<span class="text-base-content/55 block text-xs">Run the agent's tools in an isolated sandbox.</span>
+			</span>
+		</label>
+		<p class="text-warning mt-2 flex items-start gap-2 text-xs" role="note" data-testid="share-sandbox-warning">
+			@ui.IconSpan("lucide--triangle-alert", "size-4 shrink-0")
+			<span>Turning this on is higher risk: it can run code and reach outside the sandbox. Only enable it for links you trust.</span>
+		</p>
+	</div>
+}
+
+// shareCopyButton renders a copy-to-clipboard button. The URL lives in a
+// data attribute (never an inline handler) and shareManageScript() wires the
+// click; without JavaScript the URL is still shown as text elsewhere.
+templ shareCopyButton(value string, testID string, label string) {
+	<button
+		type="button"
+		class="btn btn-ghost btn-sm gap-2"
+		data-copy-link={ value }
+		data-testid={ testID }
+		aria-label={ label }
+	>
+		@ui.IconSpan("lucide--copy", "size-4")
+		<span class="share-copy-label">{ label }</span>
+	</button>
+}
+
+// shareRevealCopyButton is the row's copy action for an existing link whose key
+// is not present at list time. It fetches the reveal endpoint on demand, copies
+// the full URL, and surfaces it inline (see shareManageScript).
+templ shareRevealCopyButton(revealURL string, label string) {
+	<button
+		type="button"
+		class="btn btn-ghost btn-sm gap-2"
+		data-reveal-url={ revealURL }
+		data-testid="share-copy-link"
+		aria-label={ label }
+	>
+		@ui.IconSpan("lucide--copy", "size-4")
+		<span class="share-copy-label">{ label }</span>
+	</button>
+}
+
+// shareManageScript wires the copy buttons once per page.
+templ shareManageScript() {
+	@shareManageScriptOnce.Once() {
+		<script>
+		(function () {
+			if (window.__memoryShareManageWired) return;
+			window.__memoryShareManageWired = true;
+			function copyText(text, done) {
+				if (navigator.clipboard && navigator.clipboard.writeText) {
+					navigator.clipboard.writeText(text).then(done, function () {});
+				}
+			}
+			// Direct copy (URL already known, e.g. right after create/rotate).
+			document.addEventListener("click", function (ev) {
+				var btn = ev.target && ev.target.closest ? ev.target.closest("[data-copy-link]") : null;
+				if (!btn) return;
+				ev.preventDefault();
+				var text = btn.getAttribute("data-copy-link") || "";
+				var label = btn.querySelector(".share-copy-label");
+				var restore = label ? label.textContent : "";
+				copyText(text, function () {
+					if (!label) return;
+					label.textContent = "Copied";
+					setTimeout(function () { label.textContent = restore; }, 1600);
+				});
+			});
+			// On-demand reveal: fetch the key, build/copy the full URL, and show
+			// it inline in the row. The key is never rendered during list build.
+			document.addEventListener("click", function (ev) {
+				var btn = ev.target && ev.target.closest ? ev.target.closest("[data-reveal-url]") : null;
+				if (!btn) return;
+				ev.preventDefault();
+				if (btn.dataset.revealing === "true") return;
+				btn.dataset.revealing = "true";
+				var label = btn.querySelector(".share-copy-label");
+				var restore = label ? label.textContent : "";
+				var url = btn.getAttribute("data-reveal-url") || "";
+				var card = btn.closest(".card-body");
+				var urlEl = card ? card.querySelector("[data-share-link-url]") : null;
+				var finish = function (msg) {
+					if (label) label.textContent = msg;
+					setTimeout(function () {
+						if (label) label.textContent = restore;
+						btn.dataset.revealing = "false";
+					}, 2000);
+				};
+				fetch(url, { headers: { Accept: "application/json" } })
+					.then(function (res) {
+						return res.json().catch(function () { return {}; }).then(function (body) {
+							return { ok: res.ok, body: body };
+						});
+					})
+					.then(function (r) {
+						if (r.ok && r.body && r.body.url) {
+							if (urlEl) urlEl.textContent = r.body.url;
+							copyText(r.body.url, function () {});
+							finish("Copied");
+						} else if (r.body && r.body.code === "not_recoverable") {
+							if (urlEl) urlEl.textContent = "Key not recoverable — rotate this link to issue a new one.";
+							finish("Not recoverable");
+						} else {
+							finish("Copy failed");
+						}
+					})
+					.catch(function () { finish("Copy failed"); });
+			});
+		})();
+		</script>
+	}
+}
+
+// --- helpers -----------------------------------------------------------------
+
+func shareLinkTitle(link ShareLinkRow) string {
+	if link.Label != "" {
+		return link.Label
+	}
+	return "Untitled link"
+}
+
+// shareTimeCell shows a relative time when known, with the absolute time as the
+// title for hover, and an em dash when the value is empty.
+func shareTimeCell(absolute string, relative string) string {
+	if relative != "" {
+		return relative
+	}
+	if absolute != "" {
+		return absolute
+	}
+	return "—"
+}
+
+// shareBehaviourChip shows an on/off behaviour as a badge (off = ghost).
+templ shareBehaviourChip(icon string, label string, on bool) {
+	if on {
+		@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeInfo, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: icon})
+	} else {
+		@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeGhost, Style: ui.BadgeStyleOutline, Size: ui.BadgeSizeXS, Icon: icon})
+	}
+}
+
+func shareExpiryValue(v ShareLinkCreateValues) string {
+	if v.NeverExpires {
+		return "never"
+	}
+	if v.ExpiryDays <= 0 {
+		return "30"
+	}
+	return strconv.Itoa(v.ExpiryDays)
+}
+
+func shareExpiryOptions() []form.SelectOption {
+	return []form.SelectOption{
+		{Value: "1", Label: "After 1 day"},
+		{Value: "7", Label: "After 7 days"},
+		{Value: "30", Label: "After 30 days"},
+		{Value: "90", Label: "After 90 days"},
+		{Value: "never", Label: "Never (not recommended)"},
+	}
+}
+
+func shareToolSelected(t ShareToolOption, selected []string) bool {
+	if t.Selected {
+		return true
+	}
+	for _, id := range selected {
+		if id == t.ID {
+			return true
+		}
+	}
+	return false
+}
