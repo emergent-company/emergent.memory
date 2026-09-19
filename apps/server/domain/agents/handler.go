@@ -2686,77 +2686,126 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 		return apperror.NewBadRequest("response is required")
 	}
 
-	// Look up the question
-	question, err := h.repo.FindQuestionByID(c.Request().Context(), questionID)
+	dto, err := h.RespondToQuestion(c.Request().Context(), RespondParams{
+		ProjectID:   projectID,
+		OrgID:       user.OrgID,
+		RespondedBy: user.ID,
+		UserID:      user.ID,
+		QuestionID:  questionID,
+		Response:    req.Response,
+		Message:     req.Message,
+		AuthToken:   auth.RawTokenFromContext(c.Request().Context()),
+	})
 	if err != nil {
-		return apperror.NewInternal("failed to get question", err)
+		return err
+	}
+
+	return c.JSON(http.StatusAccepted, SuccessResponse(dto))
+}
+
+// RespondParams parameterizes the shared question-respond/resume flow so both
+// the authenticated owner path (HandleRespondToQuestion) and the public share
+// path (share service) can drive it.
+type RespondParams struct {
+	ProjectID   string
+	OrgID       string // may be empty; resolved from the agent's project when empty
+	RespondedBy string // uuid string — owner user ID, or end_user_ref for share runs
+	UserID      string // auth user ID for ask_user notifications ("" for share runs)
+	QuestionID  string
+	Response    string
+	Message     string
+	AuthToken   string
+
+	// Share-run resume overrides (zero/empty = not a share run).
+	ShareLinkID     string
+	ShareToolDeny   []string
+	DisableAuthMint bool
+}
+
+// RespondToQuestion is the shared core of the question-respond flow. It looks up
+// the question + paused run, atomically claims the question via AnswerQuestion,
+// records any tool-approval decision via MarkToolConfirmationDecision, and
+// resumes the run in a background goroutine. Share callers must verify
+// question->run->session ownership BEFORE calling this.
+func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*AgentQuestionDTO, error) {
+	if p.ProjectID == "" {
+		return nil, apperror.NewBadRequest("projectId is required")
+	}
+	if p.QuestionID == "" {
+		return nil, apperror.NewBadRequest("questionId is required")
+	}
+	if p.Response == "" {
+		return nil, apperror.NewBadRequest("response is required")
+	}
+
+	// Look up the question
+	question, err := h.repo.FindQuestionByID(ctx, p.QuestionID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to get question", err)
 	}
 	if question == nil {
-		return apperror.NewNotFound("AgentQuestion", questionID)
+		return nil, apperror.NewNotFound("AgentQuestion", p.QuestionID)
 	}
 
 	// Verify question belongs to this project
-	if question.ProjectID != projectID {
-		return apperror.NewNotFound("AgentQuestion", questionID)
+	if question.ProjectID != p.ProjectID {
+		return nil, apperror.NewNotFound("AgentQuestion", p.QuestionID)
 	}
 
 	// Verify question is still pending
 	if question.Status != QuestionStatusPending {
-		return apperror.ErrConflict.WithMessage(fmt.Sprintf("question is already %s", question.Status))
+		return nil, apperror.ErrConflict.WithMessage(fmt.Sprintf("question is already %s", question.Status))
 	}
 
 	// Look up the run and verify it's paused
-	run, err := h.repo.FindRunByID(c.Request().Context(), question.RunID)
+	run, err := h.repo.FindRunByID(ctx, question.RunID)
 	if err != nil {
-		return apperror.NewInternal("failed to get run", err)
+		return nil, apperror.NewInternal("failed to get run", err)
 	}
 	if run == nil {
-		return apperror.NewInternal("associated run not found", nil)
+		return nil, apperror.NewInternal("associated run not found", nil)
 	}
 	if run.Status != RunStatusPaused {
-		return apperror.ErrConflict.WithMessage(fmt.Sprintf("run is %s, expected paused", run.Status))
+		return nil, apperror.ErrConflict.WithMessage(fmt.Sprintf("run is %s, expected paused", run.Status))
 	}
 
 	// Atomically claim the question. A concurrent respond/cancel that won the
 	// race leaves claimed=false and must not resume the run.
-	claimed, err := h.repo.AnswerQuestion(c.Request().Context(), questionID, req.Response, user.ID)
+	claimed, err := h.repo.AnswerQuestion(ctx, p.QuestionID, p.Response, p.RespondedBy)
 	if err != nil {
-		return apperror.NewInternal("failed to answer question", err)
+		return nil, apperror.NewInternal("failed to answer question", err)
 	}
 	if !claimed {
-		return apperror.ErrConflict.WithMessage("question is no longer pending")
+		return nil, apperror.ErrConflict.WithMessage("question is no longer pending")
 	}
 
 	// Update notification action status if notification was created (non-fatal)
 	if question.NotificationID != nil {
-		_ = h.repo.UpdateNotificationActionStatus(c.Request().Context(), *question.NotificationID, "completed", user.ID)
+		_ = h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "completed", p.UserID)
 	}
 
 	// Resume the agent in a background goroutine
 	var preCreatedRun *AgentRun
 	if h.executor != nil {
 		// Look up the agent to build the resume request
-		agent, err := h.repo.FindByID(c.Request().Context(), run.AgentID, nil)
+		agent, err := h.repo.FindByID(ctx, run.AgentID, nil)
 		if err != nil || agent == nil {
-			_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
-			return apperror.NewInternal("failed to find agent for resume", err)
+			_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+			return nil, apperror.NewInternal("failed to find agent for resume", err)
 		}
 
 		// Look up the agent definition (optional, may be nil)
-		agentDef, _ := h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
+		agentDef, _ := h.repo.ResolveDefinitionForAgent(ctx, agent)
 
 		// Build the resume user message.
-		// For tool-policy confirmation questions, pass just the button value (e.g. "approve"
-		// or "reject") so injectToolResponse can reliably match it. For all other question
-		// types, include Q&A context so the LLM has history.
 		var userMessage string
 		var resumeNow = true
 		sc := SuspendSignalFromMap(run.SuspendContext)
 		if sc != nil && sc.Reason == SuspendReasonAwaitingToolConfirm {
 			// Resolve the option value from the submitted label (or use as-is if it's already a value).
-			userMessage = strings.ToLower(strings.TrimSpace(req.Response))
+			userMessage = strings.ToLower(strings.TrimSpace(p.Response))
 			for _, opt := range question.Options {
-				if strings.EqualFold(opt.Label, req.Response) || strings.EqualFold(opt.Value, req.Response) {
+				if strings.EqualFold(opt.Label, p.Response) || strings.EqualFold(opt.Value, p.Response) {
 					userMessage = strings.ToLower(strings.TrimSpace(opt.Value))
 					break
 				}
@@ -2769,23 +2818,22 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 			case "cancel":
 				decision = "cancelled"
 			}
-			_ = h.repo.UpdateToolApprovalDecision(c.Request().Context(), questionID, decision, req.Message, user.ID)
+			_ = h.repo.UpdateToolApprovalDecision(ctx, p.QuestionID, decision, p.Message, p.RespondedBy)
 			// Batch coordination: mark this decision in suspend_context and
 			// resume only once every confirmation in the batch is decided.
 			if len(sc.PendingToolConfirmations) > 0 {
 				var markErr error
-				resumeNow, markErr = h.repo.MarkToolConfirmationDecision(c.Request().Context(), run.ID, questionID, userMessage, req.Message)
+				resumeNow, markErr = h.repo.MarkToolConfirmationDecision(ctx, run.ID, p.QuestionID, userMessage, p.Message)
 				if markErr != nil {
-					_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
-					return apperror.NewInternal("failed to record decision", markErr)
+					_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+					return nil, apperror.NewInternal("failed to record decision", markErr)
 				}
 				if resumeNow {
-					// Re-fetch the run so Resume reads the updated suspend_context
-					// (decisions persisted), not the stale in-memory copy.
-					fresh, ferr := h.repo.FindRunByID(c.Request().Context(), run.ID)
+					// Re-fetch the run so Resume reads the updated suspend_context.
+					fresh, ferr := h.repo.FindRunByID(ctx, run.ID)
 					if ferr != nil || fresh == nil {
-						_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
-						return apperror.NewInternal("failed to re-fetch run after decision", ferr)
+						_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+						return nil, apperror.NewInternal("failed to re-fetch run after decision", ferr)
 					}
 					run = fresh
 				}
@@ -2793,21 +2841,21 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 		} else {
 			userMessage = fmt.Sprintf(
 				"Previously you asked: \"%s\"\nThe user responded: \"%s\"\nContinue from where you left off.",
-				question.Question, req.Response,
+				question.Question, p.Response,
 			)
 		}
 
 		if resumeNow {
-			preCreatedRun, err = h.resumeQuestionRun(c, user, run, agent, agentDef, userMessage, req.Message)
+			preCreatedRun, err = h.resumeQuestionRun(ctx, p, run, agent, agentDef, userMessage, p.Message)
 			if err != nil {
-				_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
-				return err
+				_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+				return nil, err
 			}
 		}
 	}
 
 	// Re-fetch the question to return the updated state
-	updatedQuestion, err := h.repo.FindQuestionByID(c.Request().Context(), questionID)
+	updatedQuestion, err := h.repo.FindQuestionByID(ctx, p.QuestionID)
 	var dto *AgentQuestionDTO
 	if err != nil || updatedQuestion == nil {
 		dto = question.ToDTO()
@@ -2820,22 +2868,22 @@ func (h *Handler) HandleRespondToQuestion(c echo.Context) error {
 		dto.ResumeRunID = &preCreatedRun.ID
 	}
 
-	return c.JSON(http.StatusAccepted, SuccessResponse(dto))
+	return dto, nil
 }
 
 // resumeQuestionRun resumes a paused run after a question decision. It pre-creates
 // the resume run, persists the resume_run_id, and launches the resume goroutine
 // with the given resolved user message and optional reject message. It returns
 // the pre-created run (whose ID clients poll) or an error.
-func (h *Handler) resumeQuestionRun(c echo.Context, user *auth.AuthUser, run *AgentRun, agent *Agent, agentDef *AgentDefinition, userMessage, rejectMessage string) (*AgentRun, error) {
-	orgID := user.OrgID
+func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *AgentRun, agent *Agent, agentDef *AgentDefinition, userMessage, rejectMessage string) (*AgentRun, error) {
+	orgID := p.OrgID
 	if orgID == "" {
-		orgID, _ = h.repo.GetOrgIDByProjectID(c.Request().Context(), agent.ProjectID)
+		orgID, _ = h.repo.GetOrgIDByProjectID(ctx, agent.ProjectID)
 	}
 
 	maxSteps := MaxTotalStepsPerRun
 	resumedFrom := run.ID
-	preCreatedRun, err := h.repo.CreateRunWithOptions(c.Request().Context(), CreateRunOptions{
+	preCreatedRun, err := h.repo.CreateRunWithOptions(ctx, CreateRunOptions{
 		AgentID:          run.AgentID,
 		MaxSteps:         &maxSteps,
 		ResumedFrom:      &resumedFrom,
@@ -2852,10 +2900,9 @@ func (h *Handler) resumeQuestionRun(c echo.Context, user *auth.AuthUser, run *Ag
 			sc[k] = v
 		}
 		sc["resume_run_id"] = preCreatedRun.ID
-		_ = h.repo.UpdateSuspendContext(c.Request().Context(), run.ID, sc)
+		_ = h.repo.UpdateSuspendContext(ctx, run.ID, sc)
 	}
 
-	resumeAuthToken := auth.RawTokenFromContext(c.Request().Context())
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -2880,9 +2927,12 @@ func (h *Handler) resumeQuestionRun(c echo.Context, user *auth.AuthUser, run *Ag
 			OrgID:           orgID,
 			UserMessage:     userMessage,
 			RejectMessage:   rejectMessage,
-			UserID:          user.ID, // propagate for ask_user notifications
-			AuthToken:       resumeAuthToken,
+			UserID:          p.UserID, // propagate for ask_user notifications ("" for share)
+			AuthToken:       p.AuthToken,
 			PreCreatedRun:   preCreatedRun,
+			ShareLinkID:     p.ShareLinkID,
+			ShareToolDeny:   p.ShareToolDeny,
+			DisableAuthMint: p.DisableAuthMint,
 		})
 		if result != nil && result.Cleanup != nil {
 			result.Cleanup()
@@ -2991,7 +3041,13 @@ func (h *Handler) HandleCancelQuestion(c echo.Context) error {
 		}
 
 		if resumeNow {
-			preCreatedRun, err = h.resumeQuestionRun(c, user, run, agent, agentDef, "cancel", "")
+			preCreatedRun, err = h.resumeQuestionRun(c.Request().Context(), RespondParams{
+				ProjectID:   projectID,
+				OrgID:       user.OrgID,
+				RespondedBy: user.ID,
+				UserID:      user.ID,
+				AuthToken:   auth.RawTokenFromContext(c.Request().Context()),
+			}, run, agent, agentDef, "cancel", "")
 			if err != nil {
 				_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
 				return err

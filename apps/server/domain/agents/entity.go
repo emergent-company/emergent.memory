@@ -561,6 +561,10 @@ type AgentToolApproval struct {
 	CreatedAt   time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt   time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 
+	// ShareLinkID is the public agent-share link this approval's run belongs to
+	// (nullable — nil for non-share runs). Added by migration 00159.
+	ShareLinkID *string `bun:"share_link_id,type:uuid" json:"shareLinkId,omitempty"`
+
 	// ConversationID is the chat conversation this approval's run belongs to,
 	// resolved via agent_runs.acp_session_id → chat_conversations.id. Populated
 	// only by ListToolApprovals (not a stored column).

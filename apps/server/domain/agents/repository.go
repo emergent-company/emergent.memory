@@ -2929,11 +2929,14 @@ func (r *Repository) GetACPSession(ctx context.Context, projectID, sessionID str
 
 // ListACPSessions returns ACP sessions for a project ordered by created_at descending.
 // By default only non-archived sessions are returned; pass includeArchived=true to include them.
+// Share-created sessions (rows linked from kb.agent_share_sessions) are excluded so
+// project members do not see anonymous public-share sessions in their session list.
 func (r *Repository) ListACPSessions(ctx context.Context, projectID string, includeArchived bool) ([]*ACPSession, error) {
 	var sessions []*ACPSession
 	q := r.db.NewSelect().
 		Model(&sessions).
-		Where("project_id = ?", projectID)
+		Where("project_id = ?", projectID).
+		Where("NOT EXISTS (SELECT 1 FROM kb.agent_share_sessions AS ass WHERE ass.acp_session_id = acps.id)")
 	if !includeArchived {
 		q = q.Where("is_archived = FALSE")
 	}
