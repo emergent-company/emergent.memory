@@ -458,17 +458,24 @@ func slimSimilarResult(sr *graph.SimilarObjectResult, opts ResponseOpts) map[str
 	return out
 }
 
-// structuredContentFromJSON returns the JSON object encoded in jsonBytes as a
-// map[string]any, or nil when the top-level value is not a JSON object.
-// MCP 2025-06-18 requires structuredContent to be a root object; arrays and
-// primitives are intentionally left nil (spec-legal) while the text content
-// block still carries the serialized payload.
-func structuredContentFromJSON(jsonBytes []byte) map[string]any {
-	var obj map[string]any
-	if err := json.Unmarshal(jsonBytes, &obj); err != nil {
+// StructuredContentFromJSON converts a marshalled result into a root-object
+// map suitable for MCP structuredContent. object -> itself; array ->
+// {"results": arr}; primitive -> {"value": v}; nil/invalid -> nil.
+func StructuredContentFromJSON(jsonBytes []byte) map[string]any {
+	var v any
+	if err := json.Unmarshal(jsonBytes, &v); err != nil {
 		return nil
 	}
-	return obj
+	switch t := v.(type) {
+	case map[string]any:
+		return t
+	case []any:
+		return map[string]any{"results": t}
+	case nil:
+		return nil
+	default:
+		return map[string]any{"value": t}
+	}
 }
 
 // normalizeStructuredContent converts an arbitrary structured-content value
@@ -510,6 +517,6 @@ func (s *Service) wrapResultCompact(data any) (*ToolResult, error) {
 				Text: string(jsonBytes),
 			},
 		},
-		StructuredContent: structuredContentFromJSON(jsonBytes),
+		StructuredContent: StructuredContentFromJSON(jsonBytes),
 	}, nil
 }
