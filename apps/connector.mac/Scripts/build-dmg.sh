@@ -33,6 +33,10 @@ ARCHIVE_PATH="build/Memory.xcarchive"
 EXPORT_PATH="build/Export"
 DMG_NAME="Memory"
 CONFIGURATION="Release"
+# Signing identity: APP_CERT_NAME (documented above) overrides the generic
+# default so a machine holding several Developer ID identities signs
+# deterministically instead of relying on name-substring matching.
+SIGN_IDENTITY="${APP_CERT_NAME:-Developer ID Application}"
 
 # --- Version handling -----------------------------------------------------
 # VERSION is a release tag (v0.2.0) or bare semver (0.2.0). Derive two values:
@@ -43,9 +47,18 @@ CONFIGURATION="Release"
 # The monotonic encoding is REQUIRED: Sparkle 2's generate_appcast orders
 # updates by sparkle:version (the app's CFBundleVersion), which must strictly
 # increase per published app release.
+# Fallback for local runs without VERSION. Info.plist stores the literal
+# build-setting placeholder "$(MARKETING_VERSION)", so it cannot be read
+# directly; prefer the newest release tag, then project.yml's default.
 RAW_VERSION="${VERSION:-}"
 if [ -z "$RAW_VERSION" ]; then
-    RAW_VERSION="$(defaults read "$(pwd)/${PROJECT_DIR}/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "0.1.0")"
+    RAW_VERSION="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+fi
+if [ -z "$RAW_VERSION" ]; then
+    RAW_VERSION="$(awk '/^[[:space:]]*MARKETING_VERSION:/ {gsub(/"/, "", $2); print $2; exit}' "${PROJECT_DIR}/project.yml" 2>/dev/null || true)"
+fi
+if [ -z "$RAW_VERSION" ]; then
+    RAW_VERSION="0.1.0"
 fi
 if [[ "$RAW_VERSION" == v* ]]; then
     MARKETING_VERSION="${RAW_VERSION#v}"
@@ -83,7 +96,7 @@ xcodebuild archive \
     -derivedDataPath "${DERIVED_DATA}" \
     DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-}" \
     CODE_SIGN_STYLE=Manual \
-    CODE_SIGN_IDENTITY="Developer ID Application" \
+    CODE_SIGN_IDENTITY="${SIGN_IDENTITY}" \
     MARKETING_VERSION="${MARKETING_VERSION}" \
     CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION}" \
     SWIFT_VERSION=5
@@ -105,9 +118,9 @@ APP_PATH="${EXPORT_PATH}/Memory.app"
 # Sign embedded binaries (deepest first), then the app. `codesign --deep` is
 # deprecated and unreliable for notarization.
 for bin in "${APP_PATH}/Contents/Resources/memory-connector" "${APP_PATH}/Contents/Resources/memory-reminders"; do
-  [ -f "$bin" ] && codesign --force --options runtime --sign "Developer ID Application" "$bin"
+  [ -f "$bin" ] && codesign --force --options runtime --sign "${SIGN_IDENTITY}" "$bin"
 done
-codesign --force --options runtime --sign "Developer ID Application" "${APP_PATH}"
+codesign --force --options runtime --sign "${SIGN_IDENTITY}" "${APP_PATH}"
 
 # Step 4: Notarize + staple the app (optional)
 if [[ "${1:-}" == "--notarize" ]]; then
@@ -144,7 +157,7 @@ fi
 
 # Step 6: Sign the DMG. Must happen AFTER the DMG is finalized.
 echo "==> Signing DMG..."
-codesign --force --timestamp --sign "Developer ID Application" "${DMG_PATH}"
+codesign --force --timestamp --sign "${SIGN_IDENTITY}" "${DMG_PATH}"
 
 # Step 7: Notarize + staple the DMG (optional). notarytool accepts the .dmg
 # directly; no need to re-zip.
