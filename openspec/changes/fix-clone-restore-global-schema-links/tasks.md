@@ -9,9 +9,10 @@
 
 ## 2. Migration — builtin graph schema uniqueness
 
-- [x] 2.1 `00157_builtin_graph_schemas_unique.sql`: dedupe duplicate `source='builtin'` rows on `(name, version)` keeping one per group, then `CREATE UNIQUE INDEX ... WHERE source = 'builtin'`
+- [x] 2.1 `00158_builtin_graph_schemas_unique.sql`: repoint dependents (`project_schemas`, `project_edge_schema_registry`, `blueprint_pack_claims`, `schema_studio_sessions`) to the canonical `source='builtin'` row, dropping redundant links that would violate child uniqueness, before deleting the duplicate then `CREATE UNIQUE INDEX ... WHERE source = 'builtin'`
 - [x] 2.2 Scope to `source = 'builtin'` (not `project_id IS NULL`) so 00145's `source='manual'`, `project_id IS NULL` rows stay unconstrained
 - [x] 2.3 Confirm the migration is picked up via `migrations/embed.go` (`//go:embed *.sql`) — no explicit list to update
+- [x] 2.4 Update embedded `apps/server/internal/testutil/schema.sql` snapshot with the new partial unique index so DB-backed tests match production
 
 ## 3. DB-backed regression test
 
@@ -27,5 +28,5 @@ All Go commands run from `apps/server/`; `openspec` runs from the repository roo
 - [x] 4.1 `go build ./...` clean
 - [x] 4.2 `go test ./domain/backups/...` passes
 - [x] 4.3 `go vet ./domain/backups/...` clean
-- [x] 4.4 `golangci-lint run ./...` (or `task lint`) clean
+- [x] 4.4 `golangci-lint run ./domain/backups/...` reports exactly 1 finding — the pre-existing `errcheck` in `service.go:249` (the line `s.restorer.Restore(...)` in the request handler, untouched by this change); no new findings are introduced, and repo-wide `task lint` was not used as the gate
 - [x] 4.5 `openspec validate fix-clone-restore-global-schema-links` passes
