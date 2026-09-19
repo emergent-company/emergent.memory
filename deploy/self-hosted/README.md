@@ -297,6 +297,10 @@ cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 - **Database**: `emergent`
 - **Extensions**: pgvector
 
+### Scheduled Database Backup
+
+The server image runs a scheduled `pg_dump` backup (see `scheduler.database_backup`). Its `pg_dump` client major is set by the `PG_CLIENT_MAJOR` build argument (default `17`) and must match the major of the `pgvector/pgvector:pg17` database image. The override must name a client major available in the server image's base distribution (`alpine:3.21` ships 15, 16, and 17); requesting a newer major requires bumping the base image first. If the two majors drift apart, `pg_dump` refuses to dump a newer server and the scheduled backup fails with a version-mismatch error. The `/health` endpoint reports a `database_backup` check: a failing backup makes the overall status `degraded`. Failed backup rows are visible at `GET /api/superadmin/database-backups`.
+
 ### Kreuzberg
 
 - **Port**: 8000 (internal only)

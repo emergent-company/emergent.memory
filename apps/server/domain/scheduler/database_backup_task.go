@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -77,9 +79,15 @@ func (t *DatabaseBackupTask) Run(ctx context.Context) error {
 		return fmt.Errorf("insert backup record: %w", err)
 	}
 
-	backupErr := t.runBackup(ctx, record)
+	// 2. Preflight the pg_dump ↔ server version pairing before dumping, so a
+	// mismatch is persisted on the record with an actionable message. Only run
+	// the dump itself once the preflight passes.
+	backupErr := t.preflightPgDump(ctx)
+	if backupErr == nil {
+		backupErr = t.runBackup(ctx, record)
+	}
 
-	// 2. Update record with result
+	// 3. Update record with result
 	completedAt := time.Now()
 	record.CompletedAt = &completedAt
 
@@ -107,23 +115,104 @@ func (t *DatabaseBackupTask) Run(ctx context.Context) error {
 		)
 	}
 
-	if backupErr != nil {
-		return backupErr
-	}
-
-	// 3. Enforce retention
+	// 4. Enforce retention after every attempt — including failures — so failed
+	// rows age out instead of accumulating forever.
 	if err := t.enforceRetention(ctx); err != nil {
-		// Log but don't fail the task — backup succeeded
+		// Log but don't fail the task — retention failure must not mask the
+		// backup outcome.
 		t.log.Error("failed to enforce backup retention", slog.String("error", err.Error()))
 	}
 
+	return backupErr
+}
+
+// pgMajorFromVersionNum extracts the major version from a PostgreSQL
+// server_version_num integer (e.g. 170011 → 17).
+func pgMajorFromVersionNum(num int) int {
+	return num / 10000
+}
+
+// pgDumpMajorFromVersionOutput parses `pg_dump --version` output such as
+// `pg_dump (PostgreSQL) 17.11 (Debian 17.11-3.pgdg12+1)` and returns the first
+// integer appearing after the `PostgreSQL)` marker (the client major version).
+func pgDumpMajorFromVersionOutput(out string) (int, error) {
+	const marker = "PostgreSQL)"
+	idx := strings.Index(out, marker)
+	if idx < 0 {
+		return 0, fmt.Errorf("pg_dump --version output %q does not contain the %q version marker", out, marker)
+	}
+	rest := out[idx+len(marker):]
+
+	i := 0
+	for i < len(rest) && (rest[i] < '0' || rest[i] > '9') {
+		i++
+	}
+	if i >= len(rest) {
+		return 0, fmt.Errorf("pg_dump --version output %q has no version number after the %q marker", out, marker)
+	}
+	start := i
+	for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+		i++
+	}
+
+	major, err := strconv.Atoi(rest[start:i])
+	if err != nil {
+		return 0, fmt.Errorf("parse pg_dump --version output %q: %w", out, err)
+	}
+	return major, nil
+}
+
+// checkPgDumpCompatible returns an error when the pg_dump client major is
+// older than the database server major, naming both majors and the fix.
+func checkPgDumpCompatible(dumpMajor, serverMajor int) error {
+	if dumpMajor >= serverMajor {
+		return nil
+	}
+	return fmt.Errorf("pg_dump client major %d is older than database server major %d: cannot dump; align PG_CLIENT_MAJOR in deploy/self-hosted/Dockerfile.server with the database image major", dumpMajor, serverMajor)
+}
+
+// preflightPgDump verifies that pg_dump exists and that its major version is
+// at least the database server's major version, so a client/server mismatch
+// fails loudly (and is recorded) instead of surfacing as an opaque exec error.
+func (t *DatabaseBackupTask) preflightPgDump(ctx context.Context) error {
+	if _, err := exec.LookPath("pg_dump"); err != nil {
+		return fmt.Errorf("pg_dump not found on PATH: %w", err)
+	}
+
+	versionOut, err := exec.CommandContext(ctx, "pg_dump", "--version").Output()
+	if err != nil {
+		return fmt.Errorf("pg_dump --version: %w", err)
+	}
+	dumpMajor, err := pgDumpMajorFromVersionOutput(string(versionOut))
+	if err != nil {
+		return err
+	}
+
+	var serverVersionNum int
+	if err := t.db.NewRaw("SELECT current_setting('server_version_num')::int").Scan(ctx, &serverVersionNum); err != nil {
+		return fmt.Errorf("read database server version: %w", err)
+	}
+	serverMajor := pgMajorFromVersionNum(serverVersionNum)
+
+	if err := checkPgDumpCompatible(dumpMajor, serverMajor); err != nil {
+		return err
+	}
+
+	t.log.Info("pg_dump preflight passed",
+		slog.String("pg_dump_version", strings.TrimSpace(string(versionOut))),
+		slog.Int("server_version", serverVersionNum),
+	)
 	return nil
 }
 
 // runBackup runs pg_dump and streams output to MinIO.
 func (t *DatabaseBackupTask) runBackup(ctx context.Context, record *DatabaseBackup) error {
 	dbCfg := t.cfg.Database
-	key := fmt.Sprintf("database-backups/%s.dump", time.Now().UTC().Format("2006-01-02_15-04-05"))
+	// Per-run unique key: the timestamp alone is only second-level precision and
+	// the scheduler has no skip-if-running guard, so overlapping runs could share
+	// a key and a failed run's cleanup could delete another run's object.
+	// record.ID is populated by the Returning("id") insert in Run.
+	key := fmt.Sprintf("database-backups/%s-%s.dump", time.Now().UTC().Format("2006-01-02_15-04-05"), record.ID)
 
 	// Build pg_dump command
 	cmd := exec.CommandContext(ctx,
@@ -175,9 +264,15 @@ func (t *DatabaseBackupTask) runBackup(ctx context.Context, record *DatabaseBack
 		uploadErrCh <- nil
 	}()
 
-	// Wait for pg_dump to finish, then close the write end of the pipe
+	// Wait for pg_dump to finish, then close the write end of the pipe.
+	// On failure, close with the error so the uploader aborts mid-stream instead
+	// of finalizing a truncated or empty object.
 	cmdErr := cmd.Wait()
-	pw.Close()
+	if cmdErr != nil {
+		pw.CloseWithError(cmdErr)
+	} else {
+		pw.Close()
+	}
 	stderrWriter.Close()
 	stderrBuf = <-stderrDone
 
@@ -187,7 +282,24 @@ func (t *DatabaseBackupTask) runBackup(ctx context.Context, record *DatabaseBack
 
 	if cmdErr != nil {
 		stderr := string(stderrBuf)
-		return fmt.Errorf("pg_dump failed: %w (stderr: %s)", cmdErr, stderr)
+		pgDumpErr := fmt.Errorf("pg_dump failed: %w (stderr: %s)", cmdErr, stderr)
+
+		// Defensive cleanup: an S3 PutObject can commit before returning an
+		// error, so a failed pg_dump may still leave an object under this run's
+		// key. Delete unconditionally — deleting a missing key is a no-op — so
+		// a failed dump never leaves a stray object. The pg_dump error is always
+		// the one returned; cleanup noise never replaces the real diagnostic.
+		if delErr := t.storage.DeleteFromBucket(ctx, dbBackupBucket, key); delErr != nil {
+			t.log.Warn("failed to delete backup object after pg_dump failure",
+				slog.String("key", key),
+				slog.String("error", delErr.Error()),
+			)
+		} else {
+			t.log.Warn("deleted backup object left by failed pg_dump",
+				slog.String("key", key),
+			)
+		}
+		return pgDumpErr
 	}
 	if uploadErr != nil {
 		return fmt.Errorf("upload to MinIO: %w", uploadErr)
