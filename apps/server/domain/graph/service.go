@@ -836,7 +836,7 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 			if _, err := tx.NewUpdate().Model((*GraphObject)(nil)).
 				Set("extraction_job_id = ?", *req.ExtractionJobID).
 				Where("id = ?", existing.ID).Exec(ctx); err != nil {
-				return nil, false, apperror.ErrDatabase.WithInternal(err)
+				return nil, false, fmt.Errorf("backfill extraction job id: %w", err)
 			}
 			existing.ExtractionJobID = req.ExtractionJobID
 		}
