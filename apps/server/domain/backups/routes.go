@@ -15,6 +15,8 @@ func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middlew
 		org.GET("/backups/:backupId", handler.GetBackup)
 		org.GET("/backups/:backupId/download", handler.DownloadBackup)
 		org.DELETE("/backups/:backupId", handler.DeleteBackup)
+		// Import an archive produced by another deployment.
+		org.POST("/backups/import", handler.ImportBackup)
 		// Clone restore: creates a new project in this org from a backup.
 		org.POST("/restore", handler.RestoreBackup)
 	}

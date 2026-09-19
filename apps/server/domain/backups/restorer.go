@@ -105,7 +105,7 @@ func restoreTableOrder() []restoreTableSpec {
 		table("agent_definitions"),
 		{name: "agents", nullIfUnmapped: []string{"agent_definition_id"}, wipeSQL: byProject("kb.agents")},
 		table("agent_webhook_hooks"),
-		{name: "chat_conversations", nullIfUnmapped: []string{"acp_session_id", "object_id", "agent_definition_id"},
+		{name: "chat_conversations", nullIfUnmapped: []string{"acp_session_id", "object_id", "agent_definition_id", "owner_user_id"},
 			wipeSQL: byProject("kb.chat_conversations")},
 		{name: "chat_messages", wipeSQL: "DELETE FROM kb.chat_messages WHERE conversation_id IN (SELECT id FROM kb.chat_conversations WHERE project_id = ?)"},
 		{name: "branches", selfRefs: []string{"parent_branch_id"},
@@ -175,6 +175,10 @@ func (r *Restorer) restore(ctx context.Context, job *Restore, req RestoreRequest
 	}
 	if backup.Status != BackupStatusReady {
 		return fmt.Errorf("backup %s is not ready (status %s)", backup.ID, backup.Status)
+	}
+
+	if backup.Imported && job.Mode == RestoreModeOverwrite {
+		return fmt.Errorf("imported backups support clone restore only")
 	}
 
 	archive, err := r.importer.Load(ctx, backup.StorageKey)
@@ -271,7 +275,9 @@ func (r *Restorer) restoreClone(ctx context.Context, job *Restore, req RestoreRe
 	remap := map[string]string{sourceProjectID: projectID}
 
 	// Cross-org membership filtering needs the set of users in the target org.
-	sameOrg := backup.OrganizationID == req.TargetOrgID
+	// Imported archives always filter: their memberships carry foreign user
+	// ids that must not leak into the target project.
+	sameOrg := backup.OrganizationID == req.TargetOrgID && !backup.Imported
 	var targetOrgUsers map[string]bool
 	if !sameOrg {
 		var err error

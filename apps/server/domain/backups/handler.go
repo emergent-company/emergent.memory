@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -15,6 +16,10 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/labstack/echo/v4"
 )
+
+// MaxImportArchiveSize is the maximum accepted size (1 GiB) of an imported
+// backup archive uploaded via the import endpoint.
+const MaxImportArchiveSize int64 = 1 << 30
 
 type Handler struct {
 	service *Service
@@ -154,6 +159,104 @@ func (h *Handler) CreateBackup(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusAccepted, backup)
+}
+
+// ImportBackup accepts a backup archive produced by another deployment and
+// registers it as a ready, imported backup for clone restore.
+// @Summary      Import backup archive
+// @Description  Accepts a backup ZIP archive (multipart/form-data field `file`, max 1 GiB) from another deployment, validates its manifest and checksums, stores it, and registers a `ready` backup flagged `imported`. Imported backups support clone restore only.
+// @Tags         backups
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        file formData file true "Backup archive (ZIP)"
+// @Param        retentionDays formData int false "Retention days (1-365, default 30)"
+// @Success      201 {object} Backup "Backup registered (status: ready, imported: true)"
+// @Failure      400 {object} apperror.Error "Invalid archive"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Not a member of the target organization"
+// @Failure      413 {object} apperror.Error "Archive too large"
+// @Failure      415 {object} apperror.Error "Not a ZIP archive"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v1/organizations/{orgId}/backups/import [post]
+// @Security     bearerAuth
+func (h *Handler) ImportBackup(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	orgID := c.Param("orgId")
+
+	// Org membership check (mirrors restoreClone).
+	var memberCount int64
+	if err := h.service.repo.db.NewSelect().
+		Table("kb.organization_memberships").
+		ColumnExpr("count(*)").
+		Where("organization_id = ?", orgID).
+		Where("user_id = ?", user.ID).
+		Scan(c.Request().Context(), &memberCount); err != nil {
+		return apperror.NewInternal("failed to verify org membership", err)
+	}
+	if memberCount == 0 {
+		return apperror.NewForbidden("you are not a member of the target organization")
+	}
+
+	retentionDays := 30
+	if rd := c.FormValue("retentionDays"); rd != "" {
+		parsed, err := strconv.Atoi(rd)
+		if err != nil {
+			return apperror.NewBadRequest("retentionDays must be an integer")
+		}
+		retentionDays = parsed
+	}
+	if retentionDays < 1 || retentionDays > 365 {
+		return apperror.NewBadRequest("retentionDays must be between 1 and 365")
+	}
+
+	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, MaxImportArchiveSize+1024)
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+		}
+		return apperror.NewBadRequest("file field is required")
+	}
+
+	if file.Size > MaxImportArchiveSize {
+		return apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		return apperror.NewInternal("failed to open uploaded file", err)
+	}
+	defer src.Close()
+
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return apperror.NewInternal("failed to read uploaded file", err)
+	}
+	if int64(len(data)) > MaxImportArchiveSize {
+		return apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+	}
+
+	// Reject non-ZIP early by sniffing the magic bytes.
+	if sniff := data[:min(512, len(data))]; http.DetectContentType(sniff) != "application/zip" && http.DetectContentType(sniff) != "application/octet-stream" {
+		return apperror.New(http.StatusUnsupportedMediaType, "unsupported_media_type", "uploaded file must be a ZIP archive")
+	}
+
+	backup, err := h.service.ImportBackup(c.Request().Context(), orgID, user.ID, data, retentionDays)
+	if err != nil {
+		if errors.Is(err, ErrInvalidArchive) {
+			return apperror.NewBadRequest(err.Error())
+		}
+		h.log.Error("failed to import backup",
+			slog.String("org_id", orgID),
+			slog.Any("error", err),
+		)
+		return apperror.NewInternal("failed to import backup", err)
+	}
+
+	return c.JSON(http.StatusCreated, backup)
 }
 
 // GetBackup retrieves a specific backup by ID
@@ -341,6 +444,9 @@ func (h *Handler) restoreOverwrite(c echo.Context, ctx context.Context, user *au
 	}
 	if backup.Status != BackupStatusReady {
 		return apperror.NewBadRequest("backup is not ready for restore")
+	}
+	if backup.Imported {
+		return apperror.NewBadRequest("imported backups support clone restore only")
 	}
 	if backup.ProjectID != projectID {
 		return apperror.NewBadRequest("backup does not belong to this project")
