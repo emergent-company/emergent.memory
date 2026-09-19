@@ -104,17 +104,7 @@ func SetupTestDB(ctx context.Context, suffix string) (*TestDB, error) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	// Load .env files if present (for local development), matching server startup.
-	// Walk up from CWD looking for .env.local (works from any test package directory).
-	if wd, err := os.Getwd(); err == nil {
-		for dir := wd; dir != "/"; dir = filepath.Dir(dir) {
-			envLocal := filepath.Join(dir, ".env.local")
-			if _, statErr := os.Stat(envLocal); statErr == nil {
-				_ = godotenv.Load(filepath.Join(dir, ".env"))
-				_ = godotenv.Overload(envLocal)
-				break
-			}
-		}
-	}
+	loadRepoEnvFiles()
 
 	// Load base config from environment
 	baseCfg, err := config.NewConfig(log)
@@ -182,6 +172,24 @@ func SetupTestDB(ctx context.Context, suffix string) (*TestDB, error) {
 		Name:    testDBName,
 		cleanup: cleanup,
 	}, nil
+}
+
+// loadRepoEnvFiles loads .env and .env.local from the nearest ancestor
+// directory containing .env.local, matching server startup. This lets tests
+// pick up local database credentials without re-exporting them.
+func loadRepoEnvFiles() {
+	wd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	for dir := wd; dir != "/"; dir = filepath.Dir(dir) {
+		envLocal := filepath.Join(dir, ".env.local")
+		if _, statErr := os.Stat(envLocal); statErr == nil {
+			_ = godotenv.Load(filepath.Join(dir, ".env"))
+			_ = godotenv.Overload(envLocal)
+			return
+		}
+	}
 }
 
 // ensureTemplateDB creates the template database with schema if it doesn't exist.
