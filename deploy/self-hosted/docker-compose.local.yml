@@ -103,6 +103,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/self-hosted/Dockerfile.server
+      args:
+        PG_CLIENT_MAJOR: ${PG_CLIENT_MAJOR:-17}
     container_name: memory-server
     restart: unless-stopped
     network_mode: host

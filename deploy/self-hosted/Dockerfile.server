@@ -152,6 +152,12 @@ RUN set -eux; \
 # ── Stage 3: Runtime ──────────────────────────────────────────────
 FROM alpine:3.21
 
+# The PostgreSQL client major MUST match the database image major in the
+# compose files (pgvector/pgvector:pg17) because pg_dump refuses to dump a
+# server newer than itself. Override at build time with
+# --build-arg PG_CLIENT_MAJOR=<major> when the database image major changes.
+ARG PG_CLIENT_MAJOR=17
+
 # Install runtime dependencies
 # Includes Firecracker prerequisites: iptables (NAT), iproute2 (TAP), e2fsprogs (mkfs.ext4)
 RUN apk --no-cache add \
@@ -160,7 +166,7 @@ RUN apk --no-cache add \
     wget \
     bash \
     jq \
-    postgresql16-client \
+    postgresql${PG_CLIENT_MAJOR}-client \
     iptables \
     iproute2 \
     e2fsprogs \
