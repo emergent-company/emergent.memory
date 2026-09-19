@@ -4914,6 +4914,13 @@ CREATE INDEX idx_graph_schemas_project_id ON kb.graph_schemas USING btree (proje
 
 
 --
+-- Name: graph_schemas_builtin_name_version_key; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE UNIQUE INDEX graph_schemas_builtin_name_version_key ON kb.graph_schemas USING btree (name, version) WHERE (source = 'builtin'::text);
+
+
+--
 -- Name: idx_llm_usage_events_model; Type: INDEX; Schema: kb; Owner: -
 --
 
