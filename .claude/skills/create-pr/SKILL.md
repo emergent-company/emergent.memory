@@ -120,4 +120,4 @@ gh pr edit <number> --body-file <correct-file>
   in the same PR (see repo `AGENTS.md`).
 - **Work in a worktree**, not the shared checkout, when other sessions may be
   active (see repo `AGENTS.md` / the `worktrees` skill).
-- Report the PR URL when done; leave merging to the review bot.
+- Report the PR URL when done; leave merging to the maintainer or the review bot.
