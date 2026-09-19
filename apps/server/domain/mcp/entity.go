@@ -348,9 +348,10 @@ type ToolDefinition struct {
 
 // InputSchema is a JSON schema for tool parameters
 type InputSchema struct {
-	Type       string                    `json:"type"`
-	Properties map[string]PropertySchema `json:"properties"`
-	Required   []string                  `json:"required,omitempty"`
+	Type                 string                    `json:"type"`
+	Properties           map[string]PropertySchema `json:"properties"`
+	Required             []string                  `json:"required,omitempty"`
+	AdditionalProperties *bool                     `json:"additionalProperties,omitempty"`
 }
 
 // PropertySchema describes a single property in a JSON schema
