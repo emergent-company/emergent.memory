@@ -57,6 +57,21 @@ func runUpgrade(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	// Refuse to self-update the engine bundled inside a macOS .app: replacing
+	// the signed Mach-O in place invalidates the app's code signature and
+	// notarization. --check is report-only, so it stays available in a bundle.
+	if !*check {
+		exe, err := upgrade.Executable()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "memory-connector upgrade: %v\n", err)
+			return 1
+		}
+		if upgrade.IsInsideAppBundle(exe) {
+			_, _ = fmt.Fprintln(stderr, "memory-connector upgrade: the bundled engine is managed by the macOS app and cannot be upgraded in place; update the app instead")
+			return 1
+		}
+	}
+
 	client := newUpgradeClient()
 	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
 	defer cancel()
