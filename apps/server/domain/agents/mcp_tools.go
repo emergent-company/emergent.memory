@@ -1286,9 +1286,15 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		},
 
 		// --- ACP (Agent Communication Protocol) tools ---
+		//
+		// Deprecated: the ACP interface is superseded by A2A v1.0 (see
+		// openspec/changes/add-a2a-v1-interop). These tools remain functional for
+		// backward compatibility but are scheduled for removal in the ACP-deletion
+		// milestone. New integrations should use `agent-list-available`,
+		// `trigger_agent`, and the A2A HTTP surface instead.
 		{
 			Name:        "acp-list-agents",
-			Description: "List externally-visible agents via ACP semantics. Returns agent manifests for all agents with visibility='external' in ACP discovery format.",
+			Description: "[Deprecated: use agent-list-available or the A2A extended AgentCard] List externally-visible agents via ACP semantics. Returns agent manifests for all agents with visibility='external' in ACP discovery format.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -1303,7 +1309,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		},
 		{
 			Name:        "acp-trigger-run",
-			Description: "Create and execute a run against an externally-visible agent via ACP semantics. The agent must have visibility='external'. Stream mode is not supported via MCP — use sync or async.",
+			Description: "[Deprecated: use trigger_agent or the A2A POST /message:send surface] Create and execute a run against an externally-visible agent via ACP semantics. The agent must have visibility='external'. Stream mode is not supported via MCP — use sync or async.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -1331,7 +1337,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		},
 		{
 			Name:        "acp-get-run-status",
-			Description: "Get the current state of an agent run with ACP status mapping applied. Returns the full run object including output messages and await_request if paused.",
+			Description: "[Deprecated: use the A2A GET /tasks/{id} surface] Get the current state of an agent run with ACP status mapping applied. Returns the full run object including output messages and await_request if paused.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{
@@ -1349,7 +1355,7 @@ func (h *MCPToolHandler) GetAgentToolDefinitions() []mcp.ToolDefinition {
 		},
 		{
 			Name:        "acp-get-run-events",
-			Description: "Fetch the full persisted event log for a completed or in-progress agent run. Returns all trajectory events (tool calls, thought chunks, message parts, run lifecycle) in ACP SSE format. Use this to reconstruct the run history or inspect what the agent did step-by-step.",
+			Description: "[Deprecated: use the A2A POST /tasks/{id}:subscribe or GET /tasks/{id} history surface] Fetch the full persisted event log for a completed or in-progress agent run. Returns all trajectory events (tool calls, thought chunks, message parts, run lifecycle) in ACP SSE format. Use this to reconstruct the run history or inspect what the agent did step-by-step.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.PropertySchema{

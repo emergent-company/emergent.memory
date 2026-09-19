@@ -174,6 +174,21 @@ Content type `application/a2a+json` (accept `application/json`); streaming `text
 
 *Open spec ambiguity:* the spec text says `POST /tasks/{id}:subscribe` while the proto annotation says `GET`. Implement `POST` (per §5.3/§11.3.2) and note the discrepancy.
 
+### 10. Skill routing via message metadata
+
+A2A's `SendMessageRequest` carries no skill selector, while a Memory project exposes many agent definitions. The first-party client (and any client) MAY select the target agent by setting `message.metadata["skillId"]` to an agent-definition slug.
+
+- New-task path only: if `skillId` is present, resolve the definition by slug (external visibility first, then any visibility, mirroring the ACP resolver). Unknown slug → HTTP 400 `SKILL_NOT_FOUND`, with no fallback.
+- If absent, the run uses the project CLI-assistant fallback (previous behaviour).
+- Resume never consults `skillId` (the task already knows its agent).
+- `skill_id` is tolerated as an alias; `skillId` wins.
+
+This uses the A2A open-ended `metadata` map and requires no protocol extension. It is a first-party convention, documented for external clients.
+
+### 11. MCP `acp-*` tool disposition
+
+The `acp-list-agents`, `acp-trigger-run`, `acp-get-run-status`, and `acp-get-run-events` MCP tools are **deprecated in place** for this milestone: their descriptions are prefixed `[Deprecated: …]` pointing at `agent-list-available`, `trigger_agent`, and the A2A HTTP surface, but behaviour is unchanged. Removal is deferred to the ACP-deletion milestone alongside the ACP HTTP handlers, because removal is a breaking change for agent prompts that still reference the old tool names.
+
 ## Risks / Trade-offs
 
 - **Multi-tenant well-known path (highest).** An unauthenticated global path cannot be tenant-aware. Mitigation: the global card is static/config-only with a unit test asserting no tenant identifiers leak; all per-project data stays behind `/extendedAgentCard`.
@@ -195,4 +210,4 @@ Content type `application/a2a+json` (accept `application/json`); streaming `text
 
 1. Should `GET /tasks` be project-scoped only, or also filterable by `skill`/agent id? (A2A has no skill filter; propose project-scoped with `contextId` + `status` filters.)
 2. Retention/TTL for the reused `kb.acp_run_events` log once it backs A2A history.
-3. Whether to migrate the `acp-*` MCP tools to `a2a-*` or retire them as duplicates of `agent-list-available`/`trigger_agent`.
+3. ~~Whether to migrate the `acp-*` MCP tools to `a2a-*` or retire them.~~ **Resolved (Decision 11):** deprecate in place now, remove at the ACP-deletion milestone.
