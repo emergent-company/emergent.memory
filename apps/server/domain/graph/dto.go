@@ -17,7 +17,10 @@ type CreateGraphObjectRequest struct {
 	BranchID   *uuid.UUID     `json:"branch_id,omitempty"`
 	Namespace  *string        `json:"namespace,omitempty" validate:"omitempty,max=128"`
 
-	ExtractionJobID *uuid.UUID `json:"extraction_job_id,omitempty"`
+	// ExtractionJobID is internal-only provenance set programmatically by the
+	// extraction worker. It is excluded from JSON binding (json:"-") so clients
+	// cannot attach arbitrary provenance that the deletion resolver would trust.
+	ExtractionJobID *uuid.UUID `json:"-"`
 }
 
 // PatchGraphObjectRequest is the request body for patching a graph object.

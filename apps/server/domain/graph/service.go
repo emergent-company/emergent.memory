@@ -4014,6 +4014,9 @@ func (s *Service) applyMerge(
 				Properties: props,
 				ProjectID:  projectID,
 				BranchID:   targetBranchID,
+				// Carry the staging source's provenance so the merged version stays
+				// attributable to the source document (not the target head's job).
+				ExtractionJobID: src.ExtractionJobID,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
@@ -4086,6 +4089,9 @@ func (s *Service) applyMerge(
 				ProjectID:     projectID,
 				BranchID:      targetBranchID,
 				ChangeSummary: changeSummary,
+				// Carry the staging source's provenance so the merged version stays
+				// attributable to the source document (not the target head's job).
+				ExtractionJobID: src.ExtractionJobID,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
@@ -4153,6 +4159,9 @@ func (s *Service) applyMerge(
 					ProjectID:     projectID,
 					BranchID:      targetBranchID,
 					ChangeSummary: changeSummary,
+					// Carry the staging source's provenance so the absorbed version
+					// stays attributable to the source document.
+					ExtractionJobID: src.ExtractionJobID,
 				}
 				if err := s.repo.CreateVersion(ctx, tx.Tx, existingTarget, newVersion); err != nil {
 					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
