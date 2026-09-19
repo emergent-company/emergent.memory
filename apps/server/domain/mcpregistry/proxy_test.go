@@ -228,3 +228,35 @@ func TestCallTool_ClientError_Propagates(t *testing.T) {
 	assert.Contains(t, err.Error(), "search")
 	assert.Contains(t, err.Error(), "myserver")
 }
+
+// --- convertToolOutputSchema tests ---
+
+// TestConvertToolOutputSchema_TypeLessButDeclared covers Fix 2: a valid JSON
+// Schema may omit the top-level "type" yet still declare properties/required.
+// Such a schema must be forwarded (non-nil), with no "type" key forced.
+func TestConvertToolOutputSchema_TypeLessButDeclared(t *testing.T) {
+	schema := mcpgo.ToolOutputSchema{
+		Properties: map[string]any{"result": map[string]any{"type": "string"}},
+		Required:   []string{"result"},
+	}
+	out := convertToolOutputSchema(schema)
+	require.NotNil(t, out)
+	assert.NotContains(t, out, "type", "absent top-level type must not be forced")
+	assert.Contains(t, out, "properties")
+	assert.Contains(t, out, "required")
+}
+
+// TestConvertToolOutputSchema_TypeOnlyDeclared verifies a type-only schema is
+// forwarded with just the type key.
+func TestConvertToolOutputSchema_TypeOnlyDeclared(t *testing.T) {
+	out := convertToolOutputSchema(mcpgo.ToolOutputSchema{Type: "object"})
+	require.NotNil(t, out)
+	assert.Equal(t, "object", out["type"])
+	assert.Len(t, out, 1)
+}
+
+// TestConvertToolOutputSchema_Undeclared verifies a fully empty schema maps to
+// nil (no outputSchema to forward).
+func TestConvertToolOutputSchema_Undeclared(t *testing.T) {
+	assert.Nil(t, convertToolOutputSchema(mcpgo.ToolOutputSchema{}))
+}

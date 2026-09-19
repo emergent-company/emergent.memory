@@ -223,6 +223,7 @@ func agentEndpointToolDefinitions(agentName string) []ToolDefinition {
 					"message": {Type: "string", Description: "Optional first message. Omit to create an empty session."},
 				},
 			},
+			OutputSchema: envelopeOutputSchema(),
 		},
 		{
 			Name:        agentContinueSessionToolName,
@@ -235,6 +236,7 @@ func agentEndpointToolDefinitions(agentName string) []ToolDefinition {
 				},
 				Required: []string{"session_id", "message"},
 			},
+			OutputSchema: envelopeOutputSchema(),
 		},
 		{
 			Name:        agentGetSessionToolName,
@@ -246,6 +248,7 @@ func agentEndpointToolDefinitions(agentName string) []ToolDefinition {
 				},
 				Required: []string{"session_id"},
 			},
+			OutputSchema: envelopeOutputSchema(),
 		},
 		{
 			Name:        agentListSessionsToolName,
@@ -254,6 +257,7 @@ func agentEndpointToolDefinitions(agentName string) []ToolDefinition {
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
 			},
+			OutputSchema: envelopeOutputSchema(),
 		},
 	}
 }
