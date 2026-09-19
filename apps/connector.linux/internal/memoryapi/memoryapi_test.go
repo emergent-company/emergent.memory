@@ -3,11 +3,15 @@ package memoryapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 )
 
 const testToken = "emt_testtoken"
@@ -179,4 +183,33 @@ func TestNewBearerClientWithHTTPClientOption(t *testing.T) {
 	if cap.auth != "Bearer tok" {
 		t.Errorf("Authorization = %q, want Bearer tok", cap.auth)
 	}
+}
+
+func TestIsTokenNameExists(t *testing.T) {
+	t.Run("direct conflict", func(t *testing.T) {
+		if !IsTokenNameExists(&sdkerrors.Error{StatusCode: 409, Code: "token_name_exists", Message: "exists"}) {
+			t.Error("IsTokenNameExists(direct token_name_exists) = false, want true")
+		}
+	})
+	t.Run("wrapped conflict", func(t *testing.T) {
+		err := fmt.Errorf("memoryapi: create token: %w", &sdkerrors.Error{StatusCode: 409, Code: "token_name_exists", Message: "exists"})
+		if !IsTokenNameExists(err) {
+			t.Error("IsTokenNameExists(wrapped token_name_exists) = false, want true")
+		}
+	})
+	t.Run("empty code 409", func(t *testing.T) {
+		if !IsTokenNameExists(&sdkerrors.Error{StatusCode: 409, Message: "conflict"}) {
+			t.Error("IsTokenNameExists(409 empty code) = false, want true")
+		}
+	})
+	t.Run("different code", func(t *testing.T) {
+		if IsTokenNameExists(&sdkerrors.Error{StatusCode: 409, Code: "other", Message: "x"}) {
+			t.Error("IsTokenNameExists(different code) = true, want false")
+		}
+	})
+	t.Run("plain error", func(t *testing.T) {
+		if IsTokenNameExists(errors.New("boom")) {
+			t.Error("IsTokenNameExists(plain error) = true, want false")
+		}
+	})
 }
