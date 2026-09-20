@@ -179,6 +179,7 @@ func TestCLIInstalled_AskNoProjectStream(t *testing.T) {
 
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
+	skipIfNoLLMProvider(t, rl)
 	rl.Describe("Verify POST /api/ask returns well-formed SSE stream without project context",
 		"POST /api/ask with no project yields meta + done SSE events",
 		"SSE stream contains at least one content/text event",
@@ -368,6 +369,7 @@ func TestCLIInstalled_AskProjectSetup(t *testing.T) {
 func TestCLIInstalled_AskNoProjectVariants(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
+	skipIfNoLLMProvider(t, rl)
 	rl.Describe("Verify /api/ask handles varied no-project questions uniformly",
 		"Table-driven: list_projects, create_agent, query_graph questions",
 		"Each variant returns SSE stream with meta, token, and done events",
