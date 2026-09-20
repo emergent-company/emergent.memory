@@ -160,8 +160,7 @@ func (s *Server) uiAgentShareReveal(c echo.Context) error {
 // its row can carry the one-time URL.
 func (s *Server) shareListPanelProps(ctx context.Context, agent *AgentDefinition, reveal *ShareLinkReveal) ShareLinksPageProps {
 	props := ShareLinksPageProps{
-		PublicBaseURL: s.cfg.sharePublicBase(),
-		NewLinkURL:    "/agents/" + url.PathEscape(agent.ID) + "/share/new",
+		NewLinkURL: "/agents/" + url.PathEscape(agent.ID) + "/share/new",
 	}
 	links, err := s.memory.ListShareLinks(ctx, agent.ID)
 	if err != nil {

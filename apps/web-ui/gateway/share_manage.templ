@@ -104,9 +104,6 @@ type ShareLinkCreateValues struct {
 
 // ShareLinksPageProps configures the list page body.
 type ShareLinksPageProps struct {
-	// PublicBaseURL is the share host shown in the "public URL" banner
-	// (e.g. "https://memory.example.com/share"). Empty hides the banner.
-	PublicBaseURL string
 	// NewLinkURL is the create page's address for the header call to action.
 	NewLinkURL string
 	// Links are the agent's existing share links, newest first.
@@ -143,12 +140,10 @@ type ShareLinkReveal struct {
 // --- list page body ----------------------------------------------------------
 
 // ShareLinksListPanel renders the list page body: the section header with its
-// "New share link" call to action, the public URL banner, and the links (or
-// empty state).
+// "New share link" call to action, and the links (or empty state).
 templ ShareLinksListPanel(props ShareLinksPageProps) {
 	<section class="space-y-6" data-testid="share-links-panel" aria-labelledby="share-links-heading">
 		@ShareLinksHeader(props)
-		@SharePublicURLBanner(props.PublicBaseURL)
 		if props.Error != "" {
 			@ui.Alert(ui.AlertProps{
 				Type:    ui.AlertError,
@@ -183,22 +178,6 @@ templ ShareLinksHeader(props ShareLinksPageProps) {
 			New share link
 		}
 	</div>
-}
-
-// SharePublicURLBanner shows the public share host with a copy affordance.
-templ SharePublicURLBanner(base string) {
-	if base != "" {
-		<div class="card card-border bg-base-100" data-testid="share-public-url">
-			<div class="card-body flex flex-wrap items-center gap-3 p-4 sm:flex-nowrap">
-				@ui.IconTile("lucide--globe", ui.IconTileProps{Tone: "primary", Size: "size-9"})
-				<div class="min-w-0 grow">
-					<p class="text-base-content/50 text-xs font-semibold tracking-wider uppercase">Public share URL</p>
-					<p class="truncate font-mono text-sm">{ base }</p>
-				</div>
-				@shareCopyButton(base, "share-public-url-copy", "Copy base URL")
-			</div>
-		</div>
-	}
 }
 
 // ShareLinksList renders the existing links or the empty state.
