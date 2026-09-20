@@ -1080,6 +1080,27 @@
     });
   }
 
+  // Test hook: inject a synthetic tool event into the live code path so tool
+  // chips can be verified in the browser alongside thinking (DOM order).
+  // Harmless in production.
+  function debugTool(payload) {
+    var p = payload || {};
+    handleToolEvent({
+      tool: p.tool || "tool",
+      status: p.status || "running",
+      result: p.result,
+      error: p.error,
+      resultHtml: p.resultHtml,
+    });
+  }
+
+  // Test hook: open the in-progress assistant bubble directly (mirrors the
+  // streaming open path) so DOM-order tests can position badges relative to it.
+  // Harmless in production.
+  function debugOpenBubble() {
+    openAssistantBubble();
+  }
+
   /* ---------- SSE handling ---------- */
 
   // Tool-result normalization and tool-chip live updates
@@ -2053,6 +2074,8 @@
   window.MemoryChat = {
     init: init,
     _debugThinking: debugThinking,
+    _debugTool: debugTool,
+    _debugOpenBubble: debugOpenBubble,
     refreshSessionRail: refreshSessionRail,
     applyRailBadges: applyRailBadges,
     refreshDock: refreshDock,
