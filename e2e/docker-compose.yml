@@ -27,8 +27,6 @@ services:
   test-db:
     image: pgvector/pgvector:pg17
     container_name: test-emergent-db
-    ports:
-      - "5436:5432"
     environment:
       POSTGRES_USER: emergent
       POSTGRES_PASSWORD: emergent
@@ -42,10 +40,9 @@ services:
       retries: 10
 
   # ─────────────────────────────────────────────────────────────────────────
-  # MinIO storage (required for document upload tests and health check)
-  # ─────────────────────────────────────────────────────────────────────────
-  # ─────────────────────────────────────────────────────────────────────────
   # Memory API server (standalone mode)
+  # Storage (MinIO) is intentionally omitted — the CLI tests (version, status,
+  # set-token, projects list) do not require document storage.
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
     image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
@@ -68,26 +65,10 @@ services:
       POSTGRES_PASSWORD: emergent
       POSTGRES_DB: emergent
 
-      # Storage (MinIO on host, port 9012)
-      STORAGE_ENDPOINT: http://172.17.0.1:9012
-      STORAGE_ACCESS_KEY: minioadmin
-      STORAGE_SECRET_KEY: local-test-minio
-      STORAGE_BUCKET_DOCUMENTS: documents
-      STORAGE_BUCKET_TEMP: document-temp
-
       # Server
       PORT: "3002"
       GO_ENV: development
       DB_AUTOINIT: "true"
-
-      # LLM provider — OpenAI-compatible via litellm
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk--hdGtQNlFMQDO3aW2d-bPw}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://litellm:4000/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-openai/deepseek-v4-flash}
-
-      # DeepSeek (direct)
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-sk-c9bf6d9840264ce5b912d2d16484d5b9}
-      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
 
       # Disable optional features that need external services
       ENABLE_AGENT_WORKSPACES: "false"

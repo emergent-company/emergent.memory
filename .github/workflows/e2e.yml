@@ -1,0 +1,149 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      TEST_RUN:
+        description: "Optional -run filter (e.g. TestCLIInstalled_Version)"
+        required: false
+        default: ""
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # integration: full Docker Compose stack (server + CLI test runner)
+  # ───────────────────────────────────────────────────────────────────────────
+  integration:
+    name: CLI Install Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: e2e
+
+    env:
+      MEMORY_SERVER_IMAGE: memory-server:ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build memory-server image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          load: true
+          push: false
+          tags: memory-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run CLI install tests
+        env:
+          TEST_RUN: ${{ inputs.TEST_RUN }}
+        run: ./run_tests.sh
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: e2e/test-logs/
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # api: run HTTP API tests (tests/api/) against a fresh Docker Compose stack.
+  # ───────────────────────────────────────────────────────────────────────────
+  api:
+    name: API Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: e2e
+
+    env:
+      MEMORY_SERVER_IMAGE: memory-server:ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build memory-server image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          load: true
+          push: false
+          tags: memory-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: e2e/go.mod
+
+      - name: Start server stack
+        run: |
+          cp .env.example .env 2>/dev/null || true
+          docker compose up -d
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3002/health > /dev/null 2>&1; then
+              echo "Server is healthy"
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run API tests
+        env:
+          MEMORY_TEST_SERVER: http://localhost:3002
+          MEMORY_TEST_TOKEN: e2e-test-user
+          MEMORY_AUTH_MODE: standalone
+        run: go test -v ./tests/api/... -timeout 15m
+
+      - name: Show server logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Stop server stack
+        if: always()
+        run: docker compose down -v
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # production: smoke-test the live production server using a pre-issued token.
+  # Skipped (not failed) when the secret is absent.
+  # ───────────────────────────────────────────────────────────────────────────
+  production:
+    name: Production Smoke Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: e2e
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: e2e/go.mod
+
+      - name: Run production smoke tests
+        env:
+          MEMORY_PROD_TEST_TOKEN: ${{ secrets.MEMORY_PROD_TEST_TOKEN }}
+        run: go test -v -run TestProduction_ -timeout 2m ./...
