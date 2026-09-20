@@ -285,6 +285,7 @@ func main() {
 	e.POST("/objects", s.uiObjectCreate)
 	e.POST("/objects/:id", s.uiObjectUpdate)
 	e.POST("/objects/:id/relationships", s.uiObjectRelationshipCreate)
+	e.GET("/embeddings", s.uiEmbeddings)
 	e.GET("/schema", s.uiSchema)
 	e.GET("/schema/add", s.uiSchemaAdd)
 	e.POST("/schema/add", s.uiSchemaInstall, s.requireSchemaWrite)

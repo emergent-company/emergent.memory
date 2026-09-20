@@ -1,0 +1,131 @@
+package main
+
+import (
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Embeddings status/progress ---
+
+// EmbeddingsPage renders the embedding pipeline status: per-queue job counts,
+// worker running/paused state, and the active configuration. A failed progress
+// fetch renders the whole-page error state; empty (all-zero) queues render a
+// "no statistics yet" state instead of a wall of zeroes; the worker state
+// section still renders whenever the status endpoint answered.
+templ EmbeddingsPage(data embeddingPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@embeddingsHeader(data.LoadErr == nil)
+		if data.LoadErr != nil {
+			@pageError("Failed to load embedding statistics", data.LoadErr)
+		} else {
+			if data.Empty {
+				@embeddingsEmpty()
+			} else {
+				@queueCountsSection(data.Progress)
+			}
+			if data.Status != nil {
+				@workerStateSection(data.Status)
+			}
+		}
+	}
+}
+
+templ embeddingsHeader(ok bool) {
+	@pageHeader("Memory Browser", "Embeddings", "Vector embedding pipeline — queue backlog, worker state, and tuning.") {
+		if ok {
+			@ui.Badge(ui.BadgeProps{
+				Label:   "pipeline status",
+				Variant: ui.BadgeGhost,
+				Size:    ui.BadgeSizeSM,
+				Icon:    "lucide--scan-line",
+			})
+		}
+	}
+}
+
+// embeddingsEmpty is the "no statistics yet" state: the queue counters are all
+// zero (or unavailable), so the page shows a single clear message instead of a
+// row of zeroes.
+templ embeddingsEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--scan-line",
+		Title:       "No embedding statistics yet",
+		Description: "Once objects and relationships flow through the embedding pipeline, queue counts will show up here.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
+}
+
+// queueCountsSection renders the object and relationship queue counters as two
+// titled sections of stat cards.
+templ queueCountsSection(p *EmbeddingProgress) {
+	@queueStatsSection("Object embedding queue", p.Objects)
+	@queueStatsSection("Relationship embedding queue", p.Relationships)
+}
+
+templ queueStatsSection(title string, s EmbeddingQueueStats) {
+	@ui.Section(title, ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		@statRow([]ui.StatCardProps{
+			{Label: "Pending", Value: strconv.FormatInt(s.Pending, 10), Icon: "lucide--clock", IconColor: "bg-base-200/60 text-base-content"},
+			{Label: "Processing", Value: strconv.FormatInt(s.Processing, 10), Icon: "lucide--loader-circle", IconColor: "bg-primary/10 text-primary"},
+			{Label: "Completed", Value: strconv.FormatInt(s.Completed, 10), Icon: "lucide--check", IconColor: "bg-success/10 text-success"},
+			{Label: "Failed", Value: strconv.FormatInt(s.Failed, 10), Icon: "lucide--x", IconColor: "bg-error/10 text-error"},
+			{Label: "Dead letter", Value: strconv.FormatInt(s.DeadLetter, 10), Icon: "lucide--mail-warning", IconColor: "bg-warning/10 text-warning"},
+		}, "")
+	}
+}
+
+// workerStateSection renders the object/relationship/sweep worker state plus the
+// active configuration.
+templ workerStateSection(st *EmbeddingStatus) {
+	@ui.Section("Workers", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		<div class="flex flex-wrap gap-2">
+			@workerStateBadge("Objects", st.Objects)
+			@workerStateBadge("Relationships", st.Relationships)
+			@workerStateBadge("Sweep", st.Sweep)
+		</div>
+		<div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+			@configStat("Batch size", strconv.Itoa(st.Config.BatchSize), "lucide--layers")
+			@configStat("Concurrency", strconv.Itoa(st.Config.Concurrency), "lucide--cpu")
+			@configStat("Interval", strconv.Itoa(st.Config.IntervalMs)+"ms", "lucide--timer")
+			@configStat("Stale after", strconv.Itoa(st.Config.StaleMinutes)+"m", "lucide--clock")
+		</div>
+		<div class="mt-4 flex flex-wrap items-center gap-2">
+			@ui.Eyebrow("Adaptive scaling", ui.EyebrowProps{Size: "text-[10px]", Margin: "mb-0"})
+			if st.Config.EnableAdaptiveScaling {
+				@ui.Badge(ui.BadgeProps{Label: "enabled", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS})
+			} else {
+				@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+			}
+		</div>
+	}
+}
+
+// workerStateBadge renders one worker's running/paused state as a labeled badge.
+templ workerStateBadge(name string, st EmbeddingWorkerStatus) {
+	{{ lbl, variant := workerStateLabel(st) }}
+	@ui.Badge(ui.BadgeProps{
+		Label:   name + ": " + lbl,
+		Variant: variant,
+		Size:    ui.BadgeSizeSM,
+		Dot:     true,
+	})
+}
+
+// configStat renders one configuration value as a small stat card.
+templ configStat(label, value, icon string) {
+	@ui.StatCard(ui.StatCardProps{
+		Label:     label,
+		Value:     value,
+		Icon:      icon,
+		IconColor: "bg-base-200/60 text-base-content",
+	})
+}
