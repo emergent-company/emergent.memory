@@ -436,7 +436,7 @@ func TestRefreshFailureClearsSession(t *testing.T) {
 	dir := t.TempDir()
 	deps := fakeDeps(t)
 	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
-		return nil, errors.New("invalid_grant")
+		return nil, &sdkauth.RefreshError{StatusCode: http.StatusBadRequest, Code: "invalid_grant"}
 	}
 	m := NewManagerWithDeps(dir, deps)
 	serverURL := "https://memory.example.test"
@@ -448,7 +448,55 @@ func TestRefreshFailureClearsSession(t *testing.T) {
 		t.Fatal("Refresh: expected error, got nil")
 	}
 	if sess, err := m.SessionFor(serverURL); err != nil || sess != nil {
-		t.Errorf("session after failed refresh = (%v, %v), want (nil, nil)", sess, err)
+		t.Errorf("session after rejected refresh = (%v, %v), want (nil, nil)", sess, err)
+	}
+}
+
+func TestRefreshTransientErrorRetainsSession(t *testing.T) {
+	dir := t.TempDir()
+	deps := fakeDeps(t)
+	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
+		return nil, errors.New("token endpoint unreachable")
+	}
+	m := NewManagerWithDeps(dir, deps)
+	serverURL := "https://memory.example.test"
+	if _, err := m.Login(context.Background(), serverURL, io.Discard); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if _, err := m.Refresh(context.Background(), serverURL); err == nil {
+		t.Fatal("Refresh: expected error, got nil")
+	}
+	sess, err := m.SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("session after transient refresh failure = (%v, %v), want retained", sess, err)
+	}
+	if sess.RefreshToken != "refresh-1" {
+		t.Errorf("refresh token = %q, want refresh-1 retained", sess.RefreshToken)
+	}
+}
+
+func TestRefreshServerErrorRetainsSession(t *testing.T) {
+	dir := t.TempDir()
+	deps := fakeDeps(t)
+	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
+		return nil, &sdkauth.RefreshError{StatusCode: http.StatusInternalServerError}
+	}
+	m := NewManagerWithDeps(dir, deps)
+	serverURL := "https://memory.example.test"
+	if _, err := m.Login(context.Background(), serverURL, io.Discard); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if _, err := m.Refresh(context.Background(), serverURL); err == nil {
+		t.Fatal("Refresh: expected error, got nil")
+	}
+	sess, err := m.SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("session after 5xx refresh failure = (%v, %v), want retained", sess, err)
+	}
+	if sess.RefreshToken != "refresh-1" {
+		t.Errorf("refresh token = %q, want refresh-1 retained", sess.RefreshToken)
 	}
 }
 
