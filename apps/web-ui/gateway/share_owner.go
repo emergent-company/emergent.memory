@@ -283,10 +283,13 @@ func shareLinkCreateValuesFromForm(c echo.Context) ShareLinkCreateValues {
 // so an unchecked box must become an explicit false). Budget/limit fields are
 // omitted when empty so the server defaults apply.
 func shareLinkConfigInputFromForm(c echo.Context) *ShareLinkConfigInput {
+	requireEmail := c.FormValue("requireEmail") == "true"
+	showSessionList := c.FormValue("showSessionList") == "true"
+	sandbox := c.FormValue("sandbox") == "true"
 	in := &ShareLinkConfigInput{
-		RequireEmail:    new(c.FormValue("requireEmail") == "true"),
-		ShowSessionList: new(c.FormValue("showSessionList") == "true"),
-		SandboxEnabled:  new(c.FormValue("sandbox") == "true"),
+		RequireEmail:    &requireEmail,
+		ShowSessionList: &showSessionList,
+		SandboxEnabled:  &sandbox,
 	}
 	expiry := strings.TrimSpace(c.FormValue("expiryDays"))
 	days := 30
@@ -300,27 +303,27 @@ func shareLinkConfigInputFromForm(c echo.Context) *ShareLinkConfigInput {
 			days = n
 		}
 	}
-	in.LinkExpiryDays = new(days)
+	in.LinkExpiryDays = &days
 	if vals, ok := c.Request().Form["toolIds"]; ok {
 		in.ToolAllowlist = slices.Clone(vals)
 	}
 	if v := strings.TrimSpace(c.FormValue("maxSessionsPerUser")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			in.MaxActiveSessionsPerUser = new(n)
+			in.MaxActiveSessionsPerUser = &n
 		}
 	}
 	if v := strings.TrimSpace(c.FormValue("budgetMessages")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			in.BudgetMaxMessages = new(n)
+			in.BudgetMaxMessages = &n
 		}
 	}
 	if v := strings.TrimSpace(c.FormValue("budgetTokens")); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
-			in.BudgetMaxTokens = new(n)
+			in.BudgetMaxTokens = &n
 		}
 	}
 	if v := strings.TrimSpace(c.FormValue("welcomeMessage")); v != "" {
-		in.WelcomeMessage = new(v)
+		in.WelcomeMessage = &v
 	}
 	return in
 }
