@@ -204,6 +204,7 @@ func TestSkills_DeleteSkill_Success(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	token := e2eTestToken()
 	resp := doAPILogged(t, rl, "POST", "/api/skills", token, "", jsonBody(map[string]any{
