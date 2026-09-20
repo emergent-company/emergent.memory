@@ -1,5 +1,10 @@
 // Package acp provides a Go client for the Agent Communication Protocol (ACP) v1 API.
 //
+// Deprecated: this package is deprecated in favour of package a2a
+// (github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a), which
+// targets the A2A Protocol v1.0. The ACP surface is slated for removal after the
+// deprecation window; migrate new and existing callers to package a2a.
+//
 // The ACP API is mounted at /acp/v1/ and uses Bearer token authentication
 // (the same emt_* project API tokens as the rest of the Memory API).
 //

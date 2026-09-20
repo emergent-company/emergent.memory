@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
-	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/acp"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/acp" //nolint:staticcheck // SA1019: ACP is deprecated but intentionally retained until its removal; `memory acp` is the legacy consumer.
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	"github.com/spf13/cobra"
 )
@@ -36,10 +36,14 @@ func getACPClient(cmd *cobra.Command) (*acp.Client, error) {
 // ── Root command: memory acp ─────────────────────────────────────────────────
 
 var acpCmd = &cobra.Command{
-	Use:     "acp",
-	Short:   "Agent Communication Protocol (ACP) operations",
-	Long:    "Commands for interacting with agents via the Agent Communication Protocol (ACP) v1 API.",
-	GroupID: "ai",
+	Use:   "acp",
+	Short: "Agent Communication Protocol (ACP) operations (deprecated)",
+	Long: `Commands for interacting with agents via the Agent Communication Protocol (ACP) v1 API.
+
+Deprecated: ACP has been superseded by the A2A Protocol v1.0. Use 'memory a2a'
+instead. These commands continue to function during the migration window.`,
+	Deprecated: "use 'memory a2a' instead",
+	GroupID:    "ai",
 }
 
 // ── memory acp ping ──────────────────────────────────────────────────────────
