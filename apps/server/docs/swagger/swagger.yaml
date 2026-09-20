@@ -6886,6 +6886,8 @@ definitions:
     type: object
   domain_schemas.SchemaMigrationRollbackRequest:
     properties:
+      max_objects:
+        type: integer
       restore_type_registry:
         type: boolean
       to_version:
