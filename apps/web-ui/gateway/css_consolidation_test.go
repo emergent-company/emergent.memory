@@ -54,7 +54,7 @@ func compiledCSS(t *testing.T) string {
 // chatBubbleOverride returns the custom unlayered .chat-bubble rule from the
 // compiled CSS, or "" when absent. It is the only .chat-bubble rule that sets a
 // box-shadow — daisyUI's layered default has none — so the shadow uniquely
-// identifies the rule that is meant to beat daisyUI's width:fit-content/90%.
+// identifies the override that is meant to beat daisyUI's layered defaults.
 func chatBubbleOverride(css string) string {
 	for {
 		start := strings.Index(css, ".chat-bubble{")
@@ -120,22 +120,29 @@ func TestCompiledCSSDeterministic(t *testing.T) {
 	}
 }
 
-// TestChatBubbleFillsColumn guards the chat bubble sizing fix: daisyUI sizes
-// .chat-bubble to its content (width:fit-content; max-width:90%), so a short
-// message rendered as a narrow pill. The custom unlayered override must still
-// resolve width and max-width to 100% in the *compiled* output. A source-only
-// change is not enough to guard this: webui/static/css/app.css is generated
-// and gitignored, so a future Tailwind/daisyUI build could silently drop or
-// override these declarations while the Go page-markup tests still pass.
-func TestChatBubbleFillsColumn(t *testing.T) {
+// TestChatBubbleShrinksToContent guards the chat bubble sizing fix: daisyUI
+// sizes .chat-bubble to its content (width:fit-content; max-width:90%), so a
+// short message renders as a narrow pill that only widens as the text grows.
+// The custom unlayered override beats those layered defaults, so it must pass
+// the shrink-to-fit sizing through unchanged (fit-content + a percentage cap),
+// NOT force width/max-width to 100%. A source-only check is not enough to guard
+// this: webui/static/css/app.css is generated and gitignored, so a future
+// Tailwind/daisyUI build or an accidental width:100% override could silently
+// stretch every bubble to the full chat column while the Go page-markup tests
+// still pass.
+func TestChatBubbleShrinksToContent(t *testing.T) {
 	css := compiledCSS(t)
 	rule := chatBubbleOverride(css)
 	if rule == "" {
 		t.Fatal("compiled css missing the custom .chat-bubble override (no box-shadow rule)")
 	}
-	for _, decl := range []string{"width:100%", "max-width:100%"} {
-		if !strings.Contains(rule, decl) {
-			t.Errorf("chat-bubble override %q missing %q — a short message would render as a narrow pill", rule, decl)
-		}
+	if !strings.Contains(rule, "width:fit-content") {
+		t.Errorf("chat-bubble override %q missing width:fit-content — the bubble would not hug its content", rule)
+	}
+	if strings.Contains(rule, "width:100%") || strings.Contains(rule, "max-width:100%") {
+		t.Errorf("chat-bubble override %q forces full width — every bubble would stretch across the chat column", rule)
+	}
+	if !strings.Contains(rule, "max-width:90%") {
+		t.Errorf("chat-bubble override %q missing the 90%% max-width cap", rule)
 	}
 }
