@@ -26,6 +26,7 @@ const (
 type Client struct {
 	baseURL    string
 	serverType ServerType
+	token      string
 	httpClient *http.Client
 	metrics    *MetricsCollector
 	mu         sync.Mutex
@@ -35,6 +36,7 @@ type Client struct {
 type Config struct {
 	BaseURL    string
 	ServerType ServerType
+	Token      string
 	Timeout    time.Duration
 }
 
@@ -50,6 +52,7 @@ func New(cfg Config) *Client {
 	return &Client{
 		baseURL:    strings.TrimSuffix(cfg.BaseURL, "/"),
 		serverType: cfg.ServerType,
+		token:      cfg.Token,
 		httpClient: &http.Client{
 			Timeout: cfg.Timeout,
 			Transport: &http.Transport{

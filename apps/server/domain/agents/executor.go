@@ -282,6 +282,20 @@ type ExecuteRequest struct {
 	// They are appended to the resolved tool set after all standard tools.
 	// Used by the agentcompat layer to inject caller-supplied (client) tools.
 	ExtraTools []tool.Tool
+
+	// ShareToolDeny lists tool names hard-blocked on this run (public agent-share
+	// allowlist). beforeToolCb enforces it BEFORE the confirm gate, so an
+	// approval can never override a deny-listed tool.
+	ShareToolDeny []string
+
+	// ShareLinkID is the public agent-share link backing this run. When non-empty
+	// it is recorded on tool-approval audit rows for share provenance.
+	ShareLinkID string
+
+	// DisableAuthMint prevents the executor from minting an ephemeral org token
+	// for this run when no raw token is present. Share runs set this so anonymous
+	// end users never run with the owner's project/org credentials.
+	DisableAuthMint bool
 }
 
 // ExecuteResult is the outcome of an agent execution.
@@ -492,7 +506,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		if effectiveToken == "" {
 			effectiveToken = auth.RawTokenFromContext(ctx)
 		}
-		if effectiveToken == "" && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+		if effectiveToken == "" && !req.DisableAuthMint && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
 			if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
 				effectiveToken = ephToken
 				req.EphemeralTokenID = ephID
@@ -871,7 +885,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		if effectiveToken == "" {
 			effectiveToken = auth.RawTokenFromContext(ctx)
 		}
-		if effectiveToken == "" && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+		if effectiveToken == "" && !req.DisableAuthMint && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
 			if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
 				effectiveToken = ephToken
 				req.EphemeralTokenID = ephID
@@ -1962,6 +1976,23 @@ func (ae *AgentExecutor) runPipeline(
 			}, nil
 		}
 
+		// Share-run allowlist: deny-listed tools are hard-blocked BEFORE the
+		// confirm gate, so an approval can never override a deny-listed tool.
+		if len(req.ShareToolDeny) > 0 {
+			for _, denied := range req.ShareToolDeny {
+				if denied == t.Name() {
+					ae.log.Info("share_deny: tool denied by share link allowlist, blocking call",
+						slog.String("run_id", run.ID),
+						slog.String("tool", t.Name()),
+					)
+					return map[string]any{
+						"error":  fmt.Sprintf("tool %q is not allowed on this share link", t.Name()),
+						"policy": "share_deny",
+					}, nil
+				}
+			}
+		}
+
 		// Confirm (ask): pause the run and ask the user before executing.
 		if hasPolicy && policy.Confirm {
 			// If this tool was pre-approved on resume, allow it through once.
@@ -2008,6 +2039,9 @@ func (ae *AgentExecutor) runPipeline(
 					ToolName:    t.Name(),
 					ArgsSummary: redactToolArgs(args),
 					Decision:    "pending",
+				}
+				if req.ShareLinkID != "" {
+					approval.ShareLinkID = &req.ShareLinkID
 				}
 				if aErr := ae.repo.CreateToolApproval(tCtx, approval); aErr != nil {
 					ae.log.Warn("tool_policy: failed to record approval, continuing",
