@@ -301,8 +301,10 @@
     }
 
     // Rail visibility: the owner can disable the session list on the link.
-    if (config.showSessionList === false && els.rail) {
-      els.rail.classList.add("hidden");
+    // The rail is rendered hidden to avoid a flash; reveal it only once the
+    // config confirms the list should be shown.
+    if (els.rail) {
+      els.rail.classList.toggle("hidden", config.showSessionList === false);
     }
 
     // Record the require-email flag on the root for any email flow / footer.
