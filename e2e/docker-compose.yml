@@ -43,7 +43,7 @@ services:
   # MinIO storage (required for document upload tests)
   # ─────────────────────────────────────────────────────────────────────────
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: test-emergent-minio
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -82,11 +82,13 @@ services:
       POSTGRES_DB: emergent
 
       # Storage (MinIO)
+      STORAGE_PROVIDER: minio
       STORAGE_ENDPOINT: http://minio:9000
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: local-test-minio
       STORAGE_BUCKET_DOCUMENTS: documents
       STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_USE_SSL: 'false'
 
       # Server
       PORT: "3002"
