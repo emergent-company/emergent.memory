@@ -75,6 +75,9 @@
     aborter: null,
     bubble: null,
     bubbleText: "",
+    // agentName labels each assistant bubble's header (mirrors the app chat's
+    // per-message "You"/agent header). Set from the sanitized config.
+    agentName: "",
     railOpener: null,
     // email holds the visitor-supplied address for this page session only.
     // It is never persisted or written to the URL/DOM.
@@ -326,6 +329,7 @@
 
     var nameEl = document.getElementById("share-agent-name");
     if (nameEl) nameEl.textContent = name;
+    state.agentName = name;
 
     // The server renders the generic "Shared chat — Memory" title because the
     // agent identity only arrives with the exchange; mirror shareDocTitle's
@@ -356,8 +360,10 @@
     }
 
     // Rail visibility: the owner can disable the session list on the link.
-    if (config.showSessionList === false && els.rail) {
-      els.rail.classList.add("hidden");
+    // The rail is rendered hidden to avoid a flash; reveal it only once the
+    // config confirms the list should be shown.
+    if (els.rail) {
+      els.rail.classList.toggle("hidden", config.showSessionList === false);
     }
 
     // Record the require-email flag on the root for any email flow / footer.
@@ -473,34 +479,47 @@
       var html = role === "assistant" ? m.html : null;
       appendBubble(role, text, false, html);
     });
+    state.bubble = null; // history is not the live streaming target
     show(els.firstLoad, messages.length === 0);
     scrollToBottom();
   }
 
+  // appendBubble renders one message with the same daisyUI chat shell the app
+  // chat uses (chat-stream.js: chat chat-start/end + chat-bubble + a per-message
+  // header, with the assistant leading with an avatar tile). The assistant
+  // content lives in a .memory-md wrapper so the shared markdown styles apply.
+  // Assistant history renders sanitized server-side markdown (`html`); user
+  // messages and plain-text streaming tokens stay textContent — never run as
+  // HTML. The returned node is the content container (the streaming engine
+  // writes tokens and moves the caret there).
   function appendBubble(role, text, streaming, html) {
-    var wrap = el("div", role === "user" ? "flex justify-end" : "flex justify-start");
-    var bubble = el(
-      "div",
-      role === "user"
-        ? "bg-primary text-primary-content max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
-        : "bg-base-100 border-base-content/10 max-w-[85%] rounded-2xl rounded-bl-sm border px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
-    );
-    bubble.setAttribute("data-role", role);
-    // Assistant transcript messages render sanitized markdown (server-rendered
-    // `html`); everything else stays plain text — user input is never run as HTML.
-    if (role === "assistant" && html) {
-      bubble.innerHTML = html;
-    } else {
-      bubble.textContent = text;
+    var isUser = role === "user";
+    var wrap = el("div", "chat " + (isUser ? "chat-end" : "chat-start") + " memory-rise");
+    if (!isUser) {
+      var avatar = el("div", "chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2");
+      var bot = el("span", "iconify lucide--bot size-5");
+      bot.setAttribute("aria-hidden", "true");
+      avatar.appendChild(bot);
+      wrap.appendChild(avatar);
     }
-    if (streaming) {
-      var caret = el("span", "share-caret", "\u258C");
-      bubble.appendChild(caret);
-    }
-    wrap.appendChild(bubble);
+    wrap.appendChild(el("div", "chat-header text-xs text-base-content/50", isUser ? "You" : (state.agentName || "Memory")));
+    var shell = el("div", "chat-bubble " + (isUser ? "chat-bubble-primary" : "chat-bubble-neutral") + " max-w-[85%]");
+    shell.setAttribute("data-role", role);
+    var content = isUser
+      ? el("p", "whitespace-pre-wrap break-words", text)
+      : el("div", "memory-md whitespace-pre-wrap break-words", text);
+    // Assistant messages render sanitized server-side markdown (`html`) for
+    // history and the streaming snapshot; everything else stays plain text.
+    if (!isUser && html) content.innerHTML = html;
+    // The caret only appears once the first token lands; while the reply is
+    // still pending the external #share-typing dots own the wait state, exactly
+    // like the app chat's empty assistant bubble.
+    if (streaming && text) content.appendChild(el("span", "memory-caret"));
+    shell.appendChild(content);
+    wrap.appendChild(shell);
     if (els.messages) els.messages.appendChild(wrap);
     scrollToBottom();
-    return bubble;
+    return content;
   }
 
   /* ---------- approvals ---------- */
@@ -523,30 +542,36 @@
     });
   }
 
+  // approvalCard renders a pending approval with the same chrome as the app
+  // chat's pending-work dock (.dock-card .dock-approval, chat_dock.templ), so
+  // the two surfaces share one approval look. The share flow is simpler than
+  // the app dock (approve/deny only), so the reason field and question-option
+  // controls are not present.
   function approvalCard(q) {
-    var card = el("div", "card card-border bg-base-100 border-warning/30 my-3");
+    var card = el("div", "dock-card dock-approval");
     card.setAttribute("data-testid", "share-approval");
-    var body = el("div", "card-body gap-2 p-4");
-    body.appendChild(el("p", "text-sm font-semibold", q.title || "Approval needed"));
-    if (q.tool) {
-      var pre = el("pre", "bg-base-200/60 max-h-40 overflow-y-auto rounded-lg p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words", q.tool);
-      body.appendChild(pre);
-    }
-    if (q.detail) body.appendChild(el("p", "text-base-content/60 text-xs", q.detail));
+    card.setAttribute("data-dock-kind", "approval");
+    if (q.id) card.setAttribute("data-question-id", q.id);
 
-    var actions = el("div", "flex justify-end gap-2 pt-1");
-    var reject = el("button", "btn btn-ghost btn-sm text-error", "Deny");
+    var main = el("div", "dock-card-main");
+    main.appendChild(el("span", "dock-card-kind", "Approval"));
+    main.appendChild(el("span", "dock-card-prompt", q.title || "Approval needed"));
+    if (q.tool) main.appendChild(el("span", "dock-card-args", q.tool));
+    if (q.detail) main.appendChild(el("span", "dock-card-args", q.detail));
+    card.appendChild(main);
+
+    var controls = el("div", "dock-card-controls");
+    var reject = el("button", "dock-approval-reject btn btn-ghost btn-xs text-error", "Deny");
     reject.type = "button";
     reject.setAttribute("data-testid", "share-approval-deny");
-    var approve = el("button", "btn btn-primary btn-sm", "Approve");
+    var approve = el("button", "dock-approval-approve btn btn-primary btn-xs", "Approve");
     approve.type = "button";
     approve.setAttribute("data-testid", "share-approval-approve");
     approve.addEventListener("click", function () { postDecision(q.sessionId, q.id, "approve", card); });
     reject.addEventListener("click", function () { postDecision(q.sessionId, q.id, "deny", card); });
-    actions.appendChild(reject);
-    actions.appendChild(approve);
-    body.appendChild(actions);
-    card.appendChild(body);
+    controls.appendChild(reject);
+    controls.appendChild(approve);
+    card.appendChild(controls);
     return card;
   }
 
@@ -709,9 +734,21 @@
 
   function updateBubbleText() {
     if (!state.bubble) return;
-    var caret = state.bubble.querySelector(".share-caret");
+    var caret = state.bubble.querySelector(".memory-caret");
+    // Still waiting on the first token: the external #share-typing dots own the
+    // wait state, so there is no caret yet (the app's empty bubble behaves the
+    // same way).
+    if (state.streaming && !state.bubbleText) {
+      if (caret) caret.remove();
+      return;
+    }
     state.bubble.textContent = state.bubbleText;
-    if (caret) state.bubble.appendChild(caret);
+    if (state.streaming) {
+      if (!caret) caret = el("span", "memory-caret");
+      state.bubble.appendChild(caret);
+    } else if (caret) {
+      caret.remove();
+    }
     scrollToBottom();
   }
 
@@ -719,8 +756,8 @@
     show(els.typing, false);
     if (state.bubble) {
       state.bubble.textContent = "";
-      state.bubble.classList.add("border-error/40", "text-error");
-      state.bubble.textContent = message;
+      // Mirror the app chat: the neutral bubble stays, only the text turns red.
+      state.bubble.appendChild(el("span", "text-error", message));
     }
     finish("error");
   }
@@ -728,7 +765,7 @@
   function finish() {
     show(els.typing, false);
     if (state.bubble) {
-      var caret = state.bubble.querySelector(".share-caret");
+      var caret = state.bubble.querySelector(".memory-caret");
       if (caret) caret.remove();
     }
     state.bubble = null;
