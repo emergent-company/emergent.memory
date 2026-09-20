@@ -998,13 +998,9 @@
       if (!rec) return;
       thinkingMap[id] = rec;
       thinkingOrder.push(id);
-      // The assistant bubble is opened before the stream begins (it shows the
-      // typing indicator), so a freshly appended thinking badge would land
-      // BELOW the answer. Reposition it above the bubble so reasoning reads
-      // before the reply, not after.
-      if (bubble && rec.details && rec.details.parentElement) {
-        messages.insertBefore(rec.details.parentElement, bubble);
-      }
+      // Keep the badge in arrival order (below the in-progress assistant
+      // bubble), like tool chips — chronological, not hoisted above the reply.
+      // createThinkingBlock already appended it to the end of the stream.
     }
 
     if (text) {
