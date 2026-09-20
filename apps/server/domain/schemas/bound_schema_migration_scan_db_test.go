@@ -178,6 +178,49 @@ func TestMigrationScanHardCapAborts(t *testing.T) {
 	}
 }
 
+// TestExecuteMigrationHardCapAborts proves the configurable hard cap aborts the
+// synchronous forward-migration scan with a clear 4xx. Execute is not
+// transactional, so objects before the cap may already be migrated; the
+// deterministic guarantee the spec pins is that NO kb.schema_migration_runs
+// row is written when the cap aborts the scan (the run record is the rollback
+// path's fallback resolution source).
+func TestExecuteMigrationHardCapAborts(t *testing.T) {
+	ctx, repo, db, projectID, cfg := setupRollbackTest(t)
+	cfg.Graph.MigrationScanMaxObjects = 2
+	svc := newRollbackService(t, db, repo, cfg)
+
+	v1 := insertRollbackPack(t, ctx, db, "Execute Cap Pack", "1.0.0", `[
+		{"name":"Doc","properties":{"title":{"type":"string"},"alpha":{"type":"string"}}}
+	]`)
+	v2 := insertRollbackPack(t, ctx, db, "Execute Cap Pack", "2.0.0", `[
+		{"name":"Doc","properties":{"title":{"type":"string"}}}
+	]`)
+
+	for i := 0; i < 3; i++ {
+		insertArchiveTestObject(t, ctx, db, projectID, "Doc", `{"title":"doc","alpha":"keep"}`, "1.0.0")
+	}
+
+	_, err := svc.ExecuteSchemaMigration(ctx, projectID, &schemas.SchemaMigrationExecuteRequest{
+		FromSchemaID: v1.ID,
+		ToSchemaID:   v2.ID,
+		Force:        true,
+	})
+	require.Error(t, err)
+
+	var apErr *apperror.Error
+	require.ErrorAs(t, err, &apErr)
+	assert.Equal(t, http.StatusBadRequest, apErr.HTTPStatus)
+	assert.Contains(t, apErr.Message, "scan more than 2 objects")
+
+	// The abort returns before the run record is written, so no run row exists
+	// for this project.
+	var runs int
+	if err := db.NewRaw(`SELECT count(*) FROM kb.schema_migration_runs WHERE project_id = ?`, projectID).Scan(ctx, &runs); err != nil {
+		t.Fatalf("read runs: %v", err)
+	}
+	assert.Zero(t, runs, "hard-cap abort must not write a migration run record")
+}
+
 // TestRollbackMaxObjectsCapsRestoredObjects proves the per-request MaxObjects
 // cap bounds how many objects a rollback restores.
 func TestRollbackMaxObjectsCapsRestoredObjects(t *testing.T) {
