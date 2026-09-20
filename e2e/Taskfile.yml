@@ -47,6 +47,35 @@ tasks:
       - sleep 1
       - task: daemon:start
 
+  # ─── Runlog (primary entry points) ────────────────────────
+
+  runlog:start:
+    desc: Start the runlog daemon (TUI browser backend)
+    cmds:
+      - |
+        if curl -sf http://localhost:{{.RUNLOG_PORT}} > /dev/null 2>&1; then
+          echo "runlog daemon already running on port {{.RUNLOG_PORT}}"
+        else
+          echo "starting runlog daemon on port {{.RUNLOG_PORT}}..."
+          mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
+          PATH="/root/go/bin:$PATH" nohup runlog daemon -port {{.RUNLOG_PORT}} \
+            > "{{.LOG_DIR}}/daemon.log" 2>&1 &
+          sleep 2
+          echo "daemon started (port {{.RUNLOG_PORT}})"
+        fi
+
+  runlog:stop:
+    desc: Stop the runlog daemon
+    cmds:
+      - |
+        PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
+        if [ -n "$PID" ]; then
+          kill "$PID" 2>/dev/null || true
+          echo "daemon stopped (PID $PID)"
+        else
+          echo "no daemon running on port {{.RUNLOG_PORT}}"
+        fi
+
   # ─── mcj-emergent Docker server ────────────────────────────
 
   server:start:
