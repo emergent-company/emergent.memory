@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/html"
 )
 
 // This file pins two rendered-output structure changes that landed during the
@@ -13,12 +16,20 @@ import (
 
 // --- Delta 1: agent dashboard header leading icon tile ---
 
+// Class tokens used to locate the tile and the flex title/actions row in the
+// parsed DOM. Shared between the subtest body and checkHeaderDOM.
+const (
+	tileMark     = `grid shrink-0 place-items-center rounded-lg` // unique within the header
+	flexRowClass = `mt-2 flex flex-wrap`                         // flex title/actions row
+)
+
 // TestAgentDashboardHeaderLeadingTileStructure pins the structural position of
 // the leading icon tile after the header migrated to nav.PageHeading's Leading
-// slot: the tile now renders BEFORE the breadcrumbs and BEFORE the h1, on the
-// outer wrapper, as a sibling preceding the flex title/actions row (not nested
-// inside it). It also locks the Bare guard (leading tile dropped) and the tile
-// markup itself.
+// slot. It parses the rendered DOM and asserts the tile is a DIRECT child of
+// the mb-6 wrapper (a sibling preceding, and not nested inside, the breadcrumbs
+// and the flex title/actions row), that the tile is not a descendant of the
+// flex row at all, and that the h1 lives inside the flex row. It also locks the
+// Bare guard (leading tile dropped) and the tile markup itself.
 func TestAgentDashboardHeaderLeadingTileStructure(t *testing.T) {
 	declared := &AgentDefinition{
 		ID: "a1", Name: "diane", Description: "household assistant",
@@ -26,10 +37,6 @@ func TestAgentDashboardHeaderLeadingTileStructure(t *testing.T) {
 	}
 
 	const (
-		tileMark      = `grid shrink-0 place-items-center rounded-lg` // unique within the header
-		crumbsMark    = `<div class="breadcrumbs text-sm"`
-		h1Mark        = `<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">`
-		flexRowMark   = `<div class="mt-2 flex flex-wrap items-end justify-between gap-4">`
 		neutralTile   = `class="grid shrink-0 place-items-center rounded-lg border bg-primary/10 text-primary border-primary/15 size-9"`
 		accentTile    = `class="grid shrink-0 place-items-center rounded-lg border size-9"`
 		accentStyle   = `style="color:#2563EB;background-color:color-mix(in oklch,#2563EB 10%,transparent);border-color:color-mix(in oklch,#2563EB 15%,transparent);"`
@@ -38,73 +45,93 @@ func TestAgentDashboardHeaderLeadingTileStructure(t *testing.T) {
 	)
 
 	t.Run("declared appearance", func(t *testing.T) {
-		html := renderHTML(t, agentDashboardHeader(declared, ""))
-
-		tile := strings.Index(html, tileMark)
-		crumbs := strings.Index(html, crumbsMark)
-		h1 := strings.Index(html, h1Mark)
-		flex := strings.Index(html, flexRowMark)
-		if tile == -1 || crumbs == -1 || h1 == -1 || flex == -1 {
-			t.Fatalf("header markers missing: tile=%d crumbs=%d h1=%d flex=%d", tile, crumbs, h1, flex)
-		}
-
-		// Tile leads the breadcrumbs and the h1 in document order.
-		if tile > crumbs {
-			t.Errorf("tile (%d) must precede breadcrumbs (%d)", tile, crumbs)
-		}
-		if tile > h1 {
-			t.Errorf("tile (%d) must precede h1 (%d)", tile, h1)
-		}
-		// Tile is a sibling preceding the flex title/actions row, not nested
-		// within it: it opens before the flex row's opening tag.
-		if tile > flex {
-			t.Errorf("tile (%d) must precede the flex title/actions row (%d)", tile, flex)
-		}
+		rendered := renderHTML(t, agentDashboardHeader(declared, ""))
+		checkHeaderDOM(t, parseDOM(t, rendered))
 
 		// Tile markup unchanged (accented: colour via inline style, no tone classes).
 		for _, want := range []string{accentTile, accentStyle, accentedGlyph} {
-			if !strings.Contains(html, want) {
+			if !strings.Contains(rendered, want) {
 				t.Errorf("accented header tile missing %q", want)
 			}
 		}
 	})
 
 	t.Run("neutral appearance", func(t *testing.T) {
-		html := renderHTML(t, agentDashboardHeader(&AgentDefinition{ID: "a1", Name: "diane"}, ""))
-
-		tile := strings.Index(html, tileMark)
-		crumbs := strings.Index(html, crumbsMark)
-		h1 := strings.Index(html, h1Mark)
-		flex := strings.Index(html, flexRowMark)
-		if tile == -1 || crumbs == -1 || h1 == -1 || flex == -1 {
-			t.Fatalf("header markers missing: tile=%d crumbs=%d h1=%d flex=%d", tile, crumbs, h1, flex)
-		}
-		if tile > crumbs || tile > h1 || tile > flex {
-			t.Errorf("neutral tile (%d) must lead crumbs (%d), h1 (%d), flex row (%d)", tile, crumbs, h1, flex)
-		}
+		rendered := renderHTML(t, agentDashboardHeader(&AgentDefinition{ID: "a1", Name: "diane"}, ""))
+		checkHeaderDOM(t, parseDOM(t, rendered))
 
 		// Tile markup unchanged (neutral: primary tone classes).
 		for _, want := range []string{neutralTile, neutralGlyph} {
-			if !strings.Contains(html, want) {
+			if !strings.Contains(rendered, want) {
 				t.Errorf("neutral header tile missing %q", want)
 			}
 		}
 	})
 
 	t.Run("bare drops leading tile", func(t *testing.T) {
-		html := renderHTML(t, detailHeader(nil, "", "diane", "", detailHeaderOpts{
+		rendered := renderHTML(t, detailHeader(nil, "", "diane", "", detailHeaderOpts{
 			Margin:    "mb-6",
 			Dashboard: true,
 			Bare:      true,
 			Leading:   agentIconTile("database", "#2563EB"),
 		}))
 		// The Bare guard ignores Leading entirely — no tile icon/class survives.
+		if findElementByClass(parseDOM(t, rendered), strings.Fields(tileMark)...) != nil {
+			t.Error("bare header must drop the leading tile element")
+		}
 		for _, bad := range []string{tileMark, accentedGlyph, neutralGlyph} {
-			if strings.Contains(html, bad) {
+			if strings.Contains(rendered, bad) {
 				t.Errorf("bare header must drop the leading tile, found %q", bad)
 			}
 		}
 	})
+}
+
+// checkHeaderDOM asserts the DOM-structure invariants shared by the declared
+// and neutral header variants: the leading tile, breadcrumbs, and flex
+// title/actions row are all direct children of the mb-6 wrapper in that order,
+// the tile is not nested inside the flex row, and the h1 lives inside the flex
+// row.
+func checkHeaderDOM(t *testing.T, doc *html.Node) {
+	t.Helper()
+
+	wrapper := findElementByClass(doc, "mb-6")
+	tile := findElementByClass(doc, strings.Fields(tileMark)...)
+	crumbs := findElementByClass(doc, "breadcrumbs")
+	flex := findElementByClass(doc, strings.Fields(flexRowClass)...)
+	h1 := findElementByTag(doc, "h1")
+
+	if wrapper == nil || tile == nil || crumbs == nil || flex == nil || h1 == nil {
+		t.Fatalf("header DOM missing elements: wrapper=%v tile=%v crumbs=%v flex=%v h1=%v",
+			wrapper != nil, tile != nil, crumbs != nil, flex != nil, h1 != nil)
+	}
+
+	// Core fix: the tile must be a direct child of the outer wrapper, not
+	// nested inside the breadcrumbs or the flex row.
+	if tile.Parent != wrapper {
+		t.Errorf("leading tile parent = %s, want outer wrapper", nodeDesc(tile.Parent))
+	}
+	if crumbs.Parent != wrapper {
+		t.Errorf("breadcrumbs parent = %s, want outer wrapper", nodeDesc(crumbs.Parent))
+	}
+	if flex.Parent != wrapper {
+		t.Errorf("flex title/actions row parent = %s, want outer wrapper", nodeDesc(flex.Parent))
+	}
+
+	// Document order among the wrapper's element children: tile < crumbs < flex.
+	if ti, ci, fi := childIndexOf(wrapper, tile), childIndexOf(wrapper, crumbs), childIndexOf(wrapper, flex); ti < 0 || ti >= ci || ci >= fi {
+		t.Errorf("wrapper child order wrong: tile=%d crumbs=%d flex=%d, want tile < crumbs < flex", ti, ci, fi)
+	}
+
+	// Belt-and-braces: the tile must not sit inside the flex row at all.
+	if isDescendantOf(tile, flex) {
+		t.Error("leading tile must not be a descendant of the flex title/actions row")
+	}
+
+	// The h1 belongs inside the flex row (its title column).
+	if !isDescendantOf(h1, flex) {
+		t.Error("h1 must be a descendant of the flex title/actions row")
+	}
 }
 
 // --- Delta 2: agent tool-group disclosure summary class ordering ---
@@ -128,17 +155,21 @@ func TestAgentToolGroupDisclosureSummaryClass(t *testing.T) {
 			Count:   1,
 			Rows:    []agentToolRow{{Name: "native-tool", Checked: true}},
 		}
-		html := renderHTML(t, agentToolCapabilityGroup(gv))
+		rendered := renderHTML(t, agentToolCapabilityGroup(gv))
+
+		summary := findElementByClass(parseDOM(t, rendered), "list-none")
+		if summary == nil || summary.Data != "summary" {
+			t.Fatalf("summary element with list-none class not found (got %v)", summary)
+		}
+		tokens := strings.Fields(classAttr(summary))
+		if len(tokens) == 0 || tokens[len(tokens)-1] != "items-start" {
+			t.Errorf("items-start must be the last summary class token, got %q", classAttr(summary))
+		}
 
 		// Exact summary class: alignment token items-start trails the base list.
 		wantClass := base + ` items-start `
-		if !strings.Contains(html, `class="`+wantClass+`"`) {
+		if !strings.Contains(rendered, `class="`+wantClass+`"`) {
 			t.Errorf("capability summary class missing %q", wantClass)
-		}
-		// The trailing alignment token must come after list-none (end of list),
-		// never before it.
-		if strings.Index(html, "items-start") < strings.Index(html, "list-none") {
-			t.Error("items-start must trail list-none in the summary class")
 		}
 
 		// Summary + details attributes unchanged.
@@ -146,7 +177,7 @@ func TestAgentToolGroupDisclosureSummaryClass(t *testing.T) {
 			`data-testid="tool-group-header-cap"`,            // summary
 			`data-testid="tool-group" data-tool-group="cap"`, // details
 		} {
-			if !strings.Contains(html, want) {
+			if !strings.Contains(rendered, want) {
 				t.Errorf("capability group missing %q", want)
 			}
 		}
@@ -163,14 +194,126 @@ func TestAgentToolGroupDisclosureSummaryClass(t *testing.T) {
 			Open:            true,
 			Tools:           []agentToolRow{{Name: "web_search", Checked: true}},
 		}
-		html := renderHTML(t, agentToolGroup(p))
+		rendered := renderHTML(t, agentToolGroup(p))
+
+		summary := findElementByClass(parseDOM(t, rendered), "list-none")
+		if summary == nil || summary.Data != "summary" {
+			t.Fatalf("summary element with list-none class not found (got %v)", summary)
+		}
+		tokens := strings.Fields(classAttr(summary))
+		if len(tokens) == 0 || tokens[len(tokens)-1] != "items-center" {
+			t.Errorf("items-center must be the last summary class token, got %q", classAttr(summary))
+		}
 
 		wantClass := base + ` items-center `
-		if !strings.Contains(html, `class="`+wantClass+`"`) {
+		if !strings.Contains(rendered, `class="`+wantClass+`"`) {
 			t.Errorf("source-group summary class missing %q", wantClass)
 		}
-		if strings.Index(html, "items-center") < strings.Index(html, "list-none") {
-			t.Error("items-center must trail list-none in the summary class")
-		}
 	})
+}
+
+// --- DOM helpers (golang.org/x/net/html node walking) ---
+
+// parseDOM parses an HTML fragment into a *html.Node document tree.
+func parseDOM(t *testing.T, s string) *html.Node {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(s))
+	if err != nil {
+		t.Fatalf("parse html: %v", err)
+	}
+	return doc
+}
+
+// classAttr returns the value of the node's class attribute, or "".
+func classAttr(n *html.Node) string {
+	for _, a := range n.Attr {
+		if a.Key == "class" {
+			return a.Val
+		}
+	}
+	return ""
+}
+
+// hasClasses reports whether n is an element whose class attribute contains
+// every one of the given tokens.
+func hasClasses(n *html.Node, classes ...string) bool {
+	if n.Type != html.ElementNode {
+		return false
+	}
+	tokens := strings.Fields(classAttr(n))
+	for _, want := range classes {
+		if !slices.Contains(tokens, want) {
+			return false
+		}
+	}
+	return true
+}
+
+// findElementByClass returns the first element (depth-first) whose class
+// attribute contains every given token, or nil.
+func findElementByClass(n *html.Node, classes ...string) *html.Node {
+	if hasClasses(n, classes...) {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findElementByClass(c, classes...); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// findElementByTag returns the first element (depth-first) with the given tag
+// name, or nil.
+func findElementByTag(n *html.Node, tag string) *html.Node {
+	if n.Type == html.ElementNode && n.Data == tag {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findElementByTag(c, tag); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// childIndexOf returns the index of child among parent's element children, or
+// -1 if child is not an element child of parent.
+func childIndexOf(parent, child *html.Node) int {
+	idx := 0
+	for c := parent.FirstChild; c != nil; c = c.NextSibling {
+		if c == child {
+			return idx
+		}
+		if c.Type == html.ElementNode {
+			idx++
+		}
+	}
+	return -1
+}
+
+// isDescendantOf reports whether node is a descendant of ancestor (node is
+// reachable from ancestor via Parent links, exclusive of ancestor itself).
+func isDescendantOf(node, ancestor *html.Node) bool {
+	for n := node.Parent; n != nil; n = n.Parent {
+		if n == ancestor {
+			return true
+		}
+	}
+	return false
+}
+
+// nodeDesc renders a compact, human-readable description of a node for error
+// messages.
+func nodeDesc(n *html.Node) string {
+	if n == nil {
+		return "nil"
+	}
+	if n.Type == html.ElementNode {
+		if cls := classAttr(n); cls != "" {
+			return "<" + n.Data + ` class="` + cls + `">`
+		}
+		return "<" + n.Data + ">"
+	}
+	return n.Data
 }
