@@ -36,6 +36,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apidocs"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/apitokens"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/backups"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/branches"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/chat"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/chunking"
@@ -88,6 +89,7 @@ type Client struct {
 	MCP              *mcp.Client
 	MCPRegistry      *mcpregistry.Client
 	Branches         *branches.Client
+	Backups          *backups.Client
 	UserActivity     *useractivity.Client
 	SchemaRegistry   *schemaregistry.Client
 	Notifications    *notifications.Client
@@ -313,6 +315,7 @@ func initClients(c *Client) {
 	c.MCP = mcp.NewClient(c.http, c.base, c.auth)
 	c.MCPRegistry = mcpregistry.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Branches = branches.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
+	c.Backups = backups.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.UserActivity = useractivity.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.SchemaRegistry = schemaregistry.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
 	c.Notifications = notifications.NewClient(c.http, c.base, c.auth, c.orgID, c.projectID)
@@ -357,6 +360,7 @@ func (c *Client) SetContext(orgID, projectID string) {
 	c.MCP.SetContext(projectID)
 	c.MCPRegistry.SetContext(orgID, projectID)
 	c.Branches.SetContext(orgID, projectID)
+	c.Backups.SetContext(orgID, projectID)
 	c.UserActivity.SetContext(orgID, projectID)
 	c.SchemaRegistry.SetContext(orgID, projectID)
 	c.Notifications.SetContext(orgID, projectID)
