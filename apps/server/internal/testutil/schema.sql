@@ -904,6 +904,87 @@ COMMENT ON COLUMN kb.agent_sandboxes.mcp_config IS 'MCP server configuration inc
 
 
 --
+-- Name: agent_share_access_log; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.agent_share_access_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    share_link_id uuid NOT NULL,
+    end_user_ref character varying(64) NOT NULL,
+    ip_hash character varying(64) NOT NULL,
+    action character varying(64) NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: agent_share_end_users; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.agent_share_end_users (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    share_link_id uuid NOT NULL,
+    end_user_ref character varying(64) NOT NULL,
+    email character varying(255),
+    email_normalized character varying(255),
+    verified boolean DEFAULT false NOT NULL,
+    consent_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_seen_at timestamp with time zone
+);
+
+
+--
+-- Name: agent_share_links; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.agent_share_links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    agent_definition_id uuid NOT NULL,
+    api_token_id uuid NOT NULL,
+    label character varying(255) NOT NULL,
+    config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_by_user_id uuid,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    expires_at timestamp with time zone
+);
+
+
+--
+-- Name: agent_share_sessions; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.agent_share_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    share_link_id uuid NOT NULL,
+    acp_session_id uuid NOT NULL,
+    end_user_ref character varying(64) NOT NULL,
+    title character varying(255),
+    last_activity_at timestamp with time zone,
+    is_archived boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: agent_share_usage; Type: TABLE; Schema: kb; Owner: -
+--
+
+CREATE TABLE kb.agent_share_usage (
+    link_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    messages integer DEFAULT 0 NOT NULL,
+    tokens bigint DEFAULT 0 NOT NULL,
+    cost_usd numeric DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
 -- Name: agent_tool_approvals; Type: TABLE; Schema: kb; Owner: -
 --
 
@@ -920,7 +1001,8 @@ CREATE TABLE kb.agent_tool_approvals (
     decided_by uuid,
     decided_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    share_link_id uuid
 );
 
 
@@ -3221,6 +3303,54 @@ ALTER TABLE ONLY kb.agent_sandboxes
 
 
 --
+-- Name: agent_share_access_log agent_share_access_log_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_access_log
+    ADD CONSTRAINT agent_share_access_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_share_end_users agent_share_end_users_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_end_users
+    ADD CONSTRAINT agent_share_end_users_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_share_links agent_share_links_api_token_id_key; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_links
+    ADD CONSTRAINT agent_share_links_api_token_id_key UNIQUE (api_token_id);
+
+
+--
+-- Name: agent_share_links agent_share_links_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_links
+    ADD CONSTRAINT agent_share_links_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_share_sessions agent_share_sessions_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_sessions
+    ADD CONSTRAINT agent_share_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_share_usage agent_share_usage_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_usage
+    ADD CONSTRAINT agent_share_usage_pkey PRIMARY KEY (link_id, period_start);
+
+
+--
 -- Name: agent_tool_approvals agent_tool_approvals_pkey; Type: CONSTRAINT; Schema: kb; Owner: -
 --
 
@@ -4418,6 +4548,55 @@ CREATE INDEX idx_agent_sandboxes_status ON kb.agent_sandboxes USING btree (statu
 
 
 --
+-- Name: idx_agent_share_access_log_link; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_share_access_log_link ON kb.agent_share_access_log USING btree (share_link_id, created_at DESC);
+
+
+--
+-- Name: idx_agent_share_end_users_email; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_share_end_users_email ON kb.agent_share_end_users USING btree (share_link_id, email_normalized);
+
+
+--
+-- Name: idx_agent_share_end_users_ref; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_agent_share_end_users_ref ON kb.agent_share_end_users USING btree (share_link_id, end_user_ref);
+
+
+--
+-- Name: idx_agent_share_links_def_label_active; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_agent_share_links_def_label_active ON kb.agent_share_links USING btree (agent_definition_id, lower(label)) WHERE (revoked_at IS NULL);
+
+
+--
+-- Name: idx_agent_share_links_project_active; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_share_links_project_active ON kb.agent_share_links USING btree (project_id) WHERE (revoked_at IS NULL);
+
+
+--
+-- Name: idx_agent_share_sessions_acp_link; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_agent_share_sessions_acp_link ON kb.agent_share_sessions USING btree (acp_session_id, share_link_id);
+
+
+--
+-- Name: idx_agent_share_sessions_user; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_share_sessions_user ON kb.agent_share_sessions USING btree (share_link_id, end_user_ref, is_archived, last_activity_at DESC);
+
+
+--
 -- Name: idx_agent_tool_approvals_project_id; Type: INDEX; Schema: kb; Owner: -
 --
 
@@ -4436,6 +4615,13 @@ CREATE INDEX idx_agent_tool_approvals_question_id ON kb.agent_tool_approvals USI
 --
 
 CREATE INDEX idx_agent_tool_approvals_run_id ON kb.agent_tool_approvals USING btree (run_id);
+
+
+--
+-- Name: idx_agent_tool_approvals_share_link_id; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_agent_tool_approvals_share_link_id ON kb.agent_tool_approvals USING btree (share_link_id);
 
 
 --
@@ -5824,6 +6010,86 @@ ALTER TABLE ONLY kb.agent_runs
 
 ALTER TABLE ONLY kb.agent_runs
     ADD CONSTRAINT agent_runs_root_run_id_fkey FOREIGN KEY (root_run_id) REFERENCES kb.agent_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: agent_share_access_log agent_share_access_log_share_link_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_access_log
+    ADD CONSTRAINT agent_share_access_log_share_link_id_fkey FOREIGN KEY (share_link_id) REFERENCES kb.agent_share_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_share_end_users agent_share_end_users_share_link_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_end_users
+    ADD CONSTRAINT agent_share_end_users_share_link_id_fkey FOREIGN KEY (share_link_id) REFERENCES kb.agent_share_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_share_links agent_share_links_agent_definition_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_links
+    ADD CONSTRAINT agent_share_links_agent_definition_id_fkey FOREIGN KEY (agent_definition_id) REFERENCES kb.agent_definitions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_share_links agent_share_links_api_token_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_links
+    ADD CONSTRAINT agent_share_links_api_token_id_fkey FOREIGN KEY (api_token_id) REFERENCES core.api_tokens(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_share_links agent_share_links_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_links
+    ADD CONSTRAINT agent_share_links_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES core.user_profiles(id);
+
+
+--
+-- Name: agent_share_links agent_share_links_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_links
+    ADD CONSTRAINT agent_share_links_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_share_sessions agent_share_sessions_acp_session_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_sessions
+    ADD CONSTRAINT agent_share_sessions_acp_session_id_fkey FOREIGN KEY (acp_session_id) REFERENCES kb.acp_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_share_sessions agent_share_sessions_share_link_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_sessions
+    ADD CONSTRAINT agent_share_sessions_share_link_id_fkey FOREIGN KEY (share_link_id) REFERENCES kb.agent_share_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_share_usage agent_share_usage_link_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_share_usage
+    ADD CONSTRAINT agent_share_usage_link_id_fkey FOREIGN KEY (link_id) REFERENCES kb.agent_share_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_tool_approvals agent_tool_approvals_share_link_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
+--
+
+ALTER TABLE ONLY kb.agent_tool_approvals
+    ADD CONSTRAINT agent_tool_approvals_share_link_id_fkey FOREIGN KEY (share_link_id) REFERENCES kb.agent_share_links(id) ON DELETE SET NULL;
 
 
 --

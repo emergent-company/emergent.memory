@@ -51,6 +51,26 @@ type Config struct {
 	// token lifetime is the true ceiling). Zero = derive from access-token
 	// expiry (legacy behavior, used by tests).
 	SessionMaxAge time.Duration
+	// ShareCookieSecret is the AES-256-GCM key that seals the anonymous
+	// agent-share cookie (see share.go). Empty disables the public share
+	// exchange — the gateway cannot seal a cookie without it.
+	ShareCookieSecret string
+	// ShareRefSecret is the HMAC-SHA256 key that signs the X-End-User-Ref
+	// header on upstream share calls (see share.go / memory_share.go). Empty
+	// disables the public share surface — the gateway must never send an
+	// unsigned end-user ref.
+	ShareRefSecret string
+	// SharePublicBaseURL is the externally-reachable public share host used to
+	// build copyable owner share URLs (e.g. "https://share.example.com").
+	// Empty falls back to PublicBaseURL.
+	SharePublicBaseURL string
+	// ShareRateIPPerMin / ShareRateIPBurst bound the public share surface per
+	// client IP (token bucket). ShareRateLinkPerMin / ShareRateLinkBurst bound
+	// it per share link (keyed by a hash of the share token).
+	ShareRateIPPerMin   int
+	ShareRateIPBurst    int
+	ShareRateLinkPerMin int
+	ShareRateLinkBurst  int
 	// WorkerInternalKey is the shared secret the gateway injects into bridge
 	// workers so they can fetch their per-room voice binding from the internal
 	// endpoint. Empty = the internal endpoint rejects every request.
@@ -124,13 +144,20 @@ func LoadConfig() Config {
 		PublicBaseURL:     os.Getenv("PUBLIC_BASE_URL"),
 		TTSProvider:       envOr("TTS_PROVIDER", "cartesia"),
 
-		ZitadelIssuer:      os.Getenv("ZITADEL_ISSUER"),
-		ZitadelClientID:    os.Getenv("ZITADEL_CLIENT_ID"),
-		ZitadelRedirectURI: os.Getenv("ZITADEL_REDIRECT_URI"),
-		AuthMode:           envOr("AUTH_MODE", "session"),
-		SessionSecret:      os.Getenv("SESSION_SECRET"),
-		SessionMaxAge:      durationOr("SESSION_MAX_AGE", 30*24*time.Hour),
-		WorkerInternalKey:  os.Getenv("WORKER_INTERNAL_KEY"),
+		ZitadelIssuer:       os.Getenv("ZITADEL_ISSUER"),
+		ZitadelClientID:     os.Getenv("ZITADEL_CLIENT_ID"),
+		ZitadelRedirectURI:  os.Getenv("ZITADEL_REDIRECT_URI"),
+		AuthMode:            envOr("AUTH_MODE", "session"),
+		SessionSecret:       os.Getenv("SESSION_SECRET"),
+		SessionMaxAge:       durationOr("SESSION_MAX_AGE", 30*24*time.Hour),
+		WorkerInternalKey:   os.Getenv("WORKER_INTERNAL_KEY"),
+		ShareCookieSecret:   os.Getenv("SHARE_COOKIE_SECRET"),
+		ShareRefSecret:      os.Getenv("SHARE_REF_SECRET"),
+		SharePublicBaseURL:  os.Getenv("SHARE_PUBLIC_BASE_URL"),
+		ShareRateIPPerMin:   intOr("SHARE_RATE_IP_PER_MIN", 30),
+		ShareRateIPBurst:    intOr("SHARE_RATE_IP_BURST", 10),
+		ShareRateLinkPerMin: intOr("SHARE_RATE_LINK_PER_MIN", 60),
+		ShareRateLinkBurst:  intOr("SHARE_RATE_LINK_BURST", 20),
 
 		CartesiaModel:        envOr("CARTESIA_MODEL", "sonic-3.5"),
 		CartesiaVoice:        envOr("CARTESIA_VOICE", "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"),
@@ -197,6 +224,21 @@ func floatOr(key string, fallback float64) float64 {
 		}
 	}
 	return fallback
+}
+
+// intOr reads a non-negative int env var; an invalid/negative value falls back
+// to the default.
+func intOr(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		log.Printf("config: ignoring invalid %s=%q", key, v)
+		return fallback
+	}
+	return n
 }
 
 // Validate fails fast on an auth posture that cannot be safely served. The

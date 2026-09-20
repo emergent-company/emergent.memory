@@ -43,6 +43,11 @@ type Server struct {
 	// gateway-authenticated caller is allowed (memory enforces token scopes on
 	// the mutation endpoints); a deployment or test can inject a stricter policy.
 	schemaWritePolicy func(echo.Context) bool
+	// shareIPLimiter / shareLinkLimiter bound the public share surface
+	// (per-instance, in-memory; see share_middleware.go). Nil until main()
+	// constructs them — the share middleware no-ops when unset.
+	shareIPLimiter   *keyedRateLimiter
+	shareLinkLimiter *keyedRateLimiter
 }
 
 // beginShutdown signals long-lived streams to end. Safe to call once.

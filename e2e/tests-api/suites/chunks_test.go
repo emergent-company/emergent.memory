@@ -31,6 +31,9 @@ func (s *ChunksTestSuite) SetupTest() {
 
 // TearDownTest cleans up created test data after each test.
 func (s *ChunksTestSuite) TearDownTest() {
+	if s.DB == nil {
+		return
+	}
 	// Clean up chunks first (due to FK constraints)
 	if len(s.createdChunkIDs) > 0 {
 		_ = testutil.DeleteTestChunks(s.Ctx, s.DB, s.createdChunkIDs)
@@ -43,6 +46,10 @@ func (s *ChunksTestSuite) TearDownTest() {
 
 // createTestDocument creates a document via SQL and tracks it for cleanup.
 func (s *ChunksTestSuite) createTestDocument(filename string) string {
+	if s.DB == nil {
+		s.T().Skip("chunks e2e requires direct DB access; set E2E_SKIP_DB=false")
+		return ""
+	}
 	docID := testutil.NewUUID()
 	doc := testutil.TestDocument{
 		ID:        docID,
@@ -57,6 +64,10 @@ func (s *ChunksTestSuite) createTestDocument(filename string) string {
 
 // createTestChunk creates a chunk via SQL and tracks it for cleanup.
 func (s *ChunksTestSuite) createTestChunk(documentID string, index int, text string) string {
+	if s.DB == nil {
+		s.T().Skip("chunks e2e requires direct DB access; set E2E_SKIP_DB=false")
+		return ""
+	}
 	chunkID := testutil.NewUUID()
 	chunk := testutil.TestChunk{
 		ID:         chunkID,

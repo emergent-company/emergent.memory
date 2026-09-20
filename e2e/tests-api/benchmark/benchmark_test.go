@@ -215,6 +215,10 @@ func TestPerformanceBenchmark(t *testing.T) {
 	cfg := loadConfig()
 	testCfg := testutil.LoadConfig()
 
+	if testCfg.SkipDB {
+		t.Skip("performance benchmark requires direct DB access; set E2E_SKIP_DB=false")
+	}
+
 	apiClient := client.New(client.Config{
 		BaseURL:    testCfg.BaseURL,
 		ServerType: testCfg.ServerType,

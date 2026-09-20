@@ -44,10 +44,17 @@ var Module = fx.Module("agents",
 		provideStaleRunReaper,
 		provideSessionTitleHandlerForMCP,
 		provideOrgToolPoolInvalidator,
+		provideShareRepo,
+		provideShareRunner,
+		provideShareResponder,
+		provideShareService,
+		provideShareHandler,
+		provideShareRunReaper,
 	),
 	fx.Invoke(
 		RegisterRoutes,
 		RegisterACPRoutes,
+		RegisterShareRoutes,
 		RegisterA2ARoutes,
 		registerAgentTriggers,
 		registerOrphanRecovery,
@@ -58,6 +65,7 @@ var Module = fx.Module("agents",
 		registerAgentToolHandler,
 		registerToolPoolInvalidator,
 		registerStaleRunReaper,
+		registerShareRunReaper,
 	),
 )
 
@@ -272,6 +280,45 @@ func provideStaleRunReaper(repo *Repository, log *slog.Logger) *StaleRunReaper {
 }
 
 func registerStaleRunReaper(lc fx.Lifecycle, reaper *StaleRunReaper) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			reaper.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			reaper.Stop()
+			return nil
+		},
+	})
+}
+
+// --- Share feature wiring ---
+
+func provideShareRepo(repo *Repository) ShareRepo {
+	return repo
+}
+
+func provideShareRunner(executor *AgentExecutor) agentRunner {
+	return executor
+}
+
+func provideShareResponder(h *Handler) QuestionResponder {
+	return h
+}
+
+func provideShareService(repo ShareRepo, apiTokens *apitoken.Service, runner agentRunner, responder QuestionResponder, cfg *config.Config, log *slog.Logger) *ShareService {
+	return NewShareService(repo, apiTokens, runner, responder, cfg.ShareRefSecret, log)
+}
+
+func provideShareHandler(svc *ShareService) *ShareHandler {
+	return NewShareHandler(svc)
+}
+
+func provideShareRunReaper(repo *Repository, log *slog.Logger) *ShareRunReaper {
+	return NewShareRunReaper(repo, log)
+}
+
+func registerShareRunReaper(lc fx.Lifecycle, reaper *ShareRunReaper) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			reaper.Start(ctx)
