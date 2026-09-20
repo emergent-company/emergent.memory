@@ -125,6 +125,11 @@ For open, non-outdated threads, classify each by severity using the comment body
 - **Should fix** — logic improvements, missing error handling, style issues called out explicitly
 - **Nitpick / informational** — optional suggestions, praise, questions already answered
 
+**Dedup cross-bot findings first:** Copilot, CodeRabbit, and Gemini frequently flag the
+same root cause. Before triaging, group threads that describe the same issue. Treat the
+highest severity among the duplicates as the thread's severity, fix once, and reply once to
+the primary thread (cross-referencing the others). Never fix the same thing N times.
+
 Show the triage table to the user before proceeding:
 
 ```
@@ -178,6 +183,9 @@ For each thread:
   spurious change — instead just reply explaining why no change is needed
 - If a fix is ambiguous or has multiple valid approaches, pause and ask the user
 - Do not fix nitpick threads unless the user explicitly requested it
+- For every Must Fix (or Medium+) correctness or security fix, add a regression test.
+  Do not ship a code-only patch for a correctness/security bug — if a test is genuinely
+  impractical, say why in the reply.
 
 Group related fixes when they touch the same file — commit by logical unit.
 
@@ -333,6 +341,12 @@ After fixes pass checks and all blocking threads are resolved, merge.
 gh pr view --json mergeable,mergeStateStatus,reviewDecision,state
 ```
 
+Wait for CI deterministically instead of manual `gh pr view` polling:
+
+```bash
+gh pr checks --watch <N>   # blocks until checks finish; non-zero exit if any fail
+```
+
 | State | Action |
 |---|---|
 | `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`, CI green | Merge now. |
@@ -349,6 +363,11 @@ gh pr merge --squash --auto
 
 Then clean up the worktree (if one was used): `git worktree remove <path>` and delete the
 local branch.
+
+**Post-merge — archive the OpenSpec change:** if the PR shipped an OpenSpec change
+(`openspec/changes/<name>/`), run `openspec archive` from the repo root to sync its delta
+specs → `openspec/specs/`. Confirm the change no longer appears in `openspec list`. Do this
+in the same pass — do not leave it as a "follow-up note".
 
 **Merge gate (guardrails):**
 - Never merge with CI red, `CHANGES_REQUESTED`, or an unresolved security blocker.
@@ -405,6 +424,18 @@ skill.
 - [ ] docs/bugs/NNN-title.md — <one-line bug> (if any)
 
 **Commits pushed:** <list SHAs>
+```
+
+---
+
+**Persist the verdict** on the PR so the record survives the threads:
+
+```bash
+gh pr comment <N> --body '## Review verdict
+Independent review: <summary + verdict>
+Fixed & resolved: <N> threads (commits <SHAs>)
+Deferred follow-ups: <docs/improvements + docs/bugs links, if any>
+Merge: <commit SHA / queued via auto-merge>'
 ```
 
 ---
