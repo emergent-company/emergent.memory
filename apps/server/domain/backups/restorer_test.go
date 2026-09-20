@@ -272,3 +272,35 @@ func TestApplyRefs(t *testing.T) {
 		}
 	})
 }
+
+// TestCloneSchemaLinkSpecsDeclareSkip guards the declared per-column policy for
+// GitHub issue #592. Both kb.project_schemas and kb.project_edge_schema_registry
+// link a project to a schema UUID, and both can carry a link to the source
+// deployment's global builtin schema UUID (absent from a project-scoped
+// archive). Each must therefore declare refSkip on schema_id so a clone drops
+// the unresolvable row instead of aborting on the schema_id foreign key.
+//
+// This assertion does not need a database, so it still runs when the DB-backed
+// clone regression test skips.
+func TestCloneSchemaLinkSpecsDeclareSkip(t *testing.T) {
+	specs := map[string]restoreTableSpec{}
+	for _, s := range restoreTableOrder() {
+		specs[s.name] = s
+	}
+
+	for _, table := range []string{"project_schemas", "project_edge_schema_registry"} {
+		spec, ok := specs[table]
+		if !ok {
+			t.Errorf("restore order has no spec for %s", table)
+			continue
+		}
+		policy, ok := spec.refs["schema_id"]
+		if !ok {
+			t.Errorf("%s declares no ref policy for schema_id; want refSkip", table)
+			continue
+		}
+		if policy.action != refSkip {
+			t.Errorf("%s.schema_id policy = %q, want %q", table, policy.action, refSkip)
+		}
+	}
+}
