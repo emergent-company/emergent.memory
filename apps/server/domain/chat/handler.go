@@ -630,16 +630,25 @@ func validateStreamRequest(req *StreamRequest) error {
 	return nil
 }
 
-// startKeepalive emits SSE comment frames (": ping") on a fixed interval for the
-// lifetime of the stream. Long-lived chat streams can sit idle for minutes while
-// a tool call or model generation is in flight; periodic comment frames keep
-// every hop (browser → gateway → Traefik → server) from tripping an idle timeout.
-// The goroutine exits when ctx is done (client disconnect), a write fails, or the
-// returned stop func is called.
-func startKeepalive(ctx context.Context, w *sse.Writer) func() {
+// chatKeepaliveInterval is how often the SSE stream emits a comment frame
+// during idle gaps to keep every hop from tripping an idle timeout.
+const chatKeepaliveInterval = 25 * time.Second
+
+// startKeepalive emits SSE comment frames (": ping") on the given interval for
+// the lifetime of the stream. Long-lived chat streams can sit idle for minutes
+// while a tool call or model generation is in flight; periodic comment frames
+// keep every hop (browser → gateway → Traefik → server) from tripping an idle
+// timeout. The goroutine exits when ctx is done (client disconnect), a write
+// fails, or the returned stop func is called. The stop func cancels the
+// goroutine and joins it, closing the window where it writes to the response
+// writer after the handler returns. interval and log are injectable so the
+// keepalive can be exercised with a short tick in tests.
+func startKeepalive(ctx context.Context, w *sse.Writer, interval time.Duration, log *slog.Logger) func() {
 	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	go func() {
-		t := time.NewTicker(25 * time.Second)
+		defer close(done)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
@@ -647,12 +656,18 @@ func startKeepalive(ctx context.Context, w *sse.Writer) func() {
 				return
 			case <-t.C:
 				if err := w.WriteComment("ping"); err != nil {
+					if log != nil {
+						log.Warn("chat keepalive write failed", slog.String("error", err.Error()))
+					}
 					return
 				}
 			}
 		}
 	}()
-	return cancel
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // StreamChat handles POST /api/chat/stream
@@ -822,7 +837,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 
 	// Keep the stream alive across long idle gaps (slow tool calls, model busy,
 	// approval pauses) so no intermediate proxy times out the connection.
-	stopKeepalive := startKeepalive(ctx, sseWriter)
+	stopKeepalive := startKeepalive(ctx, sseWriter, chatKeepaliveInterval, h.log)
 	defer stopKeepalive()
 
 	// Emit meta event first
