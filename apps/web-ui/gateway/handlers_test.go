@@ -1672,18 +1672,20 @@ func TestChatStreamsFlushIncrementally(t *testing.T) {
 	srv := httptest.NewServer(e)
 	defer srv.Close()
 
-	// ResponseHeaderTimeout bounds how long the client waits for the server's
-	// response headers. Without the per-write flush, net/http buffers the 200
-	// and first SSE frame and never sends headers, so client.Post hangs until
-	// this timeout — turning the buffering regression into a fast failure
-	// instead of a deadlock.
-	client := &http.Client{
-		Transport: &http.Transport{ResponseHeaderTimeout: 3 * time.Second},
+	// Bounded client timeout: without the per-write flush, the server never
+	// sends response headers until the handler returns, so Do blocks and
+	// returns "Client.Timeout exceeded while awaiting headers" within 3s — a
+	// fast, legible failure instead of a hung test.
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/chat", strings.NewReader(`{"message":"hi"}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	resp, err := client.Post(srv.URL+"/api/chat", "application/json", strings.NewReader(`{"message":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		close(release)
-		t.Fatalf("POST: %v (response headers did not arrive — flush-per-write regression)", err)
+		t.Fatalf("POST: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -1691,19 +1693,33 @@ func TestChatStreamsFlushIncrementally(t *testing.T) {
 		t.Fatalf("content-type = %q", ct)
 	}
 
-	// The first frame arrives with the flushed headers: with the per-write
-	// flush the 200 and the ": ping" frame are written together, so this read
-	// completes immediately. Without the flush, client.Post above would have
-	// already timed out.
+	// The first frame must arrive *before* release is closed: without the
+	// per-write flush, net/http buffers it and the read below blocks until the
+	// handler returns (i.e. until release is closed and the pipe closes), so
+	// this fails fast on a regression instead of hanging.
 	br := bufio.NewReader(resp.Body)
-	line, err := br.ReadString('\n')
-	if err != nil {
-		close(release)
-		t.Fatalf("first line read error: %v", err)
+	type lineResult struct {
+		line string
+		err  error
 	}
-	if !strings.HasPrefix(line, ": ping") {
+	got := make(chan lineResult, 1)
+	go func() {
+		line, rerr := br.ReadString('\n')
+		got <- lineResult{line: line, err: rerr}
+	}()
+	select {
+	case res := <-got:
+		if res.err != nil {
+			close(release)
+			t.Fatalf("first line read error: %v", res.err)
+		}
+		if !strings.HasPrefix(res.line, ": ping") {
+			close(release)
+			t.Fatalf("first line = %q, want ': ping'", res.line)
+		}
+	case <-time.After(3 * time.Second):
 		close(release)
-		t.Fatalf("first line = %q, want ': ping'", line)
+		t.Fatal("first SSE frame did not flush within 3s — flush-per-write regression")
 	}
 
 	close(release)
