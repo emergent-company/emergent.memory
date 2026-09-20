@@ -4,8 +4,10 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"sync"
@@ -54,6 +56,19 @@ func New(cfg Config) *Client {
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 100,
 				IdleConnTimeout:     90 * time.Second,
+			},
+			// Follow redirects (e.g. backup download -> presigned MinIO URL)
+			// but never forward the Authorization header to a different
+			// host:port. Forwarding it alongside a presigned S3 URL's own
+			// signature auth triggers "multiple authentication types".
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return errors.New("stopped after 10 redirects")
+				}
+				if len(via) > 0 && req.URL.Host != via[len(via)-1].URL.Host {
+					req.Header.Del("Authorization")
+				}
+				return nil
 			},
 		},
 		metrics: NewMetricsCollector(),
@@ -135,8 +150,25 @@ func (c *Client) DELETEWithBody(path string, body any, opts ...Option) (*Respons
 	return c.do(http.MethodDelete, path, body, opts...)
 }
 
-// do performs the actual HTTP request.
+// do performs the actual HTTP request with a JSON body.
 func (c *Client) do(method, path string, body any, opts ...Option) (*Response, error) {
+	// Build body
+	var bodyReader io.Reader
+	if body != nil {
+		bodyBytes, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal body: %w", err)
+		}
+		bodyReader = bytes.NewReader(bodyBytes)
+	}
+
+	return c.doWithBody(method, path, "application/json", bodyReader, opts...)
+}
+
+// doWithBody executes an HTTP request with an explicit raw body reader and
+// content type, honoring the same Options (auth headers, query) and metrics
+// recording as do.
+func (c *Client) doWithBody(method, path, contentType string, body io.Reader, opts ...Option) (*Response, error) {
 	// Apply options
 	reqOpts := &requestOptions{
 		headers: make(map[string]string),
@@ -156,24 +188,14 @@ func (c *Client) do(method, path string, body any, opts ...Option) (*Response, e
 		url += "?" + strings.Join(params, "&")
 	}
 
-	// Build body
-	var bodyReader io.Reader
-	if body != nil {
-		bodyBytes, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal body: %w", err)
-		}
-		bodyReader = bytes.NewReader(bodyBytes)
-	}
-
 	// Create request
-	req, err := http.NewRequest(method, url, bodyReader)
+	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set default headers
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "application/json")
 
 	// Apply custom headers
@@ -203,6 +225,33 @@ func (c *Client) do(method, path string, body any, opts ...Option) (*Response, e
 		Response: resp,
 		duration: duration,
 	}, nil
+}
+
+// PostMultipart performs a multipart/form-data POST with one file field.
+func (c *Client) PostMultipart(path, fieldName, filename string, data []byte, opts ...Option) (*Response, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	part, err := writer.CreateFormFile(fieldName, filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		return nil, fmt.Errorf("failed to write form file: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	return c.doWithBody(http.MethodPost, path, writer.FormDataContentType(), &buf, opts...)
+}
+
+// PostMultipartRaw performs a POST with an already-encoded multipart/form-data
+// body, where contentType must include the multipart boundary (e.g. from
+// writer.FormDataContentType()). Useful for multipart requests that carry no
+// file field (empty multipart).
+func (c *Client) PostMultipartRaw(path, contentType string, body []byte, opts ...Option) (*Response, error) {
+	return c.doWithBody(http.MethodPost, path, contentType, bytes.NewReader(body), opts...)
 }
 
 // Metrics returns the metrics collector.
