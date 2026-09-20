@@ -82,7 +82,7 @@ Run: `task -d e2e test:mcj`.
 
 | Kind | Location | Count | Env |
 |---|---|---|---|
-| Unit | `cmd/`, `internal/**` `*_test.go` | 60 files (~455 tests) | none |
+| Unit | `cmd/`, `internal/**` `*_test.go` | 57 files (~455 tests) | none |
 | Daemon e2e | `e2e/connector_daemon_e2e_test.go` | 1 | builds real binary + in-process fake WS relay; skips `-short` / non-Linux |
 
 Run: `go test -count=1 ./e2e/...`. Lint: `.golangci.yml`.
@@ -121,7 +121,7 @@ pytest matrix py3.9–3.12 + mypy + ruff. CI `python-sdk.yml`; release `python-s
 
 ---
 
-## CI — `.github/workflows/` (22 files)
+## CI — `.github/workflows/` (18 files)
 
 Per-app path-filtered workflows. **No CI job uses services/Postgres/Zitadel** — integration,
 e2e, and connector e2e run **local-only**.
@@ -134,7 +134,7 @@ e2e, and connector e2e run **local-only**.
 | `server-sdk.yml` | lint, `go test -v -race ./...` |
 | `python-sdk.yml` | ruff, mypy, pytest matrix |
 
-Required `ci` gate from 4 workflows: `server`, `cli`, `web-ui`, `ci`. Release fan-out from
+Required status check: `ci` (Meta CI, non-path-filtered). Release fan-out from
 `auto-tag.yml` `v*` → connector/mac/ios/cli/image publishes.
 
 ---
