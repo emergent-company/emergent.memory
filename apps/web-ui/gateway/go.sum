@@ -54,8 +54,8 @@ github.com/docker/go-connections v0.7.0 h1:6SsRfJddP22WMrCkj19x9WKjEDTB+ahsdiGYf
 github.com/docker/go-connections v0.7.0/go.mod h1:no1qkHdjq7kLMGUXYAduOhYPSJxxvgWBh7ogVvptn3Q=
 github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4=
 github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
-github.com/emergent-company/go-daisy v0.12.1-0.20260920192002-592bb1167513 h1:HASGWCTQSMj/HWOsPyHkKsdk6qlCj4dmYIL9E2o6a64=
-github.com/emergent-company/go-daisy v0.12.1-0.20260920192002-592bb1167513/go.mod h1:Drolj0RhGVWiTmYsCbPY7LMg9Zz/6Z9iswQEc9VsJeU=
+github.com/emergent-company/go-daisy v0.12.1-0.20260920194302-6d4696fc9cf9 h1:TrZns/vY+0hNgq+pHlPLaa02tROVoI6t7zujjLpukfc=
+github.com/emergent-company/go-daisy v0.12.1-0.20260920194302-6d4696fc9cf9/go.mod h1:Drolj0RhGVWiTmYsCbPY7LMg9Zz/6Z9iswQEc9VsJeU=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/frostbyte73/core v0.1.1 h1:ChhJOR7bAKOCPbA+lqDLE2cGKlCG5JXsDvvQr4YaJIA=
