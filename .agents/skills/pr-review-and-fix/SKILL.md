@@ -338,7 +338,8 @@ After fixes pass checks and all blocking threads are resolved, merge.
 
 ```bash
 # Inspect merge readiness first — never merge blindly.
-gh pr view --json mergeable,mergeStateStatus,reviewDecision,state
+gh pr view --json mergeable,mergeStateStatus,reviewDecision,state,statusCheckRollup
+gh pr checks <N> --required   # every required check must pass before merging
 ```
 
 Wait for CI deterministically instead of manual `gh pr view` polling:
