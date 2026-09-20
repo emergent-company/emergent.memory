@@ -12,24 +12,20 @@ import (
 // has no identity).
 templ userAccountMenu(user *currentUser, accounts []currentUser) {
 	if user != nil {
-		<div class="dropdown dropdown-end" data-testid="account-menu">
+		@ui.Dropdown(ui.DropdownEnd, templ.Attributes{"data-testid": "account-menu"}) {
 			<div
 				tabindex="0"
 				role="button"
 				class="rounded-full p-px outline-none cursor-pointer transition hover:ring-1 hover:ring-base-content/25 focus-visible:ring-1 focus-visible:ring-base-content/45 active:ring-1 active:ring-base-content/30"
 				aria-label="Account"
+				aria-haspopup="menu"
 				data-testid="account-menu-trigger"
 			>
 				<div class="flex items-center gap-1">
 					@accountAvatar(user.Name, user.Picture, ui.AvatarSize7, "text-xs")
 				</div>
 			</div>
-			<ul
-				tabindex="0"
-				role="menu"
-				aria-label="Account"
-				class="dropdown-content menu menu-sm bg-base-100 rounded-box shadow-lg z-50 w-56 p-1 border border-base-content/10 mt-1"
-			>
+			@ui.DropdownMenu(templ.Attributes{"aria-label": "Account", "class": "min-w-56 border-base-content/10 z-50"}) {
 				<li class="menu-title pointer-events-none px-2 pt-2 pb-0.5 text-[10px] font-medium tracking-[0.14em] uppercase text-base-content/40 select-none">Signed in as</li>
 				@accountMenuActiveRow(user)
 				if len(accounts) > 0 {
@@ -60,8 +56,8 @@ templ userAccountMenu(user *currentUser, accounts []currentUser) {
 						</button>
 					</form>
 				</li>
-			</ul>
-		</div>
+			}
+		}
 	}
 }
 

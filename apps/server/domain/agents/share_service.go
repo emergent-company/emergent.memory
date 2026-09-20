@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -522,7 +523,27 @@ func (s *ShareService) PublicConfig(binding *ShareLinkBinding) *SharePublicConfi
 	if def.Model != nil {
 		dto.Model = def.Model.Name
 	}
+	dto.Icon, dto.Color = shareAgentIconColor(def.UIConfig)
 	return dto
+}
+
+// shareAgentIconColor parses an agent definition's uiConfig JSON blob and
+// returns its declared icon (a bare Lucide kebab name, or an emoji/glyph) and
+// color (an arbitrary CSS color). It is tolerant of absent (nil/empty), null,
+// and {} payloads, and ignores non-string values — mirroring the gateway's
+// agentUIOf parsing so the public share surface renders the owner's configured
+// appearance.
+func shareAgentIconColor(raw json.RawMessage) (icon, color string) {
+	if len(raw) == 0 {
+		return "", ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", ""
+	}
+	icon, _ = m["icon"].(string)
+	color, _ = m["color"].(string)
+	return icon, color
 }
 
 // ============================================================================

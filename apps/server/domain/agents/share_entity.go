@@ -350,6 +350,8 @@ type SharePublicConfigDTO struct {
 	MaxActiveSessionsPerUser int     `json:"maxActiveSessionsPerUser"`
 	MaxConcurrentRuns        int     `json:"maxConcurrentRuns"`
 	WelcomeMessage           string  `json:"welcomeMessage,omitempty"`
+	Icon                     string  `json:"icon,omitempty"`
+	Color                    string  `json:"color,omitempty"`
 }
 
 // ShareSessionDTO is the end-user-facing representation of a share session.

@@ -271,6 +271,7 @@ func (s *Server) shareExchange(c echo.Context) error {
 	if err != nil {
 		return shareExchangeErrorResponse(c, err)
 	}
+	sanitizeShareConfig(cfg)
 	endUserRef, err := newShareEndUserRef()
 	if err != nil {
 		captureError(err)
@@ -308,7 +309,21 @@ func (s *Server) shareConfig(c echo.Context) error {
 	if err != nil {
 		return shareExchangeErrorResponse(c, err)
 	}
+	sanitizeShareConfig(cfg)
 	return c.JSON(http.StatusOK, cfg)
+}
+
+// sanitizeShareConfig normalizes the display fields of the public config before
+// it is returned to the anonymous client. The icon is the risky field: an
+// unknown ASCII value would otherwise render as a bogus "lucide--…" class with
+// no compiled CSS, so it is resolved against the icon catalog (or dropped to
+// the client's bot fallback) here rather than trusting the client to validate
+// it against a catalog it does not hold.
+func sanitizeShareConfig(cfg *SharePublicConfig) {
+	if cfg == nil {
+		return
+	}
+	cfg.Icon = shareIconName(cfg.Icon)
 }
 
 // --- page -------------------------------------------------------------------
@@ -433,6 +448,13 @@ func (s *Server) shareGetSession(c echo.Context) error {
 	sess, err := s.memory.ShareGetSession(c.Request().Context(), claims.Token, claims.EndUserRef, c.Param("id"))
 	if err != nil {
 		return s.shareProxyErrorResponse(c, err)
+	}
+	// Render markdown server-side for assistant messages only; user messages
+	// stay plain text and are never interpreted as HTML by the client.
+	for i := range sess.Messages {
+		if sess.Messages[i].Role == "assistant" {
+			sess.Messages[i].HTML = renderMarkdown(sess.Messages[i].Content)
+		}
 	}
 	return c.JSON(http.StatusOK, sess)
 }
@@ -620,6 +642,8 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	sc.Split(splitSSEEvent)
+	var sb strings.Builder
+	var snapshotEmitted bool // true once this turn's html snapshot was emitted
 	for sc.Scan() {
 		raw := sc.Bytes()
 		data := extractSSEData(raw)
@@ -639,6 +663,7 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 		}
 		switch ev.Type {
 		case "token":
+			sb.WriteString(ev.Token)
 			payload, merr := marshalNoEscape(map[string]string{"type": "token", "delta": ev.Token})
 			if merr != nil {
 				return merr
@@ -646,6 +671,17 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 			if _, werr := fmtEvent(w, payload); werr != nil {
 				return werr
 			}
+		case "done":
+			// Emit the authoritative markdown snapshot before passing done
+			// through, then reset the turn buffer for any later turn.
+			if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
+				return err
+			}
+			if _, werr := w.Write(raw); werr != nil {
+				return werr
+			}
+			sb.Reset()
+			snapshotEmitted = false
 		case "error":
 			if code := shareSSEErrorCode(ev.Error); code != "" {
 				payload, merr := marshalNoEscape(map[string]string{"type": "error", "error": ev.Error, "code": code})
@@ -665,6 +701,11 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 				return werr
 			}
 		}
+	}
+	// Fallback: a turn that produced text but never saw `done` (error/EOF)
+	// still gets its rendered snapshot before termination.
+	if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
+		return err
 	}
 	return sc.Err()
 }

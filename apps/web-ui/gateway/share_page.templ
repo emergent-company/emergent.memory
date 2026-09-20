@@ -228,29 +228,12 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 				border-radius: 1rem;
 				border: 1px solid oklch(1 0 0 / 0.08);
 			}
-			/* Streaming caret on the last assistant bubble. */
-			.share-caret {
-				display: inline-block;
-				width: 0.5ch;
-				animation: share-caret-blink 1s steps(2, start) infinite;
-			}
-			@keyframes share-caret-blink { to { visibility: hidden; } }
-			.share-typing span {
-				width: 0.4rem;
-				height: 0.4rem;
-				border-radius: 9999px;
-				background: color-mix(in oklch, var(--color-base-content) 45%, transparent);
-				display: inline-block;
-				animation: share-bounce 1.2s infinite ease-in-out;
-			}
-			.share-typing span:nth-child(2) { animation-delay: 0.15s; }
-			.share-typing span:nth-child(3) { animation-delay: 0.3s; }
-			@keyframes share-bounce {
-				0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
-				40% { transform: translateY(-4px); opacity: 1; }
-			}
+			/* The streaming caret and the waiting dots are the app chat's own
+			   components (.memory-caret / .memory-typing, defined in app.css),
+			   so the share page inherits their exact look — and the
+			   prefers-reduced-motion handling that app.css already applies to
+			   both. The only motion this page still owns is its rail drawer. */
 			@media (prefers-reduced-motion: reduce) {
-				.share-caret, .share-typing span { animation: none; }
 				.share-rail { transition: none; }
 			}
 			</style>
@@ -283,7 +266,7 @@ templ shareFrame(props ShareAgentPageProps) {
 		<div class="share-body">
 			<aside
 				id="share-session-rail"
-				class="share-rail"
+				class="share-rail hidden"
 				data-testid="share-session-rail"
 				aria-label="Your chats"
 			>
@@ -352,9 +335,9 @@ templ shareFrame(props ShareAgentPageProps) {
 				@layout.Container(layout.ContainerLG, nil) {
 					@shareFirstLoad(props)
 					<div id="share-messages" class="flex flex-col gap-3"></div>
-					<div id="share-typing" class="share-typing mt-3 hidden items-center gap-1.5 px-1" role="status" aria-live="polite" data-testid="share-typing">
-						<span></span><span></span><span></span>
-						<span class="text-base-content/45 ml-1 text-xs">Thinking…</span>
+					<div id="share-typing" class="mt-3 hidden px-1" role="status" aria-live="polite" data-testid="share-typing">
+						<span class="memory-typing"><span></span><span></span><span></span></span>
+						<span class="text-base-content/45 ml-1.5 text-xs">Thinking…</span>
 					</div>
 					<!-- Client-revealable terminal states for a link that runs out
 					     mid-conversation (rate limit / budget). Kept out of the
@@ -369,13 +352,6 @@ templ shareFrame(props ShareAgentPageProps) {
 				@shareComposer(props)
 			</section>
 		</div>
-		<footer class="border-base-content/5 text-base-content/40 border-t px-4 py-2 text-center text-[11px]">
-			if props.RequireEmail && props.UserEmail != "" {
-				Signed in as { props.UserEmail } · this chat is visible to the link's owner.
-			} else {
-				This chat is visible to the link's owner.
-			}
-		</footer>
 	</div>
 }
 
@@ -398,7 +374,7 @@ templ shareHeader(props ShareAgentPageProps) {
 				"aria-controls": "share-session-rail",
 			},
 		})
-		@shareAvatar(props)
+		@shareAvatar(props, "share-avatar")
 		<div class="min-w-0">
 			<div class="flex items-center gap-2">
 				<h1 id="share-agent-name" class="truncate text-sm font-semibold">{ props.AgentName }</h1>
@@ -412,25 +388,28 @@ templ shareHeader(props ShareAgentPageProps) {
 }
 
 // shareAvatar renders the agent's logo when one is set, else its glyph/emoji,
-// else a neutral bot tile.
-templ shareAvatar(props ShareAgentPageProps) {
-	if props.AgentAvatarURL != "" {
-		<div class="avatar placeholder">
-			<div class="bg-base-200 size-9 rounded-lg">
-				<img class="rounded-lg" src={ templ.URL(props.AgentAvatarURL) } alt=""/>
+// else a neutral bot tile. The caller supplies a container id so the client
+// (share-agent.js) can swap the tile for the agent's configured icon/color.
+templ shareAvatar(props ShareAgentPageProps, id string) {
+	<div id={ id }>
+		if props.AgentAvatarURL != "" {
+			<div class="avatar placeholder">
+				<div class="bg-base-200 size-9 rounded-lg">
+					<img class="rounded-lg" src={ templ.URL(props.AgentAvatarURL) } alt=""/>
+				</div>
 			</div>
-		</div>
-	} else if props.AgentGlyph != "" {
-		@ui.IconTile(props.AgentGlyph, ui.IconTileProps{Glyph: props.AgentGlyph, Color: props.AgentColor, Size: "size-9"})
-	} else {
-		@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary", Size: "size-9"})
-	}
+		} else if props.AgentGlyph != "" {
+			@ui.IconTile(props.AgentGlyph, ui.IconTileProps{Glyph: props.AgentGlyph, Color: props.AgentColor, Size: "size-9"})
+		} else {
+			@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary", Size: "size-9"})
+		}
+	</div>
 }
 
 // shareFirstLoad is the welcome panel shown before the visitor's first message.
 templ shareFirstLoad(props ShareAgentPageProps) {
 	<div id="share-first-load" data-testid="share-first-load" class="flex flex-col items-center py-10 text-center">
-		@shareAvatar(props)
+		@shareAvatar(props, "share-first-load-avatar")
 		<h2 id="share-first-load-title" class="mt-4 text-lg font-semibold tracking-tight">Chat with { props.AgentName }</h2>
 		<p id="share-first-load-desc" class="text-base-content/55 mt-1.5 max-w-md text-sm">
 			if props.AgentDescription != "" {
@@ -454,7 +433,7 @@ templ shareSuggestion(text string) {
 		type="button"
 		data-action="share-suggestion"
 		data-text={ text }
-		class="border-base-content/10 bg-base-100/60 text-base-content/70 hover:border-primary hover:text-base-content rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors"
+		class="memory-suggestion border-base-content/15 bg-base-100/50 text-base-content/70 hover:border-primary rounded-full border px-3.5 py-1.5 text-xs font-medium"
 	>{ text }</button>
 }
 
@@ -525,37 +504,39 @@ templ shareComposer(props ShareAgentPageProps) {
 		@shareEmailGate(props)
 		<form id="share-composer" data-testid="share-composer">
 			@layout.Container(layout.ContainerLG, nil) {
-				<div class="flex items-end gap-2">
+				<div class="flex flex-wrap items-stretch gap-2">
 					<textarea
 						id="share-input"
 						data-testid="share-input"
 						rows="1"
-						class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow resize-none"
+						class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow basis-48 resize-none"
 						placeholder={ sharePlaceholder(props) }
 						aria-label="Message"
 					></textarea>
-					@ui.Button(ui.ButtonProps{
-						Type:       ui.ButtonTypeSubmit,
-						Variant:    ui.ButtonPrimary,
-						Size:       ui.ButtonSM,
-						Shape:      ui.ButtonShapeSquare,
-						Icon:       "lucide--arrow-up",
-						AriaLabel:  "Send message",
-						ExtraClass: "h-full min-h-11 w-11 shrink-0",
-						Attrs:      templ.Attributes{"id": "share-send", "data-testid": "share-send"},
-					})
-					<span id="share-stop" class="hidden shrink-0">
+					<div class="flex shrink-0 flex-wrap items-stretch gap-1.5 sm:gap-2">
 						@ui.Button(ui.ButtonProps{
-							Type:       ui.ButtonTypeButton,
-							Variant:    ui.ButtonNeutral,
+							Type:       ui.ButtonTypeSubmit,
+							Variant:    ui.ButtonPrimary,
 							Size:       ui.ButtonSM,
 							Shape:      ui.ButtonShapeSquare,
-							Icon:       "lucide--square",
-							AriaLabel:  "Stop generating",
+							Icon:       "lucide--arrow-up",
+							AriaLabel:  "Send message",
 							ExtraClass: "h-full min-h-11 w-11 shrink-0",
-							Attrs:      templ.Attributes{"data-testid": "share-stop"},
+							Attrs:      templ.Attributes{"id": "share-send", "data-testid": "share-send"},
 						})
-					</span>
+						<span id="share-stop" class="hidden shrink-0">
+							@ui.Button(ui.ButtonProps{
+								Type:       ui.ButtonTypeButton,
+								Variant:    ui.ButtonNeutral,
+								Size:       ui.ButtonSM,
+								Shape:      ui.ButtonShapeSquare,
+								Icon:       "lucide--square",
+								AriaLabel:  "Stop generating",
+								ExtraClass: "h-full min-h-11 w-11 shrink-0",
+								Attrs:      templ.Attributes{"data-testid": "share-stop"},
+							})
+						</span>
+					</div>
 				</div>
 				<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
 			}
@@ -766,7 +747,7 @@ func shareDocTitle(props ShareAgentPageProps) string {
 		return pageTitle(shareStateTitle(props.State))
 	}
 	if props.AgentName != "" {
-		return pageTitle("Chat with " + props.AgentName)
+		return pageTitle(props.AgentName)
 	}
 	return pageTitle("Shared chat")
 }

@@ -114,6 +114,8 @@ function publicConfig() {
     linkId: "link-1",
     agentName: "Memory",
     agentDescription: "A helpful assistant.",
+    icon: "database",
+    color: "#2563EB",
     model: "deepseek-v4-flash",
     requireEmail: false,
     showSessionList: true,
@@ -139,6 +141,8 @@ function publicConfigForLink(linkConfig) {
     linkId: "link-1",
     agentName: "Memory",
     agentDescription: "A helpful assistant.",
+    icon: "database",
+    color: "#2563EB",
     model: "deepseek-v4-flash",
     requireEmail: !!cfg.require_email,
     showSessionList: !!cfg.show_session_list,
@@ -220,6 +224,12 @@ const server = http.createServer((req, res) => {
       res.statusCode = 410;
       return json(res, { error: { code: "share_link_revoked", message: "share link revoked" } });
     }
+    // A well-known key whose link has the session list disabled, so the
+    // flash-elimination test can drive a deterministic showSessionList:false
+    // exchange without the owner-page round trip.
+    if (key === "no-rail-key") {
+      return json(res, { ...publicConfig(), showSessionList: false });
+    }
     const created = shareLinks.find((l) => l.token === key && !l.revokedAt);
     if (VALID_KEYS.has(key)) {
       return json(res, publicConfig());
@@ -243,7 +253,7 @@ const server = http.createServer((req, res) => {
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
-      res.write(`data: ${JSON.stringify({ type: "token", token: "Hello" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "token", token: "**Hello**" })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: "token", token: " from share!" })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
       res.end();

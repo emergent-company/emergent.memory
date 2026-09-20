@@ -161,6 +161,28 @@ func typeIconClass(icon string) string {
 	return "lucide--box"
 }
 
+// shareIconName resolves an agent icon from the upstream share config to a
+// value the anonymous share client can render safely. Known Lucide names become
+// their compiled catalog class, raw glyphs (emoji/symbols) pass through
+// unchanged for text rendering, and anything else is dropped so the client's
+// bot fallback applies — never an unresolvable literal "lucide--…" class with
+// no compiled CSS.
+func shareIconName(icon string) string {
+	s := strings.TrimSpace(icon)
+	if s == "" {
+		return ""
+	}
+	if hasNonASCII(s) {
+		return s
+	}
+	if name := normalizeIconName(s); name != "" {
+		if _, ok := supportedTypeIcons[name]; ok {
+			return "lucide--" + name
+		}
+	}
+	return ""
+}
+
 // normalizeIconName reduces an ASCII icon value to a bare Lucide kebab name
 // ("FileText" → "file-text", "file_text" → "file-text", "lucide--file-text" →
 // "file-text"). It returns "" when the value is not a plausible icon name
