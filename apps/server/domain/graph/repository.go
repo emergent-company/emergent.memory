@@ -604,6 +604,8 @@ func (r *Repository) GetByIDIncludeDeleted(ctx context.Context, projectID, id uu
 	var objects []GraphObject
 	err := r.db.NewSelect().
 		Model(&objects).
+		Column(graphObjectDetailColumns...).
+		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
 		OrderExpr("supersedes_id ASC NULLS FIRST"). // HEAD first
