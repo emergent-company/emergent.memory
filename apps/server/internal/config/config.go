@@ -84,6 +84,12 @@ type Config struct {
 	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
 	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
 
+	// A2AOrigin is the public origin advertised in A2A AgentCards
+	// (supportedInterfaces[].url). When empty, the interface URL is derived from
+	// the incoming request (respecting X-Forwarded-Proto/Host for proxied
+	// deployments). Set A2A_ORIGIN to override, e.g. https://api.dev.emergent-company.ai.
+	A2AOrigin string `env:"A2A_ORIGIN" envDefault:""`
+
 	// AskV2 enables the code-generation variant of the CLI assistant agent.
 	// When true, POST /api/ask and /api/projects/:id/ask use EnsureCliAssistantAgentV2
 	// which generates Python SDK scripts instead of calling 57 individual MCP tools.
