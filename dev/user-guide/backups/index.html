@@ -1128,6 +1128,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#importing-an-archive-from-another-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Importing an archive from another deployment
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#checksums" class="md-nav__link">
     <span class="md-ellipsis">
       Checksums
@@ -2557,6 +2566,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#importing-an-archive-from-another-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Importing an archive from another deployment
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#checksums" class="md-nav__link">
     <span class="md-ellipsis">
       Checksums
@@ -2687,6 +2705,57 @@
 <h2 id="deleting-a-backup">Deleting a Backup<a class="headerlink" href="#deleting-a-backup" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="err">DELETE /api/v1/organizations/{orgId}/backups/{backupId}</span>
 </code></pre></div>
+<hr />
+<h2 id="importing-an-archive-from-another-deployment">Importing an archive from another deployment<a class="headerlink" href="#importing-an-archive-from-another-deployment" title="Permanent link">&para;</a></h2>
+<p>Backups are self-describing ZIP archives (<code>manifest.json</code>, <code>project/config.json</code>, <code>database/*.ndjson</code>, <code>files/*</code>). You can import an archive produced by another deployment so it can be restored locally.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">POST /api/v1/organizations/{orgId}/backups/import</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="err">Content-Type: multipart/form-data</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="err">file: &lt;backup.zip&gt;</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="err">retentionDays: 30   # optional, 1-365 (default 30)</span>
+</code></pre></div>
+<p>Requirements and limits:</p>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Field</td>
+<td><code>file</code> (multipart/form-data)</td>
+</tr>
+<tr>
+<td>Maximum size</td>
+<td>1 GiB</td>
+</tr>
+<tr>
+<td>Format</td>
+<td>ZIP only</td>
+</tr>
+<tr>
+<td>Authorization</td>
+<td>Must be a member of the target organization</td>
+</tr>
+<tr>
+<td>Manifest</td>
+<td>Must pass structure, project-id, and checksum validation</td>
+</tr>
+</tbody>
+</table>
+<p>On success the endpoint returns <code>201 Created</code> with a backup record that has <code>status: "ready"</code> and <code>imported: true</code>. Its <code>projectId</code> records the archive's <em>source</em> project — a foreign project that does not exist in this deployment.</p>
+<p>Imported backups are <strong>clone-only</strong>. They cannot be used for an overwrite restore (overwrite requires a local project matching the source project id). To restore an imported backup, clone it into the target organization:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="err">POST /api/v1/organizations/{orgId}/restore</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="err">Content-Type: application/json</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="err">{</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="err">  "backupId": "&lt;imported-backup-id&gt;",</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="err">  "targetProjectName": "Restored project"</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="err">}</span>
+</code></pre></div>
+<p>The clone creates a new project with a new project id, drops foreign user references, and adds the restoring user to the new project.</p>
 <hr />
 <h2 id="checksums">Checksums<a class="headerlink" href="#checksums" title="Permanent link">&para;</a></h2>
 <p>Each backup includes <code>manifestChecksum</code> and <code>contentChecksum</code> for integrity verification. Compare these values after downloading to confirm the archive has not been corrupted.</p>
