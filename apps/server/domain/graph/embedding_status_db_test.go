@@ -168,3 +168,37 @@ func TestEmbeddingStatus_Repository(t *testing.T) {
 		assert.Equalf(t, status, obj.EmbeddingStatus, "GetByID embedding_status for %s", id)
 	}
 }
+
+// TestGetHeadByCanonicalID_ScansEmbeddingV2 proves GetHeadByCanonicalID returns
+// the HEAD object for a canonical id without failing the scan when the row
+// carries an embedding_v2 vector. Regression guard for the explicit-column
+// projection: `go.*` selected embedding_v2 (a pgvector column with no
+// GraphObject field) and Bun aborted with "does not have column embedding_v2".
+func TestGetHeadByCanonicalID_ScansEmbeddingV2(t *testing.T) {
+	ctx, db, projectID, cfg := setupEmbeddingStatusTest(t)
+	repo := graph.NewRepository(db, slog.Default(), cfg)
+	pid := uuid.MustParse(projectID)
+
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	vec := vec768()
+	embeddedID := insertEmbeddingStatusObject(t, ctx, db, projectID, "HeadCanonicalEmbedded", &vec, &at)
+	plainID := insertEmbeddingStatusObject(t, ctx, db, projectID, "HeadCanonicalPlain", nil, nil)
+
+	embedded, err := repo.GetHeadByCanonicalID(ctx, db, pid, embeddedID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, embedded)
+	assert.Equal(t, embeddedID, embedded.ID)
+	assert.Equal(t, "embedded", embedded.EmbeddingStatus)
+	require.NotNil(t, embedded.EmbeddingUpdatedAt)
+	// Equal compares the instant, ignoring the timestamptz location the driver
+	// attaches on scan (time.Local) versus the UTC value we inserted.
+	assert.True(t, embedded.EmbeddingUpdatedAt.Equal(at),
+		"embedding_updated_at mismatch: got %v want %v", embedded.EmbeddingUpdatedAt, at)
+
+	plain, err := repo.GetHeadByCanonicalID(ctx, db, pid, plainID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, plain)
+	assert.Equal(t, plainID, plain.ID)
+	assert.Equal(t, "missing", plain.EmbeddingStatus)
+	assert.Nil(t, plain.EmbeddingUpdatedAt)
+}
