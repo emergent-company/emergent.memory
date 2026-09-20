@@ -25,12 +25,14 @@ type Project struct {
 // Token is the connector-owned view of an API token (never carries the secret
 // value except at creation time).
 type Token struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Prefix    string   `json:"prefix"`
-	Scopes    []string `json:"scopes"`
-	CreatedAt string   `json:"created_at"`
-	RevokedAt *string  `json:"revoked_at,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Prefix        string   `json:"prefix"`
+	Scopes        []string `json:"scopes"`
+	CreatedAt     string   `json:"created_at"`
+	RevokedAt     *string  `json:"revoked_at,omitempty"`
+	IsRevoked     bool     `json:"isRevoked"`
+	OwnedByCaller bool     `json:"ownedByCaller,omitempty"`
 }
 
 // CreatedToken is returned by CreateToken and carries the plaintext token,
@@ -138,12 +140,14 @@ func (c *Client) ListTokens(ctx context.Context, projectID string) ([]Token, err
 	out := make([]Token, 0, len(resp.Tokens))
 	for _, t := range resp.Tokens {
 		out = append(out, Token{
-			ID:        t.ID,
-			Name:      t.Name,
-			Prefix:    t.Prefix,
-			Scopes:    t.Scopes,
-			CreatedAt: t.CreatedAt,
-			RevokedAt: t.RevokedAt,
+			ID:            t.ID,
+			Name:          t.Name,
+			Prefix:        t.Prefix,
+			Scopes:        t.Scopes,
+			CreatedAt:     t.CreatedAt,
+			RevokedAt:     t.RevokedAt,
+			IsRevoked:     t.IsRevoked,
+			OwnedByCaller: t.OwnedByCaller,
 		})
 	}
 	return out, nil
@@ -158,9 +162,11 @@ func (c *Client) RevokeToken(ctx context.Context, projectID, tokenID string) err
 }
 
 // IsTokenNameExists reports whether err is the API's project-token name
-// conflict (HTTP 409, code token_name_exists).
+// conflict. It requires BOTH the HTTP 409 status and the token_name_exists
+// code: a bare 409 with no code (e.g. a pg-error conflict) is not a name
+// conflict and must not trigger recovery.
 func IsTokenNameExists(err error) bool {
 	var apiErr *sdkerrors.Error
 	return errors.As(err, &apiErr) &&
-		(apiErr.Code == "token_name_exists" || (apiErr.StatusCode == 409 && apiErr.Code == ""))
+		apiErr.StatusCode == 409 && apiErr.Code == "token_name_exists"
 }

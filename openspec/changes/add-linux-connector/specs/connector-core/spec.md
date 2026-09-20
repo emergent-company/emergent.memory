@@ -154,7 +154,11 @@ The core SHALL obtain a project-scoped connector token for the active project, S
 
 #### Scenario: Stale token recovery
 - **WHEN** the server already has an active connector token with the connector's project-scoped name but no local token is stored
-- **THEN** the core revokes that conflicting token and mints a fresh one, instead of failing
+- **THEN** the core revokes only the caller's own active conflicting token — never another user's same-name token — and mints a fresh one, instead of failing
+
+#### Scenario: Legacy token cleanup
+- **WHEN** an upgraded connector mints a new project token and an older `connector-<hostname>` token of the caller is still active for that project
+- **THEN** the core revokes it so the superseded credential is not left live
 
 ### Requirement: Store secrets on local disk
 

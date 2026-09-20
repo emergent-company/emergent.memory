@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/memoryapi"
@@ -89,6 +90,9 @@ type Manager struct {
 	baseDir  string
 	sessions Sessions
 	deps     Deps
+	// mu serializes EnsureToken minting so a second concurrent caller reuses
+	// the token the first one just stored instead of racing into a 409+revoke.
+	mu sync.Mutex
 }
 
 // NewManager returns a Manager backed by baseDir, reading sessions from an
@@ -230,6 +234,13 @@ func (m *Manager) EnsureToken(ctx context.Context, serverURL, projectID string) 
 	if projectID == "" {
 		return "", errors.New("project: project id is required")
 	}
+	// Serialize minting per Manager: two concurrent callers for the same
+	// project would otherwise both miss the local record, race into a 409, and
+	// one could revoke the other's freshly minted token. Locking here lets the
+	// second caller reuse the token the first one stored.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if rec, ok := m.loadToken(serverURL, projectID); ok {
 		return rec.Token, nil
 	}
@@ -267,21 +278,26 @@ func (m *Manager) EnsureToken(ctx context.Context, serverURL, projectID string) 
 	if err := m.saveToken(serverURL, projectID, rec); err != nil {
 		return "", err
 	}
+	// A fresh token was just minted (the reuse path returned early), so it is
+	// safe to clean up any superseded legacy credential still active in this
+	// project — never an in-use token.
+	m.revokeLegacyTokens(ctx, serverURL, accessToken, projectID, m.legacyTokenName())
 	return rec.Token, nil
 }
 
-// revokeConflictingTokens revokes active project tokens named name so the
-// name can be reused. The plaintext secret of an existing token is not
-// recoverable, so a conflicting token that this connector no longer holds
-// must be replaced. Only tokens for this project (the ListTokens scope) and
-// matching name are touched.
+// revokeConflictingTokens revokes the caller's own active project tokens named
+// name so the name can be reused. The plaintext secret of an existing token is
+// not recoverable, so a conflicting token that this connector no longer holds
+// must be replaced. Only the caller's own (OwnedByCaller) active (not
+// IsRevoked) tokens for this project with a matching name are touched; another
+// user's same-name token is never revoked.
 func (m *Manager) revokeConflictingTokens(ctx context.Context, serverURL, accessToken, projectID, name string) error {
 	tokens, err := m.deps.ListTokens(ctx, serverURL, accessToken, projectID)
 	if err != nil {
 		return err
 	}
 	for _, t := range tokens {
-		if t.RevokedAt != nil || t.Name != name {
+		if t.IsRevoked || !t.OwnedByCaller || t.Name != name {
 			continue
 		}
 		if err := m.deps.RevokeToken(ctx, serverURL, accessToken, projectID, t.ID); err != nil {
@@ -289,6 +305,27 @@ func (m *Manager) revokeConflictingTokens(ctx context.Context, serverURL, access
 		}
 	}
 	return nil
+}
+
+// revokeLegacyTokens best-effort revokes the caller's own active tokens named
+// legacyName for this project. An upgraded connector must not leave the old
+// connector-<hostname> credential live in that project once it mints a
+// project-scoped token. Errors are ignored: cleanup is a courtesy and the
+// superseded credential is no longer used locally.
+func (m *Manager) revokeLegacyTokens(ctx context.Context, serverURL, accessToken, projectID, legacyName string) {
+	if m.deps.ListTokens == nil || m.deps.RevokeToken == nil {
+		return
+	}
+	tokens, err := m.deps.ListTokens(ctx, serverURL, accessToken, projectID)
+	if err != nil {
+		return
+	}
+	for _, t := range tokens {
+		if t.IsRevoked || !t.OwnedByCaller || t.Name != legacyName {
+			continue
+		}
+		_ = m.deps.RevokeToken(ctx, serverURL, accessToken, projectID, t.ID)
+	}
 }
 
 // Revoke revokes the stored project token (best-effort) and deletes it
@@ -333,12 +370,24 @@ func (m *Manager) ClearAccountTokens(serverURL string) error {
 // of a user's active tokens, so a bare connector-<hostname> would collide when
 // the same host connects a second project.
 func (m *Manager) TokenName(projectID string) string {
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		host = "unknown"
-	}
+	host := hostName()
 	if projectID == "" {
 		return "connector-" + host
 	}
 	return "connector-" + host + "-" + projectID
+}
+
+// legacyTokenName returns the pre-project-scoping connector token name
+// (connector-<hostname>) that older connector builds used.
+func (m *Manager) legacyTokenName() string {
+	return "connector-" + hostName()
+}
+
+// hostName returns the connector host's hostname, falling back to "unknown".
+func hostName() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return "unknown"
+	}
+	return host
 }

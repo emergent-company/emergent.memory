@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/apps/connector.linux/internal/account"
@@ -28,7 +29,8 @@ func signedInSessions(serverURL, token string) fakeSessions {
 	}}
 }
 
-// fakeDeps records calls and returns canned results.
+// fakeDeps records calls and returns canned results. Counters and slices are
+// guarded by mu so the concurrency test exercises the Manager lock safely.
 type fakeDeps struct {
 	projects      []memoryapi.Project
 	tokens        []memoryapi.Token
@@ -46,15 +48,23 @@ type fakeDeps struct {
 	lastName      string
 	lastScopes    []string
 	lastTokenID   string
+
+	mu            sync.Mutex
+	createGate    chan struct{} // when non-nil, the first CreateToken signals then blocks
+	createRelease chan struct{} // close to unblock a gated CreateToken
 }
 
 func (f *fakeDeps) deps() Deps {
 	return Deps{
 		ListProjects: func(_ context.Context, serverURL, accessToken string) ([]memoryapi.Project, error) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
 			f.lastServer, f.lastAccess = serverURL, accessToken
 			return f.projects, nil
 		},
 		ListTokens: func(_ context.Context, serverURL, accessToken, projectID string) ([]memoryapi.Token, error) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
 			f.listCalls++
 			f.lastServer, f.lastAccess = serverURL, accessToken
 			f.lastProject = projectID
@@ -64,18 +74,34 @@ func (f *fakeDeps) deps() Deps {
 			return f.tokens, nil
 		},
 		CreateToken: func(_ context.Context, serverURL, accessToken, projectID, name string, scopes []string) (memoryapi.CreatedToken, error) {
+			f.mu.Lock()
 			f.createCalls++
+			n := f.createCalls
 			f.lastServer, f.lastAccess = serverURL, accessToken
 			f.lastProject, f.lastName, f.lastScopes = projectID, name, scopes
-			if f.createErrOnce != nil && f.createCalls == 1 {
-				return memoryapi.CreatedToken{}, f.createErrOnce
+			onceErr := f.createErrOnce
+			onceApplied := onceErr != nil && n == 1
+			createErr := f.createErr
+			gate, release := f.createGate, f.createRelease
+			f.mu.Unlock()
+
+			if gate != nil && n == 1 {
+				gate <- struct{}{}
+				<-release
 			}
-			if f.createErr != nil {
-				return memoryapi.CreatedToken{}, f.createErr
+
+			switch {
+			case onceApplied:
+				return memoryapi.CreatedToken{}, onceErr
+			case createErr != nil:
+				return memoryapi.CreatedToken{}, createErr
+			default:
+				return memoryapi.CreatedToken{ID: "tok-" + projectID, Name: name, Token: "emt_" + projectID, Scopes: scopes}, nil
 			}
-			return memoryapi.CreatedToken{ID: "tok-" + projectID, Name: name, Token: "emt_" + projectID, Scopes: scopes}, nil
 		},
 		RevokeToken: func(_ context.Context, serverURL, accessToken, projectID, tokenID string) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
 			f.revokeCalls++
 			f.lastServer, f.lastAccess = serverURL, accessToken
 			f.lastProject, f.lastTokenID = projectID, tokenID
@@ -318,11 +344,11 @@ func TestEnsureTokenRecoversFromNameConflict(t *testing.T) {
 	m := NewManagerWithDeps(dir, signedInSessions(serverURL, "at"), fd.deps())
 
 	name := m.TokenName("p1")
-	revokedAt := "2026-01-01T00:00:00Z"
 	fd.tokens = []memoryapi.Token{
-		{ID: "stale", Name: name},
-		{ID: "other", Name: "connector-other-name"},
-		{ID: "revoked-stale", Name: name, RevokedAt: &revokedAt},
+		{ID: "stale", Name: name, IsRevoked: false, OwnedByCaller: true},
+		{ID: "other", Name: "connector-other-name", IsRevoked: false, OwnedByCaller: true},
+		{ID: "revoked-stale", Name: name, IsRevoked: true, OwnedByCaller: true},
+		{ID: "not-owned-stale", Name: name, IsRevoked: false, OwnedByCaller: false},
 	}
 
 	token, err := m.EnsureToken(context.Background(), serverURL, "p1")
@@ -335,14 +361,89 @@ func TestEnsureTokenRecoversFromNameConflict(t *testing.T) {
 	if fd.createCalls != 2 {
 		t.Errorf("CreateToken calls = %d, want 2", fd.createCalls)
 	}
-	if fd.listCalls != 1 {
-		t.Errorf("ListTokens calls = %d, want 1", fd.listCalls)
+	// One list for the conflict recovery, one for the post-mint legacy cleanup.
+	if fd.listCalls != 2 {
+		t.Errorf("ListTokens calls = %d, want 2", fd.listCalls)
 	}
 	if fd.revokeCalls != 1 {
 		t.Fatalf("RevokeToken calls = %d, want 1", fd.revokeCalls)
 	}
 	if len(fd.revoked) != 1 || fd.revoked[0] != "stale" {
 		t.Errorf("revoked token ids = %v, want [stale]", fd.revoked)
+	}
+}
+
+func TestEnsureTokenCleansUpLegacyToken(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://srv.test"
+	fd := &fakeDeps{}
+	m := NewManagerWithDeps(dir, signedInSessions(serverURL, "at"), fd.deps())
+
+	legacy := m.legacyTokenName()
+	fd.tokens = []memoryapi.Token{
+		{ID: "legacy-active", Name: legacy, IsRevoked: false, OwnedByCaller: true},
+		{ID: "legacy-revoked", Name: legacy, IsRevoked: true, OwnedByCaller: true},
+		{ID: "legacy-not-owned", Name: legacy, IsRevoked: false, OwnedByCaller: false},
+		{ID: "other-name", Name: "connector-other", IsRevoked: false, OwnedByCaller: true},
+	}
+
+	token, err := m.EnsureToken(context.Background(), serverURL, "p1")
+	if err != nil {
+		t.Fatalf("EnsureToken: %v", err)
+	}
+	if token != "emt_p1" {
+		t.Errorf("token = %q, want emt_p1", token)
+	}
+	if fd.createCalls != 1 {
+		t.Errorf("CreateToken calls = %d, want 1", fd.createCalls)
+	}
+	if fd.listCalls != 1 {
+		t.Errorf("ListTokens calls = %d, want 1", fd.listCalls)
+	}
+	if fd.revokeCalls != 1 {
+		t.Fatalf("RevokeToken calls = %d, want 1", fd.revokeCalls)
+	}
+	if len(fd.revoked) != 1 || fd.revoked[0] != "legacy-active" {
+		t.Errorf("revoked token ids = %v, want [legacy-active]", fd.revoked)
+	}
+}
+
+func TestEnsureTokenConcurrentMintProducesOneCreate(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://srv.test"
+	fd := &fakeDeps{}
+	m := NewManagerWithDeps(dir, signedInSessions(serverURL, "at"), fd.deps())
+
+	gate := make(chan struct{})
+	release := make(chan struct{})
+	fd.createGate = gate
+	fd.createRelease = release
+
+	tokens := make([]string, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tokens[i], errs[i] = m.EnsureToken(context.Background(), serverURL, "p1")
+		}(i)
+	}
+
+	// Wait for the winning goroutine to reach CreateToken, then release it so it
+	// can finish, store the token, and let the loser reuse it under the lock.
+	<-gate
+	close(release)
+	wg.Wait()
+
+	if errs[0] != nil || errs[1] != nil {
+		t.Fatalf("EnsureToken errors = %v, %v; want nil", errs[0], errs[1])
+	}
+	if tokens[0] != "emt_p1" || tokens[1] != "emt_p1" {
+		t.Errorf("tokens = %q, %q; want both emt_p1", tokens[0], tokens[1])
+	}
+	if fd.createCalls != 1 {
+		t.Errorf("CreateToken calls = %d, want 1", fd.createCalls)
 	}
 }
 
