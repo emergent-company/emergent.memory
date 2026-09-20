@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { expectTokenAuthenticated, expectTokenRejected } from '../../helpers/tokens';
 
 // MCP Sharing lifecycle: gateway/mcp_shares_handlers.go + mcp_shares.templ,
 // the project-scoped share surface at /settings/mcp-servers/shares. A share
@@ -86,6 +87,12 @@ test('MCP share lifecycle: create, reveal once, edit, rotate, revoke', async ({ 
       .click();
     const rotatedToken = await revealToken(page);
     expect(rotatedToken).not.toBe(createdToken);
+
+    // Rotation must invalidate the previous key, not merely issue a new one: the
+    // memory API rejects the stale key with 401 while the replacement is still
+    // accepted (else the stale check could pass trivially).
+    await expectTokenAuthenticated(page.request, rotatedToken);
+    await expectTokenRejected(page.request, createdToken);
 
     // --- revoke ---
     await page.getByRole('button', { name: "Done — I've saved the key" }).click();
