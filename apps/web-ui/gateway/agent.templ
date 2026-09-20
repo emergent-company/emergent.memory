@@ -42,6 +42,7 @@ templ agentSubNav(agentID string, active string, section string) {
 		@agentSettingsNavGroup(agentID, section)
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sandbox", active == "sandbox", "lucide--box", "Sandbox")
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/sessions", active == "sessions", "lucide--messages-square", "Sessions")
+		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/share", active == "share", "lucide--share-2", "Share")
 	}
 }
 

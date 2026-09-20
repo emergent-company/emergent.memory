@@ -54,6 +54,8 @@ playwright-report/
 **/playwright-report/
 test-results/
 **/test-results/
+test-results-share/
+**/test-results-share/
 /.cache/ms-playwright/
 **/.cache/ms-playwright/
 

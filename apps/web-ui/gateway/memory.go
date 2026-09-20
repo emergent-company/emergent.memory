@@ -30,7 +30,9 @@ type MemoryClient struct {
 	projectID  string
 	http       *http.Client // non-streaming requests — short timeout
 	streamHTTP *http.Client // streaming (SSE) requests — no timeout; caller ctx governs lifetime
-
+	// shareRefSecret is the HMAC key for the X-End-User-Ref-Sig header on
+	// public share calls. Set once at construction from SHARE_REF_SECRET.
+	shareRefSecret string
 }
 
 func NewMemoryClient(baseURL, token, projectID string) *MemoryClient {

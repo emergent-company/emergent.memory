@@ -1,0 +1,797 @@
+package main
+
+import (
+	"strconv"
+
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Public share page -------------------------------------------------------
+//
+// ShareAgentPage is the standalone end-user surface for a share link. It is a
+// full document on purpose (no appShell, no sidebar, no user menu): the visitor
+// is anonymous and must never see admin chrome. It mirrors the self-contained
+// document structure of loginPage (auth_ui.templ) and, like it, loads only
+// self-hosted assets via webui.AssetPath — no external fonts or CDNs.
+//
+// SECURITY: the share key travels in the URL fragment (#<key>). The fragment is
+// never sent to the server, and this page NEVER renders it into the DOM. The
+// client (webui/static/js/share-agent.js) reads window.location.hash, POSTs it
+// once to /share/api/exchange, then scrubs it from the address bar and talks to
+// the cookie-authenticated /share/api/* endpoints.
+//
+// The wiring lane owns routing + the exchange: render this component for GET
+// /share, choosing Props.State from whatever the request knows (a missing/invalid
+// cookie renders a terminal state; otherwise State is ShareStateReady).
+
+// ShareTerminalState is the pre-chat lifecycle state of a share link, decided
+// by the server before the visitor can send a message. ShareStateReady is the
+// zero value: the visitor may chat.
+type ShareTerminalState string
+
+const (
+	// ShareStateReady is the normal, usable link.
+	ShareStateReady ShareTerminalState = ""
+	// ShareStateInvalid means no usable key was presented (missing/bad key).
+	ShareStateInvalid ShareTerminalState = "invalid"
+	// ShareStateRevoked means the owner turned the link off.
+	ShareStateRevoked ShareTerminalState = "revoked"
+	// ShareStateExpired means the link's expiry time has passed.
+	ShareStateExpired ShareTerminalState = "expired"
+	// ShareStateRateLimited means the visitor is sending too fast.
+	ShareStateRateLimited ShareTerminalState = "rate-limited"
+	// ShareStateBudgetExceeded means the link's budget is spent.
+	ShareStateBudgetExceeded ShareTerminalState = "budget-exceeded"
+)
+
+// ShareSessionItem is one of the visitor's own chats shown in the session rail.
+type ShareSessionItem struct {
+	// ID is the session id used to resume it (/share/api/sessions/:id).
+	ID string
+	// Title is the chat's title, set from its first message.
+	Title string
+	// LastActivity is a short human label (e.g. "3m ago"), rendered as-is.
+	LastActivity string
+	// MessageCount is the number of messages in the session.
+	MessageCount int
+	// Archived marks a chat hidden from the default rail view.
+	Archived bool
+	// Active marks the chat currently open in the transcript.
+	Active bool
+}
+
+// ShareAgentPageProps configures the public share page.
+type ShareAgentPageProps struct {
+	// State is the link's lifecycle state. Anything other than
+	// ShareStateReady replaces the chat with a dedicated terminal screen.
+	State ShareTerminalState
+
+	// Agent identity shown in the public header. AvatarURL wins over Glyph.
+	AgentName        string
+	AgentDescription string
+	AgentAvatarURL   string
+	AgentGlyph       string // emoji fallback when no avatar image
+	AgentColor       string // optional accent colour for the glyph tile
+
+	// ShareLabel is an optional small label beside the name (e.g. "Public link").
+	ShareLabel string
+
+	// Sessions is the visitor's own chat list. Empty renders the empty state.
+	Sessions []ShareSessionItem
+	// ActiveSessionID highlights one rail row (client also tracks this live).
+	ActiveSessionID string
+	// ShowSessionList hides the rail when the link owner disabled it.
+	ShowSessionList bool
+	// RequireEmail means the visitor identified themselves with an email.
+	RequireEmail bool
+	// UserEmail is the identified visitor's email (empty when not required).
+	UserEmail string
+
+	// ComposerPlaceholder overrides the composer hint.
+	ComposerPlaceholder string
+
+	// Sentry config mirrors appShell/loginPage; zero values disable reporting.
+	SentryDSN                     string
+	SentryEnvironment             string
+	SentryTracesSampleRate        float64
+	SentryReplaySessionSampleRate float64
+	SentryReplayOnErrorSampleRate float64
+}
+
+// ShareAgentPage renders the whole public share document.
+templ ShareAgentPage(props ShareAgentPageProps) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark" class="group/html">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="theme-color" content="#171921"/>
+			<!-- Public, unlisted surface: never index or follow. -->
+			<meta name="robots" content="noindex,nofollow"/>
+			<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"/>
+			<title>{ shareDocTitle(props) }</title>
+			<meta name="sentry-dsn" content={ props.SentryDSN }/>
+			<meta name="sentry-environment" content={ props.SentryEnvironment }/>
+			<meta name="sentry-traces-sample-rate" content={ props.SentryTracesSampleRate }/>
+			<meta name="sentry-replay-session-sample-rate" content={ props.SentryReplaySessionSampleRate }/>
+			<meta name="sentry-replay-on-error-sample-rate" content={ props.SentryReplayOnErrorSampleRate }/>
+			if props.SentryDSN != "" {
+				<script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.replay.feedback.min.js" crossorigin="anonymous"></script>
+				<script>
+				(function () {
+					var m = function (n) { var e = document.querySelector('meta[name="' + n + '"]'); return e ? e.content : ""; };
+					Sentry.init({
+						dsn: m("sentry-dsn"),
+						environment: m("sentry-environment"),
+						integrations: [
+							Sentry.browserTracingIntegration(),
+							Sentry.replayIntegration({ maskAllText: true, maskAllInputs: true, blockAllMedia: true })
+						],
+						tracesSampleRate: parseFloat(m("sentry-traces-sample-rate")),
+						replaysSessionSampleRate: parseFloat(m("sentry-replay-session-sample-rate")),
+						replaysOnErrorSampleRate: parseFloat(m("sentry-replay-on-error-sample-rate"))
+					});
+				})();
+				</script>
+			}
+			<!-- Paint the root dark before stylesheets load: no white flash. -->
+			<style>html{color-scheme:dark;background-color:#0E1017}</style>
+			<style>
+			/* Share surface is a full-height app frame: header, then a
+			   side-by-side rail + transcript. Self-contained so it never depends
+			   on app.css for its layout; it still loads app.css for daisyUI
+			   component styles. */
+			.share-frame {
+				display: flex;
+				flex-direction: column;
+				height: 100dvh;
+				overflow: hidden;
+			}
+			.share-body {
+				display: flex;
+				min-height: 0;
+				flex: 1 1 auto;
+			}
+			.share-rail {
+				display: flex;
+				flex-direction: column;
+				min-height: 0;
+				width: 18rem;
+				flex: 0 0 auto;
+				border-right: 1px solid color-mix(in oklch, var(--color-base-content) 7%, transparent);
+				background: var(--color-base-100);
+			}
+			.share-scrim { display: none; }
+			/* The approvals slot only takes space when a card is present. */
+			#share-approvals:empty { padding-block: 0; }
+			/* Below lg the rail becomes a slide-in drawer over the transcript. */
+			@media (max-width: 1023px) {
+				.share-rail {
+					position: fixed;
+					inset-block: 0;
+					inset-inline-start: 0;
+					z-index: 60;
+					width: min(19rem, 86vw);
+					transform: translateX(-102%);
+					transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+					box-shadow: 0 30px 80px -20px oklch(0 0 0 / 0.7);
+				}
+				.share-frame[data-rail-open="true"] .share-rail { transform: none; }
+				.share-scrim {
+					position: fixed;
+					inset: 0;
+					z-index: 55;
+					background: oklch(0 0 0 / 0.5);
+					backdrop-filter: blur(2px);
+				}
+				.share-frame[data-rail-open="true"] .share-scrim { display: block; }
+			}
+			/* Terminal screens (invalid / revoked / expired / …). */
+			.share-terminal {
+				min-height: 100dvh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 2.5rem 1.5rem;
+				position: relative;
+				overflow: hidden;
+			}
+			.share-terminal-aura {
+				position: absolute;
+				inset: 0;
+				pointer-events: none;
+				background:
+					radial-gradient(600px 340px at 50% -10%, oklch(0.74 0.135 78 / 0.12), transparent 70%),
+					radial-gradient(620px 420px at 90% 115%, oklch(0.64 0.105 240 / 0.08), transparent 70%);
+			}
+			.share-terminal-card {
+				position: relative;
+				width: 100%;
+				max-width: 26rem;
+				text-align: center;
+				padding: 2.25rem 1.75rem 2rem;
+				border-radius: 1.25rem;
+				border: 1px solid oklch(1 0 0 / 0.07);
+				background: linear-gradient(180deg, oklch(0.225 0.017 274), oklch(0.185 0.014 274));
+				box-shadow: 0 32px 90px -28px oklch(0 0 0 / 0.7), inset 0 1px 0 oklch(1 0 0 / 0.05);
+			}
+			.share-terminal-icon {
+				display: grid;
+				place-items: center;
+				width: 3.25rem;
+				height: 3.25rem;
+				margin: 0 auto 1.1rem;
+				border-radius: 1rem;
+				border: 1px solid oklch(1 0 0 / 0.08);
+			}
+			/* Streaming caret on the last assistant bubble. */
+			.share-caret {
+				display: inline-block;
+				width: 0.5ch;
+				animation: share-caret-blink 1s steps(2, start) infinite;
+			}
+			@keyframes share-caret-blink { to { visibility: hidden; } }
+			.share-typing span {
+				width: 0.4rem;
+				height: 0.4rem;
+				border-radius: 9999px;
+				background: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+				display: inline-block;
+				animation: share-bounce 1.2s infinite ease-in-out;
+			}
+			.share-typing span:nth-child(2) { animation-delay: 0.15s; }
+			.share-typing span:nth-child(3) { animation-delay: 0.3s; }
+			@keyframes share-bounce {
+				0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+				40% { transform: translateY(-4px); opacity: 1; }
+			}
+			@media (prefers-reduced-motion: reduce) {
+				.share-caret, .share-typing span { animation: none; }
+				.share-rail { transition: none; }
+			}
+			</style>
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+		</head>
+		<body class="bg-base-200">
+			if props.State != ShareStateReady {
+				@shareTerminalScreen(props.State, props.AgentName)
+			} else {
+				@shareFrame(props)
+			}
+			<script src={ templ.SafeURL(webui.AssetPath("/js/share-agent.js")) } defer></script>
+		</body>
+	</html>
+}
+
+// shareFrame is the ready (chattable) surface: public header, session rail, and
+// the streaming transcript + composer.
+templ shareFrame(props ShareAgentPageProps) {
+	<div
+		id="share-root"
+		class="share-frame"
+		data-rail-open="false"
+		data-testid="share-page"
+		data-active-session={ props.ActiveSessionID }
+		data-require-email={ boolAttr(props.RequireEmail) }
+		data-user-email={ props.UserEmail }
+	>
+		@shareHeader(props)
+		<div class="share-body">
+			<aside
+				id="share-session-rail"
+				class="share-rail"
+				data-testid="share-session-rail"
+				aria-label="Your chats"
+			>
+				<div class="border-base-content/5 flex items-center justify-between gap-2 border-b px-4 py-3">
+					<span class="text-base-content/50 text-xs font-semibold tracking-[0.14em] uppercase">Your chats</span>
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--x",
+						AriaLabel:  "Close chat list",
+						ExtraClass: "lg:hidden",
+						Attrs:      templ.Attributes{"data-action": "share-close-rail"},
+					})
+				</div>
+				<div class="space-y-2 p-3 pb-1">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeButton,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Block:   true,
+						Icon:    "lucide--plus",
+						Attrs:   templ.Attributes{"data-action": "share-new-chat", "data-testid": "share-new-chat"},
+					}) {
+						Start a new chat
+					}
+					if props.ShowSessionList {
+						<div class="flex items-center gap-2">
+							<label for="share-archived-filter" class="text-base-content/50 text-xs">Show</label>
+							<select
+								id="share-archived-filter"
+								data-testid="share-archived-filter"
+								class="select select-xs select-bordered min-w-0 grow"
+								aria-label="Filter chats"
+							>
+								<option value="active">Active</option>
+								<option value="all">All</option>
+								<option value="archived">Archived</option>
+							</select>
+						</div>
+					}
+				</div>
+				if props.ShowSessionList {
+					<nav id="share-session-list" data-testid="share-session-list" data-sessions-partial="/share/api/partial/sessions" class="min-h-0 grow overflow-y-auto p-2" aria-label="Your chats list">
+						@shareSessionList(props.Sessions)
+					</nav>
+				}
+				if !props.ShowSessionList {
+					<div class="text-base-content/45 px-4 py-6 text-center text-xs">
+						Chat history is hidden for this link.
+					</div>
+				}
+			</aside>
+			<div class="share-scrim" data-action="share-close-rail" aria-hidden="true"></div>
+			<section class="flex min-w-0 grow flex-col" aria-label={ props.AgentName + " chat" }>
+				<div
+					id="share-chat-log"
+					data-testid="share-chat-log"
+					class="min-h-0 grow overflow-y-auto"
+					role="log"
+					aria-live="polite"
+					aria-relevant="additions text"
+					aria-label="Conversation"
+				>
+				@layout.Container(layout.ContainerLG, nil) {
+					@shareFirstLoad(props)
+					<div id="share-messages" class="flex flex-col gap-3"></div>
+					<div id="share-typing" class="share-typing mt-3 hidden items-center gap-1.5 px-1" role="status" aria-live="polite" data-testid="share-typing">
+						<span></span><span></span><span></span>
+						<span class="text-base-content/45 ml-1 text-xs">Thinking…</span>
+					</div>
+					<!-- Client-revealable terminal states for a link that runs out
+					     mid-conversation (rate limit / budget). Kept out of the
+					     initial view; share-agent.js unhides the matching one. -->
+					<div id="share-inline-terminal" class="mt-6 hidden">
+						@shareInlineTerminal(ShareStateRateLimited)
+						@shareInlineTerminal(ShareStateBudgetExceeded)
+					</div>
+				}
+				</div>
+				@shareApprovalMount()
+				@shareComposer(props)
+			</section>
+		</div>
+		<footer class="border-base-content/5 text-base-content/40 border-t px-4 py-2 text-center text-[11px]">
+			if props.RequireEmail && props.UserEmail != "" {
+				Signed in as { props.UserEmail } · this chat is visible to the link's owner.
+			} else {
+				This chat is visible to the link's owner.
+			}
+		</footer>
+	</div>
+}
+
+// shareHeader is the public-facing bar: the agent's identity and the link label,
+// plus the mobile rail toggle. Deliberately not admin chrome — no menus.
+templ shareHeader(props ShareAgentPageProps) {
+	<header class="border-base-content/5 flex items-center gap-3 border-b bg-base-100 px-4 py-3 lg:px-6">
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonSM,
+			Shape:      ui.ButtonShapeSquare,
+			Icon:       "lucide--panel-left",
+			AriaLabel:  "Open chat list",
+			ExtraClass: "lg:hidden",
+			Attrs: templ.Attributes{
+				"data-action":   "share-open-rail",
+				"data-testid":   "share-rail-toggle",
+				"aria-expanded": "false",
+				"aria-controls": "share-session-rail",
+			},
+		})
+		@shareAvatar(props)
+		<div class="min-w-0">
+			<div class="flex items-center gap-2">
+				<h1 id="share-agent-name" class="truncate text-sm font-semibold">{ props.AgentName }</h1>
+				if props.ShareLabel != "" {
+					@ui.Badge(ui.BadgeProps{Label: props.ShareLabel, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-testid": "share-label"}})
+				}
+			</div>
+			<p id="share-agent-description" class="text-base-content/45 line-clamp-1 text-xs hidden">{ props.AgentDescription }</p>
+		</div>
+	</header>
+}
+
+// shareAvatar renders the agent's logo when one is set, else its glyph/emoji,
+// else a neutral bot tile.
+templ shareAvatar(props ShareAgentPageProps) {
+	if props.AgentAvatarURL != "" {
+		<div class="avatar placeholder">
+			<div class="bg-base-200 size-9 rounded-lg">
+				<img class="rounded-lg" src={ templ.URL(props.AgentAvatarURL) } alt=""/>
+			</div>
+		</div>
+	} else if props.AgentGlyph != "" {
+		@ui.IconTile(props.AgentGlyph, ui.IconTileProps{Glyph: props.AgentGlyph, Color: props.AgentColor, Size: "size-9"})
+	} else {
+		@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary", Size: "size-9"})
+	}
+}
+
+// shareFirstLoad is the welcome panel shown before the visitor's first message.
+templ shareFirstLoad(props ShareAgentPageProps) {
+	<div id="share-first-load" data-testid="share-first-load" class="flex flex-col items-center py-10 text-center">
+		@shareAvatar(props)
+		<h2 id="share-first-load-title" class="mt-4 text-lg font-semibold tracking-tight">Chat with { props.AgentName }</h2>
+		<p id="share-first-load-desc" class="text-base-content/55 mt-1.5 max-w-md text-sm">
+			if props.AgentDescription != "" {
+				{ props.AgentDescription }
+			} else {
+				Ask a question to get started.
+			}
+		</p>
+		<div class="mt-5 flex flex-wrap justify-center gap-2">
+			@shareSuggestion("What can you help me with?")
+			@shareSuggestion("Give me a quick summary")
+			@shareSuggestion("How do I get started?")
+		</div>
+		<p class="text-base-content/35 mt-6 text-[11px]">Enter to send · Shift+Enter for a new line</p>
+	</div>
+}
+
+// shareSuggestion is a starter prompt that fills the composer.
+templ shareSuggestion(text string) {
+	<button
+		type="button"
+		data-action="share-suggestion"
+		data-text={ text }
+		class="border-base-content/10 bg-base-100/60 text-base-content/70 hover:border-primary hover:text-base-content rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors"
+	>{ text }</button>
+}
+
+// shareSessionList renders the visitor's rail items, or the empty state.
+templ shareSessionList(sessions []ShareSessionItem) {
+	if len(sessions) == 0 {
+		@shareEmptySessions()
+	}
+	if len(sessions) > 0 {
+		for _, s := range sessions {
+			@shareSessionRow(s)
+		}
+	}
+}
+
+// ShareSessionList is the exported rail-fragment component swapped into
+// #share-session-list by GET /share/api/partial/sessions. It renders the same
+// inner content as the page's initial rail (see shareSessionList).
+templ ShareSessionList(items []ShareSessionItem) {
+	@shareSessionList(items)
+}
+
+// shareSessionRow is one resumable chat in the visitor's rail.
+templ shareSessionRow(s ShareSessionItem) {
+	{{
+		rowClass := "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-base-200/60"
+		if s.Active {
+			rowClass += " bg-base-200/80 ring-1 ring-primary/30"
+		}
+		if s.Archived {
+			rowClass += " opacity-60"
+		}
+	}}
+	<button
+		type="button"
+		class={ rowClass }
+		data-action="share-resume-session"
+		data-id={ s.ID }
+		data-archived={ boolAttr(s.Archived) }
+		data-testid="share-session-row"
+		aria-current={ shareAriaCurrent(s.Active) }
+	>
+		<span class="text-base-content/35 mt-0.5 shrink-0">@ui.IconSpan("lucide--message-square", "size-4")
+</span>
+		<span class="min-w-0 grow">
+			<span class="block truncate text-sm">{ s.Title }</span>
+			<span class="text-base-content/45 block text-xs">{ s.LastActivity } · { strconv.Itoa(s.MessageCount) } messages</span>
+		</span>
+	</button>
+}
+
+// shareEmptySessions is the rail's empty state.
+templ shareEmptySessions() {
+	<div data-testid="share-sessions-empty" class="px-3 py-8 text-center">
+		<div class="bg-base-content/5 mx-auto grid size-10 place-items-center rounded-full">
+			@ui.IconSpan("lucide--messages-square", "size-5", "text-base-content/30")
+		</div>
+		<p class="text-base-content/55 mt-3 text-sm font-medium">No chats yet</p>
+		<p class="text-base-content/40 mt-1 text-xs">Start a new chat and it will show up here.</p>
+	</div>
+}
+
+// shareComposer is the message form: Enter sends, Shift+Enter inserts a newline.
+// The textarea + send button are disabled by share-agent.js while a reply streams.
+// The email gate sits directly above the form when the link requires an email.
+templ shareComposer(props ShareAgentPageProps) {
+	<div class="border-base-content/5 border-t bg-base-100">
+		@shareEmailGate(props)
+		<form id="share-composer" data-testid="share-composer">
+			@layout.Container(layout.ContainerLG, nil) {
+				<div class="flex items-end gap-2">
+					<textarea
+						id="share-input"
+						data-testid="share-input"
+						rows="1"
+						class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow resize-none"
+						placeholder={ sharePlaceholder(props) }
+						aria-label="Message"
+					></textarea>
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeSubmit,
+						Variant:    ui.ButtonPrimary,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--arrow-up",
+						AriaLabel:  "Send message",
+						ExtraClass: "h-full min-h-11 w-11 shrink-0",
+						Attrs:      templ.Attributes{"id": "share-send", "data-testid": "share-send"},
+					})
+					<span id="share-stop" class="hidden shrink-0">
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonNeutral,
+							Size:       ui.ButtonSM,
+							Shape:      ui.ButtonShapeSquare,
+							Icon:       "lucide--square",
+							AriaLabel:  "Stop generating",
+							ExtraClass: "h-full min-h-11 w-11 shrink-0",
+							Attrs:      templ.Attributes{"data-testid": "share-stop"},
+						})
+					</span>
+				</div>
+				<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+			}
+		</form>
+	</div>
+}
+
+// shareEmailGate is the inline email capture for links that require an email
+// before chatting. It is a separate form (never nested) rendered hidden by
+// default; share-agent.js reveals it when the sanitized config reports
+// requireEmail and no email has been supplied yet. The value is kept in memory
+// by the client and sent only when the session is created — it is never written
+// to the URL or any storage, and the field is cleared once captured.
+//
+// forms are novalidate so the client's own inline error (share-email-error) is
+// the single source of validation feedback; type=email is kept for keyboards
+// and autofill.
+templ shareEmailGate(props ShareAgentPageProps) {
+	<div
+		id="share-email-gate"
+		data-testid="share-email-gate"
+		class={ "border-base-content/5 border-b", templ.KV("hidden", !props.RequireEmail) }
+	>
+		@layout.Container(layout.ContainerLG, nil) {
+			<form id="share-email-form" novalidate class="flex flex-col gap-2 py-1">
+				<label for="share-email-input" class="text-sm font-medium">Enter your email to start</label>
+				<div class="flex items-start gap-2">
+					<input
+						id="share-email-input"
+						data-testid="share-email-input"
+						name="email"
+						type="email"
+						autocomplete="email"
+						inputmode="email"
+						class="input input-bordered input-sm min-w-0 grow"
+						placeholder="you@example.com"
+						aria-describedby="share-email-help share-email-error"
+					/>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Attrs:   templ.Attributes{"data-testid": "share-email-submit"},
+					}) {
+						Continue
+					}
+				</div>
+				<p id="share-email-help" class="text-base-content/45 text-xs">
+					The link's owner asks for an email before you can chat. It is only shared with them.
+				</p>
+				<p id="share-email-error" data-testid="share-email-error" class="text-error hidden text-xs" role="alert"></p>
+			</form>
+		}
+	</div>
+}
+
+// shareApprovalMount is the inline card slot for pending approvals/questions.
+// share-agent.js fills it from GET /share/api/questions and posts decisions to
+// POST /share/api/sessions/:id/approvals/:questionId.
+templ shareApprovalMount() {
+	@layout.Container(layout.ContainerLG, templ.Attributes{
+		"id":           "share-approvals",
+		"data-testid":  "share-approvals",
+		"aria-live":    "polite",
+	})
+}
+
+// shareTerminalScreen is the full-page screen for a link the visitor cannot use.
+// It never exposes internal detail: friendly copy, no error codes, no stack.
+templ shareTerminalScreen(state ShareTerminalState, agentName string) {
+	<div class="share-terminal" data-testid={ shareStateTestID(state) }>
+		<div class="share-terminal-aura" aria-hidden="true"></div>
+		<main class="share-terminal-card">
+			<div class={ shareStateIconClass(state) }>
+				@ui.IconSpan(shareStateIcon(state), "size-7")
+			</div>
+			<h1 class="text-lg font-semibold tracking-tight">{ shareStateTitle(state) }</h1>
+			<p class="text-base-content/55 mt-2 text-sm leading-relaxed">{ shareStateBody(state, agentName) }</p>
+			<p class="text-base-content/35 mt-5 text-xs">If you think this is a mistake, ask the person who shared the link for a new one.</p>
+		</main>
+	</div>
+}
+
+// shareInlineTerminal is the compact in-transcript notice for a link that hits a
+// limit mid-conversation. Rendered hidden; share-agent.js reveals the matching
+// state and stops the composer.
+templ shareInlineTerminal(state ShareTerminalState) {
+	<div
+		class="share-inline-terminal alert alert-soft items-start gap-3 hidden"
+		data-share-inline-state={ string(state) }
+		data-testid={ shareStateTestID(state) }
+		role="status"
+	>
+		<span class={ shareInlineIconClass(state) }>
+			@ui.IconSpan(shareStateIcon(state), "size-5")
+		</span>
+		<div class="min-w-0">
+			<p class="text-sm font-semibold">{ shareStateTitle(state) }</p>
+			<p class="mt-0.5 text-xs opacity-80">{ shareStateBody(state, "") }</p>
+		</div>
+	</div>
+}
+
+// shareInlineIconClass tints the inline terminal's leading icon.
+func shareInlineIconClass(state ShareTerminalState) string {
+	switch state {
+	case ShareStateBudgetExceeded:
+		return "text-error shrink-0"
+	case ShareStateRateLimited:
+		return "text-warning shrink-0"
+	default:
+		return "text-info shrink-0"
+	}
+}
+
+// --- helpers -----------------------------------------------------------------
+
+// shareStateTestID maps a terminal state to its stable e2e anchor.
+func shareStateTestID(state ShareTerminalState) string {
+	switch state {
+	case ShareStateInvalid:
+		return "share-state-invalid"
+	case ShareStateRevoked:
+		return "share-state-revoked"
+	case ShareStateExpired:
+		return "share-state-expired"
+	case ShareStateRateLimited:
+		return "share-state-rate-limited"
+	case ShareStateBudgetExceeded:
+		return "share-state-budget-exceeded"
+	default:
+		return "share-state-ready"
+	}
+}
+
+func shareStateIcon(state ShareTerminalState) string {
+	switch state {
+	case ShareStateInvalid:
+		return "lucide--link-2-off"
+	case ShareStateRevoked:
+		return "lucide--ban"
+	case ShareStateExpired:
+		return "lucide--clock"
+	case ShareStateRateLimited:
+		return "lucide--gauge"
+	case ShareStateBudgetExceeded:
+		return "lucide--wallet"
+	default:
+		return "lucide--message-square"
+	}
+}
+
+func shareStateIconClass(state ShareTerminalState) string {
+	base := "share-terminal-icon "
+	switch state {
+	case ShareStateRateLimited:
+		return base + "bg-warning/10 text-warning border-warning/20"
+	case ShareStateBudgetExceeded, ShareStateRevoked:
+		return base + "bg-error/10 text-error border-error/20"
+	case ShareStateExpired, ShareStateInvalid:
+		return base + "bg-base-content/5 text-base-content/60 border-base-content/10"
+	default:
+		return base + "bg-primary/10 text-primary border-primary/20"
+	}
+}
+
+func shareStateTitle(state ShareTerminalState) string {
+	switch state {
+	case ShareStateInvalid:
+		return "This link isn't valid"
+	case ShareStateRevoked:
+		return "This link was turned off"
+	case ShareStateExpired:
+		return "This link has expired"
+	case ShareStateRateLimited:
+		return "Too many messages right now"
+	case ShareStateBudgetExceeded:
+		return "This chat has reached its limit"
+	default:
+		return "Chat unavailable"
+	}
+}
+
+func shareStateBody(state ShareTerminalState, agentName string) string {
+	who := agentName
+	if who == "" {
+		who = "this agent"
+	}
+	switch state {
+	case ShareStateInvalid:
+		return "This share link doesn't work. It may be incomplete, or it may have been copied incorrectly."
+	case ShareStateRevoked:
+		return "The link's owner has stopped sharing this chat."
+	case ShareStateExpired:
+		return "This share link is no longer active. Ask the owner for a fresh one."
+	case ShareStateRateLimited:
+		return "You've sent messages a bit too quickly. Wait a moment, then try again."
+	case ShareStateBudgetExceeded:
+		return "This shared chat has used up its allowance and can't send more messages."
+	default:
+		return "You can't chat with " + who + " right now."
+	}
+}
+
+// shareDocTitle is the browser title for the public document.
+func shareDocTitle(props ShareAgentPageProps) string {
+	if props.State != ShareStateReady {
+		return pageTitle(shareStateTitle(props.State))
+	}
+	if props.AgentName != "" {
+		return pageTitle("Chat with " + props.AgentName)
+	}
+	return pageTitle("Shared chat")
+}
+
+func sharePlaceholder(props ShareAgentPageProps) string {
+	if props.ComposerPlaceholder != "" {
+		return props.ComposerPlaceholder
+	}
+	if props.AgentName != "" {
+		return "Message " + props.AgentName + "…"
+	}
+	return "Type a message…"
+}
+
+// boolAttr renders a boolean as the string "true"/"false" for data-* attributes
+// (templ would otherwise render an empty attribute for false).
+func boolAttr(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
+
+func shareAriaCurrent(active bool) string {
+	if active {
+		return "true"
+	}
+	return "false"
+}
