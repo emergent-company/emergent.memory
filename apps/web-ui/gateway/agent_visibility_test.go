@@ -17,50 +17,97 @@ func renderGeneralForm(t *testing.T, agent *AgentDefinition) string {
 	return renderHTML(t, agentGeneralSettingsForm(agentSettingsData{Agent: agent}))
 }
 
-// visibilitySelectBlock isolates the rendered Visibility <select> so a
-// per-option selected-state assertion cannot be satisfied by another select.
-func visibilitySelectBlock(t *testing.T, html string) string {
+// visibilityDropdownBlock isolates the rendered Visibility listbox (hidden
+// input + trigger + options) so a per-option assertion cannot be satisfied by
+// another control on the page.
+func visibilityDropdownBlock(t *testing.T, html string) string {
 	t.Helper()
-	i := strings.Index(html, `name="visibility"`)
+	i := strings.Index(html, `id="agent-settings-visibility"`)
 	if i < 0 {
-		t.Fatal("visibility select not found")
+		t.Fatal("visibility control not found")
 	}
 	block := html[i:]
-	if j := strings.Index(block, "</select>"); j >= 0 {
+	if j := strings.Index(block, "</ul>"); j >= 0 {
 		return block[:j]
 	}
 	return block
 }
 
-// visibilitySelected reports whether the Visibility select preselects value.
-func visibilitySelected(t *testing.T, html, value string) bool {
+// visibilityHiddenValue returns the value carried by the hidden `visibility`
+// input — the field the form actually submits.
+func visibilityHiddenValue(t *testing.T, html string) string {
 	t.Helper()
-	return strings.Contains(visibilitySelectBlock(t, html), `value="`+value+`" selected`)
+	block := visibilityDropdownBlock(t, html)
+	i := strings.Index(block, `name="visibility"`)
+	if i < 0 {
+		t.Fatal("hidden visibility input not found")
+	}
+	rest := block[i:]
+	const marker = `value="`
+	j := strings.Index(rest, marker)
+	if j < 0 {
+		t.Fatal("hidden visibility input has no value")
+	}
+	rest = rest[j+len(marker):]
+	k := strings.Index(rest, `"`)
+	if k < 0 {
+		t.Fatal("hidden visibility input has an unterminated value")
+	}
+	return rest[:k]
+}
+
+// visibilityOptionSelected reports whether the listbox marks the option with
+// the given value as selected (aria-selected="true").
+func visibilityOptionSelected(t *testing.T, html, value string) bool {
+	t.Helper()
+	block := visibilityDropdownBlock(t, html)
+	i := strings.Index(block, `data-value="`+value+`"`)
+	if i < 0 {
+		t.Fatalf("visibility option %q not found", value)
+	}
+	tag := block[i:]
+	if j := strings.Index(tag, ">"); j >= 0 {
+		tag = tag[:j]
+	}
+	return strings.Contains(tag, `aria-selected="true"`)
 }
 
 // TestRenderAgentGeneralVisibilityDropdown covers the dropdown itself: the
-// three options with their exact stored values and the "Name — description"
-// labels, sitting in its own Visibility section after Appearance.
+// hidden input that carries the submitted value, the listbox with its three
+// options (values + two-line label/description), sitting in its own Visibility
+// section after Appearance.
 func TestRenderAgentGeneralVisibilityDropdown(t *testing.T) {
 	html := renderGeneralForm(t, &AgentDefinition{ID: "a1", Name: "diane"})
 
 	if !strings.Contains(html, `id="agent-settings-visibility" name="visibility"`) {
-		t.Error("general form missing the visibility select")
+		t.Error("general form missing the visibility hidden input")
 	}
-	block := visibilitySelectBlock(t, html)
+	block := visibilityDropdownBlock(t, html)
+	if !strings.Contains(block, `role="listbox"`) {
+		t.Error("visibility control missing role=\"listbox\"")
+	}
+	if got := strings.Count(block, `role="option"`); got != 3 {
+		t.Errorf("visibility options = %d, want 3", got)
+	}
+	// the three valid values, in project/external/internal order
+	project := strings.Index(block, `data-value="project"`)
+	external := strings.Index(block, `data-value="external"`)
+	internal := strings.Index(block, `data-value="internal"`)
+	if project < 0 || project >= external || external >= internal {
+		t.Errorf("visibility option order wrong: project=%d external=%d internal=%d", project, external, internal)
+	}
+	// each option renders its label AND its two-line description
 	for _, want := range []string{
-		`value="project"`, `value="external"`, `value="internal"`,
-		"Project — Visible in this project&#39;s UI and chat.",
-		"External — Advertised in the project&#39;s A2A agent card",
-		"Internal — Hidden from the agents list.",
+		"Project",
+		"Visible in this project&#39;s UI and chat.",
+		"External",
+		"Advertised in the project&#39;s A2A agent card",
+		"Internal",
+		"Hidden from the agents list.",
 	} {
 		if !strings.Contains(block, want) {
 			t.Errorf("visibility dropdown missing %q", want)
 		}
-	}
-	// exactly the three valid values, in project/external/internal order
-	if got := strings.Count(block, "<option"); got != 3 {
-		t.Errorf("visibility options = %d, want 3", got)
 	}
 	// its own section, carrying the section description
 	if !strings.Contains(html, ">Visibility</h2>") {
@@ -76,7 +123,8 @@ func TestRenderAgentGeneralVisibilityDropdown(t *testing.T) {
 }
 
 // TestRenderAgentGeneralVisibilityPreselection covers the stored value driving
-// the selected option, including the empty/unknown graceful fallback to project.
+// the hidden input and the selected option, including the empty/unknown
+// graceful fallback to project.
 func TestRenderAgentGeneralVisibilityPreselection(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -93,12 +141,15 @@ func TestRenderAgentGeneralVisibilityPreselection(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			html := renderGeneralForm(t, &AgentDefinition{ID: "a1", Name: "diane", Visibility: tc.stored})
-			if !visibilitySelected(t, html, tc.want) {
-				t.Errorf("stored %q should preselect %q", tc.stored, tc.want)
+			if got := visibilityHiddenValue(t, html); got != tc.want {
+				t.Errorf("stored %q: hidden input value = %q, want %q", tc.stored, got, tc.want)
+			}
+			if !visibilityOptionSelected(t, html, tc.want) {
+				t.Errorf("stored %q should mark option %q selected", tc.stored, tc.want)
 			}
 			for _, v := range tc.notSelected {
-				if visibilitySelected(t, html, v) {
-					t.Errorf("stored %q must not preselect %q", tc.stored, v)
+				if visibilityOptionSelected(t, html, v) {
+					t.Errorf("stored %q must not select %q", tc.stored, v)
 				}
 			}
 		})
@@ -222,7 +273,7 @@ func TestUIAgentGeneralVisibilityRoundTrip(t *testing.T) {
 		}
 		// The stored definition now renders with external preselected.
 		html := renderGeneralForm(t, f.updatedAgent)
-		if !visibilitySelected(t, html, "external") {
+		if !visibilityOptionSelected(t, html, "external") || visibilityHiddenValue(t, html) != "external" {
 			t.Error("saved external visibility should round-trip into the form")
 		}
 	})
