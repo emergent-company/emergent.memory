@@ -425,7 +425,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 			BodyClass: "p-5",
 		}) {
 			<div class="flex flex-col gap-4">
-				<p class="text-base-content/70 text-sm">Controls who can discover this agent. Changes take effect immediately.</p>
+				<p class="text-base-content/70 text-sm">Controls who can discover this agent. Changes take effect after you save.</p>
 				@form.FormControl("agent-settings-visibility", "Visibility", form.LabelAbove, agentVisibilityDescription(agentVisibilityValue(data.Agent)), "", nil) {
 					<select id="agent-settings-visibility" name="visibility" class="select w-full">
 						for _, opt := range agentVisibilityOptions {
