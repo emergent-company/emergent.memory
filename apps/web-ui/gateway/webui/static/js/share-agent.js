@@ -263,6 +263,58 @@
     });
   }
 
+  // applyAvatar updates the agent avatar tiles (header + first-load) from the
+  // sanitized config's icon/color, mirroring the app's agentIconTile/IconTile
+  // markup. No declared appearance → keep the server-rendered neutral bot tile.
+  function applyAvatar(icon, color) {
+    icon = (icon || "").trim();
+    color = (color || "").trim();
+    if (!icon && !color) return;
+    ["share-avatar", "share-first-load-avatar"].forEach(function (id) {
+      var holder = document.getElementById(id);
+      if (holder) holder.replaceChildren(agentAvatarNode(icon, color));
+    });
+  }
+
+  function agentAvatarNode(icon, color) {
+    var cls = agentIconClass(icon); // "" when icon is a raw glyph (emoji)
+    var glyph = cls ? "" : icon;
+    var tile = el("div", "grid shrink-0 place-items-center rounded-lg border size-9");
+    if (color) {
+      tile.style.color = color;
+      tile.style.backgroundColor = "color-mix(in oklch," + color + " 10%,transparent)";
+      tile.style.borderColor = "color-mix(in oklch," + color + " 15%,transparent)";
+    } else {
+      tile.classList.add("bg-primary/10", "text-primary", "border-primary/15");
+    }
+    if (glyph) {
+      var g = el("span", "shrink-0 leading-none text-lg");
+      g.setAttribute("aria-hidden", "true");
+      g.textContent = glyph;
+      tile.appendChild(g);
+    } else {
+      var s = el("span", "iconify " + cls + " size-4.5");
+      s.setAttribute("aria-hidden", "true");
+      tile.appendChild(s);
+    }
+    return tile;
+  }
+
+  // agentIconClass maps an agent's declared icon to its compiled iconify class,
+  // falling back to the bot glyph for empty/unresolvable values and "" for raw
+  // glyphs (emoji) — matching the app's agentIconName/typeIconClass contract.
+  function agentIconClass(icon) {
+    var s = (icon || "").trim();
+    if (!s) return "lucide--bot";
+    if (hasNonASCII(s)) return "";
+    var name = s.replace(/^lucide--/, "").replace(/^lucide:/, "");
+    return name ? "lucide--" + name : "lucide--bot";
+  }
+
+  function hasNonASCII(s) {
+    return /[^\x00-\x7F]/.test(s);
+  }
+
   // applyConfig applies the sanitized public config returned by the exchange to
   // the already-rendered page (header identity, first-load greeting, composer
   // placeholder, rail visibility, require-email flag). The key itself is never
@@ -273,9 +325,16 @@
     var desc = config.agentDescription || "";
     var welcome = config.welcomeMessage || "";
 
+    applyAvatar(config.icon, config.color);
+
     var nameEl = document.getElementById("share-agent-name");
     if (nameEl) nameEl.textContent = name;
     state.agentName = name;
+
+    // The server renders the generic "Shared chat — Memory" title because the
+    // agent identity only arrives with the exchange; mirror shareDocTitle's
+    // "<agent> — Memory" shape once the config reveals the name.
+    document.title = name ? name + " — Memory" : "Shared chat — Memory";
 
     var descEl = document.getElementById("share-agent-description");
     if (descEl) {
@@ -417,7 +476,8 @@
     messages.forEach(function (m) {
       var role = m.role === "user" ? "user" : "assistant";
       var text = typeof m.content === "string" ? m.content : "";
-      appendBubble(role, text, false);
+      var html = role === "assistant" ? m.html : null;
+      appendBubble(role, text, false, html);
     });
     state.bubble = null; // history is not the live streaming target
     show(els.firstLoad, messages.length === 0);
@@ -427,12 +487,12 @@
   // appendBubble renders one message with the same daisyUI chat shell the app
   // chat uses (chat-stream.js: chat chat-start/end + chat-bubble + a per-message
   // header, with the assistant leading with an avatar tile). The assistant
-  // content lives in a .memory-md wrapper so the shared markdown styles apply;
-  // the share surface only ever streams plain-text token deltas (no `html`
-  // frames), so whitespace-pre-wrap keeps multiline history and tokens from
-  // collapsing their line breaks. The returned node is the content container
-  // (the streaming engine writes tokens and moves the caret there).
-  function appendBubble(role, text, streaming) {
+  // content lives in a .memory-md wrapper so the shared markdown styles apply.
+  // Assistant history renders sanitized server-side markdown (`html`); user
+  // messages and plain-text streaming tokens stay textContent — never run as
+  // HTML. The returned node is the content container (the streaming engine
+  // writes tokens and moves the caret there).
+  function appendBubble(role, text, streaming, html) {
     var isUser = role === "user";
     var wrap = el("div", "chat " + (isUser ? "chat-end" : "chat-start") + " memory-rise");
     if (!isUser) {
@@ -448,6 +508,9 @@
     var content = isUser
       ? el("p", "whitespace-pre-wrap break-words", text)
       : el("div", "memory-md whitespace-pre-wrap break-words", text);
+    // Assistant messages render sanitized server-side markdown (`html`) for
+    // history and the streaming snapshot; everything else stays plain text.
+    if (!isUser && html) content.innerHTML = html;
     // The caret only appears once the first token lands; while the reply is
     // still pending the external #share-typing dots own the wait state, exactly
     // like the app chat's empty assistant bubble.

@@ -179,7 +179,7 @@ templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRa
 // an `onclick` attribute instead of templ's OnClick (whose script would be
 // emitted at the reference site, i.e. back inside the menu markup).
 templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool) {
-	<div class="dropdown dropdown-end">
+	@ui.Dropdown(ui.DropdownEnd, nil) {
 		@ui.Button(ui.ButtonProps{
 			Type:       ui.ButtonTypeButton,
 			Variant:    ui.ButtonGhost,
@@ -211,12 +211,7 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 			}
 			@ui.IconSpan("lucide--chevron-down", "size-3.5 text-base-content/40")
 		}
-		<ul
-			tabindex="0"
-			role="menu"
-			aria-label="Projects"
-			class="dropdown-content menu menu-sm bg-base-100 rounded-box shadow-lg z-50 w-max min-w-80 max-w-[calc(100vw-2rem)] border border-base-content/10 mt-1 max-h-96 flex-nowrap overflow-x-hidden overflow-y-auto p-1"
-		>
+		@ui.DropdownMenu(templ.Attributes{"aria-label": "Projects", "class": "min-w-80 border-base-content/10 z-50 max-h-96 flex-nowrap overflow-x-hidden overflow-y-auto"}) {
 			if showRecent && len(recentProjects) > 0 {
 				@pickerSectionHeader("Recent")
 				for _, p := range recentProjects {
@@ -248,8 +243,8 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 				</a>
 			</div>
 		</li>
-		</ul>
-	</div>
+		}
+	}
 	@newProjectModal(orgs, activeOrg)
 	<script>
 	function openNewProjectModal() {

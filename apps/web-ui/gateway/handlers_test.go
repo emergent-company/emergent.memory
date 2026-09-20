@@ -50,6 +50,13 @@ type fakeMemory struct {
 	convs   []Conversation
 	servers []MCPServer
 
+	// owner share-session surface (ListShareSessionsByProject /
+	// GetShareSessionTranscript).
+	shareSessions      []ShareOwnerSession
+	shareMessages      []ShareMessage
+	shareSessionsErr   error
+	shareTranscriptErr error
+
 	// catalogCalls counts backend catalog fetches (keyed by method name) so
 	// tests can assert the settings loader only fetches a section's catalogs.
 	// Writes go through recordCatalog; reads through catalogCallCount.
@@ -113,6 +120,11 @@ type fakeMemory struct {
 	ftsErr              error                      // SearchObjectsFTS failure
 	ftsQuery            string                     // last query passed to SearchObjectsFTS
 	ftsTypeFilter       string                     // last type filter passed to SearchObjectsFTS
+
+	embeddingProgress *EmbeddingProgress // returned by GetEmbeddingProgress
+	embeddingProgErr  error              // GetEmbeddingProgress failure
+	embeddingStatus   *EmbeddingStatus   // returned by GetEmbeddingStatus
+	embeddingStatErr  error              // GetEmbeddingStatus failure
 
 	compiled     *CompiledSchemaTypes
 	blueprintErr error // failure for any blueprint method
@@ -978,6 +990,20 @@ func (f *fakeMemory) SearchObjectsFTS(ctx context.Context, query, typeFilter str
 	f.ftsQuery = query
 	f.ftsTypeFilter = typeFilter
 	return f.ftsResults, nil
+}
+
+func (f *fakeMemory) GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error) {
+	if f.embeddingProgErr != nil {
+		return nil, f.embeddingProgErr
+	}
+	return f.embeddingProgress, nil
+}
+
+func (f *fakeMemory) GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, error) {
+	if f.embeddingStatErr != nil {
+		return nil, f.embeddingStatErr
+	}
+	return f.embeddingStatus, nil
 }
 
 func (f *fakeMemory) ListBranches(ctx context.Context) ([]Branch, error) {
@@ -2805,4 +2831,18 @@ func (f *fakeMemory) RotateShareLink(ctx context.Context, linkID string) (*Share
 
 func (f *fakeMemory) RevealShareLink(ctx context.Context, linkID string) (string, error) {
 	return "", errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ListShareSessionsByProject(ctx context.Context) ([]ShareOwnerSession, error) {
+	if f.shareSessionsErr != nil {
+		return nil, f.shareSessionsErr
+	}
+	return f.shareSessions, nil
+}
+
+func (f *fakeMemory) GetShareSessionTranscript(ctx context.Context, id string) ([]ShareMessage, error) {
+	if f.shareTranscriptErr != nil {
+		return nil, f.shareTranscriptErr
+	}
+	return f.shareMessages, nil
 }

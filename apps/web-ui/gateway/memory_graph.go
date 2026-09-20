@@ -20,6 +20,12 @@ type GraphObject struct {
 	Properties  map[string]any `json:"properties"`
 	Labels      []string       `json:"labels"`
 	CreatedAt   string         `json:"created_at"`
+	// EmbeddingStatus is the per-object embedding-job state derived by the
+	// server: embedded | pending | processing | failed | dead_letter | missing.
+	EmbeddingStatus string `json:"embedding_status"`
+	// EmbeddingUpdatedAt is the RFC3339 time the object's embedding was last
+	// written (empty when not embedded).
+	EmbeddingUpdatedAt string `json:"embedding_updated_at"`
 }
 
 // SimilarObject is one object returned by the vector-similarity endpoint

@@ -95,6 +95,25 @@ An owner SHALL be able to create, list, get, update, revoke, and rotate a share 
 - **WHEN** a user without admin rights over the agent's project attempts to create or revoke a share link
 - **THEN** the request is denied with a forbidden error and nothing changes
 
+### Requirement: Owner session list and read-only transcript
+An owner SHALL be able to list their project's share sessions (across all of its links) and read a session's plain user/assistant transcript. The list SHALL be ordered by last activity and bounded to the most recent sessions so the owner chat rail does not grow unbounded. The transcript endpoint SHALL scope the session to the project via its link (404 when the session belongs to another project or does not exist) and SHALL return only user/assistant plain-text messages, in order. For OAuth/session-authenticated callers both endpoints SHALL require project membership (the `RequireProjectScope`/`RequireAPITokenScopes` middleware is a no-op for OAuth, so membership is enforced in the service); API-token callers remain scoped by their project token.
+
+#### Scenario: List returns the project's sessions newest first
+- **WHEN** an owner lists their project's share sessions
+- **THEN** the response is an array of owner session DTOs (id, agent definition id, agent name, title, archived flag, `createdAt`, `lastActivityAt`) ordered by last activity, bounded to the most recent sessions
+
+#### Scenario: Transcript is scoped to the project
+- **WHEN** an owner fetches a share session id whose link belongs to a different project, or that does not exist
+- **THEN** the request is denied with 404 and no transcript leaks
+
+#### Scenario: Transcript returns only user/assistant text
+- **WHEN** an owner fetches an own-project session's transcript
+- **THEN** the response is `{messages: [{role, content}]}` containing only user/assistant plain-text messages, in order
+
+#### Scenario: OAuth caller must be a project member
+- **WHEN** an OAuth/session-authenticated user lists or reads share sessions for a project they are not a member of
+- **THEN** the request is denied with 403 before any project data is queried
+
 ### Requirement: Per-link budget, expiry, and retention config
 Each share link SHALL carry a config with a rolling 24-hour budget of 500 messages, 200k tokens, and $5 of spend, a link expiry of 30 days, and a retention of 90 days after last activity. Spend SHALL be denied before it occurs, using rolling counters in `kb.agent_share_usage` keyed by (link, period).
 

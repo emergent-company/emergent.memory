@@ -289,6 +289,7 @@ func main() {
 	e.POST("/objects", s.uiObjectCreate)
 	e.POST("/objects/:id", s.uiObjectUpdate)
 	e.POST("/objects/:id/relationships", s.uiObjectRelationshipCreate)
+	e.GET("/embeddings", s.uiEmbeddings)
 	e.GET("/schema", s.uiSchema)
 	e.GET("/schema/add", s.uiSchemaAdd)
 	e.POST("/schema/add", s.uiSchemaInstall, s.requireSchemaWrite)
@@ -442,6 +443,7 @@ func main() {
 	// Session trace/log viewer and usage dashboard.
 	e.GET("/sessions", s.uiSessions)
 	e.GET("/sessions/:id", s.uiSession)
+	e.GET("/share-sessions/:id", s.uiShareSessionTranscript)
 	e.GET("/usage", s.uiUsage)
 
 	srv := &http.Server{

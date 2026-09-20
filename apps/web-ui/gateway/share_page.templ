@@ -374,7 +374,7 @@ templ shareHeader(props ShareAgentPageProps) {
 				"aria-controls": "share-session-rail",
 			},
 		})
-		@shareAvatar(props)
+		@shareAvatar(props, "share-avatar")
 		<div class="min-w-0">
 			<div class="flex items-center gap-2">
 				<h1 id="share-agent-name" class="truncate text-sm font-semibold">{ props.AgentName }</h1>
@@ -388,25 +388,28 @@ templ shareHeader(props ShareAgentPageProps) {
 }
 
 // shareAvatar renders the agent's logo when one is set, else its glyph/emoji,
-// else a neutral bot tile.
-templ shareAvatar(props ShareAgentPageProps) {
-	if props.AgentAvatarURL != "" {
-		<div class="avatar placeholder">
-			<div class="bg-base-200 size-9 rounded-lg">
-				<img class="rounded-lg" src={ templ.URL(props.AgentAvatarURL) } alt=""/>
+// else a neutral bot tile. The caller supplies a container id so the client
+// (share-agent.js) can swap the tile for the agent's configured icon/color.
+templ shareAvatar(props ShareAgentPageProps, id string) {
+	<div id={ id }>
+		if props.AgentAvatarURL != "" {
+			<div class="avatar placeholder">
+				<div class="bg-base-200 size-9 rounded-lg">
+					<img class="rounded-lg" src={ templ.URL(props.AgentAvatarURL) } alt=""/>
+				</div>
 			</div>
-		</div>
-	} else if props.AgentGlyph != "" {
-		@ui.IconTile(props.AgentGlyph, ui.IconTileProps{Glyph: props.AgentGlyph, Color: props.AgentColor, Size: "size-9"})
-	} else {
-		@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary", Size: "size-9"})
-	}
+		} else if props.AgentGlyph != "" {
+			@ui.IconTile(props.AgentGlyph, ui.IconTileProps{Glyph: props.AgentGlyph, Color: props.AgentColor, Size: "size-9"})
+		} else {
+			@ui.IconTile("lucide--bot", ui.IconTileProps{Tone: "primary", Size: "size-9"})
+		}
+	</div>
 }
 
 // shareFirstLoad is the welcome panel shown before the visitor's first message.
 templ shareFirstLoad(props ShareAgentPageProps) {
 	<div id="share-first-load" data-testid="share-first-load" class="flex flex-col items-center py-10 text-center">
-		@shareAvatar(props)
+		@shareAvatar(props, "share-first-load-avatar")
 		<h2 id="share-first-load-title" class="mt-4 text-lg font-semibold tracking-tight">Chat with { props.AgentName }</h2>
 		<p id="share-first-load-desc" class="text-base-content/55 mt-1.5 max-w-md text-sm">
 			if props.AgentDescription != "" {
@@ -744,7 +747,7 @@ func shareDocTitle(props ShareAgentPageProps) string {
 		return pageTitle(shareStateTitle(props.State))
 	}
 	if props.AgentName != "" {
-		return pageTitle("Chat with " + props.AgentName)
+		return pageTitle(props.AgentName)
 	}
 	return pageTitle("Shared chat")
 }

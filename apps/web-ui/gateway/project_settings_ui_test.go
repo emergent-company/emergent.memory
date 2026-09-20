@@ -417,7 +417,7 @@ func TestRenderVoicePanel(t *testing.T) {
 func TestRenderChatPageVoiceGating(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "memory"}}
 
-	disabled := renderHTML(t, ChatPage(agents, nil, nil, nil, "", "", "", nil, false, nil))
+	disabled := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, nil))
 	for _, absent := range []string{`id="voice-call-btn"`, `id="voice-mute-btn"`, `id="voice-status"`, `id="agent-audio"`, `js/voice.js`, "Chat by text or voice."} {
 		if strings.Contains(disabled, absent) {
 			t.Errorf("disabled chat page must not contain %q", absent)
@@ -427,7 +427,7 @@ func TestRenderChatPageVoiceGating(t *testing.T) {
 		t.Error("disabled chat page should say 'Chat by text.'")
 	}
 
-	enabled := renderHTML(t, ChatPage(agents, nil, nil, nil, "", "", "", nil, true, nil))
+	enabled := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, true, nil))
 	for _, want := range []string{`id="voice-call-btn"`, `id="voice-mute-btn"`, `id="voice-status"`, `id="agent-audio"`, `js/voice.js`, "Chat by text or voice."} {
 		if !strings.Contains(enabled, want) {
 			t.Errorf("enabled chat page missing %q", want)
