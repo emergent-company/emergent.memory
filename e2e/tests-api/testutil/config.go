@@ -55,6 +55,10 @@ func LoadConfig() *Config {
 	// deployed server whose org/project IDs differ from the hardcoded fixtures).
 	if cfg.OrgID != "" {
 		DefaultTestOrg.ID = cfg.OrgID
+		// DefaultTestProject.OrgID is a value copy of the original org ID,
+		// so re-sync it whenever the org is overridden (DB-backed runs would
+		// otherwise create the project under the hardcoded org).
+		DefaultTestProject.OrgID = cfg.OrgID
 	}
 	if cfg.ProjectID != "" {
 		DefaultTestProject.ID = cfg.ProjectID
