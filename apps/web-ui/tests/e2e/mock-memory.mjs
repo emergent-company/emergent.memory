@@ -243,7 +243,7 @@ const server = http.createServer((req, res) => {
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
-      res.write(`data: ${JSON.stringify({ type: "token", token: "Hello" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "token", token: "**Hello**" })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: "token", token: " from share!" })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
       res.end();

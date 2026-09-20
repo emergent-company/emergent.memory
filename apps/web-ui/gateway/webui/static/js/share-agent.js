@@ -260,6 +260,58 @@
     });
   }
 
+  // applyAvatar updates the agent avatar tiles (header + first-load) from the
+  // sanitized config's icon/color, mirroring the app's agentIconTile/IconTile
+  // markup. No declared appearance → keep the server-rendered neutral bot tile.
+  function applyAvatar(icon, color) {
+    icon = (icon || "").trim();
+    color = (color || "").trim();
+    if (!icon && !color) return;
+    ["share-avatar", "share-first-load-avatar"].forEach(function (id) {
+      var holder = document.getElementById(id);
+      if (holder) holder.replaceChildren(agentAvatarNode(icon, color));
+    });
+  }
+
+  function agentAvatarNode(icon, color) {
+    var cls = agentIconClass(icon); // "" when icon is a raw glyph (emoji)
+    var glyph = cls ? "" : icon;
+    var tile = el("div", "grid shrink-0 place-items-center rounded-lg border size-9");
+    if (color) {
+      tile.style.color = color;
+      tile.style.backgroundColor = "color-mix(in oklch," + color + " 10%,transparent)";
+      tile.style.borderColor = "color-mix(in oklch," + color + " 15%,transparent)";
+    } else {
+      tile.classList.add("bg-primary/10", "text-primary", "border-primary/15");
+    }
+    if (glyph) {
+      var g = el("span", "shrink-0 leading-none text-lg");
+      g.setAttribute("aria-hidden", "true");
+      g.textContent = glyph;
+      tile.appendChild(g);
+    } else {
+      var s = el("span", "iconify " + cls + " size-4.5");
+      s.setAttribute("aria-hidden", "true");
+      tile.appendChild(s);
+    }
+    return tile;
+  }
+
+  // agentIconClass maps an agent's declared icon to its compiled iconify class,
+  // falling back to the bot glyph for empty/unresolvable values and "" for raw
+  // glyphs (emoji) — matching the app's agentIconName/typeIconClass contract.
+  function agentIconClass(icon) {
+    var s = (icon || "").trim();
+    if (!s) return "lucide--bot";
+    if (hasNonASCII(s)) return "";
+    var name = s.replace(/^lucide--/, "").replace(/^lucide:/, "");
+    return name ? "lucide--" + name : "lucide--bot";
+  }
+
+  function hasNonASCII(s) {
+    return /[^\x00-\x7F]/.test(s);
+  }
+
   // applyConfig applies the sanitized public config returned by the exchange to
   // the already-rendered page (header identity, first-load greeting, composer
   // placeholder, rail visibility, require-email flag). The key itself is never
@@ -269,6 +321,8 @@
     var name = config.agentName || "";
     var desc = config.agentDescription || "";
     var welcome = config.welcomeMessage || "";
+
+    applyAvatar(config.icon, config.color);
 
     var nameEl = document.getElementById("share-agent-name");
     if (nameEl) nameEl.textContent = name;
@@ -411,13 +465,14 @@
     messages.forEach(function (m) {
       var role = m.role === "user" ? "user" : "assistant";
       var text = typeof m.content === "string" ? m.content : "";
-      appendBubble(role, text, false);
+      var html = role === "assistant" ? m.html : null;
+      appendBubble(role, text, false, html);
     });
     show(els.firstLoad, messages.length === 0);
     scrollToBottom();
   }
 
-  function appendBubble(role, text, streaming) {
+  function appendBubble(role, text, streaming, html) {
     var wrap = el("div", role === "user" ? "flex justify-end" : "flex justify-start");
     var bubble = el(
       "div",
@@ -426,7 +481,13 @@
         : "bg-base-100 border-base-content/10 max-w-[85%] rounded-2xl rounded-bl-sm border px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
     );
     bubble.setAttribute("data-role", role);
-    bubble.textContent = text;
+    // Assistant transcript messages render sanitized markdown (server-rendered
+    // `html`); everything else stays plain text — user input is never run as HTML.
+    if (role === "assistant" && html) {
+      bubble.innerHTML = html;
+    } else {
+      bubble.textContent = text;
+    }
     if (streaming) {
       var caret = el("span", "share-caret", "\u258C");
       bubble.appendChild(caret);

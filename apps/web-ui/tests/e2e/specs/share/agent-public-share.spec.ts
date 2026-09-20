@@ -115,6 +115,11 @@ test.describe('public share page', () => {
     // the upstream token frames and the assistant bubble accumulates them.
     await expect(page.locator('[data-role="assistant"]')).toContainText('Hello from share!');
 
+    // Markdown in the reply is rendered server-side: the gateway buffers the
+    // token deltas and emits an `html` frame at completion, so **Hello** becomes
+    // <strong>Hello</strong> in the assistant bubble.
+    await expect(page.locator('[data-role="assistant"] strong')).toContainText('Hello');
+
     // The just-created session owns one pending approval.
     const card = page.getByTestId('share-approval');
     await expect(card).toBeVisible();
