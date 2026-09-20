@@ -109,6 +109,11 @@ type Config struct {
 	WriteTimeout    time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"28800s"` // 8 hours for SSE
 	IdleTimeout     time.Duration `env:"SERVER_IDLE_TIMEOUT" envDefault:"28800s"`  // 8 hours for SSE
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s"`
+
+	// ShareRefSecret is the server-side HMAC key used to verify gateway-minted
+	// end-user references (X-End-User-Ref-Sig) on public agent-share routes.
+	// When unset, share end-user identity verification fails closed (503).
+	ShareRefSecret string `env:"SHARE_REF_SECRET" envDefault:""`
 }
 
 // DatabaseConfig holds PostgreSQL connection settings

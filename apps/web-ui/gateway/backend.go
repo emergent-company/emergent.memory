@@ -195,6 +195,22 @@ type MemoryBackend interface {
 	UpdateAccountAPITokenScopes(ctx context.Context, tokenID string, scopes []string) (*APIToken, error)
 	RevokeAccountAPIToken(ctx context.Context, tokenID string) error
 	RegenerateAccountAPIToken(ctx context.Context, tokenID string) (*APITokenCreateResponse, error)
+	// Public agent-share (see share.go / memory_share.go). Share methods take an
+	// explicit share token (the decrypted key) and never send project/org scope.
+	SharePublicConfig(ctx context.Context, token string) (*SharePublicConfig, error)
+	ShareListSessions(ctx context.Context, token, endUserRef, filter string) ([]ShareSession, error)
+	ShareGetSession(ctx context.Context, token, endUserRef, id string) (*ShareSessionDetail, error)
+	ShareCreateSession(ctx context.Context, token, endUserRef string, in ShareCreateSessionInput) (*ShareSession, error)
+	ShareArchiveSession(ctx context.Context, token, endUserRef, id string) error
+	ShareListQuestions(ctx context.Context, token, endUserRef, sessionID string) ([]ShareQuestion, error)
+	ShareApprove(ctx context.Context, token, endUserRef, sessionID, questionID string, in ShareApproveInput) error
+	ShareChatStream(ctx context.Context, token, endUserRef string, in ShareStreamInput) (io.ReadCloser, error)
+	// Owner share-link management (project-scoped via the session context).
+	ListShareLinks(ctx context.Context, agentDefinitionID string) ([]ShareLink, error)
+	CreateShareLink(ctx context.Context, agentDefinitionID string, in ShareLinkCreateInput) (*ShareLink, error)
+	RevokeShareLink(ctx context.Context, linkID string) error
+	RotateShareLink(ctx context.Context, linkID string) (*ShareLink, error)
+	RevealShareLink(ctx context.Context, linkID string) (string, error)
 }
 
 // compile-time assertion that MemoryClient satisfies the interface.
