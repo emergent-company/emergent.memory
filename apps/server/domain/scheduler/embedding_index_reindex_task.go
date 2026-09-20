@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -47,9 +49,12 @@ func NewEmbeddingIndexReindexTask(db *bun.DB, log *slog.Logger) *EmbeddingIndexR
 	}
 }
 
-// Run reindexes every target ivfflat embedding index.
+// Run reindexes every target ivfflat embedding index. Per-index failures are
+// accumulated and returned as a single aggregate error so the scheduler records
+// the maintenance job as failed when any index could not be reindexed.
 func (t *EmbeddingIndexReindexTask) Run(ctx context.Context) error {
 	start := time.Now()
+	var errs []error
 
 	for _, target := range embeddingIndexTargets {
 		targetStart := time.Now()
@@ -62,6 +67,7 @@ func (t *EmbeddingIndexReindexTask) Run(ctx context.Context) error {
 			t.log.Warn("failed to check index validity",
 				slog.String("index", target.qualified()),
 				slog.String("error", err.Error()))
+			errs = append(errs, fmt.Errorf("check validity of %s: %w", target.qualified(), err))
 			continue
 		}
 		if invalid {
@@ -71,6 +77,7 @@ func (t *EmbeddingIndexReindexTask) Run(ctx context.Context) error {
 				t.log.Error("failed to recover invalid index",
 					slog.String("index", target.qualified()),
 					slog.String("error", err.Error()))
+				errs = append(errs, fmt.Errorf("recover %s: %w", target.qualified(), err))
 				continue
 			}
 		}
@@ -79,6 +86,7 @@ func (t *EmbeddingIndexReindexTask) Run(ctx context.Context) error {
 			t.log.Error("failed to reindex embedding index",
 				slog.String("index", target.qualified()),
 				slog.String("error", err.Error()))
+			errs = append(errs, fmt.Errorf("reindex %s: %w", target.qualified(), err))
 			continue
 		}
 
@@ -89,7 +97,7 @@ func (t *EmbeddingIndexReindexTask) Run(ctx context.Context) error {
 
 	t.log.Info("embedding index reindex completed",
 		slog.Duration("duration", time.Since(start)))
-	return nil
+	return errors.Join(errs...)
 }
 
 // reindex rebuilds target, concurrently when concurrent is true. Concurrent

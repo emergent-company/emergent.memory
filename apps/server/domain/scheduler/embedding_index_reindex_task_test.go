@@ -1,6 +1,21 @@
 package scheduler
 
-import "testing"
+import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"io"
+	"log/slog"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+)
 
 func TestEmbeddingIndexTargetsQualified(t *testing.T) {
 	want := map[string]string{
@@ -34,5 +49,227 @@ func TestQuoteIdent(t *testing.T) {
 		if got := quoteIdent(tt.in); got != tt.want {
 			t.Errorf("quoteIdent(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+// =============================================================================
+// DB-free fake driver
+//
+// embeddingReindexFakeDB is in-memory state used by embeddingReindexFakeDriver
+// to exercise EmbeddingIndexReindexTask.Run without a live PostgreSQL. The
+// validity SELECT returns whether each index is marked invalid; each REINDEX
+// Exec either succeeds or fails per index name.
+// =============================================================================
+
+type embeddingReindexFakeDB struct {
+	mu        sync.Mutex
+	invalid   map[string]bool  // index name -> report invalid (validity SELECT)
+	failNames map[string]bool  // index name -> REINDEX fails
+	checkErr  map[string]error // index name -> validity SELECT errors
+
+	validityChecks []string // index names whose validity was queried, in order
+	reindexSQL     []string // full REINDEX statements, in order
+}
+
+var (
+	embeddingReindexRegistryMu sync.Mutex
+	embeddingReindexRegistry   = map[string]*embeddingReindexFakeDB{}
+	embeddingReindexRegister   sync.Once
+)
+
+func newEmbeddingIndexReindexTask(t *testing.T, state *embeddingReindexFakeDB) *EmbeddingIndexReindexTask {
+	t.Helper()
+	dsn := t.Name()
+	embeddingReindexRegister.Do(func() { sql.Register("fakereindex", embeddingReindexFakeDriver{}) })
+
+	embeddingReindexRegistryMu.Lock()
+	embeddingReindexRegistry[dsn] = state
+	embeddingReindexRegistryMu.Unlock()
+
+	sqldb, err := sql.Open("fakereindex", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqldb.Close() })
+
+	return NewEmbeddingIndexReindexTask(bun.NewDB(sqldb, pgdialect.New()), slog.Default())
+}
+
+type embeddingReindexFakeDriver struct{}
+
+func (embeddingReindexFakeDriver) Open(dsn string) (driver.Conn, error) {
+	embeddingReindexRegistryMu.Lock()
+	state := embeddingReindexRegistry[dsn]
+	embeddingReindexRegistryMu.Unlock()
+	if state == nil {
+		return nil, errors.New("no fake reindex state for dsn " + dsn)
+	}
+	return &embeddingReindexFakeConn{state: state}, nil
+}
+
+type embeddingReindexFakeConn struct{ state *embeddingReindexFakeDB }
+
+func (c *embeddingReindexFakeConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("prepare unsupported")
+}
+func (c *embeddingReindexFakeConn) Close() error { return nil }
+func (c *embeddingReindexFakeConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("tx unsupported")
+}
+
+func (c *embeddingReindexFakeConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	s := c.state
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	name := validityIndexName(query, args)
+	s.validityChecks = append(s.validityChecks, name)
+	if err := s.checkErr[name]; err != nil {
+		return nil, err
+	}
+	return &singleBoolRows{val: s.invalid[name]}, nil
+}
+
+func (c *embeddingReindexFakeConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+	s := c.state
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.reindexSQL = append(s.reindexSQL, query)
+	name := reindexIndexName(query)
+	if s.failNames[name] {
+		return nil, errors.New("reindex failed")
+	}
+	return driver.RowsAffected(1), nil
+}
+
+type singleBoolRows struct {
+	val  bool
+	done bool
+}
+
+func (r *singleBoolRows) Columns() []string { return []string{"indisvalid"} }
+func (r *singleBoolRows) Close() error      { return nil }
+func (r *singleBoolRows) Next(dest []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	r.done = true
+	dest[0] = r.val
+	return nil
+}
+
+// validityIndexName extracts the index name from the validity SELECT. bun
+// inlines the string args as literals (e.g. `c.relname = 'idx_chunks_embedding'`);
+// when that is absent we fall back to the last string argument.
+func validityIndexName(query string, args []driver.NamedValue) string {
+	const marker = "c.relname = '"
+	if i := strings.Index(query, marker); i >= 0 {
+		rest := query[i+len(marker):]
+		if j := strings.Index(rest, "'"); j >= 0 {
+			return rest[:j]
+		}
+	}
+	name := ""
+	for _, a := range args {
+		if s, ok := a.Value.(string); ok {
+			name = s
+		}
+	}
+	return name
+}
+
+// reindexIndexName extracts the index name from a REINDEX statement, which is
+// always the final quoted identifier (e.g. `REINDEX INDEX CONCURRENTLY
+// "kb"."idx_chunks_embedding"`).
+func reindexIndexName(query string) string {
+	q := strings.TrimSpace(query)
+	i := strings.Index(q, `"`)
+	if i < 0 {
+		return ""
+	}
+	rest := q[i:]
+	j := strings.LastIndex(rest, `"`)
+	if j < 0 {
+		return ""
+	}
+	k := strings.LastIndex(rest[:j], `"`)
+	if k < 0 {
+		return ""
+	}
+	return rest[k+1 : j]
+}
+
+// =============================================================================
+// EmbeddingIndexReindexTask.Run
+// =============================================================================
+
+func TestEmbeddingIndexReindexTask_Run_ValidIndexes(t *testing.T) {
+	state := &embeddingReindexFakeDB{invalid: map[string]bool{}}
+	task := newEmbeddingIndexReindexTask(t, state)
+
+	require.NoError(t, task.Run(context.Background()))
+
+	// Every target is validity-checked then concurrently reindexed, no recovery.
+	assert.Equal(t, len(embeddingIndexTargets), len(state.validityChecks))
+	assert.Len(t, state.reindexSQL, len(embeddingIndexTargets))
+	for _, q := range state.reindexSQL {
+		assert.Contains(t, q, "REINDEX INDEX CONCURRENTLY", "valid index uses concurrent reindex only")
+		assert.NotContains(t, q, "REINDEX INDEX CONCURRENTLY CONCURRENTLY")
+	}
+}
+
+func TestEmbeddingIndexReindexTask_Run_InvalidIndexRecovered(t *testing.T) {
+	state := &embeddingReindexFakeDB{
+		invalid: map[string]bool{"idx_chunks_embedding": true},
+	}
+	task := newEmbeddingIndexReindexTask(t, state)
+
+	require.NoError(t, task.Run(context.Background()))
+
+	// The invalid index gets a plain REINDEX recovery first, then a concurrent
+	// rebuild; valid indexes are only concurrently rebuilt.
+	var recovery, concurrent int
+	for _, q := range state.reindexSQL {
+		switch {
+		case strings.Contains(q, "CONCURRENTLY"):
+			concurrent++
+		default:
+			recovery++
+		}
+	}
+	assert.Equal(t, 1, recovery, "exactly one invalid index needs a plain recovery")
+	assert.Equal(t, len(embeddingIndexTargets), concurrent, "every target is concurrently rebuilt")
+	assert.Contains(t, strings.Join(state.reindexSQL, "\n"), `REINDEX INDEX "kb"."idx_chunks_embedding"`)
+}
+
+func TestEmbeddingIndexReindexTask_Run_FailureReturnsAggregateError(t *testing.T) {
+	state := &embeddingReindexFakeDB{
+		invalid:   map[string]bool{},
+		failNames: map[string]bool{"idx_chunks_embedding": true},
+	}
+	task := newEmbeddingIndexReindexTask(t, state)
+
+	err := task.Run(context.Background())
+
+	require.Error(t, err, "per-index failure must surface as an aggregate error")
+	assert.Len(t, state.reindexSQL, len(embeddingIndexTargets),
+		"a poisoned index must not abort the remaining targets")
+	assert.Contains(t, err.Error(), "idx_chunks_embedding")
+}
+
+func TestEmbeddingIndexReindexTask_Run_ValidityCheckErrorReturnsAggregateError(t *testing.T) {
+	state := &embeddingReindexFakeDB{
+		invalid:  map[string]bool{},
+		checkErr: map[string]error{"idx_skills_embedding_ivfflat": errors.New("db down")},
+	}
+	task := newEmbeddingIndexReindexTask(t, state)
+
+	err := task.Run(context.Background())
+
+	require.Error(t, err, "validity-check failure must surface as an aggregate error")
+	assert.Contains(t, err.Error(), "idx_skills_embedding_ivfflat")
+	// The failing target is skipped, but the others still complete.
+	assert.Len(t, state.reindexSQL, len(embeddingIndexTargets)-1)
+	for _, q := range state.reindexSQL {
+		assert.NotContains(t, q, "idx_skills_embedding_ivfflat")
 	}
 }
