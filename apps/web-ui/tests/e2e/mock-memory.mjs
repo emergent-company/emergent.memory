@@ -130,8 +130,9 @@ function publicConfig() {
 }
 
 // publicConfigForLink maps a snake_case link config onto the sanitized camelCase
-// public config the exchange serves. Fixed identity/budget fields mirror
-// publicConfig(); the owner-tunable fields are derived from the stored config.
+// public config the exchange serves. Identity fields mirror publicConfig();
+// owner-tunable fields (limits, budgets, toggles) are derived from the stored
+// config so the exchange faithfully reflects what the owner configured.
 function publicConfigForLink(linkConfig) {
   const cfg = linkConfig || defaultShareConfig();
   const out = {
@@ -145,11 +146,11 @@ function publicConfigForLink(linkConfig) {
     allowEndUserApprovals: true,
     sandboxEnabled: !!cfg.sandbox_enabled,
     retentionDays: cfg.retention_days,
-    budgetMaxMessages: 0,
-    budgetMaxTokens: 0,
-    budgetMaxCostUSD: 0,
-    maxActiveSessionsPerUser: 0,
-    maxConcurrentRuns: 1,
+    budgetMaxMessages: cfg.budget_max_messages,
+    budgetMaxTokens: cfg.budget_max_tokens,
+    budgetMaxCostUSD: cfg.budget_max_cost_usd,
+    maxActiveSessionsPerUser: cfg.max_active_sessions_per_user,
+    maxConcurrentRuns: cfg.max_concurrent_runs,
   };
   if (cfg.welcome_message) out.welcomeMessage = cfg.welcome_message;
   return out;

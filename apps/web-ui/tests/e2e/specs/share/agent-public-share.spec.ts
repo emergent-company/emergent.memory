@@ -241,9 +241,10 @@ test.describe('owner share-link options', () => {
     await page.getByTestId('share-create-expiry').selectOption('90');
     await page.getByTestId('share-create-welcome').fill('Welcome to the demo.');
 
-    // Tick both tool checkboxes (agent tools: web_search, memory_write).
-    await page.getByTestId('share-create-tool').nth(0).check();
-    await page.getByTestId('share-create-tool').nth(1).check();
+    // Tick both tool checkboxes by stable tool id, not list order (agent tools:
+    // web_search, memory_write).
+    await page.locator('[data-testid="share-create-tool"][value="web_search"]').check();
+    await page.locator('[data-testid="share-create-tool"][value="memory_write"]').check();
 
     await createToggle(page, 'share-create-require-email').check();
     await createToggle(page, 'share-create-show-sessions').uncheck();
