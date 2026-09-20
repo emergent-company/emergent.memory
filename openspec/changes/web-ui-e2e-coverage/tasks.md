@@ -16,8 +16,8 @@
 
 - [x] 1.1 `specs/settings/project-token-lifecycle-ui.spec.ts`: create → edit scopes (`POST /settings/tokens/:tokenId/scopes`) → regenerate → revoke; asserts the one-time secret, the changed scope set, and the revoked state. Includes a self-cleanup guard test.
 - [x] 1.2 `specs/account/profile-token-lifecycle-ui.spec.ts`: `/profile/tokens/new` → `/:tokenId/edit` → `/:tokenId/scopes` → `/:tokenId/regenerate` → `/:tokenId/revoke`, plus a self-cleanup guard test.
-- [ ] 1.3 `specs/settings/mcp-share-lifecycle-ui.spec.ts`: list → new → edit/update → rotate → revoke; self-cleanup guard. **Blocked:** two unmerged lanes (`feat/mcp-share-reveal-wide-highlighted-json`, `fix/mcp-share-list-decode`) are actively rewriting `mcp_shares.templ`, `agent_mcp_shares.templ` and `mcp_shares.go`. Land after they merge to avoid conflicting testids/selectors.
-- [ ] 1.4 `specs/agents/agent-mcp-share-ui.spec.ts`: create/revoke/rotate per-agent share from the agent detail surface. **Blocked:** same two lanes (also `agent.templ` is in flight in `fix/page-widths`).
+- [x] 1.3 `specs/settings/mcp-share-lifecycle-ui.spec.ts`: list → new → edit/update → rotate → revoke; self-cleanup guard. The blocker is stale — the two lanes landed via #482/#487 and the templates are stable; the spec creates a share (one-time key reveal, no redirect), asserts the list row, edit/update (`?updated=1`), rotate (second one-time key), revoke (`?revoked=1`), and self-cleans via `DELETE /api/mcp-shares/:id`. Skips with a stated reason when the backend tool catalog is empty (create requires ≥1 tool).
+- [x] 1.4 ~~`specs/agents/agent-mcp-share-ui.spec.ts`~~ **obsolete** — `agent_mcp_shares.templ` is gone and #501 (`make project share instances tools-only, drop agent allowlist`) removed the per-agent share surface. Superseded by agent MCP *endpoints*, already covered by `agent-mcp-keys-ui.spec.ts`.
 - [x] 1.5 Phase 1 verify: `npx playwright test specs/settings/project-token-lifecycle-ui.spec.ts specs/account/profile-token-lifecycle-ui.spec.ts --project=mutations` → setup + 4 tests (project lifecycle, project no-live-token guard, account lifecycle, account no-live-token guard), green on repeat; no tokens left behind (guard tests assert this).
 
 ## 2. Phase 2 — Authorization
@@ -43,11 +43,11 @@
 ## 4. Phase 4 — Agent & skill CRUD, org admin
 
 - [ ] 4.1 `specs/agents/agent-edit-ui.spec.ts`: `POST /agents/:id/update` persists name/model/tools and is reflected on detail
-- [ ] 4.2 `specs/agents/agent-delete-ui.spec.ts`: delete via modal + activate/deactivate (`/api/agents/:id/activate|deactivate`); assert list/status transitions
+- [x] 4.2 `specs/agents/agent-delete-ui.spec.ts`: delete via modal (list row action → `delete-confirm-modal` → `DELETE /api/agents/:id` → row gone). Activate/deactivate (`/api/agents/:id/activate|deactivate`) has **no UI surface** — a JSON-API-only pair, so there is nothing to drive through the browser; noted here rather than left silently open.
 - [ ] 4.3 `specs/agents/agent-memories-ui.spec.ts`: `/agents/:id/memories` renders and paginates memories
 - [x] 4.4 `specs/agents/agent-sandbox-update-ui.spec.ts`: `POST /agents/:id/sandbox/update` persists sandbox settings (enable switch, base image, fixed repo source + URL/branch, tool allowlist, cpu/memory/disk, setup commands, env vars) across a full reload; plus a fixed-source-without-URL rejection guard.
 - [x] 4.4a `specs/agents/agent-tool-groups-ui.spec.ts`: `POST /agents/:id/settings/tools` — the default approval policy round-trip always runs; the per-group approval-policy + enable-switch persistence (PR #568/#578 group-level enable + approval policy) probes for the server capability taxonomy and skips with a stated reason when the backend reports no `ToolGroups`.
-- [ ] 4.5 `specs/skills-schedules/skill-edit-delete-ui.spec.ts`: `POST /skills/:id/update` + `/skills/:id/delete`
+- [x] 4.5 `specs/skills-schedules/skill-edit-delete-ui.spec.ts`: `POST /skills/:id/update` (description/content persist across reload) + `/skills/:id/delete` (gone from the list); self-cleaning.
 - [x] 4.6 `specs/organizations/org-rename-ui.spec.ts`: `POST /orgs/:id/rename` + `/orgs/:id/settings/general` reflects the new name (`?renamed=1`, persisted across reload). Scratch org + bootstrap reactivation cleanup.
 - [x] 4.7 `specs/organizations/org-tool-settings-ui.spec.ts`: `POST /orgs/:id/tool-settings/:toolName` (+ `/delete`) persists and clears tool settings — seeds an override (enabled=true) via the toggle route (a fresh org has none to render), then toggles Disable and deletes through the UI, asserting resulting state each step. Scratch org + bootstrap reactivation cleanup.
 - [ ] 4.8 Phase 4 verify: `task e2e:test -- --project=mutations`
@@ -55,7 +55,7 @@
 ## 5. Phase 5 — Interaction depth on render-only pages
 
 - [x] 5.1 `specs/settings/project-settings-autosave-ui.spec.ts`: drives the `project_info` textarea (`POST /settings/project/project_info`, `hx-trigger="change delay:400ms"`, `hx-swap="none"`) and the `editor_agent` select (`POST /settings/editor`), asserting the `HX-Trigger` `memory-toast` event plus the persisted value after a full reload. Both values are captured and restored in cleanup. `dedup_threshold` and `budget_usd` were rejected as not symmetrically restorable through the UI (empty input means "leave unchanged"), which would strand tenant state.
-- [ ] 5.2 `specs/settings/approvals-respond-ui.spec.ts`: `POST /settings/approvals/:questionId/respond` and `/cancel` clear the pending item
+- [x] 5.2 `scenarios/approvals-respond.spec.ts`: `POST /settings/approvals/:questionId/respond` clears the pending item. **Moved to the env-gated `scenarios` project** (was planned as a mutations spec) — a tool approval only exists once a live run pauses on a "ask"-policy tool, and there is no deterministic seed API. The spec drives a gated tool call end-to-end and approves the pending item from `/settings/approvals`, polling a sibling tab (reload) until the Approve control appears while the chat SSE stream stays alive; skips on model non-call / env rejection, hard-fails on page/selector regressions. Reject and Cancel share the same `respond`/`cancel` routes but remain **uncovered by UI e2e** — tracked as a follow-up (no deterministic seed for their paths); this scenario exercises the primary respond path once.
 - [ ] 5.3 `specs/settings/devices-revoke-ui.spec.ts`: `POST /settings/devices/:key/revoke`
 - [ ] 5.4 `specs/settings/voice-save-ui.spec.ts`: `POST /settings/voice`, `/voice/:key`, `/voice/group/:group` persist field/group edits
 - [ ] 5.5 `specs/settings/provider-connection-test-ui.spec.ts`: `POST /settings/providers/test`, `/check-url`, `/:provider/test`, `/:provider/remove`

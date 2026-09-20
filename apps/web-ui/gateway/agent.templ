@@ -704,25 +704,29 @@ templ agentSandboxForm(data agentSandboxData) {
 	</form>
 }
 
-// agentToolPicker is the tools panel body. When the agent definition carries a
-// server-computed tool taxonomy it renders capability groups (each with an
-// enable switch and a tri-state policy) with the MCP-server and relay-node
-// listings nested inside the group that owns their tools. When memory reports
-// no groups (older server) it falls back to the previous source-only grouping
-// unchanged. Either way, tools that nothing covers stay reachable so saving the
-// panel never drops them.
+// agentToolPicker is the tools panel body, grouped by source first. When the
+// agent definition carries a server-computed tool taxonomy it renders a
+// top-level "Built-in" section (memory's native tools as capability groups with
+// enable switches + tri-state policies, their members as direct rows) followed
+// by one top-level sibling block per external MCP server and per relay node.
+// When memory reports no groups (older server) it falls back to the previous
+// source-only grouping unchanged. Either way, tools that nothing covers stay
+// reachable so saving the panel never drops them.
 templ agentToolPicker(data agentSettingsData) {
-	{{ groups := buildToolGroupViews(data, data.Agent.ToolGroups)
-	otherRows := groupedOtherRows(data, groups)
+	{{ view := buildToolPickerView(data)
 	relayGroups := relayPickerGroups(data.RelayNodes)
 	unlisted := unlistedTools(data.Agent, data.MCPServers, data.RelayNodes) }}
-	if len(groups) > 0 {
+	if len(view.BuiltinGroups) > 0 {
 		<div class="flex flex-col gap-3" data-testid="tool-groups">
-			for _, gv := range groups {
-				@agentToolCapabilityGroup(gv)
+			@agentToolBuiltinSection(view.BuiltinGroups)
+			for _, src := range view.Servers {
+				@agentToolGroup(src)
 			}
-			if len(otherRows) > 0 {
-				@agentToolUncoveredGroup(otherRows)
+			for _, node := range view.Relays {
+				@agentToolGroup(node)
+			}
+			if len(view.Other) > 0 {
+				@agentToolUncoveredGroup(view.Other)
 			}
 		</div>
 	} else if len(data.MCPServers) == 0 && len(relayGroups) == 0 && len(unlisted) == 0 {
@@ -760,37 +764,61 @@ templ agentToolCountBadge(n int) {
 	})
 }
 
-// agentToolCapabilityGroup renders one capability group: a collapsible header
-// (label, description, member count) carrying the group enable switch
-// (groupEnabled.<id>) and policy select (groupPolicy.<id>), and a body of the
-// group's member tools. Registry-server and relay-node listings whose tools
-// belong to the group render as nested sub-groups; the rest render as direct
-// rows. The header uses a named `group/cap` so nested `group` details don't
-// rotate each other's chevrons.
+// agentToolBuiltinSection is the top-level "Built-in" container: memory's
+// native tools organised into capability groups whose members render as direct
+// rows. It is the sibling of the external MCP-server and relay-node source
+// blocks and uses a lighter container tone so it reads as the built-in origin.
+// The named `group/builtin` keeps its chevron independent of the nested
+// capability-group chevrons.
+templ agentToolBuiltinSection(groups []toolGroupView) {
+	@ui.Disclosure(ui.DisclosureProps{
+		GroupClass:   "group/builtin",
+		ItemsStart:   true,
+		DetailsBase:  "rounded-box border border-base-content/10 bg-base-100/60",
+		BodyBase:     "flex flex-col gap-2 border-t border-base-content/10 p-3",
+		Open:         true,
+		Attrs:        templ.Attributes{"data-testid": "tool-source-builtin"},
+		SummaryAttrs: templ.Attributes{"data-testid": "tool-source-header-builtin"},
+	}, agentToolBuiltinLeading(), agentToolCountBadge(builtinToolCount(groups))) {
+		for _, gv := range groups {
+			@agentToolCapabilityGroup(gv)
+		}
+	}
+}
+
+// agentToolBuiltinLeading is the Built-in section's summary leading block: the
+// package icon, the plain "Built-in" label, and a one-line explanation.
+templ agentToolBuiltinLeading() {
+	<div class="flex min-w-0 flex-col gap-0.5">
+		<div class="flex min-w-0 items-center gap-2.5">
+			@ui.IconSpan("lucide--package", "size-4 shrink-0 text-primary/70")
+			<span class="truncate text-sm font-semibold">Built-in</span>
+		</div>
+		<p class="text-base-content/50 truncate pl-[26px] text-xs">Tools that ship with Memory.</p>
+	</div>
+}
+
+// agentToolCapabilityGroup renders one capability group inside the Built-in
+// section: a collapsible header (label, description, member count) carrying the
+// group enable switch (groupEnabled.<id>) and policy select (groupPolicy.<id>),
+// and a body of the group's native member tools as direct rows. The nested
+// per-source sub-group is gone — external sources render as their own top-level
+// blocks. The header uses a named `group/cap` so nested details don't rotate
+// each other's chevrons.
 templ agentToolCapabilityGroup(gv toolGroupView) {
 	@ui.Disclosure(ui.DisclosureProps{
 		GroupClass:   "group/cap",
 		ItemsStart:   true,
+		DetailsBase:  "rounded-box border border-base-content/10",
 		Attrs:        templ.Attributes{"data-testid": "tool-group", "data-tool-group": gv.Group.ID},
 		SummaryAttrs: templ.Attributes{"data-testid": "tool-group-header-" + gv.Group.ID},
 		Open:         gv.Open,
 	}, agentToolCapabilityLeading(gv), agentToolCapabilityControls(gv)) {
-		if len(gv.ServerGroups) == 0 && len(gv.RelayGroups) == 0 && len(gv.Rows) == 0 {
-			<p class="text-base-content/50 text-xs">No tools from this group are available.</p>
-		}
-		for _, sub := range gv.ServerGroups {
-			@agentToolGroup(sub)
-		}
-		for _, sub := range gv.RelayGroups {
-			@agentToolGroup(sub)
-		}
-		if len(gv.Rows) > 0 {
-			<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
-				for _, t := range gv.Rows {
-					@agentToolRowView(t, true)
-				}
-			</div>
-		}
+		<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
+			for _, t := range gv.Rows {
+				@agentToolRowView(t, true)
+			}
+		</div>
 	}
 }
 
@@ -833,7 +861,7 @@ templ agentToolCapabilityControls(gv toolGroupView) {
 				},
 			})
 		</label>
-		if gv.Group.ID != "other" {
+		if gv.Group.ID != toolGroupOtherID {
 			<select
 				name={ "groupPolicy." + gv.Group.ID }
 				class="select select-xs w-24"
@@ -872,7 +900,7 @@ templ agentToolOtherContainer(desc string, withTestID bool) {
 // capability group: it carries no group enable switch or group policy, and each
 // row keeps its own per-tool policy select.
 templ agentToolUncoveredGroup(rows []agentToolRow) {
-	@agentToolOtherContainer("No capability group covers these — kept so existing tools aren't dropped on save.", true) {
+	@agentToolOtherContainer("Not offered by a source yet — kept so existing tools aren't dropped on save.", true) {
 		for _, t := range rows {
 			@agentToolRowView(t, true)
 		}
@@ -880,9 +908,10 @@ templ agentToolUncoveredGroup(rows []agentToolRow) {
 }
 
 // agentToolGroupProps configures one collapsible tool group in the agent tools
-// picker. The two callers — registry server groups and external relay node
-// groups — share the <details> shell and tool-row shape; only the border tone,
-// summary icon, remote badge, and per-tool policy select differ.
+// picker. The callers — external MCP-server source blocks and relay-node source
+// blocks (plus the no-groups fallback) — share the <details> shell and tool-row
+// shape; only the border tone, summary icon, remote badge, per-tool policy
+// select, and optional TestID differ.
 type agentToolGroupProps struct {
 	BorderClass     string
 	BodyBorderClass string
@@ -891,6 +920,7 @@ type agentToolGroupProps struct {
 	Title           string
 	TitleMono       bool
 	RemoteBadge     bool
+	TestID          string
 	Count           int
 	Open            bool
 	Tools           []agentToolRow
@@ -917,9 +947,9 @@ templ agentToolGroupLeading(p agentToolGroupProps) {
 	<div class="flex min-w-0 items-center gap-2.5">
 		@ui.IconSpan(p.Icon, "size-4 shrink-0 "+p.IconClass)
 		if p.TitleMono {
-			<span class="truncate font-mono text-sm font-medium">{ p.Title }</span>
+			<span class="truncate font-mono text-sm font-semibold">{ p.Title }</span>
 		} else {
-			<span class="truncate text-sm font-medium">{ p.Title }</span>
+			<span class="truncate text-sm font-semibold">{ p.Title }</span>
 		}
 		if p.RemoteBadge {
 			@ui.Badge(ui.BadgeProps{
@@ -936,12 +966,17 @@ templ agentToolGroupLeading(p agentToolGroupProps) {
 // agentToolGroup renders one collapsible <details> tool group: a summary
 // (icon + title + optional remote badge + tool count) and a body listing each
 // tool as a toggle row, with an optional per-tool policy select (registry
-// servers only).
+// servers only). TestID, when set, marks the top-level source block.
 templ agentToolGroup(p agentToolGroupProps) {
+	{{ attrs := templ.Attributes{}
+	if p.TestID != "" {
+		attrs["data-testid"] = p.TestID
+	} }}
 	@ui.Disclosure(ui.DisclosureProps{
 		DetailsBase: "rounded-box border " + p.BorderClass,
 		BodyBase:    "flex flex-col border-t " + p.BodyBorderClass,
 		Open:        p.Open,
+		Attrs:       attrs,
 	}, agentToolGroupLeading(p), agentToolCountBadge(p.Count)) {
 		for _, t := range p.Tools {
 			@agentToolRowView(t, p.WithPolicy)
