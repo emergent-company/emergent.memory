@@ -27,8 +27,6 @@ services:
   test-db:
     image: pgvector/pgvector:pg17
     container_name: test-emergent-db
-    ports:
-      - "5436:5432"
     environment:
       POSTGRES_USER: emergent
       POSTGRES_PASSWORD: emergent
@@ -42,8 +40,37 @@ services:
       retries: 10
 
   # ─────────────────────────────────────────────────────────────────────────
-  # MinIO storage (required for document upload tests and health check)
+  # MinIO storage (required for document upload tests)
   # ─────────────────────────────────────────────────────────────────────────
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: test-emergent-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: local-test-minio
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # MinIO bucket initialization (one-shot; the server's storage ping does
+  # HeadBucket on the documents bucket, so buckets must exist before start).
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: test-emergent-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 2;
+      mc alias set myminio http://minio:9000 minioadmin local-test-minio;
+      mc mb myminio/documents --ignore-existing;
+      mc mb myminio/document-temp --ignore-existing;
+      "
+
   # ─────────────────────────────────────────────────────────────────────────
   # Memory API server (standalone mode)
   # ─────────────────────────────────────────────────────────────────────────
@@ -53,6 +80,10 @@ services:
     depends_on:
       test-db:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     environment:
       # Standalone mode — API key is used instead of Zitadel OAuth
       STANDALONE_MODE: "true"
@@ -68,26 +99,19 @@ services:
       POSTGRES_PASSWORD: emergent
       POSTGRES_DB: emergent
 
-      # Storage (MinIO on host, port 9012)
-      STORAGE_ENDPOINT: http://172.17.0.1:9012
+      # Storage (MinIO)
+      STORAGE_PROVIDER: minio
+      STORAGE_ENDPOINT: http://minio:9000
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: local-test-minio
       STORAGE_BUCKET_DOCUMENTS: documents
       STORAGE_BUCKET_TEMP: document-temp
+      STORAGE_USE_SSL: 'false'
 
       # Server
       PORT: "3002"
       GO_ENV: development
       DB_AUTOINIT: "true"
-
-      # LLM provider — OpenAI-compatible via litellm
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk--hdGtQNlFMQDO3aW2d-bPw}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://litellm:4000/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-openai/deepseek-v4-flash}
-
-      # DeepSeek (direct)
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-sk-c9bf6d9840264ce5b912d2d16484d5b9}
-      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
 
       # Disable optional features that need external services
       ENABLE_AGENT_WORKSPACES: "false"

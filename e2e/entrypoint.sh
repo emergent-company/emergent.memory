@@ -45,4 +45,4 @@ mkdir -p "${TEST_LOG_DIR:-/test-logs}"
 
 echo ">>> running Go tests ..."
 cd /tests
-exec go test -v -timeout 10m ${TEST_RUN:+-run "$TEST_RUN"} .
+exec go test -v -timeout 10m -run "${TEST_RUN:-TestCLIInstalled_(Version|Help|SetToken|StatusAuthenticated|ConfigShowAndSet)|TestOpencode}" ./tests/cli/...

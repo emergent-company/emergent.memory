@@ -104,7 +104,7 @@ While working, you'll notice things outside the current task: unrelated bugs, mi
 task build          # build Go server binary
 task test           # unit tests
 task test:integration   # integration tests (apps/server/tests/integration)
-task test:e2e       # API e2e suites (e2e/tests-api, separate Go module)
+task test:e2e       # API e2e suites (e2e/tests/api, runlog)
 task lint           # Go linter
 task migrate:up     # run Goose migrations
 task migrate:status
@@ -121,7 +121,7 @@ task e2e:test   # Playwright e2e (see tests/e2e/README.md)
 task -d e2e test:mcj
 ```
 
-> There is no server-local `apps/server/tests/e2e/` suite anymore. API e2e lives in `e2e/tests-api/`; CLI e2e lives in `e2e/`.
+> There is no server-local `apps/server/tests/e2e/` suite anymore. API e2e lives in `e2e/tests/api/`; CLI e2e lives in `e2e/tests/cli/`. The legacy `e2e/tests-api/` (NestJS-era testify module) was removed in favor of the consolidated runlog suite.
 
 ## OpenSpec
 

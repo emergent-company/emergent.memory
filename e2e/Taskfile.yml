@@ -47,6 +47,35 @@ tasks:
       - sleep 1
       - task: daemon:start
 
+  # ─── Runlog (primary entry points) ────────────────────────
+
+  runlog:start:
+    desc: Start the runlog daemon (TUI browser backend)
+    cmds:
+      - |
+        if curl -sf http://localhost:{{.RUNLOG_PORT}} > /dev/null 2>&1; then
+          echo "runlog daemon already running on port {{.RUNLOG_PORT}}"
+        else
+          echo "starting runlog daemon on port {{.RUNLOG_PORT}}..."
+          mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
+          PATH="/root/go/bin:$PATH" nohup runlog daemon -port {{.RUNLOG_PORT}} \
+            > "{{.LOG_DIR}}/daemon.log" 2>&1 &
+          sleep 2
+          echo "daemon started (port {{.RUNLOG_PORT}})"
+        fi
+
+  runlog:stop:
+    desc: Stop the runlog daemon
+    cmds:
+      - |
+        PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
+        if [ -n "$PID" ]; then
+          kill "$PID" 2>/dev/null || true
+          echo "daemon stopped (PID $PID)"
+        else
+          echo "no daemon running on port {{.RUNLOG_PORT}}"
+        fi
+
   # ─── mcj-emergent Docker server ────────────────────────────
 
   server:start:
@@ -81,48 +110,6 @@ tasks:
     cmds:
       - task: server:stop
       - task: server:start
-
-  # ─── Hot-reload dev server (air) ──────────────────────────
-  # Starts the runlog web UI on port 17432 with auto-rebuild on source changes.
-  # Usage: task dev:server        foreground (Ctrl+C to stop)
-  #        task dev:server:bg     background
-
-  dev:server:
-    desc: "Run runlog dev server with hot-reload (air) — Ctrl+C to stop"
-    cmds:
-      - air -c .air.memory.toml
-    dir: "{{.TASKFILE_DIR}}"
-
-  dev:server:bg:
-    desc: "Start runlog dev server with hot-reload in background"
-    cmds:
-      - |
-        if curl -sf http://localhost:{{.RUNLOG_PORT}}/ui/ > /dev/null 2>&1; then
-          echo "dev server already running on port {{.RUNLOG_PORT}}"
-        else
-          nohup air -c .air.memory.toml > /tmp/air-memory.log 2>&1 &
-          echo "dev server starting on port {{.RUNLOG_PORT}} (PID $$!)"
-          sleep 3
-          if curl -sf http://localhost:{{.RUNLOG_PORT}}/ui/ > /dev/null 2>&1; then
-            echo "ready"
-          else
-            echo "check /tmp/air-memory.log"
-          fi
-        fi
-
-  dev:server:stop:
-    desc: "Stop the hot-reload dev server"
-    cmds:
-      - |
-        PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
-        if [ -n "$PID" ]; then
-          AIRPID=$(ps aux | grep "air.*memory" | grep -v grep | awk '{print $2}')
-          if [ -n "$AIRPID" ]; then kill "$AIRPID" 2>/dev/null || true; fi
-          kill "$PID" 2>/dev/null || true
-          echo "dev server stopped"
-        else
-          echo "no dev server running on port {{.RUNLOG_PORT}}"
-        fi
 
   # ─── Tests — local dev server ──────────────────────────────
 
@@ -173,13 +160,6 @@ tasks:
     cmds:
       - ./run_tests.sh --tests-only {{.CLI_ARGS}}
     dir: "{{.TASKFILE_DIR}}"
-
-  # ─── Lint ──────────────────────────────────────────────────
-
-  lint:
-    desc: Run lefthook lint group (gofmt, go-vet, go-build, gitleaks)
-    cmds:
-      - lefthook run lint
 
   # ─── Utilities ────────────────────────────────────────────
 

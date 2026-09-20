@@ -5,7 +5,6 @@ go 1.25.6
 require (
 	github.com/emergent-company/runlog v0.3.0
 	github.com/google/uuid v1.6.0
-	github.com/lib/pq v1.12.3
 )
 
 require (

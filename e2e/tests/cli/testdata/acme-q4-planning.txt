@@ -1,0 +1,123 @@
+ACME Corp — Q4 2025 Product Planning Meeting
+Date: October 14, 2025
+Location: Acme HQ, Conference Room B
+
+Attendees:
+  Sarah Chen      — VP of Engineering
+  Marcus Rivera   — Head of Product
+  Priya Nair      — Lead Architect
+  Tom Kowalski    — Engineering Manager
+  Lisa Okonkwo    — QA Lead
+
+---
+
+AGENDA ITEM 1: Platform Database Migration
+
+Sarah Chen opened the meeting by reviewing the current state of the PostgreSQL
+to CockroachDB migration project.  The team has been evaluating three options
+for the Q4 roadmap.
+
+Marcus Rivera presented the product requirements:
+  - Zero downtime during migration
+  - Full ACID compliance for financial transactions
+  - Horizontal scaling to support 50,000 concurrent users by Q2 2026
+
+Priya Nair walked through the technical evaluation:
+
+  Option A — Direct CockroachDB migration using pglogical
+    Pros: lowest risk, proven tooling, no schema changes required
+    Cons: 3-month timeline, specialist contractor needed
+
+  Option B — Dual-write strategy with eventual cutover
+    Pros: rollback capability at any point, can be done in-house
+    Cons: increased write latency during transition, complex reconciliation
+
+  Option C — Blue-green deployment with full snapshot restore
+    Pros: fastest cutover (2-week implementation)
+    Cons: brief 4-hour maintenance window required
+
+After discussion, Tom Kowalski raised the concern that Option C requires a
+maintenance window that conflicts with the Black Friday peak period.  Lisa
+Okonkwo confirmed that QA cannot sign off on Option C without a full regression
+suite that currently does not exist.
+
+DECISION: The team agreed to proceed with Option B — the dual-write migration
+strategy.  Sarah Chen made the final call.  The migration will begin November 3
+and the cutover is targeted for December 15, 2025.
+
+Rationale: Option B preserves rollback capability and can be executed by the
+internal team without specialist contractors.  The dual-write overhead was
+measured at under 12ms latency increase, which is within acceptable SLA limits.
+
+---
+
+AGENDA ITEM 2: Authentication Service Rewrite
+
+Marcus Rivera presented the requirement to replace the legacy session-based
+authentication with a JWT + OAuth 2.0 system.  Current pain points include:
+
+  - Session store (Redis) has become a single point of failure (3 outages in Q3)
+  - Mobile clients cannot reuse session tokens across app restarts
+  - Third-party integrations require service account management
+
+Priya Nair proposed two architectural options:
+
+  Option A — Adopt Auth0 as managed identity provider
+    Pros: fast implementation (4 weeks), no operational overhead
+    Cons: vendor lock-in, $80K/year licensing cost at current user volume
+
+  Option B — Build in-house using Keycloak (self-hosted)
+    Pros: full control, GDPR compliance for EU customers, one-time setup cost
+    Cons: 10-week implementation, requires dedicated DevOps effort
+
+Sarah Chen noted that the GDPR requirement makes Option B the preferred choice
+given ACME's upcoming EU market expansion in Q1 2026.
+
+DECISION: Adopt Keycloak as the self-hosted identity provider.
+Decided by: Sarah Chen (VP Engineering) with agreement from Marcus Rivera.
+Target completion: January 31, 2026.
+Rationale: GDPR compliance is non-negotiable for EU expansion.  The 10-week
+timeline fits within the Q4–Q1 window.  Keycloak reduces long-term vendor risk
+compared to Auth0.
+
+---
+
+AGENDA ITEM 3: API Gateway Consolidation
+
+Tom Kowalski presented the current situation: ACME runs three separate API
+gateways (Kong, AWS API Gateway, and a custom Nginx proxy) inherited from
+previous acquisitions.  This creates operational complexity and inconsistent
+rate-limiting policies across services.
+
+The proposal is to consolidate onto a single gateway.
+
+Options evaluated:
+  1. AWS API Gateway — already partially in use, tight AWS integration
+  2. Kong (self-hosted) — most mature feature set, plugin ecosystem
+  3. Envoy with custom control plane — maximum flexibility, highest complexity
+
+Lisa Okonkwo raised the concern that consolidation without a parallel-run period
+introduces significant regression risk.  She recommended a 4-week parallel run
+before decommissioning any existing gateway.
+
+DECISION: Consolidate to Kong (self-hosted) as the unified API gateway.
+Decided by: Tom Kowalski and Sarah Chen jointly.
+Timeline: Parallel run begins December 1, 2025; legacy gateways decommissioned
+by February 28, 2026.
+Rationale: Kong's plugin ecosystem supports the rate-limiting, JWT validation,
+and audit-logging requirements without custom code.  AWS API Gateway was
+rejected due to cloud vendor lock-in concerns consistent with broader strategy.
+
+---
+
+AGENDA ITEM 4: Action Items Summary
+
+1. Priya Nair to set up dual-write infrastructure by October 28.
+2. Tom Kowalski to create Keycloak proof-of-concept environment by October 31.
+3. Marcus Rivera to finalize API gateway requirements document by October 21.
+4. Sarah Chen to communicate migration schedule to Customer Success team.
+5. Lisa Okonkwo to draft regression test plan for all three initiatives.
+
+---
+
+NEXT MEETING: November 4, 2025 — Migration Status Review

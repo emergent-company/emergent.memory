@@ -37,6 +37,7 @@ type GanttRow = runlog.GanttRow
 type GroupLogger = runlog.GroupLogger
 type HTTPResult = runlog.HTTPResult
 type LauncherRow = runlog.LauncherRow
+type RunDB = runlog.RunDB
 type RunDescription = runlog.RunDescription
 type RunLog = runlog.RunLog
 type RunOutcome = runlog.RunOutcome
@@ -148,6 +149,12 @@ var Truncate = runlog.Truncate
 
 var VerifyCredentialsWritten = runlog.VerifyCredentialsWritten
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Functions — db.go
+// ─────────────────────────────────────────────────────────────────────────────
+
+var OpenDB = runlog.OpenDB
+var SharedDB = runlog.SharedDB
 var FormatInt = runlog.FormatInt
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,7 +205,6 @@ var SkipIfServerDown = runlog.SkipIfServerDown
 var ConfigureGoogleProvider = runlog.ConfigureGoogleProvider
 var ConfigureProvider = runlog.ConfigureProvider
 var ProviderFromEnv = runlog.ProviderFromEnv
-var ProviderFromEnvBaseURL = runlog.ProviderFromEnvBaseURL
 var CreateProject = runlog.CreateProject
 var DeleteProjectOnCleanup = runlog.DeleteProjectOnCleanup
 var InstallBlueprint = runlog.InstallBlueprint
@@ -222,7 +228,6 @@ var SetupTestProvider = runlog.SetupTestProvider
 
 var AuthMode = runlog.AuthMode
 var E2ETestToken = runlog.E2ETestToken
-var DiscoverOrgID = runlog.DiscoverOrgID
 var FilteredEnv = runlog.FilteredEnv
 var Runner = runlog.Runner
 var ServerURL = runlog.ServerURL
