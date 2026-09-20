@@ -57,9 +57,23 @@ jobs:
         env:
           GOWORK: off
 
+      # pin_matches <pin> <file> succeeds only when <file> has an `image:` entry
+      # whose value is byte-for-byte <pin>. Comparing the whole value (instead of
+      # grepping for the pin as a substring) rejects near-misses: a version
+      # prefix, an extra suffix tag, or a digest appended to the tag.
       - name: Verify Kreuzberg image pin is in sync
         working-directory: apps/cli
         run: |
+          pin_matches() {
+            awk -v pin="$1" '
+              match($0, /^[[:space:]]*image:[[:space:]]+/) {
+                v = substr($0, RLENGTH + 1)
+                sub(/[[:space:]]+$/, "", v)
+                if (v == pin) found = 1
+              }
+              END { exit !found }
+            ' "$2"
+          }
           PIN=$(grep -oP 'KreuzbergImage\s*=\s*"\K[^"]+' internal/installer/templates.go)
           if [ -z "${PIN}" ]; then
             echo "ERROR: could not read KreuzbergImage from internal/installer/templates.go"
@@ -69,8 +83,8 @@ jobs:
           for f in ../../deploy/self-hosted/docker-compose.yml \
                    ../../deploy/self-hosted/docker-compose.local.yml \
                    ../../deploy/self-hosted/install-online.sh; do
-            if ! grep -q "${PIN}" "${f}"; then
-              echo "ERROR: ${f} does not reference ${PIN}; bump it together with KreuzbergImage"
+            if ! pin_matches "${PIN}" "${f}"; then
+              echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with KreuzbergImage"
               exit 1
             fi
           done
@@ -79,6 +93,16 @@ jobs:
       - name: Verify MinIO image pins are in sync
         working-directory: apps/cli
         run: |
+          pin_matches() {
+            awk -v pin="$1" '
+              match($0, /^[[:space:]]*image:[[:space:]]+/) {
+                v = substr($0, RLENGTH + 1)
+                sub(/[[:space:]]+$/, "", v)
+                if (v == pin) found = 1
+              }
+              END { exit !found }
+            ' "$2"
+          }
           for NAME in MinioImage MinioClientImage; do
             PIN=$(grep -oP "${NAME}\s*=\s*\"\K[^\"]+" internal/installer/templates.go)
             if [ -z "${PIN}" ]; then
@@ -89,8 +113,8 @@ jobs:
             for f in ../../deploy/self-hosted/docker-compose.yml \
                      ../../deploy/self-hosted/docker-compose.local.yml \
                      ../../deploy/self-hosted/install-online.sh; do
-              if ! grep -q "${PIN}" "${f}"; then
-                echo "ERROR: ${f} does not reference ${PIN}; bump it together with ${NAME}"
+              if ! pin_matches "${PIN}" "${f}"; then
+                echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with ${NAME}"
                 exit 1
               fi
             done
