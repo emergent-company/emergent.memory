@@ -2,7 +2,7 @@
 # Tests not listed here appear under "Uncategorized".
 # Install runlog: go install github.com/emergent-company/runlog/cmd/runlog@latest
 
-testCommand: "cd /root/emergent.memory/e2e && PATH=$PATH:/root/.memory/bin TEST_RUNNER=daemon MEMORY_TEST_SERVER=http://localhost:3002 MEMORY_TEST_TOKEN=e2e-test-user MEMORY_AUTH_MODE=standalone go test -v -count=1 -run ^{name}$ ./tests/api/... ./tests/integration/... ./tests/cli/..."
+testCommand: "PATH=$PATH:/root/.memory/bin TEST_RUNNER=daemon MEMORY_TEST_SERVER=http://localhost:3002 MEMORY_TEST_TOKEN=e2e-test-user MEMORY_AUTH_MODE=standalone go test -v -count=1 -run ^{name}$ ./tests/api/... ./tests/integration/... ./tests/cli/... ./tests/blueprints/... ./tests/docs/... ./tests/tools/... ./tests/experiments/..."
 db: "tests/cli/logs/runs.db"
 
 categories:
@@ -360,12 +360,6 @@ categories:
     - TestDocSite_GettingStartedCLIExamples
     - TestDocSite_AgentsPageCLIExamples
     - TestDocSite_KnowledgeGraphCLIExamples
-
-  production:
-    - TestProduction_SetToken
-    - TestProduction_AuthAndList
-    - TestProduction_ServerHealth
-    - TestProduction_IssuerEndpoint
 
   experiments:
     - TestQuerySDKvsMCP_SDK

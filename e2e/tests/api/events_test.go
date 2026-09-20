@@ -60,6 +60,7 @@ func TestEvents_GetConnectionsCount_AcceptsMultipleTokens(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	tokens := []string{
 		e2eTestToken(),

@@ -40,15 +40,31 @@ services:
       retries: 10
 
   # ─────────────────────────────────────────────────────────────────────────
+  # MinIO storage (required for document upload tests)
+  # ─────────────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: test-emergent-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: local-test-minio
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Memory API server (standalone mode)
-  # Storage (MinIO) is intentionally omitted — the CLI tests (version, status,
-  # set-token, projects list) do not require document storage.
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
     image: ${MEMORY_SERVER_IMAGE:-ghcr.io/emergent-company/memory-server:latest}
     container_name: test-emergent-server
     depends_on:
       test-db:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     environment:
       # Standalone mode — API key is used instead of Zitadel OAuth
@@ -64,6 +80,13 @@ services:
       POSTGRES_USER: emergent
       POSTGRES_PASSWORD: emergent
       POSTGRES_DB: emergent
+
+      # Storage (MinIO)
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: local-test-minio
+      STORAGE_BUCKET_DOCUMENTS: documents
+      STORAGE_BUCKET_TEMP: document-temp
 
       # Server
       PORT: "3002"

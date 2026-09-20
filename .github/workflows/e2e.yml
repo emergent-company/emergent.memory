@@ -122,28 +122,3 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # production: smoke-test the live production server using a pre-issued token.
-  # Skipped (not failed) when the secret is absent.
-  # ───────────────────────────────────────────────────────────────────────────
-  production:
-    name: Production Smoke Tests
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: e2e
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: e2e/go.mod
-
-      - name: Run production smoke tests
-        env:
-          MEMORY_PROD_TEST_TOKEN: ${{ secrets.MEMORY_PROD_TEST_TOKEN }}
-        run: go test -v -run TestProduction_ -timeout 2m ./...

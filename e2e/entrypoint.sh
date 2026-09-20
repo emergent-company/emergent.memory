@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-INSTALL_URL="https://raw.githubusercontent.com/emergent-company/emergent.memory/main/tools/cli/install.sh"
+INSTALL_URL="https://raw.githubusercontent.com/emergent-company/emergent.memory/main/apps/cli/install.sh"
 
 echo "=== memory CLI install test entrypoint ==="
 echo ">>> installing memory CLI from ${INSTALL_URL} ..."

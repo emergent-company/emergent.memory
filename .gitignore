@@ -137,6 +137,7 @@ clean_syntax.go
 *.sh.tmp
 test-*.sh
 run_*.sh
+!e2e/run_tests.sh
 get_*.sh
 
 # Benchmark and test runners
