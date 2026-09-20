@@ -74,6 +74,13 @@ test.describe('public share page', () => {
     // The exchange config is applied to the header identity.
     await expect(page.locator('#share-agent-name')).toHaveText(AGENT_NAME);
     await expect(page.locator('#share-agent-description')).toHaveText('A helpful assistant.');
+    // The browser title mirrors the exchanged identity ("<agent> — Memory"),
+    // not the generic "Shared chat — Memory" the server renders pre-exchange.
+    await expect(page).toHaveTitle(`${AGENT_NAME} — Memory`);
+    // The configured appearance (icon + color) is applied to the header avatar.
+    const avatar = page.locator('#share-avatar');
+    await expect(avatar.locator('.iconify')).toHaveClass(/lucide--database/);
+    await expect(avatar.locator('div').first()).toHaveCSS('color', 'rgb(37, 99, 235)');
     // The mock seeds one active session for the (anonymous) visitor.
     await expect(
       page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' }),
@@ -152,6 +159,11 @@ test.describe('public share page', () => {
     // Live SSE streaming is fully expressible in the mock: the gateway proxies
     // the upstream token frames and the assistant bubble accumulates them.
     await expect(page.locator('[data-role="assistant"]')).toContainText('Hello from share!');
+
+    // Markdown in the reply is rendered server-side: the gateway buffers the
+    // token deltas and emits an `html` frame at completion, so **Hello** becomes
+    // <strong>Hello</strong> in the assistant bubble.
+    await expect(page.locator('[data-role="assistant"] strong')).toContainText('Hello');
 
     // The just-created session owns one pending approval.
     const card = page.getByTestId('share-approval');
