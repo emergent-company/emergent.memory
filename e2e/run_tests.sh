@@ -73,6 +73,9 @@ else
   # Wait for the test client to finish (it exits after the suite runs).
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" wait test-emergent-client
 
+  # Print the test client's logs so failures are visible in CI.
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" logs test-emergent-client
+
   # Capture the test client's exit code for the script's own exit status.
   exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$(docker compose -f "$SCRIPT_DIR/docker-compose.yml" ps -q test-emergent-client)")
 

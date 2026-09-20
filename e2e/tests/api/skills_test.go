@@ -176,6 +176,7 @@ func TestSkills_UpdateSkill_Success(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	created := createGlobalSkill(t, uniqueName("update-skill-test"), "Original desc", "original content")
 	id := created["id"].(string)
