@@ -84,13 +84,14 @@ func (h *Handler) Create(c echo.Context) error {
 // @Router       /api/projects/{projectId}/tokens [get]
 // @Security     bearerAuth
 func (h *Handler) List(c echo.Context) error {
+	user := auth.MustGetUser(c)
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("projectId is required")
 	}
 
-	result, err := h.svc.ListByProject(c.Request().Context(), projectID)
+	result, err := h.svc.ListByProject(c.Request().Context(), projectID, user.ID)
 	if err != nil {
 		return err
 	}
