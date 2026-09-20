@@ -820,18 +820,17 @@ templ agentToolCapabilityControls(gv toolGroupView) {
 			value={ groupWasEnabledValue(gv.Enabled) }
 		/>
 		<label class="flex cursor-pointer items-center gap-1.5" title="Turn every tool in this group on or off">
-			<input
-				type="checkbox"
-				name={ "groupEnabled." + gv.Group.ID }
-				value="on"
-				if gv.Enabled {
-					checked
-				}
-				class="toggle toggle-sm"
-				aria-label={ "Enable " + gv.Group.Label + " tools" }
-				data-testid={ "tool-group-enabled-" + gv.Group.ID }
-				onchange="this.closest('[data-tool-group]').querySelectorAll('input[name=tool]').forEach(function(cb){cb.checked=this.checked;cb.dispatchEvent(new Event('change'))},this)"
-			/>
+			@form.ToggleInput(form.ToggleInputProps{
+				Name:    "groupEnabled." + gv.Group.ID,
+				Value:   "on",
+				Checked: gv.Enabled,
+				Class:   "toggle toggle-sm",
+				Attrs: templ.Attributes{
+					"aria-label":  "Enable " + gv.Group.Label + " tools",
+					"data-testid": "tool-group-enabled-" + gv.Group.ID,
+					"onchange":    "this.closest('[data-tool-group]').querySelectorAll('input[name=tool]').forEach(function(cb){cb.checked=this.checked;cb.dispatchEvent(new Event('change'))},this)",
+				},
+			})
 		</label>
 		if gv.Group.ID != "other" {
 			<select
@@ -965,20 +964,19 @@ templ agentToolRowView(t agentToolRow, withPolicy bool, rowClass ...string) {
 	if len(rowClass) > 0 {
 		cls = rowClass[0]
 	} }}
+	{{ toolAttrs := templ.Attributes{}
+	if withPolicy {
+		toolAttrs["onchange"] = "var s=this.closest('[data-tool-row]').querySelector('[data-tool-policy]'); if (s) s.disabled = !this.checked;"
+	} }}
 	<div class={ cls } data-tool-row>
 		<label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
-			<input
-				name="tool"
-				type="checkbox"
-				value={ t.Name }
-				if t.Checked {
-					checked
-				}
-				class="toggle toggle-sm shrink-0"
-				if withPolicy {
-					onchange="var s=this.closest('[data-tool-row]').querySelector('[data-tool-policy]'); if (s) s.disabled = !this.checked;"
-				}
-			/>
+			@form.ToggleInput(form.ToggleInputProps{
+				Name:    "tool",
+				Value:   t.Name,
+				Checked: t.Checked,
+				Class:   "toggle toggle-sm shrink-0",
+				Attrs:   toolAttrs,
+			})
 			<span class="min-w-0">
 				<span class="block font-mono text-[13px] font-medium">{ t.Name }</span>
 				if t.Description != "" {

@@ -14,6 +14,25 @@ import (
 	"time"
 )
 
+// RefreshError reports a non-2xx token-endpoint response during a refresh.
+// Callers distinguish an authentication rejection (the refresh token was
+// rejected) from a transient failure by type-asserting to *RefreshError via
+// errors.As.
+type RefreshError struct {
+	StatusCode int
+	Code       string // OAuth error code from the body (e.g. invalid_grant), when present
+	Err        error
+}
+
+func (e *RefreshError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("refresh failed with status %d", e.StatusCode)
+}
+
+func (e *RefreshError) Unwrap() error { return e.Err }
+
 // OAuthProvider implements Provider for OAuth 2.0 device flow authentication.
 type OAuthProvider struct {
 	mu          sync.RWMutex
@@ -112,11 +131,15 @@ func (p *OAuthProvider) Refresh(ctx context.Context) error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		re := &RefreshError{StatusCode: resp.StatusCode}
 		var errResp tokenErrorResponse
 		if err := json.Unmarshal(body, &errResp); err == nil {
-			return fmt.Errorf("refresh failed: %s - %s", errResp.Error, errResp.ErrorDescription)
+			re.Code = errResp.Error
+			re.Err = fmt.Errorf("refresh failed: %s - %s", errResp.Error, errResp.ErrorDescription)
+		} else {
+			re.Err = fmt.Errorf("refresh failed with status %d: %s", resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("refresh failed with status %d: %s", resp.StatusCode, string(body))
+		return re
 	}
 
 	var tokenResp TokenResponse

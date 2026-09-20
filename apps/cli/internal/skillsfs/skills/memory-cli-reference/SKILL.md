@@ -1273,6 +1273,150 @@ memory ask <question...> [flags]
       --v2               Use the v2 code-generation agent (fewer round-trips, faster)
 ```
 
+## memory backups
+
+Manage project backups
+
+### Synopsis
+
+Commands for creating, listing, downloading, importing, and deleting project backups
+
+### Options
+
+```
+  -h, --help   help for backups
+```
+
+## memory backups create
+
+Create a project backup
+
+### Synopsis
+
+Create a full backup of a project (documents, chunks, graph, files, and
+optionally deleted items, chat, and journal). The server starts the backup
+asynchronously and returns a backup with status "creating".
+
+Use --wait to block until the backup reaches "ready" or "failed".
+
+```
+memory backups create [flags]
+```
+
+### Options
+
+```
+  -h, --help                 help for create
+      --include-chat         Include chat conversations and messages
+      --include-deleted      Include soft-deleted items
+      --include-journal      Include journal entries
+      --retention-days int   Retention period in days (1-365) (default 30)
+      --timeout duration     Wait timeout (e.g. 10m, 30s) (default 10m0s)
+      --wait                 Block until the backup reaches a terminal status
+```
+
+## memory backups delete
+
+Delete a backup
+
+### Synopsis
+
+Permanently delete a backup and its archive. Use --force to skip confirmation.
+
+```
+memory backups delete <backupId> [flags]
+```
+
+### Options
+
+```
+      --force           Skip the confirmation prompt
+  -h, --help            help for delete
+      --org-id string   Organization ID (auto-detected if not specified)
+```
+
+## memory backups download
+
+Download a backup archive
+
+### Synopsis
+
+Download a ready backup archive to --out, streaming it to disk.
+
+```
+memory backups download <backupId> [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for download
+      --org-id string   Organization ID (auto-detected if not specified)
+      --out string      Output file path (required)
+```
+
+## memory backups get
+
+Get backup details
+
+### Synopsis
+
+Get details for a specific backup by ID.
+
+```
+memory backups get <backupId> [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for get
+      --org-id string   Organization ID (auto-detected if not specified)
+```
+
+## memory backups import
+
+Import a backup archive
+
+### Synopsis
+
+Import a backup archive produced by another deployment, registering it as a
+ready backup for clone restore. The archive is streamed (max 1 GiB).
+
+```
+memory backups import <archive.zip> [flags]
+```
+
+### Options
+
+```
+  -h, --help                 help for import
+      --org-id string        Organization ID (auto-detected if not specified)
+      --retention-days int   Retention period in days (1-365) (default 30)
+```
+
+## memory backups list
+
+List backups
+
+### Synopsis
+
+List backups for an organization, optionally filtered by project and
+paginated with --limit and --cursor.
+
+```
+memory backups list [flags]
+```
+
+### Options
+
+```
+      --cursor string   Pagination cursor from a previous response
+  -h, --help            help for list
+      --limit int       Maximum number of results (1-100)
+      --org-id string   Organization ID (auto-detected if not specified)
+```
+
 ## memory blueprints
 
 Install or export Blueprints (schemas, agents, skills, seed data)
@@ -4310,6 +4454,64 @@ memory remember [text] [flags]
       --session string         Continue a previous remember session (use session ID printed after a run)
       --show-time              Show elapsed time
       --show-tools             Show tool calls made by the agent
+```
+
+## memory restores
+
+Manage project restores
+
+### Synopsis
+
+Commands for creating clone restores from backups and tracking restore status
+
+### Options
+
+```
+  -h, --help   help for restores
+```
+
+## memory restores create
+
+Create a clone restore from a backup
+
+### Synopsis
+
+Clone a backup into a new project in the target organization. The server
+starts the restore asynchronously and returns a restore with status "pending".
+
+Use --wait to block until the restore reaches "completed" or "failed".
+
+```
+memory restores create [flags]
+```
+
+### Options
+
+```
+      --backup string        Backup ID to restore from (required)
+  -h, --help                 help for create
+      --org-id string        Organization ID (clone destination, auto-detected if not specified)
+      --target-name string   Name for the cloned project
+      --timeout duration     Wait timeout (e.g. 15m, 30s) (default 15m0s)
+      --wait                 Block until the restore reaches a terminal status
+```
+
+## memory restores get
+
+Get restore job status
+
+### Synopsis
+
+Get the status, progress, and target project of a restore job by ID.
+
+```
+memory restores get <restoreId> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for get
 ```
 
 ## memory runs

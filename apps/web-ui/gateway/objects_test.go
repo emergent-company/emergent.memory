@@ -269,7 +269,9 @@ func TestRenderObjectDetailTypeAwareWidgets(t *testing.T) {
 	if !strings.Contains(html, `name="prop_cleared" value="false"`) {
 		t.Error("boolean prop: missing hidden false input")
 	}
-	if !strings.Contains(html, `type="checkbox" name="prop_cleared" value="true" checked class="toggle"`) {
+	// Pins ToggleInput's canonical attribute order (class before checked) —
+	// semantically identical to the former hand-rolled markup.
+	if !strings.Contains(html, `type="checkbox" name="prop_cleared" value="true" class="toggle" checked`) {
 		t.Error("boolean prop: expected a checked toggle, got something else")
 	}
 	if strings.Contains(html, `type="text" name="prop_cleared"`) {
@@ -1104,7 +1106,8 @@ func TestRenderObjectCreatePage(t *testing.T) {
 	t.Run("boolean toggle reflects a true form value", func(t *testing.T) {
 		form := objectCreateForm{Type: "person", Props: map[string][]string{"active": {"true"}}}
 		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, nil, nil))
-		if !strings.Contains(html, `type="checkbox" name="prop_active" value="true" checked`) {
+		// Pins ToggleInput's canonical attribute order (class before checked).
+		if !strings.Contains(html, `type="checkbox" name="prop_active" value="true" class="toggle" checked`) {
 			t.Errorf("checked toggle missing in:\n%s", html)
 		}
 	})
@@ -1258,7 +1261,8 @@ func TestPropertyInput(t *testing.T) {
 	html := renderHTML(t, propertyInput(objectPropertyDef{Name: "active", Type: "boolean"}, []string{"true"}))
 	for _, want := range []string{
 		`type="hidden" name="prop_active" value="false"`,
-		`type="checkbox" name="prop_active" value="true" checked`,
+		// Pins ToggleInput's canonical attribute order (class before checked).
+		`type="checkbox" name="prop_active" value="true" class="toggle" checked`,
 		`class="toggle"`,
 	} {
 		if !strings.Contains(html, want) {

@@ -3,6 +3,8 @@ package backups
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +54,24 @@ func NewHandler(service *Service, storage *storage.Service, log *slog.Logger) *H
 	}
 }
 
+// ParseCursor decodes a base64url-encoded cursor (JSON {createdAt, id}) into a
+// Cursor. It is the inverse of the SDK's Cursor.Encode, so the value printed by
+// the CLI can be passed back verbatim as the `cursor` query parameter.
+func ParseCursor(encoded string) (*Cursor, error) {
+	if encoded == "" {
+		return nil, nil
+	}
+	data, err := base64.URLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cursor encoding: %w", err)
+	}
+	var cursor Cursor
+	if err := json.Unmarshal(data, &cursor); err != nil {
+		return nil, fmt.Errorf("invalid cursor format: %w", err)
+	}
+	return &cursor, nil
+}
+
 // CreateBackupRequestDTO is the request body for creating a backup.
 type CreateBackupRequestDTO struct {
 	IncludeDeleted bool `json:"includeDeleted"`
@@ -92,7 +112,11 @@ func (h *Handler) ListBackups(c echo.Context) error {
 
 	var cursor *Cursor
 	if cursorStr := c.QueryParam("cursor"); cursorStr != "" {
-		cursor = &Cursor{}
+		parsed, err := ParseCursor(cursorStr)
+		if err != nil {
+			return apperror.NewBadRequest("invalid cursor")
+		}
+		cursor = parsed
 	}
 
 	result, err := h.service.ListBackups(c.Request().Context(), ListParams{
