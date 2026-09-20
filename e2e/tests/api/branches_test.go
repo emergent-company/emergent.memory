@@ -40,20 +40,15 @@ func TestBranches_List_RequiresGraphReadScope(t *testing.T) {
 	mustStatus(t, resp, http.StatusForbidden)
 }
 
-func TestBranches_List_AllowsOptionalProjectID(t *testing.T) {
+func TestBranches_List_RequiresProjectID(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	// The branches API is always project-scoped: omitting project_id (no
+	// query param and no X-Project-ID header) must be rejected.
 	resp := doAPILogged(t, rl, "GET", "/api/graph/branches", e2eTestToken(), "", nil)
-	body := mustStatus(t, resp, http.StatusOK)
-
-	var branches []any
-	parseBodyJSON(t, body, &branches)
-	if branches == nil {
-		t.Error("expected array (possibly empty), got nil")
-	}
-	rl.Printf("list branches returned %d branches", len(branches))
+	mustStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestBranches_List_FiltersByProjectID(t *testing.T) {
@@ -110,7 +105,9 @@ func TestBranches_GetByID_Returns404ForNonExistent(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	resp := doAPILogged(t, rl, "GET", "/api/graph/branches/00000000-0000-0000-0000-000000000099", e2eTestToken(), "", nil)
+	projectID, _ := setupProjectLogged(t, rl)
+
+	resp := doAPILogged(t, rl, "GET", "/api/graph/branches/00000000-0000-0000-0000-000000000099", e2eTestToken(), projectID, nil)
 	mustStatus(t, resp, http.StatusNotFound)
 }
 
@@ -211,9 +208,10 @@ func TestBranches_Create_SuccessWithNameOnly(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
 	name := branchUniqueName("test-branch-basic")
 
-	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": name,
 	}))
 	body := mustStatus(t, resp, http.StatusCreated)
@@ -234,7 +232,7 @@ func TestBranches_Create_SuccessWithNameOnly(t *testing.T) {
 	// Cleanup
 	branchID, _ := branch["id"].(string)
 	t.Cleanup(func() {
-		doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil)
+		doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil)
 	})
 	rl.Printf("created branch id=%s", branchID)
 }
@@ -244,10 +242,12 @@ func TestBranches_Create_SuccessWithProjectID(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	name := branchUniqueName("test-branch-no-project")
+	projectID, _ := setupProjectLogged(t, rl)
+	name := branchUniqueName("test-branch-with-project")
 
 	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
-		"name": name,
+		"name":       name,
+		"project_id": projectID,
 	}))
 	body := mustStatus(t, resp, http.StatusCreated)
 
@@ -263,7 +263,7 @@ func TestBranches_Create_SuccessWithProjectID(t *testing.T) {
 
 	branchID, _ := branch["id"].(string)
 	t.Cleanup(func() {
-		doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil)
+		doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil)
 	})
 }
 
@@ -272,21 +272,22 @@ func TestBranches_Create_RejectsDuplicateNameSameProject(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
 	name := branchUniqueName("unique-branch-name-dup-test")
 
 	// Create first branch
-	resp1 := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	resp1 := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": name,
 	}))
 	body1 := mustStatus(t, resp1, http.StatusCreated)
 	var b1 map[string]any
 	parseBodyJSON(t, body1, &b1)
 	t.Cleanup(func() {
-		doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+b1["id"].(string), e2eTestToken(), "", nil)
+		doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+b1["id"].(string), e2eTestToken(), projectID, nil)
 	})
 
 	// Try to create second branch with same name
-	resp2 := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	resp2 := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": name,
 	}))
 	mustStatus(t, resp2, http.StatusConflict)
@@ -322,7 +323,9 @@ func TestBranches_Update_Returns404ForNonExistent(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	resp := doAPILogged(t, rl, "PATCH", "/api/graph/branches/00000000-0000-0000-0000-000000000099", e2eTestToken(), "",
+	projectID, _ := setupProjectLogged(t, rl)
+
+	resp := doAPILogged(t, rl, "PATCH", "/api/graph/branches/00000000-0000-0000-0000-000000000099", e2eTestToken(), projectID,
 		jsonBody(map[string]any{"name": "updated-name"}))
 	mustStatus(t, resp, http.StatusNotFound)
 }
@@ -342,17 +345,19 @@ func TestBranches_Update_RejectsEmptyName(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
+
 	// Create a branch first
-	createResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	createResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": branchUniqueName("branch-to-update"),
 	}))
 	createBody := mustStatus(t, createResp, http.StatusCreated)
 	var created map[string]any
 	parseBodyJSON(t, createBody, &created)
 	branchID := created["id"].(string)
-	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil) })
+	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil) })
 
-	resp := doAPILogged(t, rl, "PATCH", "/api/graph/branches/"+branchID, e2eTestToken(), "",
+	resp := doAPILogged(t, rl, "PATCH", "/api/graph/branches/"+branchID, e2eTestToken(), projectID,
 		jsonBody(map[string]any{"name": ""}))
 	mustStatus(t, resp, http.StatusBadRequest)
 }
@@ -362,20 +367,22 @@ func TestBranches_Update_Success(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
+
 	// Create a branch
 	originalName := branchUniqueName("original-name")
-	createResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	createResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": originalName,
 	}))
 	createBody := mustStatus(t, createResp, http.StatusCreated)
 	var created map[string]any
 	parseBodyJSON(t, createBody, &created)
 	branchID := created["id"].(string)
-	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil) })
+	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil) })
 
 	// Update the branch
 	updatedName := branchUniqueName("updated-name")
-	resp := doAPILogged(t, rl, "PATCH", "/api/graph/branches/"+branchID, e2eTestToken(), "",
+	resp := doAPILogged(t, rl, "PATCH", "/api/graph/branches/"+branchID, e2eTestToken(), projectID,
 		jsonBody(map[string]any{"name": updatedName}))
 	body := mustStatus(t, resp, http.StatusOK)
 
@@ -418,7 +425,9 @@ func TestBranches_Delete_Returns404ForNonExistent(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	resp := doAPILogged(t, rl, "DELETE", "/api/graph/branches/00000000-0000-0000-0000-000000000099", e2eTestToken(), "", nil)
+	projectID, _ := setupProjectLogged(t, rl)
+
+	resp := doAPILogged(t, rl, "DELETE", "/api/graph/branches/00000000-0000-0000-0000-000000000099", e2eTestToken(), projectID, nil)
 	mustStatus(t, resp, http.StatusNotFound)
 }
 
@@ -436,8 +445,10 @@ func TestBranches_Delete_Success(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
+
 	// Create a branch
-	createResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	createResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": branchUniqueName("branch-to-delete"),
 	}))
 	createBody := mustStatus(t, createResp, http.StatusCreated)
@@ -446,11 +457,11 @@ func TestBranches_Delete_Success(t *testing.T) {
 	branchID := created["id"].(string)
 
 	// Delete the branch
-	resp := doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil)
+	resp := doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil)
 	mustStatus(t, resp, http.StatusNoContent)
 
 	// Verify it's deleted
-	getResp := doAPILogged(t, rl, "GET", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil)
+	getResp := doAPILogged(t, rl, "GET", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil)
 	mustStatus(t, getResp, http.StatusNotFound)
 	rl.Printf("deleted branch id=%s", branchID)
 }
@@ -464,9 +475,11 @@ func TestBranches_CRUD_FullLifecycle(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
+
 	// 1. Create a branch
 	branchName := branchUniqueName("lifecycle-branch")
-	createResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	createResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": branchName,
 	}))
 	createBody := mustStatus(t, createResp, http.StatusCreated)
@@ -479,7 +492,7 @@ func TestBranches_CRUD_FullLifecycle(t *testing.T) {
 	}
 
 	// 2. Read the branch
-	getResp := doAPILogged(t, rl, "GET", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil)
+	getResp := doAPILogged(t, rl, "GET", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil)
 	getBody := mustStatus(t, getResp, http.StatusOK)
 	var fetched map[string]any
 	parseBodyJSON(t, getBody, &fetched)
@@ -491,7 +504,7 @@ func TestBranches_CRUD_FullLifecycle(t *testing.T) {
 	}
 
 	// 3. List and find the branch
-	listResp := doAPILogged(t, rl, "GET", "/api/graph/branches", e2eTestToken(), "", nil)
+	listResp := doAPILogged(t, rl, "GET", "/api/graph/branches", e2eTestToken(), projectID, nil)
 	listBody := mustStatus(t, listResp, http.StatusOK)
 	var branches []map[string]any
 	parseBodyJSON(t, listBody, &branches)
@@ -508,7 +521,7 @@ func TestBranches_CRUD_FullLifecycle(t *testing.T) {
 
 	// 4. Update the branch
 	updatedName := branchUniqueName("lifecycle-branch-updated")
-	updateResp := doAPILogged(t, rl, "PATCH", "/api/graph/branches/"+branchID, e2eTestToken(), "",
+	updateResp := doAPILogged(t, rl, "PATCH", "/api/graph/branches/"+branchID, e2eTestToken(), projectID,
 		jsonBody(map[string]any{"name": updatedName}))
 	updateBody := mustStatus(t, updateResp, http.StatusOK)
 	var updated map[string]any
@@ -518,11 +531,11 @@ func TestBranches_CRUD_FullLifecycle(t *testing.T) {
 	}
 
 	// 5. Delete the branch
-	deleteResp := doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil)
+	deleteResp := doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil)
 	mustStatus(t, deleteResp, http.StatusNoContent)
 
 	// 6. Verify deletion
-	verifyResp := doAPILogged(t, rl, "GET", "/api/graph/branches/"+branchID, e2eTestToken(), "", nil)
+	verifyResp := doAPILogged(t, rl, "GET", "/api/graph/branches/"+branchID, e2eTestToken(), projectID, nil)
 	mustStatus(t, verifyResp, http.StatusNotFound)
 	rl.Printf("branch full lifecycle completed successfully")
 }
@@ -536,18 +549,20 @@ func TestBranches_Create_WithParentBranch(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
+
 	// Create parent branch
-	parentResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	parentResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name": branchUniqueName("parent-branch"),
 	}))
 	parentBody := mustStatus(t, parentResp, http.StatusCreated)
 	var parent map[string]any
 	parseBodyJSON(t, parentBody, &parent)
 	parentID := parent["id"].(string)
-	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+parentID, e2eTestToken(), "", nil) })
+	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+parentID, e2eTestToken(), projectID, nil) })
 
 	// Create child branch
-	childResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	childResp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name":             branchUniqueName("child-branch"),
 		"parent_branch_id": parentID,
 	}))
@@ -555,7 +570,7 @@ func TestBranches_Create_WithParentBranch(t *testing.T) {
 	var child map[string]any
 	parseBodyJSON(t, childBody, &child)
 	childID := child["id"].(string)
-	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+childID, e2eTestToken(), "", nil) })
+	t.Cleanup(func() { doAPILogged(t, rl, "DELETE", "/api/graph/branches/"+childID, e2eTestToken(), projectID, nil) })
 
 	if child["name"] == nil || child["name"] == "" {
 		t.Error("expected non-empty name on child branch")
@@ -571,8 +586,10 @@ func TestBranches_Create_RejectsNonExistentParentBranch(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	projectID, _ := setupProjectLogged(t, rl)
+
 	nonExistentID := "00000000-0000-0000-0000-000000000099"
-	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
+	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"name":             "orphan-branch",
 		"parent_branch_id": nonExistentID,
 	}))
