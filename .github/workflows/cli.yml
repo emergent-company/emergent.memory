@@ -76,6 +76,27 @@ jobs:
           done
           echo "OK: all self-hosted static copies match KreuzbergImage"
 
+      - name: Verify MinIO image pins are in sync
+        working-directory: apps/cli
+        run: |
+          for NAME in MinioImage MinioClientImage; do
+            PIN=$(grep -oP "${NAME}\s*=\s*\"\K[^\"]+" internal/installer/templates.go)
+            if [ -z "${PIN}" ]; then
+              echo "ERROR: could not read ${NAME} from internal/installer/templates.go"
+              exit 1
+            fi
+            echo "${NAME} pin: ${PIN}"
+            for f in ../../deploy/self-hosted/docker-compose.yml \
+                     ../../deploy/self-hosted/docker-compose.local.yml \
+                     ../../deploy/self-hosted/install-online.sh; do
+              if ! grep -q "${PIN}" "${f}"; then
+                echo "ERROR: ${f} does not reference ${PIN}; bump it together with ${NAME}"
+                exit 1
+              fi
+            done
+          done
+          echo "OK: all self-hosted static copies match the MinIO image pins"
+
   test:
     name: Test
     runs-on: ubuntu-latest
