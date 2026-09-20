@@ -16,7 +16,7 @@ async function deleteOrgAndPollGone(page: Page, orgId: string): Promise<void> {
     .poll(
       async () => {
         const resp = await page.request.get('/api/orgs');
-        if (!resp.ok()) return false;
+        if (!resp.ok()) throw new Error(`list orgs failed: ${resp.status()}`);
         const orgs = (await resp.json()) as Array<{ id: string }>;
         return orgs.some((o) => o.id === orgId);
       },
