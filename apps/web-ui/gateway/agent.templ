@@ -793,7 +793,7 @@ templ agentToolBuiltinLeading() {
 			@ui.IconSpan("lucide--package", "size-4 shrink-0 text-primary/70")
 			<span class="truncate text-sm font-semibold">Built-in</span>
 		</div>
-		<p class="text-base-content/50 truncate pl-[26px] text-xs">memory's native tools, grouped by capability.</p>
+		<p class="text-base-content/50 truncate pl-[26px] text-xs">Tools that ship with Memory.</p>
 	</div>
 }
 
@@ -808,19 +808,16 @@ templ agentToolCapabilityGroup(gv toolGroupView) {
 	@ui.Disclosure(ui.DisclosureProps{
 		GroupClass:   "group/cap",
 		ItemsStart:   true,
+		DetailsBase:  "rounded-box border border-base-content/10",
 		Attrs:        templ.Attributes{"data-testid": "tool-group", "data-tool-group": gv.Group.ID},
 		SummaryAttrs: templ.Attributes{"data-testid": "tool-group-header-" + gv.Group.ID},
 		Open:         gv.Open,
 	}, agentToolCapabilityLeading(gv), agentToolCapabilityControls(gv)) {
-		if len(gv.Rows) > 0 {
-			<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
-				for _, t := range gv.Rows {
-					@agentToolRowView(t, true)
-				}
-			</div>
-		} else {
-			<p class="text-base-content/50 text-xs">No tools from this group are available.</p>
-		}
+		<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
+			for _, t := range gv.Rows {
+				@agentToolRowView(t, true)
+			}
+		</div>
 	}
 }
 
@@ -902,7 +899,7 @@ templ agentToolOtherContainer(desc string, withTestID bool) {
 // capability group: it carries no group enable switch or group policy, and each
 // row keeps its own per-tool policy select.
 templ agentToolUncoveredGroup(rows []agentToolRow) {
-	@agentToolOtherContainer("No capability group covers these — kept so existing tools aren't dropped on save.", true) {
+	@agentToolOtherContainer("Not offered by a source yet — kept so existing tools aren't dropped on save.", true) {
 		for _, t := range rows {
 			@agentToolRowView(t, true)
 		}
@@ -949,9 +946,9 @@ templ agentToolGroupLeading(p agentToolGroupProps) {
 	<div class="flex min-w-0 items-center gap-2.5">
 		@ui.IconSpan(p.Icon, "size-4 shrink-0 "+p.IconClass)
 		if p.TitleMono {
-			<span class="truncate font-mono text-sm font-medium">{ p.Title }</span>
+			<span class="truncate font-mono text-sm font-semibold">{ p.Title }</span>
 		} else {
-			<span class="truncate text-sm font-medium">{ p.Title }</span>
+			<span class="truncate text-sm font-semibold">{ p.Title }</span>
 		}
 		if p.RemoteBadge {
 			@ui.Badge(ui.BadgeProps{
