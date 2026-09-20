@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/emergent/api-tests/client"
+	"github.com/google/uuid"
 )
 
 // DocumentsTestSuite tests the documents API endpoints.
@@ -379,8 +380,9 @@ func (s *DocumentsTestSuite) TestGetDocument_RequiresProjectID() {
 // =============================================================================
 
 func (s *DocumentsTestSuite) TestCreateDocument_Success() {
+	filename := "create-test-" + uuid.New().String() + ".txt"
 	body := map[string]any{
-		"filename": "create-test.txt",
+		"filename": filename,
 		"content":  "Hello, World!",
 	}
 
@@ -398,7 +400,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_Success() {
 	s.NotEmpty(respBody["id"])
 	s.createdDocIDs = append(s.createdDocIDs, respBody["id"].(string))
 
-	s.Equal("create-test.txt", respBody["filename"])
+	s.Equal(filename, respBody["filename"])
 	s.Equal("Hello, World!", respBody["content"])
 	s.NotEmpty(respBody["contentHash"])
 	s.Equal(s.Project, respBody["projectId"])

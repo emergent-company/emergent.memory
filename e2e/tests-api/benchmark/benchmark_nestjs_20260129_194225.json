@@ -51,7 +51,7 @@
       "requests_per_second": 5257.335699821357
     },
     {
-      "endpoint": "/api/v2/documents",
+      "endpoint": "/api/documents",
       "method": "GET",
       "total_requests": 500,
       "success_requests": 0,
