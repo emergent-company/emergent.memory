@@ -60,7 +60,7 @@
 - [ ] 5.4 `specs/settings/voice-save-ui.spec.ts`: `POST /settings/voice`, `/voice/:key`, `/voice/group/:group` persist field/group edits
 - [ ] 5.5 `specs/settings/provider-connection-test-ui.spec.ts`: `POST /settings/providers/test`, `/check-url`, `/:provider/test`, `/:provider/remove`
 - [x] 5.6 `specs/settings/settings-overrides-ui.spec.ts`: creates then deletes a scratch `E2E override …` (`POST /settings/overrides`, `/:agentName/delete`), asserting both states across reloads, plus a no-leftovers guard test. No scratch agent is needed — overrides are name-keyed project settings and memory performs no agent-existence check.
-- [ ] 5.7 `specs/settings/settings-editor-remember-ui.spec.ts`: `POST /settings/remember/:field` persists. The `POST /settings/editor` half is already covered by 5.1, so this task reduces to the remember-field route.
+- [x] 5.7 `specs/settings/settings-editor-remember-ui.spec.ts`: `POST /settings/remember/agent` — the remember-agent select autosaves inline (HX-Trigger toast) and persists across reload, then restores the prior value. The `dedup` sibling is deliberately not exercised: empty input means "leave unchanged", so a set value is not symmetrically restorable (same reason 5.1 rejected `dedup_threshold`).
 - [ ] 5.8 `specs/settings/mcp-nodes-ui.spec.ts`: `/settings/mcp-nodes` lists nodes and `POST /settings/mcp-nodes/remove` works
 - [ ] 5.9 `specs/sessions/usage-charts-ui.spec.ts`: assert `stat-total-tokens`/`stat-estimated-cost`/`stat-sessions`/`stat-month-spend` render and `usage-token-chart`/`usage-session-chart` draw from `#usage-timeseries`
 - [ ] 5.10 `specs/sessions/session-detail-ui.spec.ts`: `/sessions/:id` renders timeline, run grouping and tool-call details
