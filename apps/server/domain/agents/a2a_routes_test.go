@@ -90,11 +90,11 @@ func TestParseTaskActionSuffix(t *testing.T) {
 }
 
 func TestRequireA2AScope(t *testing.T) {
-	t.Run("no user returns 401", func(t *testing.T) {
+	t.Run("no user is not a scope error (auth enforced upstream)", func(t *testing.T) {
+		// Authentication is enforced by a2aStreamingAuthMiddleware wrapping the
+		// dispatcher route, so the scope helper only performs the scope check.
 		c, _ := newA2AActionContext("abc:cancel", nil)
-		a2aErr := requireA2AScope(c, "agents:write")
-		require.NotNil(t, a2aErr)
-		assert.Equal(t, http.StatusUnauthorized, a2aErr.Code.HTTPStatus())
+		assert.Nil(t, requireA2AScope(c, "agents:write"))
 	})
 
 	t.Run("non-token session passes through", func(t *testing.T) {

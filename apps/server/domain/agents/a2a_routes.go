@@ -151,15 +151,13 @@ func (h *A2AHandler) DispatchTaskAction(c echo.Context) error {
 // authenticated via an emt_* API token (APITokenID != ""). OAuth/standalone
 // sessions pass through. Returns an A2A error so rejections use the A2A
 // envelope, not the platform's generic error shape.
+//
+// Authentication is enforced upstream by a2aStreamingAuthMiddleware (which wraps
+// this dispatcher's route), so this performs only the scope check and does not
+// duplicate the auth guard.
 func requireA2AScope(c echo.Context, scope string) *A2AError {
 	user := auth.GetUser(c)
-	if user == nil {
-		return NewA2AError(A2ACodeUnauthenticated, A2AReasonUnauthenticated, "authentication required")
-	}
-	if user.APITokenID == "" {
-		return nil
-	}
-	if !user.HasScope(scope) {
+	if user != nil && user.APITokenID != "" && !user.HasScope(scope) {
 		return NewA2AError(A2ACodePermissionDenied, A2AReasonPermissionDenied, "insufficient permissions")
 	}
 	return nil

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
-	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/acp"
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/acp" //nolint:staticcheck // SA1019: ACP is deprecated but intentionally retained until its removal; `memory acp` is the legacy consumer.
 	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 	"github.com/spf13/cobra"
 )
