@@ -1,19 +1,49 @@
 ---
 name: pr-review-and-fix
-description: Address PR review comments from all bots and reviewers (CodeRabbit, Copilot, Gemini, etc.), implement fixes, reply to threads with commit references, and resolve threads. Use when the user wants to work through open PR comments.
+description: Review a PR end-to-end — independent review, address all bot/human review comments, fix what needs fixing, merge when checks are green, and file follow-up issues for deferred suggestions/ideas/bugs. Use when the user wants to review a PR, work through open review comments, or review-and-merge.
 license: MIT
 metadata:
   author: opencode
-  version: "1.1"
+  version: "1.2"
 ---
 
 # Skill: pr-review-and-fix
 
-Address all open PR review comments: read them, triage them, implement fixes, commit,
-reply to each thread with the commit reference, and resolve threads.
+Review a PR end-to-end in four phases. Do not stop at replying to bot comments — the
+review is yours to own.
+
+1. **Independent review** — read the diff and judge it yourself against the criteria
+   below. Route logic/correctness to `@oracle`, UI/UX to `@designer`. Do not trust bot
+   comments alone.
+2. **Address comments** — fetch and triage every open review thread (Steps 1–9), fix what
+   you independently agree needs fixing.
+3. **Merge** — after fixes pass checks and CI is green (Step 10).
+4. **Follow-up filing** — capture deferred suggestions/ideas/bugs (Step 11).
 
 **Input**: PR number (e.g. `51`) or a GitHub PR URL. If omitted, infer from conversation
 context (current branch → `gh pr view`) or ask.
+
+---
+
+## Review criteria (independent review)
+
+Judge the diff against ALL of these. For every bot comment, verify the claim against the
+live code before acting — never rubber-stamp.
+
+| Dimension | What to check |
+|---|---|
+| **Correctness** | Logic sound? Edge cases handled? Errors wrapped? Nil/race/off-by-one? |
+| **Security** | Authz enforced (RLS / scope checks)? No secret/token leaks in code, logs, or docs examples? No injection? |
+| **API contract** | Routes, JSON field names, status codes match the merged server/spec? |
+| **Spec drift** | Behavior/interface change updated the OpenSpec delta specs in the same PR? Run `openspec validate`. |
+| **Migrations** | Schema change has a Goose migration, schema-qualified names, reversible? |
+| **Tests** | New behavior covered? Negative + edge cases? e2e for API/UI changes? |
+| **UI/UX** | Route to `@designer`: hierarchy, spacing, responsive behavior, affordances, motion. |
+| **Scope** | Unrelated changes sneaked in? Clean, logical commit history? |
+
+**Parallel review lanes:** dispatch `@oracle` (logic/correctness/security) and `@designer`
+(UI/UX) in parallel when both apply. Reconcile their findings before scoping fixes. Do not
+re-read files the lanes already mapped — read only exact lines before editing.
 
 ---
 
@@ -294,7 +324,61 @@ mutation {
 
 ---
 
-### 10. Final status report
+### 10. Merge
+
+After fixes pass checks and all blocking threads are resolved, merge.
+
+```bash
+# Inspect merge readiness first — never merge blindly.
+gh pr view --json mergeable,mergeStateStatus,reviewDecision,state
+```
+
+| State | Action |
+|---|---|
+| `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`, CI green | Merge now. |
+| `mergeStateStatus: BEHIND` | Sync `main` into the branch (`git merge origin/main`, push), then merge/auto-merge. |
+| `reviewDecision: CHANGES_REQUESTED` | Do **not** merge — address the requesting review first. |
+| CI red / `mergeStateStatus: BLOCKED` | Do **not** merge — fix the failure first. |
+
+Merge commands:
+```bash
+gh pr merge --squash --delete-branch      # squash merge + delete remote branch
+# or queue it so it lands the moment CI goes green:
+gh pr merge --squash --auto
+```
+
+Then clean up the worktree (if one was used): `git worktree remove <path>` and delete the
+local branch.
+
+**Merge gate (guardrails):**
+- Never merge with CI red, `CHANGES_REQUESTED`, or an unresolved security blocker.
+- Never squash/amend already-pushed commits to sidestep a problem.
+- Do **not** merge your own authored PR unless explicitly asked — repo policy says the
+  review bot or a maintainer merges. When you are acting as **reviewer** (not author),
+  merging is expected.
+
+---
+
+### 11. Post-review follow-up filing (optional)
+
+After the review, capture anything deferred or discovered that is out of scope for this PR:
+
+- **Ideas / suggestions / tech debt** → `docs/improvements/NNN-short-title.md` (template `docs/improvements/TEMPLATE.md`).
+- **Bugs found** → `docs/bugs/NNN-short-title.md` (template `docs/bugs/TEMPLATE.md`).
+
+Do this when the review surfaced something real but not appropriate to fix in the PR:
+unhandled edge cases, missing test coverage, architectural smells, security hardening
+ideas, UX improvements, or a confirmed bug. Do **not** file trivia, already-tracked items,
+or things you are fixing in this same PR.
+
+Use the next available `NNN` in each directory. Fill the template fully; set priority /
+severity. Link the PR in the body for traceability. If the item is a platform-level bug
+(e.g. a broken Memory server), also consider `gh issue create` via the `memory-issue-report`
+skill.
+
+---
+
+### 12. Final status report
 
 ```
 ## PR #<N> — Review Complete
@@ -312,6 +396,13 @@ mutation {
 
 ### Remaining Open
 <list any threads intentionally left open>
+
+### Merged
+<merge commit SHA, or "queued via auto-merge" if CI still pending>
+
+### Follow-ups filed
+- [ ] docs/improvements/NNN-title.md — <one-line idea/suggestion>
+- [ ] docs/bugs/NNN-title.md — <one-line bug> (if any)
 
 **Commits pushed:** <list SHAs>
 ```
@@ -373,3 +464,9 @@ without further code changes:
   `pre-commit-check` skill if available
 - Never use `git commit --no-verify` unless the user explicitly says to skip hooks
 - The reply endpoint MUST include the PR number: `pulls/<PR_NUMBER>/comments/<ID>/replies`
+- Independent review first: verify every bot claim against the live code before fixing
+- Check spec drift — behavior/interface changes must ship with their OpenSpec delta specs
+- Never merge with CI red, `CHANGES_REQUESTED`, or an unresolved security blocker
+- Do not merge your own authored PR unless explicitly asked (reviewer role may merge)
+- File follow-ups (`docs/improvements` / `docs/bugs`) only for real, deferred items —
+  never trivia or things you fixed in the same PR
