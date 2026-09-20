@@ -362,6 +362,7 @@ def start_agent_run(project_id, doc_id):
             "parts": [{"text": f"Remember document {doc_id}"}],
             "metadata": {"skillId": AGENT_NAME},
         },
+        "configuration": {"returnImmediately": True},
     })
     task = resp.get("task") or {}
     run_id = task.get("id")

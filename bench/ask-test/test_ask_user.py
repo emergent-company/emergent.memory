@@ -228,6 +228,7 @@ def start_run(project_id: str, agent_id: str) -> str:
             "parts": [{"text": "Ask me a test question using ask_user with options Yes and No."}],
             "metadata": {"skillId": AGENT_NAME},
         },
+        "configuration": {"returnImmediately": True},
     })
     task = resp.get("task") or {}
     run_id = task.get("id")
