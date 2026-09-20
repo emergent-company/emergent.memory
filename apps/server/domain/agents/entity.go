@@ -273,9 +273,9 @@ type AgentProcessingLog struct {
 type AgentVisibility string
 
 const (
-	VisibilityExternal AgentVisibility = "external" // Discoverable via ACP and admin UI
-	VisibilityProject  AgentVisibility = "project"  // Visible in admin UI, not via ACP
-	VisibilityInternal AgentVisibility = "internal" // Only visible to other agents
+	VisibilityExternal AgentVisibility = "external" // Advertised in the project's A2A agent card and shown in the admin UI
+	VisibilityProject  AgentVisibility = "project"  // Shown in the admin UI, not advertised in the A2A agent card
+	VisibilityInternal AgentVisibility = "internal" // Hidden from lists; callable only by other agents, never via A2A
 )
 
 // AgentFlowType defines how an agent executes

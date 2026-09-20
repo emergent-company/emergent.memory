@@ -366,7 +366,7 @@ templ agentSettingsSave() {
 }
 
 // agentGeneralSettingsForm is the General subpage (PRG → POST
-// /agents/:id/settings/general): name, system prompt, language.
+// /agents/:id/settings/general): name, system prompt, language, and visibility.
 templ agentGeneralSettingsForm(data agentSettingsData) {
 	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general") }>
 		@ui.Section("General", ui.SectionProps{
@@ -419,6 +419,36 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 						})
 					}
 				</div>
+			</div>
+		}
+		@ui.Section("Visibility", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "p-5",
+		}) {
+			<div class="flex flex-col gap-4">
+				<p class="text-base-content/70 text-sm">Controls who can discover this agent. Changes take effect after you save.</p>
+				@form.FormControl("agent-settings-visibility", "Visibility", form.LabelAbove, agentVisibilityDescription(agentVisibilityValue(data.Agent)), "", nil) {
+					<select id="agent-settings-visibility" name="visibility" class="select w-full">
+						for _, opt := range agentVisibilityOptions {
+							<option value={ opt.Value } selected?={ agentVisibilityValue(data.Agent) == opt.Value }>{ opt.Label } — { opt.Description }</option>
+						}
+					</select>
+				}
+				if agentVisibilityValue(data.Agent) == agentVisibilityExternal {
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--shield-alert",
+						Message: agentVisibilityExternalWarning,
+					})
+				} else if agentVisibilityValue(data.Agent) == agentVisibilityInternal {
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertInfo,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--info",
+						Message: agentVisibilityInternalNote,
+					})
+				}
 			</div>
 		}
 		@agentSettingsSave()

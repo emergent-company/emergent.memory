@@ -777,6 +777,85 @@ func visibilityLabel(v string) string {
 	return v
 }
 
+// Valid agent visibility levels, mirroring memory's AgentVisibility enum.
+// A missing value defaults to project (the server default).
+const (
+	agentVisibilityProject  = "project"
+	agentVisibilityExternal = "external"
+	agentVisibilityInternal = "internal"
+)
+
+// agentVisibilityOption is one selectable visibility level: the stored value,
+// its short display name, and the one-line description shown both in the
+// option label ("Name — description") and as the selected option's helper line.
+type agentVisibilityOption struct {
+	Value       string
+	Label       string
+	Description string
+}
+
+// agentVisibilityOptions is the ordered visibility list for the General
+// settings dropdown. Project leads as the default.
+var agentVisibilityOptions = []agentVisibilityOption{
+	{agentVisibilityProject, "Project", "Visible in this project's UI and chat. Not advertised in the project's A2A agent card."},
+	{agentVisibilityExternal, "External", "Advertised in the project's A2A agent card, so external A2A clients can discover it. The agent's name becomes its public skill id."},
+	{agentVisibilityInternal, "Internal", "Hidden from the agents list. For system agents that other agents call — open it by direct link."},
+}
+
+// Warning and note copy shown under the Visibility control. Kept factual:
+// project agents are not advertised in the A2A agent card but remain resolvable
+// by slug; internal agents are neither advertised nor A2A-resolvable (they can
+// still be invoked by other agents through delegation). Neither is ever
+// described as "not callable".
+const (
+	agentVisibilityExternalWarning = "External agents are listed in your project's A2A agent card. Anyone with a project API token can discover them (agents:read) and call them (agents:write). Review the system prompt and tools before exposing an agent."
+	agentVisibilityInternalNote    = "Internal agents don't appear in the agents list. You can still open this one from its direct link, and other agents can still call it."
+)
+
+// agentVisibilityNormalize maps a stored or submitted visibility to one of the
+// three valid levels, defaulting empty/missing to project (the server default).
+// It returns false for anything else, so callers never forward garbage.
+func agentVisibilityNormalize(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "":
+		return agentVisibilityProject, true
+	case agentVisibilityProject, agentVisibilityExternal, agentVisibilityInternal:
+		return v, true
+	default:
+		return "", false
+	}
+}
+
+// agentVisibilityValue returns the agent's visibility normalized to a known
+// level: empty or unknown reads as project (the server default), so an older
+// server or a malformed value still preselects a valid option.
+func agentVisibilityValue(a *AgentDefinition) string {
+	if a == nil {
+		return agentVisibilityProject
+	}
+	if v, ok := agentVisibilityNormalize(a.Visibility); ok {
+		return v
+	}
+	return agentVisibilityProject
+}
+
+// agentVisibilityDescription returns the one-line description for a visibility
+// value, matching what the dropdown renders for its selected option. Unknown
+// values fall back to the project copy.
+func agentVisibilityDescription(v string) string {
+	nv, ok := agentVisibilityNormalize(v)
+	if !ok {
+		nv = agentVisibilityProject
+	}
+	for _, opt := range agentVisibilityOptions {
+		if opt.Value == nv {
+			return opt.Description
+		}
+	}
+	return ""
+}
+
 // chatPlaceholder picks a placeholder mentioning the active agent name.
 func chatPlaceholder(agents []AgentDefinitionSummary, preselect string) string {
 	name := "Memory"
