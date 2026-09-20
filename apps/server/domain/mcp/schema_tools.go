@@ -1227,8 +1227,7 @@ func (s *Service) executeSchemaMigratePreview(ctx context.Context, projectID str
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("preview failed: %v", err)}}}, err
 	}
 
-	out, _ := json.Marshal(result)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(result)
 }
 
 func (s *Service) executeSchemaMigrateExecute(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -1258,8 +1257,7 @@ func (s *Service) executeSchemaMigrateExecute(ctx context.Context, projectID str
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("execute failed: %v", err)}}}, err
 	}
 
-	out, _ := json.Marshal(result)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(result)
 }
 
 func (s *Service) executeSchemaMigrateRollback(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -1281,8 +1279,7 @@ func (s *Service) executeSchemaMigrateRollback(ctx context.Context, projectID st
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("rollback failed: %v", err)}}}, err
 	}
 
-	out, _ := json.Marshal(result)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(result)
 }
 
 func (s *Service) executeSchemaMigrateCommit(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -1302,8 +1299,7 @@ func (s *Service) executeSchemaMigrateCommit(ctx context.Context, projectID stri
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("commit failed: %v", err)}}}, err
 	}
 
-	out, _ := json.Marshal(result)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(result)
 }
 
 func (s *Service) executeSchemaMigrationJobStatus(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
@@ -1321,6 +1317,5 @@ func (s *Service) executeSchemaMigrationJobStatus(ctx context.Context, projectID
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("job status failed: %v", err)}}}, err
 	}
 
-	out, _ := json.Marshal(job)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(out)}}}, nil
+	return s.wrapResultCompact(job)
 }

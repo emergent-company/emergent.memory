@@ -718,6 +718,11 @@ func (w *ObjectExtractionWorker) persistResults(
 		return nil, fmt.Errorf("parse project_id: %w", err)
 	}
 
+	jobUUID, err := uuid.Parse(job.ID)
+	if err != nil {
+		return nil, fmt.Errorf("parse job id: %w", err)
+	}
+
 	// Map temp_id -> created object ID
 	tempIDToObjectID := make(map[string]uuid.UUID)
 	createdObjectIDs := make([]string, 0)
@@ -751,11 +756,12 @@ func (w *ObjectExtractionWorker) persistResults(
 		if key != "" {
 			// Upsert: merge into existing object when (project_id, type, key) matches.
 			graphObj, created, err := w.graphService.CreateOrUpdate(ctx, projectID, &graph.CreateGraphObjectRequest{
-				Type:       entity.Type,
-				Key:        &key,
-				Properties: properties,
-				Status:     stringPtr("suggested"),
-				BranchID:   stagingBranchID,
+				Type:            entity.Type,
+				Key:             &key,
+				Properties:      properties,
+				Status:          stringPtr("suggested"),
+				BranchID:        stagingBranchID,
+				ExtractionJobID: &jobUUID,
 			}, nil)
 			if err != nil {
 				w.log.Warn("failed to persist graph object",
@@ -774,10 +780,11 @@ func (w *ObjectExtractionWorker) persistResults(
 		} else {
 			// No name → cannot key for dedup, fall back to plain Create.
 			graphObj, err := w.graphService.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
-				Type:       entity.Type,
-				Properties: properties,
-				Status:     stringPtr("suggested"),
-				BranchID:   stagingBranchID,
+				Type:            entity.Type,
+				Properties:      properties,
+				Status:          stringPtr("suggested"),
+				BranchID:        stagingBranchID,
+				ExtractionJobID: &jobUUID,
 			}, nil)
 			if err != nil {
 				w.log.Warn("failed to create graph object (no name)",

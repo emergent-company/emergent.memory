@@ -252,7 +252,8 @@ CREATE TABLE core.api_tokens (
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
     token_encrypted text,
-    expires_at timestamp with time zone
+    expires_at timestamp with time zone,
+    CONSTRAINT api_tokens_pkey PRIMARY KEY (id)
 );
 
 
@@ -2851,14 +2852,6 @@ ALTER TABLE ONLY core.user_emails
 
 
 --
--- Name: api_tokens api_tokens_pkey; Type: CONSTRAINT; Schema: core; Owner: -
---
-
-ALTER TABLE ONLY core.api_tokens
-    ADD CONSTRAINT api_tokens_pkey PRIMARY KEY (id);
-
-
---
 -- Name: api_tokens api_tokens_token_hash_unique; Type: CONSTRAINT; Schema: core; Owner: -
 --
 
@@ -4918,6 +4911,13 @@ COMMENT ON INDEX kb.idx_graph_relationships_embedding_ivfflat IS 'IVFFlat index 
 --
 
 CREATE INDEX idx_graph_schemas_project_id ON kb.graph_schemas USING btree (project_id) WHERE (project_id IS NOT NULL);
+
+
+--
+-- Name: graph_schemas_builtin_name_version_key; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE UNIQUE INDEX graph_schemas_builtin_name_version_key ON kb.graph_schemas USING btree (name, version) WHERE (source = 'builtin'::text);
 
 
 --
