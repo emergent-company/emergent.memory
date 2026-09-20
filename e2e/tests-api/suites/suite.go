@@ -33,8 +33,17 @@ func (s *BaseSuite) SetupSuite() {
 	s.Client = client.New(client.Config{
 		BaseURL:    s.Config.BaseURL,
 		ServerType: s.Config.ServerType,
+		Token:      s.Config.Token,
 	})
 	s.Tokens = s.Client.Tokens()
+
+	if s.Config.SkipDB {
+		// Remote mode: no direct database access. Leave s.DB nil and skip
+		// fixture setup — the deployed server is expected to already have the
+		// target org/project provisioned.
+		s.Project = testutil.DefaultTestProject.ID
+		return
+	}
 
 	// Connect to database
 	db, err := testutil.ConnectDB(s.Config)
