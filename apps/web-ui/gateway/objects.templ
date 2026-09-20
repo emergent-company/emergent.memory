@@ -119,6 +119,14 @@ templ objectRow(o GraphObject, tui typeUI) {
 				Size:    ui.BadgeSizeXS,
 			})
 		}
+		if o.EmbeddingStatus != "" {
+			{{ lbl, variant := embeddingStatusBadge(o.EmbeddingStatus) }}
+			@ui.Badge(ui.BadgeProps{
+				Label:   lbl,
+				Variant: variant,
+				Size:    ui.BadgeSizeXS,
+			})
+		}
 	}
 }
 
@@ -294,6 +302,17 @@ templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
 							Variant: ui.BadgeGhost,
 							Size:    ui.BadgeSizeSM,
 						})
+					}
+					if obj.EmbeddingStatus != "" {
+						{{ lbl, variant := embeddingStatusBadge(obj.EmbeddingStatus) }}
+						@ui.Badge(ui.BadgeProps{
+							Label:   lbl,
+							Variant: variant,
+							Size:    ui.BadgeSizeSM,
+						})
+					}
+					if obj.EmbeddingUpdatedAt != "" {
+						<span class="text-base-content/50 text-xs">Embedded { relTime(obj.EmbeddingUpdatedAt) }</span>
 					}
 				</div>
 				<h1 class="text-2xl font-bold tracking-tight">{ graphObjectLabel(*obj) }</h1>

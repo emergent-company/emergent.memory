@@ -96,6 +96,8 @@ type MemoryBackend interface {
 	CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error)
 	CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error
 	SearchObjectsFTS(ctx context.Context, query, typeFilter string) ([]GraphObject, error)
+	GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error)
+	GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, error)
 	ListBranches(ctx context.Context) ([]Branch, error)
 	GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error)
 	ListAllSchemas(ctx context.Context) ([]SchemaInfo, error)

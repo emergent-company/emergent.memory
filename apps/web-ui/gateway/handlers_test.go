@@ -121,6 +121,11 @@ type fakeMemory struct {
 	ftsQuery            string                     // last query passed to SearchObjectsFTS
 	ftsTypeFilter       string                     // last type filter passed to SearchObjectsFTS
 
+	embeddingProgress *EmbeddingProgress // returned by GetEmbeddingProgress
+	embeddingProgErr  error              // GetEmbeddingProgress failure
+	embeddingStatus   *EmbeddingStatus   // returned by GetEmbeddingStatus
+	embeddingStatErr  error              // GetEmbeddingStatus failure
+
 	compiled     *CompiledSchemaTypes
 	blueprintErr error // failure for any blueprint method
 
@@ -985,6 +990,20 @@ func (f *fakeMemory) SearchObjectsFTS(ctx context.Context, query, typeFilter str
 	f.ftsQuery = query
 	f.ftsTypeFilter = typeFilter
 	return f.ftsResults, nil
+}
+
+func (f *fakeMemory) GetEmbeddingProgress(ctx context.Context) (*EmbeddingProgress, error) {
+	if f.embeddingProgErr != nil {
+		return nil, f.embeddingProgErr
+	}
+	return f.embeddingProgress, nil
+}
+
+func (f *fakeMemory) GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, error) {
+	if f.embeddingStatErr != nil {
+		return nil, f.embeddingStatErr
+	}
+	return f.embeddingStatus, nil
 }
 
 func (f *fakeMemory) ListBranches(ctx context.Context) ([]Branch, error) {

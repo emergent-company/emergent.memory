@@ -25081,6 +25081,14 @@ const docTemplate = `{
                 "deleted_at": {
                     "type": "string"
                 },
+                "embedding_status": {
+                    "description": "EmbeddingStatus is a computed column (not stored) derived from the\nembedding_v2 vector and the latest kb.graph_embedding_jobs row. Values:\nembedded | pending | processing | failed | dead_letter | missing.",
+                    "type": "string"
+                },
+                "embedding_updated_at": {
+                    "description": "Embedding fields",
+                    "type": "string"
+                },
                 "external_id": {
                     "type": "string"
                 },
@@ -25208,6 +25216,13 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "deleted_at": {
+                    "type": "string"
+                },
+                "embedding_status": {
+                    "description": "Embedding status (computed): embedded | pending | processing | failed | dead_letter | missing",
+                    "type": "string"
+                },
+                "embedding_updated_at": {
                     "type": "string"
                 },
                 "external_id": {

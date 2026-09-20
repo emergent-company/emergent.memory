@@ -785,7 +785,8 @@ func TestGraphObject_ToResponse_DoesNotExposeInternalFields(t *testing.T) {
 	// This is a compile-time check - if resp.ContentHash existed, it would be a bug
 	assert.NotNil(t, resp)
 	assert.Equal(t, obj.ID, resp.ID)
-	// The response type doesn't have ContentHash, FTS, EmbeddingUpdatedAt, etc.
+	// The response type doesn't have ContentHash, FTS, etc.
+	// EmbeddingUpdatedAt is intentionally exposed (embedding_updated_at) for the UI.
 }
 
 // =============================================================================

@@ -91,6 +91,7 @@ func sidebarGroups() []layout.SidebarGroup {
 			Label: "Memory Browser",
 			Items: []layout.SidebarItem{
 				{Label: "Objects", Href: "/objects", Icon: "lucide--box"},
+				{Label: "Embeddings", Href: "/embeddings", Icon: "lucide--scan-line"},
 				{Label: "Schema", Href: "/schema", Icon: "lucide--git-branch"},
 				{Label: "Documents", Href: "/documents", Icon: "lucide--file-text"},
 				{Label: "Backups", Href: "/backups", Icon: "lucide--archive"},
