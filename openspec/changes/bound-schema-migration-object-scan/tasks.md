@@ -15,6 +15,9 @@
 - [x] 2.4 Add `Graph.MigrationScanMaxObjects` (`GRAPH_MIGRATION_SCAN_MAX_OBJECTS`, default `10000`) and enforce it in both execute and rollback (abort with a clear 4xx; rollback aborts inside the tx)
 - [x] 2.5 Wire config into `schemas.NewService` via fx; update all `NewService` call sites
 - [x] 2.6 DB tests: empty-archive execute still migrates/counts; rollback restores only archived objects; archive-free project restores zero; hard cap aborts; `MaxObjects` caps restores
+- [x] 2.7 Reject `restore_type_registry` + `max_objects` combination up front (fail loudly with a 4xx before any work)
+- [x] 2.8 Document abort semantics in the spec delta (rollback hard-cap abort atomic; execute non-transactional; combined-request rejection)
+- [x] 2.9 Unit test asserting the combined request returns a 4xx and performs no work
 
 ## 3. Verification
 
@@ -23,3 +26,4 @@
 - [x] 3.3 `go test ./domain/graph/... ./domain/schemas/...` (unit tests pass; DB-dependent tests skip cleanly — Postgres unreachable in this environment)
 - [x] 3.4 `task lint` clean
 - [x] 3.5 `openspec validate bound-schema-migration-object-scan` passes
+- [x] 3.6 Follow-up: reject-combination guard + spec/docs + ops note (this change)

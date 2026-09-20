@@ -44,4 +44,23 @@ The synchronous migrate and rollback request path SHALL be bounded by a configur
 - **GIVEN** a configured hard cap of N scanned objects
 - **WHEN** a migrate or rollback scans more than N objects
 - **THEN** the operation SHALL abort with a 4xx error naming the cap
-- **THEN** for rollback the abort SHALL occur inside the transaction so nothing is written
+
+#### Scenario: Rollback hard-cap abort is atomic
+- **GIVEN** a rollback that exceeds the hard cap mid-scan
+- **WHEN** the rollback aborts
+- **THEN** the single transaction SHALL roll back so no objects are restored and no registry changes are written
+
+#### Scenario: Execute hard-cap abort is not transactional
+- **GIVEN** a forward migration that exceeds the hard cap mid-scan
+- **WHEN** the migration aborts
+- **THEN** the current type MAY be left partially migrated
+- **THEN** the `kb.schema_migration_runs` run row SHALL NOT be written
+
+### Requirement: Rollback rejects max_objects combined with restore_type_registry
+The rollback operation SHALL reject a request that combines `max_objects` with `restore_type_registry`, because the registry restore is all-or-nothing and cannot be skipped when the `max_objects` cap is reached mid-scan.
+
+#### Scenario: Combined request fails loudly
+- **GIVEN** a rollback request with `restore_type_registry: true` and `max_objects: N`
+- **WHEN** the rollback executes
+- **THEN** the request SHALL fail with a 4xx bad-request error
+- **THEN** no objects SHALL be restored and no registry changes SHALL be written
