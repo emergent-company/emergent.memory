@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,8 +15,14 @@ import (
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
+
+// ErrInvalidArchive is returned when a backup archive fails structure,
+// manifest, or checksum validation. Callers can errors.Is(err, ErrInvalidArchive)
+// to distinguish a malformed upload from an infrastructure failure.
+var ErrInvalidArchive = errors.New("invalid backup archive")
 
 // Importer downloads and validates a backup archive so it can be applied by the
 // Restorer. Validation mirrors the Creator's checksum contract exactly:
@@ -113,12 +120,23 @@ func (i *Importer) Load(ctx context.Context, storageKey string) (*Archive, error
 		return nil, fmt.Errorf("read backup archive: %w", err)
 	}
 
+	return i.Parse(data)
+}
+
+// Parse validates a raw backup archive (ZIP bytes) and materializes it.
+// Structure, manifest, and checksum validation failures are wrapped with
+// ErrInvalidArchive so callers can errors.Is(err, ErrInvalidArchive).
+func (i *Importer) Parse(data []byte) (*Archive, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return nil, fmt.Errorf("open backup archive: %w", err)
+		return nil, fmt.Errorf("%w: open backup archive: %v", ErrInvalidArchive, err)
 	}
 
-	return i.validate(zr)
+	archive, err := i.validate(zr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArchive, err)
+	}
+	return archive, nil
 }
 
 func (i *Importer) validate(zr *zip.Reader) (*Archive, error) {
@@ -222,6 +240,25 @@ func (i *Importer) validate(zr *zip.Reader) (*Archive, error) {
 	sum := sha256.Sum256(payloadBytes)
 	if got := hex.EncodeToString(sum[:]); got != archive.manifest.Checksums.Manifest {
 		return nil, fmt.Errorf("backup archive manifest checksum mismatch: got %s want %s", got, archive.manifest.Checksums.Manifest)
+	}
+
+	// Validate the source project identity: an imported archive must carry a
+	// parseable source project id and a non-empty name, and the id must agree
+	// with the exported project/config.json id when that config is present.
+	if archive.manifest.Project.ID == "" {
+		return nil, fmt.Errorf("backup archive manifest is missing project id")
+	}
+	if _, err := uuid.Parse(archive.manifest.Project.ID); err != nil {
+		return nil, fmt.Errorf("backup archive manifest project id is not a valid UUID: %v", err)
+	}
+	if strings.TrimSpace(archive.manifest.Project.Name) == "" {
+		return nil, fmt.Errorf("backup archive manifest is missing project name")
+	}
+	if cfgID, ok := archive.project["id"]; ok {
+		id, ok := cfgID.(string)
+		if !ok || id != archive.manifest.Project.ID {
+			return nil, fmt.Errorf("backup archive manifest project id does not match project/config.json")
+		}
 	}
 
 	// Pair files/* ZIP entries back to their real storage keys via the

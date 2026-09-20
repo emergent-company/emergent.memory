@@ -205,6 +205,70 @@ func TestScalarHelpers(t *testing.T) {
 	}
 }
 
+func TestChatConversationsNullForeignOwnerUserID(t *testing.T) {
+	// The chat_conversations spec must null owner_user_id when it cannot be
+	// remapped, so a foreign owner never lands as a dangling FK on clone.
+	specs := restoreTableOrder()
+	var spec *restoreTableSpec
+	for i := range specs {
+		if specs[i].name == "chat_conversations" {
+			spec = &specs[i]
+			break
+		}
+	}
+	if spec == nil {
+		t.Fatal("chat_conversations table spec not found")
+	}
+	if got := spec.refs["owner_user_id"].action; got != refNull {
+		t.Fatalf("chat_conversations owner_user_id policy = %q, want %q", got, refNull)
+	}
+
+	row := map[string]any{"owner_user_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+	skip, err := applyRefs(row, map[string]string{}, spec.refs)
+	if err != nil {
+		t.Fatalf("applyRefs: %v", err)
+	}
+	if skip {
+		t.Fatal("applyRefs unexpectedly skipped the row")
+	}
+	if row["owner_user_id"] != nil {
+		t.Errorf("owner_user_id = %v, want nil (foreign owner must be nulled on clone)", row["owner_user_id"])
+	}
+}
+
+func TestFilterCloneMembershipsDropsForeignUsers(t *testing.T) {
+	r := &Restorer{}
+	m := &membershipFilter{
+		sameOrg:         false, // imported archives always filter
+		targetOrgUsers:  map[string]bool{"member-1": true},
+		createdBy:       "restorer-1",
+		targetProjectID: "proj-1",
+	}
+	rows := []map[string]any{
+		{"user_id": "member-1", "role": "project_admin"},
+		{"user_id": "foreign-1", "role": "editor"},
+	}
+
+	got := r.filterCloneMemberships(rows, m)
+	if len(got) != 2 {
+		t.Fatalf("filterCloneMemberships returned %d rows, want 2 (member-1 + restorer-1)", len(got))
+	}
+
+	seen := map[string]bool{}
+	for _, row := range got {
+		seen[stringValue(row["user_id"])] = true
+	}
+	if !seen["member-1"] {
+		t.Error("expected member-1 to be retained")
+	}
+	if seen["foreign-1"] {
+		t.Error("expected foreign-1 to be dropped")
+	}
+	if !seen["restorer-1"] {
+		t.Error("expected restorer-1 to be added")
+	}
+}
+
 func TestApplyRefs(t *testing.T) {
 	sourceID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	targetID := "11111111-1111-1111-1111-111111111111"
