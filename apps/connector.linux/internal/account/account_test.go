@@ -500,6 +500,49 @@ func TestRefreshServerErrorRetainsSession(t *testing.T) {
 	}
 }
 
+func TestRefreshRejectedAfterTokenRotatedRetainsSession(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://memory.example.test"
+	deps := fakeDeps(t)
+	rotated := false
+	deps.RefreshToken = func(_ context.Context, _ *sdkauth.OIDCConfig, _, _ string) (*sdkauth.Credentials, error) {
+		// Simulate a concurrent process winning the single-use refresh race:
+		// it rotates the token before this Refresh's original token is
+		// rejected, so the stored session now holds a different refresh token
+		// than the one this Refresh just attempted.
+		winner := NewManager(dir)
+		if err := winner.Save(serverURL, &Session{
+			ServerURL:    serverURL,
+			IssuerURL:    "https://issuer.test",
+			AccessToken:  "access-winner",
+			RefreshToken: "refresh-winner",
+			ExpiresAt:    time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC),
+		}); err != nil {
+			t.Fatalf("winner save: %v", err)
+		}
+		rotated = true
+		return nil, &sdkauth.RefreshError{StatusCode: http.StatusBadRequest, Code: "invalid_grant"}
+	}
+	m := NewManagerWithDeps(dir, deps)
+	if _, err := m.Login(context.Background(), serverURL, io.Discard); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if _, err := m.Refresh(context.Background(), serverURL); err == nil {
+		t.Fatal("Refresh: expected error, got nil")
+	}
+	if !rotated {
+		t.Fatal("RefreshToken fake did not run")
+	}
+	sess, err := m.SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("session after rotated-token rejection = (%v, %v), want retained", sess, err)
+	}
+	if sess.RefreshToken != "refresh-winner" {
+		t.Errorf("refresh token = %q, want winner's refresh-winner retained", sess.RefreshToken)
+	}
+}
+
 func TestRefreshSuccessUpdatesSession(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManagerWithDeps(dir, fakeDeps(t))

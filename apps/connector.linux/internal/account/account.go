@@ -406,7 +406,7 @@ func (m *Manager) Refresh(ctx context.Context, serverURL string) (*Session, erro
 	}
 	creds, err := m.deps.RefreshToken(ctx, oidc, m.effectiveClientID(sess.ClientID), m.sessionPath(serverURL))
 	if err != nil {
-		if isAuthRejection(err) {
+		if isAuthRejection(err) && m.refreshTokenStillCurrent(serverURL, sess.RefreshToken) {
 			_ = m.Logout(serverURL)
 		}
 		return nil, fmt.Errorf("account: refresh %s: %w", serverURL, err)
@@ -439,6 +439,21 @@ func isAuthRejection(err error) bool {
 		return true
 	}
 	return re.StatusCode == http.StatusBadRequest || re.StatusCode == http.StatusUnauthorized
+}
+
+// refreshTokenStillCurrent reports whether the stored session still holds the
+// refresh token this Refresh just attempted. A cross-process race can rotate a
+// single-use refresh token between the initial read and the token call: the
+// winner persists the rotated token, after which the loser's original token is
+// rejected with invalid_grant. In that case the stored session is valid again
+// and must not be cleared.
+func (m *Manager) refreshTokenStillCurrent(serverURL, attempted string) bool {
+	cur, err := m.SessionFor(serverURL)
+	if err != nil || cur == nil {
+		// Cannot verify; preserve the clear-on-rejection behavior.
+		return true
+	}
+	return cur.RefreshToken == attempted
 }
 
 // effectiveClientID returns persisted when non-empty, else the manager default,
