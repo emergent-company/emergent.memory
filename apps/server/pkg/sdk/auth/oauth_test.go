@@ -2,12 +2,14 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,4 +117,45 @@ func testOIDCConfig(endpoint string) *OIDCConfig {
 		TokenEndpoint:               endpoint,
 		UserinfoEndpoint:            endpoint,
 	}
+}
+
+func refreshableProvider(t *testing.T, endpoint string) *OAuthProvider {
+	t.Helper()
+	credsPath := filepath.Join(t.TempDir(), "credentials.json")
+	require.NoError(t, SaveCredentials(&Credentials{
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}, credsPath))
+	return NewOAuthProvider(testOIDCConfig(endpoint), "client-1", credsPath)
+}
+
+func TestRefreshNon200ReturnsRefreshError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token expired"}`))
+	}))
+	defer srv.Close()
+
+	p := refreshableProvider(t, srv.URL)
+
+	err := p.Refresh(context.Background())
+	var re *RefreshError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, http.StatusBadRequest, re.StatusCode)
+	assert.Equal(t, "invalid_grant", re.Code)
+}
+
+func TestRefreshTransportFailureIsNotRefreshError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	srv.Close() // now unreachable
+
+	p := refreshableProvider(t, srv.URL)
+
+	err := p.Refresh(context.Background())
+	require.Error(t, err)
+	var re *RefreshError
+	assert.False(t, errors.As(err, &re), "transport failure must not be a *RefreshError")
 }
