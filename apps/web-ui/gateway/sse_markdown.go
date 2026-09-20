@@ -65,6 +65,14 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 		raw := sc.Bytes()
 		data := extractSSEData(raw)
 		if data == "" {
+			// Forward SSE keepalive/comment frames (e.g. ": ping") verbatim so
+			// long-lived streams stay alive end-to-end; drop anything else that
+			// carries no data payload.
+			if bytes.HasPrefix(bytes.TrimSpace(raw), []byte(":")) {
+				if _, err := w.Write(raw); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		var ev struct {
