@@ -615,8 +615,8 @@ type ACPSession struct {
 	UpdatedAt  time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 }
 
-// ACPRunEvent represents a persisted SSE event emitted during an ACP run.
-// Used to serve GET /acp/v1/agents/:name/runs/:runId/events as a JSON array.
+// ACPRunEvent represents a persisted run event emitted during an agent run.
+// Replayed by the A2A v1.0 SubscribeTask to reconstruct a task's event stream.
 // Table: kb.acp_run_events
 type ACPRunEvent struct {
 	bun.BaseModel `bun:"table:kb.acp_run_events,alias:acre"`
@@ -632,8 +632,8 @@ type ACPRunEvent struct {
 }
 
 // ACP run event types persisted in kb.acp_run_events.event_type. Reused by the
-// A2A v1.0 interface (GetTask history + SubscribeTask replay) for task-state
-// mapping and stream reconstruction.
+// A2A v1.0 SubscribeTask replay for task-state mapping and stream
+// reconstruction.
 const (
 	ACPEventRunCreated    = "run.created"
 	ACPEventRunInProgress = "run.in-progress"
