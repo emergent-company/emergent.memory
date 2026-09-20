@@ -557,6 +557,7 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 	var objects []GraphObject
 	err := r.db.NewSelect().
 		Model(&objects).
+		ColumnExpr("go.*").
 		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
@@ -617,6 +618,7 @@ func (r *Repository) GetHeadByCanonicalID(ctx context.Context, db bun.IDB, proje
 	var obj GraphObject
 	q := db.NewSelect().
 		Model(&obj).
+		ColumnExpr("go.*").
 		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
