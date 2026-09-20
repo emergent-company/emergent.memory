@@ -22,7 +22,9 @@ test('editing an agent name persists across a full reload', async ({ page }) => 
     await page.locator('#agent-settings-name').fill(renamed);
     await page.getByRole('button', { name: 'Save changes' }).click();
 
-    await page.waitForURL(/\/settings\/general\?updated=1/);
+    // The General section maps to the bare settings route (agentSettingsSectionPath),
+    // so the PRG redirect lands on `/agents/:id/settings?updated=1` — not `/settings/general`.
+    await page.waitForURL(/\/settings\?updated=1/);
     await page.reload();
     await expect(page.locator('#agent-settings-name')).toHaveValue(renamed);
   } finally {
