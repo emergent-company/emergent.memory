@@ -36,7 +36,7 @@ func (s *ProjectsTestSuite) TearDownTest() {
 	}
 	// Clean up orgs
 	for _, id := range s.createdOrgIDs {
-		_, _ = s.Client.DELETE("/api/v2/orgs/"+id, s.AdminAuth())
+		_, _ = s.Client.DELETE("/api/orgs/"+id, s.AdminAuth())
 	}
 }
 
@@ -47,7 +47,7 @@ func (s *ProjectsTestSuite) TearDownTest() {
 // createOrg creates an organization via API and tracks for cleanup.
 func (s *ProjectsTestSuite) createOrg(name string) (string, error) {
 	body := map[string]any{"name": name}
-	resp, err := s.Client.POST("/api/v2/orgs", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/orgs", body, s.AdminAuth())
 	if err != nil {
 		return "", err
 	}
