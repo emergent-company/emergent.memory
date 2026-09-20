@@ -10,24 +10,25 @@ import (
 // --- Embeddings status/progress ---
 
 // EmbeddingsPage renders the embedding pipeline status: per-queue job counts,
-// worker running/paused state, and the active configuration. A failed progress
-// fetch renders the whole-page error state; empty (all-zero) queues render a
-// "no statistics yet" state instead of a wall of zeroes; the worker state
-// section still renders whenever the status endpoint answered.
+// worker running/paused state, and the active configuration. Each section
+// degrades independently: a failed progress fetch renders an error for the
+// queue section (leaving the worker section intact), a failed status fetch
+// renders an error for the worker section (leaving the queue section intact),
+// and empty (all-zero) queues render a "no statistics yet" state.
 templ EmbeddingsPage(data embeddingPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@embeddingsHeader(data.LoadErr == nil)
-		if data.LoadErr != nil {
-			@pageError("Failed to load embedding statistics", data.LoadErr)
+		@embeddingsHeader(data.ProgressErr == nil && data.StatusErr == nil)
+		if data.ProgressErr != nil {
+			@pageError("Failed to load embedding statistics", data.ProgressErr)
+		} else if data.Empty {
+			@embeddingsEmpty()
 		} else {
-			if data.Empty {
-				@embeddingsEmpty()
-			} else {
-				@queueCountsSection(data.Progress)
-			}
-			if data.Status != nil {
-				@workerStateSection(data.Status)
-			}
+			@queueCountsSection(data.Progress)
+		}
+		if data.StatusErr != nil {
+			@workerStateError(data.StatusErr)
+		} else if data.Status != nil {
+			@workerStateSection(data.Status)
 		}
 	}
 }
@@ -77,6 +78,23 @@ templ queueStatsSection(title string, s EmbeddingQueueStats) {
 			{Label: "Failed", Value: strconv.FormatInt(s.Failed, 10), Icon: "lucide--x", IconColor: "bg-error/10 text-error"},
 			{Label: "Dead letter", Value: strconv.FormatInt(s.DeadLetter, 10), Icon: "lucide--mail-warning", IconColor: "bg-warning/10 text-warning"},
 		}, "")
+	}
+}
+
+// workerStateError renders the worker-state section's failure state: the
+// "Workers" title with an inline error alert, so the queue section above stays
+// usable when only the status endpoint failed.
+templ workerStateError(err error) {
+	@ui.Section("Workers", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "p-5",
+	}) {
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertError,
+			Style:   ui.AlertStyleOutline,
+			Icon:    "lucide--alert-triangle",
+			Message: err.Error(),
+		})
 	}
 }
 

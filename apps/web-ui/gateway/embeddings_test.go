@@ -51,6 +51,25 @@ func TestEmbeddingStatusBadgeMapping(t *testing.T) {
 	}
 }
 
+func TestWorkerStateLabel(t *testing.T) {
+	cases := []struct {
+		name   string
+		status EmbeddingWorkerStatus
+		label  string
+	}{
+		{"running", EmbeddingWorkerStatus{Running: true}, "running"},
+		{"paused", EmbeddingWorkerStatus{Paused: true}, "paused"},
+		{"paused wins when both flags set", EmbeddingWorkerStatus{Running: true, Paused: true}, "paused"},
+		{"idle", EmbeddingWorkerStatus{}, "idle"},
+	}
+	for _, c := range cases {
+		label, _ := workerStateLabel(c.status)
+		if label != c.label {
+			t.Errorf("workerStateLabel(%+v) = %q, want %q", c.status, label, c.label)
+		}
+	}
+}
+
 func TestGetEmbeddingProgress(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/embeddings/progress" {
@@ -161,6 +180,49 @@ func TestEmbeddingsRoute(t *testing.T) {
 			t.Errorf("error state missing: %s", rec.Body.String())
 		}
 	})
+
+	t.Run("progress failure preserves worker state section", func(t *testing.T) {
+		f := &fakeMemory{
+			embeddingProgErr: fmt.Errorf("boom"),
+			embeddingStatus:  &EmbeddingStatus{Objects: EmbeddingWorkerStatus{Running: true}},
+		}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "Failed to load embedding statistics") {
+			t.Errorf("queue error missing: %s", body)
+		}
+		if !strings.Contains(body, "Workers") {
+			t.Errorf("worker section missing despite successful status fetch: %s", body)
+		}
+	})
+
+	t.Run("status failure preserves queue counts section", func(t *testing.T) {
+		f := &fakeMemory{
+			embeddingProgress: &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 3}},
+			embeddingStatErr:  fmt.Errorf("boom"),
+		}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "Object embedding queue") {
+			t.Errorf("queue section missing despite successful progress fetch: %s", body)
+		}
+		if !strings.Contains(body, "Workers") {
+			t.Errorf("worker error section missing: %s", body)
+		}
+		if !strings.Contains(body, "boom") {
+			t.Errorf("worker error message missing: %s", body)
+		}
+	})
 }
 
 func TestRenderEmbeddingsPage(t *testing.T) {
@@ -192,9 +254,17 @@ func TestRenderEmbeddingsPage(t *testing.T) {
 		t.Error("empty state missing")
 	}
 
-	htmlErr := renderHTML(t, EmbeddingsPage(embeddingPageData{LoadErr: errTest}))
+	htmlErr := renderHTML(t, EmbeddingsPage(embeddingPageData{ProgressErr: errTest}))
 	if !strings.Contains(htmlErr, "Failed to load embedding statistics") {
 		t.Error("error state missing")
+	}
+
+	htmlStatusErr := renderHTML(t, EmbeddingsPage(embeddingPageData{
+		Progress:  &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 1}},
+		StatusErr: errTest,
+	}))
+	if !strings.Contains(htmlStatusErr, "Object embedding queue") || !strings.Contains(htmlStatusErr, "Workers") {
+		t.Errorf("section-scoped status error should keep the queue section: %s", htmlStatusErr)
 	}
 }
 

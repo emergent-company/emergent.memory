@@ -103,10 +103,10 @@ func embeddingStatsZero(s EmbeddingQueueStats) bool {
 // badge intent for the embeddings status page.
 func workerStateLabel(s EmbeddingWorkerStatus) (string, ui.BadgeIntent) {
 	switch {
-	case s.Running:
-		return "running", ui.BadgeSuccess
 	case s.Paused:
 		return "paused", ui.BadgeWarning
+	case s.Running:
+		return "running", ui.BadgeSuccess
 	default:
 		return "idle", ui.BadgeNeutral
 	}
@@ -119,11 +119,16 @@ func embeddingProgressZero(p EmbeddingProgress) bool {
 }
 
 // embeddingPageData carries everything the embeddings status page renders.
+//
+// Progress/Status carry the successful responses; ProgressErr/StatusErr carry
+// per-section fetch failures. The page renders each section independently so a
+// failure in one section (queue counts vs worker state) does not hide the other.
 type embeddingPageData struct {
-	Progress *EmbeddingProgress
-	Status   *EmbeddingStatus
-	LoadErr  error
-	Empty    bool
+	Progress    *EmbeddingProgress
+	Status      *EmbeddingStatus
+	ProgressErr error
+	StatusErr   error
+	Empty       bool
 }
 
 // uiEmbeddings renders the embeddings status/progress page.
@@ -140,13 +145,18 @@ func (s *Server) uiEmbeddings(c echo.Context) error {
 	g.Go(func() error { status, statErr = s.memory.GetEmbeddingStatus(ctx); return nil })
 	_ = g.Wait()
 
-	if progErr != nil {
-		return s.page(c, pageTitle("Embeddings"), EmbeddingsPage(embeddingPageData{LoadErr: progErr}))
-	}
+	// Report both failures to Sentry, but keep rendering: each section degrades
+	// independently instead of one failed endpoint blanking the whole page.
+	captureError(progErr)
 	captureError(statErr)
 
-	data := embeddingPageData{Progress: progress, Status: status}
-	if progress == nil || embeddingProgressZero(*progress) {
+	data := embeddingPageData{
+		Progress:    progress,
+		Status:      status,
+		ProgressErr: progErr,
+		StatusErr:   statErr,
+	}
+	if progErr == nil && (progress == nil || embeddingProgressZero(*progress)) {
 		data.Empty = true
 	}
 	return s.page(c, pageTitle("Embeddings"), EmbeddingsPage(data))
