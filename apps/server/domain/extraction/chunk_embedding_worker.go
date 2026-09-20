@@ -312,13 +312,24 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
 
 	if err != nil {
-		// Embedding failed
+		// Embedding failed — distinguish permanent (bad model/creds) from transient (network, quota)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
-			w.log.Error("failed to mark job as failed",
+		if isPermanentEmbeddingError(err) {
+			w.log.Warn("chunk embedding permanently failed (non-retryable error)",
 				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
+				slog.String("error", err.Error()))
+			if markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, err); markErr != nil {
+				w.log.Error("failed to mark job as permanently failed",
+					slog.String("job_id", job.ID),
+					slog.String("error", markErr.Error()))
+			}
+		} else {
+			if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
+				w.log.Error("failed to mark job as failed",
+					slog.String("job_id", job.ID),
+					slog.String("error", markErr.Error()))
+			}
 		}
 		w.incrementFailure()
 		return fmt.Errorf("generate embedding: %w", err)

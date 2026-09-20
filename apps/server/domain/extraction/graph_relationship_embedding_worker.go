@@ -337,9 +337,17 @@ func (w *GraphRelationshipEmbeddingWorker) processJob(ctx context.Context, job *
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		markErr := w.jobs.MarkFailed(ctx, job.ID, err)
-		if markErr != nil {
-			w.log.Error("failed to mark rel embedding job as failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
+		if isPermanentEmbeddingError(err) {
+			w.log.Warn("relationship embedding permanently failed (non-retryable error)",
+				slog.String("job_id", job.ID),
+				slog.String("error", err.Error()))
+			if markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, err); markErr != nil {
+				w.log.Error("failed to mark rel embedding job as permanently failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
+			}
+		} else {
+			if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
+				w.log.Error("failed to mark rel embedding job as failed", slog.String("job_id", job.ID), slog.String("error", markErr.Error()))
+			}
 		}
 		w.incrementFailure()
 		return fmt.Errorf("generate rel embedding: %w", err)

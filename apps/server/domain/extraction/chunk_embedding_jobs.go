@@ -310,6 +310,26 @@ func (s *ChunkEmbeddingJobsService) MarkFailed(ctx context.Context, id string, j
 	return nil
 }
 
+// MarkPermanentlyFailed marks a job as failed without scheduling a retry.
+// Use this for terminal errors where retrying will never succeed (e.g. the
+// project has no embedding model configured).
+func (s *ChunkEmbeddingJobsService) MarkPermanentlyFailed(ctx context.Context, id string, jobErr error) error {
+	errorMessage := truncateError(jobErr.Error())
+	_, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
+		SET status = 'failed',
+			last_error = ?,
+			updated_at = now()
+		WHERE id = ?`,
+		errorMessage, id).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("mark permanently failed: %w", err)
+	}
+	s.log.Warn("chunk embedding job permanently failed (no retry)",
+		slog.String("job_id", id),
+		slog.String("error", errorMessage))
+	return nil
+}
+
 // RecoverStaleJobs recovers jobs stuck in 'processing' status.
 // This can happen when the server restarts while jobs are being processed.
 func (s *ChunkEmbeddingJobsService) RecoverStaleJobs(ctx context.Context, staleThresholdMinutes int) (int, error) {

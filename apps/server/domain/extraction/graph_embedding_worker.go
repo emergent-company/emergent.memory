@@ -710,11 +710,17 @@ func isPermanentEmbeddingError(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	// API error codes surfaced by the vertex client as "API error NNN: ..."
+	// HTTP client errors from the model provider (invalid model/creds) are
+	// permanent — retrying will never succeed.
 	for _, code := range []string{"API error 400", "API error 401", "API error 403", "API error 404"} {
 		if strings.Contains(msg, code) {
 			return true
 		}
+	}
+	// Missing embedding model configuration is a permanent config error, not a
+	// transient network/quota failure.
+	if strings.Contains(msg, "no embedding model configured") {
+		return true
 	}
 	return false
 }
