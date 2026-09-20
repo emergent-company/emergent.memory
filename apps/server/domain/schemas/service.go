@@ -745,7 +745,7 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 					// A mid-scan abort here can leave the current type partially
 					// migrated, which matches today's failure mode (execute is not
 					// transactional and aborts partway through).
-					return apperror.ErrBadRequest.WithMessage(fmt.Sprintf(
+					return apperror.NewBadRequest(fmt.Sprintf(
 						"schema migration would scan more than %d objects; narrow the migration (e.g. max_objects or a type filter) or raise GRAPH_MIGRATION_SCAN_MAX_OBJECTS",
 						s.maxMigrationScanObjects))
 				}
@@ -892,7 +892,7 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 				if s.maxMigrationScanObjects > 0 && scanned > s.maxMigrationScanObjects {
 					// Returning an error from the tx aborts it, so nothing is
 					// written (data or registry).
-					return apperror.ErrBadRequest.WithMessage(fmt.Sprintf(
+					return apperror.NewBadRequest(fmt.Sprintf(
 						"rollback would scan more than %d objects; narrow the rollback (e.g. max_objects or a version filter) or raise GRAPH_MIGRATION_SCAN_MAX_OBJECTS",
 						s.maxMigrationScanObjects))
 				}
