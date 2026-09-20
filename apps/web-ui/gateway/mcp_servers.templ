@@ -136,14 +136,15 @@ templ mcpServerRow(srv MCPServer) {
 templ mcpServerRowActions(srv MCPServer) {
 	<div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-content/10 px-3 py-2">
 		<label class="flex cursor-pointer items-center gap-2" title="Enable or disable this server. Disabled servers stop offering tools to agents.">
-			<input
-				type="checkbox"
-				class="toggle toggle-sm"
-				checked?={ srv.Enabled }
-				aria-label={ "Enable " + srv.Name }
-				data-mcp-enabled-toggle
-				data-mcp-server={ srv.ID }
-			/>
+			@form.ToggleInput(form.ToggleInputProps{
+				Checked: srv.Enabled,
+				Class:   "toggle toggle-sm",
+				Attrs: templ.Attributes{
+					"aria-label":              "Enable " + srv.Name,
+					"data-mcp-enabled-toggle": true,
+					"data-mcp-server":         srv.ID,
+				},
+			})
 			<span class="text-base-content/60 text-xs">Enabled</span>
 		</label>
 		<div class="flex items-center gap-1">
@@ -242,15 +243,16 @@ templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool) {
 templ mcpServerToolRow(srv MCPServer, t MCPTool) {
 	<div class="flex items-center gap-2.5 px-3 py-1.5" data-mcp-tool-row>
 		if !mcpServerIsBuiltin(srv) {
-			<input
-				type="checkbox"
-				class="toggle toggle-sm shrink-0"
-				checked?={ t.Enabled }
-				aria-label={ "Toggle " + t.ToolName }
-				data-mcp-tool-toggle
-				data-mcp-server={ srv.ID }
-				data-mcp-tool={ t.ID }
-			/>
+			@form.ToggleInput(form.ToggleInputProps{
+				Checked: t.Enabled,
+				Class:   "toggle toggle-sm shrink-0",
+				Attrs: templ.Attributes{
+					"aria-label":           "Toggle " + t.ToolName,
+					"data-mcp-tool-toggle": true,
+					"data-mcp-server":      srv.ID,
+					"data-mcp-tool":        t.ID,
+				},
+			})
 		}
 		<span class="min-w-0">
 			<span class="block font-mono text-[13px] font-medium">{ t.ToolName }</span>
@@ -278,7 +280,7 @@ templ mcpServerDeleteDescription(srv MCPServer) {
 // mcpServerDeleteDialog confirms deletion before the POST to
 // /settings/mcp-servers/:id/delete. One dialog per row (its action is fixed).
 templ mcpServerDeleteDialog(srv MCPServer) {
-	@confirmDeleteDialog("mcp-server-delete-"+srv.ID, "MCP server", mcpServerDeleteDescription(srv)) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "mcp-server-delete-" + srv.ID, Noun: "MCP server"}, mcpServerDeleteDescription(srv)) {
 		<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/delete") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{

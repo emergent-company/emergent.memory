@@ -458,6 +458,50 @@ func slimSimilarResult(sr *graph.SimilarObjectResult, opts ResponseOpts) map[str
 	return out
 }
 
+// StructuredContentFromJSON converts a marshalled result into a root-object
+// map suitable for MCP structuredContent. object -> itself; array ->
+// {"results": arr}; primitive -> {"value": v}; nil/invalid -> nil.
+func StructuredContentFromJSON(jsonBytes []byte) map[string]any {
+	var v any
+	if err := json.Unmarshal(jsonBytes, &v); err != nil {
+		return nil
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		return t
+	case []any:
+		return map[string]any{"results": t}
+	case nil:
+		return nil
+	default:
+		return map[string]any{"value": t}
+	}
+}
+
+// normalizeStructuredContent converts an arbitrary structured-content value
+// (e.g. the "structuredContent" key of a raw relay tools/call result) into a
+// map[string]any, or nil when it is not a JSON object. MCP 2025-06-18 requires
+// structuredContent to be a root object; non-object shapes are left nil while
+// the text content block still carries the serialized payload. It mirrors
+// mcpregistry.convertStructuredContent.
+func normalizeStructuredContent(sc any) map[string]any {
+	if sc == nil {
+		return nil
+	}
+	if m, ok := sc.(map[string]any); ok {
+		return m
+	}
+	data, err := json.Marshal(sc)
+	if err != nil {
+		return nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil
+	}
+	return obj
+}
+
 // wrapResultCompact is like wrapResult but marshals with json.Marshal (compact,
 // no indentation) for slimmer LLM-facing tool results.
 func (s *Service) wrapResultCompact(data any) (*ToolResult, error) {
@@ -473,5 +517,6 @@ func (s *Service) wrapResultCompact(data any) (*ToolResult, error) {
 				Text: string(jsonBytes),
 			},
 		},
+		StructuredContent: StructuredContentFromJSON(jsonBytes),
 	}, nil
 }

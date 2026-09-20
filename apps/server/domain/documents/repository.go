@@ -266,6 +266,271 @@ func (r *Repository) Delete(ctx context.Context, projectID, documentID string) (
 	return rowsAffected > 0, nil
 }
 
+// graphVersionRow is a single physical version of a graph object. Graph objects
+// are versioned: each physical `id` row shares a stable `canonical_id` with the
+// other versions of the same entity.
+type graphVersionRow struct {
+	ID              string  `bun:"id"`
+	CanonicalID     string  `bun:"canonical_id"`
+	ExtractionJobID *string `bun:"extraction_job_id"`
+}
+
+// resolveGraphRemovals decides which graph object rows and canonical entities
+// are removed when the given extraction jobs are deleted.
+//
+// Returns:
+//
+//	objectRowIDs  - physical kb.graph_objects.id rows to delete (all rows of
+//	                wholly-removed canonicals, plus attributable rows of
+//	                entities that survive)
+//	canonicalIDs  - canonical ids of entities fully removed (used to delete
+//	                relationships whose src_id/dst_id reference them)
+func resolveGraphRemovals(rows []graphVersionRow, jobIDs []string) (objectRowIDs, canonicalIDs []string) {
+	jobSet := make(map[string]bool, len(jobIDs))
+	for _, id := range jobIDs {
+		jobSet[id] = true
+	}
+
+	// Group rows by canonical entity.
+	canonicalRows := make(map[string][]graphVersionRow)
+	for _, row := range rows {
+		canonicalRows[row.CanonicalID] = append(canonicalRows[row.CanonicalID], row)
+	}
+
+	objectSet := make(map[string]bool)
+	canonicalSet := make(map[string]bool)
+
+	for canonicalID, group := range canonicalRows {
+		// A canonical is fully removed iff every one of its rows is
+		// attributable to a deleted job (non-nil ExtractionJobID in jobSet).
+		fullyRemoved := true
+		for _, row := range group {
+			if row.ExtractionJobID == nil || !jobSet[*row.ExtractionJobID] {
+				fullyRemoved = false
+			}
+		}
+
+		if fullyRemoved {
+			canonicalSet[canonicalID] = true
+		}
+
+		for _, row := range group {
+			attributable := row.ExtractionJobID != nil && jobSet[*row.ExtractionJobID]
+			if fullyRemoved || attributable {
+				objectSet[row.ID] = true
+			}
+		}
+	}
+
+	objectRowIDs = make([]string, 0, len(objectSet))
+	for id := range objectSet {
+		objectRowIDs = append(objectRowIDs, id)
+	}
+	canonicalIDs = make([]string, 0, len(canonicalSet))
+	for id := range canonicalSet {
+		canonicalIDs = append(canonicalIDs, id)
+	}
+
+	return objectRowIDs, canonicalIDs
+}
+
+// loadGraphVersionRows loads all version rows for the canonical entities that
+// are attributable to the given extraction jobs. It bounds its work via
+// attributable canonicals so that only the affected entities' version rows are
+// loaded. Returns an empty slice (not an error) when jobIDs is empty or no
+// canonicals are attributable.
+func (r *Repository) loadGraphVersionRows(ctx context.Context, db bun.IDB, projectID string, jobIDs []string) ([]graphVersionRow, error) {
+	if len(jobIDs) == 0 {
+		return nil, nil
+	}
+
+	// 1. Attributable canonical ids, to bound the second query.
+	var attrCanon []string
+	err := db.NewSelect().
+		TableExpr("kb.graph_objects").
+		Column("canonical_id").
+		Distinct().
+		Where("extraction_job_id IN (?)", bun.In(jobIDs)).
+		Where("project_id = ?", projectID).
+		Scan(ctx, &attrCanon)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("resolve graph canonicals: %w", err)
+	}
+
+	if len(attrCanon) == 0 {
+		return nil, nil
+	}
+
+	// 2. Load all version rows for the attributable canonicals.
+	var rows []graphVersionRow
+	err = db.NewSelect().
+		TableExpr("kb.graph_objects").
+		Column("id", "canonical_id", "extraction_job_id").
+		Where("canonical_id IN (?)", bun.In(attrCanon)).
+		Where("project_id = ?", projectID).
+		OrderExpr("canonical_id").
+		Scan(ctx, &rows)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("load graph versions: %w", err)
+	}
+
+	return rows, nil
+}
+
+// resolveGraphCascade resolves which graph object rows and canonical entities
+// are removed by deleting the given extraction jobs, without touching the DB.
+func (r *Repository) resolveGraphCascade(ctx context.Context, db bun.IDB, projectID string, jobIDs []string) (objectRowIDs, canonicalIDs []string, err error) {
+	rows, err := r.loadGraphVersionRows(ctx, db, projectID, jobIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+
+	objectRowIDs, canonicalIDs = resolveGraphRemovals(rows, jobIDs)
+	return objectRowIDs, canonicalIDs, nil
+}
+
+// relEndpoint is a single relationship row's endpoint canonical ids.
+type relEndpoint struct {
+	SrcID string `bun:"src_id"`
+	DstID string `bun:"dst_id"`
+}
+
+// countRelationshipsTouching returns how many relationship rows have at least
+// one endpoint in the given canonical set. A relationship is counted once even
+// when both endpoints are in the set.
+func countRelationshipsTouching(endpoints []relEndpoint, canonicalSet map[string]bool) int {
+	count := 0
+	for _, e := range endpoints {
+		if canonicalSet[e.SrcID] || canonicalSet[e.DstID] {
+			count++
+		}
+	}
+	return count
+}
+
+// survivingVersionRow is a version row of a surviving canonical entity, used to
+// repair its version chain after some of its versions were deleted.
+type survivingVersionRow struct {
+	ID           string  `bun:"id"`
+	CanonicalID  string  `bun:"canonical_id"`
+	SupersedesID *string `bun:"supersedes_id"`
+	Version      int     `bun:"version"`
+}
+
+// survivingCanonicalsForDeletion returns the canonical ids of entities that
+// survive deletion: the distinct canonical ids of the rows being deleted, minus
+// those canonical ids that are fully removed. These are the entities whose
+// version chains must be repaired after their attributable rows are gone.
+func (r *Repository) survivingCanonicalsForDeletion(ctx context.Context, db bun.IDB, projectID string, objectRowIDs []string, fullyRemoved []string) ([]string, error) {
+	if len(objectRowIDs) == 0 {
+		return nil, nil
+	}
+
+	var deletedCanonicals []string
+	err := db.NewSelect().
+		TableExpr("kb.graph_objects").
+		Column("canonical_id").
+		Distinct().
+		Where("id IN (?)", bun.In(objectRowIDs)).
+		Where("project_id = ?", projectID).
+		Scan(ctx, &deletedCanonicals)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("load deleted row canonicals: %w", err)
+	}
+
+	removedSet := make(map[string]bool, len(fullyRemoved))
+	for _, c := range fullyRemoved {
+		removedSet[c] = true
+	}
+
+	surviving := make([]string, 0, len(deletedCanonicals))
+	for _, c := range deletedCanonicals {
+		if removedSet[c] {
+			continue
+		}
+		surviving = append(surviving, c)
+	}
+	return surviving, nil
+}
+
+// repairSurvivingVersionChains keeps surviving canonical entities queryable after
+// some of their version rows were removed. Any surviving row left pointing at a
+// deleted row's id has its supersedes_id cleared, and each surviving canonical is
+// guaranteed exactly one HEAD row (supersedes_id IS NULL) — the highest-version
+// survivor — so the entity does not vanish from HEAD queries.
+func (r *Repository) repairSurvivingVersionChains(ctx context.Context, db bun.IDB, projectID string, survivingCanonicalIDs []string, deletedRowIDs []string) error {
+	if len(survivingCanonicalIDs) == 0 {
+		return nil
+	}
+
+	// 1. Clear supersedes_id on surviving rows that point at a deleted row.
+	if len(deletedRowIDs) > 0 {
+		_, err := db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("supersedes_id = NULL").
+			Where("project_id = ?", projectID).
+			Where("canonical_id IN (?)", bun.In(survivingCanonicalIDs)).
+			Where("supersedes_id IN (?)", bun.In(deletedRowIDs)).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("clear dangling supersedes_id: %w", err)
+		}
+	}
+
+	// 2. Load the remaining rows for the surviving canonicals.
+	var rows []survivingVersionRow
+	err := db.NewSelect().
+		TableExpr("kb.graph_objects").
+		Column("id", "canonical_id", "supersedes_id", "version").
+		Where("project_id = ?", projectID).
+		Where("canonical_id IN (?)", bun.In(survivingCanonicalIDs)).
+		OrderExpr("canonical_id", "version DESC").
+		Scan(ctx, &rows)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("load surviving versions: %w", err)
+	}
+
+	// 3. For each surviving canonical with no HEAD, promote the highest-version
+	//    row (first in version DESC order) to HEAD by clearing supersedes_id.
+	type headState struct {
+		hasHead bool
+		headID  string
+	}
+	groups := make(map[string]*headState)
+	for _, row := range rows {
+		g := groups[row.CanonicalID]
+		if g == nil {
+			g = &headState{}
+			groups[row.CanonicalID] = g
+		}
+		if row.SupersedesID == nil {
+			g.hasHead = true
+		}
+		if g.headID == "" {
+			g.headID = row.ID
+		}
+	}
+
+	for canonicalID, g := range groups {
+		if g.hasHead {
+			continue
+		}
+		_, err := db.NewUpdate().
+			TableExpr("kb.graph_objects").
+			Set("supersedes_id = NULL").
+			Where("id = ?", g.headID).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("promote head for canonical %s: %w", canonicalID, err)
+		}
+	}
+
+	return nil
+}
+
 // DeleteWithCascade deletes a document and all related entities in a transaction
 // Returns a summary of what was deleted
 func (r *Repository) DeleteWithCascade(ctx context.Context, projectID, documentID string) (*DeleteSummary, error) {
@@ -297,22 +562,26 @@ func (r *Repository) DeleteWithCascade(ctx context.Context, projectID, documentI
 		}
 
 		if len(jobIDs) > 0 {
-			// 3. Get graph object IDs from these jobs
-			var objectIDs []string
-			err = tx.NewSelect().
-				TableExpr("kb.graph_objects").
-				Column("id").
-				Where("extraction_job_id IN (?)", bun.In(jobIDs)).
-				Scan(ctx, &objectIDs)
-			if err != nil && err != sql.ErrNoRows {
-				return fmt.Errorf("get graph objects: %w", err)
+			// 3-5. Resolve graph object rows and canonical entities to remove.
+			objectRowIDs, canonicalIDs, err := r.resolveGraphCascade(ctx, tx, projectID, jobIDs)
+			if err != nil {
+				return err
 			}
 
-			if len(objectIDs) > 0 {
-				// 4. Delete graph relationships involving these objects
+			// Determine which canonical entities survive (attributable rows are
+			// deleted, but the entity itself is not fully removed). Their version
+			// chains must be repaired after the rows are gone.
+			survivingCanonicals, err := r.survivingCanonicalsForDeletion(ctx, tx, projectID, objectRowIDs, canonicalIDs)
+			if err != nil {
+				return err
+			}
+
+			// Delete relationships referencing fully-removed canonicals FIRST
+			// (they must go before their endpoint objects).
+			if len(canonicalIDs) > 0 {
 				result, err = tx.NewDelete().
 					TableExpr("kb.graph_relationships").
-					Where("src_id IN (?) OR dst_id IN (?)", bun.In(objectIDs), bun.In(objectIDs)).
+					Where("src_id IN (?) OR dst_id IN (?)", bun.In(canonicalIDs), bun.In(canonicalIDs)).
 					Exec(ctx)
 				if err != nil {
 					return fmt.Errorf("delete relationships: %w", err)
@@ -320,11 +589,13 @@ func (r *Repository) DeleteWithCascade(ctx context.Context, projectID, documentI
 				if n, _ := result.RowsAffected(); n > 0 {
 					summary.GraphRelationships = int(n)
 				}
+			}
 
-				// 5. Delete graph objects
+			// Delete graph object rows.
+			if len(objectRowIDs) > 0 {
 				result, err = tx.NewDelete().
 					TableExpr("kb.graph_objects").
-					Where("id IN (?)", bun.In(objectIDs)).
+					Where("id IN (?) AND project_id = ?", bun.In(objectRowIDs), projectID).
 					Exec(ctx)
 				if err != nil {
 					return fmt.Errorf("delete graph objects: %w", err)
@@ -332,6 +603,12 @@ func (r *Repository) DeleteWithCascade(ctx context.Context, projectID, documentI
 				if n, _ := result.RowsAffected(); n > 0 {
 					summary.GraphObjects = int(n)
 				}
+			}
+
+			// Repair version chains for surviving canonicals so they keep a
+			// single HEAD and never point at the deleted rows.
+			if err := r.repairSurvivingVersionChains(ctx, tx, projectID, survivingCanonicals, objectRowIDs); err != nil {
+				return err
 			}
 
 			// 6. Delete extraction jobs
@@ -448,22 +725,25 @@ func (r *Repository) BulkDeleteWithCascade(ctx context.Context, projectID string
 		}
 
 		if len(jobIDs) > 0 {
-			// 3. Get graph object IDs
-			var objectIDs []string
-			err = tx.NewSelect().
-				TableExpr("kb.graph_objects").
-				Column("id").
-				Where("extraction_job_id IN (?)", bun.In(jobIDs)).
-				Scan(ctx, &objectIDs)
-			if err != nil && err != sql.ErrNoRows {
-				return fmt.Errorf("get graph objects: %w", err)
+			// 3-5. Resolve graph object rows and canonical entities to remove.
+			objectRowIDs, canonicalIDs, err := r.resolveGraphCascade(ctx, tx, projectID, jobIDs)
+			if err != nil {
+				return err
 			}
 
-			if len(objectIDs) > 0 {
-				// 4. Delete relationships
+			// Determine which canonical entities survive (attributable rows are
+			// deleted, but the entity itself is not fully removed). Their version
+			// chains must be repaired after the rows are gone.
+			survivingCanonicals, err := r.survivingCanonicalsForDeletion(ctx, tx, projectID, objectRowIDs, canonicalIDs)
+			if err != nil {
+				return err
+			}
+
+			// Delete relationships referencing fully-removed canonicals FIRST.
+			if len(canonicalIDs) > 0 {
 				result, err = tx.NewDelete().
 					TableExpr("kb.graph_relationships").
-					Where("src_id IN (?) OR dst_id IN (?)", bun.In(objectIDs), bun.In(objectIDs)).
+					Where("src_id IN (?) OR dst_id IN (?)", bun.In(canonicalIDs), bun.In(canonicalIDs)).
 					Exec(ctx)
 				if err != nil {
 					return fmt.Errorf("delete relationships: %w", err)
@@ -471,11 +751,13 @@ func (r *Repository) BulkDeleteWithCascade(ctx context.Context, projectID string
 				if n, _ := result.RowsAffected(); n > 0 {
 					summary.GraphRelationships = int(n)
 				}
+			}
 
-				// 5. Delete graph objects
+			// Delete graph object rows.
+			if len(objectRowIDs) > 0 {
 				result, err = tx.NewDelete().
 					TableExpr("kb.graph_objects").
-					Where("id IN (?)", bun.In(objectIDs)).
+					Where("id IN (?) AND project_id = ?", bun.In(objectRowIDs), projectID).
 					Exec(ctx)
 				if err != nil {
 					return fmt.Errorf("delete graph objects: %w", err)
@@ -483,6 +765,12 @@ func (r *Repository) BulkDeleteWithCascade(ctx context.Context, projectID string
 				if n, _ := result.RowsAffected(); n > 0 {
 					summary.GraphObjects = int(n)
 				}
+			}
+
+			// Repair version chains for surviving canonicals so they keep a
+			// single HEAD and never point at the deleted rows.
+			if err := r.repairSurvivingVersionChains(ctx, tx, projectID, survivingCanonicals, objectRowIDs); err != nil {
+				return err
 			}
 
 			// 6. Delete extraction jobs
@@ -636,34 +924,19 @@ func (r *Repository) GetDeletionImpact(ctx context.Context, projectID, documentI
 		return nil, fmt.Errorf("get extraction jobs: %w", err)
 	}
 
-	// Count graph objects and get object IDs
-	var objectsCount int
-	var objectIDs []string
-	if len(jobIDs) > 0 {
-		objectsCount, err = r.db.NewSelect().
-			TableExpr("kb.graph_objects").
-			Where("extraction_job_id IN (?)", bun.In(jobIDs)).
-			Count(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("count graph objects: %w", err)
-		}
-
-		err = r.db.NewSelect().
-			TableExpr("kb.graph_objects").
-			Column("id").
-			Where("extraction_job_id IN (?)", bun.In(jobIDs)).
-			Scan(ctx, &objectIDs)
-		if err != nil && err != sql.ErrNoRows {
-			return nil, fmt.Errorf("get object IDs: %w", err)
-		}
+	// Resolve graph object rows and canonical entities to remove (canonical-aware).
+	objectRowIDs, canonicalIDs, err := r.resolveGraphCascade(ctx, r.db, projectID, jobIDs)
+	if err != nil {
+		return nil, err
 	}
+	objectsCount := len(objectRowIDs)
 
-	// Count graph relationships
+	// Count relationships referencing fully-removed canonicals.
 	var relationshipsCount int
-	if len(objectIDs) > 0 {
+	if len(canonicalIDs) > 0 {
 		relationshipsCount, err = r.db.NewSelect().
 			TableExpr("kb.graph_relationships").
-			Where("src_id IN (?) OR dst_id IN (?)", bun.In(objectIDs), bun.In(objectIDs)).
+			Where("src_id IN (?) OR dst_id IN (?)", bun.In(canonicalIDs), bun.In(canonicalIDs)).
 			Count(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("count relationships: %w", err)
@@ -781,73 +1054,64 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 	}
 
 	jobsMap := make(map[string]int)
+	docJobIDs := make(map[string][]string)
 	var allJobIDs []string
 	for _, j := range jobs {
 		jobsMap[j.DocumentID]++
+		docJobIDs[j.DocumentID] = append(docJobIDs[j.DocumentID], j.ID)
 		allJobIDs = append(allJobIDs, j.ID)
 	}
 
-	// Count graph objects per extraction job
-	objectsMap := make(map[string]int)
-	var allObjectIDs []string
+	// Load all version rows for the union of all job IDs once. Per-document
+	// resolutions reuse these rows below: the pure resolver treats rows from
+	// other documents' jobs as survivors, so no extra queries are needed per
+	// document.
+	var totalObjects, totalRelationships int
+	var unionRows []graphVersionRow
+	var unionCanonicalIDs []string
 	if len(allJobIDs) > 0 {
-		type objectResult struct {
-			ExtractionJobID string `bun:"extraction_job_id"`
-			Count           int    `bun:"count"`
-		}
-		var objectsCounts []objectResult
-		err = r.db.NewSelect().
-			TableExpr("kb.graph_objects").
-			ColumnExpr("extraction_job_id, COUNT(*)::int as count").
-			Where("extraction_job_id IN (?)", bun.In(allJobIDs)).
-			Group("extraction_job_id").
-			Scan(ctx, &objectsCounts)
+		unionRows, err = r.loadGraphVersionRows(ctx, r.db, projectID, allJobIDs)
 		if err != nil {
-			return nil, fmt.Errorf("count graph objects: %w", err)
+			return nil, err
 		}
-
-		jobToDoc := make(map[string]string)
-		for _, j := range jobs {
-			jobToDoc[j.ID] = j.DocumentID
-		}
-
-		for _, o := range objectsCounts {
-			if docID, ok := jobToDoc[o.ExtractionJobID]; ok {
-				objectsMap[docID] += o.Count
-			}
-		}
-
-		// Get all object IDs for relationship counting
-		err = r.db.NewSelect().
-			TableExpr("kb.graph_objects").
-			Column("id").
-			Where("extraction_job_id IN (?)", bun.In(allJobIDs)).
-			Scan(ctx, &allObjectIDs)
-		if err != nil && err != sql.ErrNoRows {
-			return nil, fmt.Errorf("get object IDs: %w", err)
-		}
+		unionObjectRowIDs, canonicals := resolveGraphRemovals(unionRows, allJobIDs)
+		unionCanonicalIDs = canonicals
+		totalObjects = len(unionObjectRowIDs)
 	}
 
-	// Count total relationships (approximate per-doc)
-	relationshipsMap := make(map[string]int)
-	var totalRelationships int
-	if len(allObjectIDs) > 0 {
-		totalRelationships, err = r.db.NewSelect().
+	// Load relationship endpoint rows ONCE for the union of fully-removed
+	// canonicals, then partition in Go per document.
+	var relEndpoints []relEndpoint
+	if len(unionCanonicalIDs) > 0 {
+		err = r.db.NewSelect().
 			TableExpr("kb.graph_relationships").
-			Where("src_id IN (?) OR dst_id IN (?)", bun.In(allObjectIDs), bun.In(allObjectIDs)).
-			Count(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("count relationships: %w", err)
+			Column("src_id", "dst_id").
+			Where("src_id IN (?) OR dst_id IN (?)", bun.In(unionCanonicalIDs), bun.In(unionCanonicalIDs)).
+			Scan(ctx, &relEndpoints)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("load relationship endpoints: %w", err)
 		}
+	}
+	totalRelationships = len(relEndpoints)
 
-		// Distribute proportionally based on object count
-		totalObjects := len(allObjectIDs)
-		for docID, objCount := range objectsMap {
-			if totalObjects > 0 {
-				proportion := float64(objCount) / float64(totalObjects)
-				relationshipsMap[docID] = int(float64(totalRelationships) * proportion)
-			}
+	// Per-document graph impact. Each entry reflects deleting that document
+	// alone, so entries for documents sharing entities may not sum to the
+	// summary totals above.
+	docObjects := make(map[string]int)
+	docRelationships := make(map[string]int)
+	for _, doc := range docs {
+		jobIDs := docJobIDs[doc.ID]
+		if len(jobIDs) == 0 {
+			continue
 		}
+		objectRowIDs, canonicalIDs := resolveGraphRemovals(unionRows, jobIDs)
+		docObjects[doc.ID] = len(objectRowIDs)
+
+		canonicalSet := make(map[string]bool, len(canonicalIDs))
+		for _, c := range canonicalIDs {
+			canonicalSet[c] = true
+		}
+		docRelationships[doc.ID] = countRelationshipsTouching(relEndpoints, canonicalSet)
 	}
 
 	// Count notifications per document
@@ -881,8 +1145,8 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 		impact := ImpactSummary{
 			Chunks:             chunksMap[doc.ID],
 			ExtractionJobs:     jobsMap[doc.ID],
-			GraphObjects:       objectsMap[doc.ID],
-			GraphRelationships: relationshipsMap[doc.ID],
+			GraphObjects:       docObjects[doc.ID],
+			GraphRelationships: docRelationships[doc.ID],
 			Notifications:      notificationsMap[doc.ID],
 		}
 
@@ -897,10 +1161,13 @@ func (r *Repository) GetBulkDeletionImpact(ctx context.Context, projectID string
 
 		totalImpact.Chunks += impact.Chunks
 		totalImpact.ExtractionJobs += impact.ExtractionJobs
-		totalImpact.GraphObjects += impact.GraphObjects
-		totalImpact.GraphRelationships += impact.GraphRelationships
 		totalImpact.Notifications += impact.Notifications
 	}
+
+	// Graph totals are exact (computed over the union of all jobs), not the sum
+	// of per-document entries (which reflect each document deleted in isolation).
+	totalImpact.GraphObjects = totalObjects
+	totalImpact.GraphRelationships = totalRelationships
 
 	return &BulkDeletionImpact{
 		TotalDocuments: len(documents),

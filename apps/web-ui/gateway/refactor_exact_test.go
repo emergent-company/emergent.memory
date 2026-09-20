@@ -79,20 +79,20 @@ func TestRefactorOutputExact(t *testing.T) {
 	want = `<section class="mb-8"><h2 class="mb-3 text-lg font-semibold tracking-tight">Installed</h2><div class="card bg-base-100 card-border"><div class="card-body "><div class="flex flex-col items-center justify-center py-16 text-center px-4"><span class="iconify size-12 text-base-content/20 mb-4 lucide--library"></span><h3 class="text-base font-semibold text-base-content mb-1">No blueprints installed</h3><p class="text-sm text-base-content/50 mb-4">Install a blueprint to extend the graph schema.</p></div></div></div></section>`
 	check("cardList empty", got, want)
 
-	// modalShell
-	got = render(modalShell("spotlight-modal", "", "p-0 max-w-lg"), "<p>x</p>")
+	// ui.Dialog (was the local modalShell — same markup)
+	got = render(ui.Dialog(ui.DialogProps{ID: "spotlight-modal", BoxClass: "p-0 max-w-lg"}), "<p>x</p>")
 	want = `<dialog id="spotlight-modal" class="modal" hx-boost="false"><div class="modal-box p-0 max-w-lg"><p>x</p></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
-	check("modalShell", got, want)
+	check("ui.Dialog", got, want)
 
-	got = render(modalShell("sidepanel-modal", "sidepanel-modal-box", ""), "<p>x</p>")
+	got = render(ui.Dialog(ui.DialogProps{ID: "sidepanel-modal", BoxID: "sidepanel-modal-box"}), "<p>x</p>")
 	want = `<dialog id="sidepanel-modal" class="modal" hx-boost="false"><div id="sidepanel-modal-box" class="modal-box"><p>x</p></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
-	check("modalShell boxid", got, want)
+	check("ui.Dialog boxid", got, want)
 
-	// confirmDeleteDialog
-	got = render(confirmDeleteDialog("delete-confirm-modal", "agent", deleteAgentDescription()),
+	// ui.ConfirmDialog (was the local confirmDeleteDialog — same markup)
+	got = render(ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "delete-confirm-modal", Noun: "agent"}, deleteAgentDescription()),
 		`<div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div>`)
 	want = `<dialog id="delete-confirm-modal" class="modal" hx-boost="false"><div class="modal-box max-w-sm"><div class="mb-4 flex items-start gap-3"><div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full"><span class="iconify lucide--trash-2 size-5" aria-hidden="true"></span></div><div><h3 class="text-lg font-semibold">Delete agent?</h3><p class="text-base-content/55 mt-1 text-sm">This permanently removes <span id="delete-agent-name" class="font-medium text-base-content"></span> and its definition. Irreversible.</p></div></div><div class="flex justify-end gap-2 pt-2"><button type="button" class="btn btn-ghost btn-sm" data-action="close-delete-confirm">Cancel</button> <button type="button" class="btn btn-error btn-sm" id="delete-agent-go">Delete</button></div></div><form method="dialog" class="modal-backdrop"><button>close</button></form></dialog>`
-	check("confirmDeleteDialog", got, want)
+	check("ui.ConfirmDialog", got, want)
 
 	// detailHeader default (existing callers)
 	got = render(detailHeader(crumbsActive(nav.Crumbs("Skills", "/skills", "New skill")), "", "New skill", "A name, what it does, and the instructions that make it work."))
@@ -114,6 +114,16 @@ func TestRefactorOutputExact(t *testing.T) {
 	got = render(detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Person")), "Object type", "Person", "", detailHeaderOpts{Margin: "mb-6"}))
 	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/schema" class="">Schema</a></li><li class="font-medium text-base-content"><span class="">Person</span></li></ul></div><div class="mt-2 flex flex-wrap items-center justify-between gap-4"><div class="min-w-0"><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Object type</p><h1 class="text-2xl font-bold tracking-tight">Person</h1></div></div></div>`
 	check("detailHeader kicker", got, want)
+
+	// pageHeader — full case (kicker + title + subtitle + one action)
+	got = render(pageHeader("Control plane", "Agents", "The personas Memory can become — pick a model, set the tone, grant tools."), "<span>action</span>")
+	want = `<div class="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Control plane</p><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Agents</h1><p class="text-base-content/55 mt-1 text-sm">The personas Memory can become — pick a model, set the tone, grant tools.</p></div><span>action</span></div>`
+	check("pageHeader full", got, want)
+
+	// pageHeader — empty subtitle, no actions
+	got = render(pageHeader("Kicker", "Title", ""))
+	want = `<div class="mb-6 flex flex-wrap items-end justify-between gap-4"><div><p class="text-base-content/45 font-semibold tracking-[0.16em] uppercase text-[11px] mb-1">Kicker</p><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">Title</h1></div></div>`
+	check("pageHeader empty", got, want)
 
 	// checkboxPicker — skill, empty with id
 	got = render(checkboxPicker(checkboxPickerProps{

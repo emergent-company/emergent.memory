@@ -220,7 +220,12 @@ templ propertyInput(def objectPropertyDef, vals []string) {
 	}}
 	if def.Type == "boolean" {
 		<input type="hidden" name={ "prop_" + def.Name } value="false"/>
-		<input type="checkbox" name={ "prop_" + def.Name } value="true" checked?={ v == "true" } class="toggle"/>
+		@fm.ToggleInput(fm.ToggleInputProps{
+			Name:    "prop_" + def.Name,
+			Value:   "true",
+			Checked: v == "true",
+			Class:   "toggle",
+		})
 	} else if def.Type == "date" {
 		<input name={ "prop_" + def.Name } type="date" value={ v } class="input w-full"/>
 	} else if def.Type == "number" {
@@ -390,7 +395,7 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 // type, confirm the source object (defaults to the current object), and pick
 // the target via search. Posts to /objects/{id}/relationships.
 templ objectConnectDialog(obj *GraphObject, relTypes []CompiledType) {
-	@modalShell("object-connect-modal", "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "object-connect-modal", BoxClass: "max-w-sm"}) {
 		<h3 class="text-lg font-semibold">Connect object</h3>
 		<p class="text-base-content/50 mb-4 text-sm">Link this object to another one in the knowledge graph.</p>
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/relationships") }>

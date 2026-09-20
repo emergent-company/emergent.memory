@@ -94,7 +94,7 @@ Working tree clean at session end; branch `omos/schema-resync-stale` == merged `
   (JWT via the App private key at `/root/Emergent Code Reviewer Private Key Sept 9 2026.pem`,
   App id `4884315`, installation `160306576`), create the Paseo review schedule, flip the
   AGENTS interim rule to bot-merge, live-test. Tracked in the
-  [pr-review-bot-wiring](../tasks/pr-review-bot-wiring.md) task.
+  `pr-review-bot-wiring` (moved to emergent-company/emergent.memory.infra → docs/review-bot/) task.
 - GitHub Pro upgrade would give a hard branch-protection gate (required reviews/checks) instead
   of the scripted process gate — deferred by choice, revisit if enforcement is bypassed.
 - Multiple reviewer lanes (role-split reviewers) and/or a human-signoff requirement are
@@ -102,4 +102,4 @@ Working tree clean at session end; branch `omos/schema-resync-stale` == merged `
 
 ## Tasks
 
-- [pr-review-bot-wiring](../tasks/pr-review-bot-wiring.md) — finish the GitHub App review-bot wiring
+- `pr-review-bot-wiring` (moved to emergent-company/emergent.memory.infra → docs/review-bot/) — finish the GitHub App review-bot wiring

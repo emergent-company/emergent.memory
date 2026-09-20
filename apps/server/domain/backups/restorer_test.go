@@ -204,3 +204,167 @@ func TestScalarHelpers(t *testing.T) {
 		t.Errorf("quoteArrayElement = %q", got)
 	}
 }
+
+func TestChatConversationsNullForeignOwnerUserID(t *testing.T) {
+	// The chat_conversations spec must null owner_user_id when it cannot be
+	// remapped, so a foreign owner never lands as a dangling FK on clone.
+	specs := restoreTableOrder()
+	var spec *restoreTableSpec
+	for i := range specs {
+		if specs[i].name == "chat_conversations" {
+			spec = &specs[i]
+			break
+		}
+	}
+	if spec == nil {
+		t.Fatal("chat_conversations table spec not found")
+	}
+	if got := spec.refs["owner_user_id"].action; got != refNull {
+		t.Fatalf("chat_conversations owner_user_id policy = %q, want %q", got, refNull)
+	}
+
+	row := map[string]any{"owner_user_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+	skip, err := applyRefs(row, map[string]string{}, spec.refs)
+	if err != nil {
+		t.Fatalf("applyRefs: %v", err)
+	}
+	if skip {
+		t.Fatal("applyRefs unexpectedly skipped the row")
+	}
+	if row["owner_user_id"] != nil {
+		t.Errorf("owner_user_id = %v, want nil (foreign owner must be nulled on clone)", row["owner_user_id"])
+	}
+}
+
+func TestFilterCloneMembershipsDropsForeignUsers(t *testing.T) {
+	r := &Restorer{}
+	m := &membershipFilter{
+		sameOrg:         false, // imported archives always filter
+		targetOrgUsers:  map[string]bool{"member-1": true},
+		createdBy:       "restorer-1",
+		targetProjectID: "proj-1",
+	}
+	rows := []map[string]any{
+		{"user_id": "member-1", "role": "project_admin"},
+		{"user_id": "foreign-1", "role": "editor"},
+	}
+
+	got := r.filterCloneMemberships(rows, m)
+	if len(got) != 2 {
+		t.Fatalf("filterCloneMemberships returned %d rows, want 2 (member-1 + restorer-1)", len(got))
+	}
+
+	seen := map[string]bool{}
+	for _, row := range got {
+		seen[stringValue(row["user_id"])] = true
+	}
+	if !seen["member-1"] {
+		t.Error("expected member-1 to be retained")
+	}
+	if seen["foreign-1"] {
+		t.Error("expected foreign-1 to be dropped")
+	}
+	if !seen["restorer-1"] {
+		t.Error("expected restorer-1 to be added")
+	}
+}
+
+func TestApplyRefs(t *testing.T) {
+	sourceID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	targetID := "11111111-1111-1111-1111-111111111111"
+	unmapped := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	remap := map[string]string{sourceID: targetID}
+
+	t.Run("value in remap is remapped", func(t *testing.T) {
+		row := map[string]any{"schema_id": sourceID}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refSkip}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false for a resolvable reference")
+		}
+		if got := row["schema_id"]; got != targetID {
+			t.Errorf("schema_id = %v, want %s", got, targetID)
+		}
+	})
+
+	t.Run("unmapped refNull is nulled", func(t *testing.T) {
+		row := map[string]any{"parent_document_id": unmapped}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"parent_document_id": {action: refNull}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false for refNull")
+		}
+		if row["parent_document_id"] != nil {
+			t.Errorf("parent_document_id = %v, want nil", row["parent_document_id"])
+		}
+	})
+
+	t.Run("unmapped refSkip skips row", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refSkip}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !skip {
+			t.Fatal("expected skip=true for refSkip")
+		}
+	})
+
+	t.Run("unmapped refFail errors", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		_, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refFail}})
+		if err == nil {
+			t.Fatal("expected error for refFail")
+		}
+	})
+
+	t.Run("unmapped with no policy preserves raw value", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		skip, err := applyRefs(row, remap, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false")
+		}
+		if got := row["schema_id"]; got != unmapped {
+			t.Errorf("schema_id = %v, want %s", got, unmapped)
+		}
+	})
+}
+
+// TestCloneSchemaLinkSpecsDeclareSkip guards the declared per-column policy for
+// GitHub issue #592. Both kb.project_schemas and kb.project_edge_schema_registry
+// link a project to a schema UUID, and both can carry a link to the source
+// deployment's global builtin schema UUID (absent from a project-scoped
+// archive). Each must therefore declare refSkip on schema_id so a clone drops
+// the unresolvable row instead of aborting on the schema_id foreign key.
+//
+// This assertion does not need a database, so it still runs when the DB-backed
+// clone regression test skips.
+func TestCloneSchemaLinkSpecsDeclareSkip(t *testing.T) {
+	specs := map[string]restoreTableSpec{}
+	for _, s := range restoreTableOrder() {
+		specs[s.name] = s
+	}
+
+	for _, table := range []string{"project_schemas", "project_edge_schema_registry"} {
+		spec, ok := specs[table]
+		if !ok {
+			t.Errorf("restore order has no spec for %s", table)
+			continue
+		}
+		policy, ok := spec.refs["schema_id"]
+		if !ok {
+			t.Errorf("%s declares no ref policy for schema_id; want refSkip", table)
+			continue
+		}
+		if policy.action != refSkip {
+			t.Errorf("%s.schema_id policy = %q, want %q", table, policy.action, refSkip)
+		}
+	}
+}

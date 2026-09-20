@@ -154,7 +154,7 @@ templ apiTokenRowContent(t APIToken, actionBase string) {
 			<div class="flex flex-wrap items-center gap-2">
 				<p class="font-medium">{ t.Name }</p>
 				if t.IsRevoked {
-					@ui.Badge(ui.BadgeProps{Label: "Revoked", Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Icon: "lucide--ban", Attrs: templ.Attributes{"data-testid": "token-revoked-badge"}})
+					@components.StatusBadge("Revoked", ui.BadgeError, "lucide--ban", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-testid": "token-revoked-badge"}})
 				}
 			</div>
 		</td>

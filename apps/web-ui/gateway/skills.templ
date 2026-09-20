@@ -334,7 +334,7 @@ templ skillDeleteDescription(s *Skill) {
 // The action is fixed because the dialog only exists on the detail page for
 // the skill being viewed — no per-skill JS state needed.
 templ skillDeleteDialog(s *Skill) {
-	@confirmDeleteDialog("skill-delete-modal", "skill", skillDeleteDescription(s)) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "skill-delete-modal", Noun: "skill"}, skillDeleteDescription(s)) {
 		<form method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/delete") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{

@@ -2,6 +2,7 @@ package mcpregistry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -212,8 +213,9 @@ func (pm *ProxyManager) DiscoverTools(ctx context.Context, server *MCPServer) ([
 	tools := make([]DiscoveredTool, 0, len(result.Tools))
 	for _, t := range result.Tools {
 		dt := DiscoveredTool{
-			Name:        t.Name,
-			InputSchema: convertToolInputSchema(t.InputSchema),
+			Name:         t.Name,
+			InputSchema:  convertToolInputSchema(t.InputSchema),
+			OutputSchema: convertToolOutputSchema(t.OutputSchema),
 		}
 		if t.Description != "" {
 			desc := t.Description
@@ -296,9 +298,10 @@ func (pm *ProxyManager) InspectServer(ctx context.Context, server *MCPServer) (*
 			} else {
 				for _, t := range toolsResult.Tools {
 					it := InspectToolDTO{
-						Name:        t.Name,
-						Description: t.Description,
-						InputSchema: convertToolInputSchema(t.InputSchema),
+						Name:         t.Name,
+						Description:  t.Description,
+						InputSchema:  convertToolInputSchema(t.InputSchema),
+						OutputSchema: convertToolOutputSchema(t.OutputSchema),
 					}
 					result.Tools = append(result.Tools, it)
 				}
@@ -727,7 +730,8 @@ func convertCallToolResult(result *mcpgo.CallToolResult) *mcp.ToolResult {
 	}
 
 	tr := &mcp.ToolResult{
-		IsError: result.IsError,
+		IsError:           result.IsError,
+		StructuredContent: convertStructuredContent(result.StructuredContent),
 	}
 
 	for _, content := range result.Content {
@@ -749,10 +753,61 @@ func convertCallToolResult(result *mcpgo.CallToolResult) *mcp.ToolResult {
 	return tr
 }
 
+// convertStructuredContent normalizes an mcp-go CallToolResult.StructuredContent
+// (any) into a map[string]any, or nil when it is not a JSON object. MCP 2025-06-18
+// requires structuredContent to be a root object; non-object shapes are left nil
+// while the text content block still carries the serialized payload.
+func convertStructuredContent(sc any) map[string]any {
+	if sc == nil {
+		return nil
+	}
+	if m, ok := sc.(map[string]any); ok {
+		return m
+	}
+	data, err := json.Marshal(sc)
+	if err != nil {
+		return nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil
+	}
+	return obj
+}
+
 // convertToolInputSchema converts an mcp-go ToolInputSchema to a map[string]any for storage.
 func convertToolInputSchema(schema mcpgo.ToolInputSchema) map[string]any {
 	m := map[string]any{
 		"type": schema.Type,
+	}
+	if schema.Properties != nil {
+		m["properties"] = schema.Properties
+	}
+	if len(schema.Required) > 0 {
+		m["required"] = schema.Required
+	}
+	if schema.AdditionalProperties != nil {
+		m["additionalProperties"] = schema.AdditionalProperties
+	}
+	return m
+}
+
+// convertToolOutputSchema converts an mcp-go ToolOutputSchema to a map[string]any,
+// mirroring convertToolInputSchema so discovered tools forward their outputSchema
+// (MCP 2025-06-18). Returns nil when the schema declares nothing. A valid JSON
+// Schema may omit the top-level "type", so a schema is considered declared when
+// it carries a type OR any of properties/required/additionalProperties.
+func convertToolOutputSchema(schema mcpgo.ToolOutputSchema) map[string]any {
+	declared := schema.Type != "" ||
+		schema.Properties != nil ||
+		len(schema.Required) > 0 ||
+		schema.AdditionalProperties != nil
+	if !declared {
+		return nil
+	}
+	m := map[string]any{}
+	if schema.Type != "" {
+		m["type"] = schema.Type
 	}
 	if schema.Properties != nil {
 		m["properties"] = schema.Properties

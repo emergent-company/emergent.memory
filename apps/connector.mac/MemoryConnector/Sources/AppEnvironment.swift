@@ -18,6 +18,10 @@ final class AppEnvironment: ObservableObject {
     let projectStore: ProjectStore
     let appState = AppState()
     let identity = IdentityStore()
+    /// Sparkle-backed app updater. Created once here so the About page and any
+    /// future menu-bar surface share a single controller (starting a second one
+    /// would start a second update cycle).
+    let updater = UpdaterModel()
 
     /// The one-time legacy-session migrator, if one should run. Built by
     /// default against the shared legacy storage; `nil` when a migrator is
@@ -132,10 +136,12 @@ final class AppEnvironment: ObservableObject {
     /// Builds the real migrator against the shared legacy storage, or `nil`
     /// under hosted unit tests. Tests share the app process, so the default
     /// migrator must never touch the real Keychain/session/config from a test.
+    ///
+    /// Uses the shared `HostedTest` check — the same one that decides whether
+    /// lifecycle logging is suppressed — so the guards cannot drift apart.
     private static func defaultLegacyMigrator() -> LegacyMigrator? {
         let env = ProcessInfo.processInfo.environment
-        guard env["XCTestConfigurationFilePath"] == nil,
-              env["XCTestBundlePath"] == nil else {
+        guard !HostedTest.isRunning(environment: env) else {
             return nil
         }
         return LegacyMigrator(

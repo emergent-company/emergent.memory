@@ -219,10 +219,11 @@ func (s *Service) callBraveSearchAPI(ctx context.Context, req braveSearchRequest
 // getBraveSearchToolDefinition returns the MCP tool definition for Brave web search
 func getBraveSearchToolDefinition() ToolDefinition {
 	return ToolDefinition{
-		Name:        "web-search-brave",
-		AgentOnly:   true,
-		Description: "Search the web using the Brave Search API. Returns web search results with titles, URLs, descriptions, and snippets. Use this to find current information, research topics, or verify facts from the web.",
-		ConfigKeys:  []string{"api_key"},
+		Name:         "web-search-brave",
+		OutputSchema: objectOutputSchema(),
+		AgentOnly:    true,
+		Description:  "Search the web using the Brave Search API. Returns web search results with titles, URLs, descriptions, and snippets. Use this to find current information, research topics, or verify facts from the web.",
+		ConfigKeys:   []string{"api_key"},
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertySchema{

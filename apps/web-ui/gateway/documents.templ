@@ -117,7 +117,7 @@ templ documentDeleteForm(id, name string) {
 
 templ documentStatusBadge(status string) {
 	if status == "" {
-		@emptyDash()
+		@components.EmptyDash()
 	} else {
 		@components.StatusBadge(status, documentStatusIntent(status), "", components.StatusBadgeOpts{
 			Size: ui.BadgeSizeXS,

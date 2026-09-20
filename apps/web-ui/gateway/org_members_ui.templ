@@ -429,7 +429,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 				Margin:    "mb-6",
 				BodyClass: "p-5",
 			}) {
-				<dl class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+				@components.MetaGrid(components.MetaGridOpts{GapY: "gap-y-4"}) {
 					@memberDetailRow("Display name", memberDisplayName(m))
 					@memberDetailRow("Email", m.Email)
 					@memberDetailRow("First name", m.FirstName)
@@ -438,7 +438,7 @@ templ MemberDetailPage(data memberDetailPageData) {
 						@roleBadge(m.Role)
 					}
 					@memberDetailRow("Joined", relTime(m.JoinedAt))
-				</dl>
+				}
 			}
 			@memberRoleChangeSection(m, data.CanChangeRole)
 		}
@@ -708,7 +708,7 @@ templ profileAvatar(p *UserProfileDto) {
 // Opened by the identity-card avatar trigger via MemoryApp.openDialog; the header X
 // (method="dialog" submit) and the backdrop form both close it natively.
 templ profileAvatarModal(p *UserProfileDto) {
-	@modalShell("profile-avatar-modal", "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "profile-avatar-modal", BoxClass: "max-w-sm"}) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
 				<h3 class="text-lg font-semibold">Profile photo</h3>

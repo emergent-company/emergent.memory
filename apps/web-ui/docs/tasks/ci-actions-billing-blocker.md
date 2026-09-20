@@ -25,7 +25,6 @@ merge. PR #37 was merged on local evidence + explicit user approval.
 - Fix is org/billing-side (payment method or spending limit), not a repo change.
 - To confirm recovery: open any PR and verify jobs transition past
   "queued"/"not started" — `gh pr checks <n>`.
-- Related merge-gate work: [pr-review-bot-wiring](pr-review-bot-wiring.md).
 - Interim local verification while CI is down: `go build ./...`,
   `templ generate -check`, `go test ./...`, `golangci-lint run ./...` from
   `gateway/`.

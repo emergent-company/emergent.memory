@@ -147,11 +147,9 @@ templ agentMCPEndpointBody(data agentSettingsData) {
 
 // agentMCPEndpointRevokeDialog confirms endpoint revocation before POSTing.
 templ agentMCPEndpointRevokeDialog(agentID string) {
-	@modalShell("agent-mcp-endpoint-revoke-dialog", "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-endpoint-revoke-dialog", BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--trash-2", "size-5")
-			</div>
+			@components.ConfirmIcon("")
 			<div>
 				<h3 class="text-lg font-semibold">Revoke MCP endpoint?</h3>
 				<p class="text-base-content/55 mt-1 text-sm">
@@ -233,24 +231,26 @@ templ agentMCPKeysBlock(data agentSettingsData) {
 					})
 				</div>
 			} else {
-				<div class="rounded-box border-base-200 mt-4 border" data-testid="agent-mcp-key-list">
-					<div class="overflow-x-auto">
-						<table class="table table-sm">
-							<thead>
-								<tr>
-									<th>Label</th>
-									<th>Created</th>
-									<th>Last used</th>
-									<th class="text-right">Actions</th>
-								</tr>
-							</thead>
-							<tbody>
-								for _, k := range data.MCPKeys {
-									@agentMCPKeyRow(k)
-								}
-							</tbody>
-						</table>
-					</div>
+				<div class="mt-4">
+					@components.TableCard(templ.Attributes{"data-testid": "agent-mcp-key-list"}) {
+						<div class="overflow-x-auto">
+							<table class="table table-sm">
+								<thead>
+									<tr>
+										<th>Label</th>
+										<th>Created</th>
+										<th>Last used</th>
+										<th class="text-right">Actions</th>
+									</tr>
+								</thead>
+								<tbody>
+									for _, k := range data.MCPKeys {
+										@agentMCPKeyRow(k)
+									}
+								</tbody>
+							</table>
+						</div>
+					}
 				</div>
 				for _, k := range data.MCPKeys {
 					if agentMCPKeyIsUsable(k.Status) {
@@ -329,11 +329,9 @@ templ agentMCPKeyRevokeDialog(agentID string, k AgentMCPKey) {
 	if label == "" {
 		label = "this key"
 	} }}
-	@modalShell("agent-mcp-key-revoke-"+k.ID, "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-key-revoke-" + k.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--trash-2", "size-5")
-			</div>
+			@components.ConfirmIcon("")
 			<div>
 				<h3 class="text-lg font-semibold">Revoke key?</h3>
 				<p class="text-base-content/55 mt-1 text-sm">
@@ -370,7 +368,7 @@ templ agentMCPKeyRotateDialog(agentID string, k AgentMCPKey) {
 	if label == "" {
 		label = "this key"
 	} }}
-	@modalShell("agent-mcp-key-rotate-"+k.ID, "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "agent-mcp-key-rotate-" + k.ID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
 			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
 				@ui.IconSpan("lucide--refresh-cw", "size-5")
@@ -474,25 +472,27 @@ templ agentMCPSessionsBody(data agentSettingsData) {
 			}
 		</div>
 	} else {
-		<div class="rounded-box border-base-200 mt-3 border" data-testid="agent-mcp-session-list">
-			<div class="overflow-x-auto">
-				<table class="table table-sm">
-					<thead>
-						<tr>
-							<th>Key</th>
-							<th>Status</th>
-							<th>Turns</th>
-							<th>Last active</th>
-							<th class="hidden sm:table-cell">Created</th>
-						</tr>
-					</thead>
-					<tbody>
-						for _, s := range data.MCPSessions {
-							@agentMCPSessionRow(s)
-						}
-					</tbody>
-				</table>
-			</div>
+		<div class="mt-3">
+			@components.TableCard(templ.Attributes{"data-testid": "agent-mcp-session-list"}) {
+				<div class="overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th>Key</th>
+								<th>Status</th>
+								<th>Turns</th>
+								<th>Last active</th>
+								<th class="hidden sm:table-cell">Created</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, s := range data.MCPSessions {
+								@agentMCPSessionRow(s)
+							}
+						</tbody>
+					</table>
+				</div>
+			}
 		</div>
 	}
 }

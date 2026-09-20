@@ -170,6 +170,14 @@ type ListParams struct {
 	// that actually read or write obj.MigrationArchive (schema migrate/rollback)
 	// should set it.
 	IncludeMigrationArchive bool
+
+	// OnlyWithMigrationArchive bounds the scan to objects that carry at least
+	// one migration_archive entry (migration_archive <> '[]'::jsonb). It is an
+	// opt-in scan bound for batch callers (schema rollback) and relies on the
+	// existing partial index idx_graph_objects_has_archive. It MUST NOT be used
+	// by forward migration, which must also visit archive-free objects (a
+	// first-ever migration has zero archived objects).
+	OnlyWithMigrationArchive bool
 }
 
 // numericPropertyKeywords are substrings that hint a property path holds a
@@ -291,10 +299,23 @@ func applyPropertyFiltersUpdate(q *bun.UpdateQuery, filters []PropertyFilter) *b
 // extraction job, namespace, deleted, property filters, and related-to).
 // Cursor, ordering, and LIMIT are NOT applied — callers add those as needed.
 func (r *Repository) buildObjectBaseQuery(params ListParams) *bun.SelectQuery {
-	q := r.db.NewSelect().
+	return r.buildObjectBaseQueryWith(r.db, params)
+}
+
+// buildObjectBaseQueryWith is buildObjectBaseQuery against a caller-supplied
+// handle (a *bun.DB or a bun.Tx), so batch iterators can run their scans inside
+// an existing transaction.
+func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bun.SelectQuery {
+	q := db.NewSelect().
 		Model((*GraphObject)(nil)).
 		Where("project_id = ?", params.ProjectID).
 		Where("supersedes_id IS NULL") // HEAD versions only
+
+	if params.OnlyWithMigrationArchive {
+		// Opt-in scan bound: only objects with at least one archive entry. Uses
+		// the partial index idx_graph_objects_has_archive.
+		q = q.Where("migration_archive <> '[]'::jsonb")
+	}
 
 	if params.BranchID != nil {
 		q = q.Where("branch_id = ?", *params.BranchID)
@@ -360,6 +381,12 @@ func (r *Repository) buildObjectBaseQuery(params ListParams) *bun.SelectQuery {
 // List returns graph objects matching the given parameters.
 // Returns only HEAD versions (latest version per canonical_id).
 func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+	return r.list(ctx, r.db, params)
+}
+
+// list runs a single List query against the given handle. It is shared by List
+// (r.db) and the streaming batch iterators (ListEachTx), which pass a bun.Tx.
+func (r *Repository) list(ctx context.Context, db bun.IDB, params ListParams) ([]*GraphObject, error) {
 	if params.Limit <= 0 {
 		params.Limit = 50
 	}
@@ -382,7 +409,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 		// column is omitted and obj.MigrationArchive always scans as empty.
 		columns = append(columns, "migration_archive")
 	}
-	q := r.buildObjectBaseQuery(params).Column(columns...)
+	q := r.buildObjectBaseQueryWith(db, params).Column(columns...)
 
 	// Property-based ordering: ORDER BY the JSONB property accessor with id as a
 	// tiebreaker. Keyset cursor pagination encodes (created_at, id), which is
@@ -437,17 +464,24 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]*GraphObjec
 	return objects, nil
 }
 
-// ListAll returns every HEAD object matching params. Unlike List — which clamps
-// the page size to MaxListLimit and fetches at most one page — ListAll walks the
-// result set with keyset cursors so batch callers (schema migrate/rollback) are
-// not silently capped at a single page.
+// ListEach streams every HEAD object matching params to fn one page at a time,
+// without materialising the full result set. It mirrors ListAll's keyset-cursor
+// walk (defaulting Order to "desc" and paging at MaxListLimit), but invokes
+// fn(page) per page and stops as soon as fn returns an error — that error is
+// propagated immediately and no further pages are fetched. Property ordering is
+// rejected because it is incompatible with the (created_at, id) cursor.
 //
 // Callers that read or write obj.MigrationArchive must set
-// params.IncludeMigrationArchive. Property ordering is rejected because it is
-// incompatible with the (created_at, id) keyset cursor.
-func (r *Repository) ListAll(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+// params.IncludeMigrationArchive.
+func (r *Repository) ListEach(ctx context.Context, params ListParams, fn func([]*GraphObject) error) error {
+	return r.ListEachTx(ctx, r.db, params, fn)
+}
+
+// ListEachTx is ListEach against a caller-supplied handle (a *bun.DB or a
+// bun.Tx), so a batch scan can run inside an existing transaction.
+func (r *Repository) ListEachTx(ctx context.Context, db bun.IDB, params ListParams, fn func([]*GraphObject) error) error {
 	if params.PropertyOrder != nil {
-		return nil, apperror.NewBadRequest("property ordering is not supported for full list scans")
+		return apperror.NewBadRequest("property ordering is not supported for full list scans")
 	}
 	if params.Order == "" {
 		params.Order = "desc"
@@ -459,25 +493,46 @@ func (r *Repository) ListAll(ctx context.Context, params ListParams) ([]*GraphOb
 		pageSize = 50
 	}
 
-	all := make([]*GraphObject, 0)
 	for {
 		page := params
 		page.Limit = pageSize
-		objects, err := r.List(ctx, page)
+		objects, err := r.list(ctx, db, page)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		all = append(all, objects...)
+		if err := fn(objects); err != nil {
+			return err
+		}
 
-		// List fetches Limit+1 rows so callers can detect a further page; a page
+		// list fetches Limit+1 rows so callers can detect a further page; a page
 		// no larger than the requested size means the result set is exhausted.
 		if len(objects) <= pageSize {
-			return all, nil
+			return nil
 		}
 		last := objects[len(objects)-1]
 		cursor := encodeCursor(last.CreatedAt, last.ID)
 		params.Cursor = &cursor
 	}
+}
+
+// ListAll returns every HEAD object matching params. Unlike List — which clamps
+// the page size to MaxListLimit and fetches at most one page — ListAll walks the
+// result set with keyset cursors so batch callers (schema migrate/rollback) are
+// not silently capped at a single page.
+//
+// Callers that read or write obj.MigrationArchive must set
+// params.IncludeMigrationArchive. Property ordering is rejected because it is
+// incompatible with the (created_at, id) keyset cursor.
+func (r *Repository) ListAll(ctx context.Context, params ListParams) ([]*GraphObject, error) {
+	all := make([]*GraphObject, 0)
+	err := r.ListEach(ctx, params, func(page []*GraphObject) error {
+		all = append(all, page...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
 }
 
 // Count returns the total count of graph objects matching the given parameters.
@@ -664,6 +719,10 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
+	if newVersion.ExtractionJobID == nil {
+		newVersion.ExtractionJobID = prevHead.ExtractionJobID
+	}
+
 	// Insert new version as HEAD
 	_, err = tx.NewInsert().
 		Model(newVersion).
@@ -718,22 +777,23 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 	now := time.Now()
 	actorType := "user"
 	tombstone := &GraphObject{
-		ID:           uuid.New(),
-		CanonicalID:  mainHead.CanonicalID,
-		ProjectID:    mainHead.ProjectID,
-		BranchID:     branchID,
-		Type:         mainHead.Type,
-		Key:          mainHead.Key,
-		Status:       mainHead.Status,
-		Properties:   mainHead.Properties,
-		Labels:       mainHead.Labels,
-		DeletedAt:    &now,
-		DeleteReason: reason,
-		ActorID:      actorID,
-		ActorType:    &actorType,
-		Version:      mainHead.Version + 1,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:              uuid.New(),
+		CanonicalID:     mainHead.CanonicalID,
+		ProjectID:       mainHead.ProjectID,
+		BranchID:        branchID,
+		Type:            mainHead.Type,
+		Key:             mainHead.Key,
+		Status:          mainHead.Status,
+		Properties:      mainHead.Properties,
+		Labels:          mainHead.Labels,
+		DeletedAt:       &now,
+		DeleteReason:    reason,
+		ActorID:         actorID,
+		ActorType:       &actorType,
+		Version:         mainHead.Version + 1,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ExtractionJobID: mainHead.ExtractionJobID,
 	}
 	tombstone.ContentHash = computeContentHash(tombstone.Properties, tombstone.Status, tombstone.Key, tombstone.Labels)
 
@@ -2543,6 +2603,7 @@ type BranchObjectHead struct {
 	// MergedToCanonicalID is non-nil when this source object was already cloned
 	// to a target branch by a prior merge (the merge ledger).
 	MergedToCanonicalID *uuid.UUID
+	ExtractionJobID     *uuid.UUID
 }
 
 // GetBranchObjectHeads returns HEAD versions of all objects on a branch.
@@ -2552,7 +2613,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 
 	q := r.db.NewSelect().
 		Model(&objects).
-		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id").
+		Column("id", "canonical_id", "content_hash", "type", "key", "status", "namespace", "labels", "properties", "deleted_at", "merged_to_canonical_id", "extraction_job_id").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL")
 
@@ -2581,6 +2642,7 @@ func (r *Repository) GetBranchObjectHeads(ctx context.Context, projectID uuid.UU
 			Properties:          obj.Properties,
 			DeletedAt:           obj.DeletedAt,
 			MergedToCanonicalID: obj.MergedToCanonicalID,
+			ExtractionJobID:     obj.ExtractionJobID,
 		}
 	}
 
@@ -2806,17 +2868,18 @@ func (r *Repository) BulkCopyObjectsToBranch(ctx context.Context, projectID uuid
 	batch := make([]*GraphObject, 0, 100)
 	for _, obj := range objects {
 		newObj := &GraphObject{
-			ID:          uuid.New(),
-			ProjectID:   projectID,
-			BranchID:    targetBranchID,
-			CanonicalID: obj.CanonicalID, // Preserve canonical ID for merge-back support
-			Version:     1,
-			Type:        obj.Type,
-			Key:         obj.Key,
-			Status:      obj.Status,
-			Properties:  obj.Properties,
-			Labels:      obj.Labels,
-			ContentHash: obj.ContentHash,
+			ID:              uuid.New(),
+			ProjectID:       projectID,
+			BranchID:        targetBranchID,
+			CanonicalID:     obj.CanonicalID, // Preserve canonical ID for merge-back support
+			Version:         1,
+			Type:            obj.Type,
+			Key:             obj.Key,
+			Status:          obj.Status,
+			Properties:      obj.Properties,
+			Labels:          obj.Labels,
+			ContentHash:     obj.ContentHash,
+			ExtractionJobID: obj.ExtractionJobID,
 		}
 		batch = append(batch, newObj)
 		copiedCanonicals[obj.CanonicalID] = true

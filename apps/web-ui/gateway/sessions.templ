@@ -350,7 +350,7 @@ templ runStatusBadge(status string) {
 // toolStatusBadge colors a tool-call status; an empty status renders a dash.
 templ toolStatusBadge(status string) {
 	if status == "" {
-		@emptyDash()
+		@components.EmptyDash()
 	} else {
 		{{ intent := ui.BadgeNeutral
 		if status == "completed" {

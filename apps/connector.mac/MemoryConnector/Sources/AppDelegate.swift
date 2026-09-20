@@ -11,8 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Hosted unit tests run inside the app process — never spawn the
         // engine or status polling there.
         let env = ProcessInfo.processInfo.environment
-        let isTesting = env["XCTestConfigurationFilePath"] != nil || env["XCTestBundlePath"] != nil
-        guard !isTesting else { return }
+        guard !HostedTest.isRunning(environment: env) else { return }
         let app = AppEnvironment.shared
         // Gated: start the engine + status polling ONLY for a connected project
         // with a valid config; otherwise stop and publish "not running" so a

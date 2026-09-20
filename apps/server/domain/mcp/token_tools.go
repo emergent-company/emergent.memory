@@ -17,6 +17,7 @@ func tokenToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:          "token-list",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "List all API tokens for the current project. Returns token metadata (id, name, prefix, scopes, created at) but not the raw token value.",
 			InputSchema: InputSchema{
@@ -27,6 +28,7 @@ func tokenToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "token-create",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "Create a new API token for the current project. Returns the token id, name, scopes, and the raw token value (shown once only).",
 			InputSchema: InputSchema{
@@ -46,6 +48,7 @@ func tokenToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "token-get",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "Get a project API token by its ID. Returns metadata and the encrypted token value if available.",
 			InputSchema: InputSchema{
@@ -61,6 +64,7 @@ func tokenToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:          "token-revoke",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "admin",
 			Description:   "Revoke (permanently disable) a project API token. This cannot be undone.",
 			InputSchema: InputSchema{
@@ -82,7 +86,11 @@ func tokenToolDefinitions() []ToolDefinition {
 // ============================================================================
 
 func (s *Service) executeListProjectAPITokens(ctx context.Context, projectID string) (*ToolResult, error) {
-	result, err := s.apitokenSvc.ListByProject(ctx, projectID)
+	userID := ""
+	if u := auth.UserFromContext(ctx); u != nil {
+		userID = u.ID
+	}
+	result, err := s.apitokenSvc.ListByProject(ctx, projectID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list_project_api_tokens: %w", err)
 	}

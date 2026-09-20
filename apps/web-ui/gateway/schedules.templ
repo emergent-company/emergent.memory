@@ -125,7 +125,15 @@ templ scheduleRow(rowID string, a ScheduledAgent, defs []AgentDefinitionSummary)
 					}
 				</form>
 				<form method="post" action={ templ.URL("/schedules/" + a.ID + "/toggle") }>
-					<input type="checkbox" name="enabled" class="toggle toggle-sm" aria-label={ "Toggle " + a.Name } if a.Enabled { checked } onchange="this.form.submit()"/>
+					@form.ToggleInput(form.ToggleInputProps{
+						Name:    "enabled",
+						Checked: a.Enabled,
+						Class:   "toggle toggle-sm",
+						Attrs: templ.Attributes{
+							"aria-label": "Toggle " + a.Name,
+							"onchange":   "this.form.submit()",
+						},
+					})
 				</form>
 			</div>
 		}
@@ -343,7 +351,7 @@ templ scheduleDeleteDescription(a *ScheduledAgent) {
 // The action is fixed because the dialog only exists on the detail page for
 // the schedule being viewed — no per-schedule JS state needed.
 templ scheduleDeleteDialog(a *ScheduledAgent) {
-	@confirmDeleteDialog("schedule-delete-modal", "schedule", scheduleDeleteDescription(a)) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "schedule-delete-modal", Noun: "schedule"}, scheduleDeleteDescription(a)) {
 		<form method="post" action={ templ.URL("/schedules/" + a.ID + "/delete") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{

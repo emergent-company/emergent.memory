@@ -51,11 +51,14 @@ func TestRenderAgentSettingsRelayTools(t *testing.T) {
 	html := renderHTML(t, AgentSettingsPage(relaySettingsData()))
 	for _, want := range []string{
 		"mac-ada", "studio-linux", "remote",
-		`name="tool" type="checkbox" value="mac-ada_notes_search" checked`,
-		`name="tool" type="checkbox" value="mac-ada_reminders_add"`,
-		`name="tool" type="checkbox" value="studio-linux_files_list"`,
+		// Below: ToggleInput pins a canonical attribute order — type before name,
+		// class before checked. Semantically identical to the former hand-rolled
+		// markup; only the byte order differs.
+		`type="checkbox" name="tool" value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`,
+		`type="checkbox" name="tool" value="mac-ada_reminders_add"`,
+		`type="checkbox" name="tool" value="studio-linux_files_list"`,
 		"Search Apple Notes",
-		`name="tool" type="checkbox" value="web_search" checked`, // registry group untouched
+		`type="checkbox" name="tool" value="web_search" class="toggle toggle-sm shrink-0" checked`, // registry group untouched
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("relay picker missing %q", want)
@@ -96,7 +99,8 @@ func TestRenderAgentSettingsRelayOnlyTools(t *testing.T) {
 	if strings.Contains(html, "No tools available") {
 		t.Error("relay-only tools must not trigger the empty state")
 	}
-	if !strings.Contains(html, `value="mac-ada_notes_search" checked`) {
+	// Pins ToggleInput's canonical attribute order (class before checked).
+	if !strings.Contains(html, `value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`) {
 		t.Error("relay tool should render checked")
 	}
 
@@ -127,7 +131,9 @@ func TestRenderAgentSettingsNoRelayNodes(t *testing.T) {
 		t.Error("no relay nodes → no remote group")
 	}
 	for _, want := range []string{
-		`name="tool" type="checkbox" value="web_search" checked`,
+		// Pins ToggleInput's canonical attribute order (type before name, class
+		// before checked).
+		`type="checkbox" name="tool" value="web_search" class="toggle toggle-sm shrink-0" checked`,
 		`name="toolPolicy.web_search"`,
 	} {
 		if !strings.Contains(html, want) {
@@ -151,7 +157,8 @@ func TestRelayToolPreservedWhenNodeOffline(t *testing.T) {
 		// mac-ada disconnected: not in RelayNodes anymore
 	}
 	html := renderHTML(t, AgentSettingsPage(data))
-	for _, want := range []string{"Other", `value="mac-ada_notes_search" checked`, `value="ha_get_state" checked`} {
+	// Pins ToggleInput's canonical attribute order (class before checked).
+	for _, want := range []string{"Other", `value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`, `value="ha_get_state" class="toggle toggle-sm shrink-0" checked`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("offline relay tool should survive in the Other group, missing %q", want)
 		}
@@ -190,7 +197,8 @@ func TestUIAgentSettingsRouteRelayNodes(t *testing.T) {
 		t.Fatalf("nodes-present status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`value="mac-ada_notes_search" checked`, `value="mac-ada_reminders_add"`, relayGroupBorder} {
+	// Pins ToggleInput's canonical attribute order (class before checked).
+	for _, want := range []string{`value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`, `value="mac-ada_reminders_add"`, relayGroupBorder} {
 		if !strings.Contains(body, want) {
 			t.Errorf("nodes-present settings page missing %q", want)
 		}
@@ -213,7 +221,8 @@ func TestUIAgentSettingsRouteRelayNodes(t *testing.T) {
 		t.Error("rest of the settings page should still render")
 	}
 	// the whitelisted relay tool survives via the Other group (never dropped)
-	if !strings.Contains(body, `value="mac-ada_notes_search" checked`) {
+	// Pins ToggleInput's canonical attribute order (class before checked).
+	if !strings.Contains(body, `value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`) {
 		t.Error("whitelisted relay tool should persist in the Other group when its node is offline")
 	}
 

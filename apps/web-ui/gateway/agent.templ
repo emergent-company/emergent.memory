@@ -568,9 +568,9 @@ templ sandboxProviderAvailability(data agentSandboxData) {
 					<li class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
 						<span class="text-base-content/70 font-medium">{ sandboxProviderDisplayName(p) }</span>
 						if p.Healthy {
-							@ui.Badge(ui.BadgeProps{Label: "available", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+							@components.StatusBadge("available", ui.BadgeSuccess, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 						} else {
-							@ui.Badge(ui.BadgeProps{Label: "unavailable", Variant: ui.BadgeError, Size: ui.BadgeSizeXS, Dot: true})
+							@components.StatusBadge("unavailable", ui.BadgeError, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 							if p.Message != "" {
 								<span class="text-base-content/60">{ p.Message }</span>
 							}
@@ -748,6 +748,17 @@ templ agentToolPicker(data agentSettingsData) {
 	}
 }
 
+// agentToolCountBadge renders the ghost XS "N tool(s)" wrench badge shown in a
+// tool-group header (capability groups and source sub-groups alike).
+templ agentToolCountBadge(n int) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   countLabel(n, "tool", "tools"),
+		Variant: ui.BadgeGhost,
+		Size:    ui.BadgeSizeXS,
+		Icon:    "lucide--wrench",
+	})
+}
+
 // agentToolCapabilityGroup renders one capability group: a collapsible header
 // (label, description, member count) carrying the group enable switch
 // (groupEnabled.<id>) and policy select (groupPolicy.<id>), and a body of the
@@ -756,87 +767,102 @@ templ agentToolPicker(data agentSettingsData) {
 // rows. The header uses a named `group/cap` so nested `group` details don't
 // rotate each other's chevrons.
 templ agentToolCapabilityGroup(gv toolGroupView) {
-	<details
-		class="group/cap rounded-box border border-base-content/10 bg-base-200/40"
-		if gv.Open {
-			open
+	@ui.Disclosure(ui.DisclosureProps{
+		GroupClass:   "group/cap",
+		ItemsStart:   true,
+		Attrs:        templ.Attributes{"data-testid": "tool-group", "data-tool-group": gv.Group.ID},
+		SummaryAttrs: templ.Attributes{"data-testid": "tool-group-header-" + gv.Group.ID},
+		Open:         gv.Open,
+	}, agentToolCapabilityLeading(gv), agentToolCapabilityControls(gv)) {
+		if len(gv.ServerGroups) == 0 && len(gv.RelayGroups) == 0 && len(gv.Rows) == 0 {
+			<p class="text-base-content/50 text-xs">No tools from this group are available.</p>
 		}
-		data-testid="tool-group"
-		data-tool-group={ gv.Group.ID }
-	>
-		<summary class="flex cursor-pointer list-none items-start justify-between gap-3 px-3 py-2.5 select-none [&::-webkit-details-marker]:hidden" data-testid={ "tool-group-header-" + gv.Group.ID }>
-			<div class="flex min-w-0 flex-col gap-0.5">
-				<div class="flex min-w-0 items-center gap-2.5">
-					@ui.IconSpan("lucide--layers", "size-4 shrink-0 text-base-content/40")
-					<span class="truncate text-sm font-medium">{ gv.Group.Label }</span>
-					@ui.Badge(ui.BadgeProps{
-						Label:   countLabel(gv.Count, "tool", "tools"),
-						Variant: ui.BadgeGhost,
-						Size:    ui.BadgeSizeXS,
-						Icon:    "lucide--wrench",
-					})
-				</div>
-				if gv.Group.Description != "" {
-					<p class="text-base-content/50 truncate pl-[26px] text-xs">{ gv.Group.Description }</p>
+		for _, sub := range gv.ServerGroups {
+			@agentToolGroup(sub)
+		}
+		for _, sub := range gv.RelayGroups {
+			@agentToolGroup(sub)
+		}
+		if len(gv.Rows) > 0 {
+			<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
+				for _, t := range gv.Rows {
+					@agentToolRowView(t, true)
 				}
 			</div>
-			<div class="flex shrink-0 items-center gap-2">
-				<div class="flex shrink-0 items-center gap-2" onclick="event.stopPropagation()">
-					<input
-						type="hidden"
-						name={ "groupWasEnabled." + gv.Group.ID }
-						value={ groupWasEnabledValue(gv.Enabled) }
-					/>
-					<label class="flex cursor-pointer items-center gap-1.5" title="Turn every tool in this group on or off">
-						<input
-							type="checkbox"
-							name={ "groupEnabled." + gv.Group.ID }
-							value="on"
-							if gv.Enabled {
-								checked
-							}
-							class="toggle toggle-sm"
-							aria-label={ "Enable " + gv.Group.Label + " tools" }
-							data-testid={ "tool-group-enabled-" + gv.Group.ID }
-							onchange="this.closest('[data-tool-group]').querySelectorAll('input[name=tool]').forEach(function(cb){cb.checked=this.checked;cb.dispatchEvent(new Event('change'))},this)"
-						/>
-					</label>
-					if gv.Group.ID != "other" {
-						<select
-							name={ "groupPolicy." + gv.Group.ID }
-							class="select select-xs w-24"
-							aria-label={ gv.Group.Label + " approval policy" }
-							data-testid={ "tool-group-policy-" + gv.Group.ID }
-						>
-							<option value="inherit" if gv.Policy == "inherit" { selected }>Inherit</option>
-							<option value="allow" if gv.Policy == "allow" { selected }>Allow</option>
-							<option value="ask" if gv.Policy == "ask" { selected }>Ask</option>
-							<option value="deny" if gv.Policy == "deny" { selected }>Deny</option>
-						</select>
-					}
-				</div>
-				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-base-content/40 transition-transform group-open/cap:rotate-180")
-			</div>
-		</summary>
-		<div class="flex flex-col gap-2 border-t border-base-content/10 p-3">
-			if len(gv.ServerGroups) == 0 && len(gv.RelayGroups) == 0 && len(gv.Rows) == 0 {
-				<p class="text-base-content/50 text-xs">No tools from this group are available.</p>
-			}
-			for _, sub := range gv.ServerGroups {
-				@agentToolGroup(sub)
-			}
-			for _, sub := range gv.RelayGroups {
-				@agentToolGroup(sub)
-			}
-			if len(gv.Rows) > 0 {
-				<div class="flex flex-col divide-y divide-base-content/10 overflow-hidden rounded-box border border-base-content/10">
-					for _, t := range gv.Rows {
-						@agentToolRowView(t, true)
-					}
-				</div>
-			}
+		}
+	}
+}
+
+// agentToolCapabilityLeading is the capability-group summary's leading block:
+// the layers icon, label, member-count badge, and optional description.
+templ agentToolCapabilityLeading(gv toolGroupView) {
+	<div class="flex min-w-0 flex-col gap-0.5">
+		<div class="flex min-w-0 items-center gap-2.5">
+			@ui.IconSpan("lucide--layers", "size-4 shrink-0 text-base-content/40")
+			<span class="truncate text-sm font-medium">{ gv.Group.Label }</span>
+			@agentToolCountBadge(gv.Count)
 		</div>
-	</details>
+		if gv.Group.Description != "" {
+			<p class="text-base-content/50 truncate pl-[26px] text-xs">{ gv.Group.Description }</p>
+		}
+	</div>
+}
+
+// agentToolCapabilityControls is the capability-group summary's trailing
+// controls: the group enable switch (groupEnabled.<id> with its
+// groupWasEnabled.<id> baseline) and, for every group except the display-only
+// "other" group, the group policy select.
+templ agentToolCapabilityControls(gv toolGroupView) {
+	<div class="flex shrink-0 items-center gap-2" onclick="event.stopPropagation()">
+		<input
+			type="hidden"
+			name={ "groupWasEnabled." + gv.Group.ID }
+			value={ groupWasEnabledValue(gv.Enabled) }
+		/>
+		<label class="flex cursor-pointer items-center gap-1.5" title="Turn every tool in this group on or off">
+			@form.ToggleInput(form.ToggleInputProps{
+				Name:    "groupEnabled." + gv.Group.ID,
+				Value:   "on",
+				Checked: gv.Enabled,
+				Class:   "toggle toggle-sm",
+				Attrs: templ.Attributes{
+					"aria-label":  "Enable " + gv.Group.Label + " tools",
+					"data-testid": "tool-group-enabled-" + gv.Group.ID,
+					"onchange":    "this.closest('[data-tool-group]').querySelectorAll('input[name=tool]').forEach(function(cb){cb.checked=this.checked;cb.dispatchEvent(new Event('change'))},this)",
+				},
+			})
+		</label>
+		if gv.Group.ID != "other" {
+			<select
+				name={ "groupPolicy." + gv.Group.ID }
+				class="select select-xs w-24"
+				aria-label={ gv.Group.Label + " approval policy" }
+				data-testid={ "tool-group-policy-" + gv.Group.ID }
+			>
+				@agentPolicyOptions(gv.Policy, "inherit")
+			</select>
+		}
+	</div>
+}
+
+// agentToolOtherContainer renders the shared dashed "Other" fallback container:
+// a dashed-border box with the "Other" eyebrow, a one-line explanation, and the
+// tool rows as children. withTestID emits the data-testid="tool-group-other"
+// marker (only the uncovered-group variant carries it, so tests can assert the
+// grouped-picker fallback).
+templ agentToolOtherContainer(desc string, withTestID bool) {
+	<div
+		class="rounded-box border border-dashed border-base-content/20 bg-base-200/40 p-3"
+		if withTestID {
+			data-testid="tool-group-other"
+		}
+	>
+		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
+		<p class="text-base-content/50 mt-0.5 mb-2 text-xs">{ desc }</p>
+		<div class="flex flex-col divide-y divide-base-content/10">
+			{ children... }
+		</div>
+	</div>
 }
 
 // agentToolUncoveredGroup lists tools the rendered capability groups do not
@@ -845,15 +871,11 @@ templ agentToolCapabilityGroup(gv toolGroupView) {
 // capability group: it carries no group enable switch or group policy, and each
 // row keeps its own per-tool policy select.
 templ agentToolUncoveredGroup(rows []agentToolRow) {
-	<div class="rounded-box border border-dashed border-base-content/20 bg-base-200/40 p-3" data-testid="tool-group-other">
-		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
-		<p class="text-base-content/50 mt-0.5 mb-2 text-xs">No capability group covers these — kept so existing tools aren't dropped on save.</p>
-		<div class="flex flex-col divide-y divide-base-content/10">
-			for _, t := range rows {
-				@agentToolRowView(t, true)
-			}
-		</div>
-	</div>
+	@agentToolOtherContainer("No capability group covers these — kept so existing tools aren't dropped on save.", true) {
+		for _, t := range rows {
+			@agentToolRowView(t, true)
+		}
+	}
 }
 
 // agentToolGroupProps configures one collapsible tool group in the agent tools
@@ -888,51 +910,42 @@ type agentToolRow struct {
 	HintShort   string
 }
 
+// agentToolGroupLeading is the source-group summary's leading block: the group
+// icon, title (mono for relay instances), and optional remote badge.
+templ agentToolGroupLeading(p agentToolGroupProps) {
+	<div class="flex min-w-0 items-center gap-2.5">
+		@ui.IconSpan(p.Icon, "size-4 shrink-0 "+p.IconClass)
+		if p.TitleMono {
+			<span class="truncate font-mono text-sm font-medium">{ p.Title }</span>
+		} else {
+			<span class="truncate text-sm font-medium">{ p.Title }</span>
+		}
+		if p.RemoteBadge {
+			@ui.Badge(ui.BadgeProps{
+				Label:   "remote",
+				Variant: ui.BadgeWarning,
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--radio",
+			})
+		}
+	</div>
+}
+
 // agentToolGroup renders one collapsible <details> tool group: a summary
 // (icon + title + optional remote badge + tool count) and a body listing each
 // tool as a toggle row, with an optional per-tool policy select (registry
 // servers only).
 templ agentToolGroup(p agentToolGroupProps) {
-	<details
-		class={ "group rounded-box border", p.BorderClass }
-		if p.Open {
-			open
+	@ui.Disclosure(ui.DisclosureProps{
+		DetailsBase: "rounded-box border " + p.BorderClass,
+		BodyBase:    "flex flex-col border-t " + p.BodyBorderClass,
+		Open:        p.Open,
+	}, agentToolGroupLeading(p), agentToolCountBadge(p.Count)) {
+		for _, t := range p.Tools {
+			@agentToolRowView(t, p.WithPolicy)
 		}
-	>
-		<summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 select-none [&::-webkit-details-marker]:hidden">
-			<div class="flex min-w-0 items-center gap-2.5">
-				@ui.IconSpan(p.Icon, "size-4 shrink-0 "+p.IconClass)
-				if p.TitleMono {
-					<span class="truncate font-mono text-sm font-medium">{ p.Title }</span>
-				} else {
-					<span class="truncate text-sm font-medium">{ p.Title }</span>
-				}
-				if p.RemoteBadge {
-					@ui.Badge(ui.BadgeProps{
-						Label:   "remote",
-						Variant: ui.BadgeWarning,
-						Style:   ui.BadgeStyleSoft,
-						Size:    ui.BadgeSizeXS,
-						Icon:    "lucide--radio",
-					})
-				}
-			</div>
-			<div class="flex shrink-0 items-center gap-2">
-				@ui.Badge(ui.BadgeProps{
-					Label:   countLabel(p.Count, "tool", "tools"),
-					Variant: ui.BadgeGhost,
-					Size:    ui.BadgeSizeXS,
-					Icon:    "lucide--wrench",
-				})
-				@ui.IconSpan("lucide--chevron-down", "size-4 shrink-0 text-base-content/40 transition-transform group-open:rotate-180")
-			</div>
-		</summary>
-		<div class={ "flex flex-col border-t", p.BodyBorderClass }>
-			for _, t := range p.Tools {
-				@agentToolRowView(t, p.WithPolicy)
-			}
-		</div>
-	</details>
+	}
 }
 
 // agentToolRowView is one tool row shared by every group body: an enable toggle
@@ -940,21 +953,30 @@ templ agentToolGroup(p agentToolGroupProps) {
 // per-tool policy select, and the non-interactive inheritance hint ("" hides
 // it). The toggle's onchange disables/dims the policy select while the tool is
 // off.
-templ agentToolRowView(t agentToolRow, withPolicy bool) {
-	<div class="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-base-200/50" data-tool-row>
+//
+// Two row variants exist. The default (`px-3` + hover background) suits rows
+// inside a plain group body, where the surrounding container has no horizontal
+// padding. The "Other" fallback container already supplies `p-3`, so its rows
+// pass the legacy inset-free class (no `px-3`, no hover background) to keep the
+// pre-refactor alignment with the "Other" eyebrow.
+templ agentToolRowView(t agentToolRow, withPolicy bool, rowClass ...string) {
+	{{ cls := "flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-base-200/50"
+	if len(rowClass) > 0 {
+		cls = rowClass[0]
+	} }}
+	{{ toolAttrs := templ.Attributes{}
+	if withPolicy {
+		toolAttrs["onchange"] = "var s=this.closest('[data-tool-row]').querySelector('[data-tool-policy]'); if (s) s.disabled = !this.checked;"
+	} }}
+	<div class={ cls } data-tool-row>
 		<label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
-			<input
-				name="tool"
-				type="checkbox"
-				value={ t.Name }
-				if t.Checked {
-					checked
-				}
-				class="toggle toggle-sm shrink-0"
-				if withPolicy {
-					onchange="var s=this.closest('[data-tool-row]').querySelector('[data-tool-policy]'); if (s) s.disabled = !this.checked;"
-				}
-			/>
+			@form.ToggleInput(form.ToggleInputProps{
+				Name:    "tool",
+				Value:   t.Name,
+				Checked: t.Checked,
+				Class:   "toggle toggle-sm shrink-0",
+				Attrs:   toolAttrs,
+			})
 			<span class="min-w-0">
 				<span class="block font-mono text-[13px] font-medium">{ t.Name }</span>
 				if t.Description != "" {
@@ -1044,29 +1066,23 @@ templ agentToolRelayGroup(node relayNode, agent *AgentDefinition) {
 // server offers (e.g. the bridge's Home Assistant tools). Always checked —
 // they're preserved so the picker never drops them on save.
 templ agentToolOtherGroup(tools []string, agent *AgentDefinition) {
-	<div class="rounded-box border border-dashed border-base-content/20 bg-base-200/40 p-3">
-		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
-		<p class="text-base-content/50 mt-0.5 mb-2 text-xs">Not from a registered MCP server — kept so existing tools aren't dropped on save.</p>
-		<div class="flex flex-col divide-y divide-base-content/10">
-			for _, t := range tools {
-				<div class="flex items-center gap-2.5 py-2" data-tool-row>
-					<label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
-						<input name="tool" type="checkbox" value={ t } checked class="toggle toggle-sm shrink-0"
-							onchange="var s=this.closest('[data-tool-row]').querySelector('[data-tool-policy]'); if (s) s.disabled = !this.checked;"/>
-						<span class="block font-mono text-[13px] font-medium">{ t }</span>
-					</label>
-					@toolPolicySelect(agent, t)
-				</div>
-			}
-		</div>
-	</div>
+	@agentToolOtherContainer("Not from a registered MCP server — kept so existing tools aren't dropped on save.", false) {
+		for _, t := range tools {
+			@agentToolRowView(agentToolRow{Name: t, Checked: true, PolicyValue: toolPolicyValue(agent, t)}, true, "flex items-center gap-2.5 py-2")
+		}
+	}
 }
 
-// toolPolicySelect renders a compact per-tool approval-policy dropdown for a
-// tool. When the tool is not enabled the select is disabled/dimmed; the toggle
-// row's onchange re-enables it live.
-templ toolPolicySelect(agent *AgentDefinition, tool string) {
-	@toolPolicySelectValue("toolPolicy."+tool, tool, toolPolicyValue(agent, tool), !containsString(agent.Tools, tool))
+// agentPolicyOptions renders the shared Inherit / Allow / Ask / Deny option set
+// for a policy <select>. inheritValue is the Inherit option's submitted value —
+// "inherit" for the group select (its value space spells the absent policy) and
+// "" for the per-tool select ("" = no override) — and value selects the current
+// option.
+templ agentPolicyOptions(value, inheritValue string) {
+	<option value={ inheritValue } if value == inheritValue { selected }>Inherit</option>
+	<option value="allow" if value == "allow" { selected }>Allow</option>
+	<option value="ask" if value == "ask" { selected }>Ask</option>
+	<option value="deny" if value == "deny" { selected }>Deny</option>
 }
 
 // toolPolicySelectValue is the value-driven form of the per-tool policy
@@ -1082,10 +1098,7 @@ templ toolPolicySelectValue(name, key, value string, disabled bool) {
 		}
 		data-tool-policy={ key }
 	>
-		<option value="" if value == "" { selected }>Inherit</option>
-		<option value="allow" if value == "allow" { selected }>Allow</option>
-		<option value="ask" if value == "ask" { selected }>Ask</option>
-		<option value="deny" if value == "deny" { selected }>Deny</option>
+		@agentPolicyOptions(value, "")
 	</select>
 }
 

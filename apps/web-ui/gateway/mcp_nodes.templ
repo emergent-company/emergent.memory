@@ -145,11 +145,9 @@ templ mcpNodeStateBadge(live bool) {
 // entry — a still-connected host is re-added on the next page load — hence
 // "Remove" rather than "Delete".
 templ mcpNodeRemoveDialog(node mcpNodeView) {
-	@modalShell("mcp-node-remove-"+node.InstanceID, "", "max-w-sm") {
+	@ui.Dialog(ui.DialogProps{ID: "mcp-node-remove-" + node.InstanceID, BoxClass: "max-w-sm"}) {
 		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--trash-2", "size-5")
-			</div>
+			@components.ConfirmIcon("")
 			<div>
 				<h3 class="text-lg font-semibold">
 					Remove node <span class="font-mono">{ node.InstanceID }</span>?

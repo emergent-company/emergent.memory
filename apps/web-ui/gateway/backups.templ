@@ -277,7 +277,7 @@ templ backupDeleteDescription(b Backup) {
 
 // backupDeleteDialog confirms deletion before the POST to /backups/:id/delete.
 templ backupDeleteDialog(b Backup) {
-	@confirmDeleteDialog("backup-delete-"+b.ID, "backup", backupDeleteDescription(b)) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "backup-delete-" + b.ID, Noun: "backup"}, backupDeleteDescription(b)) {
 		<form method="post" action={ templ.URL("/backups/" + url.PathEscape(b.ID) + "/delete") }>
 			@form.FormActions("", "") {
 				@ui.Button(ui.ButtonProps{
@@ -408,7 +408,7 @@ templ backupDetailField(label, value string) {
 // backupDetailOverview is the identity/metadata grid.
 templ backupDetailOverview(b *Backup) {
 	@ui.Section("Overview", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
-		<dl class="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+		@components.MetaGrid(components.MetaGridOpts{GapY: "gap-y-4", ColsClass: "lg:grid-cols-3"}) {
 			@backupDetailField("Project", backupTextOrDash(b.ProjectName))
 			@backupDetailField("Backup type", backupTypeLabel(b.BackupType))
 			@backupDetailField("Status", backupStatusLabel(b.Status))
@@ -442,7 +442,7 @@ templ backupDetailOverview(b *Backup) {
 					<code class="rounded bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.StorageKey }</code>
 				</dd>
 			</div>
-		</dl>
+		}
 	}
 }
 

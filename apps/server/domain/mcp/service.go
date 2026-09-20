@@ -252,8 +252,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "project-create",
-			Description: "Create a new project under the authenticated user's organization. Returns the new project's id, name, and orgId. If org_id is omitted it is resolved from the caller's authentication context.",
+			Name:         "project-create",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Create a new project under the authenticated user's organization. Returns the new project's id, name, and orgId. If org_id is omitted it is resolved from the caller's authentication context.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -270,8 +271,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-version",
-			Description: "Get the current schema version and metadata. Returns version hash, timestamp, total types, and relationships.",
+			Name:         "schema-version",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get the current schema version and metadata. Returns version hash, timestamp, total types, and relationships.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -279,8 +281,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-type-list",
-			Description: "List all available entity types in the knowledge graph with instance counts and relationship types. Pass branch to see counts for a specific branch (e.g. \"plan/main\"); omit for main branch. By default only returns types with no namespace set. Pass namespace to filter by a specific namespace, or namespace=\"all\" to see all types regardless of namespace.",
+			Name:         "entity-type-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List all available entity types in the knowledge graph with instance counts and relationship types. Pass branch to see counts for a specific branch (e.g. \"plan/main\"); omit for main branch. By default only returns types with no namespace set. Pass namespace to filter by a specific namespace, or namespace=\"all\" to see all types regardless of namespace.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -297,8 +300,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-query",
-			Description: "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
+			Name:         "entity-query",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -359,8 +363,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-history",
-			Description: "Get the version history of an entity by canonical ID or key. Returns a list of versions with their physical IDs, version numbers, and timestamps. Use entity-query with ids=[physical_id] to fetch the full properties of a specific historical version. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "entity-history",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get the version history of an entity by canonical ID or key. Returns a list of versions with their physical IDs, version numbers, and timestamps. Use entity-query with ids=[physical_id] to fetch the full properties of a specific historical version. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -382,8 +387,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-search",
-			Description: "Search entities by text query across name, key, and description fields. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
+			Name:         "entity-search",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Search entities by text query across name, key, and description fields. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -415,8 +421,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-edges-get",
-			Description: "Get all relationships (edges) for an entity. Returns incoming and outgoing relationships with connected entity information. Use this to traverse the graph and discover how entities are connected.",
+			Name:         "entity-edges-get",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get all relationships (edges) for an entity. Returns incoming and outgoing relationships with connected entity information. Use this to traverse the graph and discover how entities are connected.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -429,8 +436,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-list",
-			Description: "List memory schemas owned by the current project. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
+			Name:         "schema-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List memory schemas owned by the current project. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -461,8 +469,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-get",
-			Description: "Get detailed information about a specific memory schema including all type definitions, UI configs, and extraction prompts.",
+			Name:         "schema-get",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get detailed information about a specific memory schema including all type definitions, UI configs, and extraction prompts.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -475,8 +484,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-list-available",
-			Description: "Get all schemas available for a project with their installation status. Shows which schemas are installed, active, and their object type counts.",
+			Name:         "schema-list-available",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get all schemas available for a project with their installation status. Shows which schemas are installed, active, and their object type counts.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -484,8 +494,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-list-installed",
-			Description: "Get all schemas currently installed in the project with their configuration and active status.",
+			Name:         "schema-list-installed",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get all schemas currently installed in the project with their configuration and active status.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -589,8 +600,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-delete",
-			Description: "Delete a memory schema owned by the current project. Cannot delete built-in schemas or schemas that are currently installed in any project.",
+			Name:         "schema-delete",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Delete a memory schema owned by the current project. Cannot delete built-in schemas or schemas that are currently installed in any project.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -603,16 +615,18 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-history",
-			Description: "List the full installation history for schemas in this project, including schemas that have been uninstalled. Useful for auditing which schemas were used over time.",
+			Name:         "schema-history",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List the full installation history for schemas in this project, including schemas that have been uninstalled. Useful for auditing which schemas were used over time.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
 			},
 		},
 		{
-			Name:        "schema-compiled-types",
-			Description: "Return the compiled (merged) set of object and relationship types currently active in this project, across all installed schemas. Optionally includes shadow detection metadata.",
+			Name:         "schema-compiled-types",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Return the compiled (merged) set of object and relationship types currently active in this project, across all installed schemas. Optionally includes shadow detection metadata.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -624,16 +638,18 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-icon-list",
-			Description: "List the valid Lucide icon names for schema object types (the value of ui_configs.<type>.icon). Icons are a CLOSED catalog — a name outside it silently renders as a generic box. Returns the canonical kebab-case names plus the accepted alternate spellings. Colors (ui_configs.<type>.color) accept any hex value, e.g. \"#3B82F6\".",
+			Name:         "schema-icon-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List the valid Lucide icon names for schema object types (the value of ui_configs.<type>.icon). Icons are a CLOSED catalog — a name outside it silently renders as a generic box. Returns the canonical kebab-case names plus the accepted alternate spellings. Colors (ui_configs.<type>.color) accept any hex value, e.g. \"#3B82F6\".",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
 			},
 		},
 		{
-			Name:        "entity-create",
-			Description: "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
+			Name:         "entity-create",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -658,8 +674,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "relationship-create",
-			Description: "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed schema. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead. IMPORTANT: source_id and target_id must be different entities — self-referential relationships (same entity as source and target) are not allowed.",
+			Name:         "relationship-create",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed schema. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead. IMPORTANT: source_id and target_id must be different entities — self-referential relationships (same entity as source and target) are not allowed.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -672,8 +689,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-update",
-			Description: "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property). Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "entity-update",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property). Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -710,8 +728,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-delete",
-			Description: "Soft-delete an entity. The entity can be restored later.",
+			Name:         "entity-delete",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Soft-delete an entity. The entity can be restored later.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -728,8 +747,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "entity-restore",
-			Description: "Restore a soft-deleted entity. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "entity-restore",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Restore a soft-deleted entity. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -746,8 +766,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "session-get-messages",
-			Description: "Get messages from a graph session. Returns paginated messages with role, content, speaker, and sequence_number. Use this to read conversation history stored as graph Session/Message objects.",
+			Name:         "session-get-messages",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get messages from a graph session. Returns paginated messages with role, content, speaker, and sequence_number. Use this to read conversation history stored as graph Session/Message objects.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -768,16 +789,18 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "graph-branch-list",
-			Description: "List all branches in the project.",
+			Name:         "graph-branch-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List all branches in the project.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
 			},
 		},
 		{
-			Name:        "graph-branch-create",
-			Description: "Create a new branch in the project.",
+			Name:         "graph-branch-create",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Create a new branch in the project.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -798,8 +821,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "graph-branch-merge",
-			Description: "Merge a source branch into the main graph (or a target branch). By default performs a dry-run; set execute=true to apply.",
+			Name:         "graph-branch-merge",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Merge a source branch into the main graph (or a target branch). By default performs a dry-run; set execute=true to apply.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -824,8 +848,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "graph-branch-delete",
-			Description: "Delete a branch by name or UUID.",
+			Name:         "graph-branch-delete",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Delete a branch by name or UUID.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -838,8 +863,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "search-hybrid",
-			Description: "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "search-hybrid",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -901,8 +927,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "search-semantic",
-			Description: "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "search-semantic",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -948,8 +975,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "search-similar",
-			Description: "Find entities similar to a given entity based on semantic similarity. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "search-similar",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Find entities similar to a given entity based on semantic similarity. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -982,8 +1010,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "graph-traverse",
-			Description: "Multi-hop graph traversal starting from an entity. Discover non-obvious connections and relationships. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "graph-traverse",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Multi-hop graph traversal starting from an entity. Discover non-obvious connections and relationships. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1031,8 +1060,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "relationship-list",
-			Description: "Query relationships with optional filters. Returns paginated list of relationships in the knowledge graph. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "relationship-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Query relationships with optional filters. Returns paginated list of relationships in the knowledge graph. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1069,8 +1099,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "relationship-update",
-			Description: "Update an existing relationship's properties or weight. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Name:         "relationship-update",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Update an existing relationship's properties or weight. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1095,8 +1126,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "relationship-delete",
-			Description: "Soft-delete a relationship between two entities.",
+			Name:         "relationship-delete",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Soft-delete a relationship between two entities.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1113,8 +1145,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "tag-list",
-			Description: "Get all unique tags/labels used in the project with counts.",
+			Name:         "tag-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get all unique tags/labels used in the project with counts.",
 			InputSchema: InputSchema{
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
@@ -1185,8 +1218,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 		// New System A migration tools — delegate to schemas.Service
 		{
-			Name:        "schema-migrate-preview",
-			Description: "Preview a schema migration from one installed schema version to another. Runs a dry-run against all project objects, returning per-type risk breakdown (safe/cautious/risky/dangerous) and an overall risk level. NO CHANGES ARE MADE. Use before execute to understand impact.",
+			Name:         "schema-migrate-preview",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Preview a schema migration from one installed schema version to another. Runs a dry-run against all project objects, returning per-type risk breakdown (safe/cautious/risky/dangerous) and an overall risk level. NO CHANGES ARE MADE. Use before execute to understand impact.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1203,8 +1237,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-migrate-execute",
-			Description: "Execute a schema migration for all project objects, applying type/property renames and archiving removed properties. Returns counts of migrated and failed objects.",
+			Name:         "schema-migrate-execute",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Execute a schema migration for all project objects, applying type/property renames and archiving removed properties. Returns counts of migrated and failed objects.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1230,8 +1265,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-migrate-rollback",
-			Description: "Rollback a schema migration by restoring archived property data for objects migrated to a given schema version. Optionally re-installs old schema types in a single transaction.",
+			Name:         "schema-migrate-rollback",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Rollback a schema migration by restoring archived property data for objects migrated to a given schema version. Optionally re-installs old schema types in a single transaction.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1248,8 +1284,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-migrate-commit",
-			Description: "Permanently discard migration archive data up to a given schema version. This prunes migration_archive entries from all project objects for versions <= through_version. Irreversible — only do this after confirming rollback is no longer needed.",
+			Name:         "schema-migrate-commit",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Permanently discard migration archive data up to a given schema version. This prunes migration_archive entries from all project objects for versions <= through_version. Irreversible — only do this after confirming rollback is no longer needed.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1262,8 +1299,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "schema-migration-job-status",
-			Description: "Get the current status and progress of an async schema migration job. Returns status (pending/running/completed/failed), objects migrated/failed counts, and any error message.",
+			Name:         "schema-migration-job-status",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get the current status and progress of an async schema migration job. Returns status (pending/running/completed/failed), objects migrated/failed counts, and any error message.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1313,8 +1351,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 
 	// Journal tools
 	tools = append(tools, ToolDefinition{
-		Name:        "journal-list",
-		Description: "List recent project journal entries — graph mutations (create, update, delete, batch, merge) and notes. Use since to filter by age (e.g. '7d', '24h'). Returns entries with event type, actor, metadata, and attached notes.",
+		Name:         "journal-list",
+		OutputSchema: objectOutputSchema(),
+		Description:  "List recent project journal entries — graph mutations (create, update, delete, batch, merge) and notes. Use since to filter by age (e.g. '7d', '24h'). Returns entries with event type, actor, metadata, and attached notes.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertySchema{
@@ -1342,6 +1381,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		Name:          "remember",
 		Description:   "Ingest a document, conversation, or knowledge snippet into the project knowledge graph. Runs the AI extraction pipeline: text → document → classify → extract → structured entities and relationships. Use for substantive content ingestion (meeting notes, documents, decisions). For lightweight observations, use entity-create instead.",
 		RequiredScope: "graph:write",
+		OutputSchema:  envelopeOutputSchema(),
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertySchema{
@@ -1369,6 +1409,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		Name:          "forget",
 		Description:   "Remove entities and relationships from the knowledge graph using a natural language query. Performs soft-delete (reversible via entity-restore). Use to clean up outdated or incorrect information from the graph.",
 		RequiredScope: "graph:write",
+		OutputSchema:  envelopeOutputSchema(),
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertySchema{
@@ -1416,8 +1457,9 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		},
 	})
 	tools = append(tools, ToolDefinition{
-		Name:        "journal-add-note",
-		Description: "Add a markdown note to the project journal. Notes can be standalone or attached to a specific journal entry. Use to record observations, decisions, or context about graph changes.",
+		Name:         "journal-add-note",
+		OutputSchema: objectOutputSchema(),
+		Description:  "Add a markdown note to the project journal. Notes can be standalone or attached to a specific journal entry. Use to record observations, decisions, or context about graph changes.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertySchema{
@@ -2039,11 +2081,20 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 					if err != nil {
 						return nil, fmt.Errorf("relay tool %q: %w", toolName, err)
 					}
-					// Convert the relay result map to a ToolResult.
+					// Convert the relay result map to a ToolResult. The text block is
+					// the fallback payload; structuredContent/isError are forwarded
+					// when the relay result carries them (MCP 2025-06-18).
 					resultBytes, _ := json.Marshal(result)
-					return &ToolResult{
+					tr := &ToolResult{
 						Content: []ContentBlock{{Type: "text", Text: string(resultBytes)}},
-					}, nil
+					}
+					if sc, ok := result["structuredContent"]; ok {
+						tr.StructuredContent = normalizeStructuredContent(sc)
+					}
+					if isErr, ok := result["isError"].(bool); ok {
+						tr.IsError = isErr
+					}
+					return tr, nil
 				}
 			}
 		}
@@ -2092,6 +2143,12 @@ func relaySessionTools(sess *RelaySession) []ToolDefinition {
 		if schemaRaw, ok := m["inputSchema"]; ok {
 			if schemaBytes, err := json.Marshal(schemaRaw); err == nil {
 				_ = json.Unmarshal(schemaBytes, &td.InputSchema)
+			}
+		}
+		// Carry through outputSchema if present (MCP 2025-06-18).
+		if schemaRaw, ok := m["outputSchema"]; ok {
+			if schemaBytes, err := json.Marshal(schemaRaw); err == nil {
+				_ = json.Unmarshal(schemaBytes, &td.OutputSchema)
 			}
 		}
 		out = append(out, td)
@@ -4153,6 +4210,7 @@ func (s *Service) wrapResult(data any) (*ToolResult, error) {
 				Text: string(jsonBytes),
 			},
 		},
+		StructuredContent: StructuredContentFromJSON(jsonBytes),
 	}, nil
 }
 
@@ -4946,10 +5004,7 @@ func (s *Service) executeCreateProject(ctx context.Context, args map[string]any)
 		"name":  row.Name,
 		"orgId": row.OrgID,
 	}
-	b, _ := json.Marshal(result)
-	return &ToolResult{
-		Content: []ContentBlock{{Type: "text", Text: string(b)}},
-	}, nil
+	return s.wrapResultCompact(result)
 }
 
 // executeJournalList lists recent journal entries for the project.

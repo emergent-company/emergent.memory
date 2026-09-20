@@ -41,6 +41,27 @@ func schemaOptionLabel(h SchemaHistoryItem) string {
 	return label
 }
 
+// schemaSelectGroups adapts schema history to the grouped option shape that
+// components.SelectOptionGroups renders, marking the option whose SchemaID
+// matches selectedID. The shared component knows nothing about
+// SchemaHistoryItem, so the mapping lives here as a thin call-site adapter.
+func schemaSelectGroups(history []SchemaHistoryItem, selectedID string) []components.SelectOptionGroup {
+	groups := schemaOptionGroups(history)
+	out := make([]components.SelectOptionGroup, 0, len(groups))
+	for _, g := range groups {
+		opts := make([]components.SelectOption, 0, len(g.Options))
+		for _, h := range g.Options {
+			opts = append(opts, components.SelectOption{
+				Value:    h.SchemaID,
+				Label:    schemaOptionLabel(h),
+				Selected: h.SchemaID == selectedID,
+			})
+		}
+		out = append(out, components.SelectOptionGroup{Label: g.Name, Options: opts})
+	}
+	return out
+}
+
 // riskBadgeVariant maps a migration risk level to a badge color.
 func riskBadgeVariant(level string) ui.BadgeIntent {
 	switch strings.ToLower(strings.TrimSpace(level)) {
@@ -204,25 +225,13 @@ templ migrationForm(data migrationData) {
 					<label class="form-control">
 						<span class="label-text text-xs font-medium">From schema</span>
 						<select name="from" class="select select-bordered select-sm w-full">
-							for _, g := range schemaOptionGroups(data.History) {
-								<optgroup label={ g.Name }>
-									for _, h := range g.Options {
-										<option value={ h.SchemaID } selected?={ h.SchemaID == data.FromID }>{ schemaOptionLabel(h) }</option>
-									}
-								</optgroup>
-							}
+							@components.SelectOptionGroups(schemaSelectGroups(data.History, data.FromID))
 						</select>
 					</label>
 					<label class="form-control">
 						<span class="label-text text-xs font-medium">To schema</span>
 						<select name="to" class="select select-bordered select-sm w-full">
-							for _, g := range schemaOptionGroups(data.History) {
-								<optgroup label={ g.Name }>
-									for _, h := range g.Options {
-										<option value={ h.SchemaID } selected?={ h.SchemaID == data.ToID }>{ schemaOptionLabel(h) }</option>
-									}
-								</optgroup>
-							}
+							@components.SelectOptionGroups(schemaSelectGroups(data.History, data.ToID))
 						</select>
 					</label>
 				</div>

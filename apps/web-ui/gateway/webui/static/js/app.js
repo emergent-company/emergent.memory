@@ -34,9 +34,9 @@
   if (standalone) document.documentElement.setAttribute("data-standalone", "");
 
   /* ---------- toast ---------- */
-  /* Push a toast into the Alpine toast queue (rendered by toastQueue in
-     gateway/toast.templ). Alpine owns the queue, dismissal timer, countdown
-     progress bar, and hover-to-pause. */
+  /* Push a toast into the Alpine toast queue (rendered by
+     ui.ToastQueueWithProps in the app shell). Alpine owns the queue, dismissal
+     timer, countdown progress bar, and hover-to-pause. */
   function toast(kind, message) {
     var container = document.getElementById("toast-container");
     if (!container || !window.Alpine) return;

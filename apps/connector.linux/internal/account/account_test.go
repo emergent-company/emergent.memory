@@ -436,7 +436,7 @@ func TestRefreshFailureClearsSession(t *testing.T) {
 	dir := t.TempDir()
 	deps := fakeDeps(t)
 	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
-		return nil, errors.New("invalid_grant")
+		return nil, &sdkauth.RefreshError{StatusCode: http.StatusBadRequest, Code: "invalid_grant"}
 	}
 	m := NewManagerWithDeps(dir, deps)
 	serverURL := "https://memory.example.test"
@@ -448,7 +448,98 @@ func TestRefreshFailureClearsSession(t *testing.T) {
 		t.Fatal("Refresh: expected error, got nil")
 	}
 	if sess, err := m.SessionFor(serverURL); err != nil || sess != nil {
-		t.Errorf("session after failed refresh = (%v, %v), want (nil, nil)", sess, err)
+		t.Errorf("session after rejected refresh = (%v, %v), want (nil, nil)", sess, err)
+	}
+}
+
+func TestRefreshTransientErrorRetainsSession(t *testing.T) {
+	dir := t.TempDir()
+	deps := fakeDeps(t)
+	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
+		return nil, errors.New("token endpoint unreachable")
+	}
+	m := NewManagerWithDeps(dir, deps)
+	serverURL := "https://memory.example.test"
+	if _, err := m.Login(context.Background(), serverURL, io.Discard); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if _, err := m.Refresh(context.Background(), serverURL); err == nil {
+		t.Fatal("Refresh: expected error, got nil")
+	}
+	sess, err := m.SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("session after transient refresh failure = (%v, %v), want retained", sess, err)
+	}
+	if sess.RefreshToken != "refresh-1" {
+		t.Errorf("refresh token = %q, want refresh-1 retained", sess.RefreshToken)
+	}
+}
+
+func TestRefreshServerErrorRetainsSession(t *testing.T) {
+	dir := t.TempDir()
+	deps := fakeDeps(t)
+	deps.RefreshToken = func(context.Context, *sdkauth.OIDCConfig, string, string) (*sdkauth.Credentials, error) {
+		return nil, &sdkauth.RefreshError{StatusCode: http.StatusInternalServerError}
+	}
+	m := NewManagerWithDeps(dir, deps)
+	serverURL := "https://memory.example.test"
+	if _, err := m.Login(context.Background(), serverURL, io.Discard); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if _, err := m.Refresh(context.Background(), serverURL); err == nil {
+		t.Fatal("Refresh: expected error, got nil")
+	}
+	sess, err := m.SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("session after 5xx refresh failure = (%v, %v), want retained", sess, err)
+	}
+	if sess.RefreshToken != "refresh-1" {
+		t.Errorf("refresh token = %q, want refresh-1 retained", sess.RefreshToken)
+	}
+}
+
+func TestRefreshRejectedAfterTokenRotatedRetainsSession(t *testing.T) {
+	dir := t.TempDir()
+	serverURL := "https://memory.example.test"
+	deps := fakeDeps(t)
+	rotated := false
+	deps.RefreshToken = func(_ context.Context, _ *sdkauth.OIDCConfig, _, _ string) (*sdkauth.Credentials, error) {
+		// Simulate a concurrent process winning the single-use refresh race:
+		// it rotates the token before this Refresh's original token is
+		// rejected, so the stored session now holds a different refresh token
+		// than the one this Refresh just attempted.
+		winner := NewManager(dir)
+		if err := winner.Save(serverURL, &Session{
+			ServerURL:    serverURL,
+			IssuerURL:    "https://issuer.test",
+			AccessToken:  "access-winner",
+			RefreshToken: "refresh-winner",
+			ExpiresAt:    time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC),
+		}); err != nil {
+			t.Fatalf("winner save: %v", err)
+		}
+		rotated = true
+		return nil, &sdkauth.RefreshError{StatusCode: http.StatusBadRequest, Code: "invalid_grant"}
+	}
+	m := NewManagerWithDeps(dir, deps)
+	if _, err := m.Login(context.Background(), serverURL, io.Discard); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if _, err := m.Refresh(context.Background(), serverURL); err == nil {
+		t.Fatal("Refresh: expected error, got nil")
+	}
+	if !rotated {
+		t.Fatal("RefreshToken fake did not run")
+	}
+	sess, err := m.SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("session after rotated-token rejection = (%v, %v), want retained", sess, err)
+	}
+	if sess.RefreshToken != "refresh-winner" {
+		t.Errorf("refresh token = %q, want winner's refresh-winner retained", sess.RefreshToken)
 	}
 }
 

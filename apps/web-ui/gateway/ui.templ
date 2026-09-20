@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"io"
 	"net/url"
 	"strconv"
 
@@ -79,7 +81,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<!-- Modal container -->
 			<div id="modal-container"></div>
 			<!-- Toast container -->
-			@toastQueue()
+			@ui.ToastQueueWithProps(ui.ToastQueueProps{Position: ui.ToastQueueBottomCenter, PauseOnHover: true, Countdown: true})
 			@spotlightSearch(agents)
 			<div class="flex h-screen overflow-hidden">
 				<input
@@ -97,7 +99,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 				}
 				<div class="flex min-w-0 grow flex-col overflow-hidden">
 					<div class="bg-base-100 border-base-content/5 z-10 h-14 shrink-0 border-b">
-						@layout.Navbar(appBrand, spotlightTrigger()) {
+						@layout.Navbar(appBrand, ui.CommandPaletteButton("spotlight", "Search…")) {
 							@projectSwitcher(currentProject, currentOrgName, activeOrg, projectGroups, orgs, recentProjects, showRecent)
 							if assistantAgent != "" {
 								@ui.Button(ui.ButtonProps{
@@ -364,7 +366,7 @@ templ agentRow(a AgentDefinitionSummary) {
 			if a.EffectiveModel != "" {
 				<span class="font-mono text-[11px]">{ a.EffectiveModel }</span>
 			} else {
-				@emptyDash()
+				@components.EmptyDash()
 			}
 		}
 		@table.TableCell("", nil) {
@@ -376,7 +378,7 @@ templ agentRow(a AgentDefinitionSummary) {
 					Icon:    "lucide--wrench",
 				})
 			} else {
-				@emptyDash()
+				@components.EmptyDash()
 			}
 		}
 		@table.TableCell("", nil) {
@@ -433,7 +435,7 @@ templ agentRow(a AgentDefinitionSummary) {
 // ones this agent may hand off to. defaultModel names the model the dialog's
 // "Auto" option resolves to (project pinned default; "" when none is pinned).
 templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, skills []Skill, defaultModel string) {
-	@modalShell("agent-form-modal", "", "w-full max-w-lg") {
+	@ui.Dialog(ui.DialogProps{ID: "agent-form-modal", BoxClass: "w-full max-w-lg"}) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
 				<h3 id="agent-form-title" class="text-lg font-semibold">New agent</h3>
@@ -544,7 +546,7 @@ templ deleteAgentDescription() {
 
 // deleteConfirmDialog confirms agent deletion before the DELETE call.
 templ deleteConfirmDialog() {
-	@confirmDeleteDialog("delete-confirm-modal", "agent", deleteAgentDescription()) {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "delete-confirm-modal", Noun: "agent"}, deleteAgentDescription()) {
 		@form.FormActions("", "") {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeButton,
@@ -570,17 +572,31 @@ templ deleteConfirmDialog() {
 
 // pageHeader renders the standard list-page header: kicker eyebrow + title +
 // subtitle on the left, right-side actions/badges via children.
-templ pageHeader(kicker, title, subtitle string) {
-	<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
-		<div>
-			@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
-			<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-			if subtitle != "" {
-				<p class="text-base-content/55 mt-1 text-sm">{ subtitle }</p>
-			}
-		</div>
-		{ children... }
-	</div>
+//
+// It is a thin delegate over nav.PageHeading (Flat + Dashboard + no-top-margin
+// variant), which reproduces this header's markup byte-for-byte. It is a plain
+// Go function (not a templ component) so its children forward into PageHeading's
+// Actions slot: templ components clear their children context before the body
+// runs, so a hand-written ComponentFunc reads GetChildren(ctx) directly.
+func pageHeader(kicker, title, subtitle string) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		children := templ.GetChildren(ctx)
+		if children == nil {
+			children = templ.NopComponent
+		}
+		return nav.PageHeading(nav.PageHeadingProps{
+			Title:           title,
+			Kicker:          kicker,
+			Subtitle:        subtitle,
+			Actions:         children,
+			Margin:          "mb-6",
+			Dashboard:       true,
+			SubtitleFull:    true,
+			HideBreadcrumbs: true,
+			NoTopMargin:     true,
+			Flat:            true,
+		}).Render(ctx, w)
+	})
 }
 
 // detailHeaderOpts configures detailHeader variants. All fields optional.
@@ -596,9 +612,9 @@ type detailHeaderOpts struct {
 	Bare bool
 	// SubtitleFull renders the subtitle at full width (no max-w-2xl).
 	SubtitleFull bool
-	// Leading renders before the title block on the same flex row — e.g. an
-	// agent icon tile. Nil (the default) keeps the header markup byte-identical
-	// for every existing caller.
+	// Leading forwards into PageHeading's Leading slot — rendered before the
+	// breadcrumbs and the h1, e.g. an agent icon tile. Nil (the default) keeps
+	// the header markup byte-identical for every existing caller.
 	Leading templ.Component
 	// TitleAdornment renders inline next to the h1 (same flex line), e.g. a
 	// version badge. Nil (the default) keeps the h1 markup byte-identical for
@@ -606,96 +622,45 @@ type detailHeaderOpts struct {
 	TitleAdornment templ.Component
 }
 
-// detailHeaderTitleRow wraps a detail-header title column in a leading row when
-// a leading component (e.g. an agent icon tile) is supplied. Without one it
-// renders its children unchanged, so every existing header stays byte-identical.
-templ detailHeaderTitleRow(leading templ.Component) {
-	if leading != nil {
-		<div class="flex items-center gap-3">
-			@leading
-			{ children... }
-		</div>
-	} else {
-		{ children... }
+// detailHeader renders a detail-page header: breadcrumb trail, optional kicker
+// eyebrow, h1 (+ optional subtitle), and right-side badges/actions via children.
+//
+// It is a plain Go function (not a templ component) because its children must be
+// forwarded into PageHeading's Actions slot, a templ.Component prop. templ
+// components clear their children context before the body runs, so `{ children... }`
+// cannot be converted into a Component value there; a hand-written ComponentFunc
+// reads GetChildren(ctx) directly. Leading (an agent icon tile) forwards into
+// PageHeading's Leading slot, rendered before the breadcrumbs and the h1.
+func detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, opts ...detailHeaderOpts) templ.Component {
+	o := detailHeaderOpts{}
+	if len(opts) > 0 {
+		o = opts[0]
 	}
-}
-
-// detailHeader renders a detail-page header: breadcrumb trail (scrolls on
-// overflow), optional kicker eyebrow, h1 (+ optional subtitle), and right-side
-// badges/actions via children. Pass kicker="" to drop the eyebrow when the
-// breadcrumb already names the section.
-templ detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, opts ...detailHeaderOpts) {
-	{{
-		o := detailHeaderOpts{}
-		if len(opts) > 0 {
-			o = opts[0]
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		children := templ.GetChildren(ctx)
+		if children == nil {
+			children = templ.NopComponent
 		}
-		margin := o.Margin
-		if margin == "" {
-			margin = "mb-4"
-		}
-		itemsClass := "items-center"
-		if o.Dashboard {
-			itemsClass = "items-end"
-		}
-	}}
-	<div class={ margin }>
-		@nav.Breadcrumbs(crumbs, nav.BreadcrumbsDividerDefault)
+		// Leading is ignored when Bare, matching the pre-adoption behaviour
+		// (the leading tile only appears on the dashboard header, never bare).
+		leading := o.Leading
 		if o.Bare {
-			<div class="mt-2">
-				<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-				if subtitle != "" {
-					<p class="text-base-content/55 mt-1 text-sm">{ subtitle }</p>
-				}
-			</div>
-		} else {
-			<div class={ "mt-2 flex flex-wrap", itemsClass, "justify-between gap-4" }>
-				{{
-					subtitleClass := "text-base-content/55 mt-1"
-					if !o.SubtitleFull {
-						subtitleClass += " max-w-2xl"
-					}
-				}}
-				if o.Dashboard {
-					@detailHeaderTitleRow(o.Leading) {
-						<div>
-							if o.TitleAdornment != nil {
-								<div class="flex flex-wrap items-center gap-2">
-									<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-									@o.TitleAdornment
-								</div>
-							} else {
-								<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
-							}
-							if subtitle != "" {
-								<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
-							}
-						</div>
-					}
-				} else {
-					@detailHeaderTitleRow(o.Leading) {
-						<div class="min-w-0">
-							if kicker != "" {
-								@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
-							}
-							if o.TitleAdornment != nil {
-								<div class="flex flex-wrap items-center gap-2">
-									<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-									@o.TitleAdornment
-								</div>
-							} else {
-								<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
-							}
-							if subtitle != "" {
-								<p class={ subtitleClass, "text-sm" }>{ subtitle }</p>
-							}
-						</div>
-					}
-				}
-				{ children... }
-			</div>
+			leading = nil
 		}
-	</div>
+		return nav.PageHeading(nav.PageHeadingProps{
+			Title:          title,
+			Breadcrumbs:    crumbs,
+			Kicker:         kicker,
+			Subtitle:       subtitle,
+			Leading:        leading,
+			TitleAdornment: o.TitleAdornment,
+			Actions:        children,
+			Margin:         o.Margin,
+			Dashboard:      o.Dashboard,
+			Bare:           o.Bare,
+			SubtitleFull:   o.SubtitleFull,
+		}).Render(ctx, w)
+	})
 }
 
 // crumbsActive marks the trailing crumb as the current page (active styling).
@@ -750,87 +715,46 @@ templ countBadgeLabel(label, icon string) {
 }
 
 // cardListProps configures the optional aspects of cardList (mirrors
-// ui.SectionProps for the titled variant).
+// ui.SectionProps).
 type cardListProps struct {
-	// Margin is the section wrapper's margin class, e.g. "mt-6" or "mb-8"
-	// (ignored when Title is "").
+	// Margin is the section wrapper's margin class, e.g. "mt-6" or "mb-8".
+	// In the wrapperless (title-empty) branch it applies to the card element.
 	Margin string
-	// Empty switches to the section's empty state (ignored when Title is "").
+	// Empty switches to the section's empty state (still honoured when
+	// wrapperless).
 	Empty      bool
 	EmptyIcon  string
 	EmptyTitle string
 	EmptyDesc  string
 }
 
-// cardList renders a bordered card with a divide-y row list. When title is
-// non-empty it renders a titled ui.Section (with optional empty state);
-// otherwise a bare ui.CardRaw. Children are the list rows.
+// cardList renders a bordered card with a divide-y row list via ui.Section: the
+// titled branch is a normal Section, the title-empty branch is Section with
+// Wrapperless (Section always emitted a <section> wrapper before Wrapperless,
+// which the bare variant never had — Wrapperless drops it to preserve output).
 templ cardList(title string, props cardListProps) {
-	if title != "" {
-		@ui.Section(title, ui.SectionProps{
-			Margin:    props.Margin,
-			CardClass: "card-border overflow-hidden",
-			BodyClass: "p-0",
-			Empty:     props.Empty,
-			EmptyIcon: props.EmptyIcon, EmptyTitle: props.EmptyTitle, EmptyDesc: props.EmptyDesc,
-		}) {
-			<div class="divide-y divide-base-200">
-				{ children... }
-			</div>
-		}
-	} else {
-		@ui.CardRaw("card-border overflow-hidden", "p-0", nil) {
-			<div class="divide-y divide-base-200">
-				{ children... }
-			</div>
-		}
+	@ui.Section(title, ui.SectionProps{
+		Margin:      props.Margin,
+		CardClass:   "card-border overflow-hidden",
+		BodyClass:   "p-0",
+		Empty:       props.Empty,
+		EmptyIcon:   props.EmptyIcon,
+		EmptyTitle:  props.EmptyTitle,
+		EmptyDesc:   props.EmptyDesc,
+		Rows:        true,
+		Wrapperless: title == "",
+	}) {
+		{ children... }
 	}
 }
 
-// modalBoxAttrs returns the optional id for a modal-box element ("" omits it).
+// modalBoxAttrs returns the optional id for an element ("" omits it). Shared by
+// checkboxPicker's wrapped variant, which sets an optional wrapper id.
 func modalBoxAttrs(boxID string) templ.Attributes {
 	if boxID == "" {
 		return nil
 	}
 	return templ.Attributes{"id": boxID}
-}
-
-// modalShell renders the shared native <dialog class="modal"> shell: a
-// modal-box (boxClass e.g. "max-w-sm", boxID when set) and the standard
-// backdrop form. Children are the modal-box content. attrs is optional extra
-// attributes for the dialog element (e.g. components.DialogAutoOpen()).
-templ modalShell(id, boxID, boxClass string, attrs ...templ.Attributes) {
-	{{ var extra templ.Attributes
-	if len(attrs) > 0 {
-		extra = attrs[0]
-	} }}
-	<dialog id={ id } class="modal" hx-boost="false" { extra... }>
-		<div { modalBoxAttrs(boxID)... } class={ "modal-box", templ.KV(boxClass, boxClass != "") }>
-			{ children... }
-		</div>
-		<form method="dialog" class="modal-backdrop">
-			<button>close</button>
-		</form>
-	</dialog>
-}
-
-// confirmDeleteDialog renders the shared delete-confirmation modal shell:
-// error icon circle, "Delete <noun>?" heading, and the backdrop. description
-// is the detail paragraph (rendered under the heading); children are the
-// action buttons (outside the icon/title row, directly in the modal box).
-templ confirmDeleteDialog(id, noun string, description templ.Component) {
-	@modalShell(id, "", "max-w-sm") {
-		<div class="mb-4 flex items-start gap-3">
-			<div class="bg-error/10 text-error grid size-10 shrink-0 place-items-center rounded-full">
-				@ui.IconSpan("lucide--trash-2", "size-5")
-			</div>
-			<div>
-				<h3 class="text-lg font-semibold">Delete { noun }?</h3>
-				@description
-			</div>
-		</div>
-		{ children... }
-	}
 }
 
 // checkboxPickerItem is one checkbox option in a checkboxPicker list.
@@ -1051,11 +975,6 @@ templ chatWelcomeHero(id, icon, wrapClass, title string, headingLevel int, headi
 		</div>
 		{ children... }
 	</div>
-}
-
-// emptyDash renders the muted em-dash fallback.
-templ emptyDash() {
-	<span class="text-base-content/30 text-sm">—</span>
 }
 
 // monoMeta renders a mono metadata line; pass the exact text color class.

@@ -24,6 +24,7 @@ func queryToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:          "search-knowledge",
+			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "search",
 			Description: "Ask a natural language question against the project's knowledge graph. The system finds relevant entities and relationships, " +
 				"then generates a grounded answer using the connected LLM provider. " +
