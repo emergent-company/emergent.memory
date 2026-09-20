@@ -40,14 +40,6 @@ fi
 echo ">>> memory installed at: $(command -v memory)"
 memory version
 
-# Create MinIO buckets required by document upload tests. The server does not
-# auto-create document buckets (its EnsureBucket only covers DB backups), so the
-# test client seeds them before the suite runs.
-echo ">>> creating MinIO buckets ..."
-mc alias set local http://minio:9000 minioadmin local-test-minio 2>/dev/null || true
-mc mb local/documents --ignore-existing 2>/dev/null || true
-mc mb local/document-temp --ignore-existing 2>/dev/null || true
-
 # Create the log directory so tests never race on it.
 mkdir -p "${TEST_LOG_DIR:-/test-logs}"
 

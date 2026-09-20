@@ -55,6 +55,22 @@ services:
       timeout: 5s
       retries: 10
 
+  # MinIO bucket initialization (one-shot; the server's storage ping does
+  # HeadBucket on the documents bucket, so buckets must exist before start).
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: test-emergent-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 2;
+      mc alias set myminio http://minio:9000 minioadmin local-test-minio;
+      mc mb myminio/documents --ignore-existing;
+      mc mb myminio/document-temp --ignore-existing;
+      "
+
   # ─────────────────────────────────────────────────────────────────────────
   # Memory API server (standalone mode)
   # ─────────────────────────────────────────────────────────────────────────
@@ -66,6 +82,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     environment:
       # Standalone mode — API key is used instead of Zitadel OAuth
       STANDALONE_MODE: "true"

@@ -65,16 +65,21 @@ else
   # Bring down any stale containers from previous runs.
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true
 
-  # Run; --abort-on-container-exit stops everything when any container exits.
-  # --exit-code-from captures the exit code of the test client.
-  docker compose -f "$SCRIPT_DIR/docker-compose.yml" \
-    up \
-    --build \
-    --abort-on-container-exit \
-    --exit-code-from test-emergent-client
+  # Bring up the full stack detached. minio-init is a one-shot that creates the
+  # document buckets and exits; --abort-on-container-exit would stop the stack
+  # on that exit, so wait for the test client explicitly instead.
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --build
+
+  # Wait for the test client to finish (it exits after the suite runs).
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" wait test-emergent-client
+
+  # Capture the test client's exit code for the script's own exit status.
+  exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$(docker compose -f "$SCRIPT_DIR/docker-compose.yml" ps -q test-emergent-client)")
 
   # Bring down cleanly regardless of outcome.
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true
+
+  exit "$exit_code"
 fi
 
 echo "> done. logs: $LOG_DIR"
