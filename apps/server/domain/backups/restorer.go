@@ -50,14 +50,30 @@ func NewRestorer(
 	}
 }
 
+// refAction describes how a clone-mode foreign-key column is resolved against
+// the remap table when its value cannot be found there.
+type refAction string
+
+const (
+	refRemap refAction = "remap" // default: rewrite via remap map, leave raw if unmapped
+	refNull  refAction = "null"  // NULL the column when unmapped
+	refSkip  refAction = "skip"  // drop the entire row when this column is unmapped
+	refFail  refAction = "fail"  // error out the restore
+)
+
+// refPolicy is the per-column clone-mode resolution policy.
+type refPolicy struct {
+	action refAction
+}
+
 // restoreTableSpec describes how one table is wiped, ordered, and inserted.
 // Vector columns need no explicit spec: they are detected by UDT from
 // information_schema and cast back with ?::vector.
 type restoreTableSpec struct {
-	name           string   // NDJSON file / table base name
-	selfRefs       []string // columns that reference other rows of the SAME table
-	nullIfUnmapped []string // clone only: NULL these columns when the value is not remapped
-	wipeSQL        string   // DELETE scoped to the project; ? = project_id
+	name     string               // NDJSON file / table base name
+	selfRefs []string             // columns that reference other rows of the SAME table
+	refs     map[string]refPolicy // column -> policy; absent column == refRemap
+	wipeSQL  string               // DELETE scoped to the project; ? = project_id
 }
 
 // restoreTableOrder returns the dependency-safe insert order. References to
@@ -71,50 +87,68 @@ func restoreTableOrder() []restoreTableSpec {
 	table := func(name string) restoreTableSpec {
 		return restoreTableSpec{name: name, wipeSQL: byProject("kb." + name)}
 	}
+	// nullRefs declares columns that are NULLed on clone when their value is
+	// not resolvable through the remap (nullable dangling project-local refs).
+	nullRefs := func(cols ...string) map[string]refPolicy {
+		refs := make(map[string]refPolicy, len(cols))
+		for _, c := range cols {
+			refs[c] = refPolicy{action: refNull}
+		}
+		return refs
+	}
+	// skipRefs declares columns that drop the whole row on clone when their
+	// value is not resolvable (global rows absent from the archive).
+	skipRefs := func(cols ...string) map[string]refPolicy {
+		refs := make(map[string]refPolicy, len(cols))
+		for _, c := range cols {
+			refs[c] = refPolicy{action: refSkip}
+		}
+		return refs
+	}
 
 	return []restoreTableSpec{
 		// object_type_schemas can reference itself through supersedes_id /
 		// canonical_id, so self references are ordered during insert.
 		{name: "object_type_schemas", selfRefs: []string{"supersedes_id", "canonical_id"},
-			nullIfUnmapped: []string{"supersedes_id", "canonical_id"},
-			wipeSQL:        byProject("kb.object_type_schemas")},
+			refs:    nullRefs("supersedes_id", "canonical_id"),
+			wipeSQL: byProject("kb.object_type_schemas")},
 		{name: "graph_schemas", selfRefs: []string{"parent_version_id"},
-			nullIfUnmapped: []string{"parent_version_id"},
-			wipeSQL:        byProject("kb.graph_schemas")},
-		table("project_schemas"),
+			refs:    nullRefs("parent_version_id"),
+			wipeSQL: byProject("kb.graph_schemas")},
+		{name: "project_schemas", refs: skipRefs("schema_id"), wipeSQL: byProject("kb.project_schemas")},
 		table("project_object_schema_registry"),
-		table("project_edge_schema_registry"),
+		{name: "project_edge_schema_registry", refs: skipRefs("schema_id"), wipeSQL: byProject("kb.project_edge_schema_registry")},
 		table("schema_migration_jobs"),
 		table("schema_migration_runs"),
 		table("external_sources"),
 		{name: "product_versions", selfRefs: []string{"base_product_version_id"},
-			nullIfUnmapped: []string{"base_product_version_id"},
-			wipeSQL:        byProject("kb.product_versions")},
+			refs:    nullRefs("base_product_version_id"),
+			wipeSQL: byProject("kb.product_versions")},
 		{name: "documents", selfRefs: []string{"parent_document_id"},
-			nullIfUnmapped: []string{"parent_document_id"},
-			wipeSQL:        byProject("kb.documents")},
+			refs:    nullRefs("parent_document_id"),
+			wipeSQL: byProject("kb.documents")},
 		{name: "chunks", wipeSQL: "DELETE FROM kb.chunks WHERE document_id IN (SELECT id FROM kb.documents WHERE project_id = ?)"},
 		// canonical_id is NOT NULL on graph_objects, so it must resolve through
 		// the remap; only nullable dangling refs are nulled on clone.
 		{name: "graph_objects", selfRefs: []string{"canonical_id", "supersedes_id", "merged_to_canonical_id"},
-			nullIfUnmapped: []string{"supersedes_id", "merged_to_canonical_id"},
-			wipeSQL:        byProject("kb.graph_objects")},
+			refs:    nullRefs("supersedes_id", "merged_to_canonical_id"),
+			wipeSQL: byProject("kb.graph_objects")},
 		{name: "graph_relationships", selfRefs: []string{"canonical_id", "supersedes_id"},
-			nullIfUnmapped: []string{"supersedes_id"},
-			wipeSQL:        byProject("kb.graph_relationships")},
+			refs:    nullRefs("supersedes_id"),
+			wipeSQL: byProject("kb.graph_relationships")},
 		table("agent_definitions"),
-		{name: "agents", nullIfUnmapped: []string{"agent_definition_id"}, wipeSQL: byProject("kb.agents")},
+		{name: "agents", refs: nullRefs("agent_definition_id"), wipeSQL: byProject("kb.agents")},
 		table("agent_webhook_hooks"),
-		{name: "chat_conversations", nullIfUnmapped: []string{"acp_session_id", "object_id", "agent_definition_id"},
+		{name: "chat_conversations", refs: nullRefs("acp_session_id", "object_id", "agent_definition_id", "owner_user_id"),
 			wipeSQL: byProject("kb.chat_conversations")},
 		{name: "chat_messages", wipeSQL: "DELETE FROM kb.chat_messages WHERE conversation_id IN (SELECT id FROM kb.chat_conversations WHERE project_id = ?)"},
 		{name: "branches", selfRefs: []string{"parent_branch_id"},
-			nullIfUnmapped: []string{"parent_branch_id"},
-			wipeSQL:        byProject("kb.branches")},
+			refs:    nullRefs("parent_branch_id"),
+			wipeSQL: byProject("kb.branches")},
 		{name: "branch_lineage", wipeSQL: "DELETE FROM kb.branch_lineage WHERE branch_id IN (SELECT id FROM kb.branches WHERE project_id = ?)"},
 		{name: "object_extraction_jobs", selfRefs: []string{"reprocessing_of"},
-			nullIfUnmapped: []string{"document_id", "chunk_id", "staging_branch_id", "reprocessing_of"},
-			wipeSQL:        byProject("kb.object_extraction_jobs")},
+			refs:    nullRefs("document_id", "chunk_id", "staging_branch_id", "reprocessing_of"),
+			wipeSQL: byProject("kb.object_extraction_jobs")},
 		table("embedding_policies"),
 		table("skills"),
 		table("mcp_servers"),
@@ -175,6 +209,10 @@ func (r *Restorer) restore(ctx context.Context, job *Restore, req RestoreRequest
 	}
 	if backup.Status != BackupStatusReady {
 		return fmt.Errorf("backup %s is not ready (status %s)", backup.ID, backup.Status)
+	}
+
+	if backup.Imported && job.Mode == RestoreModeOverwrite {
+		return fmt.Errorf("imported backups support clone restore only")
 	}
 
 	archive, err := r.importer.Load(ctx, backup.StorageKey)
@@ -271,7 +309,9 @@ func (r *Restorer) restoreClone(ctx context.Context, job *Restore, req RestoreRe
 	remap := map[string]string{sourceProjectID: projectID}
 
 	// Cross-org membership filtering needs the set of users in the target org.
-	sameOrg := backup.OrganizationID == req.TargetOrgID
+	// Imported archives always filter: their memberships carry foreign user
+	// ids that must not leak into the target project.
+	sameOrg := backup.OrganizationID == req.TargetOrgID && !backup.Imported
 	var targetOrgUsers map[string]bool
 	if !sameOrg {
 		var err error
@@ -533,7 +573,17 @@ func (r *Restorer) insertTableRows(ctx context.Context, tx bun.Tx, spec restoreT
 	count := 0
 	for _, row := range rows {
 		if clone {
-			remapRowUUIDs(row, remap, spec.nullIfUnmapped, cols)
+			remapRowUUIDs(row, remap)
+			skip, err := applyRefs(row, remap, spec.refs)
+			if err != nil {
+				return count, fmt.Errorf("insert %s: %w", spec.name, err)
+			}
+			if skip {
+				r.log.Warn("skipping clone row with unresolvable reference",
+					slog.String("table", spec.name),
+				)
+				continue
+			}
 		}
 		if err := r.insertRow(ctx, tx, "kb."+spec.name, cols, row); err != nil {
 			return count, err
@@ -543,9 +593,9 @@ func (r *Restorer) insertTableRows(ctx context.Context, tx bun.Tx, spec restoreT
 	return count, nil
 }
 
-// remapRowUUIDs registers a fresh UUID for the row's PK (clone) and rewrites
-// every column value that matches a remapped source UUID.
-func remapRowUUIDs(row map[string]any, remap map[string]string, nullIfUnmapped []string, cols []dbColumn) {
+// remapRowUUIDs registers a fresh UUID for the row's PK on clone so the row's
+// id anchors every subsequent reference to it in the remap table.
+func remapRowUUIDs(row map[string]any, remap map[string]string) {
 	// New PK for this row (id is the PK on every curated table except
 	// project_model_config, whose PK is project_id and is handled via remap).
 	if v := stringValue(row["id"]); v != "" {
@@ -557,12 +607,12 @@ func remapRowUUIDs(row map[string]any, remap map[string]string, nullIfUnmapped [
 			row["id"] = nid
 		}
 	}
+}
 
-	nullSet := make(map[string]bool, len(nullIfUnmapped))
-	for _, c := range nullIfUnmapped {
-		nullSet[c] = true
-	}
-
+// applyRefs rewrites every column value that matches a remapped source UUID and
+// applies the per-column resolution policy to values that cannot be resolved.
+// The default (absent) policy is refRemap: the raw value is left untouched.
+func applyRefs(row map[string]any, remap map[string]string, refs map[string]refPolicy) (skip bool, err error) {
 	for key, val := range row {
 		s := stringValue(val)
 		if s == "" {
@@ -572,12 +622,23 @@ func remapRowUUIDs(row map[string]any, remap map[string]string, nullIfUnmapped [
 			row[key] = nid
 			continue
 		}
-		// Unresolvable project-local references are nulled on clone so they
-		// never dangle into the source project.
-		if nullSet[key] {
+		policy, ok := refs[key]
+		if !ok {
+			// refRemap (default): preserve the raw value.
+			continue
+		}
+		switch policy.action {
+		case refRemap:
+			// Explicit remap: preserve the raw value.
+		case refNull:
 			row[key] = nil
+		case refSkip:
+			return true, nil
+		case refFail:
+			return false, fmt.Errorf("unresolved reference %s=%q", key, s)
 		}
 	}
+	return false, nil
 }
 
 // orderSelfReferences returns rows sorted so same-table parents precede the

@@ -643,16 +643,17 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGr
 	}
 
 	obj := &GraphObject{
-		ProjectID:  projectID,
-		BranchID:   req.BranchID,
-		Type:       req.Type,
-		Key:        req.Key,
-		Status:     req.Status,
-		Namespace:  req.Namespace,
-		Properties: validatedProps,
-		Labels:     req.Labels,
-		ActorType:  &actorType,
-		ActorID:    actorID,
+		ProjectID:       projectID,
+		BranchID:        req.BranchID,
+		Type:            req.Type,
+		Key:             req.Key,
+		Status:          req.Status,
+		Namespace:       req.Namespace,
+		Properties:      validatedProps,
+		Labels:          req.Labels,
+		ActorType:       &actorType,
+		ActorID:         actorID,
+		ExtractionJobID: req.ExtractionJobID,
 	}
 
 	// Sync status column from properties["status"] — properties is the
@@ -737,16 +738,17 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	if existing == nil {
 		// Create new object
 		obj := &GraphObject{
-			ProjectID:  projectID,
-			BranchID:   req.BranchID,
-			Type:       req.Type,
-			Key:        req.Key,
-			Status:     req.Status,
-			Namespace:  req.Namespace,
-			Properties: validatedProps,
-			Labels:     req.Labels,
-			ActorType:  &actorType,
-			ActorID:    actorID,
+			ProjectID:       projectID,
+			BranchID:        req.BranchID,
+			Type:            req.Type,
+			Key:             req.Key,
+			Status:          req.Status,
+			Namespace:       req.Namespace,
+			Properties:      validatedProps,
+			Labels:          req.Labels,
+			ActorType:       &actorType,
+			ActorID:         actorID,
+			ExtractionJobID: req.ExtractionJobID,
 		}
 		if schemaVersion != "" {
 			obj.SchemaVersion = &schemaVersion
@@ -771,15 +773,16 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	if existing.DeletedAt != nil {
 		// Was deleted, create new version to "restore" with new properties
 		newVersion := &GraphObject{
-			Type:       req.Type,
-			Key:        req.Key,
-			Status:     req.Status,
-			Namespace:  existing.Namespace,
-			Properties: validatedProps,
-			Labels:     req.Labels,
-			DeletedAt:  nil,
-			ActorType:  &actorType,
-			ActorID:    actorID,
+			Type:            req.Type,
+			Key:             req.Key,
+			Status:          req.Status,
+			Namespace:       existing.Namespace,
+			Properties:      validatedProps,
+			Labels:          req.Labels,
+			DeletedAt:       nil,
+			ActorType:       &actorType,
+			ActorID:         actorID,
+			ExtractionJobID: req.ExtractionJobID,
 		}
 		newVersion.ChangeSummary = computeChangeSummary(existing.Properties, validatedProps)
 		if schemaVersion != "" {
@@ -829,6 +832,14 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	if diff == nil && !statusChanged && !labelsChanged {
 		// No change - return existing (no-op)
+		if existing.ExtractionJobID == nil && req.ExtractionJobID != nil {
+			if _, err := tx.NewUpdate().Model((*GraphObject)(nil)).
+				Set("extraction_job_id = ?", *req.ExtractionJobID).
+				Where("id = ?", existing.ID).Exec(ctx); err != nil {
+				return nil, false, fmt.Errorf("backfill extraction job id: %w", err)
+			}
+			existing.ExtractionJobID = req.ExtractionJobID
+		}
 		if err := tx.Commit(); err != nil {
 			return nil, false, apperror.ErrDatabase.WithInternal(err)
 		}
@@ -841,14 +852,15 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 
 	// Properties, status, or labels differ - create new version
 	newVersion := &GraphObject{
-		Type:       existing.Type,
-		Key:        existing.Key,
-		Status:     newStatus,
-		Namespace:  existing.Namespace,
-		Properties: newProps,
-		Labels:     newLabels,
-		ActorType:  &actorType,
-		ActorID:    actorID,
+		Type:            existing.Type,
+		Key:             existing.Key,
+		Status:          newStatus,
+		Namespace:       existing.Namespace,
+		Properties:      newProps,
+		Labels:          newLabels,
+		ActorType:       &actorType,
+		ActorID:         actorID,
+		ExtractionJobID: req.ExtractionJobID,
 	}
 	newVersion.ChangeSummary = diff
 	if schemaVersion != "" {
@@ -3927,17 +3939,18 @@ func (s *Service) applyMerge(
 			}
 			newCanonicalID := uuid.New()
 			clone := &GraphObject{
-				ID:          uuid.New(),
-				CanonicalID: newCanonicalID,
-				ProjectID:   projectID,
-				BranchID:    targetBranchID,
-				Version:     1,
-				Type:        src.Type,
-				Key:         src.Key,
-				Status:      src.Status,
-				Namespace:   src.Namespace,
-				Labels:      labels,
-				Properties:  props,
+				ID:              uuid.New(),
+				CanonicalID:     newCanonicalID,
+				ProjectID:       projectID,
+				BranchID:        targetBranchID,
+				Version:         1,
+				Type:            src.Type,
+				Key:             src.Key,
+				Status:          src.Status,
+				Namespace:       src.Namespace,
+				Labels:          labels,
+				Properties:      props,
+				ExtractionJobID: src.ExtractionJobID,
 			}
 			clone.ContentHash = computeContentHash(clone.Properties, clone.Status, clone.Key, clone.Labels)
 			now := time.Now()
@@ -4001,6 +4014,9 @@ func (s *Service) applyMerge(
 				Properties: props,
 				ProjectID:  projectID,
 				BranchID:   targetBranchID,
+				// Carry the staging source's provenance so the merged version stays
+				// attributable to the source document (not the target head's job).
+				ExtractionJobID: src.ExtractionJobID,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
@@ -4073,6 +4089,9 @@ func (s *Service) applyMerge(
 				ProjectID:     projectID,
 				BranchID:      targetBranchID,
 				ChangeSummary: changeSummary,
+				// Carry the staging source's provenance so the merged version stays
+				// attributable to the source document (not the target head's job).
+				ExtractionJobID: src.ExtractionJobID,
 			}
 			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
@@ -4140,6 +4159,9 @@ func (s *Service) applyMerge(
 					ProjectID:     projectID,
 					BranchID:      targetBranchID,
 					ChangeSummary: changeSummary,
+					// Carry the staging source's provenance so the absorbed version
+					// stays attributable to the source document.
+					ExtractionJobID: src.ExtractionJobID,
 				}
 				if err := s.repo.CreateVersion(ctx, tx.Tx, existingTarget, newVersion); err != nil {
 					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)

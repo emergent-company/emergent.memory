@@ -252,7 +252,8 @@ CREATE TABLE core.api_tokens (
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
     token_encrypted text,
-    expires_at timestamp with time zone
+    expires_at timestamp with time zone,
+    CONSTRAINT api_tokens_pkey PRIMARY KEY (id)
 );
 
 
@@ -1035,6 +1036,7 @@ CREATE TABLE kb.backups (
     parent_backup_id uuid,
     baseline_backup_id uuid,
     change_window jsonb,
+    imported boolean DEFAULT false NOT NULL,
     CONSTRAINT backups_backup_type_check CHECK ((backup_type = ANY (ARRAY['full'::text, 'incremental'::text]))),
     CONSTRAINT backups_progress_check CHECK (((progress >= 0) AND (progress <= 100))),
     CONSTRAINT backups_status_check CHECK ((status = ANY (ARRAY['creating'::text, 'ready'::text, 'failed'::text, 'deleted'::text])))
@@ -2848,14 +2850,6 @@ ALTER TABLE ONLY core.user_profiles
 
 ALTER TABLE ONLY core.user_emails
     ADD CONSTRAINT "PK_3ef6c4be97ba94ea3ba65362ad0" PRIMARY KEY (id);
-
-
---
--- Name: api_tokens api_tokens_pkey; Type: CONSTRAINT; Schema: core; Owner: -
---
-
-ALTER TABLE ONLY core.api_tokens
-    ADD CONSTRAINT api_tokens_pkey PRIMARY KEY (id);
 
 
 --
@@ -4921,6 +4915,13 @@ CREATE INDEX idx_graph_schemas_project_id ON kb.graph_schemas USING btree (proje
 
 
 --
+-- Name: graph_schemas_builtin_name_version_key; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE UNIQUE INDEX graph_schemas_builtin_name_version_key ON kb.graph_schemas USING btree (name, version) WHERE (source = 'builtin'::text);
+
+
+--
 -- Name: idx_llm_usage_events_model; Type: INDEX; Schema: kb; Owner: -
 --
 
@@ -5871,14 +5872,6 @@ ALTER TABLE ONLY kb.backups
 
 ALTER TABLE ONLY kb.backups
     ADD CONSTRAINT backups_parent_backup_id_fkey FOREIGN KEY (parent_backup_id) REFERENCES kb.backups(id);
-
-
---
--- Name: backups backups_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.backups
-    ADD CONSTRAINT backups_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
 
 
 --
