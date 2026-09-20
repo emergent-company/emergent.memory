@@ -90,7 +90,7 @@ func (c *orphanRecoveryFakeConn) ExecContext(_ context.Context, query string, _ 
 	return driver.RowsAffected(s.rows), nil
 }
 
-type orphanRecoveryRows struct{ pos int }
+type orphanRecoveryRows struct{}
 
 func (r *orphanRecoveryRows) Columns() []string { return nil }
 func (r *orphanRecoveryRows) Close() error      { return nil }
