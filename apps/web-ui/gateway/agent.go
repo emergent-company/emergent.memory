@@ -320,7 +320,8 @@ func (s *Server) applyAgentSettingsSection(c echo.Context, section string, apply
 }
 
 // uiAgentUpdateGeneral handles POST /agents/:id/settings/general (and the
-// back-compat POST /agents/:id/update alias): name, system prompt, language.
+// back-compat POST /agents/:id/update alias): name, system prompt, language,
+// and visibility.
 func (s *Server) uiAgentUpdateGeneral(c echo.Context) error {
 	return s.applyAgentSettingsSection(c, sectionGeneral, applyAgentGeneralSection)
 }
@@ -346,9 +347,11 @@ func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
 }
 
 // applyAgentGeneralSection maps the General form (name, system prompt,
-// language, appearance) onto the definition. Name is trimmed and required;
-// language persists to Config["language"] (deleted when empty); the icon +
-// color appearance persists to the uiConfig blob (both empty clears it).
+// language, appearance, visibility) onto the definition. Name is trimmed and
+// required; language persists to Config["language"] (deleted when empty); the
+// icon + color appearance persists to the uiConfig blob (both empty clears it);
+// visibility accepts only project/external/internal, with empty/missing
+// defaulting to project (the server default) and anything else rejected.
 func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 	name := strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
@@ -366,6 +369,11 @@ func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 	} else {
 		delete(def.Config, "language")
 	}
+	visibility, ok := agentVisibilityNormalize(c.FormValue("visibility"))
+	if !ok {
+		return fmt.Errorf("visibility must be one of project, external, internal")
+	}
+	def.Visibility = visibility
 	return nil
 }
 

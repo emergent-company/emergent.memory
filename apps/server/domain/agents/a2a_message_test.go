@@ -461,6 +461,37 @@ func TestA2ASendMessage_WithoutSkillID_StillReachesRepo_Panics(t *testing.T) {
 }
 
 // ============================================================================
+// Skill-id visibility contract (a2aPickResolvableDefinition)
+// ============================================================================
+
+// TestA2APickResolvableDefinition covers the visibility precedence that decides
+// whether an A2A skill slug resolves. resolveA2AAgentBySkillID hits the DB for
+// the external and fallback lookups, so the decision itself is a pure helper
+// unit-tested here; the internal-slug → 400 SKILL_NOT_FOUND wire path needs a
+// live DB and is left to integration coverage.
+func TestA2APickResolvableDefinition_PrefersExternal(t *testing.T) {
+	external := &AgentDefinition{Name: "dupe", Visibility: VisibilityExternal}
+	project := &AgentDefinition{Name: "dupe", Visibility: VisibilityProject}
+	assert.Equal(t, external, a2aPickResolvableDefinition(external, project))
+}
+
+func TestA2APickResolvableDefinition_ProjectFallback(t *testing.T) {
+	project := &AgentDefinition{Name: "agent", Visibility: VisibilityProject}
+	assert.Equal(t, project, a2aPickResolvableDefinition(nil, project))
+}
+
+func TestA2APickResolvableDefinition_InternalNotResolvable(t *testing.T) {
+	internal := &AgentDefinition{Name: "sys", Visibility: VisibilityInternal}
+	assert.Nil(t, a2aPickResolvableDefinition(nil, internal))
+	// An internal fallback never outranks a missing external match.
+	assert.Nil(t, a2aPickResolvableDefinition(nil, internal))
+}
+
+func TestA2APickResolvableDefinition_NoMatch(t *testing.T) {
+	assert.Nil(t, a2aPickResolvableDefinition(nil, nil))
+}
+
+// ============================================================================
 // New helpers (role validation, terminal-state, returnImmediately, snapshot)
 // ============================================================================
 

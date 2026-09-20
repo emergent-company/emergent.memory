@@ -340,11 +340,13 @@ func (h *A2AHandler) a2aOrgID(ctx context.Context, c echo.Context, projectID str
 // Routing contract: the A2A SendMessageRequest has no skill selector, so a
 // first-party client targets a specific skill by encoding the AgentSkill id in
 // message.metadata["skillId"] (the SDK's pkg/sdk/a2a.SkillIDMetadataKey). When
-// that key is present the definition is resolved by slug — external-visibility
-// first, then any-visibility (mirroring ACPHandler.resolveAgentDefinitionBySlug)
-// — and an unknown skill id is a hard 400 (SKILL_NOT_FOUND), never a fallback.
-// When the key is absent, the project's general-purpose CLI assistant is used,
-// mirroring the platform /api/ask behaviour.
+// that key is present the definition is resolved by slug with visibility
+// precedence: external definitions are preferred, a project-visibility
+// definition is an accepted fallback, and an internal-visibility definition is
+// never resolvable via A2A. An unknown or internal skill id is a hard 400
+// (SKILL_NOT_FOUND), never a fallback to the CLI assistant. When the key is
+// absent, the project's general-purpose CLI assistant is used, mirroring the
+// platform /api/ask behaviour.
 func (h *A2AHandler) resolveA2AAgent(ctx context.Context, projectID, skillID string) (*AgentDefinition, *Agent, error) {
 	var def *AgentDefinition
 	var err error
@@ -371,21 +373,40 @@ func (h *A2AHandler) resolveA2AAgent(ctx context.Context, projectID, skillID str
 	return def, agent, nil
 }
 
+// a2aPickResolvableDefinition chooses the definition to serve for an A2A skill
+// slug, applying the visibility contract: an external match wins outright; a
+// fallback match is used only when its visibility is project or external; an
+// internal-visibility definition is never resolvable via A2A (hidden/system
+// agents stay out of the external call surface).
+func a2aPickResolvableDefinition(external, fallback *AgentDefinition) *AgentDefinition {
+	if external != nil {
+		return external
+	}
+	if fallback != nil && fallback.Visibility != VisibilityInternal {
+		return fallback
+	}
+	return nil
+}
+
 // resolveA2AAgentBySkillID resolves an agent definition by skill id (slug),
-// preferring external visibility and falling back to any visibility. Returns
-// (nil, nil) when no definition matches; a non-nil error only on DB failure.
+// preferring external visibility and falling back to a project-visibility
+// definition. Internal-visibility definitions are never returned (they are not
+// A2A-callable), so the result is nil when only an internal match exists.
+// Returns (nil, nil) when no resolvable definition matches; a non-nil error
+// only on DB failure.
 func (h *A2AHandler) resolveA2AAgentBySkillID(ctx context.Context, projectID, skillID string) (*AgentDefinition, error) {
-	def, err := h.repo.FindExternalAgentBySlug(ctx, projectID, skillID)
+	external, err := h.repo.FindExternalAgentBySlug(ctx, projectID, skillID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to look up skill: %w", err)
 	}
-	if def == nil {
-		def, err = h.repo.FindAgentDefinitionBySlug(ctx, projectID, skillID)
+	var fallback *AgentDefinition
+	if external == nil {
+		fallback, err = h.repo.FindAgentDefinitionBySlug(ctx, projectID, skillID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to look up skill: %w", err)
 		}
 	}
-	return def, nil
+	return a2aPickResolvableDefinition(external, fallback), nil
 }
 
 // resolveRuntimeAgent finds the runtime Agent for a definition by name, creating
