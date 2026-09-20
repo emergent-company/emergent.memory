@@ -91,6 +91,19 @@ type Config struct {
 	// EmbeddingReindexInterval is the fallback interval used when the cron
 	// schedule is unset or invalid. Default: 24h.
 	EmbeddingReindexInterval time.Duration
+
+	// EmbeddingJobRetentionDays is the minimum age (in days) of a terminal
+	// embedding job (completed, failed, dead_letter) before it is purged.
+	// Default: 7.
+	EmbeddingJobRetentionDays int
+
+	// EmbeddingJobPurgeSchedule is the cron schedule for purging old terminal
+	// embedding jobs. Default: "0 0 5 * * *" (daily at 5am).
+	EmbeddingJobPurgeSchedule string
+
+	// EmbeddingJobPurgeInterval is the fallback interval used when the cron
+	// schedule is unset or invalid. Default: 24h.
+	EmbeddingJobPurgeInterval time.Duration
 }
 
 // NewConfig creates a new Config from environment variables
@@ -124,6 +137,9 @@ func NewConfig() *Config {
 		ProjectDeletionSweepSchedule: getEnvString("PROJECT_DELETION_SWEEP_SCHEDULE", ""),
 		EmbeddingReindexSchedule:     getEnvString("EMBEDDING_REINDEX_SCHEDULE", "0 0 2 * * *"),
 		EmbeddingReindexInterval:     getEnvDurationString("EMBEDDING_REINDEX_INTERVAL", 24*time.Hour),
+		EmbeddingJobRetentionDays:    getEnvInt("EMBEDDING_JOB_RETENTION_DAYS", 7),
+		EmbeddingJobPurgeSchedule:    getEnvString("EMBEDDING_JOB_PURGE_SCHEDULE", "0 0 5 * * *"),
+		EmbeddingJobPurgeInterval:    getEnvDuration("EMBEDDING_JOB_PURGE_INTERVAL", 24*time.Hour),
 	}
 }
 

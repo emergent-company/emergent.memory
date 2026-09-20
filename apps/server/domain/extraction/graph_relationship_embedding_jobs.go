@@ -210,6 +210,29 @@ func (s *GraphRelationshipEmbeddingJobsService) RecoverStaleJobs(ctx context.Con
 	return int(n), nil
 }
 
+// RecoverOrphanedProcessingJobs resets ALL 'processing' jobs to 'pending'.
+// Called on worker startup: a freshly-started process has no in-flight work, so
+// every 'processing' job was left behind by a previous process that crashed or
+// was restarted. Resetting them makes the queue restart-resistant. (In a
+// multi-instance deployment this may briefly double-process a peer's job, which
+// is harmless because embedding generation is idempotent.)
+func (s *GraphRelationshipEmbeddingJobsService) RecoverOrphanedProcessingJobs(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.graph_relationship_embedding_jobs
+		SET status = 'pending',
+			started_at = NULL,
+			scheduled_at = now(),
+			updated_at = now()
+		WHERE status = 'processing'`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("recover orphaned processing jobs: %w", err)
+	}
+	count, _ := result.RowsAffected()
+	if count > 0 {
+		s.log.Warn("recovered orphaned relationship embedding jobs on startup", slog.Int64("count", count))
+	}
+	return int(count), nil
+}
+
 // GraphRelationshipEmbeddingQueueStats contains queue statistics for relationship jobs.
 type GraphRelationshipEmbeddingQueueStats struct {
 	Pending    int64 `json:"pending"`

@@ -144,16 +144,16 @@ func (w *GraphEmbeddingWorker) Stop(ctx context.Context) error {
 	return nil
 }
 
-// recoverStaleJobsOnStartup recovers stale jobs on startup
+// recoverStaleJobsOnStartup recovers orphaned processing jobs on startup
 func (w *GraphEmbeddingWorker) recoverStaleJobsOnStartup(ctx context.Context) {
-	recovered, err := w.jobs.RecoverStaleJobs(ctx, 10)
+	recovered, err := w.jobs.RecoverOrphanedProcessingJobs(ctx)
 	if err != nil {
-		w.log.Warn("failed to recover stale jobs on startup",
+		w.log.Warn("failed to recover orphaned jobs on startup",
 			slog.String("error", err.Error()))
 		return
 	}
 	if recovered > 0 {
-		w.log.Info("recovered stale graph embedding jobs on startup",
+		w.log.Info("recovered orphaned graph embedding jobs on startup",
 			slog.Int("count", recovered))
 	}
 }
@@ -710,11 +710,17 @@ func isPermanentEmbeddingError(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	// API error codes surfaced by the vertex client as "API error NNN: ..."
+	// HTTP client errors from the model provider (invalid model/creds) are
+	// permanent — retrying will never succeed.
 	for _, code := range []string{"API error 400", "API error 401", "API error 403", "API error 404"} {
 		if strings.Contains(msg, code) {
 			return true
 		}
+	}
+	// Missing embedding model configuration is a permanent config error, not a
+	// transient network/quota failure.
+	if strings.Contains(msg, "no embedding model configured") {
+		return true
 	}
 	return false
 }
