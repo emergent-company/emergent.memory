@@ -10,6 +10,7 @@ Backup and restore are server-API-only. GitHub issue #592 surfaced the gap: a us
 - `memory restores` subcommands: `create` (clone restore, with optional `--wait` polling), `get`.
 - Stream the import archive and download responses rather than buffering them in memory (server import cap is 1 GiB).
 - Reuse existing CLI helpers for org/project resolution, output formats (`table|json|yaml|csv`), and table rendering.
+- Fix the server's `ListBackups` handler to actually decode the `cursor` query parameter (base64url JSON), so the CLI's `--cursor` pagination round-trips instead of being silently discarded.
 
 ## Capabilities
 
@@ -19,7 +20,7 @@ Backup and restore are server-API-only. GitHub issue #592 surfaced the gap: a us
 
 ### Modified Capabilities
 
-<!-- none — the server backup/restore pipeline is unchanged and already covered by `backup-restore`. -->
+- `backup-restore`: the `ListBackups` handler now decodes the `cursor` query parameter (base64url JSON) and returns a 400 on an invalid cursor; the response `nextCursor` object shape is unchanged.
 
 ## Impact
 
@@ -27,7 +28,8 @@ Backup and restore are server-API-only. GitHub issue #592 surfaced the gap: a us
 - `apps/server/pkg/sdk/sdk.go`: register the `Backups` sub-client.
 - `apps/cli/internal/cmd/`: new `backups.go`, `restores.go`, `backups_test.go`.
 - `apps/cli/internal/skillsfs/skills/memory-cli-reference/SKILL.md`: regenerated reference.
-- No `.templ` files, no server routes, no migrations.
+- `apps/server/domain/backups/handler.go`: decode the `cursor` query parameter (`ParseCursor`).
+- No `.templ` files, no new server routes, no migrations.
 
 ## Notes
 

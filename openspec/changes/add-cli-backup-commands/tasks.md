@@ -14,5 +14,5 @@
 ## 3. Docs, build, lint, verification
 
 - [x] 3.1 Run `task cli:gen-docs` to regenerate the embedded CLI reference skill and commit the diff. Verify: `SKILL.md` contains `memory backups` and `memory restores`.
-- [x] 3.2 Run `go build ./...`, `go test ./...`, `gofmt -l` (empty), `go vet`, and scoped `golangci-lint`; fix until clean. Verify: all pass.
+- [x] 3.2 Run module-scoped checks for the affected modules — `cd apps/server/pkg/sdk && go build ./... && go test ./...`, `cd apps/cli && go build ./... && go test ./...`, and `cd apps/server && go build ./...`; run `gofmt -l` (empty), `go vet`, and scoped `golangci-lint`; fix until clean. Verify: all pass.
 - [x] 3.3 Run `openspec validate add-cli-backup-commands` from the repo root. Verify: passes.

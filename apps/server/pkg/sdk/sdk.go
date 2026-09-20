@@ -164,9 +164,7 @@ func New(cfg Config) (*Client, error) {
 
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: 30 * time.Second,
-		}
+		httpClient = defaultHTTPClient()
 	}
 
 	client := &Client{
@@ -181,6 +179,37 @@ func New(cfg Config) (*Client, error) {
 	initClients(client)
 
 	return client, nil
+}
+
+// defaultHTTPClient returns the SDK's default *http.Client: a 30s timeout plus a
+// redirect policy that strips credential/context headers when a redirect leaves
+// the originating host.
+func defaultHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		CheckRedirect: credentialSafeRedirectPolicy(),
+	}
+}
+
+// credentialSafeRedirectPolicy returns a CheckRedirect that stops after 10 hops
+// and strips the SDK's credential and context headers when a redirect crosses
+// hosts. net/http already drops Authorization/Cookie on cross-host redirects
+// but not custom headers such as X-API-Key, X-Org-ID, and X-Project-ID, which
+// would otherwise leak (for example, an API key leaking to a presigned storage
+// host while downloading a backup archive).
+func credentialSafeRedirectPolicy() func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if via[len(via)-1].URL.Host != req.URL.Host {
+			req.Header.Del("X-API-Key")
+			req.Header.Del("Authorization")
+			req.Header.Del("X-Org-ID")
+			req.Header.Del("X-Project-ID")
+		}
+		return nil
+	}
 }
 
 // NewFromEnv creates a new Emergent API client by auto-discovering configuration.
@@ -281,9 +310,7 @@ func NewWithDeviceFlow(cfg Config) (*Client, error) {
 	// Create HTTP client
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: 30 * time.Second,
-		}
+		httpClient = defaultHTTPClient()
 	}
 
 	client := &Client{

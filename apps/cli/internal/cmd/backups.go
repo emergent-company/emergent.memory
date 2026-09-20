@@ -47,6 +47,10 @@ Use --wait to block until the backup reaches "ready" or "failed".`,
 }
 
 func runBackupsCreate(cmd *cobra.Command, args []string) error {
+	if err := validateRetentionDays(backupsCreateRetentionDays); err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
@@ -55,10 +59,6 @@ func runBackupsCreate(cmd *cobra.Command, args []string) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
 	projectID, err := resolveProjectContext(cmd, projectFlag)
 	if err != nil {
-		return err
-	}
-
-	if err := validateRetentionDays(backupsCreateRetentionDays); err != nil {
 		return err
 	}
 
@@ -216,7 +216,10 @@ func runBackupsDownload(cmd *cobra.Command, args []string) error {
 
 	out := backupsDownloadOut
 	if fi, statErr := os.Stat(out); statErr == nil && fi.IsDir() {
-		out = filepath.Join(out, filename)
+		// The server-controlled filename may carry path components (project
+		// names are user-controlled), so reduce it to the base name before
+		// joining it onto the requested directory.
+		out = filepath.Join(out, filepath.Base(filename))
 	}
 
 	f, err := os.Create(out)
@@ -244,7 +247,7 @@ var (
 var backupsDeleteCmd = &cobra.Command{
 	Use:   "delete <backupId>",
 	Short: "Delete a backup",
-	Long:  "Permanently delete a backup and its archive. Use --force to skip confirmation.",
+	Long:  "Mark a backup as deleted (soft delete). The archive is retained until the server's retention cleanup removes it. Use --force to skip confirmation.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runBackupsDelete,
 }
@@ -264,7 +267,7 @@ func runBackupsDelete(cmd *cobra.Command, args []string) error {
 
 	if !backupsDeleteForce {
 		if isNonInteractive() {
-			return fmt.Errorf("deleting a backup is destructive — re-run with --force to confirm")
+			return fmt.Errorf("deleting a backup requires confirmation — re-run with --force to confirm")
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Delete backup %s? [y/N] ", backupID)
 		scanner := bufio.NewScanner(cmd.InOrStdin())
@@ -284,7 +287,7 @@ func runBackupsDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete backup: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Backup %s deleted.\n", backupID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Backup %s marked as deleted.\n", backupID)
 	return nil
 }
 
@@ -388,7 +391,8 @@ func waitForBackup(ctx context.Context, c *client.Client, orgID, backupID string
 }
 
 // emitStructured writes v as JSON or YAML when --output requests it, returning
-// handled=true. Returns handled=false for table/csv (caller renders the table).
+// handled=true. Returns handled=false for table (caller renders the table) and
+// an error for csv, which these records do not support.
 func emitStructured(cmd *cobra.Command, v interface{}) (bool, error) {
 	switch output {
 	case "json":
@@ -402,6 +406,8 @@ func emitStructured(cmd *cobra.Command, v interface{}) (bool, error) {
 		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(data))
 		return true, err
+	case "csv":
+		return true, fmt.Errorf("csv output is not supported for this command; use table, json, or yaml")
 	default:
 		return false, nil
 	}
@@ -435,7 +441,7 @@ func printBackupList(out io.Writer, result *backups.ListBackupsResult) {
 			b.Status, b.Progress, b.SizeBytes, fmtTimeStr(b.CreatedAt))
 	}
 	if result.NextCursor != nil {
-		fmt.Fprintf(out, "\nNext cursor: %s\n", result.NextCursor.ID)
+		fmt.Fprintf(out, "\nNext cursor: %s\n", result.NextCursor.Encode())
 	}
 }
 

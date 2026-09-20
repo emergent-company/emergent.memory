@@ -180,8 +180,9 @@ func (c *Client) GetBackup(ctx context.Context, orgID, backupID string) (*Backup
 //
 // The download is NOT bounded by the SDK client's default timeout: it uses an
 // http.Client sharing the same Transport but with no Timeout, relying on ctx for
-// cancellation, so large archives can stream. Authorization is stripped by
-// net/http automatically on the cross-host redirect.
+// cancellation, so large archives can stream. Credential/context headers are
+// stripped on cross-host redirects by the client's redirect policy, so the API
+// key never reaches the presigned storage host.
 func (c *Client) DownloadBackup(ctx context.Context, orgID, backupID string) (io.ReadCloser, string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		c.base+"/api/v1/organizations/"+url.PathEscape(orgID)+"/backups/"+url.PathEscape(backupID)+"/download", nil)

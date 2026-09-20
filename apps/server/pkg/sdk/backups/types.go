@@ -2,7 +2,11 @@
 // Emergent API SDK.
 package backups
 
-import "io"
+import (
+	"encoding/base64"
+	"encoding/json"
+	"io"
+)
 
 // Backup status constants.
 const (
@@ -83,6 +87,21 @@ type ListBackupsOptions struct {
 type Cursor struct {
 	CreatedAt string `json:"createdAt"`
 	ID        string `json:"id"`
+}
+
+// Encode serializes the cursor to the opaque string the server accepts as the
+// `cursor` query parameter: base64url-encoded JSON of {createdAt, id}. The
+// server's own ParseCursor is the inverse, so the value printed by the CLI can
+// be passed straight back to --cursor.
+func (c *Cursor) Encode() string {
+	if c == nil {
+		return ""
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	return base64.URLEncoding.EncodeToString(data)
 }
 
 // ListBackupsResult is the response from listing backups.
