@@ -437,7 +437,7 @@ func (h *ShareHandler) RevealLink(c echo.Context) error {
 
 // ListProjectSessions handles GET /api/projects/:projectId/share-sessions.
 func (h *ShareHandler) ListProjectSessions(c echo.Context) error {
-	dto, err := h.svc.ListSessionsByProject(c.Request().Context(), c.Param("projectId"))
+	dto, err := h.svc.ListSessionsByProject(c.Request().Context(), c.Param("projectId"), oauthUserID(c))
 	if err != nil {
 		return err
 	}
@@ -446,13 +446,27 @@ func (h *ShareHandler) ListProjectSessions(c echo.Context) error {
 
 // GetProjectSession handles GET /api/projects/:projectId/share-sessions/:id,
 // returning the session's plain transcript. Project ownership is enforced in
-// the service (the client-supplied :projectId is never trusted).
+// the service (the client-supplied :projectId is never trusted) and, for
+// OAuth sessions, the caller must be a project member.
 func (h *ShareHandler) GetProjectSession(c echo.Context) error {
-	messages, err := h.svc.GetSessionTranscriptByID(c.Request().Context(), c.Param("projectId"), c.Param("id"))
+	messages, err := h.svc.GetSessionTranscriptByID(c.Request().Context(), c.Param("projectId"), c.Param("id"), oauthUserID(c))
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, map[string][]ShareTranscriptMessage{"messages": messages})
+}
+
+// oauthUserID returns the authenticated user's id for OAuth/session auth, or ""
+// for API-token auth. Owner read endpoints pass this to the service so it can
+// enforce project membership for OAuth callers only — API-token callers are
+// already scoped to their project by RequireProjectScope, and their token owner
+// id is not necessarily a project member.
+func oauthUserID(c echo.Context) string {
+	user := auth.MustGetUser(c)
+	if user.APITokenID == "" {
+		return user.ID
+	}
+	return ""
 }
 
 // --- helpers ---

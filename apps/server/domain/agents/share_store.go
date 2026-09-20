@@ -12,6 +12,11 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
 
+// shareSessionsRailLimit bounds the owner-facing project share-session listing
+// to the most recent N sessions, since public-share session retention is not
+// yet implemented and the rail would otherwise grow unbounded on a busy project.
+const shareSessionsRailLimit = 50
+
 // ============================================================================
 // Share link CRUD + binding resolver
 // ============================================================================
@@ -265,12 +270,15 @@ func shareSessionProjectQuery(q *bun.SelectQuery) *bun.SelectQuery {
 }
 
 // ListShareSessionsByProject lists a project's share sessions (across all of its
-// share links), newest activity first.
+// share links), newest activity first. It is bounded to the most recent
+// shareSessionsRailLimit sessions so a busy project does not transfer and render
+// every historical anonymous session on each chat-rail load/refresh.
 func (r *Repository) ListShareSessionsByProject(ctx context.Context, projectID string) ([]shareSessionProjectRow, error) {
 	var rows []shareSessionProjectRow
 	err := shareSessionProjectQuery(r.db.NewSelect()).
 		Where("asl.project_id = ?", projectID).
 		OrderExpr("COALESCE(ass.last_activity_at, ass.created_at) DESC").
+		Limit(shareSessionsRailLimit).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, apperror.NewDatabase("Database operation failed", err)

@@ -602,7 +602,7 @@ type sharedSessionRow struct {
 	AgentName         string
 	Title             string
 	IsArchived        bool
-	CreatedRelative   string
+	ActivityRelative  string
 }
 
 // chatSharedSessions collects the project's owner-shared sessions (created by
@@ -619,13 +619,17 @@ func (s *Server) chatSharedSessions(ctx context.Context) []sharedSessionRow {
 		if title == "" {
 			title = sess.AgentName
 		}
+		last := sess.CreatedAt
+		if sess.LastActivityAt != nil {
+			last = *sess.LastActivityAt
+		}
 		out = append(out, sharedSessionRow{
 			ID:                sess.ID,
 			AgentDefinitionID: sess.AgentDefinitionID,
 			AgentName:         sess.AgentName,
 			Title:             title,
 			IsArchived:        sess.IsArchived,
-			CreatedRelative:   relTime(sess.CreatedAt.UTC().Format(time.RFC3339)),
+			ActivityRelative:  relTime(last.UTC().Format(time.RFC3339)),
 		})
 	}
 	return out

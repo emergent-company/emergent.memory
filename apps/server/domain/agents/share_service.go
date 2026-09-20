@@ -232,6 +232,23 @@ func (s *ShareService) EnsureProjectAdmin(ctx context.Context, projectID, userID
 	return nil
 }
 
+// EnsureProjectMember returns nil when userID holds any membership role in
+// projectID. Owner read endpoints call this for OAuth/session auth, because
+// RequireProjectScope and RequireAPITokenScopes are no-ops for OAuth sessions
+// and the caller-supplied :projectId would otherwise be trusted — letting a
+// member of one project read another project's shared sessions. API-token
+// requests are already scoped by RequireProjectScope and never pass a userID.
+func (s *ShareService) EnsureProjectMember(ctx context.Context, projectID, userID string) error {
+	role, err := s.apiTokens.GetUserProjectRole(ctx, projectID, userID)
+	if err != nil {
+		return err
+	}
+	if role == "" {
+		return apperror.NewForbidden("project membership required to view share sessions")
+	}
+	return nil
+}
+
 // CreateLink mints a reserved-scope token and creates a share link bound to an
 // agent definition.
 func (s *ShareService) CreateLink(ctx context.Context, projectID, agentDefinitionID, label, createdBy string, in *ShareLinkConfigInput) (*ShareLinkDTO, error) {
@@ -652,8 +669,14 @@ func (s *ShareService) sessionTranscript(ctx context.Context, acpSessionID strin
 }
 
 // ListSessionsByProject returns a project's share sessions (across all of its
-// links), newest activity first, mapped to the owner-facing DTO.
-func (s *ShareService) ListSessionsByProject(ctx context.Context, projectID string) ([]*ShareOwnerSessionDTO, error) {
+// links), newest activity first, mapped to the owner-facing DTO. When userID is
+// non-empty (OAuth/session auth), the caller must be a project member.
+func (s *ShareService) ListSessionsByProject(ctx context.Context, projectID, userID string) ([]*ShareOwnerSessionDTO, error) {
+	if userID != "" {
+		if err := s.EnsureProjectMember(ctx, projectID, userID); err != nil {
+			return nil, err
+		}
+	}
 	rows, err := s.repo.ListShareSessionsByProject(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -668,8 +691,14 @@ func (s *ShareService) ListSessionsByProject(ctx context.Context, projectID stri
 // GetSessionTranscriptByID returns the plain user/assistant transcript for a
 // share session, scoped to a project. The session is loaded by id and its
 // link's project_id must match projectID (404 otherwise), so the caller can
-// never read another project's shared session.
-func (s *ShareService) GetSessionTranscriptByID(ctx context.Context, projectID, sessionID string) ([]ShareTranscriptMessage, error) {
+// never read another project's shared session. When userID is non-empty
+// (OAuth/session auth), the caller must also be a project member.
+func (s *ShareService) GetSessionTranscriptByID(ctx context.Context, projectID, sessionID, userID string) ([]ShareTranscriptMessage, error) {
+	if userID != "" {
+		if err := s.EnsureProjectMember(ctx, projectID, userID); err != nil {
+			return nil, err
+		}
+	}
 	row, err := s.repo.GetShareSessionByProject(ctx, sessionID, projectID)
 	if err != nil {
 		return nil, err

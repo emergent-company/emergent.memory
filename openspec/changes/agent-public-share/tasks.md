@@ -62,6 +62,7 @@
 - [ ] 7.4 Usage analytics UI for share links (server `usage` endpoint exists; no owner-facing analytics UI shipped)
 - [ ] 7.5 Retention jobs: purge `kb.agent_share_*` rows and end-user data after `retention_days` post-activity
 - [ ] 7.6 Unit + gateway tests for each deferred Phase 2 flow (TDD)
+- [x] 7.7 Owner session list + read-only transcript: `GET /api/projects/:projectId/share-sessions` (bounded recent-N listing, newest activity first) and `GET /api/projects/:projectId/share-sessions/:id` (project-scoped transcript, 404 cross-project), each enforcing project membership for OAuth callers; gateway chat rail surfaces shared sessions with a last-activity subtitle; unit tests cover the 404 boundary, transcript-not-queried-on-mismatch, message filtering, and membership denial
 
 ## 8. Phase 3 — embed / branding / cross-device restore
 

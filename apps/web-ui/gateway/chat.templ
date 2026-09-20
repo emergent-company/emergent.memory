@@ -479,7 +479,7 @@ templ sharedRailItem(s sharedSessionRow) {
 	}}
 	@ui.ListRow(ui.ListRowProps{
 		Title:    s.Title,
-		Subtitle: s.CreatedRelative,
+		Subtitle: s.ActivityRelative,
 		Leading:  agentInlineGlyph("", ""),
 		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-base-content/25")},
 		Attrs:    attrs,
