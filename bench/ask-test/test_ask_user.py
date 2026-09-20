@@ -21,6 +21,7 @@ Environment:
 import os
 import sys
 import time
+import uuid
 import subprocess
 import argparse
 import requests
@@ -211,12 +212,25 @@ def setup_project() -> tuple[str, str]:
 # Run helpers
 # ---------------------------------------------------------------------------
 
+# A2A task state → legacy harness status token (lowercase terminal tokens).
+A2A_STATE_TO_STATUS = {
+    "TASK_STATE_INPUT_REQUIRED": "input-required",
+    "TASK_STATE_COMPLETED": "completed",
+    "TASK_STATE_FAILED": "failed",
+}
+
+
 def start_run(project_id: str, agent_id: str) -> str:
-    resp = post(f"/acp/v1/agents/{AGENT_NAME}/runs", {
-        "message": [{"content_type": "text/plain", "content": "Ask me a test question using ask_user with options Yes and No."}],
-        "mode": "async",
+    resp = post("/message:send", {
+        "message": {
+            "messageId": str(uuid.uuid4()),
+            "role": "ROLE_USER",
+            "parts": [{"text": "Ask me a test question using ask_user with options Yes and No."}],
+            "metadata": {"skillId": AGENT_NAME},
+        },
     })
-    run_id = resp.get("id") or resp.get("run_id")
+    task = resp.get("task") or {}
+    run_id = task.get("id")
     print(f"  Run ID: {run_id}")
     return run_id
 
@@ -225,8 +239,9 @@ def poll_run(run_id: str, timeout=120) -> tuple[str, dict]:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            resp = get(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}")
-            status = resp.get("status", "")
+            resp = get(f"/tasks/{run_id}")
+            state = (resp.get("status") or {}).get("state", "")
+            status = A2A_STATE_TO_STATUS.get(state, state)
             if status in ("completed", "failed", "input-required"):
                 return status, resp
         except Exception as e:

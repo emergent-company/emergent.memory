@@ -18,6 +18,7 @@ import os
 import sys
 import json
 import time
+import uuid
 import argparse
 import requests
 from pathlib import Path
@@ -344,22 +345,26 @@ def upload_document(project_id, filepath: Path):
 # Agent run + polling + tool-policy confirm auto-approve
 # ---------------------------------------------------------------------------
 
+# A2A task state → legacy harness status token (lowercase terminal tokens).
+A2A_STATE_TO_STATUS = {
+    "TASK_STATE_INPUT_REQUIRED": "input-required",
+    "TASK_STATE_COMPLETED": "completed",
+    "TASK_STATE_FAILED": "failed",
+}
+
+
 def start_agent_run(project_id, doc_id):
     print(f"  Starting remember-test agent run for doc {doc_id}...")
-    resp = post(f"/acp/v1/agents/{AGENT_NAME}/runs", {
-        "message": [
-            {
-                "content_type": "text/plain",
-                "content": f"Remember document {doc_id}",
-            }
-        ],
-        "mode": "async",
-        "env_vars": {
-            "document_id": doc_id,
-            "project_id": project_id,
+    resp = post("/message:send", {
+        "message": {
+            "messageId": str(uuid.uuid4()),
+            "role": "ROLE_USER",
+            "parts": [{"text": f"Remember document {doc_id}"}],
+            "metadata": {"skillId": AGENT_NAME},
         },
     })
-    run_id = resp.get("id") or resp.get("run_id")
+    task = resp.get("task") or {}
+    run_id = task.get("id")
     print(f"  Run ID: {run_id}")
     return run_id
 
@@ -369,8 +374,9 @@ def poll_run_status(project_id, run_id, timeout=120):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            resp = get(f"/acp/v1/agents/{AGENT_NAME}/runs/{run_id}")
-            status = resp.get("status")
+            resp = get(f"/tasks/{run_id}")
+            state = (resp.get("status") or {}).get("state", "")
+            status = A2A_STATE_TO_STATUS.get(state, state)
             if status in ("completed", "failed", "input-required"):
                 return status, resp
         except Exception as e:
