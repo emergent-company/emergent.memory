@@ -35,6 +35,9 @@ type ApiTokenDTO struct {
 	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
 	IsRevoked   bool       `json:"isRevoked"`
 	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
+	// OwnedByCaller is true when the listed token belongs to the authenticated
+	// caller. It is set by the list endpoints (not ToDTO) and omitted otherwise.
+	OwnedByCaller bool `json:"ownedByCaller,omitempty"`
 }
 
 // CreateApiTokenResponseDTO extends ApiTokenDTO with the full token value (only at creation)

@@ -27,6 +27,25 @@ const (
 	// together with this constant; the CLI tests assert the rendered template and the
 	// cli.yml CI workflow greps the static copies, so drift fails CI.
 	KreuzbergImage = "ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3"
+
+	// MinioImage is the pinned MinIO server image.
+	//
+	// MinIO withdrew the minio/minio repository from Docker Hub (and later
+	// minio/mc too): anonymous pulls now fail with "repository does not exist or
+	// may require 'docker login'", which broke every fresh install and every
+	// `memory server upgrade`. Quay.io is the canonical registry.
+	//
+	// Bumping these constants is the single source of truth for the MinIO
+	// version. The static copies in deploy/self-hosted/*.yml and
+	// install-online.sh MUST be bumped together with them; the CLI tests assert
+	// the rendered template and the cli.yml CI workflow greps the static copies,
+	// so drift fails CI.
+	MinioImage = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+
+	// MinioClientImage is the pinned MinIO `mc` client image used by the
+	// minio-init bucket provisioning service. See MinioImage for the registry
+	// rationale and the sync requirements.
+	MinioClientImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
 )
 
 // GetDockerComposeTemplate returns the docker-compose template with :latest tag.
@@ -134,7 +153,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       - memory
 
   minio:
-    image: minio/minio:latest
+    image: ` + MinioImage + `
     container_name: memory-minio
     restart: unless-stopped
     command: server /data --console-address ':9001'
@@ -154,7 +173,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       - memory
 
   minio-init:
-    image: minio/mc:latest
+    image: ` + MinioClientImage + `
     container_name: memory-minio-init
     depends_on:
       minio:
