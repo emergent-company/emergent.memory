@@ -36,6 +36,27 @@ func TestTypeIconClass(t *testing.T) {
 	}
 }
 
+func TestShareIconName(t *testing.T) {
+	cases := []struct {
+		name string
+		icon string
+		want string
+	}{
+		{"empty", "", ""},
+		{"blank", "   ", ""},
+		{"known bare", "FileText", "lucide--file-text"},
+		{"known iconify", "lucide--git-branch", "lucide--git-branch"},
+		{"unknown ascii", "DefinitelyNotReal", ""},
+		{"emoji glyph", "📝", "📝"},
+		{"symbol glyph", "✓", "✓"},
+	}
+	for _, c := range cases {
+		if got := shareIconName(c.icon); got != c.want {
+			t.Errorf("%s: shareIconName(%q) = %q, want %q", c.name, c.icon, got, c.want)
+		}
+	}
+}
+
 func TestNormalizeIconName(t *testing.T) {
 	cases := []struct {
 		in   string

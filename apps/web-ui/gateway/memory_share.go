@@ -40,6 +40,8 @@ type SharePublicConfig struct {
 	MaxActiveSessionsPerUser int     `json:"maxActiveSessionsPerUser"`
 	MaxConcurrentRuns        int     `json:"maxConcurrentRuns"`
 	WelcomeMessage           string  `json:"welcomeMessage,omitempty"`
+	Icon                     string  `json:"icon,omitempty"`
+	Color                    string  `json:"color,omitempty"`
 }
 
 // ShareSession is the end-user-facing representation of a share session.
@@ -51,10 +53,13 @@ type ShareSession struct {
 	CreatedAt      time.Time  `json:"createdAt"`
 }
 
-// ShareMessage is one plain-text message in a share session transcript.
+// ShareMessage is one message in a share session transcript. The server sends
+// plain text (role + content); the gateway adds an `html` field for assistant
+// messages (sanitized markdown) so the client can render it directly.
 type ShareMessage struct {
-	Role    string `json:"role"`    // "user" | "assistant"
-	Content string `json:"content"` // plain text
+	Role    string `json:"role"`           // "user" | "assistant"
+	Content string `json:"content"`        // plain text
+	HTML    string `json:"html,omitempty"` // sanitized markdown (assistant only)
 }
 
 // ShareSessionDetail is the transcript-bearing response for

@@ -260,7 +260,7 @@
       wrap.className = "chat chat-end memory-rise";
       wrap.innerHTML =
         '<div class="chat-header text-xs text-base-content/50">You</div>' +
-        '<div class="chat-bubble chat-bubble-primary max-w-[85%]"><p class="whitespace-pre-wrap break-words"></p></div>' +
+        '<div class="chat-bubble chat-bubble-primary"><p class="whitespace-pre-wrap break-words"></p></div>' +
         (meta
           ? '<div class="chat-footer mt-1 text-[11px] text-base-content/35 font-mono">' + escapeHTML(meta) + "</div>"
           : "");
@@ -278,7 +278,7 @@
       wrap.innerHTML =
         agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
         '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(name || "Memory") + '</div>' +
-        '<div class="chat-bubble chat-bubble-neutral max-w-[85%]"><div class="memory-md break-words"></div></div>' +
+        '<div class="chat-bubble chat-bubble-neutral"><div class="memory-md break-words"></div></div>' +
         (meta
           ? '<div class="chat-footer mt-1 text-[11px] text-base-content/35 font-mono">' + escapeHTML(meta) + "</div>"
           : "");
@@ -296,7 +296,7 @@
       b.innerHTML =
         agentAvatarHTML(currentAgentUI(), "lucide--bot", "bg-primary/5 text-primary border-primary/10") +
         '<div class="chat-header text-xs text-base-content/50">' + escapeHTML(ctx.currentAgentName()) + '</div>' +
-        '<div class="chat-bubble chat-bubble-neutral max-w-[85%]"><div class="memory-md break-words"></div></div>';
+        '<div class="chat-bubble chat-bubble-neutral"><div class="memory-md break-words"></div></div>';
       ctx.bubble = b;
       ctx.messages.appendChild(b);
       ctx.bubbleHTML = "";

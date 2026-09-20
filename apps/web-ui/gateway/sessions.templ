@@ -225,7 +225,7 @@ templ sessionUserMessage(it TimelineItem) {
 			@ui.IconSpan("lucide--user", "size-5")
 		</div>
 		<div class="chat-header text-xs text-base-content/50">You</div>
-		<div class="chat-bubble chat-bubble-primary max-w-[85%]">
+		<div class="chat-bubble chat-bubble-primary">
 			if text != "" {
 				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(text))</div>
 			}
@@ -246,7 +246,7 @@ templ sessionAssistantBubble(author string, aui agentUI, it TimelineItem) {
 			@agentGlyph(aui.Icon, "size-5", "text-lg")
 		</div>
 		<div class="chat-header text-xs text-base-content/50">{ author }</div>
-		<div class="chat-bubble chat-bubble-neutral max-w-[85%]">
+		<div class="chat-bubble chat-bubble-neutral">
 			{ children... }
 		</div>
 		if footer != "" {
