@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -68,9 +69,9 @@ func propertiesForStrategy(props map[string]any, opts ResponseOpts) map[string]a
 		return nil
 	}
 	if len(opts.Fields) == 0 {
-		return props
+		return truncateProperties(props)
 	}
-	return projectProperties(props, opts.Fields)
+	return truncateProperties(projectProperties(props, opts.Fields))
 }
 
 // projectProperties builds a map containing only the requested property keys.
@@ -103,6 +104,60 @@ func nameForStrategy(props map[string]any, opts ResponseOpts) (string, bool) {
 		return "", false
 	}
 	return s, true
+}
+
+// maxPropertyValueChars bounds a single string property value emitted in an
+// MCP tool result. Full text blobs (e.g. LegalParagraph content) previously
+// blew up agent context (issue #673), so longer strings are truncated with an
+// explicit marker.
+const maxPropertyValueChars = 4000
+
+// truncateProperties returns a copy of props with any string value longer than
+// maxPropertyValueChars truncated, recursing into nested maps and slices. It
+// never mutates the input.
+func truncateProperties(props map[string]any) map[string]any {
+	if len(props) == 0 {
+		return props
+	}
+	out := make(map[string]any, len(props))
+	for k, v := range props {
+		out[k] = truncatePropertyValue(v)
+	}
+	return out
+}
+
+// truncatePropertyValue truncates string values (including strings inside
+// nested []any, []string, and map[string]any) to maxPropertyValueChars runes.
+// Non-string scalars pass through unchanged.
+func truncatePropertyValue(v any) any {
+	switch t := v.(type) {
+	case string:
+		return truncateString(t)
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = truncatePropertyValue(e)
+		}
+		return out
+	case []string:
+		out := make([]string, len(t))
+		for i, e := range t {
+			out[i] = truncateString(e)
+		}
+		return out
+	case map[string]any:
+		return truncateProperties(t)
+	default:
+		return v
+	}
+}
+
+func truncateString(s string) string {
+	runes := []rune(s)
+	if len(runes) <= maxPropertyValueChars {
+		return s
+	}
+	return string(runes[:maxPropertyValueChars]) + "… [truncated " + strconv.Itoa(len(runes)-maxPropertyValueChars) + " chars]"
 }
 
 // slimEntity renders a graph object as a compact map for LLM consumption.
@@ -229,7 +284,7 @@ func slimRelationship(r *graph.GraphRelationshipResponse, opts ResponseOpts) map
 		out["weight"] = *r.Weight
 	}
 	if len(r.Properties) > 0 {
-		out["properties"] = r.Properties
+		out["properties"] = truncateProperties(r.Properties)
 	}
 
 	if opts.Verbose {
