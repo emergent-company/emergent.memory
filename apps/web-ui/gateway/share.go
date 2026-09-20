@@ -271,6 +271,7 @@ func (s *Server) shareExchange(c echo.Context) error {
 	if err != nil {
 		return shareExchangeErrorResponse(c, err)
 	}
+	sanitizeShareConfig(cfg)
 	endUserRef, err := newShareEndUserRef()
 	if err != nil {
 		captureError(err)
@@ -308,7 +309,21 @@ func (s *Server) shareConfig(c echo.Context) error {
 	if err != nil {
 		return shareExchangeErrorResponse(c, err)
 	}
+	sanitizeShareConfig(cfg)
 	return c.JSON(http.StatusOK, cfg)
+}
+
+// sanitizeShareConfig normalizes the display fields of the public config before
+// it is returned to the anonymous client. The icon is the risky field: an
+// unknown ASCII value would otherwise render as a bogus "lucide--…" class with
+// no compiled CSS, so it is resolved against the icon catalog (or dropped to
+// the client's bot fallback) here rather than trusting the client to validate
+// it against a catalog it does not hold.
+func sanitizeShareConfig(cfg *SharePublicConfig) {
+	if cfg == nil {
+		return
+	}
+	cfg.Icon = shareIconName(cfg.Icon)
 }
 
 // --- page -------------------------------------------------------------------

@@ -63,6 +63,13 @@ test.describe('public share page', () => {
     // The exchange config is applied to the header identity.
     await expect(page.locator('#share-agent-name')).toHaveText(AGENT_NAME);
     await expect(page.locator('#share-agent-description')).toHaveText('A helpful assistant.');
+    // The browser title mirrors the exchanged identity ("<agent> — Memory"),
+    // not the generic "Shared chat — Memory" the server renders pre-exchange.
+    await expect(page).toHaveTitle(`${AGENT_NAME} — Memory`);
+    // The configured appearance (icon + color) is applied to the header avatar.
+    const avatar = page.locator('#share-avatar');
+    await expect(avatar.locator('.iconify')).toHaveClass(/lucide--database/);
+    await expect(avatar.locator('div').first()).toHaveCSS('color', 'rgb(37, 99, 235)');
     // The mock seeds one active session for the (anonymous) visitor.
     await expect(
       page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' }),

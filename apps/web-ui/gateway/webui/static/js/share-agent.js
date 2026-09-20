@@ -327,6 +327,11 @@
     var nameEl = document.getElementById("share-agent-name");
     if (nameEl) nameEl.textContent = name;
 
+    // The server renders the generic "Shared chat — Memory" title because the
+    // agent identity only arrives with the exchange; mirror shareDocTitle's
+    // "<agent> — Memory" shape once the config reveals the name.
+    document.title = name ? name + " — Memory" : "Shared chat — Memory";
+
     var descEl = document.getElementById("share-agent-description");
     if (descEl) {
       if (desc) {
