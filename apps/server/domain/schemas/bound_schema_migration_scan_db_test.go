@@ -2,14 +2,17 @@ package schemas_test
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/schemas"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -212,4 +215,24 @@ func TestRollbackMaxObjectsCapsRestoredObjects(t *testing.T) {
 	}
 	assert.Equal(t, 2, restored)
 	assert.Equal(t, 1, stillArchived, "one object must remain un-restored beyond the cap")
+}
+
+// TestRollbackRejectsMaxObjectsWithRestoreTypeRegistry is a pure unit test: the
+// guard runs immediately after the projectID parse and before any
+// repository/graph/DB access, so a Service with nil dependencies is sufficient
+// (no Postgres required — this test does NOT skip).
+func TestRollbackRejectsMaxObjectsWithRestoreTypeRegistry(t *testing.T) {
+	svc := schemas.NewService(nil, nil, slog.Default(), &config.Config{})
+
+	_, err := svc.RollbackSchemaMigration(context.Background(), uuid.NewString(), &schemas.SchemaMigrationRollbackRequest{
+		ToVersion:           "2.0.0",
+		RestoreTypeRegistry: true,
+		MaxObjects:          1,
+	})
+	require.Error(t, err)
+
+	var apErr *apperror.Error
+	require.ErrorAs(t, err, &apErr)
+	assert.Equal(t, http.StatusBadRequest, apErr.HTTPStatus)
+	assert.Contains(t, apErr.Message, "max_objects cannot be combined with restore_type_registry")
 }

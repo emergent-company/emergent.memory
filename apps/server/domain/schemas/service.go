@@ -842,6 +842,15 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
 	}
 
+	// max_objects cannot be combined with restore_type_registry: when the cap is
+	// reached the restore loop stops early (errMaxObjectsReached) and would skip
+	// the registry restore entirely, committing a partial data restore while
+	// silently dropping the all-or-nothing registry restore. Reject the
+	// combination up front so it fails loudly instead.
+	if req.RestoreTypeRegistry && req.MaxObjects > 0 {
+		return nil, apperror.NewBadRequest("max_objects cannot be combined with restore_type_registry: the type registry restore is all-or-nothing and must run in full")
+	}
+
 	// Resolve the pre-migration (from) and migration-target (to) packs up front,
 	// before any writes, so an explicit restore_type_registry request fails
 	// loudly instead of silently no-oping. The resolved packs are then used
