@@ -220,6 +220,12 @@ const server = http.createServer((req, res) => {
       res.statusCode = 410;
       return json(res, { error: { code: "share_link_revoked", message: "share link revoked" } });
     }
+    // A well-known key whose link has the session list disabled, so the
+    // flash-elimination test can drive a deterministic showSessionList:false
+    // exchange without the owner-page round trip.
+    if (key === "no-rail-key") {
+      return json(res, { ...publicConfig(), showSessionList: false });
+    }
     const created = shareLinks.find((l) => l.token === key && !l.revokedAt);
     if (VALID_KEYS.has(key)) {
       return json(res, publicConfig());

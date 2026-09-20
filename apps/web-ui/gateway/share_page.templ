@@ -283,7 +283,7 @@ templ shareFrame(props ShareAgentPageProps) {
 		<div class="share-body">
 			<aside
 				id="share-session-rail"
-				class="share-rail"
+				class="share-rail hidden"
 				data-testid="share-session-rail"
 				aria-label="Your chats"
 			>
@@ -369,13 +369,6 @@ templ shareFrame(props ShareAgentPageProps) {
 				@shareComposer(props)
 			</section>
 		</div>
-		<footer class="border-base-content/5 text-base-content/40 border-t px-4 py-2 text-center text-[11px]">
-			if props.RequireEmail && props.UserEmail != "" {
-				Signed in as { props.UserEmail } · this chat is visible to the link's owner.
-			} else {
-				This chat is visible to the link's owner.
-			}
-		</footer>
 	</div>
 }
 
