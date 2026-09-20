@@ -10,7 +10,8 @@ All test-related documentation including E2E tests, coverage reports, and testin
 
 ## Key Documents
 
+- [Test Summary by App](./test-summary.md) - Test suites grouped by app, with environments
 - [AI Agent Guide](./AI_AGENT_GUIDE.md) - Guide for AI agents working with tests
 - [Testing Guide](./TESTING_GUIDE.md) - General testing guidelines
 - [LLM Provider Comparison](./LLM_PROVIDER_COMPARISON.md) - LLM extraction performance tests and findings
-- [Test Commands Reference](./TEST_COMMANDS_REFERENCE.md) - Quick reference for test commands
+- [Test Commands Reference](./TEST_COMMANDS_REFERENCE.md) - Quick reference for test commands (stale: NestJS/nx era)

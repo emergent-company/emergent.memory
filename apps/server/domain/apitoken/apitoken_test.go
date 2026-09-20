@@ -307,6 +307,7 @@ func TestValidApiTokenScopes(t *testing.T) {
 		"admin",
 		"admin:all",
 		"mcp:agent-call",
+		"share:agent-chat",
 	}
 	if len(ValidApiTokenScopes) != len(expected) {
 		t.Errorf("ValidApiTokenScopes has %d items, want %d", len(ValidApiTokenScopes), len(expected))
@@ -349,6 +350,44 @@ func TestUserFacingTokenPathsRejectReservedAgentCallScope(t *testing.T) {
 			err := call()
 			if err == nil {
 				t.Fatal("expected rejection of the reserved agent-call scope")
+			}
+			if !strings.Contains(err.Error(), "reserved") {
+				t.Fatalf("error = %q, want it to mention reserved", err.Error())
+			}
+		})
+	}
+}
+
+// The share:agent-chat marker must be reserved to the internal share mint path:
+// all user-facing token create/update entry points reject it. Non-DB.
+func TestUserFacingTokenPathsRejectReservedShareChatScope(t *testing.T) {
+	svc := &Service{}
+	scopes := []string{shareAgentChatScope}
+
+	cases := map[string]func() error{
+		"Create": func() error {
+			_, err := svc.Create(context.Background(), "", "", "test", scopes)
+			return err
+		},
+		"CreateAccountToken": func() error {
+			_, err := svc.CreateAccountToken(context.Background(), "", "test", scopes)
+			return err
+		},
+		"UpdateScopes": func() error {
+			_, err := svc.UpdateScopes(context.Background(), "tok", "", "", scopes)
+			return err
+		},
+		"UpdateAccountTokenScopes": func() error {
+			_, err := svc.UpdateAccountTokenScopes(context.Background(), "tok", "", scopes)
+			return err
+		},
+	}
+
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := call()
+			if err == nil {
+				t.Fatal("expected rejection of the reserved share:agent-chat scope")
 			}
 			if !strings.Contains(err.Error(), "reserved") {
 				t.Fatalf("error = %q, want it to mention reserved", err.Error())
