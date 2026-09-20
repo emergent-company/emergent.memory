@@ -630,6 +630,31 @@ func validateStreamRequest(req *StreamRequest) error {
 	return nil
 }
 
+// startKeepalive emits SSE comment frames (": ping") on a fixed interval for the
+// lifetime of the stream. Long-lived chat streams can sit idle for minutes while
+// a tool call or model generation is in flight; periodic comment frames keep
+// every hop (browser → gateway → Traefik → server) from tripping an idle timeout.
+// The goroutine exits when ctx is done (client disconnect), a write fails, or the
+// returned stop func is called.
+func startKeepalive(ctx context.Context, w *sse.Writer) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		t := time.NewTicker(25 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := w.WriteComment("ping"); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	return cancel
+}
+
 // StreamChat handles POST /api/chat/stream
 // This is the SSE streaming endpoint for chat completions
 // @Summary      Stream chat completion
@@ -794,6 +819,11 @@ func (h *Handler) StreamChat(c echo.Context) error {
 	if err := sseWriter.Start(); err != nil {
 		return apperror.ErrInternal.WithMessage("failed to start SSE stream")
 	}
+
+	// Keep the stream alive across long idle gaps (slow tool calls, model busy,
+	// approval pauses) so no intermediate proxy times out the connection.
+	stopKeepalive := startKeepalive(ctx, sseWriter)
+	defer stopKeepalive()
 
 	// Emit meta event first
 	metaEvent := sse.NewMetaEvent(conv.ID.String())
