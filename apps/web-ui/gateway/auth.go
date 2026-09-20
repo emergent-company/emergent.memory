@@ -615,6 +615,12 @@ func publicAuthPath(p string) bool {
 	if strings.HasPrefix(p, "/internal/") {
 		return true
 	}
+	// Public agent-share surface: anonymous end users load the page and call the
+	// cookie-authenticated /share/api/* endpoints. Scoped to exactly /share/ —
+	// no other path is widened.
+	if strings.HasPrefix(p, "/share/") {
+		return true
+	}
 	switch p {
 	case "/auth/login", "/auth/start", "/auth/add", "/auth/callback", "/auth/logout",
 		"/auth/switch", "/api/setup", "/api/health",

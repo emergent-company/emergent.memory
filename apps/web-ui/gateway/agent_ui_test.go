@@ -1886,9 +1886,10 @@ func TestApplyAgentToolsSectionGroups(t *testing.T) {
 	})
 }
 
-// TestRenderAgentSettingsToolGroups covers the capability-group panel: a
-// collapsible header per group with its enable switch + policy select, the MCP
-// server nested under the group that owns its tools, inheritance hints on rows
+// TestRenderAgentSettingsToolGroups covers the source-first capability panel:
+// the top-level "Built-in" section, a collapsible header per capability group
+// with its enable switch + policy select, the group's member tools as direct
+// rows (no nested "builtin" server sub-group), inheritance hints on rows
 // without an override and the explicit value on rows with one, an "Other" group
 // for uncovered tools, and no header for a group with no member tools.
 func TestRenderAgentSettingsToolGroups(t *testing.T) {
@@ -1905,7 +1906,7 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 			},
 		},
 		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
-		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 3, Tools: []MCPTool{
+		MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: 3, Tools: []MCPTool{
 			{ToolName: "entity-create", Description: "create an object"},
 			{ToolName: "entity-delete", Description: "delete an object"},
 			{ToolName: "web_search", Description: "search the web"},
@@ -1913,6 +1914,10 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 	}
 	html := renderHTML(t, AgentSettingsPage(data))
 	for _, want := range []string{
+		// Built-in is the top-level source section wrapping the capability groups.
+		`data-testid="tool-source-builtin"`,
+		`data-testid="tool-source-header-builtin"`,
+		">Built-in</span>",
 		"Graph · Write", "Create, update, or delete graph objects.",
 		`data-testid="tool-group-header-graph-write"`,
 		`data-tool-group="graph-write"`,
@@ -1927,7 +1932,6 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		`type="checkbox" name="tool" value="entity-delete"`,
 		"Override · Ask",               // entity-create has an explicit entry
 		"Inherits Graph · Write · Ask", // entity-delete has none
-		"builtin",                      // MCP server nested in the group that owns it
 		"Web", `name="groupPolicy.web"`,
 		`type="checkbox" name="tool" value="web_search"`,
 		`data-testid="tool-group-other"`,
@@ -1936,6 +1940,14 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("grouped tools page missing %q", want)
 		}
+	}
+	// the builtin server is no longer a nested sub-group: its tools render as
+	// direct rows inside their capability group.
+	if strings.Contains(html, ">builtin</span>") {
+		t.Error("the nested builtin server sub-group must be gone")
+	}
+	if strings.Contains(html, `data-testid="tool-source-server-builtin"`) {
+		t.Error("the builtin server must not render as an external source block")
 	}
 	// the policy select reflects the stored group policy (scoped to each select)
 	if !selectShowsValue(html, "groupPolicy.graph-write", "ask") {
@@ -1960,7 +1972,7 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		Section: "tools",
 		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"web_search"}},
 		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
-		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 1, Tools: []MCPTool{
+		MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: 1, Tools: []MCPTool{
 			{ToolName: "web_search", Description: "search the web"},
 		}}},
 	}
@@ -1971,7 +1983,7 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		t.Error("fallback source-only grouping should still render server tools")
 	}
 	if strings.Contains(fh, `data-testid="tool-groups"`) {
-		t.Error("fallback must not render the capability-group wrapper")
+		t.Error("fallback must not render the source-first wrapper")
 	}
 }
 
@@ -2080,8 +2092,8 @@ func TestSanitizeAgentWriteDropsToolGroups(t *testing.T) {
 // full-membership toolGroups: a fully disabled group still renders with its
 // switch off and every member row unchecked (so it can be switched on), each
 // member renders exactly once and never leaks into Other, a banned-only member
-// still appears in its group, an uncovered relay tool lands in Other, and the
-// inheritance hint stays visible at all widths.
+// still appears in its group, a relay tool renders in its own top-level source
+// block (not Other), and the inheritance hint stays visible at all widths.
 func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
 	data := agentSettingsData{
 		Section: "tools",
@@ -2095,7 +2107,7 @@ func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
 			},
 		},
 		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
-		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 3, Tools: []MCPTool{
+		MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: 3, Tools: []MCPTool{
 			{ToolName: "entity-create"},
 			{ToolName: "entity-delete"},
 			{ToolName: "web_search"},
@@ -2132,14 +2144,24 @@ func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
 		}
 	}
 
-	// the uncovered relay tool lands in Other, checked, so it is never lost
-	if !strings.Contains(html, `data-testid="tool-group-other"`) {
-		t.Error("uncovered tools should render the Other group")
+	// the relay tool renders in its own top-level remote source block, checked,
+	// so it is never lost — and never duplicates into Other.
+	if !strings.Contains(html, `data-testid="tool-source-relay-mac-ada"`) {
+		t.Error("relay nodes should render as a top-level source block")
+	}
+	if !strings.Contains(html, "remote") {
+		t.Error("relay source block should carry the remote badge")
+	}
+	if strings.Contains(html, `data-testid="tool-group-other"`) {
+		t.Error("all tools are covered, Other must not render")
 	}
 	// Pins ToggleInput's canonical attribute order (type before name, class
 	// before checked).
 	if !strings.Contains(html, `type="checkbox" name="tool" value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`) {
-		t.Error("uncovered relay tool should appear checked in Other")
+		t.Error("relay tool should appear checked in its source block")
+	}
+	if got := strings.Count(html, `value="mac-ada_notes_search"`); got != 1 {
+		t.Errorf("relay tool rendered %d times, want 1", got)
 	}
 
 	// inheritance stays visible at all widths: compact form alongside the full one
@@ -2148,6 +2170,94 @@ func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
 	}
 	if !strings.Contains(html, "Inherits Graph · Write · Default") {
 		t.Error("full inheritance hint should render for inherited rows")
+	}
+}
+
+// TestRenderAgentSettingsToolSourceSiblings covers the source-first hierarchy:
+// the top-level Built-in section (capability groups with direct rows) is a
+// sibling of one block per external MCP server and per relay node. External
+// server tools render in their own block with per-tool policies, relay tools
+// render enable-only with the remote badge, builtin server tools stay inside
+// their capability groups, and the uncovered fallback stays reachable.
+func TestRenderAgentSettingsToolSourceSiblings(t *testing.T) {
+	data := agentSettingsData{
+		Section: "tools",
+		Agent: &AgentDefinition{
+			ID: "a1", Name: "diane",
+			Tools: []string{"entity-create", "github_get_issue", "mac-ada_notes_search", "ha_get_state"},
+			ToolGroups: []ToolGroup{
+				{ID: "graph-write", Label: "Graph · Write", Enabled: true, Tools: []string{"entity-create", "entity-delete"}},
+				{ID: "search", Label: "Search", Tools: []string{"web_search"}},
+				// External and relay tools land in the display-only "other" group
+				// server-side; they must move to their own top-level source blocks,
+				// so this group renders no builtin rows and is dropped.
+				{ID: "other", Label: "Other", Tools: []string{"github_get_issue", "mac-ada_notes_search"}},
+			},
+		},
+		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{
+			{Name: "builtin", Type: "builtin", ToolCount: 3, Tools: []MCPTool{
+				{ToolName: "entity-create", Description: "create an object"},
+				{ToolName: "entity-delete", Description: "delete an object"},
+				{ToolName: "web_search", Description: "search the web"},
+			}},
+			{Name: "github-mcp", Type: "stdio", ToolCount: 2, Tools: []MCPTool{
+				{ToolName: "github_get_issue", Description: "fetch an issue"},
+				{ToolName: "github_list_repos", Description: "list repos"},
+			}},
+		},
+		RelayNodes: []relayNode{{Session: RelaySession{InstanceID: "mac-ada", ToolCount: 1}, Tools: []RelayTool{{Name: "notes_search", Description: "Search Apple Notes"}}}},
+	}
+	html := renderHTML(t, AgentSettingsPage(data))
+
+	for _, want := range []string{
+		// Built-in section wraps the capability groups.
+		`data-testid="tool-source-builtin"`,
+		`data-testid="tool-group-header-graph-write"`,
+		`data-testid="tool-group-header-search"`,
+		`name="groupPolicy.graph-write"`,
+		`type="checkbox" name="tool" value="entity-create" class="toggle toggle-sm shrink-0" checked`,
+		`type="checkbox" name="tool" value="entity-delete"`,
+		// External MCP server: a sibling block with per-tool policy selects.
+		`data-testid="tool-source-server-github-mcp"`,
+		"fetch an issue",
+		`name="toolPolicy.github_get_issue"`,
+		`type="checkbox" name="tool" value="github_get_issue" class="toggle toggle-sm shrink-0" checked`,
+		`type="checkbox" name="tool" value="github_list_repos"`,
+		// Relay node: a sibling block with the remote badge, no per-tool policy.
+		`data-testid="tool-source-relay-mac-ada"`,
+		"remote",
+		`type="checkbox" name="tool" value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`,
+		// Uncovered fallback stays reachable for tools no source offers.
+		`data-testid="tool-group-other"`,
+		`type="checkbox" name="tool" value="ha_get_state" class="toggle toggle-sm shrink-0" checked`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("source-first picker missing %q", want)
+		}
+	}
+
+	// the builtin server is the Built-in section, never a source block of its own
+	if strings.Contains(html, `data-testid="tool-source-server-builtin"`) {
+		t.Error("the builtin server must not render as an external source block")
+	}
+	// the display-only "other" group is dropped: its members moved to sources
+	if strings.Contains(html, `data-tool-group="other"`) {
+		t.Error("an external-only capability group must not render an empty header")
+	}
+	// relay tools never carry a per-tool policy select (allow-only)
+	if strings.Contains(html, `name="toolPolicy.mac-ada_notes_search"`) {
+		t.Error("relay source block must not render per-tool policy selects")
+	}
+	// Built-in precedes the external source blocks.
+	if bi, si := strings.Index(html, `data-testid="tool-source-builtin"`), strings.Index(html, `data-testid="tool-source-server-github-mcp"`); bi < 0 || si < 0 || bi > si {
+		t.Error("the Built-in section must precede external source blocks")
+	}
+	// every tool renders exactly once across the whole picker
+	for _, name := range []string{"entity-create", "entity-delete", "web_search", "github_get_issue", "github_list_repos", "mac-ada_notes_search", "ha_get_state"} {
+		if got := strings.Count(html, `value="`+name+`"`); got != 1 {
+			t.Errorf("%s rendered %d times, want exactly 1", name, got)
+		}
 	}
 }
 
@@ -2293,25 +2403,37 @@ func TestGoldenToolGroupsFixtureContract(t *testing.T) {
 			ToolGroups: groups,
 		},
 		Agents:     []AgentDefinitionSummary{{ID: "a1", Name: "fixture-agent"}},
-		MCPServers: []MCPServer{{Name: "builtin", ToolCount: len(serverTools), Tools: serverTools}},
+		MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: len(serverTools), Tools: serverTools}},
 		RelayNodes: relayNodes,
 	}
 	html := renderHTML(t, AgentSettingsPage(data))
 
-	// every fixture group renders a header (no group dropped) and the relay-style
-	// member renders inside its group's relay sub-group.
+	// Every fixture group with at least one builtin member renders a header (no
+	// builtin group dropped); the relay-only "other" group has no builtin rows
+	// and is not rendered — its member moves to the top-level relay source block.
+	rendersBuiltin := func(g ToolGroup) bool {
+		for _, name := range g.Tools {
+			if _, _, isRelay := strings.Cut(name, "_"); !isRelay {
+				return true
+			}
+		}
+		return false
+	}
 	for _, g := range groups {
+		if !rendersBuiltin(g) {
+			continue
+		}
 		if !strings.Contains(html, `data-testid="tool-group-header-`+g.ID+`"`) {
 			t.Errorf("group %q header is missing from the panel", g.ID)
 		}
 	}
-	if !strings.Contains(html, "relay1") {
-		t.Error("relay-style group member should render under its relay node sub-group")
+	if !strings.Contains(html, `data-testid="tool-source-relay-relay1"`) {
+		t.Error("relay-style member should render in its own top-level relay source block")
 	}
 	// Pins ToggleInput's canonical attribute order (type before name, class
 	// before checked).
 	if !strings.Contains(html, `type="checkbox" name="tool" value="relay1_reminders_list" class="toggle toggle-sm shrink-0" checked`) {
-		t.Error("relay-style member should render checked in its relay sub-group")
+		t.Error("relay-style member should render checked in its relay source block")
 	}
 
 	// (a) a disabled group still renders its rows unchecked and offers the

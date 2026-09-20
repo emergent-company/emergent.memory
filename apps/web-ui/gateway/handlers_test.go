@@ -2751,3 +2751,58 @@ func (f *fakeMemory) RegenerateAccountAPIToken(ctx context.Context, tokenID stri
 	out.Token = secret
 	return &out, nil
 }
+
+// --- public agent-share stubs (share handlers are not exercised by these
+// tests; the stubs satisfy MemoryBackend) ---
+
+func (f *fakeMemory) SharePublicConfig(ctx context.Context, token string) (*SharePublicConfig, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ShareListSessions(ctx context.Context, token, endUserRef, filter string) ([]ShareSession, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ShareGetSession(ctx context.Context, token, endUserRef, id string) (*ShareSessionDetail, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ShareCreateSession(ctx context.Context, token, endUserRef string, in ShareCreateSessionInput) (*ShareSession, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ShareArchiveSession(ctx context.Context, token, endUserRef, id string) error {
+	return errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ShareListQuestions(ctx context.Context, token, endUserRef, sessionID string) ([]ShareQuestion, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ShareApprove(ctx context.Context, token, endUserRef, sessionID, questionID string, in ShareApproveInput) error {
+	return errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ShareChatStream(ctx context.Context, token, endUserRef string, in ShareStreamInput) (io.ReadCloser, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ListShareLinks(ctx context.Context, agentDefinitionID string) ([]ShareLink, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) CreateShareLink(ctx context.Context, agentDefinitionID string, in ShareLinkCreateInput) (*ShareLink, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) RevokeShareLink(ctx context.Context, linkID string) error {
+	return errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) RotateShareLink(ctx context.Context, linkID string) (*ShareLink, error) {
+	return nil, errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) RevealShareLink(ctx context.Context, linkID string) (string, error) {
+	return "", errors.New("share: not implemented")
+}

@@ -802,55 +802,76 @@ func toolRow(agent *AgentDefinition, name, description, groupLabel, groupPolicy 
 	}
 }
 
-// toolRows resolves names with their descriptions into picker rows.
-func toolRows(agent *AgentDefinition, names []string, descriptions map[string]string, groupLabel, groupPolicy string) []agentToolRow {
-	rows := make([]agentToolRow, 0, len(names))
-	for _, name := range names {
-		rows = append(rows, toolRow(agent, name, descriptions[name], groupLabel, groupPolicy))
-	}
-	return rows
-}
-
-// anyChecked reports whether any name is currently allowed on the agent.
-func anyChecked(agent *AgentDefinition, names []string) bool {
-	return slices.ContainsFunc(names, func(name string) bool { return containsString(agent.Tools, name) })
-}
-
-// toolGroupView is the resolved view of one capability group in the grouped
-// picker: the server-supplied group, its stored policy, whether any member is
-// currently enabled, and the nested source sub-groups plus direct member rows
-// that make up its body.
+// toolGroupView is the resolved view of one capability group inside the
+// Built-in section: the server-supplied group, its stored policy, whether any
+// member is currently enabled, and the native member rows that make up its
+// body. Tools owned by an external MCP server or a relay node are excluded
+// here; they render in their own top-level source block.
 type toolGroupView struct {
-	Group        ToolGroup
-	Policy       string // "inherit" | "allow" | "ask" | "deny"
-	Enabled      bool
-	Open         bool
-	Count        int
-	ServerGroups []agentToolGroupProps
-	RelayGroups  []agentToolGroupProps
-	Rows         []agentToolRow
+	Group   ToolGroup
+	Policy  string // "inherit" | "allow" | "ask" | "deny"
+	Enabled bool
+	Open    bool
+	Count   int
+	Rows    []agentToolRow
 }
 
-// buildToolGroupViews resolves the server-supplied tool groups into render
-// models. ToolGroup.Tools is the group's FULL membership — the project catalog
-// for that group unioned with the agent's allowed and banned tools — so it
-// drives the rows, the enable switch, and the enable/disable fan-out even when
-// every member is currently disabled. A group with no member tools is dropped
-// so the panel never renders an empty header.
+// toolPickerView is the fully resolved source-first model for the Tools picker:
+// the Built-in section's capability groups, the external MCP-server and
+// relay-node sibling source groups, and the uncovered fallback rows.
+type toolPickerView struct {
+	BuiltinGroups []toolGroupView
+	Servers       []agentToolGroupProps
+	Relays        []agentToolGroupProps
+	Other         []agentToolRow
+}
+
+// buildToolPickerView resolves the source-first Tools picker model: the
+// Built-in section's capability groups, the external MCP-server and relay-node
+// sibling source groups, and the uncovered fallback rows. Built-in is the top
+// dimension; capability groups live inside it and their native members render
+// as direct rows (there is no nested per-source sub-group). A tool offered by a
+// non-builtin MCP server or a relay node renders in that source's own top-level
+// block, never inside a capability group. Every tool renders at most once.
 //
-// Each member renders exactly once: a tool offered by several sources is
-// claimed by the first source (server order, then relay order) and any member
-// no source offers renders as a direct row. This prevents duplicate
-// input[name=tool] values inside one group and keeps a group member out of the
-// "Other" fallback.
-func buildToolGroupViews(data agentSettingsData, groups []ToolGroup) []toolGroupView {
+// ToolGroup.Tools is the group's FULL membership — the project catalog for that
+// group unioned with the agent's allowed and banned tools — so it still drives
+// the enable switch and its server-side enable/disable fan-out even when every
+// member is currently disabled. A group that would render an empty body (all of
+// its members are external) is dropped so the panel never shows an empty header.
+func buildToolPickerView(data agentSettingsData) toolPickerView {
 	agent := data.Agent
-	if agent == nil || len(groups) == 0 {
-		return nil
+	if agent == nil || len(agent.ToolGroups) == 0 {
+		return toolPickerView{}
 	}
 	descriptions := catalogToolDescriptions(data)
-	views := make([]toolGroupView, 0, len(groups))
-	for _, g := range groups {
+	relays := relayPickerGroups(data.RelayNodes)
+
+	// Tools owned by external sources (non-builtin MCP servers + relay nodes)
+	// render in their own top-level block, so a capability group's direct rows
+	// must never claim them.
+	externalOwned := map[string]bool{}
+	for _, srv := range data.MCPServers {
+		if mcpServerIsBuiltin(srv) {
+			continue
+		}
+		for _, t := range srv.Tools {
+			if t.ToolName != "" {
+				externalOwned[t.ToolName] = true
+			}
+		}
+	}
+	for _, node := range relays {
+		for _, name := range node.agentToolNames() {
+			externalOwned[name] = true
+		}
+	}
+
+	claimed := map[string]bool{}
+	var view toolPickerView
+
+	// 1. Built-in capability groups.
+	for _, g := range agent.ToolGroups {
 		if len(g.Tools) == 0 {
 			continue
 		}
@@ -864,113 +885,145 @@ func buildToolGroupViews(data agentSettingsData, groups []ToolGroup) []toolGroup
 		for _, t := range g.Tools {
 			inGroup[t] = true
 		}
-		rendered := make(map[string]bool, len(g.Tools))
-		enabled := false
-		for _, t := range g.Tools {
-			if !isDelegationTool(t) && containsString(agent.Tools, t) {
-				enabled = true
-				break
+		var rows []agentToolRow
+		// Builtin server tools that belong to the group, in server order.
+		for _, srv := range data.MCPServers {
+			if !mcpServerIsBuiltin(srv) {
+				continue
+			}
+			for _, t := range srv.Tools {
+				if !inGroup[t.ToolName] || claimed[t.ToolName] {
+					continue
+				}
+				claimed[t.ToolName] = true
+				rows = append(rows, toolRow(agent, t.ToolName, t.Description, g.Label, policy))
 			}
 		}
-		gv := toolGroupView{
+		// Native members no source offers render inline. Delegation-managed
+		// tools and externally owned tools are excluded.
+		for _, t := range g.Tools {
+			if isDelegationTool(t) || claimed[t] || externalOwned[t] {
+				continue
+			}
+			claimed[t] = true
+			rows = append(rows, toolRow(agent, t, descriptions[t], g.Label, policy))
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		view.BuiltinGroups = append(view.BuiltinGroups, toolGroupView{
 			Group:   g,
 			Policy:  groupPolicyFormValue(policy),
-			Enabled: enabled,
-			Open:    enabled,
-			Count:   len(g.Tools),
-		}
-		for _, srv := range data.MCPServers {
-			names := claimedServerToolNames(srv.Tools, inGroup, rendered)
-			if len(names) == 0 {
-				continue
-			}
-			markRendered(rendered, names)
-			gv.ServerGroups = append(gv.ServerGroups, agentToolGroupProps{
-				BorderClass:     "border-base-content/10 bg-base-100/60",
-				BodyBorderClass: "border-base-content/10",
-				Icon:            "lucide--server",
-				IconClass:       "text-base-content/40",
-				Title:           srv.Name,
-				Count:           len(names),
-				Open:            anyChecked(agent, names),
-				Tools:           toolRows(agent, names, descriptions, g.Label, policy),
-				// External MCP-server tools (the "other" group) get enable/disable
-				// only; built-in capability groups keep per-tool policy controls.
-				WithPolicy: g.ID != toolGroupOtherID,
-			})
-		}
-		for _, node := range relayPickerGroups(data.RelayNodes) {
-			names := claimedRelayToolNames(node, inGroup, rendered)
-			if len(names) == 0 {
-				continue
-			}
-			markRendered(rendered, names)
-			gv.RelayGroups = append(gv.RelayGroups, agentToolGroupProps{
-				BorderClass:     "border-primary/25 bg-primary/[0.04]",
-				BodyBorderClass: "border-primary/15",
-				Icon:            "lucide--radio",
-				IconClass:       "text-primary/60",
-				Title:           node.Session.InstanceID,
-				TitleMono:       true,
-				RemoteBadge:     true,
-				Count:           len(names),
-				Open:            anyChecked(agent, names),
-				Tools:           toolRows(agent, names, descriptions, g.Label, policy),
-				// Relay-node tools get enable/disable only, no policy control
-				// (deferred non-goal).
-				WithPolicy: false,
-			})
-		}
-		// Direct member rows: group members no server or relay offers (native
-		// tools) still belong to the group and render inline. A member is only
-		// skipped here when an earlier source already claimed it, or when it is
-		// delegation-managed (never rendered inside a capability group).
-		for _, t := range g.Tools {
-			if isDelegationTool(t) {
-				continue
-			}
-			if rendered[t] {
-				continue
-			}
-			rendered[t] = true
-			gv.Rows = append(gv.Rows, toolRow(agent, t, descriptions[t], g.Label, policy))
-		}
-		views = append(views, gv)
+			Enabled: g.Enabled,
+			Open:    g.Enabled,
+			Count:   len(rows),
+			Rows:    rows,
+		})
 	}
-	return views
+
+	// 2. External MCP servers: top-level siblings of Built-in, each listing its
+	// own tools directly with per-tool policy controls.
+	for _, srv := range data.MCPServers {
+		if mcpServerIsBuiltin(srv) {
+			continue
+		}
+		rows := unclaimedServerRows(srv, agent, claimed)
+		if len(rows) == 0 {
+			continue
+		}
+		view.Servers = append(view.Servers, agentToolGroupProps{
+			BorderClass:     "border-base-content/10 bg-base-200/40",
+			BodyBorderClass: "border-base-content/10",
+			Icon:            "lucide--server",
+			IconClass:       "text-base-content/40",
+			Title:           srv.Name,
+			TestID:          "tool-source-server-" + srv.Name,
+			Count:           len(rows),
+			Open:            rowsInUse(rows),
+			Tools:           rows,
+			WithPolicy:      true,
+		})
+	}
+
+	// 3. Relay nodes: top-level siblings, enable-only, carrying the remote badge.
+	for _, node := range relays {
+		rows := unclaimedRelayRows(node, agent, claimed)
+		if len(rows) == 0 {
+			continue
+		}
+		view.Relays = append(view.Relays, agentToolGroupProps{
+			BorderClass:     "border-primary/25 bg-primary/[0.04]",
+			BodyBorderClass: "border-primary/15",
+			Icon:            "lucide--radio",
+			IconClass:       "text-primary/60",
+			Title:           node.Session.InstanceID,
+			TitleMono:       true,
+			RemoteBadge:     true,
+			TestID:          "tool-source-relay-" + node.Session.InstanceID,
+			Count:           len(rows),
+			Open:            rowsInUse(rows),
+			Tools:           rows,
+		})
+	}
+
+	// 4. Uncovered fallback: kept so a taxonomy gap never drops a tool on save.
+	view.Other = uncoveredRows(data, claimed, descriptions)
+	return view
 }
 
-// claimedServerToolNames returns a registry server's tool names that belong to
-// the group and have not been claimed by an earlier source, in server order.
-func claimedServerToolNames(tools []MCPTool, members, rendered map[string]bool) []string {
-	var names []string
-	for _, t := range tools {
-		if members[t.ToolName] && !rendered[t.ToolName] {
-			names = append(names, t.ToolName)
+// unclaimedServerRows resolves a registry server's tools into rows, skipping
+// names an earlier section already rendered and marking the rest as claimed.
+func unclaimedServerRows(srv MCPServer, agent *AgentDefinition, claimed map[string]bool) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(srv.Tools))
+	for _, t := range srv.Tools {
+		if t.ToolName == "" || claimed[t.ToolName] {
+			continue
 		}
+		claimed[t.ToolName] = true
+		rows = append(rows, agentToolRow{
+			Name:        t.ToolName,
+			Description: t.Description,
+			Checked:     containsString(agent.Tools, t.ToolName),
+			PolicyValue: toolPolicyValue(agent, t.ToolName),
+		})
 	}
-	return names
+	return rows
 }
 
-// claimedRelayToolNames is claimedServerToolNames for a relay node's
-// agent-facing <instance>_<tool> names.
-func claimedRelayToolNames(node relayNode, members, rendered map[string]bool) []string {
-	var names []string
+// unclaimedRelayRows is unclaimedServerRows for a relay node's agent-facing
+// <instance>_<tool> names.
+func unclaimedRelayRows(node relayNode, agent *AgentDefinition, claimed map[string]bool) []agentToolRow {
+	rows := make([]agentToolRow, 0, len(node.Tools))
 	for _, t := range node.Tools {
 		name := relayAgentToolName(node.Session.InstanceID, t.Name)
-		if members[name] && !rendered[name] {
-			names = append(names, name)
+		if claimed[name] {
+			continue
 		}
+		claimed[name] = true
+		rows = append(rows, agentToolRow{
+			Name:        name,
+			Description: t.Description,
+			Checked:     containsString(agent.Tools, name),
+			PolicyValue: toolPolicyValue(agent, name),
+		})
 	}
-	return names
+	return rows
 }
 
-// markRendered records names as claimed so no later source or direct row
-// repeats them inside the same group.
-func markRendered(rendered map[string]bool, names []string) {
-	for _, n := range names {
-		rendered[n] = true
+// rowsInUse reports whether any row's tool is currently whitelisted, so a
+// source group with active picks defaults open.
+func rowsInUse(rows []agentToolRow) bool {
+	return slices.ContainsFunc(rows, func(r agentToolRow) bool { return r.Checked })
+}
+
+// builtinToolCount sums the rendered tool rows across the Built-in section's
+// capability groups.
+func builtinToolCount(groups []toolGroupView) int {
+	total := 0
+	for _, g := range groups {
+		total += len(g.Rows)
 	}
+	return total
 }
 
 // catalogToolDescriptions maps every catalog tool name to its description, so
@@ -998,38 +1051,31 @@ func catalogToolDescriptions(data agentSettingsData) map[string]string {
 	return descriptions
 }
 
-// groupedOtherRows returns rows for tools the rendered groups do not cover —
-// the agent's allowed and banned tools plus any catalog tool (registry server
-// or relay node) whose capability group is missing — so a taxonomy gap can
-// never drop a tool from the picker on save. A tool that any group lists as a
-// member is covered and stays out of Other. Delegation-managed tools are
-// excluded (the delegation toggle owns them).
-func groupedOtherRows(data agentSettingsData, views []toolGroupView) []agentToolRow {
+// uncoveredRows returns rows for tools no rendered section covers — the
+// agent's allowed and banned tools plus any builtin catalog tool whose
+// capability group is missing — so a taxonomy gap can never drop a tool from
+// the picker on save. Tools offered by a server or relay already rendered in
+// their own source block are claimed and stay out of Other, as are
+// delegation-managed tools (the delegation toggle owns them).
+func uncoveredRows(data agentSettingsData, claimed map[string]bool, descriptions map[string]string) []agentToolRow {
 	agent := data.Agent
 	if agent == nil {
 		return nil
 	}
-	covered := map[string]bool{}
-	for _, gv := range views {
-		for _, t := range gv.Group.Tools {
-			covered[t] = true
-		}
-	}
-	descriptions := catalogToolDescriptions(data)
 	names := slices.Clone(agent.Tools)
 	names = append(names, agent.BannedTools...)
 	for _, srv := range data.MCPServers {
+		if !mcpServerIsBuiltin(srv) {
+			continue
+		}
 		for _, t := range srv.Tools {
 			names = append(names, t.ToolName)
 		}
 	}
-	for _, node := range data.RelayNodes {
-		names = append(names, node.agentToolNames()...)
-	}
 	seen := map[string]bool{}
 	var rows []agentToolRow
 	for _, name := range names {
-		if name == "" || covered[name] || seen[name] || isDelegationTool(name) {
+		if name == "" || claimed[name] || seen[name] || isDelegationTool(name) {
 			continue
 		}
 		seen[name] = true
