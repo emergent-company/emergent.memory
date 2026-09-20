@@ -130,17 +130,17 @@ Two shell normalizations are intentional and documented, not regressions:
 
 ### Requirement: Detail-page headers render through nav.PageHeading
 
-The detail-page header (breadcrumb trail, optional kicker eyebrow, h1, optional subtitle, right-side actions) SHALL render through `nav.PageHeading`, and the gateway's `detailHeader` SHALL be a thin adapter delegating to it. The list-page `pageHeader` SHALL also render through `nav.PageHeading` as a thin adapter (Flat + Dashboard + no-top-margin variant), which now reproduces it byte-for-byte.
+The detail-page header (breadcrumbs, optional kicker, h1, optional subtitle, actions) SHALL render through `nav.PageHeading`, and the gateway's `detailHeader` SHALL be a thin adapter delegating to it by default; a non-nil `TitleLeading` (inline icon tile before the h1) SHALL render locally via `detailHeaderWithTitleLeading`. The list-page `pageHeader` SHALL also render through `nav.PageHeading` as a thin adapter (Flat + Dashboard + no-top-margin variant), which reproduces it byte-for-byte.
 
 #### Scenario: detailHeader delegates to PageHeading
 
 - **WHEN** a detail header is rendered in its default, dashboard, bare, kicker, subtitle-full, or title-adornment variant
 - **THEN** it emits the same breadcrumbs, title column, subtitle, and actions markup, with the header's children forwarded into `PageHeading`'s `Actions` slot
 
-#### Scenario: Leading variant forwards to PageHeading
+#### Scenario: TitleLeading variant renders inline before the h1
 
-- **WHEN** a detail header uses the `Leading` option (an agent icon tile before the title column)
-- **THEN** the gateway has no local `detailHeaderLeading`, and the leading component is forwarded into `PageHeading`'s `Leading` slot (rendered before the breadcrumbs and the h1), with `Leading` ignored when `Bare`
+- **WHEN** a detail header uses the `TitleLeading` option (an agent icon tile before the title column)
+- **THEN** the gateway renders the component inline immediately before the h1, on the same flex line and before any `TitleAdornment`, via a local `detailHeaderWithTitleLeading` render that mirrors `PageHeading`'s markup (because `PageHeading` has no pre-h1 slot), with `TitleLeading` ignored when `Bare`
 
 #### Scenario: pageHeader delegates to PageHeading
 
