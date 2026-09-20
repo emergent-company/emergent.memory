@@ -43,11 +43,11 @@
 ## 4. Phase 4 — Agent & skill CRUD, org admin
 
 - [ ] 4.1 `specs/agents/agent-edit-ui.spec.ts`: `POST /agents/:id/update` persists name/model/tools and is reflected on detail
-- [ ] 4.2 `specs/agents/agent-delete-ui.spec.ts`: delete via modal + activate/deactivate (`/api/agents/:id/activate|deactivate`); assert list/status transitions
+- [x] 4.2 `specs/agents/agent-delete-ui.spec.ts`: delete via modal (list row action → `delete-confirm-modal` → `DELETE /api/agents/:id` → row gone). Activate/deactivate (`/api/agents/:id/activate|deactivate`) has **no UI surface** — a JSON-API-only pair, so there is nothing to drive through the browser; noted here rather than left silently open.
 - [ ] 4.3 `specs/agents/agent-memories-ui.spec.ts`: `/agents/:id/memories` renders and paginates memories
 - [x] 4.4 `specs/agents/agent-sandbox-update-ui.spec.ts`: `POST /agents/:id/sandbox/update` persists sandbox settings (enable switch, base image, fixed repo source + URL/branch, tool allowlist, cpu/memory/disk, setup commands, env vars) across a full reload; plus a fixed-source-without-URL rejection guard.
 - [x] 4.4a `specs/agents/agent-tool-groups-ui.spec.ts`: `POST /agents/:id/settings/tools` — the default approval policy round-trip always runs; the per-group approval-policy + enable-switch persistence (PR #568/#578 group-level enable + approval policy) probes for the server capability taxonomy and skips with a stated reason when the backend reports no `ToolGroups`.
-- [ ] 4.5 `specs/skills-schedules/skill-edit-delete-ui.spec.ts`: `POST /skills/:id/update` + `/skills/:id/delete`
+- [x] 4.5 `specs/skills-schedules/skill-edit-delete-ui.spec.ts`: `POST /skills/:id/update` (description/content persist across reload) + `/skills/:id/delete` (gone from the list); self-cleaning.
 - [ ] 4.6 `specs/organizations/org-rename-ui.spec.ts`: `POST /orgs/:id/rename` + `/orgs/:id/settings/general` reflects the new name
 - [ ] 4.7 `specs/organizations/org-tool-settings-ui.spec.ts`: `POST /orgs/:id/tool-settings/:toolName` (+ `/delete`) persists and clears tool settings
 - [ ] 4.8 Phase 4 verify: `task e2e:test -- --project=mutations`
