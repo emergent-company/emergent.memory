@@ -82,6 +82,19 @@ type Config struct {
 	// ProjectDeletionSweepSchedule is the cron schedule override for the project
 	// deletion sweep. Empty string means use the interval.
 	ProjectDeletionSweepSchedule string
+
+	// EmbeddingJobRetentionDays is the minimum age (in days) of a terminal
+	// embedding job (completed, failed, dead_letter) before it is purged.
+	// Default: 7.
+	EmbeddingJobRetentionDays int
+
+	// EmbeddingJobPurgeSchedule is the cron schedule for purging old terminal
+	// embedding jobs. Default: "0 0 5 * * *" (daily at 5am).
+	EmbeddingJobPurgeSchedule string
+
+	// EmbeddingJobPurgeInterval is the fallback interval used when the cron
+	// schedule is unset or invalid. Default: 24h.
+	EmbeddingJobPurgeInterval time.Duration
 }
 
 // NewConfig creates a new Config from environment variables
@@ -113,6 +126,9 @@ func NewConfig() *Config {
 		// with PROJECT_DELETION_GRACE_PERIOD; default 1 minute.
 		ProjectDeletionSweepInterval: getEnvDurationString("PROJECT_DELETION_SWEEP_INTERVAL", time.Minute),
 		ProjectDeletionSweepSchedule: getEnvString("PROJECT_DELETION_SWEEP_SCHEDULE", ""),
+		EmbeddingJobRetentionDays:    getEnvInt("EMBEDDING_JOB_RETENTION_DAYS", 7),
+		EmbeddingJobPurgeSchedule:    getEnvString("EMBEDDING_JOB_PURGE_SCHEDULE", "0 0 5 * * *"),
+		EmbeddingJobPurgeInterval:    getEnvDuration("EMBEDDING_JOB_PURGE_INTERVAL", 24*time.Hour),
 	}
 }
 
