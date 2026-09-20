@@ -85,6 +85,7 @@ While working, you'll notice things outside the current task: unrelated bugs, mi
 
 - If a finding is **not part of the current task's scope**, create a GitHub issue instead of expanding the PR.
 - **Search first** to avoid duplicates: `gh issue list --repo emergent-company/emergent.memory --search "<keywords>"`. If a matching open issue exists, link to it rather than opening a new one.
+- **Get user confirmation before creating** — show the drafted title and body and let the user edit, add context, or decline. Do not open the issue autonomously. (Searching and linking to an existing issue do not require confirmation.)
 - **Create** with a clear title and body:
 
   ```bash
