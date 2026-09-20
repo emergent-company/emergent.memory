@@ -261,7 +261,7 @@ func TestPerformanceBenchmark(t *testing.T) {
 	}
 
 	// Server-specific endpoint definitions
-	// Go server: /api/v2/* prefix, /healthz, /ready
+	// Go server: /api/* prefix, /healthz, /ready
 	// NestJS server: no prefix, /health only
 	var endpoints []endpointDef
 
@@ -270,7 +270,7 @@ func TestPerformanceBenchmark(t *testing.T) {
 			{"Health", "GET", "/health", nil, nil},
 			{"Healthz", "GET", "/healthz", nil, nil},
 			{"Ready", "GET", "/ready", nil, nil},
-			{"List Documents", "GET", "/api/v2/documents", nil, []client.Option{
+			{"List Documents", "GET", "/api/documents", nil, []client.Option{
 				client.WithAuth(tokens.Admin()),
 				client.WithProjectID(projectID),
 				client.WithQuery("limit", "10"),

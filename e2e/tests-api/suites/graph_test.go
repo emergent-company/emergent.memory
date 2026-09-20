@@ -721,7 +721,7 @@ func (s *GraphTestSuite) TestCreateRelationship_Success() {
 	s.createdRelationshipIDs = append(s.createdRelationshipIDs, rel["id"].(string))
 
 	s.NotEmpty(rel["id"])
-	s.Equal("DEPENDS_ON", rel["type"])
+	s.Equal("depends_on", rel["type"])
 	s.Equal(srcID, rel["src_id"])
 	s.Equal(dstID, rel["dst_id"])
 	s.Equal(float64(1), rel["version"])
@@ -866,7 +866,7 @@ func (s *GraphTestSuite) TestGetRelationship_Success() {
 	s.Require().NoError(err)
 
 	s.Equal(created["id"], rel["id"])
-	s.Equal("DEPENDS_ON", rel["type"])
+	s.Equal("depends_on", rel["type"])
 	s.Equal(srcID, rel["src_id"])
 	s.Equal(dstID, rel["dst_id"])
 }
@@ -907,10 +907,10 @@ func (s *GraphTestSuite) TestListRelationships_FilterByType() {
 	body, err := resp.JSONMap()
 	s.Require().NoError(err)
 
-	data := body["data"].([]any)
+	data := body["items"].([]any)
 	for _, item := range data {
 		rel := item.(map[string]any)
-		s.Equal("DEPENDS_ON", rel["type"])
+		s.Equal("depends_on", rel["type"])
 	}
 }
 
@@ -936,7 +936,7 @@ func (s *GraphTestSuite) TestListRelationships_FilterBySrcID() {
 	body, err := resp.JSONMap()
 	s.Require().NoError(err)
 
-	data := body["data"].([]any)
+	data := body["items"].([]any)
 	s.Len(data, 1)
 	rel := data[0].(map[string]any)
 	s.Equal(src1ID, rel["src_id"])
