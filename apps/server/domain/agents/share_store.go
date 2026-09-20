@@ -227,6 +227,74 @@ func (r *Repository) ListShareSessionsByEndUser(ctx context.Context, linkID, end
 	return sessions, nil
 }
 
+// shareSessionProjectRow is a share session joined to its share link + agent
+// definition, for owner-facing project-scoped listing. AgentShareSession has no
+// AgentDefinitionID/agent-name columns, so this row carries them alongside the
+// session's own fields.
+type shareSessionProjectRow struct {
+	ID                string     `bun:"id"`
+	ShareLinkID       string     `bun:"share_link_id"`
+	ACPSessionID      string     `bun:"acp_session_id"`
+	EndUserRef        string     `bun:"end_user_ref"`
+	Title             *string    `bun:"title"`
+	LastActivityAt    *time.Time `bun:"last_activity_at"`
+	IsArchived        bool       `bun:"is_archived"`
+	CreatedAt         time.Time  `bun:"created_at"`
+	AgentDefinitionID string     `bun:"agent_definition_id"`
+	AgentName         string     `bun:"agent_name"`
+}
+
+// shareSessionProjectQuery builds the shared select (all share-session columns
+// plus the joined link's agent_definition_id and the agent definition's name)
+// used by the owner-facing project-scoped session queries.
+func shareSessionProjectQuery(q *bun.SelectQuery) *bun.SelectQuery {
+	return q.
+		TableExpr("kb.agent_share_sessions AS ass").
+		ColumnExpr("ass.id AS id").
+		ColumnExpr("ass.share_link_id AS share_link_id").
+		ColumnExpr("ass.acp_session_id AS acp_session_id").
+		ColumnExpr("ass.end_user_ref AS end_user_ref").
+		ColumnExpr("ass.title AS title").
+		ColumnExpr("ass.last_activity_at AS last_activity_at").
+		ColumnExpr("ass.is_archived AS is_archived").
+		ColumnExpr("ass.created_at AS created_at").
+		ColumnExpr("asl.agent_definition_id AS agent_definition_id").
+		ColumnExpr("ad.name AS agent_name").
+		Join("JOIN kb.agent_share_links AS asl ON asl.id = ass.share_link_id").
+		Join("JOIN kb.agent_definitions AS ad ON ad.id = asl.agent_definition_id")
+}
+
+// ListShareSessionsByProject lists a project's share sessions (across all of its
+// share links), newest activity first.
+func (r *Repository) ListShareSessionsByProject(ctx context.Context, projectID string) ([]shareSessionProjectRow, error) {
+	var rows []shareSessionProjectRow
+	err := shareSessionProjectQuery(r.db.NewSelect()).
+		Where("asl.project_id = ?", projectID).
+		OrderExpr("COALESCE(ass.last_activity_at, ass.created_at) DESC").
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	return rows, nil
+}
+
+// GetShareSessionByProject returns a share session scoped to a project via its
+// link, or nil when the session does not exist or belongs to another project.
+func (r *Repository) GetShareSessionByProject(ctx context.Context, sessionID, projectID string) (*shareSessionProjectRow, error) {
+	row := new(shareSessionProjectRow)
+	err := shareSessionProjectQuery(r.db.NewSelect()).
+		Where("ass.id = ?", sessionID).
+		Where("asl.project_id = ?", projectID).
+		Scan(ctx, row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	return row, nil
+}
+
 // CountActiveShareSessions returns the number of non-archived sessions for an
 // end user on a link (session cap enforcement).
 func (r *Repository) CountActiveShareSessions(ctx context.Context, linkID, endUserRef string) (int, error) {

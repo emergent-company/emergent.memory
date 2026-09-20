@@ -93,6 +93,8 @@ func RegisterShareRoutes(e *echo.Echo, h *ShareHandler, authMiddleware *auth.Mid
 	owner.POST("/share-links/:linkId/rotate", h.RotateLink, authMiddleware.RequireAPITokenScopes("agents:write"))
 	owner.GET("/share-links/:linkId/usage", h.GetUsage, authMiddleware.RequireAPITokenScopes("agents:read"))
 	owner.GET("/share-links/:linkId/reveal", h.RevealLink, authMiddleware.RequireAPITokenScopes("agents:read"))
+	owner.GET("/share-sessions", h.ListProjectSessions, authMiddleware.RequireAPITokenScopes("agents:read"))
+	owner.GET("/share-sessions/:id", h.GetProjectSession, authMiddleware.RequireAPITokenScopes("agents:read"))
 }
 
 // RequireShareLink is the authorization chain for share routes: RequireAuth ->
@@ -431,6 +433,26 @@ func (h *ShareHandler) RevealLink(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, map[string]string{"key": key})
+}
+
+// ListProjectSessions handles GET /api/projects/:projectId/share-sessions.
+func (h *ShareHandler) ListProjectSessions(c echo.Context) error {
+	dto, err := h.svc.ListSessionsByProject(c.Request().Context(), c.Param("projectId"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, dto)
+}
+
+// GetProjectSession handles GET /api/projects/:projectId/share-sessions/:id,
+// returning the session's plain transcript. Project ownership is enforced in
+// the service (the client-supplied :projectId is never trusted).
+func (h *ShareHandler) GetProjectSession(c echo.Context) error {
+	messages, err := h.svc.GetSessionTranscriptByID(c.Request().Context(), c.Param("projectId"), c.Param("id"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string][]ShareTranscriptMessage{"messages": messages})
 }
 
 // --- helpers ---

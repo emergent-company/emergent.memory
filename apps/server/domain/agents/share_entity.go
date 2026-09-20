@@ -361,6 +361,21 @@ type ShareSessionDTO struct {
 	CreatedAt      time.Time  `json:"createdAt"`
 }
 
+// ShareOwnerSessionDTO is the owner-facing representation of a share session,
+// scoped to a project. Unlike ShareSessionDTO (the anonymous end-user view), it
+// carries the backing agent definition id + name so the owner chat rail can
+// filter and title shared sessions.
+type ShareOwnerSessionDTO struct {
+	ID                string     `json:"id"`
+	AgentDefinitionID string     `json:"agentDefinitionId"`
+	AgentName         string     `json:"agentName"`
+	Title             string     `json:"title,omitempty"`
+	ACPSessionID      string     `json:"acpSessionId"`
+	IsArchived        bool       `json:"isArchived"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	LastActivityAt    *time.Time `json:"lastActivityAt,omitempty"`
+}
+
 // ShareTranscriptMessage is a single chat message in a share-session transcript.
 type ShareTranscriptMessage struct {
 	Role    string `json:"role"`    // "user" | "assistant"

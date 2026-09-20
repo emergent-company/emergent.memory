@@ -140,7 +140,7 @@ func TestAgentsAndObjectsSharePageContainer(t *testing.T) {
 func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 	html := renderHTML(t, ChatPage(
 		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
-		nil, nil, nil, "", "", "", nil, false, nil,
+		nil, nil, nil, nil, "", "", "", nil, false, nil,
 	))
 
 	// The scroll-fill wrapper keeps min-h-full + flex-col + justify-end so a

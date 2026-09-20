@@ -157,6 +157,20 @@ type ShareLinkCreateInput struct {
 	Config *ShareLinkConfigInput `json:"config,omitempty"`
 }
 
+// ShareOwnerSession is the owner-facing representation of a share session,
+// scoped to a project. It carries the backing agent definition id + name so the
+// owner chat rail can filter and title shared sessions.
+type ShareOwnerSession struct {
+	ID                string     `json:"id"`
+	AgentDefinitionID string     `json:"agentDefinitionId"`
+	AgentName         string     `json:"agentName"`
+	Title             string     `json:"title,omitempty"`
+	ACPSessionID      string     `json:"acpSessionId"`
+	IsArchived        bool       `json:"isArchived"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	LastActivityAt    *time.Time `json:"lastActivityAt,omitempty"`
+}
+
 // --- public share request plumbing ------------------------------------------
 
 // errShareRefSecretUnset is returned when a share call would need to send an
@@ -397,4 +411,28 @@ func (m *MemoryClient) RevealShareLink(ctx context.Context, linkID string) (stri
 		return "", err
 	}
 	return out.Key, nil
+}
+
+// ListShareSessionsByProject returns the project's share sessions (across all
+// of its links), newest activity first.
+func (m *MemoryClient) ListShareSessionsByProject(ctx context.Context) ([]ShareOwnerSession, error) {
+	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/share-sessions"
+	var out []ShareOwnerSession
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetShareSessionTranscript returns the plain user/assistant transcript for an
+// owner-scoped share session.
+func (m *MemoryClient) GetShareSessionTranscript(ctx context.Context, id string) ([]ShareMessage, error) {
+	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/share-sessions/" + url.PathEscape(id)
+	var out struct {
+		Messages []ShareMessage `json:"messages"`
+	}
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Messages, nil
 }

@@ -66,6 +66,11 @@ type fakeShareRepo struct {
 	runUsage            *RunTokenUsage
 	question            *AgentQuestion
 	accessLogs          []accessLogEntry
+
+	// owner-facing project session listing (ListShareSessionsByProject /
+	// GetShareSessionByProject).
+	shareSessionRows []shareSessionProjectRow
+	shareSessionRow  *shareSessionProjectRow
 }
 
 type accessLogEntry struct {
@@ -165,6 +170,12 @@ func (f *fakeShareRepo) ListShareSessionsByEndUser(_ context.Context, linkID, en
 		}
 	}
 	return out, nil
+}
+func (f *fakeShareRepo) ListShareSessionsByProject(_ context.Context, _ string) ([]shareSessionProjectRow, error) {
+	return f.shareSessionRows, nil
+}
+func (f *fakeShareRepo) GetShareSessionByProject(_ context.Context, _, _ string) (*shareSessionProjectRow, error) {
+	return f.shareSessionRow, nil
 }
 func (f *fakeShareRepo) CountActiveShareSessions(_ context.Context, _, _ string) (int, error) {
 	return f.activeSessions, nil
