@@ -167,6 +167,19 @@ func TestEmbeddingStatus_Repository(t *testing.T) {
 		assert.Equalf(t, id, obj.ID, "GetByID must return the object's real id (not a zero value)")
 		assert.Equalf(t, status, obj.EmbeddingStatus, "GetByID embedding_status for %s", id)
 	}
+
+	// --- GetHeadByCanonicalID path ---
+	// GetHeadByCanonicalID backs PATCH, merge, restore, and other transactional
+	// flows, so it must return populated IDs and the computed EmbeddingStatus too
+	// — a select-list regression here would pass the GetByID assertions above
+	// while breaking those callers.
+	for id, status := range want {
+		obj, err := repo.GetHeadByCanonicalID(ctx, db, pid, id, nil)
+		require.NoErrorf(t, err, "GetHeadByCanonicalID %s", id)
+		assert.Equalf(t, id, obj.ID, "GetHeadByCanonicalID must return the object's real id (not a zero value)")
+		assert.Equalf(t, id, obj.CanonicalID, "GetHeadByCanonicalID must return the canonical id")
+		assert.Equalf(t, status, obj.EmbeddingStatus, "GetHeadByCanonicalID embedding_status for %s", id)
+	}
 }
 
 // TestGetHeadByCanonicalID_ScansEmbeddingV2 proves GetHeadByCanonicalID returns
