@@ -380,8 +380,11 @@ func (m *Manager) LoginWithOptions(ctx context.Context, serverURL string, opts L
 }
 
 // Refresh refreshes the stored session for serverURL via the SDK provider. A
-// failed refresh clears the stored session so callers can prompt for a new
-// sign-in. Refreshes are serialized per Manager.
+// refresh that is rejected as an authentication error (the refresh token was
+// rejected with invalid_grant/invalid_token or a 400/401 response) clears the
+// stored session so callers can prompt for a new sign-in; transient failures
+// (network, timeout, parse, 5xx) leave the stored session intact. Refreshes are
+// serialized per Manager.
 func (m *Manager) Refresh(ctx context.Context, serverURL string) (*Session, error) {
 	m.refreshMu.Lock()
 	defer m.refreshMu.Unlock()
@@ -403,7 +406,9 @@ func (m *Manager) Refresh(ctx context.Context, serverURL string) (*Session, erro
 	}
 	creds, err := m.deps.RefreshToken(ctx, oidc, m.effectiveClientID(sess.ClientID), m.sessionPath(serverURL))
 	if err != nil {
-		_ = m.Logout(serverURL)
+		if isAuthRejection(err) && m.refreshTokenStillCurrent(serverURL, sess.RefreshToken) {
+			_ = m.Logout(serverURL)
+		}
 		return nil, fmt.Errorf("account: refresh %s: %w", serverURL, err)
 	}
 
@@ -419,6 +424,36 @@ func (m *Manager) Refresh(ctx context.Context, serverURL string) (*Session, erro
 		return nil, err
 	}
 	return sess, nil
+}
+
+// isAuthRejection reports whether a refresh error is an authentication
+// rejection (the token endpoint rejected the refresh token) rather than a
+// transient failure. Only such rejections clear the stored session.
+func isAuthRejection(err error) bool {
+	var re *sdkauth.RefreshError
+	if !errors.As(err, &re) {
+		return false
+	}
+	switch re.Code {
+	case "invalid_grant", "invalid_token":
+		return true
+	}
+	return re.StatusCode == http.StatusBadRequest || re.StatusCode == http.StatusUnauthorized
+}
+
+// refreshTokenStillCurrent reports whether the stored session still holds the
+// refresh token this Refresh just attempted. A cross-process race can rotate a
+// single-use refresh token between the initial read and the token call: the
+// winner persists the rotated token, after which the loser's original token is
+// rejected with invalid_grant. In that case the stored session is valid again
+// and must not be cleared.
+func (m *Manager) refreshTokenStillCurrent(serverURL, attempted string) bool {
+	cur, err := m.SessionFor(serverURL)
+	if err != nil || cur == nil {
+		// Cannot verify; preserve the clear-on-rejection behavior.
+		return true
+	}
+	return cur.RefreshToken == attempted
 }
 
 // effectiveClientID returns persisted when non-empty, else the manager default,

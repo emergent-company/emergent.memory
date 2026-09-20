@@ -96,16 +96,30 @@ func runAuthImport(args []string, stdout, stderr io.Writer) int {
 		expiresAt = parsed
 	}
 
+	refreshToken := firstNonEmpty(payload.RefreshToken, payload.RefreshTokenAlt)
+
+	m := newAuthManager(account.BaseDirForConfig(*configPath))
+	// Merge instead of clobber: when the payload omits the refresh token,
+	// carry over the stored session's so an import that carries only the
+	// access token does not destroy the IdP-minted refresh token.
+	if refreshToken == "" {
+		if stored, err := m.SessionFor(*server); err != nil {
+			_, _ = fmt.Fprintf(stderr, "memory-connector auth import: %v\n", err)
+			return 1
+		} else if stored != nil {
+			refreshToken = stored.RefreshToken
+		}
+	}
+
 	sess := &account.Session{
 		ServerURL:    *server,
 		IssuerURL:    firstNonEmpty(payload.Issuer, payload.IssuerURL),
 		AccessToken:  accessToken,
-		RefreshToken: firstNonEmpty(payload.RefreshToken, payload.RefreshTokenAlt),
+		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt,
 		UserEmail:    firstNonEmpty(payload.Email, payload.UserEmail),
 	}
 
-	m := newAuthManager(account.BaseDirForConfig(*configPath))
 	if err := m.Save(*server, sess); err != nil {
 		_, _ = fmt.Fprintf(stderr, "memory-connector auth import: %v\n", err)
 		return 1

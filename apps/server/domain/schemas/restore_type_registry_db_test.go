@@ -261,7 +261,7 @@ func newRollbackService(t *testing.T, db bun.IDB, repo *schemas.Repository, cfg 
 	log := slog.Default()
 	gRepo := graph.NewRepository(db, log, cfg)
 	gSvc := graph.NewService(gRepo, log, nil, nil, nil, nil, nil, nil, nil, nil)
-	return schemas.NewService(repo, gSvc, log)
+	return schemas.NewService(repo, gSvc, log, cfg)
 }
 
 func TestRollbackSchemaMigrationRestoreTypeRegistryFlag(t *testing.T) {

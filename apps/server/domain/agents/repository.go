@@ -3709,3 +3709,125 @@ func (r *Repository) GetRunSessionStats(ctx context.Context, projectID string, p
 	}
 	return rows, nil
 }
+
+// ============================================================================
+// A2A Repository Methods
+// ============================================================================
+
+// FindLatestRunInChain follows a run's resume chain forward (resumed_from links)
+// to the most recent run, loading the Agent relation on the final run. Returns
+// the input run itself when it has no resume continuations. A resume chain is
+// linear (AnswerQuestion atomically claims each question), so there is at most
+// one child per run.
+func (r *Repository) FindLatestRunInChain(ctx context.Context, runID string) (*AgentRun, error) {
+	current, err := r.FindRunByID(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, nil
+	}
+
+	for i := 0; i < MaxTotalStepsPerRun; i++ {
+		next := new(AgentRun)
+		err := r.db.NewSelect().
+			Model(next).
+			Relation("Agent").
+			Where("ar.resumed_from = ?", current.ID).
+			Order("created_at DESC").
+			Limit(1).
+			Scan(ctx)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return current, nil
+			}
+			return nil, err
+		}
+		current = next
+	}
+	return current, nil
+}
+
+// ListA2ARuns returns the logical A2A tasks for a project, optionally filtered
+// by context (acp_session_id) and a set of internal statuses, with the total
+// count. Each logical task is represented by its resume-chain tail: a resumed
+// task leaves its root run in a non-terminal "working" state while the terminal
+// state lives on the child run created by executor.Resume, so listing the roots
+// alone would report a completed/failed resumed task as WORKING forever and
+// break completed/failed filters.
+//
+// Behaviour change: status filtering is applied to the chain tail (not the
+// root), and pagination happens in memory after tail resolution, so this scans
+// all root runs for the project (bounded in practice by per-project task volume
+// and the A2A page size). The returned runs keep the stable root ID as the task
+// id while carrying the tail's status/updated fields.
+func (r *Repository) ListA2ARuns(ctx context.Context, projectID, contextID string, statuses []AgentRunStatus, limit, offset int) ([]*AgentRun, int, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	rootsQuery := r.db.NewSelect().
+		Model((*AgentRun)(nil)).
+		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
+		Where("a.project_id = ?", projectID).
+		Where("ar.resumed_from IS NULL")
+
+	if contextID != "" {
+		rootsQuery = rootsQuery.Where("ar.acp_session_id = ?", contextID)
+	}
+
+	var roots []*AgentRun
+	if err := rootsQuery.Order("ar.created_at DESC").Scan(ctx, &roots); err != nil {
+		return nil, 0, fmt.Errorf("ListA2ARuns roots: %w", err)
+	}
+
+	tails := make([]*AgentRun, 0, len(roots))
+	for _, root := range roots {
+		tail, err := r.FindLatestRunInChain(ctx, root.ID)
+		if err != nil {
+			return nil, 0, fmt.Errorf("ListA2ARuns chain: %w", err)
+		}
+		if len(statuses) > 0 && !containsAgentRunStatus(statuses, tail.Status) {
+			continue
+		}
+		tails = append(tails, a2aListingRun(root, tail))
+	}
+
+	totalCount := len(tails)
+
+	if offset >= len(tails) {
+		return []*AgentRun{}, totalCount, nil
+	}
+	end := offset + limit
+	if end > len(tails) {
+		end = len(tails)
+	}
+
+	return tails[offset:end], totalCount, nil
+}
+
+// containsAgentRunStatus reports whether s is in statuses.
+func containsAgentRunStatus(statuses []AgentRunStatus, s AgentRunStatus) bool {
+	for _, x := range statuses {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// a2aListingRun returns the run that should represent a logical task in a
+// listing: the chain tail's state/fields, but with the stable root ID as the
+// task id (the id clients receive from message:send and use in subsequent
+// get/cancel/subscribe calls). Pure and unit-testable.
+func a2aListingRun(root, tail *AgentRun) *AgentRun {
+	if tail == nil {
+		tail = root
+	}
+	effective := *tail
+	effective.ID = root.ID
+	return &effective
+}
