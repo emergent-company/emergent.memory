@@ -42,14 +42,14 @@
 
 ## 4. Phase 4 — Agent & skill CRUD, org admin
 
-- [ ] 4.1 `specs/agents/agent-edit-ui.spec.ts`: `POST /agents/:id/update` persists name/model/tools and is reflected on detail
+- [x] 4.1 `specs/agents/agent-edit-ui.spec.ts`: name edit via `POST /agents/:id/settings/general` (`?updated=1`, persisted across reload). Model + tools editing are already covered by `agent-model-switch-ui` and `agent-tool-groups-ui`, so this closes the remaining name-edit gap.
 - [x] 4.2 `specs/agents/agent-delete-ui.spec.ts`: delete via modal (list row action → `delete-confirm-modal` → `DELETE /api/agents/:id` → row gone). Activate/deactivate (`/api/agents/:id/activate|deactivate`) has **no UI surface** — a JSON-API-only pair, so there is nothing to drive through the browser; noted here rather than left silently open.
 - [ ] 4.3 `specs/agents/agent-memories-ui.spec.ts`: `/agents/:id/memories` renders and paginates memories
 - [x] 4.4 `specs/agents/agent-sandbox-update-ui.spec.ts`: `POST /agents/:id/sandbox/update` persists sandbox settings (enable switch, base image, fixed repo source + URL/branch, tool allowlist, cpu/memory/disk, setup commands, env vars) across a full reload; plus a fixed-source-without-URL rejection guard.
 - [x] 4.4a `specs/agents/agent-tool-groups-ui.spec.ts`: `POST /agents/:id/settings/tools` — the default approval policy round-trip always runs; the per-group approval-policy + enable-switch persistence (PR #568/#578 group-level enable + approval policy) probes for the server capability taxonomy and skips with a stated reason when the backend reports no `ToolGroups`.
 - [x] 4.5 `specs/skills-schedules/skill-edit-delete-ui.spec.ts`: `POST /skills/:id/update` (description/content persist across reload) + `/skills/:id/delete` (gone from the list); self-cleaning.
-- [ ] 4.6 `specs/organizations/org-rename-ui.spec.ts`: `POST /orgs/:id/rename` + `/orgs/:id/settings/general` reflects the new name
-- [ ] 4.7 `specs/organizations/org-tool-settings-ui.spec.ts`: `POST /orgs/:id/tool-settings/:toolName` (+ `/delete`) persists and clears tool settings
+- [x] 4.6 `specs/organizations/org-rename-ui.spec.ts`: `POST /orgs/:id/rename` + `/orgs/:id/settings/general` reflects the new name (`?renamed=1`, persisted across reload). Scratch org + bootstrap reactivation cleanup.
+- [x] 4.7 `specs/organizations/org-tool-settings-ui.spec.ts`: `POST /orgs/:id/tool-settings/:toolName` (+ `/delete`) persists and clears tool settings — seeds an override (enabled=true) via the toggle route (a fresh org has none to render), then toggles Disable and deletes through the UI, asserting resulting state each step. Scratch org + bootstrap reactivation cleanup.
 - [ ] 4.8 Phase 4 verify: `task e2e:test -- --project=mutations`
 
 ## 5. Phase 5 — Interaction depth on render-only pages
@@ -62,7 +62,7 @@
 - [x] 5.6 `specs/settings/settings-overrides-ui.spec.ts`: creates then deletes a scratch `E2E override …` (`POST /settings/overrides`, `/:agentName/delete`), asserting both states across reloads, plus a no-leftovers guard test. No scratch agent is needed — overrides are name-keyed project settings and memory performs no agent-existence check.
 - [x] 5.7 `specs/settings/settings-editor-remember-ui.spec.ts`: `POST /settings/remember/agent` — the remember-agent select autosaves inline (HX-Trigger toast) and persists across reload, then restores the prior value. The `dedup` sibling is deliberately not exercised: empty input means "leave unchanged", so a set value is not symmetrically restorable (same reason 5.1 rejected `dedup_threshold`).
 - [ ] 5.8 `specs/settings/mcp-nodes-ui.spec.ts`: `/settings/mcp-nodes` lists nodes and `POST /settings/mcp-nodes/remove` works
-- [ ] 5.9 `specs/sessions/usage-charts-ui.spec.ts`: assert `stat-total-tokens`/`stat-estimated-cost`/`stat-sessions`/`stat-month-spend` render and `usage-token-chart`/`usage-session-chart` draw from `#usage-timeseries`
+- [x] 5.9 `specs/sessions/usage-charts-ui.spec.ts`: asserts `stat-total-tokens`/`stat-estimated-cost`/`stat-sessions` + `usage-token-chart`/`usage-session-chart` + `#usage-timeseries` render. `stat-month-spend` is intentionally not asserted — it is omitted when the backend reports no month-spend data (`hasMonthSpend`), so requiring it would flake on an idle tenant.
 - [ ] 5.10 `specs/sessions/session-detail-ui.spec.ts`: `/sessions/:id` renders timeline, run grouping and tool-call details
 - [ ] 5.11 `specs/skills-schedules/schedule-lifecycle-ui.spec.ts`: `/schedules/:id` detail, `/:id/update`, `/:id/trigger`, `/:id/toggle`, `/:id/delete`, and `/runs/:runId` run detail
 - [ ] 5.12 Phase 5 verify: `task e2e:test -- --project=mutations`
