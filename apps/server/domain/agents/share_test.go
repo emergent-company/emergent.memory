@@ -66,6 +66,15 @@ type fakeShareRepo struct {
 	runUsage            *RunTokenUsage
 	question            *AgentQuestion
 	accessLogs          []accessLogEntry
+
+	// owner-facing project session listing (ListShareSessionsByProject /
+	// GetShareSessionByProject).
+	shareSessionRows []shareSessionProjectRow
+	shareSessionRow  *shareSessionProjectRow
+
+	// transcript history (GetConversationFullHistory).
+	historyCalled bool
+	historyItems  []*ConversationHistoryItem
 }
 
 type accessLogEntry struct {
@@ -165,6 +174,12 @@ func (f *fakeShareRepo) ListShareSessionsByEndUser(_ context.Context, linkID, en
 		}
 	}
 	return out, nil
+}
+func (f *fakeShareRepo) ListShareSessionsByProject(_ context.Context, _ string) ([]shareSessionProjectRow, error) {
+	return f.shareSessionRows, nil
+}
+func (f *fakeShareRepo) GetShareSessionByProject(_ context.Context, _, _ string) (*shareSessionProjectRow, error) {
+	return f.shareSessionRow, nil
 }
 func (f *fakeShareRepo) CountActiveShareSessions(_ context.Context, _, _ string) (int, error) {
 	return f.activeSessions, nil
@@ -272,7 +287,8 @@ func (f *fakeShareRepo) GetRunTokenUsage(_ context.Context, _ string) (*RunToken
 	return f.runUsage, nil
 }
 func (f *fakeShareRepo) GetConversationFullHistory(_ context.Context, _ string) ([]*ConversationHistoryItem, error) {
-	return nil, nil
+	f.historyCalled = true
+	return f.historyItems, nil
 }
 
 type shareFakeRunner struct {
@@ -301,6 +317,7 @@ type shareFakeTokenService struct {
 	revokedTokenIDs []string
 	revealedKey     string
 	role            string
+	roleSet         bool
 }
 
 func (f *shareFakeTokenService) CreateAgentChatShareToken(_ context.Context, _, _ string, _ *time.Time) (*apitoken.CreateApiTokenResponseDTO, error) {
@@ -316,7 +333,7 @@ func (f *shareFakeTokenService) GetByID(_ context.Context, _, _ string) (*apitok
 	return &apitoken.GetApiTokenResponseDTO{ApiTokenDTO: apitoken.ApiTokenDTO{ID: "tok-1"}, Token: f.revealedKey}, nil
 }
 func (f *shareFakeTokenService) GetUserProjectRole(_ context.Context, _, _ string) (string, error) {
-	if f.role == "" {
+	if !f.roleSet {
 		return "project_admin", nil
 	}
 	return f.role, nil
@@ -660,7 +677,7 @@ func TestRevokeLink_NonAdminRejected(t *testing.T) {
 	link := testLink("link-a", "proj-a", "def-a", "token-a")
 	repo.linkByID["link-a"] = link
 
-	tokens := &shareFakeTokenService{role: "project_viewer"}
+	tokens := &shareFakeTokenService{role: "project_viewer", roleSet: true}
 	svc := NewShareService(repo, tokens, nil, nil, "", nil)
 
 	err := svc.RevokeLink(context.Background(), "link-a", "proj-a", "viewer-user")
@@ -674,7 +691,7 @@ func TestCreateLink_NonAdminRejected(t *testing.T) {
 	repo := newFakeShareRepo()
 	repo.defByID["def-a"] = testDefinition("def-a", "proj-a", "Agent A")
 
-	tokens := &shareFakeTokenService{role: "project_viewer"}
+	tokens := &shareFakeTokenService{role: "project_viewer", roleSet: true}
 	svc := NewShareService(repo, tokens, nil, nil, "", nil)
 
 	_, err := svc.CreateLink(context.Background(), "proj-a", "def-a", "label", "viewer-user", nil)
@@ -722,4 +739,75 @@ func TestStreamMessage_ConcurrentRunLimit(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "concurrent")
 	assert.Equal(t, "", runner.captured.ProjectID, "runner must not execute when the concurrent limit is reached")
+}
+
+// =============================================================================
+// Owner session-list + transcript (project-scoped)
+// =============================================================================
+
+// A member fetching a session id that does not belong to the project must get
+// 404, and the transcript history must never be queried (no cross-project leak).
+func TestGetSessionTranscriptByID_ForeignProject404(t *testing.T) {
+	repo := newFakeShareRepo()
+	// shareSessionRow stays nil — the session is not in this project.
+	tokens := &shareFakeTokenService{} // default project_admin member
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	_, err := svc.GetSessionTranscriptByID(context.Background(), "proj-a", "sess-foreign", "owner-user")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+	assert.False(t, repo.historyCalled, "transcript history must not be queried for a foreign session")
+}
+
+// A non-member OAuth caller must be denied before any project session lookup,
+// closing the RequireProjectScope/RequireAPITokenScopes OAuth bypass.
+func TestGetSessionTranscriptByID_NonMemberForbidden(t *testing.T) {
+	repo := newFakeShareRepo()
+	repo.shareSessionRow = &shareSessionProjectRow{ACPSessionID: "acp-1"}
+	tokens := &shareFakeTokenService{roleSet: true} // role == "" → not a member
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	_, err := svc.GetSessionTranscriptByID(context.Background(), "proj-a", "sess-1", "stranger")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+	assert.False(t, repo.historyCalled, "transcript must not be queried for a non-member")
+}
+
+// ListSessionsByProject must reject a non-member OAuth caller too.
+func TestListSessionsByProject_NonMemberForbidden(t *testing.T) {
+	repo := newFakeShareRepo()
+	tokens := &shareFakeTokenService{roleSet: true} // role == "" → not a member
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	_, err := svc.ListSessionsByProject(context.Background(), "proj-a", "stranger")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+}
+
+// The owner transcript must include only user/assistant plain-text messages, in
+// order, dropping non-message kinds, non-user/assistant roles, and empty text.
+func TestGetSessionTranscriptByID_FiltersMessages(t *testing.T) {
+	repo := newFakeShareRepo()
+	repo.shareSessionRow = &shareSessionProjectRow{ACPSessionID: "acp-1"}
+	repo.historyItems = []*ConversationHistoryItem{
+		{Kind: "message", Role: "user", Content: map[string]any{"text": "hello"}},
+		{Kind: "message", Role: "assistant", Content: map[string]any{"text": "hi there"}},
+		{Kind: "message", Role: "system", Content: map[string]any{"text": "system prompt"}},
+		{Kind: "tool_call", Role: "assistant", Content: map[string]any{"text": "tool output"}, ToolName: "search"},
+		{Kind: "message", Role: "user", Content: map[string]any{"text": ""}},
+		{Kind: "message", Role: "assistant", Content: map[string]any{"text": "final answer"}},
+	}
+	tokens := &shareFakeTokenService{} // member
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	msgs, err := svc.GetSessionTranscriptByID(context.Background(), "proj-a", "sess-1", "owner-user")
+	require.NoError(t, err)
+
+	require.Len(t, msgs, 3)
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "hello", msgs[0].Content)
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Equal(t, "hi there", msgs[1].Content)
+	assert.Equal(t, "assistant", msgs[2].Role)
+	assert.Equal(t, "final answer", msgs[2].Content)
 }

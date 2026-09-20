@@ -140,7 +140,7 @@ func TestChatModelWarningBannerRender(t *testing.T) {
 	escaped := "No provider is configured, so this agent&#39;s model openai/gpt-4o can&#39;t run yet. Configure a provider or change the agent&#39;s model."
 
 	// default agent (a1) warned → visible banner + data-warn on its option
-	html := renderHTML(t, ChatPage(agents, nil, nil, nil, "", "", "", nil, false, map[string]string{"a1": msg}))
+	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, map[string]string{"a1": msg}))
 	if !strings.Contains(html, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline"`) {
 		t.Error("warned agent must render a visible (non-hidden) error banner")
 	}
@@ -158,7 +158,7 @@ func TestChatModelWarningBannerRender(t *testing.T) {
 	}
 
 	// no warnings → banner hidden, empty text span, options carry empty data-warn
-	htmlClean := renderHTML(t, ChatPage(agents, nil, nil, nil, "", "", "", nil, false, nil))
+	htmlClean := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, nil))
 	if !strings.Contains(htmlClean, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline hidden"`) {
 		t.Error("alert-free chat page must render the banner hidden")
 	}
@@ -171,7 +171,7 @@ func TestChatModelWarningBannerRender(t *testing.T) {
 
 	// a warning for a non-selected agent stays hidden server-side (chat.js
 	// reveals it only once that agent is picked)
-	htmlOther := renderHTML(t, ChatPage(agents, nil, nil, nil, "", "", "", nil, false, map[string]string{"a2": msg}))
+	htmlOther := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, map[string]string{"a2": msg}))
 	if !strings.Contains(htmlOther, `id="chat-model-warning" role="alert" class="alert alert-error alert-outline hidden"`) {
 		t.Error("non-selected agent's warning must not pre-open the banner")
 	}

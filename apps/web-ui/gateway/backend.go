@@ -213,6 +213,9 @@ type MemoryBackend interface {
 	RevokeShareLink(ctx context.Context, linkID string) error
 	RotateShareLink(ctx context.Context, linkID string) (*ShareLink, error)
 	RevealShareLink(ctx context.Context, linkID string) (string, error)
+	// Owner share-session management (project-scoped via the session context).
+	ListShareSessionsByProject(ctx context.Context) ([]ShareOwnerSession, error)
+	GetShareSessionTranscript(ctx context.Context, id string) ([]ShareMessage, error)
 }
 
 // compile-time assertion that MemoryClient satisfies the interface.

@@ -50,6 +50,13 @@ type fakeMemory struct {
 	convs   []Conversation
 	servers []MCPServer
 
+	// owner share-session surface (ListShareSessionsByProject /
+	// GetShareSessionTranscript).
+	shareSessions      []ShareOwnerSession
+	shareMessages      []ShareMessage
+	shareSessionsErr   error
+	shareTranscriptErr error
+
 	// catalogCalls counts backend catalog fetches (keyed by method name) so
 	// tests can assert the settings loader only fetches a section's catalogs.
 	// Writes go through recordCatalog; reads through catalogCallCount.
@@ -2824,4 +2831,18 @@ func (f *fakeMemory) RotateShareLink(ctx context.Context, linkID string) (*Share
 
 func (f *fakeMemory) RevealShareLink(ctx context.Context, linkID string) (string, error) {
 	return "", errors.New("share: not implemented")
+}
+
+func (f *fakeMemory) ListShareSessionsByProject(ctx context.Context) ([]ShareOwnerSession, error) {
+	if f.shareSessionsErr != nil {
+		return nil, f.shareSessionsErr
+	}
+	return f.shareSessions, nil
+}
+
+func (f *fakeMemory) GetShareSessionTranscript(ctx context.Context, id string) ([]ShareMessage, error) {
+	if f.shareTranscriptErr != nil {
+		return nil, f.shareTranscriptErr
+	}
+	return f.shareMessages, nil
 }
