@@ -32,14 +32,14 @@ func (s *SearchTestSuite) SetupTest() {
 func (s *SearchTestSuite) TearDownTest() {
 	// Clean up graph objects
 	for _, id := range s.createdObjectIDs {
-		_, _ = s.Client.DELETE("/api/v2/graph/objects/"+id,
+		_, _ = s.Client.DELETE("/api/graph/objects/"+id,
 			s.AdminAuth(),
 			s.ProjectHeader(),
 		)
 	}
 	// Clean up documents
 	for _, id := range s.createdDocIDs {
-		_, _ = s.Client.DELETE("/api/v2/documents/"+id,
+		_, _ = s.Client.DELETE("/api/documents/"+id,
 			s.AdminAuth(),
 			s.ProjectHeader(),
 		)
@@ -55,7 +55,7 @@ func (s *SearchTestSuite) createGraphObject(objType string, properties map[strin
 		body["properties"] = properties
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects", body,
+	resp, err := s.Client.POST("/api/graph/objects", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -79,7 +79,7 @@ func (s *SearchTestSuite) createDocument(filename, content string) string {
 		"content":  content,
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -105,7 +105,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_RequiresAuth() {
 		"query": "test query",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.ProjectHeader(),
 	)
 
@@ -118,7 +118,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_RequiresProjectID() {
 		"query": "test query",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 	)
 
@@ -131,7 +131,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_RequiresProjectID() {
 // =============================================================================
 
 func (s *SearchTestSuite) TestUnifiedSearch_RequiresQuery() {
-	resp, err := s.Client.POST("/api/v2/search/unified", map[string]any{},
+	resp, err := s.Client.POST("/api/search/unified", map[string]any{},
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -155,7 +155,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_QueryTooLong() {
 		"query": longQuery,
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -173,7 +173,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_EmptyResults() {
 		"query": fmt.Sprintf("nonexistent_query_%s", uuid.New().String()),
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -207,7 +207,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ResultTypesGraph() {
 		"resultTypes": "graph",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -239,7 +239,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ResultTypesText() {
 		"resultTypes": "text",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -268,7 +268,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ResultTypesBoth() {
 		"resultTypes": "both",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -293,7 +293,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyWeighted() {
 		"fusionStrategy": "weighted",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -314,7 +314,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyRRF() {
 		"fusionStrategy": "rrf",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -335,7 +335,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyInterleave() {
 		"fusionStrategy": "interleave",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -356,7 +356,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyGraphFirst() {
 		"fusionStrategy": "graph_first",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -377,7 +377,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_FusionStrategyTextFirst() {
 		"fusionStrategy": "text_first",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -398,7 +398,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_DefaultFusionStrategy() {
 		"query": "test",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -428,7 +428,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_CustomWeights() {
 		},
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -461,7 +461,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_WithLimit() {
 		"resultTypes": "graph",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -485,7 +485,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_IncludesExecutionTime() {
 		"query": "test",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -521,7 +521,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ReturnsGraphResults() {
 		"resultTypes": "graph",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -545,7 +545,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ReturnsTextResults() {
 		"resultTypes": "text",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -572,7 +572,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_ReturnsBothResults() {
 		"resultTypes": "both",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -602,7 +602,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_WithTypeFilter() {
 		"graphTypes":  []string{"Requirement"},
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -626,7 +626,7 @@ func (s *SearchTestSuite) TestUnifiedSearch_DebugModeResponse() {
 		"query": "test",
 	}
 
-	resp, err := s.Client.POST("/api/v2/search/unified", body,
+	resp, err := s.Client.POST("/api/search/unified", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)

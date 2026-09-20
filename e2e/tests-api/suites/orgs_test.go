@@ -29,7 +29,7 @@ func (s *OrgsTestSuite) SetupTest() {
 // TearDownTest cleans up created resources after each test.
 func (s *OrgsTestSuite) TearDownTest() {
 	for _, id := range s.createdOrgIDs {
-		_, _ = s.Client.DELETE("/api/v2/orgs/"+id, s.AdminAuth())
+		_, _ = s.Client.DELETE("/api/orgs/"+id, s.AdminAuth())
 	}
 }
 
@@ -40,7 +40,7 @@ func (s *OrgsTestSuite) TearDownTest() {
 // createOrg creates an organization via API and tracks for cleanup.
 func (s *OrgsTestSuite) createOrg(name string) (string, error) {
 	body := map[string]any{"name": name}
-	resp, err := s.Client.POST("/api/v2/orgs", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/orgs", body, s.AdminAuth())
 	if err != nil {
 		return "", err
 	}
@@ -66,14 +66,14 @@ func (s *OrgsTestSuite) createOrg(name string) (string, error) {
 // =============================================================================
 
 func (s *OrgsTestSuite) TestListOrgs_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/orgs")
+	resp, err := s.Client.GET("/api/orgs")
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestListOrgs_ReturnsUserOrgs() {
 	// Admin user already has access to the default test org
-	resp, err := s.Client.GET("/api/v2/orgs", s.AdminAuth())
+	resp, err := s.Client.GET("/api/orgs", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -90,7 +90,7 @@ func (s *OrgsTestSuite) TestListOrgs_MultipleOrgs() {
 		s.Require().NoError(err)
 	}
 
-	resp, err := s.Client.GET("/api/v2/orgs", s.AdminAuth())
+	resp, err := s.Client.GET("/api/orgs", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -106,20 +106,20 @@ func (s *OrgsTestSuite) TestListOrgs_MultipleOrgs() {
 // =============================================================================
 
 func (s *OrgsTestSuite) TestGetOrg_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/orgs/" + testutil.DefaultTestOrg.ID)
+	resp, err := s.Client.GET("/api/orgs/" + testutil.DefaultTestOrg.ID)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestGetOrg_InvalidUUID() {
-	resp, err := s.Client.GET("/api/v2/orgs/invalid-uuid", s.AdminAuth())
+	resp, err := s.Client.GET("/api/orgs/invalid-uuid", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestGetOrg_NotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
-	resp, err := s.Client.GET("/api/v2/orgs/"+notFoundID, s.AdminAuth())
+	resp, err := s.Client.GET("/api/orgs/"+notFoundID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -129,7 +129,7 @@ func (s *OrgsTestSuite) TestGetOrg_Success() {
 	orgID, err := s.createOrg("Get Test Org")
 	s.Require().NoError(err)
 
-	resp, err := s.Client.GET("/api/v2/orgs/"+orgID, s.AdminAuth())
+	resp, err := s.Client.GET("/api/orgs/"+orgID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -146,14 +146,14 @@ func (s *OrgsTestSuite) TestGetOrg_Success() {
 
 func (s *OrgsTestSuite) TestCreateOrg_RequiresAuth() {
 	body := map[string]any{"name": "Unauth Org"}
-	resp, err := s.Client.POST("/api/v2/orgs", body)
+	resp, err := s.Client.POST("/api/orgs", body)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_Success() {
 	body := map[string]any{"name": "New Organization"}
-	resp, err := s.Client.POST("/api/v2/orgs", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/orgs", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusCreated, resp.StatusCode)
 
@@ -169,7 +169,7 @@ func (s *OrgsTestSuite) TestCreateOrg_Success() {
 	}
 
 	// Verify the org appears in list
-	listResp, err := s.Client.GET("/api/v2/orgs", s.AdminAuth())
+	listResp, err := s.Client.GET("/api/orgs", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, listResp.StatusCode)
 
@@ -189,7 +189,7 @@ func (s *OrgsTestSuite) TestCreateOrg_Success() {
 
 func (s *OrgsTestSuite) TestCreateOrg_TrimsWhitespace() {
 	body := map[string]any{"name": "  Trimmed Name  "}
-	resp, err := s.Client.POST("/api/v2/orgs", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/orgs", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusCreated, resp.StatusCode)
 
@@ -206,14 +206,14 @@ func (s *OrgsTestSuite) TestCreateOrg_TrimsWhitespace() {
 
 func (s *OrgsTestSuite) TestCreateOrg_EmptyName() {
 	body := map[string]any{"name": ""}
-	resp, err := s.Client.POST("/api/v2/orgs", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/orgs", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_WhitespaceOnlyName() {
 	body := map[string]any{"name": "   "}
-	resp, err := s.Client.POST("/api/v2/orgs", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/orgs", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -222,14 +222,14 @@ func (s *OrgsTestSuite) TestCreateOrg_NameTooLong() {
 	// Create a name longer than 120 characters
 	longName := strings.Repeat("a", 121)
 	body := map[string]any{"name": longName}
-	resp, err := s.Client.POST("/api/v2/orgs", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/orgs", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestCreateOrg_MissingName() {
 	body := map[string]any{}
-	resp, err := s.Client.POST("/api/v2/orgs", body, s.AdminAuth())
+	resp, err := s.Client.POST("/api/orgs", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -240,14 +240,14 @@ func (s *OrgsTestSuite) TestCreateOrg_MissingName() {
 
 func (s *OrgsTestSuite) TestUpdateOrg_RequiresAuth() {
 	body := map[string]any{"name": "Updated Name"}
-	resp, err := s.Client.PATCH("/api/v2/orgs/"+testutil.DefaultTestOrg.ID, body)
+	resp, err := s.Client.PATCH("/api/orgs/"+testutil.DefaultTestOrg.ID, body)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestUpdateOrg_InvalidUUID() {
 	body := map[string]any{"name": "Updated Name"}
-	resp, err := s.Client.PATCH("/api/v2/orgs/invalid-uuid", body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/orgs/invalid-uuid", body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -255,7 +255,7 @@ func (s *OrgsTestSuite) TestUpdateOrg_InvalidUUID() {
 func (s *OrgsTestSuite) TestUpdateOrg_NotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
 	body := map[string]any{"name": "Updated Name"}
-	resp, err := s.Client.PATCH("/api/v2/orgs/"+notFoundID, body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/orgs/"+notFoundID, body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -266,7 +266,7 @@ func (s *OrgsTestSuite) TestUpdateOrg_Success() {
 	s.Require().NoError(err)
 
 	body := map[string]any{"name": "Updated Name"}
-	resp, err := s.Client.PATCH("/api/v2/orgs/"+orgID, body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/orgs/"+orgID, body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -284,7 +284,7 @@ func (s *OrgsTestSuite) TestUpdateOrg_EmptyUpdate() {
 
 	// Empty update should still return OK
 	body := map[string]any{}
-	resp, err := s.Client.PATCH("/api/v2/orgs/"+orgID, body, s.AdminAuth())
+	resp, err := s.Client.PATCH("/api/orgs/"+orgID, body, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
@@ -299,20 +299,20 @@ func (s *OrgsTestSuite) TestUpdateOrg_EmptyUpdate() {
 // =============================================================================
 
 func (s *OrgsTestSuite) TestDeleteOrg_RequiresAuth() {
-	resp, err := s.Client.DELETE("/api/v2/orgs/" + testutil.DefaultTestOrg.ID)
+	resp, err := s.Client.DELETE("/api/orgs/" + testutil.DefaultTestOrg.ID)
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestDeleteOrg_InvalidUUID() {
-	resp, err := s.Client.DELETE("/api/v2/orgs/invalid-uuid", s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/orgs/invalid-uuid", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestDeleteOrg_NotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
-	resp, err := s.Client.DELETE("/api/v2/orgs/"+notFoundID, s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/orgs/"+notFoundID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -322,12 +322,12 @@ func (s *OrgsTestSuite) TestDeleteOrg_Success() {
 	orgID, err := s.createOrg("To Delete")
 	s.Require().NoError(err)
 
-	resp, err := s.Client.DELETE("/api/v2/orgs/"+orgID, s.AdminAuth())
+	resp, err := s.Client.DELETE("/api/orgs/"+orgID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
 	// Verify org is no longer accessible
-	getResp, err := s.Client.GET("/api/v2/orgs/"+orgID, s.AdminAuth())
+	getResp, err := s.Client.GET("/api/orgs/"+orgID, s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, getResp.StatusCode)
 
@@ -345,20 +345,20 @@ func (s *OrgsTestSuite) TestDeleteOrg_Success() {
 // =============================================================================
 
 func (s *OrgsTestSuite) TestListOrgMembers_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/orgs/" + testutil.DefaultTestOrg.ID + "/members")
+	resp, err := s.Client.GET("/api/orgs/" + testutil.DefaultTestOrg.ID + "/members")
 	s.Require().NoError(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestListOrgMembers_InvalidUUID() {
-	resp, err := s.Client.GET("/api/v2/orgs/invalid-uuid/members", s.AdminAuth())
+	resp, err := s.Client.GET("/api/orgs/invalid-uuid/members", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *OrgsTestSuite) TestListOrgMembers_OrgNotFound() {
 	notFoundID := "00000000-0000-0000-0000-000000000999"
-	resp, err := s.Client.GET("/api/v2/orgs/"+notFoundID+"/members", s.AdminAuth())
+	resp, err := s.Client.GET("/api/orgs/"+notFoundID+"/members", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -368,7 +368,7 @@ func (s *OrgsTestSuite) TestListOrgMembers_Success() {
 	orgID, err := s.createOrg("Members Test Org")
 	s.Require().NoError(err)
 
-	resp, err := s.Client.GET("/api/v2/orgs/"+orgID+"/members", s.AdminAuth())
+	resp, err := s.Client.GET("/api/orgs/"+orgID+"/members", s.AdminAuth())
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, resp.StatusCode)
 
