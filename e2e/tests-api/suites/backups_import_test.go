@@ -2,8 +2,10 @@ package suites
 
 // BackupsImportSuite exercises the backup archive import feature (PR #610).
 //
-// This suite requires a server with object storage (MinIO) enabled, because the
-// round-trip under test is create -> download -> import -> clone:
+// This suite is opt-in: it requires a server with object storage (MinIO)
+// enabled, which the default e2e harness does not provision. Run it with
+// BACKUP_IMPORT_E2E=1 (see SetupSuite). The round-trip under test is
+// create -> download -> import -> clone:
 //
 //  1. Create a real backup of the default project and wait for it to reach
 //     status "ready".
@@ -22,6 +24,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -34,10 +37,27 @@ type BackupsImportSuite struct {
 
 	backupIDs  []string // kb.backups rows created during a test (source + imported)
 	projectIDs []string // kb.projects rows created by clone restore
+	storage    *testutil.Storage
 }
 
 func TestBackupsImportSuite(t *testing.T) {
 	RunSuite(t, new(BackupsImportSuite))
+}
+
+// SetupSuite gates the whole suite behind an explicit opt-in. The round-trip
+// under test requires object storage (MinIO), which the default e2e harness
+// does not provision; without this gate TestImportBackupRoundTrip would create
+// a backup, poll for 60s, and fail the entire run. Enable the suite with
+// BACKUP_IMPORT_E2E=1 once the harness provisions MinIO (and sets
+// STORAGE_ENDPOINT / STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY).
+func (s *BackupsImportSuite) SetupSuite() {
+	if os.Getenv("BACKUP_IMPORT_E2E") != "1" {
+		s.T().Skip("storage-backed backup import e2e is opt-in; set BACKUP_IMPORT_E2E=1 to run")
+	}
+	s.BaseSuite.SetupSuite()
+
+	// Best-effort object-storage client for teardown cleanup.
+	s.storage, _ = testutil.NewStorage(testutil.LoadStorageConfig())
 }
 
 // SetupTest runs before each test.
@@ -50,14 +70,41 @@ func (s *BackupsImportSuite) SetupTest() {
 // TearDownTest deletes backups and cloned projects created during the test so
 // reruns are idempotent. Deleting a backup cascades to kb.restores; deleting a
 // project cascades to its documents/chunks/memberships.
+//
+// The backup DELETE endpoint soft-deletes only (it never removes the archive
+// from object storage), so the raw SQL row deletes would orphan every source
+// and imported ZIP. The storage object is removed first, best-effort.
 func (s *BackupsImportSuite) TearDownTest() {
 	ctx := s.Ctx
-	for _, id := range s.backupIDs {
+	orgID := testutil.DefaultTestOrg.ID
+
+	for _, id := range uniqueStrings(s.backupIDs) {
+		if s.storage != nil {
+			_ = s.storage.DeleteBackup(ctx, orgID, id)
+		}
 		_, _ = s.DB.NewRaw(`DELETE FROM kb.backups WHERE id = ?`, id).Exec(ctx)
 	}
-	for _, id := range s.projectIDs {
+	for _, id := range uniqueStrings(s.projectIDs) {
 		_, _ = s.DB.NewRaw(`DELETE FROM kb.projects WHERE id = ?`, id).Exec(ctx)
 	}
+}
+
+// uniqueStrings deduplicates and drops empty entries, so teardown tolerates a
+// clone id recorded both from the restore response and from a name-based query.
+func uniqueStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 // importPath returns the import endpoint path for the default org.
@@ -184,12 +231,19 @@ func (s *BackupsImportSuite) TestImportBackupRoundTrip() {
 	}
 	s.Require().Equal("completed", restoreStatus, "clone restore did not complete: %v", restoreDone)
 
-	// 5. The completed clone restore reports the new project id. Use it as the
-	// authoritative clone id and register it for teardown so reruns stay
-	// idempotent.
+	// 5. The completed clone restore created a new project. Record every
+	// created project id for teardown BEFORE asserting, so a failed assertion
+	// (or a response that omits targetProjectId) never leaks the clone.
 	targetProjectID, ok := restoreDone["targetProjectId"].(string)
+
+	// The target name is unique per run, so look the clone up by name rather
+	// than trusting the response field alone for cleanup.
+	var created []string
+	err = s.DB.NewRaw(`SELECT id FROM kb.projects WHERE name = ?`, targetName).Scan(s.Ctx, &created)
+	s.Require().NoError(err)
+	s.projectIDs = append(s.projectIDs, created...)
+
 	s.Require().True(ok && targetProjectID != "", "completed clone restore must report targetProjectId: %v", restoreDone)
-	s.projectIDs = append(s.projectIDs, targetProjectID)
 
 	// Assert the clone produced a new project with the expected org.
 	var rows []struct {
