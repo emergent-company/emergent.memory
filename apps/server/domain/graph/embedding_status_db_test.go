@@ -164,6 +164,7 @@ func TestEmbeddingStatus_Repository(t *testing.T) {
 	for id, status := range want {
 		obj, err := repo.GetByID(ctx, pid, id)
 		require.NoErrorf(t, err, "GetByID %s", id)
+		assert.Equalf(t, id, obj.ID, "GetByID must return the object's real id (not a zero value)")
 		assert.Equalf(t, status, obj.EmbeddingStatus, "GetByID embedding_status for %s", id)
 	}
 }
