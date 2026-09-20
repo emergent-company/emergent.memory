@@ -31,6 +31,7 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 func (r *Repository) Create(ctx context.Context, token *ApiToken) error {
 	_, err := r.db.NewInsert().
 		Model(token).
+		Returning("id").
 		Exec(ctx)
 	if err != nil {
 		if pgutils.IsUniqueViolation(err) {
