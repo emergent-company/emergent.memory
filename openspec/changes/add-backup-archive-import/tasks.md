@@ -1,6 +1,6 @@
 ## 1. Migration — allow imported backups
 
-- [ ] 1.1 Add `apps/server/migrations/00157_allow_imported_backups.sql`: Up drops `backups_project_id_fkey` and adds `imported boolean NOT NULL DEFAULT false`; Down deletes imported restores/backups, drops the column, re-adds the FK. Verify: `task migrate:up` then `task migrate:status` shows 00157 applied; `\d kb.backups` has `imported` and no `backups_project_id_fkey`.
+- [ ] 1.1 Add `apps/server/migrations/00159_allow_imported_backups.sql`: Up drops `backups_project_id_fkey` and adds `imported boolean NOT NULL DEFAULT false`; Down deletes imported restores/backups, drops the column, re-adds the FK. Verify: `task migrate:up` then `task migrate:status` shows 00159 applied; `\d kb.backups` has `imported` and no `backups_project_id_fkey`.
 
 ## 2. Importer — parse from bytes, validate source identity
 

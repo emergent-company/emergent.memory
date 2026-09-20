@@ -48,7 +48,7 @@ Clone remap already rewrites the project id. Additionally, an imported clone mus
 
 ## Migration Plan
 
-`00157_allow_imported_backups.sql`:
+`00159_allow_imported_backups.sql`:
 - Up: `DROP CONSTRAINT IF EXISTS backups_project_id_fkey`; `ADD COLUMN imported boolean NOT NULL DEFAULT false`.
 - Down: delete restores + backups where `imported`; drop the column; re-add the FK.
 
