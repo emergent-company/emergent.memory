@@ -148,6 +148,11 @@ type SchemaMigrationExecuteResponse struct {
 type SchemaMigrationRollbackRequest struct {
 	ToVersion           string `json:"to_version"`
 	RestoreTypeRegistry bool   `json:"restore_type_registry,omitempty"`
+	// MaxObjects caps the number of objects restored by a single rollback
+	// (0 = unlimited). It bounds processing, not the scan; the scan itself is
+	// bounded separately by OnlyWithMigrationArchive and the configurable
+	// MigrationScanMaxObjects safety cap.
+	MaxObjects int `json:"max_objects,omitempty"`
 }
 
 // SchemaMigrationRollbackResponse is the response from a rollback.

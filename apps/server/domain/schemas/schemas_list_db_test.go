@@ -16,6 +16,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/schemas"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
@@ -77,7 +78,7 @@ func TestListPacksPaginationHandler(t *testing.T) {
 	db := testDB.GetDB()
 
 	repo := schemas.NewRepository(db, slog.Default())
-	h := schemas.NewHandler(schemas.NewService(repo, nil, slog.Default()))
+	h := schemas.NewHandler(schemas.NewService(repo, nil, slog.Default(), &config.Config{}))
 
 	projectID := uuid.NewString()
 	base := time.Now().UTC().Truncate(time.Microsecond)
