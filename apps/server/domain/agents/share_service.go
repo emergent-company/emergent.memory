@@ -42,6 +42,8 @@ type ShareRepo interface {
 	CreateShareSessionIfUnderCap(ctx context.Context, s *AgentShareSession, maxActive int) (bool, error)
 	GetShareSessionByID(ctx context.Context, sessionID, linkID, endUserRef string) (*AgentShareSession, error)
 	ListShareSessionsByEndUser(ctx context.Context, linkID, endUserRef string, includeArchived bool) ([]*AgentShareSession, error)
+	ListShareSessionsByProject(ctx context.Context, projectID string) ([]shareSessionProjectRow, error)
+	GetShareSessionByProject(ctx context.Context, sessionID, projectID string) (*shareSessionProjectRow, error)
 	CountActiveShareSessions(ctx context.Context, linkID, endUserRef string) (int, error)
 	ArchiveShareSession(ctx context.Context, sessionID, linkID, endUserRef string) (bool, error)
 	TouchShareSession(ctx context.Context, sessionID string) error
@@ -227,6 +229,23 @@ func (s *ShareService) EnsureProjectAdmin(ctx context.Context, projectID, userID
 	}
 	if role != "project_admin" {
 		return apperror.NewForbidden("project admin role required to manage share links")
+	}
+	return nil
+}
+
+// EnsureProjectMember returns nil when userID holds any membership role in
+// projectID. Owner read endpoints call this for OAuth/session auth, because
+// RequireProjectScope and RequireAPITokenScopes are no-ops for OAuth sessions
+// and the caller-supplied :projectId would otherwise be trusted — letting a
+// member of one project read another project's shared sessions. API-token
+// requests are already scoped by RequireProjectScope and never pass a userID.
+func (s *ShareService) EnsureProjectMember(ctx context.Context, projectID, userID string) error {
+	role, err := s.apiTokens.GetUserProjectRole(ctx, projectID, userID)
+	if err != nil {
+		return err
+	}
+	if role == "" {
+		return apperror.NewForbidden("project membership required to view share sessions")
 	}
 	return nil
 }
@@ -668,6 +687,69 @@ func (s *ShareService) sessionTranscript(ctx context.Context, acpSessionID strin
 		out = append(out, ShareTranscriptMessage{Role: it.Role, Content: text})
 	}
 	return out, nil
+}
+
+// ListSessionsByProject returns a project's share sessions (across all of its
+// links), newest activity first, mapped to the owner-facing DTO. When userID is
+// non-empty (OAuth/session auth), the caller must be a project member.
+func (s *ShareService) ListSessionsByProject(ctx context.Context, projectID, userID string) ([]*ShareOwnerSessionDTO, error) {
+	if userID != "" {
+		if err := s.EnsureProjectMember(ctx, projectID, userID); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := s.repo.ListShareSessionsByProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*ShareOwnerSessionDTO, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, s.ownerSessionDTO(row))
+	}
+	return out, nil
+}
+
+// GetSessionTranscriptByID returns the plain user/assistant transcript for a
+// share session, scoped to a project. The session is loaded by id and its
+// link's project_id must match projectID (404 otherwise), so the caller can
+// never read another project's shared session. When userID is non-empty
+// (OAuth/session auth), the caller must also be a project member.
+func (s *ShareService) GetSessionTranscriptByID(ctx context.Context, projectID, sessionID, userID string) ([]ShareTranscriptMessage, error) {
+	if userID != "" {
+		if err := s.EnsureProjectMember(ctx, projectID, userID); err != nil {
+			return nil, err
+		}
+	}
+	row, err := s.repo.GetShareSessionByProject(ctx, sessionID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, apperror.New(http.StatusNotFound, "not_found", "share session not found")
+	}
+	return s.sessionTranscript(ctx, row.ACPSessionID)
+}
+
+// ownerSessionDTO maps a project-scoped share-session row to its owner DTO,
+// falling back to the agent name when the session has no explicit title.
+func (s *ShareService) ownerSessionDTO(row shareSessionProjectRow) *ShareOwnerSessionDTO {
+	title := ""
+	if row.Title != nil {
+		title = *row.Title
+	}
+	if title == "" {
+		title = row.AgentName
+	}
+	return &ShareOwnerSessionDTO{
+		ID:                row.ID,
+		AgentDefinitionID: row.AgentDefinitionID,
+		AgentName:         row.AgentName,
+		Title:             title,
+		ACPSessionID:      row.ACPSessionID,
+		IsArchived:        row.IsArchived,
+		CreatedAt:         row.CreatedAt,
+		LastActivityAt:    row.LastActivityAt,
+	}
 }
 
 // ArchiveSession archives one session.

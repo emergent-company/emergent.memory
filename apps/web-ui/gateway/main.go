@@ -442,6 +442,7 @@ func main() {
 	// Session trace/log viewer and usage dashboard.
 	e.GET("/sessions", s.uiSessions)
 	e.GET("/sessions/:id", s.uiSession)
+	e.GET("/share-sessions/:id", s.uiShareSessionTranscript)
 	e.GET("/usage", s.uiUsage)
 
 	srv := &http.Server{

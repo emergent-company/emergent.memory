@@ -340,6 +340,13 @@
           closeSessionRail();
           resumeRun(runId, t);
         }
+      } else if (t.getAttribute("data-action") === "open-share") {
+        // owner-shared session rows open a read-only transcript on a separate
+        // page (they are not resumable in this workspace).
+        var shareId = t.getAttribute("data-share-id");
+        if (shareId) {
+          window.location.href = "/share-sessions/" + encodeURIComponent(shareId);
+        }
       } else if (t.getAttribute("data-action") === "toggle-chat-rail") {
         var rail = document.getElementById("chat-rail");
         if (rail) rail.classList.toggle("hidden");
