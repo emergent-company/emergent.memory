@@ -110,6 +110,13 @@ var ValidApiTokenScopes = []string{
 	// The project MCP transports reject any credential carrying it (see
 	// domain/mcp/agent_mcp_share.go) and only the per-agent endpoint accepts it.
 	"mcp:agent-call",
+	// Marker scope minted on public agent-share link keys. Like mcp:agent-call
+	// it is reserved for an internal mint path (Service.CreateAgentChatShareToken)
+	// and deliberately absent from the user-facing oneof tags; Service.Create /
+	// CreateAccountToken / UpdateScopes reject it. The gateway presents the
+	// share key as a Bearer credential; share routes resolve token -> link ->
+	// agent -> project and ignore client-supplied project/org headers.
+	"share:agent-chat",
 }
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO

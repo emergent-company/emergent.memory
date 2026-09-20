@@ -56,6 +56,12 @@ func (s *BackupsImportSuite) SetupSuite() {
 	}
 	s.BaseSuite.SetupSuite()
 
+	// The round-trip assertions inspect kb.backups/kb.projects via direct SQL,
+	// so remote mode (no DB) cannot support this suite.
+	if s.DB == nil {
+		s.T().Skip("backup import e2e requires direct DB access; set E2E_SKIP_DB=false")
+	}
+
 	// Best-effort object-storage client for teardown cleanup.
 	s.storage, _ = testutil.NewStorage(testutil.LoadStorageConfig())
 }
@@ -82,10 +88,14 @@ func (s *BackupsImportSuite) TearDownTest() {
 		if s.storage != nil {
 			_ = s.storage.DeleteBackup(ctx, orgID, id)
 		}
-		_, _ = s.DB.NewRaw(`DELETE FROM kb.backups WHERE id = ?`, id).Exec(ctx)
+		if s.DB != nil {
+			_, _ = s.DB.NewRaw(`DELETE FROM kb.backups WHERE id = ?`, id).Exec(ctx)
+		}
 	}
 	for _, id := range uniqueStrings(s.projectIDs) {
-		_, _ = s.DB.NewRaw(`DELETE FROM kb.projects WHERE id = ?`, id).Exec(ctx)
+		if s.DB != nil {
+			_, _ = s.DB.NewRaw(`DELETE FROM kb.projects WHERE id = ?`, id).Exec(ctx)
+		}
 	}
 }
 
