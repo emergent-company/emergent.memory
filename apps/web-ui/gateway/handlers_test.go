@@ -1672,65 +1672,38 @@ func TestChatStreamsFlushIncrementally(t *testing.T) {
 	srv := httptest.NewServer(e)
 	defer srv.Close()
 
-	// Issue the POST in a goroutine: without the per-write flush, the server
-	// never sends response headers (or the first frame) until the handler
-	// returns, so a plain http.Post would block here and deadlock the test.
-	// Bounding it with a select turns that regression into a fast failure.
-	type postResult struct {
-		resp *http.Response
-		err  error
+	// ResponseHeaderTimeout bounds how long the client waits for the server's
+	// response headers. Without the per-write flush, net/http buffers the 200
+	// and first SSE frame and never sends headers, so client.Post hangs until
+	// this timeout — turning the buffering regression into a fast failure
+	// instead of a deadlock.
+	client := &http.Client{
+		Transport: &http.Transport{ResponseHeaderTimeout: 3 * time.Second},
 	}
-	postCh := make(chan postResult, 1)
-	go func() {
-		resp, err := http.Post(srv.URL+"/api/chat", "application/json", strings.NewReader(`{"message":"hi"}`))
-		postCh <- postResult{resp: resp, err: err}
-	}()
-
-	var resp *http.Response
-	select {
-	case res := <-postCh:
-		if res.err != nil {
-			close(release)
-			t.Fatalf("POST: %v", res.err)
-		}
-		resp = res.resp
-	case <-time.After(3 * time.Second):
+	resp, err := client.Post(srv.URL+"/api/chat", "application/json", strings.NewReader(`{"message":"hi"}`))
+	if err != nil {
 		close(release)
-		t.Fatal("response headers not received within 3s — flush-per-write regression")
+		t.Fatalf("POST: %v (response headers did not arrive — flush-per-write regression)", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
 		t.Fatalf("content-type = %q", ct)
 	}
 
-	// The first frame must arrive *before* release is closed: without the
-	// per-write flush, net/http buffers it and the read below blocks until the
-	// handler returns (i.e. until release is closed and the pipe closes), so
-	// this fails fast on a regression instead of hanging.
+	// The first frame arrives with the flushed headers: with the per-write
+	// flush the 200 and the ": ping" frame are written together, so this read
+	// completes immediately. Without the flush, client.Post above would have
+	// already timed out.
 	br := bufio.NewReader(resp.Body)
-	type lineResult struct {
-		line string
-		err  error
-	}
-	got := make(chan lineResult, 1)
-	go func() {
-		line, rerr := br.ReadString('\n')
-		got <- lineResult{line: line, err: rerr}
-	}()
-	select {
-	case res := <-got:
-		if res.err != nil {
-			close(release)
-			t.Fatalf("first line read error: %v", res.err)
-		}
-		if !strings.HasPrefix(res.line, ": ping") {
-			close(release)
-			t.Fatalf("first line = %q, want ': ping'", res.line)
-		}
-	case <-time.After(3 * time.Second):
+	line, err := br.ReadString('\n')
+	if err != nil {
 		close(release)
-		t.Fatal("first SSE frame did not flush within 3s — flush-per-write regression")
+		t.Fatalf("first line read error: %v", err)
+	}
+	if !strings.HasPrefix(line, ": ping") {
+		close(release)
+		t.Fatalf("first line = %q, want ': ping'", line)
 	}
 
 	close(release)
