@@ -228,9 +228,13 @@ func main() {
 	share.GET("/api/questions", s.shareQuestions)
 	share.POST("/api/sessions/:id/approvals/:questionId", s.shareApprove)
 	share.GET("/api/partial/sessions", s.sharePartialSessions)
-	// Owner agent-share management (session-gated; see share_owner.go).
+	// Owner agent-share management (session-gated; see share_owner.go). The
+	// list lives at /share; create is a standalone page at /share/new (mirroring
+	// MCP Sharing). Create and rotate render the list with the one-time URL
+	// revealed directly (no redirect).
 	e.GET("/agents/:id/share", s.uiAgentShare)
-	e.POST("/agents/:id/share-links", s.uiAgentShareCreate)
+	e.GET("/agents/:id/share/new", s.uiAgentShareNewPage)
+	e.POST("/agents/:id/share/new", s.uiAgentShareCreate)
 	e.POST("/agents/:id/share-links/:linkId/rotate", s.uiAgentShareRotate)
 	e.POST("/agents/:id/share-links/:linkId/revoke", s.uiAgentShareRevoke)
 	e.GET("/agents/:id/share-links/:linkId/reveal", s.uiAgentShareReveal)
