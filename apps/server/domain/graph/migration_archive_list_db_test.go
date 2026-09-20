@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -139,4 +140,104 @@ func TestListAllCoversEveryPage(t *testing.T) {
 	for _, obj := range all {
 		require.Lenf(t, obj.MigrationArchive, 1, "object %s lost its archive entry", obj.ID)
 	}
+}
+
+// TestListOnlyWithMigrationArchive proves the opt-in archive predicate filters
+// out empty-archive objects while still paging across more than one page.
+func TestListOnlyWithMigrationArchive(t *testing.T) {
+	ctx, db, projectID, cfg := setupArchiveListTest(t)
+	cfg.Graph.MaxListLimit = 3
+	repo := graph.NewRepository(db, slog.Default(), cfg)
+	pid := uuid.MustParse(projectID)
+
+	base := time.Now().UTC()
+	for i := 0; i < 4; i++ {
+		archive := fmt.Sprintf(`[{"from_version":"1.0.0","to_version":"2.0.0","dropped_data":{"n":%d}}]`, i)
+		insertArchiveObject(t, ctx, db, projectID, "BoundType",
+			base.Add(-time.Duration(i)*time.Second), archive, fmt.Sprintf(`{"n":%d}`, i))
+	}
+	for i := 0; i < 3; i++ {
+		insertArchiveObject(t, ctx, db, projectID, "BoundType",
+			base.Add(-time.Duration(10+i)*time.Second), `[]`, fmt.Sprintf(`{"empty":%d}`, i))
+	}
+
+	// Without the predicate every object is returned.
+	all, err := repo.ListAll(ctx, graph.ListParams{ProjectID: pid, IncludeMigrationArchive: true})
+	require.NoError(t, err)
+	require.Len(t, all, 7)
+
+	// With the predicate only archive-carrying objects are returned, and the
+	// result still pages (4 objects against a MaxListLimit of 3).
+	only, err := repo.ListAll(ctx, graph.ListParams{
+		ProjectID:                pid,
+		IncludeMigrationArchive:  true,
+		OnlyWithMigrationArchive: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, only, 4)
+	for _, obj := range only {
+		require.Lenf(t, obj.MigrationArchive, 1, "only archive-carrying objects must be returned")
+	}
+}
+
+// TestListEachMatchesListAll proves ListEach visits every page in the same order
+// as ListAll without accumulating.
+func TestListEachMatchesListAll(t *testing.T) {
+	ctx, db, projectID, cfg := setupArchiveListTest(t)
+	cfg.Graph.MaxListLimit = 3
+	repo := graph.NewRepository(db, slog.Default(), cfg)
+	pid := uuid.MustParse(projectID)
+
+	base := time.Now().UTC()
+	const total = 7
+	for i := 0; i < total; i++ {
+		archive := fmt.Sprintf(`[{"from_version":"1.0.0","to_version":"2.0.0","dropped_data":{"n":%d}}]`, i)
+		insertArchiveObject(t, ctx, db, projectID, "EachType",
+			base.Add(-time.Duration(i)*time.Second), archive, fmt.Sprintf(`{"n":%d}`, i))
+	}
+
+	all, err := repo.ListAll(ctx, graph.ListParams{ProjectID: pid, IncludeMigrationArchive: true})
+	require.NoError(t, err)
+
+	var got []*graph.GraphObject
+	pages := 0
+	err = repo.ListEach(ctx, graph.ListParams{ProjectID: pid, IncludeMigrationArchive: true}, func(page []*graph.GraphObject) error {
+		pages++
+		got = append(got, page...)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, got, total)
+	require.Greater(t, pages, 1, "must page across more than one page")
+
+	require.Equal(t, len(all), len(got))
+	for i := range all {
+		require.Equal(t, all[i].ID, got[i].ID, "ListEach order must match ListAll at index %d", i)
+	}
+}
+
+// TestListEachStopsOnFnError proves ListEach propagates an fn error immediately
+// and does not fetch further pages.
+func TestListEachStopsOnFnError(t *testing.T) {
+	ctx, db, projectID, cfg := setupArchiveListTest(t)
+	cfg.Graph.MaxListLimit = 3
+	repo := graph.NewRepository(db, slog.Default(), cfg)
+	pid := uuid.MustParse(projectID)
+
+	base := time.Now().UTC()
+	const total = 7
+	for i := 0; i < total; i++ {
+		archive := fmt.Sprintf(`[{"from_version":"1.0.0","to_version":"2.0.0","dropped_data":{"n":%d}}]`, i)
+		insertArchiveObject(t, ctx, db, projectID, "StopType",
+			base.Add(-time.Duration(i)*time.Second), archive, fmt.Sprintf(`{"n":%d}`, i))
+	}
+
+	sentinel := errors.New("stop")
+	calls := 0
+	err := repo.ListEach(ctx, graph.ListParams{ProjectID: pid, IncludeMigrationArchive: true}, func(page []*graph.GraphObject) error {
+		calls++
+		return sentinel
+	})
+	require.ErrorIs(t, err, sentinel)
+	require.Equal(t, 1, calls, "ListEach must not fetch further pages after fn returns an error")
 }
