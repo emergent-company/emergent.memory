@@ -29,7 +29,8 @@ RUN apk --no-cache add \
     ca-certificates \
     jq \
     libstdc++ \
-    libgcc
+    libgcc \
+    minio-client
 
 WORKDIR /tests
 
