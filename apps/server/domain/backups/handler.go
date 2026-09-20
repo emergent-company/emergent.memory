@@ -21,6 +21,23 @@ import (
 // backup archive uploaded via the import endpoint.
 const MaxImportArchiveSize int64 = 1 << 30
 
+// isZipArchive reports whether data starts with a ZIP local-file, empty-archive,
+// or spanned-archive signature (PK\x03\x04 / PK\x05\x06 / PK\x07\x08).
+func isZipArchive(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	if data[0] != 'P' || data[1] != 'K' {
+		return false
+	}
+	switch data[2] {
+	case 0x03, 0x05, 0x07:
+		return data[3] == data[2]+1
+	default:
+		return false
+	}
+}
+
 type Handler struct {
 	service *Service
 	storage *storage.Service
@@ -180,11 +197,67 @@ func (h *Handler) CreateBackup(c echo.Context) error {
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/v1/organizations/{orgId}/backups/import [post]
 // @Security     bearerAuth
+// parseRetentionDays reads the optional retentionDays form value, defaulting to
+// 30 when absent and validating the 1..365 range.
+func parseRetentionDays(c echo.Context) (int, *apperror.Error) {
+	retentionDays := 30
+	if rd := c.FormValue("retentionDays"); rd != "" {
+		parsed, err := strconv.Atoi(rd)
+		if err != nil {
+			return 0, apperror.NewBadRequest("retentionDays must be an integer")
+		}
+		retentionDays = parsed
+	}
+	if retentionDays < 1 || retentionDays > 365 {
+		return 0, apperror.NewBadRequest("retentionDays must be between 1 and 365")
+	}
+	return retentionDays, nil
+}
+
+// readArchiveUpload parses the multipart `file` field, enforcing the size cap
+// and ZIP signature, and returns the raw archive bytes.
+func readArchiveUpload(c echo.Context) ([]byte, *apperror.Error) {
+	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, MaxImportArchiveSize+1024)
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return nil, apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+		}
+		return nil, apperror.NewBadRequest("file field is required")
+	}
+
+	if file.Size > MaxImportArchiveSize {
+		return nil, apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		return nil, apperror.NewInternal("failed to open uploaded file", err)
+	}
+	defer src.Close()
+
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to read uploaded file", err)
+	}
+	if int64(len(data)) > MaxImportArchiveSize {
+		return nil, apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+	}
+
+	if !isZipArchive(data) {
+		return nil, apperror.New(http.StatusUnsupportedMediaType, "unsupported_media_type", "uploaded file must be a ZIP archive")
+	}
+
+	return data, nil
+}
+
 func (h *Handler) ImportBackup(c echo.Context) error {
 	user := auth.MustGetUser(c)
 	orgID := c.Param("orgId")
 
-	// Org membership check (mirrors restoreClone).
+	// Org membership check first: authorization before any body work.
 	var memberCount int64
 	if err := h.service.repo.db.NewSelect().
 		Table("kb.organization_memberships").
@@ -198,50 +271,14 @@ func (h *Handler) ImportBackup(c echo.Context) error {
 		return apperror.NewForbidden("you are not a member of the target organization")
 	}
 
-	retentionDays := 30
-	if rd := c.FormValue("retentionDays"); rd != "" {
-		parsed, err := strconv.Atoi(rd)
-		if err != nil {
-			return apperror.NewBadRequest("retentionDays must be an integer")
-		}
-		retentionDays = parsed
-	}
-	if retentionDays < 1 || retentionDays > 365 {
-		return apperror.NewBadRequest("retentionDays must be between 1 and 365")
+	retentionDays, aerr := parseRetentionDays(c)
+	if aerr != nil {
+		return aerr
 	}
 
-	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, MaxImportArchiveSize+1024)
-
-	file, err := c.FormFile("file")
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			return apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
-		}
-		return apperror.NewBadRequest("file field is required")
-	}
-
-	if file.Size > MaxImportArchiveSize {
-		return apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
-	}
-
-	src, err := file.Open()
-	if err != nil {
-		return apperror.NewInternal("failed to open uploaded file", err)
-	}
-	defer src.Close()
-
-	data, err := io.ReadAll(src)
-	if err != nil {
-		return apperror.NewInternal("failed to read uploaded file", err)
-	}
-	if int64(len(data)) > MaxImportArchiveSize {
-		return apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
-	}
-
-	// Reject non-ZIP early by sniffing the magic bytes.
-	if sniff := data[:min(512, len(data))]; http.DetectContentType(sniff) != "application/zip" && http.DetectContentType(sniff) != "application/octet-stream" {
-		return apperror.New(http.StatusUnsupportedMediaType, "unsupported_media_type", "uploaded file must be a ZIP archive")
+	data, aerr := readArchiveUpload(c)
+	if aerr != nil {
+		return aerr
 	}
 
 	backup, err := h.service.ImportBackup(c.Request().Context(), orgID, user.ID, data, retentionDays)

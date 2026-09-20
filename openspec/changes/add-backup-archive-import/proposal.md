@@ -21,6 +21,6 @@ Project backups can be exported and downloaded, but there is no supported path t
 ## Impact
 
 - `apps/server/domain/backups/`: `routes.go`, `handler.go`, `service.go`, `importer.go`, `restorer.go`, `entity.go`.
-- `apps/server/migrations/00156_allow_imported_backups.sql`.
+- `apps/server/migrations/00157_allow_imported_backups.sql`.
 - `docs/site/user-guide/backups.md`.
 - No CLI or gateway surface in this change; the API is the self-service path.

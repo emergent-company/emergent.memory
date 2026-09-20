@@ -221,10 +221,6 @@ func (s *Service) ImportBackup(ctx context.Context, orgID, userID string, data [
 		return nil, fmt.Errorf("storage service not enabled")
 	}
 
-	if retentionDays <= 0 {
-		retentionDays = 30
-	}
-
 	backupID := uuid.New().String()
 	storageKey := GenerateStorageKey(orgID, backupID)
 
@@ -234,22 +230,49 @@ func (s *Service) ImportBackup(ctx context.Context, orgID, userID string, data [
 		return nil, fmt.Errorf("upload imported backup: %w", err)
 	}
 
-	backupType := archive.Manifest().BackupType
+	backup := newImportedBackupRecord(orgID, userID, backupID, storageKey, int64(len(data)), archive, retentionDays)
+
+	if err := s.repo.Create(ctx, backup); err != nil {
+		// Best-effort cleanup of the just-uploaded object so a failed insert
+		// does not leave an orphaned archive behind.
+		_ = s.storage.Delete(ctx, storageKey)
+		return nil, fmt.Errorf("create imported backup: %w", err)
+	}
+
+	s.log.Info("imported backup registered",
+		slog.String("backup_id", backupID),
+		slog.String("org_id", orgID),
+		slog.String("source_project_id", backup.ProjectID),
+	)
+
+	return backup, nil
+}
+
+// newImportedBackupRecord builds the `ready` backup record for an imported
+// archive. retentionDays <= 0 defaults to 30. The record's project_id /
+// project_name record the manifest's foreign source project; it is flagged
+// imported and supports clone restore only.
+func newImportedBackupRecord(orgID, userID, backupID, storageKey string, dataLen int64, archive *Archive, retentionDays int) *Backup {
+	if retentionDays <= 0 {
+		retentionDays = 30
+	}
+
+	manifest := archive.Manifest()
+	backupType := manifest.BackupType
 	if backupType == "" {
 		backupType = BackupTypeFull
 	}
 
-	manifest := archive.Manifest()
 	now := time.Now()
 	expiresAt := now.AddDate(0, 0, retentionDays)
 
-	backup := &Backup{
+	return &Backup{
 		ID:             backupID,
 		OrganizationID: orgID,
 		ProjectID:      manifest.Project.ID,
 		ProjectName:    manifest.Project.Name,
 		StorageKey:     storageKey,
-		SizeBytes:      int64(len(data)),
+		SizeBytes:      dataLen,
 		Status:         BackupStatusReady,
 		Progress:       100,
 		BackupType:     backupType,
@@ -270,21 +293,6 @@ func (s *Service) ImportBackup(ctx context.Context, orgID, userID string, data [
 		ManifestChecksum: &manifest.Checksums.Manifest,
 		ContentChecksum:  &manifest.Checksums.Database,
 	}
-
-	if err := s.repo.Create(ctx, backup); err != nil {
-		// Best-effort cleanup of the just-uploaded object so a failed insert
-		// does not leave an orphaned archive behind.
-		_ = s.storage.Delete(ctx, storageKey)
-		return nil, fmt.Errorf("create imported backup: %w", err)
-	}
-
-	s.log.Info("imported backup registered",
-		slog.String("backup_id", backupID),
-		slog.String("org_id", orgID),
-		slog.String("source_project_id", backup.ProjectID),
-	)
-
-	return backup, nil
 }
 
 // CreateRestore creates a restore job and dispatches it asynchronously.
