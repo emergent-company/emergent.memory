@@ -6,7 +6,6 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -86,8 +85,7 @@ func emitCLIErr(t *testing.T, invocation, out string, err error) {
 func mustRunCLIInDirWithHome(t *testing.T, dir, home string, args ...string) string {
 	t.Helper()
 	out := framework.MustRunCLIInDirWithHome(t, dir, home, args...)
-	invocation := fmt.Sprintf("memory %s", strings.Join(args, " "))
-	emitCLI(t, invocation, out)
+	emitCLI(t, redactInvocation(args...), out)
 	return out
 }
 
@@ -96,9 +94,80 @@ func mustRunCLIInDirWithHome(t *testing.T, dir, home string, args ...string) str
 func runCLIInDirWithHome(t *testing.T, dir, home string, args ...string) (string, error) {
 	t.Helper()
 	out, err := framework.RunCLIInDirWithHome(t, dir, home, args...)
-	invocation := fmt.Sprintf("memory %s", strings.Join(args, " "))
-	emitCLIErr(t, invocation, out, err)
+	emitCLIErr(t, redactInvocation(args...), out, err)
 	return out, err
+}
+
+// sensitiveArgKeys are CLI flags or positional keys whose following value is a
+// secret (token, API key, password). Their values must never be written to
+// runlog events or the test log.
+var sensitiveArgKeys = map[string]bool{
+	"--api-key": true, "--api_key": true, "--apikey": true,
+	"--token": true, "--secret": true, "--password": true,
+	"api-key": true, "api_key": true, "set-token": true,
+}
+
+// redactInvocation renders the CLI invocation as "memory <args>" with the value
+// of every sensitive key masked, so secrets never leak into runlog events or
+// the test log.
+func redactInvocation(args ...string) string {
+	return "memory " + strings.Join(redactArgs(args...), " ")
+}
+
+// redactArgs returns a copy of args where the value following any sensitive key
+// is replaced with "***".
+func redactArgs(args ...string) []string {
+	out := make([]string, len(args))
+	redactNext := false
+	for i, a := range args {
+		if redactNext {
+			out[i] = "***"
+			redactNext = false
+			continue
+		}
+		out[i] = a
+		if sensitiveArgKeys[a] {
+			redactNext = true
+		}
+	}
+	return out
+}
+
+func TestRedactArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{
+			name: "flag form",
+			in:   []string{"provider", "configure", "x", "--api-key", "secret-key"},
+			want: []string{"provider", "configure", "x", "--api-key", "***"},
+		},
+		{
+			name: "set-token positional",
+			in:   []string{"set-token", "secret-token", "--server", "http://x"},
+			want: []string{"set-token", "***", "--server", "http://x"},
+		},
+		{
+			name: "config api_key positional",
+			in:   []string{"config", "set", "api_key", "secret-token"},
+			want: []string{"config", "set", "api_key", "***"},
+		},
+		{
+			name: "no secrets unchanged",
+			in:   []string{"projects", "list"},
+			want: []string{"projects", "list"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactArgs(tc.in...)
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("redactArgs(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
 }
 
 func logStatusPreamble(t *testing.T, home ...string) {
