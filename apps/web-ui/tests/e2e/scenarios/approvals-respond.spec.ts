@@ -15,23 +15,28 @@ import { addProvider } from '../helpers/providers';
 //      cached tool name.
 //   4. AGENT (API): whitelist = that tool, defaultToolPolicy "ask", directive
 //      prompt. The "ask" policy is what turns the tool call into a pause.
-//   5. CHAT (UI): send one imperative turn, then navigate to /settings/approvals
-//      and poll (reloading — the page is server-rendered, not live) until the
-//      pending approval's Approve control appears.
-//   6. RESPOND (UI): click Approve → the pending decision is resolved (the row
+//   5. CHAT (UI): send one imperative turn and keep the chat page alive — the
+//      SSE stream is bound to the request context, so navigating away would
+//      abort the run before the model reaches the gated tool.
+//   6. APPROVALS (UI): poll a sibling tab (reloading — the page is server-rendered,
+//      not live) until the pending approval's Approve control appears.
+//   7. RESPOND (UI): click Approve → the pending decision is resolved (the row
 //      no longer offers Approve / no "pending" badge remains).
-//   7. CLEANUP (finally): delete agent + server, reactivate bootstrap project,
+//   8. CLEANUP (finally): delete agent + server, reactivate bootstrap project,
 //      delete the scratch project.
 //
 // The model must actually call the gated tool; tool-use is non-deterministic,
 // so the spec skips (rather than fails) when no pending approval appears. Reject
 // and Cancel share the same respond/cancel routes (the same approvalActions
-// form renders Reject + Cancel next to Approve) and are covered by the handler's
-// unit tests; this scenario exercises the primary respond path once.
+// form renders Reject + Cancel next to Approve); they remain uncovered by UI e2e
+// (tracked as a follow-up) — this scenario exercises the primary respond path.
 
 const PROVIDER = process.env.E2E_SCENARIO_LLM_PROVIDER || 'openai';
 const API_KEY = process.env.E2E_SCENARIO_LLM_API_KEY || '';
 const BASE_URL = process.env.E2E_SCENARIO_LLM_BASE_URL || 'http://litellm:4000/v1';
+// base_url renders only for the OpenAI-compatible provider; pass it only then —
+// fillProviderForm otherwise waits on a field that never renders (timeout).
+const PROVIDER_BASE_URL = PROVIDER === 'openai' ? BASE_URL : undefined;
 const MODEL = process.env.E2E_SCENARIO_LLM_MODEL || 'openai/deepseek-v4-flash';
 const AGENT_MODEL = MODEL.includes('/') ? MODEL : `${PROVIDER}/${MODEL}`;
 const MCP_URL = process.env.E2E_MCP_EXAMPLE_URL || 'https://mcp.exa.ai/mcp';
@@ -115,7 +120,7 @@ test('a pending tool approval is resolved from the approvals page', async ({ pag
     projectId = await createProject(page, bootstrap.orgId, name);
 
     // 2. PROVIDER (UI).
-    const saved = await addProvider(page, PROVIDER, API_KEY, BASE_URL);
+    const saved = await addProvider(page, PROVIDER, API_KEY, PROVIDER_BASE_URL);
     if (saved !== 'saved') {
       let detail = "couldn't save provider";
       const modal = page.locator('#provider-save-error-modal');
@@ -175,34 +180,47 @@ test('a pending tool approval is resolved from the approvals page', async ({ pag
     await page.locator('#chat-send').click();
     await chatStarted; // headers arrived → run is executing server-side
 
-    // 6. APPROVALS (UI): the page is server-rendered with no live refresh, so
-    // poll by reloading until the pending approval's Approve control appears.
-    await page.goto('/settings/approvals');
-    const pendingAppeared = await expect
-      .poll(
-        async () => {
-          await page.reload();
-          return await page.getByRole('button', { name: 'Approve' }).count();
-        },
-        { timeout: 180_000, intervals: [2000, 2000, 2000, 5000, 5000, 10000] },
-      )
-      .toBeGreaterThan(0)
-      .then(() => true)
-      .catch(() => false);
-    if (!pendingAppeared) {
-      test.skip(true, `no pending tool approval appeared for ${toolName} within 180s — the model did not pause on the gated tool`);
-      return;
+    // 6. APPROVALS (UI): poll in a SIBLING tab so the chat page (and its SSE
+    // stream, bound to c.Request().Context() via memory.ChatStream) stays alive.
+    // Navigating `page` away would cancel the request and abort the run before
+    // the model reaches the gated tool. The page is server-rendered with no live
+    // refresh, so poll by reloading the sibling until the Approve control appears.
+    const approvalsPage = await page.context().newPage();
+    try {
+      await approvalsPage.goto('/settings/approvals');
+
+      // Page-health gate: a login redirect / 500 / broken selector must HARD-FAIL
+      // here, not degrade into the model-deviation skip below.
+      await expect(approvalsPage.getByRole('heading', { name: 'Approvals' })).toBeVisible();
+
+      const pendingAppeared = await expect
+        .poll(
+          async () => {
+            await approvalsPage.reload();
+            return await approvalsPage.getByRole('button', { name: 'Approve' }).count();
+          },
+          { timeout: 180_000, intervals: [2000, 2000, 2000, 5000, 5000, 10000] },
+        )
+        .toBeGreaterThan(0)
+        .then(() => true)
+        .catch(() => false);
+      if (!pendingAppeared) {
+        test.skip(true, `no pending tool approval appeared for ${toolName} within 180s — the model did not pause on the gated tool`);
+        return;
+      }
+
+      // The pending row shows the tool name and the Approve control.
+      const pendingRow = approvalsPage.locator('.card').filter({ hasText: toolName }).first();
+      await expect(pendingRow).toBeVisible();
+      await pendingRow.getByRole('button', { name: 'Approve' }).click();
+      await approvalsPage.waitForURL(/\/settings\/approvals/);
+
+      // Resolved: the row no longer offers Approve, and no pending badge remains.
+      await expect(approvalsPage.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+      await expect(approvalsPage.getByText('pending', { exact: true })).toHaveCount(0);
+    } finally {
+      await approvalsPage.close();
     }
-
-    // The pending row shows the tool name and the Approve control.
-    const pendingRow = page.locator('.card').filter({ hasText: toolName }).first();
-    await expect(pendingRow).toBeVisible();
-    await pendingRow.getByRole('button', { name: 'Approve' }).click();
-    await page.waitForURL(/\/settings\/approvals/);
-
-    // Resolved: the row no longer offers Approve, and no pending badge remains.
-    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
-    await expect(page.getByText('pending', { exact: true })).toHaveCount(0);
   } finally {
     await cleanup(page, agentId, serverId, projectId);
   }
