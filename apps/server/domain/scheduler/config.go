@@ -82,6 +82,15 @@ type Config struct {
 	// ProjectDeletionSweepSchedule is the cron schedule override for the project
 	// deletion sweep. Empty string means use the interval.
 	ProjectDeletionSweepSchedule string
+
+	// EmbeddingReindexSchedule is the cron schedule for rebuilding the ivfflat
+	// embedding indexes to restore list clustering (issue #664).
+	// Default: "0 0 2 * * *" (daily at 2am).
+	EmbeddingReindexSchedule string
+
+	// EmbeddingReindexInterval is the fallback interval used when the cron
+	// schedule is unset or invalid. Default: 24h.
+	EmbeddingReindexInterval time.Duration
 }
 
 // NewConfig creates a new Config from environment variables
@@ -113,6 +122,8 @@ func NewConfig() *Config {
 		// with PROJECT_DELETION_GRACE_PERIOD; default 1 minute.
 		ProjectDeletionSweepInterval: getEnvDurationString("PROJECT_DELETION_SWEEP_INTERVAL", time.Minute),
 		ProjectDeletionSweepSchedule: getEnvString("PROJECT_DELETION_SWEEP_SCHEDULE", ""),
+		EmbeddingReindexSchedule:     getEnvString("EMBEDDING_REINDEX_SCHEDULE", "0 0 2 * * *"),
+		EmbeddingReindexInterval:     getEnvDurationString("EMBEDDING_REINDEX_INTERVAL", 24*time.Hour),
 	}
 }
 
