@@ -46,6 +46,11 @@ type Backup struct {
 	ParentBackupID   *string        `bun:"parent_backup_id,type:uuid" json:"parentBackupId,omitempty"`
 	BaselineBackupID *string        `bun:"baseline_backup_id,type:uuid" json:"baselineBackupId,omitempty"`
 	ChangeWindow     map[string]any `bun:"change_window,type:jsonb" json:"changeWindow,omitempty"`
+
+	// Imported marks a backup registered from an archive produced by another
+	// deployment. Its ProjectID is the foreign source project (no local
+	// kb.projects row); imported backups support clone restore only.
+	Imported bool `bun:"imported,notnull,default:false" json:"imported"`
 }
 
 // BackupStatus constants.
