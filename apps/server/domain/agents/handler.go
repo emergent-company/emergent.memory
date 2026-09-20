@@ -2717,9 +2717,11 @@ type RespondParams struct {
 	AuthToken   string
 
 	// Share-run resume overrides (zero/empty = not a share run).
-	ShareLinkID     string
-	ShareToolDeny   []string
-	DisableAuthMint bool
+	ShareLinkID            string
+	ShareToolDeny          []string
+	DisableAuthMint        bool
+	MaxApprovalsPerSession int
+	ACPSessionID           string
 }
 
 // RespondToQuestion is the shared core of the question-respond flow. It looks up
@@ -2810,7 +2812,9 @@ func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*Agen
 					break
 				}
 			}
-			// Record the approval decision in the audit trail.
+			// Record the approval decision in the audit trail. Share runs enforce
+			// the per-session approval cap atomically with the decision (advisory
+			// lock + conditional flip).
 			decision := "rejected"
 			switch userMessage {
 			case "approve":
@@ -2818,7 +2822,19 @@ func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*Agen
 			case "cancel":
 				decision = "cancelled"
 			}
-			_ = h.repo.UpdateToolApprovalDecision(ctx, p.QuestionID, decision, p.Message, p.RespondedBy)
+			if p.MaxApprovalsPerSession > 0 {
+				decided, decErr := h.repo.ReserveAndDecideShareApproval(ctx, p.ShareLinkID, p.ACPSessionID, p.QuestionID, decision, p.Message, p.RespondedBy, p.MaxApprovalsPerSession)
+				if decErr != nil {
+					_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+					return nil, apperror.NewInternal("failed to record decision", decErr)
+				}
+				if !decided {
+					_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+					return nil, apperror.New(429, "share_approval_limit", "approval limit reached for this session")
+				}
+			} else {
+				_ = h.repo.UpdateToolApprovalDecision(ctx, p.QuestionID, decision, p.Message, p.RespondedBy)
+			}
 			// Batch coordination: mark this decision in suspend_context and
 			// resume only once every confirmation in the batch is decided.
 			if len(sc.PendingToolConfirmations) > 0 {

@@ -124,11 +124,16 @@ type AgentShareUsage struct {
 // the link's config jsonb and always stored fully-merged (defaults + overrides)
 // so plain bools can be read back without "absent vs false" ambiguity.
 type ShareLinkConfig struct {
-	LinkExpiryDays           int      `json:"link_expiry_days"`
-	BudgetWindowSeconds      int      `json:"budget_window_seconds"`
-	BudgetMaxMessages        int      `json:"budget_max_messages"`
-	BudgetMaxTokens          int64    `json:"budget_max_tokens"`
-	BudgetMaxCostUSD         float64  `json:"budget_max_cost_usd"`
+	LinkExpiryDays      int     `json:"link_expiry_days"`
+	BudgetWindowSeconds int     `json:"budget_window_seconds"`
+	BudgetMaxMessages   int     `json:"budget_max_messages"`
+	BudgetMaxTokens     int64   `json:"budget_max_tokens"`
+	BudgetMaxCostUSD    float64 `json:"budget_max_cost_usd"`
+	// BudgetPerTurnTokens / BudgetPerTurnCostUSD are conservative per-turn
+	// allowances reserved atomically before a run starts so a link near its
+	// budget edge is denied before spending (reconciled to actuals after).
+	BudgetPerTurnTokens      int64    `json:"budget_per_turn_tokens"`
+	BudgetPerTurnCostUSD     float64  `json:"budget_per_turn_cost_usd"`
 	MaxActiveSessionsPerUser int      `json:"max_active_sessions_per_user"`
 	MaxConcurrentRuns        int      `json:"max_concurrent_runs"`
 	MaxApprovalsPerSession   int      `json:"max_approvals_per_session"`
@@ -153,6 +158,8 @@ func DefaultShareLinkConfig() *ShareLinkConfig {
 		BudgetMaxMessages:        500,
 		BudgetMaxTokens:          200000,
 		BudgetMaxCostUSD:         5.0,
+		BudgetPerTurnTokens:      8000,
+		BudgetPerTurnCostUSD:     0.50,
 		MaxActiveSessionsPerUser: 5,
 		MaxConcurrentRuns:        3,
 		MaxApprovalsPerSession:   10,
@@ -194,6 +201,8 @@ type ShareLinkConfigInput struct {
 	BudgetMaxMessages        *int     `json:"budget_max_messages"`
 	BudgetMaxTokens          *int64   `json:"budget_max_tokens"`
 	BudgetMaxCostUSD         *float64 `json:"budget_max_cost_usd"`
+	BudgetPerTurnTokens      *int64   `json:"budget_per_turn_tokens"`
+	BudgetPerTurnCostUSD     *float64 `json:"budget_per_turn_cost_usd"`
 	MaxActiveSessionsPerUser *int     `json:"max_active_sessions_per_user"`
 	MaxConcurrentRuns        *int     `json:"max_concurrent_runs"`
 	MaxApprovalsPerSession   *int     `json:"max_approvals_per_session"`
@@ -231,6 +240,12 @@ func (in *ShareLinkConfigInput) Apply(base *ShareLinkConfig) *ShareLinkConfig {
 	}
 	if in.BudgetMaxCostUSD != nil {
 		out.BudgetMaxCostUSD = *in.BudgetMaxCostUSD
+	}
+	if in.BudgetPerTurnTokens != nil {
+		out.BudgetPerTurnTokens = *in.BudgetPerTurnTokens
+	}
+	if in.BudgetPerTurnCostUSD != nil {
+		out.BudgetPerTurnCostUSD = *in.BudgetPerTurnCostUSD
 	}
 	if in.MaxActiveSessionsPerUser != nil {
 		out.MaxActiveSessionsPerUser = *in.MaxActiveSessionsPerUser

@@ -23,7 +23,7 @@ func (r *Repository) CreateShareLink(ctx context.Context, link *AgentShareLink) 
 		if pgutils.IsUniqueViolation(err) {
 			return apperror.New(409, "share_link_exists", "A share link with this label already exists for this agent")
 		}
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
 }
@@ -37,7 +37,7 @@ func (r *Repository) ListShareLinksByProject(ctx context.Context, projectID stri
 		Order("created_at DESC").
 		Scan(ctx)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return links, nil
 }
@@ -54,7 +54,7 @@ func (r *Repository) GetShareLinkByID(ctx context.Context, linkID string, projec
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return link, nil
 }
@@ -69,18 +69,19 @@ func (r *Repository) GetShareLinkByTokenID(ctx context.Context, apiTokenID strin
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return link, nil
 }
 
-// UpdateShareLink updates the label and config of a non-revoked link.
-func (r *Repository) UpdateShareLink(ctx context.Context, linkID, projectID, label string, config *ShareLinkConfig) (bool, error) {
+// UpdateShareLink updates the label, config, and expires_at of a non-revoked link.
+func (r *Repository) UpdateShareLink(ctx context.Context, linkID, projectID, label string, config *ShareLinkConfig, expiresAt *time.Time) (bool, error) {
 	now := time.Now()
 	res, err := r.db.NewUpdate().
 		Model((*AgentShareLink)(nil)).
 		Set("label = ?", label).
 		Set("config = ?", config).
+		Set("expires_at = ?", expiresAt).
 		Set("updated_at = ?", now).
 		Where("id = ?", linkID).
 		Where("project_id = ?", projectID).
@@ -90,7 +91,7 @@ func (r *Repository) UpdateShareLink(ctx context.Context, linkID, projectID, lab
 		if pgutils.IsUniqueViolation(err) {
 			return false, apperror.New(409, "share_link_exists", "A share link with this label already exists for this agent")
 		}
-		return false, apperror.ErrDatabase.WithInternal(err)
+		return false, apperror.NewDatabase("Database operation failed", err)
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
@@ -108,7 +109,7 @@ func (r *Repository) RevokeShareLink(ctx context.Context, linkID, projectID stri
 		Where("revoked_at IS NULL").
 		Exec(ctx)
 	if err != nil {
-		return false, apperror.ErrDatabase.WithInternal(err)
+		return false, apperror.NewDatabase("Database operation failed", err)
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
@@ -147,9 +148,47 @@ func (r *Repository) TouchShareLink(ctx context.Context, linkID string) error {
 func (r *Repository) CreateShareSession(ctx context.Context, s *AgentShareSession) error {
 	_, err := r.db.NewInsert().Model(s).Exec(ctx)
 	if err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
+}
+
+// CreateShareSessionIfUnderCap inserts a share session atomically under an
+// advisory lock, enforcing the max-active-sessions cap per (link, end user).
+// Returns created=false (no error) when the cap is already reached, so two
+// concurrent first-session requests cannot both create a session past the cap.
+func (r *Repository) CreateShareSessionIfUnderCap(ctx context.Context, s *AgentShareSession, maxActive int) (bool, error) {
+	created := false
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", s.ShareLinkID+":"+s.EndUserRef).Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		if maxActive > 0 {
+			var count int
+			err := tx.NewSelect().
+				TableExpr("kb.agent_share_sessions").
+				ColumnExpr("COUNT(*)").
+				Where("share_link_id = ?", s.ShareLinkID).
+				Where("end_user_ref = ?", s.EndUserRef).
+				Where("is_archived = false").
+				Scan(ctx, &count)
+			if err != nil {
+				return apperror.NewDatabase("Database operation failed", err)
+			}
+			if count >= maxActive {
+				return nil
+			}
+		}
+		if _, err := tx.NewInsert().Model(s).Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		created = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return created, nil
 }
 
 // GetShareSessionByID returns a share session belonging to (link, end user).
@@ -165,7 +204,7 @@ func (r *Repository) GetShareSessionByID(ctx context.Context, sessionID, linkID,
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return s, nil
 }
@@ -183,7 +222,7 @@ func (r *Repository) ListShareSessionsByEndUser(ctx context.Context, linkID, end
 	q = q.Order("last_activity_at DESC NULLS LAST")
 	err := q.Scan(ctx)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return sessions, nil
 }
@@ -200,7 +239,7 @@ func (r *Repository) CountActiveShareSessions(ctx context.Context, linkID, endUs
 		Where("is_archived = false").
 		Scan(ctx, &count)
 	if err != nil {
-		return 0, apperror.ErrDatabase.WithInternal(err)
+		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 	return count, nil
 }
@@ -216,7 +255,7 @@ func (r *Repository) ArchiveShareSession(ctx context.Context, sessionID, linkID,
 		Where("is_archived = false").
 		Exec(ctx)
 	if err != nil {
-		return false, apperror.ErrDatabase.WithInternal(err)
+		return false, apperror.NewDatabase("Database operation failed", err)
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
@@ -249,7 +288,7 @@ func (r *Repository) FindShareSessionByRunAndEndUser(ctx context.Context, linkID
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return s, nil
 }
@@ -266,9 +305,48 @@ func (r *Repository) CountActiveShareRuns(ctx context.Context, linkID string) (i
 		Where("ar.status IN (?)", bun.In([]string{string(RunStatusRunning), string(RunStatusQueued)})).
 		Scan(ctx, &count)
 	if err != nil {
-		return 0, apperror.ErrDatabase.WithInternal(err)
+		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 	return count, nil
+}
+
+// CreateShareRunIfUnderLimit atomically reserves a concurrent-run slot and
+// pre-creates the run (status working) under an advisory lock, so concurrent
+// admissions for the same link serialize and cannot exceed maxConcurrent.
+// Returns a 429 share_busy error when the limit is reached; otherwise the
+// pre-created run (to pass as ExecuteRequest.PreCreatedRun).
+func (r *Repository) CreateShareRunIfUnderLimit(ctx context.Context, linkID string, maxConcurrent int, opts CreateRunOptions) (*AgentRun, error) {
+	var run *AgentRun
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", linkID).Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		if maxConcurrent > 0 {
+			var count int
+			err := tx.NewSelect().
+				TableExpr("kb.agent_runs AS ar").
+				ColumnExpr("COUNT(*)").
+				Join("JOIN kb.agent_share_sessions AS ass ON ass.acp_session_id = ar.acp_session_id").
+				Where("ass.share_link_id = ?", linkID).
+				Where("ar.status IN (?)", bun.In([]string{string(RunStatusRunning), string(RunStatusQueued)})).
+				Scan(ctx, &count)
+			if err != nil {
+				return apperror.NewDatabase("Database operation failed", err)
+			}
+			if count >= maxConcurrent {
+				return apperror.New(429, "share_busy", "share link is at its concurrent run limit")
+			}
+		}
+		run = newAgentRun(opts)
+		if _, err := tx.NewInsert().Model(run).Returning("*").Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
 }
 
 // ============================================================================
@@ -292,7 +370,7 @@ func (r *Repository) UpsertShareEndUser(ctx context.Context, u *AgentShareEndUse
 		Set("last_seen_at = EXCLUDED.last_seen_at").
 		Exec(ctx)
 	if err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
 }
@@ -309,7 +387,7 @@ func (r *Repository) FindShareEndUser(ctx context.Context, linkID, endUserRef st
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return u, nil
 }
@@ -337,17 +415,19 @@ func (r *Repository) IncrementShareUsage(ctx context.Context, linkID string, per
 			updated_at = NOW()
 	`, linkID, periodStart, messages, tokens, costUSD).Exec(ctx)
 	if err != nil {
-		return apperror.ErrDatabase.WithInternal(err)
+		return apperror.NewDatabase("Database operation failed", err)
 	}
 	return nil
 }
 
-// ReserveShareBudget atomically reserves one message slot for a share turn and
-// enforces the rolling budget. It locks the (link, period) usage row FOR UPDATE
-// so concurrent turns serialize instead of all passing a check-then-act gate.
+// ReserveShareBudget atomically reserves one message slot plus a per-turn
+// token/cost allowance for a share turn, enforcing the rolling budget. It locks
+// the (link, period) usage row FOR UPDATE so concurrent turns serialize instead
+// of all passing a check-then-act gate. The token/cost allowance is reserved
+// (added) here and reconciled to actuals after the run via IncrementShareUsage.
 // Returns a 429 share_budget_exceeded error when the budget is exhausted (the
 // transaction is rolled back and nothing is reserved).
-func (r *Repository) ReserveShareBudget(ctx context.Context, linkID string, periodStart time.Time, maxMessages int, maxTokens int64, maxCostUSD float64) error {
+func (r *Repository) ReserveShareBudget(ctx context.Context, linkID string, periodStart time.Time, maxMessages int, maxTokens int64, maxCostUSD float64, perTurnTokens int64, perTurnCostUSD float64) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Ensure the current period row exists so FOR UPDATE has a row to lock.
 		if _, err := tx.NewRaw(`
@@ -355,7 +435,7 @@ func (r *Repository) ReserveShareBudget(ctx context.Context, linkID string, peri
 			VALUES (?, ?, 0, 0, 0, NOW())
 			ON CONFLICT (link_id, period_start) DO NOTHING
 		`, linkID, periodStart).Exec(ctx); err != nil {
-			return apperror.ErrDatabase.WithInternal(err)
+			return apperror.NewDatabase("Database operation failed", err)
 		}
 
 		var messages int64
@@ -367,27 +447,32 @@ func (r *Repository) ReserveShareBudget(ctx context.Context, linkID string, peri
 			WHERE link_id = ? AND period_start = ?
 			FOR UPDATE
 		`, linkID, periodStart).Scan(ctx, &messages, &tokens, &costUSD); err != nil {
-			return apperror.ErrDatabase.WithInternal(err)
+			return apperror.NewDatabase("Database operation failed", err)
 		}
 
-		// Budget check against current settled totals + the reserved message slot.
+		// Budget check against current settled totals + the reserved message slot
+		// + the reserved per-turn token/cost allowance, so a link near its edge
+		// is denied BEFORE the run spends.
 		if maxMessages > 0 && int(messages)+1 > maxMessages {
 			return apperror.New(429, "share_budget_exceeded", "share link message budget exceeded")
 		}
-		if maxTokens > 0 && tokens >= maxTokens {
+		if maxTokens > 0 && tokens+perTurnTokens > maxTokens {
 			return apperror.New(429, "share_budget_exceeded", "share link token budget exceeded")
 		}
-		if maxCostUSD > 0 && costUSD >= maxCostUSD {
+		if maxCostUSD > 0 && costUSD+perTurnCostUSD > maxCostUSD {
 			return apperror.New(429, "share_budget_exceeded", "share link cost budget exceeded")
 		}
 
-		// Reserve one message slot.
+		// Reserve one message slot + the per-turn token/cost allowance.
 		if _, err := tx.NewRaw(`
 			UPDATE kb.agent_share_usage
-			SET messages = messages + 1, updated_at = NOW()
+			SET messages = messages + 1,
+			    tokens   = tokens + ?,
+			    cost_usd = cost_usd + ?,
+			    updated_at = NOW()
 			WHERE link_id = ? AND period_start = ?
-		`, linkID, periodStart).Exec(ctx); err != nil {
-			return apperror.ErrDatabase.WithInternal(err)
+		`, perTurnTokens, perTurnCostUSD, linkID, periodStart).Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
 		}
 		return nil
 	})
@@ -410,7 +495,7 @@ func (r *Repository) SumShareUsageSince(ctx context.Context, linkID string, sinc
 		Where("period_start >= ?", since).
 		Scan(ctx, &agg)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return &ShareUsageAggregate{
 		Messages: int(agg.Messages),
@@ -432,7 +517,7 @@ func (r *Repository) ListShareUsage(ctx context.Context, linkID string, limit in
 		Limit(limit).
 		Scan(ctx)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return rows, nil
 }
@@ -474,7 +559,7 @@ func (r *Repository) ListPausedShareRuns(ctx context.Context) ([]shareReapCandid
 		Where("ar.status = ?", string(RunStatusPaused)).
 		Scan(ctx, &rows)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	out := make([]shareReapCandidate, 0, len(rows))
 	for _, row := range rows {
@@ -499,7 +584,7 @@ func (r *Repository) ListPendingQuestionsForACPSession(ctx context.Context, acpS
 		Order("aq.created_at ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
+		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return questions, nil
 }
@@ -517,7 +602,56 @@ func (r *Repository) CountSessionToolApprovals(ctx context.Context, shareLinkID,
 		Where("ata.decision != ?", "pending").
 		Scan(ctx, &count)
 	if err != nil {
-		return 0, apperror.ErrDatabase.WithInternal(err)
+		return 0, apperror.NewDatabase("Database operation failed", err)
 	}
 	return count, nil
+}
+
+// ReserveAndDecideShareApproval atomically reserves an approval slot and flips
+// the pending approval to decided, under a per-session advisory lock so
+// concurrent approvals cannot exceed maxApprovals. Returns decided=false when
+// the cap is already reached (the pending row is left untouched).
+func (r *Repository) ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, acpSessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error) {
+	decided := false
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", shareLinkID+":"+acpSessionID).Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		if maxApprovals > 0 {
+			var count int
+			err := tx.NewSelect().
+				TableExpr("kb.agent_tool_approvals AS ata").
+				ColumnExpr("COUNT(*)").
+				Join("JOIN kb.agent_runs AS ar ON ar.id = ata.run_id").
+				Where("ata.share_link_id = ?", shareLinkID).
+				Where("ar.acp_session_id = ?", acpSessionID).
+				Where("ata.decision != ?", "pending").
+				Scan(ctx, &count)
+			if err != nil {
+				return apperror.NewDatabase("Database operation failed", err)
+			}
+			if count >= maxApprovals {
+				return nil
+			}
+		}
+		res, err := tx.NewUpdate().
+			TableExpr("kb.agent_tool_approvals").
+			Set("decision = ?", decision).
+			Set("message = ?", message).
+			Set("decided_by = ?", decidedBy).
+			Set("decided_at = ?", time.Now()).
+			Where("question_id = ?", questionID).
+			Where("decision = ?", "pending").
+			Exec(ctx)
+		if err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		n, _ := res.RowsAffected()
+		decided = n > 0
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return decided, nil
 }

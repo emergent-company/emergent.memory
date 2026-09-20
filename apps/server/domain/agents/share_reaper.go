@@ -101,14 +101,21 @@ func (r *ShareRunReaper) reap(ctx context.Context) {
 			continue
 		}
 
-		_ = r.repo.CancelPendingQuestionsForRun(ctx, c.RunID)
-		if err := r.repo.CancelRun(ctx, c.RunID); err != nil {
+		// Cancel the run only if it is STILL paused (input-required). A visitor may
+		// have approved in between; the conditional update skips resumed runs.
+		cancelled, err := r.repo.CancelRunIfPaused(ctx, c.RunID)
+		if err != nil {
 			r.log.Warn("failed to cancel stale share run",
 				slog.String("run_id", c.RunID),
 				slog.String("error", err.Error()),
 			)
 			continue
 		}
+		if !cancelled {
+			// Run was resumed (or already cancelled) — skip questions too.
+			continue
+		}
+		_ = r.repo.CancelPendingQuestionsForRun(ctx, c.RunID)
 		r.log.Info("cancelled stale share run (approval timeout)",
 			slog.String("run_id", c.RunID),
 			slog.String("share_link_id", c.ShareLinkID),

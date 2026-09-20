@@ -73,8 +73,8 @@
 
 All Go commands run from `apps/server/`; gateway checks from `apps/web-ui/`; `openspec` from the repository root.
 
-- [ ] 9.1 `go build ./...` clean (server + gateway)
-- [ ] 9.2 `go test ./...` passes for touched server domains and gateway packages
-- [ ] 9.3 `go vet ./...` and `golangci-lint run ./...` clean for touched packages
-- [ ] 9.4 `templ generate` + `task lint` in `apps/web-ui/` clean
+- [x] 9.1 `go build ./...` clean (server + gateway)
+- [x] 9.2 `go test ./...` passes for touched server domains and gateway packages
+- [x] 9.3 `go vet ./...` and `golangci-lint run ./...` clean for touched packages
+- [x] 9.4 `templ generate` + `task lint` in `apps/web-ui/` clean
 - [x] 9.5 `openspec validate agent-public-share` passes

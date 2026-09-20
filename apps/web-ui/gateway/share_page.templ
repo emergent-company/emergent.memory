@@ -518,44 +518,97 @@ templ shareEmptySessions() {
 
 // shareComposer is the message form: Enter sends, Shift+Enter inserts a newline.
 // The textarea + send button are disabled by share-agent.js while a reply streams.
+// The email gate sits directly above the form when the link requires an email.
 templ shareComposer(props ShareAgentPageProps) {
-	<form id="share-composer" data-testid="share-composer" class="border-base-content/5 border-t bg-base-100">
-		@layout.Container(layout.ContainerLG, nil) {
-			<div class="flex items-end gap-2">
-				<textarea
-					id="share-input"
-					data-testid="share-input"
-					rows="1"
-					class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow resize-none"
-					placeholder={ sharePlaceholder(props) }
-					aria-label="Message"
-				></textarea>
-				@ui.Button(ui.ButtonProps{
-					Type:       ui.ButtonTypeSubmit,
-					Variant:    ui.ButtonPrimary,
-					Size:       ui.ButtonSM,
-					Shape:      ui.ButtonShapeSquare,
-					Icon:       "lucide--arrow-up",
-					AriaLabel:  "Send message",
-					ExtraClass: "h-full min-h-11 w-11 shrink-0",
-					Attrs:      templ.Attributes{"id": "share-send", "data-testid": "share-send"},
-				})
-				<span id="share-stop" class="hidden shrink-0">
+	<div class="border-base-content/5 border-t bg-base-100">
+		@shareEmailGate(props)
+		<form id="share-composer" data-testid="share-composer">
+			@layout.Container(layout.ContainerLG, nil) {
+				<div class="flex items-end gap-2">
+					<textarea
+						id="share-input"
+						data-testid="share-input"
+						rows="1"
+						class="textarea textarea-bordered max-h-40 min-h-11 min-w-0 grow resize-none"
+						placeholder={ sharePlaceholder(props) }
+						aria-label="Message"
+					></textarea>
 					@ui.Button(ui.ButtonProps{
-						Type:       ui.ButtonTypeButton,
-						Variant:    ui.ButtonNeutral,
+						Type:       ui.ButtonTypeSubmit,
+						Variant:    ui.ButtonPrimary,
 						Size:       ui.ButtonSM,
 						Shape:      ui.ButtonShapeSquare,
-						Icon:       "lucide--square",
-						AriaLabel:  "Stop generating",
+						Icon:       "lucide--arrow-up",
+						AriaLabel:  "Send message",
 						ExtraClass: "h-full min-h-11 w-11 shrink-0",
-						Attrs:      templ.Attributes{"data-testid": "share-stop"},
+						Attrs:      templ.Attributes{"id": "share-send", "data-testid": "share-send"},
 					})
-				</span>
-			</div>
-			<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+					<span id="share-stop" class="hidden shrink-0">
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeButton,
+							Variant:    ui.ButtonNeutral,
+							Size:       ui.ButtonSM,
+							Shape:      ui.ButtonShapeSquare,
+							Icon:       "lucide--square",
+							AriaLabel:  "Stop generating",
+							ExtraClass: "h-full min-h-11 w-11 shrink-0",
+							Attrs:      templ.Attributes{"data-testid": "share-stop"},
+						})
+					</span>
+				</div>
+				<p class="text-base-content/35 mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+			}
+		</form>
+	</div>
+}
+
+// shareEmailGate is the inline email capture for links that require an email
+// before chatting. It is a separate form (never nested) rendered hidden by
+// default; share-agent.js reveals it when the sanitized config reports
+// requireEmail and no email has been supplied yet. The value is kept in memory
+// by the client and sent only when the session is created — it is never written
+// to the URL or any storage, and the field is cleared once captured.
+//
+// forms are novalidate so the client's own inline error (share-email-error) is
+// the single source of validation feedback; type=email is kept for keyboards
+// and autofill.
+templ shareEmailGate(props ShareAgentPageProps) {
+	<div
+		id="share-email-gate"
+		data-testid="share-email-gate"
+		class={ "border-base-content/5 border-b", templ.KV("hidden", !props.RequireEmail) }
+	>
+		@layout.Container(layout.ContainerLG, nil) {
+			<form id="share-email-form" novalidate class="flex flex-col gap-2 py-1">
+				<label for="share-email-input" class="text-sm font-medium">Enter your email to start</label>
+				<div class="flex items-start gap-2">
+					<input
+						id="share-email-input"
+						data-testid="share-email-input"
+						name="email"
+						type="email"
+						autocomplete="email"
+						inputmode="email"
+						class="input input-bordered input-sm min-w-0 grow"
+						placeholder="you@example.com"
+						aria-describedby="share-email-help share-email-error"
+					/>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Attrs:   templ.Attributes{"data-testid": "share-email-submit"},
+					}) {
+						Continue
+					}
+				</div>
+				<p id="share-email-help" class="text-base-content/45 text-xs">
+					The link's owner asks for an email before you can chat. It is only shared with them.
+				</p>
+				<p id="share-email-error" data-testid="share-email-error" class="text-error hidden text-xs" role="alert"></p>
+			</form>
 		}
-	</form>
+	</div>
 }
 
 // shareApprovalMount is the inline card slot for pending approvals/questions.

@@ -59,9 +59,11 @@ func (l *keyedRateLimiter) allow(key string) bool {
 			l.evictIdle(now)
 		}
 		if len(l.buckets) >= maxShareRateKeys {
-			// Map at capacity under a burst of distinct keys: accept rather than
-			// grow memory without bound.
-			return true
+			// Still at capacity after sweeping idle buckets: fail closed. Deny
+			// the new key rather than silently allowing it, so a flood of
+			// distinct valid tokens can no longer fill the map and disable the
+			// per-link limit — the authoritative, non-spoofable dimension.
+			return false
 		}
 		b = rateBucket{lim: rate.NewLimiter(rate.Limit(float64(l.perMin)/60.0), l.burst)}
 		l.buckets[key] = b

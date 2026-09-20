@@ -16,13 +16,26 @@
  * Endpoint contract (the server lane implements these; this file only calls):
  *   POST /share/api/exchange                          body {key}      -> 200 + Set-Cookie, or {error, code}
  *   GET  /share/api/config                                            -> 200 + sanitized config, or {error, code} (cookie-gated)
- *   POST /share/api/chat                              body {message, sessionId?} -> SSE stream
+ *   POST /share/api/sessions                          body {email?, title?} -> 201 {id,...}
+ *   POST /share/api/chat                              body {message, sessionId?, email?} -> SSE stream
  *   GET  /share/api/sessions?filter=active|all|archived                -> {sessions:[...]}
  *   GET  /share/api/sessions/:id                                       -> {id,title,messages:[...]}
  *   POST /share/api/sessions/:id/archive                               -> 204
  *   GET  /share/api/partial/sessions                                   -> HTML fragment for the rail
  *   GET  /share/api/questions                                          -> {questions:[...]}
  *   POST /share/api/sessions/:id/approvals/:questionId                 body {decision, message?}
+ *
+ * Email gate
+ * ----------
+ * When the sanitized config reports requireEmail, the visitor must supply an
+ * email before the first message can be sent (otherwise the upstream session
+ * creation is rejected with share_email_required). The email is captured inline
+ * by the gate in share_page.templ (#share-email-form) and kept ONLY in the
+ * in-memory `state.email` variable for the life of this page: it is never put in
+ * the URL, localStorage/sessionStorage, or the sanitized config, and the input
+ * is cleared as soon as it is captured. It is forwarded on session creation
+ * (POST /share/api/sessions) and, defensively, on the chat request. A refresh
+ * loses the in-memory value, so the gate prompts again.
  *
  * SSE frames are JSON, one per `data:` line, mirroring the app's chat engine
  * (see webui/static/js/chat-stream.js): the frame types handled here are
@@ -50,6 +63,10 @@
     input: document.getElementById("share-input"),
     send: document.getElementById("share-send"),
     stop: document.getElementById("share-stop"),
+    emailGate: document.getElementById("share-email-gate"),
+    emailForm: document.getElementById("share-email-form"),
+    emailInput: document.getElementById("share-email-input"),
+    emailError: document.getElementById("share-email-error"),
   };
 
   var state = {
@@ -59,6 +76,12 @@
     bubble: null,
     bubbleText: "",
     railOpener: null,
+    // email holds the visitor-supplied address for this page session only.
+    // It is never persisted or written to the URL/DOM.
+    email: "",
+    // placeholder is the config-derived composer placeholder, stored so the
+    // email gate can temporarily override it.
+    placeholder: "",
   };
 
   /* ---------- small helpers ---------- */
@@ -83,6 +106,54 @@
 
   function scrollToBottom() {
     if (els.log) els.log.scrollTop = els.log.scrollHeight;
+  }
+
+  /* ---------- email gate ---------- */
+
+  // emailRequired reads the requireEmail flag the sanitized config wrote onto
+  // the root (applyConfig is the single config→DOM mapper).
+  function emailRequired() {
+    return root.getAttribute("data-require-email") === "true";
+  }
+
+  function hasEmail() {
+    return state.email !== "";
+  }
+
+  // showEmailError reveals the inline validation message and flags the input.
+  function showEmailError(message) {
+    if (els.emailError) {
+      els.emailError.textContent = message || "";
+      show(els.emailError, !!message);
+    }
+    if (els.emailInput) {
+      els.emailInput.setAttribute("aria-invalid", message ? "true" : "false");
+    }
+  }
+
+  // syncEmailGate reconciles the gate, the composer's disabled state, and the
+  // composer placeholder with the current requireEmail + email state. Called
+  // after applyConfig, after the email is captured, and by newChat.
+  function syncEmailGate() {
+    var needs = emailRequired() && !hasEmail();
+    show(els.emailGate, needs);
+    if (els.input) {
+      els.input.placeholder = needs ? "Enter your email to start…" : state.placeholder;
+    }
+    if (needs) {
+      disableComposer(true);
+    } else if (!state.streaming) {
+      disableComposer(false);
+    }
+  }
+
+  // revealEmailGate shows the gate and focuses its field, keeping any message
+  // the visitor already typed in the composer, and explains why nothing sent.
+  function revealEmailGate() {
+    show(els.emailGate, true);
+    disableComposer(true);
+    showEmailError("Enter your email to start chatting.");
+    if (els.emailInput) els.emailInput.focus();
   }
 
   /* ---------- terminal states ---------- */
@@ -220,8 +291,9 @@
       firstDesc.textContent = welcome || desc || "Ask a question to get started.";
     }
 
+    state.placeholder = name ? "Message " + name + "…" : "Type a message…";
     if (els.input) {
-      els.input.placeholder = name ? "Message " + name + "…" : "Type a message…";
+      els.input.placeholder = state.placeholder;
     }
 
     // Rail visibility: the owner can disable the session list on the link.
@@ -231,6 +303,10 @@
 
     // Record the require-email flag on the root for any email flow / footer.
     root.setAttribute("data-require-email", config.requireEmail ? "true" : "false");
+
+    // requireEmail links must collect an email before the first message; a
+    // refresh forgets the in-memory value, so the gate prompts again.
+    syncEmailGate();
   }
 
   /* ---------- sessions rail ---------- */
@@ -432,26 +508,65 @@
     state.streaming = on;
     show(els.stop, on);
     if (els.send) els.send.classList.toggle("hidden", on);
-    disableComposer(on);
-    if (!on && els.input) els.input.focus();
+    var blocked = emailRequired() && !hasEmail();
+    disableComposer(on || blocked);
+    if (!on && !blocked && els.input) els.input.focus();
+  }
+
+  // ensureSession creates the session before the first message when the link
+  // requires an email, forwarding the collected address (POST /share/api/sessions
+  // is the create path that carries an email). Links that do not require an email
+  // keep the server's implicit creation on the chat call, so no extra round trip.
+  function ensureSession(text) {
+    if (state.sessionId) return Promise.resolve();
+    if (!emailRequired()) return Promise.resolve();
+    return fetch(API + "/sessions", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email: state.email, title: (text || "").slice(0, 60) }),
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok || !body || !body.id) {
+          var e = new Error((body && body.error) || "Could not start the chat");
+          e.code = (body && body.code) || "";
+          throw e;
+        }
+        state.sessionId = body.id;
+      });
+    });
   }
 
   function send(text) {
     text = (text || "").trim();
     if (!text || state.streaming) return;
+    if (emailRequired() && !hasEmail()) { revealEmailGate(); return; }
     show(els.firstLoad, false);
     appendBubble("user", text, false);
     state.bubbleText = "";
     state.bubble = appendBubble("assistant", "", true);
     show(els.typing, true);
     setStreaming(true);
-    streamChat(text);
+    ensureSession(text).then(function () {
+      streamChat(text);
+    }).catch(function (err) {
+      show(els.typing, false);
+      if (err && err.code && TERMINAL_COPY[err.code]) {
+        finish("error");
+        showInlineTerminal(err.code);
+        return;
+      }
+      failStream(err && err.message ? err.message : "Could not start the chat.");
+    });
   }
 
   function streamChat(text) {
     state.aborter = new AbortController();
     var payload = { message: text };
     if (state.sessionId) payload.sessionId = state.sessionId;
+    // Defensive: carry the email on the chat request too, so a session created
+    // implicitly by the server still satisfies a requireEmail link.
+    if (state.email) payload.email = state.email;
 
     fetch(API + "/chat", {
       method: "POST",
@@ -573,6 +688,8 @@
     els.form.addEventListener("submit", function (ev) {
       ev.preventDefault();
       var text = els.input.value;
+      // Keep the typed message in place until the email gate is satisfied.
+      if (emailRequired() && !hasEmail()) { revealEmailGate(); return; }
       els.input.value = "";
       resizeInput();
       send(text);
@@ -586,6 +703,31 @@
     els.input.addEventListener("input", resizeInput);
   }
   if (els.stop) els.stop.addEventListener("click", stop);
+
+  // Email gate submit: minimal validation (non-empty, contains "@"), an inline
+  // error on failure, and capture into in-memory state on success. The input is
+  // cleared once captured so the address is not left in the DOM.
+  if (els.emailForm && els.emailInput) {
+    els.emailForm.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var value = (els.emailInput.value || "").trim();
+      if (!value) {
+        showEmailError("Enter your email address.");
+        els.emailInput.focus();
+        return;
+      }
+      if (value.indexOf("@") === -1) {
+        showEmailError("Enter a valid email address.");
+        els.emailInput.focus();
+        return;
+      }
+      state.email = value;
+      els.emailInput.value = "";
+      showEmailError("");
+      syncEmailGate();
+      if (els.input) els.input.focus();
+    });
+  }
 
   /* ---------- rail / drawer wiring ---------- */
 
@@ -630,9 +772,9 @@
     if (els.messages) els.messages.replaceChildren();
     if (els.approvals) els.approvals.replaceChildren();
     show(els.inlineTerminal, false);
-    disableComposer(false);
+    syncEmailGate();
     show(els.firstLoad, true);
-    if (els.input) els.input.focus();
+    if (els.input && !(emailRequired() && !hasEmail())) els.input.focus();
     highlightActive();
   }
 

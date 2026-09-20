@@ -102,12 +102,9 @@ func RegisterShareRoutes(e *echo.Echo, h *ShareHandler, authMiddleware *auth.Mid
 func (h *ShareHandler) RequireShareLink() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			user := auth.GetUser(c)
-			if user == nil {
-				return apperror.ErrUnauthorized
-			}
+			user := auth.MustGetUser(c)
 			if user.APITokenID == "" {
-				return apperror.ErrUnauthorized.WithMessage("share token required")
+				return apperror.New(http.StatusUnauthorized, "unauthorized", "share token required")
 			}
 			if !user.HasScope(shareAgentChatScope) {
 				return apperror.NewForbidden("missing share:agent-chat scope")
@@ -254,7 +251,7 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 		return err
 	}
 	if session.IsArchived {
-		return apperror.ErrConflict.WithMessage("session is archived")
+		return apperror.New(http.StatusConflict, "conflict", "session is archived")
 	}
 
 	writer := sse.NewWriter(c.Response().Writer)
@@ -383,6 +380,7 @@ func (h *ShareHandler) GetLink(c echo.Context) error {
 
 // UpdateLink handles PATCH /api/projects/:projectId/share-links/:linkId.
 func (h *ShareHandler) UpdateLink(c echo.Context) error {
+	user := auth.MustGetUser(c)
 	var req struct {
 		Label  string                `json:"label"`
 		Config *ShareLinkConfigInput `json:"config"`
@@ -390,7 +388,7 @@ func (h *ShareHandler) UpdateLink(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return apperror.NewBadRequest("invalid request body")
 	}
-	dto, err := h.svc.UpdateLink(c.Request().Context(), c.Param("linkId"), c.Param("projectId"), req.Label, req.Config)
+	dto, err := h.svc.UpdateLink(c.Request().Context(), c.Param("linkId"), c.Param("projectId"), user.ID, req.Label, req.Config)
 	if err != nil {
 		return err
 	}
@@ -399,7 +397,8 @@ func (h *ShareHandler) UpdateLink(c echo.Context) error {
 
 // DeleteLink handles DELETE /api/projects/:projectId/share-links/:linkId.
 func (h *ShareHandler) DeleteLink(c echo.Context) error {
-	if err := h.svc.RevokeLink(c.Request().Context(), c.Param("linkId"), c.Param("projectId")); err != nil {
+	user := auth.MustGetUser(c)
+	if err := h.svc.RevokeLink(c.Request().Context(), c.Param("linkId"), c.Param("projectId"), user.ID); err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "revoked"})
@@ -426,7 +425,8 @@ func (h *ShareHandler) GetUsage(c echo.Context) error {
 
 // RevealLink handles GET /api/projects/:projectId/share-links/:linkId/reveal.
 func (h *ShareHandler) RevealLink(c echo.Context) error {
-	key, err := h.svc.RevealKey(c.Request().Context(), c.Param("linkId"), c.Param("projectId"))
+	user := auth.MustGetUser(c)
+	key, err := h.svc.RevealKey(c.Request().Context(), c.Param("linkId"), c.Param("projectId"), user.ID)
 	if err != nil {
 		return err
 	}

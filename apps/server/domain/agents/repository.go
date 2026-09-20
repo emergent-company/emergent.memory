@@ -1466,8 +1466,10 @@ func nilIfEmpty(s *string) *string {
 }
 
 // CreateRunWithOptions creates a new agent run with coordination options.
-func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
-	run := &AgentRun{
+// newAgentRun builds an AgentRun from CreateRunOptions without persisting it.
+// Shared by CreateRunWithOptions and the share run reservation path.
+func newAgentRun(opts CreateRunOptions) *AgentRun {
+	return &AgentRun{
 		AgentID:           opts.AgentID,
 		Status:            RunStatusRunning,
 		StartedAt:         time.Now(),
@@ -1484,6 +1486,10 @@ func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOpt
 		AgentDefinitionID: opts.AgentDefinitionID,
 		Tools:             []string{},
 	}
+}
+
+func (r *Repository) CreateRunWithOptions(ctx context.Context, opts CreateRunOptions) (*AgentRun, error) {
+	run := newAgentRun(opts)
 	_, err := r.db.NewInsert().
 		Model(run).
 		Returning("*").
@@ -1605,6 +1611,25 @@ func (r *Repository) CancelRun(ctx context.Context, runID string) error {
 		Where("id = ?", runID).
 		Exec(ctx)
 	return err
+}
+
+// CancelRunIfPaused transitions a paused (input-required) run to cancelled only
+// if it is still paused, so a run resumed between listing and cancellation is
+// not clobbered. Returns true when a row was actually cancelled.
+func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool, error) {
+	now := time.Now()
+	res, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("status = ?", RunStatusCancelled).
+		Set("completed_at = ?", now).
+		Where("id = ?", runID).
+		Where("status = ?", RunStatusPaused).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // MarkRunResumed transitions a paused run to running state when a new resume run has been created.

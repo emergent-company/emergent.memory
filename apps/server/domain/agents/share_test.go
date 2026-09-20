@@ -44,6 +44,15 @@ type fakeShareRepo struct {
 	// simulate a tripped budget).
 	reserveBudgetErr error
 
+	// sessionCapErr / runSlotErr / approvalCapErr are returned by the respective
+	// atomic-reservation fakes to simulate a tripped cap.
+	sessionCapErr  error
+	runSlotErr     error
+	approvalCapErr error
+
+	// createdRun records the pre-created run from CreateShareRunIfUnderLimit.
+	createdRun *AgentRun
+
 	// recording
 	createdACPSession   *ACPSession
 	createdShareSession *AgentShareSession
@@ -88,13 +97,14 @@ func (f *fakeShareRepo) GetShareLinkByID(_ context.Context, id string, _ *string
 func (f *fakeShareRepo) GetShareLinkByTokenID(_ context.Context, tokenID string) (*AgentShareLink, error) {
 	return f.tokenLink[tokenID], nil
 }
-func (f *fakeShareRepo) UpdateShareLink(_ context.Context, linkID, projectID, label string, config *ShareLinkConfig) (bool, error) {
+func (f *fakeShareRepo) UpdateShareLink(_ context.Context, linkID, projectID, label string, config *ShareLinkConfig, expiresAt *time.Time) (bool, error) {
 	l := f.linkByID[linkID]
 	if l == nil || l.RevokedAt != nil {
 		return false, nil
 	}
 	l.Label = label
 	l.Config = config
+	l.ExpiresAt = expiresAt
 	return true, nil
 }
 func (f *fakeShareRepo) RevokeShareLink(_ context.Context, linkID, projectID string) (bool, error) {
@@ -120,6 +130,17 @@ func (f *fakeShareRepo) CreateShareSession(_ context.Context, s *AgentShareSessi
 	f.createdShareSession = s
 	f.sessions[s.ID] = s
 	return nil
+}
+func (f *fakeShareRepo) CreateShareSessionIfUnderCap(_ context.Context, s *AgentShareSession, maxActive int) (bool, error) {
+	if f.sessionCapErr != nil {
+		return false, f.sessionCapErr
+	}
+	if maxActive > 0 && f.activeSessions >= maxActive {
+		return false, nil
+	}
+	f.createdShareSession = s
+	f.sessions[s.ID] = s
+	return true, nil
 }
 func (f *fakeShareRepo) GetShareSessionByID(_ context.Context, id, linkID, endUserRef string) (*AgentShareSession, error) {
 	s := f.sessions[id]
@@ -158,8 +179,30 @@ func (f *fakeShareRepo) FindShareSessionByRunAndEndUser(_ context.Context, _, _,
 func (f *fakeShareRepo) CountActiveShareRuns(_ context.Context, _ string) (int, error) {
 	return f.activeRuns, nil
 }
+func (f *fakeShareRepo) CreateShareRunIfUnderLimit(_ context.Context, _ string, maxConcurrent int, opts CreateRunOptions) (*AgentRun, error) {
+	if f.runSlotErr != nil {
+		return nil, f.runSlotErr
+	}
+	if maxConcurrent > 0 && f.activeRuns >= maxConcurrent {
+		return nil, apperror.New(429, "share_busy", "share link is at its concurrent run limit")
+	}
+	run := newAgentRun(opts)
+	run.ID = "pre-run"
+	f.createdRun = run
+	return run, nil
+}
 func (f *fakeShareRepo) CountSessionToolApprovals(_ context.Context, _, _ string) (int, error) {
 	return f.approvals, nil
+}
+func (f *fakeShareRepo) ReserveAndDecideShareApproval(_ context.Context, _, _, _, _, _, _ string, maxApprovals int) (bool, error) {
+	if f.approvalCapErr != nil {
+		return false, f.approvalCapErr
+	}
+	if maxApprovals > 0 && f.approvals >= maxApprovals {
+		return false, nil
+	}
+	f.approvals++
+	return true, nil
 }
 func (f *fakeShareRepo) ListPendingQuestionsForACPSession(_ context.Context, _ string) ([]*AgentQuestion, error) {
 	return nil, nil
@@ -176,7 +219,7 @@ func (f *fakeShareRepo) IncrementShareUsage(_ context.Context, _ string, _ time.
 	f.incrementedUsage = true
 	return nil
 }
-func (f *fakeShareRepo) ReserveShareBudget(_ context.Context, _ string, _ time.Time, _ int, _ int64, _ float64) error {
+func (f *fakeShareRepo) ReserveShareBudget(_ context.Context, _ string, _ time.Time, _ int, _ int64, _ float64, _ int64, _ float64) error {
 	return f.reserveBudgetErr
 }
 func (f *fakeShareRepo) SumShareUsageSince(_ context.Context, _ string, _ time.Time) (*ShareUsageAggregate, error) {
@@ -249,6 +292,7 @@ func (f *shareFakeResponder) RespondToQuestion(_ context.Context, p RespondParam
 type shareFakeTokenService struct {
 	revokedTokenIDs []string
 	revealedKey     string
+	role            string
 }
 
 func (f *shareFakeTokenService) CreateAgentChatShareToken(_ context.Context, _, _ string, _ *time.Time) (*apitoken.CreateApiTokenResponseDTO, error) {
@@ -262,6 +306,12 @@ func (f *shareFakeTokenService) RegenerateWith(_ context.Context, _, _, _ string
 }
 func (f *shareFakeTokenService) GetByID(_ context.Context, _, _ string) (*apitoken.GetApiTokenResponseDTO, error) {
 	return &apitoken.GetApiTokenResponseDTO{ApiTokenDTO: apitoken.ApiTokenDTO{ID: "tok-1"}, Token: f.revealedKey}, nil
+}
+func (f *shareFakeTokenService) GetUserProjectRole(_ context.Context, _, _ string) (string, error) {
+	if f.role == "" {
+		return "project_admin", nil
+	}
+	return f.role, nil
 }
 
 // =============================================================================
@@ -543,9 +593,79 @@ func TestRevokeLink_RevokesCredential(t *testing.T) {
 	tokens := &shareFakeTokenService{}
 	svc := NewShareService(repo, tokens, nil, nil, "", nil)
 
-	require.NoError(t, svc.RevokeLink(context.Background(), "link-a", "proj-a"))
+	require.NoError(t, svc.RevokeLink(context.Background(), "link-a", "proj-a", "owner-user"))
 
 	assert.NotNil(t, link.RevokedAt, "link must be revoked")
 	require.Len(t, tokens.revokedTokenIDs, 1, "bound credential must be revoked")
 	assert.Equal(t, "token-a", tokens.revokedTokenIDs[0])
+}
+
+// A non-admin caller must be rejected from owner mutations.
+func TestRevokeLink_NonAdminRejected(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	repo.linkByID["link-a"] = link
+
+	tokens := &shareFakeTokenService{role: "project_viewer"}
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	err := svc.RevokeLink(context.Background(), "link-a", "proj-a", "viewer-user")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+	assert.Nil(t, link.RevokedAt, "link must NOT be revoked for a non-admin")
+}
+
+// A non-admin caller must be rejected from link creation too.
+func TestCreateLink_NonAdminRejected(t *testing.T) {
+	repo := newFakeShareRepo()
+	repo.defByID["def-a"] = testDefinition("def-a", "proj-a", "Agent A")
+
+	tokens := &shareFakeTokenService{role: "project_viewer"}
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	_, err := svc.CreateLink(context.Background(), "proj-a", "def-a", "label", "viewer-user", nil)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+}
+
+// Updating LinkExpiryDays must recompute expires_at so extend/expire/never-expire
+// controls actually affect authorization.
+func TestUpdateLink_RecomputesExpiry(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	repo.linkByID["link-a"] = link
+
+	tokens := &shareFakeTokenService{}
+	svc := NewShareService(repo, tokens, nil, nil, "", nil)
+
+	one := 1
+	_, err := svc.UpdateLink(context.Background(), "link-a", "proj-a", "admin-user", "", &ShareLinkConfigInput{LinkExpiryDays: &one})
+	require.NoError(t, err)
+	require.NotNil(t, link.ExpiresAt, "expires_at must be set for a finite expiry")
+
+	zero := 0
+	_, err = svc.UpdateLink(context.Background(), "link-a", "proj-a", "admin-user", "", &ShareLinkConfigInput{LinkExpiryDays: &zero})
+	require.NoError(t, err)
+	assert.Nil(t, link.ExpiresAt, "expires_at must be cleared for never-expire")
+}
+
+// The concurrent-run limit must be enforced atomically (busy before Execute).
+func TestStreamMessage_ConcurrentRunLimit(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	cfg := DefaultShareLinkConfig()
+	cfg.MaxConcurrentRuns = 3
+	link.Config = cfg
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	repo.runSlotErr = apperror.New(429, "share_busy", "share link is at its concurrent run limit")
+
+	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "run-1"}}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "concurrent")
+	assert.Equal(t, "", runner.captured.ProjectID, "runner must not execute when the concurrent limit is reached")
 }

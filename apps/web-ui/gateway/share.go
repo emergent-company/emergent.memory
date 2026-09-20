@@ -557,6 +557,7 @@ func (s *Server) shareChat(c echo.Context) error {
 	var in struct {
 		Message   string `json:"message"`
 		SessionID string `json:"sessionId"`
+		Email     string `json:"email"`
 	}
 	if err := c.Bind(&in); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -567,7 +568,11 @@ func (s *Server) shareChat(c echo.Context) error {
 	ctx := c.Request().Context()
 	sessionID := in.SessionID
 	if sessionID == "" {
-		sess, cerr := s.memory.ShareCreateSession(ctx, claims.Token, claims.EndUserRef, ShareCreateSessionInput{})
+		// A link that requires an email is rejected upstream with
+		// share_email_required unless the session carries one, so the implicit
+		// first-message session creation must forward any email the page
+		// collected (POST /share/api/sessions carries it on the explicit path).
+		sess, cerr := s.memory.ShareCreateSession(ctx, claims.Token, claims.EndUserRef, ShareCreateSessionInput{Email: strings.TrimSpace(in.Email)})
 		if cerr != nil {
 			return s.shareProxyErrorResponse(c, cerr)
 		}

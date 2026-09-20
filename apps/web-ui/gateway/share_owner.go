@@ -266,8 +266,12 @@ func shareLinkConfigInputFromForm(c echo.Context) *ShareLinkConfigInput {
 			in.BudgetMaxTokens = shareInt64Ptr(n)
 		}
 	}
+	if v := strings.TrimSpace(c.FormValue("welcomeMessage")); v != "" {
+		in.WelcomeMessage = shareStringPtr(v)
+	}
 	return in
 }
 
-func shareIntPtr(n int) *int       { return &n }
-func shareInt64Ptr(n int64) *int64 { return &n }
+func shareIntPtr(n int) *int          { return &n }
+func shareInt64Ptr(n int64) *int64    { return &n }
+func shareStringPtr(s string) *string { return &s }

@@ -148,6 +148,7 @@ type ShareLinkConfigInput struct {
 	ShowSessionList          *bool    `json:"show_session_list,omitempty"`
 	SandboxEnabled           *bool    `json:"sandbox_enabled,omitempty"`
 	ToolAllowlist            []string `json:"tool_allowlist,omitempty"`
+	WelcomeMessage           *string  `json:"welcome_message,omitempty"`
 }
 
 // ShareLinkCreateInput is the body for POST .../agent-definitions/:id/share-links.

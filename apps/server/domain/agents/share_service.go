@@ -32,12 +32,13 @@ type ShareRepo interface {
 	ListShareLinksByProject(ctx context.Context, projectID string) ([]*AgentShareLink, error)
 	GetShareLinkByID(ctx context.Context, linkID string, projectID *string) (*AgentShareLink, error)
 	GetShareLinkByTokenID(ctx context.Context, apiTokenID string) (*AgentShareLink, error)
-	UpdateShareLink(ctx context.Context, linkID, projectID, label string, config *ShareLinkConfig) (bool, error)
+	UpdateShareLink(ctx context.Context, linkID, projectID, label string, config *ShareLinkConfig, expiresAt *time.Time) (bool, error)
 	RevokeShareLink(ctx context.Context, linkID, projectID string) (bool, error)
 	ReplaceShareLinkToken(ctx context.Context, tx bun.Tx, linkID, newTokenID string) error
 	TouchShareLink(ctx context.Context, linkID string) error
 	// sessions
 	CreateShareSession(ctx context.Context, s *AgentShareSession) error
+	CreateShareSessionIfUnderCap(ctx context.Context, s *AgentShareSession, maxActive int) (bool, error)
 	GetShareSessionByID(ctx context.Context, sessionID, linkID, endUserRef string) (*AgentShareSession, error)
 	ListShareSessionsByEndUser(ctx context.Context, linkID, endUserRef string, includeArchived bool) ([]*AgentShareSession, error)
 	CountActiveShareSessions(ctx context.Context, linkID, endUserRef string) (int, error)
@@ -45,14 +46,16 @@ type ShareRepo interface {
 	TouchShareSession(ctx context.Context, sessionID string) error
 	FindShareSessionByRunAndEndUser(ctx context.Context, linkID, endUserRef, runID string) (*AgentShareSession, error)
 	CountActiveShareRuns(ctx context.Context, linkID string) (int, error)
+	CreateShareRunIfUnderLimit(ctx context.Context, linkID string, maxConcurrent int, opts CreateRunOptions) (*AgentRun, error)
 	CountSessionToolApprovals(ctx context.Context, shareLinkID, acpSessionID string) (int, error)
+	ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, acpSessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error)
 	ListPendingQuestionsForACPSession(ctx context.Context, acpSessionID string) ([]*AgentQuestion, error)
 	// end users
 	UpsertShareEndUser(ctx context.Context, u *AgentShareEndUser) error
 	FindShareEndUser(ctx context.Context, linkID, endUserRef string) (*AgentShareEndUser, error)
 	// usage
 	IncrementShareUsage(ctx context.Context, linkID string, periodStart time.Time, messages int, tokens int64, costUSD float64) error
-	ReserveShareBudget(ctx context.Context, linkID string, periodStart time.Time, maxMessages int, maxTokens int64, maxCostUSD float64) error
+	ReserveShareBudget(ctx context.Context, linkID string, periodStart time.Time, maxMessages int, maxTokens int64, maxCostUSD float64, perTurnTokens int64, perTurnCostUSD float64) error
 	SumShareUsageSince(ctx context.Context, linkID string, since time.Time) (*ShareUsageAggregate, error)
 	ListShareUsage(ctx context.Context, linkID string, limit int) ([]*AgentShareUsage, error)
 	// access log + reaper
@@ -82,6 +85,7 @@ type shareTokenService interface {
 	RevokeEphemeral(ctx context.Context, tokenID string)
 	RegenerateWith(ctx context.Context, tokenID, projectID, userID string, after func(context.Context, bun.Tx, string) error) (*apitoken.CreateApiTokenResponseDTO, error)
 	GetByID(ctx context.Context, tokenID, projectID string) (*apitoken.GetApiTokenResponseDTO, error)
+	GetUserProjectRole(ctx context.Context, projectID, userID string) (string, error)
 }
 
 // ============================================================================
@@ -122,14 +126,14 @@ func NewShareService(repo ShareRepo, apiTokens shareTokenService, runner agentRu
 // definition -> project. Missing -> 401; revoked/expired -> 410.
 func (s *ShareService) ResolveLinkByTokenID(ctx context.Context, apiTokenID string) (*ShareLinkBinding, error) {
 	if apiTokenID == "" {
-		return nil, apperror.ErrUnauthorized.WithMessage("share token required")
+		return nil, apperror.New(http.StatusUnauthorized, "unauthorized", "share token required")
 	}
 	link, err := s.repo.GetShareLinkByTokenID(ctx, apiTokenID)
 	if err != nil {
 		return nil, err
 	}
 	if link == nil {
-		return nil, apperror.ErrUnauthorized.WithMessage("share link not found")
+		return nil, apperror.New(http.StatusUnauthorized, "unauthorized", "share link not found")
 	}
 	if link.IsRevoked() {
 		return nil, apperror.New(410, "share_link_revoked", "share link is revoked")
@@ -173,10 +177,10 @@ const (
 // fails closed -> 503.
 func (s *ShareService) VerifyEndUserRefSig(ref, sig string) error {
 	if ref == "" {
-		return apperror.ErrUnauthorized.WithMessage("end-user ref header required")
+		return apperror.New(http.StatusUnauthorized, "unauthorized", "end-user ref header required")
 	}
 	if sig == "" {
-		return apperror.ErrUnauthorized.WithMessage("end-user ref signature header required")
+		return apperror.New(http.StatusUnauthorized, "unauthorized", "end-user ref signature header required")
 	}
 	if s.refSecret == "" {
 		return apperror.New(http.StatusServiceUnavailable, "share_ref_secret_unconfigured",
@@ -188,7 +192,7 @@ func (s *ShareService) VerifyEndUserRefSig(ref, sig string) error {
 	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
 	if !hmac.Equal([]byte(expected), []byte(sig)) {
-		return apperror.ErrUnauthorized.WithMessage("invalid end-user ref signature")
+		return apperror.New(http.StatusUnauthorized, "unauthorized", "invalid end-user ref signature")
 	}
 	return nil
 }
@@ -202,7 +206,7 @@ func (s *ShareService) EnsureEndUserExists(ctx context.Context, linkID, endUserR
 		return err
 	}
 	if eu == nil {
-		return apperror.ErrNotFound.WithMessage("end user not found")
+		return apperror.New(http.StatusNotFound, "not_found", "end user not found")
 	}
 	return nil
 }
@@ -211,9 +215,27 @@ func (s *ShareService) EnsureEndUserExists(ctx context.Context, linkID, endUserR
 // Owner link management
 // ============================================================================
 
+// EnsureProjectAdmin returns nil when userID is a project admin, mirroring the
+// MCP share precedent. Owner mutations must call this before acting, so an
+// authenticated non-admin cannot manage links for a project they don't
+// administer.
+func (s *ShareService) EnsureProjectAdmin(ctx context.Context, projectID, userID string) error {
+	role, err := s.apiTokens.GetUserProjectRole(ctx, projectID, userID)
+	if err != nil {
+		return err
+	}
+	if role != "project_admin" {
+		return apperror.NewForbidden("project admin role required to manage share links")
+	}
+	return nil
+}
+
 // CreateLink mints a reserved-scope token and creates a share link bound to an
 // agent definition.
 func (s *ShareService) CreateLink(ctx context.Context, projectID, agentDefinitionID, label, createdBy string, in *ShareLinkConfigInput) (*ShareLinkDTO, error) {
+	if err := s.EnsureProjectAdmin(ctx, projectID, createdBy); err != nil {
+		return nil, err
+	}
 	if projectID == "" {
 		return nil, apperror.NewBadRequest("projectId is required")
 	}
@@ -292,19 +314,22 @@ func (s *ShareService) GetLink(ctx context.Context, linkID, projectID string) (*
 		return nil, err
 	}
 	if link == nil {
-		return nil, apperror.ErrNotFound.WithMessage("share link not found")
+		return nil, apperror.New(http.StatusNotFound, "not_found", "share link not found")
 	}
 	return s.linkDTO(link, "", ""), nil
 }
 
-// UpdateLink updates label + config of a non-revoked link.
-func (s *ShareService) UpdateLink(ctx context.Context, linkID, projectID, label string, in *ShareLinkConfigInput) (*ShareLinkDTO, error) {
+// UpdateLink updates label + config + expiry of a non-revoked link.
+func (s *ShareService) UpdateLink(ctx context.Context, linkID, projectID, userID, label string, in *ShareLinkConfigInput) (*ShareLinkDTO, error) {
+	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
 	link, err := s.repo.GetShareLinkByID(ctx, linkID, &projectID)
 	if err != nil {
 		return nil, err
 	}
 	if link == nil {
-		return nil, apperror.ErrNotFound.WithMessage("share link not found")
+		return nil, apperror.New(http.StatusNotFound, "not_found", "share link not found")
 	}
 	if link.IsRevoked() {
 		return nil, apperror.New(409, "share_link_revoked", "share link is revoked")
@@ -316,29 +341,42 @@ func (s *ShareService) UpdateLink(ctx context.Context, linkID, projectID, label 
 	}
 	cfg := in.Apply(link.EffectiveConfig())
 
-	updated, err := s.repo.UpdateShareLink(ctx, linkID, projectID, newLabel, cfg)
+	// Recompute expires_at from the (possibly changed) LinkExpiryDays so the
+	// extend/expire/never-expire controls actually take effect on the row
+	// ResolveLinkByTokenID authorizes against.
+	var expiresAt *time.Time
+	if cfg.LinkExpiryDays > 0 {
+		t := time.Now().Add(time.Duration(cfg.LinkExpiryDays) * 24 * time.Hour)
+		expiresAt = &t
+	}
+
+	updated, err := s.repo.UpdateShareLink(ctx, linkID, projectID, newLabel, cfg, expiresAt)
 	if err != nil {
 		return nil, err
 	}
 	if !updated {
-		return nil, apperror.ErrNotFound.WithMessage("share link not found or revoked")
+		return nil, apperror.New(http.StatusNotFound, "not_found", "share link not found or revoked")
 	}
 
 	link.Label = newLabel
 	link.Config = cfg
+	link.ExpiresAt = expiresAt
 	return s.linkDTO(link, "", ""), nil
 }
 
 // RevokeLink revokes a link and its bound credential. The share key (the bound
 // core.api_tokens row) is revoked immediately so it is unusable right away,
 // even though the link's own expires_at has not passed.
-func (s *ShareService) RevokeLink(ctx context.Context, linkID, projectID string) error {
+func (s *ShareService) RevokeLink(ctx context.Context, linkID, projectID, userID string) error {
+	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
+		return err
+	}
 	link, err := s.repo.GetShareLinkByID(ctx, linkID, &projectID)
 	if err != nil {
 		return err
 	}
 	if link == nil {
-		return apperror.ErrNotFound.WithMessage("share link not found")
+		return apperror.New(http.StatusNotFound, "not_found", "share link not found")
 	}
 
 	revoked, err := s.repo.RevokeShareLink(ctx, linkID, projectID)
@@ -346,7 +384,7 @@ func (s *ShareService) RevokeLink(ctx context.Context, linkID, projectID string)
 		return err
 	}
 	if !revoked {
-		return apperror.ErrNotFound.WithMessage("share link not found or already revoked")
+		return apperror.New(http.StatusNotFound, "not_found", "share link not found or already revoked")
 	}
 
 	// Revoke the bound credential so the share key is immediately unusable.
@@ -357,12 +395,15 @@ func (s *ShareService) RevokeLink(ctx context.Context, linkID, projectID string)
 // RotateLink atomically revokes the old token and binds a new one (link ID is
 // preserved) via apitoken.RegenerateWith.
 func (s *ShareService) RotateLink(ctx context.Context, linkID, projectID, userID string) (*ShareLinkDTO, error) {
+	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
 	link, err := s.repo.GetShareLinkByID(ctx, linkID, &projectID)
 	if err != nil {
 		return nil, err
 	}
 	if link == nil {
-		return nil, apperror.ErrNotFound.WithMessage("share link not found")
+		return nil, apperror.New(http.StatusNotFound, "not_found", "share link not found")
 	}
 	if link.IsRevoked() {
 		return nil, apperror.New(409, "share_link_revoked", "share link is revoked")
@@ -377,7 +418,7 @@ func (s *ShareService) RotateLink(ctx context.Context, linkID, projectID, userID
 
 	link, _ = s.repo.GetShareLinkByID(ctx, linkID, &projectID)
 	if link == nil {
-		return nil, apperror.ErrNotFound.WithMessage("share link not found")
+		return nil, apperror.New(http.StatusNotFound, "not_found", "share link not found")
 	}
 	return s.linkDTO(link, newToken.Token, newToken.TokenPrefix), nil
 }
@@ -386,13 +427,16 @@ func (s *ShareService) RotateLink(ctx context.Context, linkID, projectID, userID
 // link, decrypted from core.api_tokens.token_encrypted. Returns a clear
 // not_recoverable error when the token cannot be decrypted (never a partial or
 // ambiguous value).
-func (s *ShareService) RevealKey(ctx context.Context, linkID, projectID string) (string, error) {
+func (s *ShareService) RevealKey(ctx context.Context, linkID, projectID, userID string) (string, error) {
+	if err := s.EnsureProjectAdmin(ctx, projectID, userID); err != nil {
+		return "", err
+	}
 	link, err := s.repo.GetShareLinkByID(ctx, linkID, &projectID)
 	if err != nil {
 		return "", err
 	}
 	if link == nil {
-		return "", apperror.ErrNotFound.WithMessage("share link not found")
+		return "", apperror.New(http.StatusNotFound, "not_found", "share link not found")
 	}
 
 	result, err := s.apiTokens.GetByID(ctx, link.APITokenID, projectID)
@@ -413,7 +457,7 @@ func (s *ShareService) GetUsage(ctx context.Context, linkID, projectID string, l
 		return nil, err
 	}
 	if link == nil {
-		return nil, apperror.ErrNotFound.WithMessage("share link not found")
+		return nil, apperror.New(http.StatusNotFound, "not_found", "share link not found")
 	}
 	rows, err := s.repo.ListShareUsage(ctx, linkID, limit)
 	if err != nil {
@@ -478,16 +522,6 @@ func (s *ShareService) CreateSession(ctx context.Context, binding *ShareLinkBind
 		return nil, apperror.New(403, "share_email_required", "an email is required to start a session")
 	}
 
-	if cfg.MaxActiveSessionsPerUser > 0 {
-		active, err := s.repo.CountActiveShareSessions(ctx, binding.Link.ID, endUserRef)
-		if err != nil {
-			return nil, err
-		}
-		if active >= cfg.MaxActiveSessionsPerUser {
-			return nil, apperror.New(429, "share_session_limit", "session limit reached for this link")
-		}
-	}
-
 	if err := s.upsertEndUser(ctx, binding.Link.ID, endUserRef, email); err != nil {
 		return nil, err
 	}
@@ -511,8 +545,15 @@ func (s *ShareService) CreateSession(ctx context.Context, binding *ShareLinkBind
 		Title:          titlePtr,
 		LastActivityAt: &now,
 	}
-	if err := s.repo.CreateShareSession(ctx, sess); err != nil {
+	// Enforce the session cap atomically at insert (advisory lock + count), so
+	// two concurrent first-session requests cannot both create a session past
+	// the cap.
+	created, err := s.repo.CreateShareSessionIfUnderCap(ctx, sess, cfg.MaxActiveSessionsPerUser)
+	if err != nil {
 		return nil, err
+	}
+	if !created {
+		return nil, apperror.New(429, "share_session_limit", "session limit reached for this link")
 	}
 	return s.sessionDTO(sess), nil
 }
@@ -554,7 +595,7 @@ func (s *ShareService) GetSessionEntity(ctx context.Context, binding *ShareLinkB
 		return nil, err
 	}
 	if sess == nil {
-		return nil, apperror.ErrNotFound.WithMessage("session not found")
+		return nil, apperror.New(http.StatusNotFound, "not_found", "session not found")
 	}
 	return sess, nil
 }
@@ -615,7 +656,7 @@ func (s *ShareService) ArchiveSession(ctx context.Context, binding *ShareLinkBin
 		return err
 	}
 	if !archived {
-		return apperror.ErrNotFound.WithMessage("session not found or already archived")
+		return apperror.New(http.StatusNotFound, "not_found", "session not found or already archived")
 	}
 	return nil
 }
@@ -633,7 +674,7 @@ func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkB
 			return nil, err
 		}
 		if sess == nil {
-			return nil, apperror.ErrNotFound.WithMessage("session not found")
+			return nil, apperror.New(http.StatusNotFound, "not_found", "session not found")
 		}
 		questions, err = s.repo.ListPendingQuestionsForACPSession(ctx, sess.ACPSessionID)
 		if err != nil {
@@ -673,17 +714,15 @@ func (s *ShareService) StreamMessage(ctx context.Context, binding *ShareLinkBind
 	if cfg.MaxMessageChars > 0 && len(message) > cfg.MaxMessageChars {
 		return nil, apperror.NewBadRequest(fmt.Sprintf("message exceeds %d characters", cfg.MaxMessageChars))
 	}
-	if err := s.reserveShareBudget(ctx, binding); err != nil {
-		return nil, err
+
+	window := time.Duration(cfg.BudgetWindowSeconds) * time.Second
+	if window <= 0 {
+		window = 24 * time.Hour
 	}
-	if cfg.MaxConcurrentRuns > 0 {
-		active, err := s.repo.CountActiveShareRuns(ctx, binding.Link.ID)
-		if err != nil {
-			return nil, err
-		}
-		if active >= cfg.MaxConcurrentRuns {
-			return nil, apperror.New(429, "share_busy", "share link is at its concurrent run limit")
-		}
+	periodStart := time.Now().UTC().Truncate(window)
+
+	if err := s.reserveShareBudget(ctx, binding, periodStart); err != nil {
+		return nil, err
 	}
 
 	req, err := s.buildShareExecuteRequest(ctx, binding, session, message, streamCallback)
@@ -691,17 +730,41 @@ func (s *ShareService) StreamMessage(ctx context.Context, binding *ShareLinkBind
 		return nil, err
 	}
 
+	// Atomically reserve a concurrent-run slot and pre-create the run (status
+	// working) under an advisory lock, so concurrent admissions for the link
+	// cannot exceed the limit.
+	maxSteps := shareMaxSteps(binding.Definition)
+	req.MaxSteps = &maxSteps
+	preRun, err := s.repo.CreateShareRunIfUnderLimit(ctx, binding.Link.ID, cfg.MaxConcurrentRuns, CreateRunOptions{
+		AgentID:           req.Agent.ID,
+		AgentDefinitionID: &req.AgentDefinition.ID,
+		MaxSteps:          &maxSteps,
+	})
+	if err != nil {
+		return nil, err
+	}
+	req.PreCreatedRun = preRun
+
 	result, err := s.runner.Execute(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := s.recordUsage(ctx, binding, result); err != nil {
+	if err := s.recordUsage(ctx, binding, periodStart, result); err != nil {
 		s.log.Warn("failed to record share usage", slog.String("error", err.Error()))
 	}
 	_ = s.repo.TouchShareLink(ctx, binding.Link.ID)
 	_ = s.repo.TouchShareSession(ctx, session.ID)
 	return result, nil
+}
+
+// shareMaxSteps returns the effective max-steps for a share turn, matching the
+// executor's default resolution (definition MaxSteps, else DefaultMaxStepsPerRun).
+func shareMaxSteps(def *AgentDefinition) int {
+	if def != nil && def.MaxSteps != nil && *def.MaxSteps > 0 {
+		return *def.MaxSteps
+	}
+	return DefaultMaxStepsPerRun
 }
 
 // buildShareExecuteRequest constructs the ExecuteRequest for a share run. It is
@@ -760,23 +823,29 @@ func (s *ShareService) ensureShareAgent(ctx context.Context, binding *ShareLinkB
 	return agent, nil
 }
 
-// reserveShareBudget atomically reserves one message slot and enforces the
-// rolling budget under a FOR UPDATE lock (see Repository.ReserveShareBudget), so
-// concurrent turns for the same link cannot all pass a check-then-act gate.
-func (s *ShareService) reserveShareBudget(ctx context.Context, binding *ShareLinkBinding) error {
+// reserveShareBudget atomically reserves one message slot plus a per-turn
+// token/cost allowance, enforcing the rolling budget under a FOR UPDATE lock
+// (see Repository.ReserveShareBudget), so concurrent turns for the same link
+// cannot all pass a check-then-act gate and a link near its edge is denied
+// before spending.
+func (s *ShareService) reserveShareBudget(ctx context.Context, binding *ShareLinkBinding, periodStart time.Time) error {
 	cfg := binding.Config
-	window := time.Duration(cfg.BudgetWindowSeconds) * time.Second
-	if window <= 0 {
-		window = 24 * time.Hour
+	perTurnTokens := cfg.BudgetPerTurnTokens
+	if cfg.BudgetMaxTokens <= 0 {
+		perTurnTokens = 0
 	}
-	periodStart := time.Now().UTC().Truncate(window)
-	return s.repo.ReserveShareBudget(ctx, binding.Link.ID, periodStart, cfg.BudgetMaxMessages, cfg.BudgetMaxTokens, cfg.BudgetMaxCostUSD)
+	perTurnCost := cfg.BudgetPerTurnCostUSD
+	if cfg.BudgetMaxCostUSD <= 0 {
+		perTurnCost = 0
+	}
+	return s.repo.ReserveShareBudget(ctx, binding.Link.ID, periodStart, cfg.BudgetMaxMessages, cfg.BudgetMaxTokens, cfg.BudgetMaxCostUSD, perTurnTokens, perTurnCost)
 }
 
-// recordUsage settles the actual token/cost usage for the completed run. The
-// message slot was already reserved up-front by reserveShareBudget, so messages
-// is passed as 0 here (only tokens + cost are settled).
-func (s *ShareService) recordUsage(ctx context.Context, binding *ShareLinkBinding, result *ExecuteResult) error {
+// recordUsage reconciles the actual token/cost usage against the per-turn
+// allowance reserved up-front, adding only the delta (which may be negative to
+// release unused allowance). The message slot was already reserved by
+// reserveShareBudget.
+func (s *ShareService) recordUsage(ctx context.Context, binding *ShareLinkBinding, periodStart time.Time, result *ExecuteResult) error {
 	if result == nil {
 		return nil
 	}
@@ -786,12 +855,16 @@ func (s *ShareService) recordUsage(ctx context.Context, binding *ShareLinkBindin
 		tokens = usage.TotalInputTokens + usage.TotalOutputTokens
 		cost = usage.EstimatedCostUSD
 	}
-	window := time.Duration(binding.Config.BudgetWindowSeconds) * time.Second
-	if window <= 0 {
-		window = 24 * time.Hour
+	cfg := binding.Config
+	perTurnTokens := cfg.BudgetPerTurnTokens
+	if cfg.BudgetMaxTokens <= 0 {
+		perTurnTokens = 0
 	}
-	periodStart := time.Now().UTC().Truncate(window)
-	return s.repo.IncrementShareUsage(ctx, binding.Link.ID, periodStart, 0, tokens, cost)
+	perTurnCost := cfg.BudgetPerTurnCostUSD
+	if cfg.BudgetMaxCostUSD <= 0 {
+		perTurnCost = 0
+	}
+	return s.repo.IncrementShareUsage(ctx, binding.Link.ID, periodStart, 0, tokens-perTurnTokens, cost-perTurnCost)
 }
 
 // ============================================================================
@@ -818,10 +891,10 @@ func (s *ShareService) RespondToQuestion(ctx context.Context, binding *ShareLink
 		return nil, err
 	}
 	if session == nil {
-		return nil, apperror.ErrNotFound.WithMessage("session not found")
+		return nil, apperror.New(http.StatusNotFound, "not_found", "session not found")
 	}
 	if session.IsArchived {
-		return nil, apperror.ErrConflict.WithMessage("session is archived")
+		return nil, apperror.New(http.StatusConflict, "conflict", "session is archived")
 	}
 
 	question, err := s.repo.FindQuestionByID(ctx, questionID)
@@ -839,33 +912,27 @@ func (s *ShareService) RespondToQuestion(ctx context.Context, binding *ShareLink
 		return nil, apperror.NewInternal("failed to verify session ownership", err)
 	}
 	if ss == nil || ss.ID != session.ID {
-		return nil, apperror.ErrNotFound.WithMessage("question not found for this session")
-	}
-
-	// Approval cap per session.
-	if cfg := binding.Config; cfg.MaxApprovalsPerSession > 0 {
-		count, err := s.repo.CountSessionToolApprovals(ctx, binding.Link.ID, session.ACPSessionID)
-		if err != nil {
-			return nil, err
-		}
-		if count >= cfg.MaxApprovalsPerSession {
-			return nil, apperror.New(429, "share_approval_limit", "approval limit reached for this session")
-		}
+		return nil, apperror.New(http.StatusNotFound, "not_found", "question not found for this session")
 	}
 
 	_ = s.repo.CreateShareAccessLog(ctx, binding.Link.ID, endUserRef, ipHash, "approve")
 
+	// The approval cap is enforced atomically inside the shared helper via
+	// ReserveAndDecideShareApproval (advisory lock + conditional flip), so
+	// concurrent approvals cannot exceed the per-session cap.
 	return s.responder.RespondToQuestion(ctx, RespondParams{
-		ProjectID:       binding.ProjectID,
-		OrgID:           binding.OrgID,
-		RespondedBy:     endUserRef, // uuid-form end_user_ref
-		UserID:          "",         // no notifications for anonymous users
-		QuestionID:      questionID,
-		Response:        response,
-		Message:         message,
-		ShareLinkID:     binding.Link.ID,
-		ShareToolDeny:   binding.Config.ComputeShareToolDeny(),
-		DisableAuthMint: true,
+		ProjectID:              binding.ProjectID,
+		OrgID:                  binding.OrgID,
+		RespondedBy:            endUserRef, // uuid-form end_user_ref
+		UserID:                 "",         // no notifications for anonymous users
+		QuestionID:             questionID,
+		Response:               response,
+		Message:                message,
+		ShareLinkID:            binding.Link.ID,
+		ShareToolDeny:          binding.Config.ComputeShareToolDeny(),
+		DisableAuthMint:        true,
+		MaxApprovalsPerSession: binding.Config.MaxApprovalsPerSession,
+		ACPSessionID:           session.ACPSessionID,
 	})
 }
 
