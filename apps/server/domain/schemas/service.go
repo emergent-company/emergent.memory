@@ -3,6 +3,7 @@ package schemas
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -22,14 +24,25 @@ type Service struct {
 	repo     *Repository
 	graphSvc *graph.Service
 	log      *slog.Logger
+
+	// maxMigrationScanObjects is the hard safety cap on the number of objects a
+	// synchronous migrate/rollback request may scan (config.Graph.
+	// MigrationScanMaxObjects). Non-positive disables the cap.
+	maxMigrationScanObjects int
 }
 
+// errMaxObjectsReached is an internal sentinel used to stop a streaming scan
+// once a per-type/per-request MaxObjects cap is reached, without treating the
+// stop as an error.
+var errMaxObjectsReached = errors.New("schemas: max objects reached")
+
 // NewService creates a new schemas service
-func NewService(repo *Repository, graphSvc *graph.Service, log *slog.Logger) *Service {
+func NewService(repo *Repository, graphSvc *graph.Service, log *slog.Logger, cfg *config.Config) *Service {
 	return &Service{
-		repo:     repo,
-		graphSvc: graphSvc,
-		log:      log.With(logger.Scope("schemas.svc")),
+		repo:                    repo,
+		graphSvc:                graphSvc,
+		log:                     log.With(logger.Scope("schemas.svc")),
+		maxMigrationScanObjects: cfg.Graph.MigrationScanMaxObjects,
 	}
 }
 
@@ -692,6 +705,9 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 	toVersion := resolveArchiveVersion(req.ToSchemaID, lookupVersion)
 	schemaVersion := toVersion
 	maxObjs := req.MaxObjects
+	// scanned counts every object visited across all types and enforces the
+	// MigrationScanMaxObjects safety cap on the synchronous request path.
+	scanned := 0
 
 	for typeName, toSchema := range toObjSchemas {
 		fromSchema := fromObjSchemas[typeName]
@@ -707,45 +723,73 @@ func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, 
 			// the patch below persists that slice. Without the column selected the
 			// slice scans empty and the UPDATE clobbers the previous hop's entries.
 			IncludeMigrationArchive: true,
+			// NOTE: OnlyWithMigrationArchive is deliberately NOT set here. A
+			// forward migration must also visit objects with an EMPTY archive
+			// (a first-ever migration has zero archived objects, as do objects
+			// created after a prior migration); filtering by archive would skip
+			// them and regress data migration.
 		}
-		// ListAll pages through the whole result set so projects larger than one
-		// List page are fully migrated (List alone caps at MaxListLimit).
-		objs, listErr := s.graphSvc.GetRepository().ListAll(ctx, listParams)
-		if listErr != nil {
-			return nil, fmt.Errorf("failed to list objects of type %s: %w", typeName, listErr)
-		}
-		if maxObjs > 0 && len(objs) > maxObjs {
-			objs = objs[:maxObjs]
-		}
+		// ListEach streams the type's objects one page at a time so the result
+		// set is never fully materialised, while still covering every page
+		// (List alone caps at MaxListLimit).
+		processed := 0
+		listErr := s.graphSvc.GetRepository().ListEach(ctx, listParams, func(page []*graph.GraphObject) error {
+			for _, obj := range page {
+				if maxObjs > 0 && processed >= maxObjs {
+					// Per-type cap reached — stop fetching further pages for this
+					// type and move on to the next.
+					return errMaxObjectsReached
+				}
+				scanned++
+				if s.maxMigrationScanObjects > 0 && scanned > s.maxMigrationScanObjects {
+					// A mid-scan abort here can leave the current type partially
+					// migrated, which matches today's failure mode (execute is not
+					// transactional and aborts partway through).
+					return apperror.NewBadRequest(fmt.Sprintf(
+						"schema migration would scan more than %d objects; narrow the migration (e.g. max_objects or a type filter) or raise GRAPH_MIGRATION_SCAN_MAX_OBJECTS",
+						s.maxMigrationScanObjects))
+				}
+				processed++
 
-		for _, obj := range objs {
-			result := migrator.MigrateObject(ctx, obj, fromSchema, toSchema, fromVersion, toVersion)
-			if !result.CanProceed && !req.Force {
-				// Check if the block is solely due to declared-removed properties
-				if !canProceedWithRemovedHints(result, removedSet[typeName]) {
+				result := migrator.MigrateObject(ctx, obj, fromSchema, toSchema, fromVersion, toVersion)
+				if !result.CanProceed && !req.Force {
+					// Check if the block is solely due to declared-removed properties
+					if !canProceedWithRemovedHints(result, removedSet[typeName]) {
+						resp.ObjectsFailed++
+						continue
+					}
+				}
+
+				// Patch the object with new properties, schema_version, and migration_archive
+				archiveJSON, _ := json.Marshal(obj.MigrationArchive)
+				_, patchErr := db.NewRaw(`
+					UPDATE kb.graph_objects
+					SET properties = ?,
+					    schema_version = ?,
+					    migration_archive = ?,
+					    updated_at = NOW()
+					WHERE id = ? AND project_id = ?
+				`, result.NewProperties, schemaVersion, string(archiveJSON), obj.ID, projectID).Exec(ctx)
+				if patchErr != nil {
+					s.log.Warn("failed to patch object after migration",
+						slog.String("objectId", obj.ID.String()),
+						logger.Error(patchErr))
 					resp.ObjectsFailed++
 					continue
 				}
+				resp.ObjectsMigrated++
 			}
-
-			// Patch the object with new properties, schema_version, and migration_archive
-			archiveJSON, _ := json.Marshal(obj.MigrationArchive)
-			_, patchErr := db.NewRaw(`
-				UPDATE kb.graph_objects
-				SET properties = ?,
-				    schema_version = ?,
-				    migration_archive = ?,
-				    updated_at = NOW()
-				WHERE id = ? AND project_id = ?
-			`, result.NewProperties, schemaVersion, string(archiveJSON), obj.ID, projectID).Exec(ctx)
-			if patchErr != nil {
-				s.log.Warn("failed to patch object after migration",
-					slog.String("objectId", obj.ID.String()),
-					logger.Error(patchErr))
-				resp.ObjectsFailed++
+			return nil
+		})
+		if listErr != nil {
+			if errors.Is(listErr, errMaxObjectsReached) {
 				continue
 			}
-			resp.ObjectsMigrated++
+			var apErr *apperror.Error
+			if errors.As(listErr, &apErr) {
+				return nil, apErr
+			}
+			return nil, fmt.Errorf("failed to list objects of type %s: %w", typeName, listErr)
 		}
 	}
 
@@ -798,6 +842,15 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
 	}
 
+	// max_objects cannot be combined with restore_type_registry: when the cap is
+	// reached the restore loop stops early (errMaxObjectsReached) and would skip
+	// the registry restore entirely, committing a partial data restore while
+	// silently dropping the all-or-nothing registry restore. Reject the
+	// combination up front so it fails loudly instead.
+	if req.RestoreTypeRegistry && req.MaxObjects > 0 {
+		return nil, apperror.NewBadRequest("max_objects cannot be combined with restore_type_registry: the type registry restore is all-or-nothing and must run in full")
+	}
+
 	// Resolve the pre-migration (from) and migration-target (to) packs up front,
 	// before any writes, so an explicit restore_type_registry request fails
 	// loudly instead of silently no-oping. The resolved packs are then used
@@ -810,19 +863,6 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		}
 	}
 
-	// Fetch all objects that have a migration_archive entry for toVersion.
-	// IncludeMigrationArchive is required: the restore loop below skips objects
-	// whose archive is empty, so without the column every object is skipped and
-	// the rollback silently restores nothing. ListAll covers every page rather
-	// than just the first MaxListLimit objects.
-	objs, listErr := s.graphSvc.GetRepository().ListAll(ctx, graph.ListParams{
-		ProjectID:               projectUUID,
-		IncludeMigrationArchive: true,
-	})
-	if listErr != nil {
-		return nil, fmt.Errorf("failed to list objects: %w", listErr)
-	}
-
 	migrator := graph.NewSchemaMigrator(graph.NewPropertyValidator(), s.log)
 	resp := &SchemaMigrationRollbackResponse{
 		ProjectID: projectID,
@@ -831,35 +871,70 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 
 	db := s.repo.DB()
 
+	// The scan now runs INSIDE the transaction via ListEachTx so only one page
+	// is in memory at a time and the data restore + optional registry restore
+	// stay atomic in ONE transaction. OnlyWithMigrationArchive bounds the scan
+	// to archive-carrying objects (via the partial index), and the
+	// (created_at, id) keyset cursor is stable here: the per-object UPDATE
+	// touches only properties/schema_version/migration_archive/updated_at,
+	// never created_at/id/supersedes_id/deleted_at, so pages cannot be skipped
+	// or revisited.
 	err = db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		for _, obj := range objs {
-			if len(obj.MigrationArchive) == 0 {
-				continue
+		scanned := 0
+		listParams := graph.ListParams{
+			ProjectID:                projectUUID,
+			IncludeMigrationArchive:  true,
+			OnlyWithMigrationArchive: true,
+		}
+		listErr := s.graphSvc.GetRepository().ListEachTx(ctx, tx, listParams, func(page []*graph.GraphObject) error {
+			for _, obj := range page {
+				scanned++
+				if s.maxMigrationScanObjects > 0 && scanned > s.maxMigrationScanObjects {
+					// Returning an error from the tx aborts it, so nothing is
+					// written (data or registry).
+					return apperror.NewBadRequest(fmt.Sprintf(
+						"rollback would scan more than %d objects; narrow the rollback (e.g. max_objects or a version filter) or raise GRAPH_MIGRATION_SCAN_MAX_OBJECTS",
+						s.maxMigrationScanObjects))
+				}
+				if len(obj.MigrationArchive) == 0 {
+					continue
+				}
+				result := migrator.RollbackObject(obj, req.ToVersion)
+				if !result.Success {
+					continue
+				}
+				if req.MaxObjects > 0 && resp.ObjectsRestored >= req.MaxObjects {
+					// max_objects cap reached — stop restoring (commit what's done).
+					return errMaxObjectsReached
+				}
+				// result.ToVersion is the archive's from_version — the human pack
+				// version the object is being restored to. Stamp that, not
+				// req.ToVersion (the migration being undone), otherwise the object
+				// is left labelled with the schema we just rolled back from.
+				restoredVersion := result.ToVersion
+				archiveJSON, _ := json.Marshal(obj.MigrationArchive)
+				_, patchErr := tx.NewRaw(`
+					UPDATE kb.graph_objects
+					SET properties = ?,
+					    schema_version = ?,
+					    migration_archive = ?,
+					    updated_at = NOW()
+					WHERE id = ? AND project_id = ?
+				`, obj.Properties, restoredVersion, string(archiveJSON), obj.ID, projectID).Exec(ctx)
+				if patchErr != nil {
+					resp.ObjectsFailed++
+				} else {
+					resp.ToVersion = restoredVersion
+					resp.ObjectsRestored++
+				}
 			}
-			result := migrator.RollbackObject(obj, req.ToVersion)
-			if !result.Success {
-				continue
+			return nil
+		})
+		if listErr != nil {
+			if errors.Is(listErr, errMaxObjectsReached) {
+				return nil
 			}
-			// result.ToVersion is the archive's from_version — the human pack
-			// version the object is being restored to. Stamp that, not
-			// req.ToVersion (the migration being undone), otherwise the object
-			// is left labelled with the schema we just rolled back from.
-			restoredVersion := result.ToVersion
-			archiveJSON, _ := json.Marshal(obj.MigrationArchive)
-			_, patchErr := tx.NewRaw(`
-				UPDATE kb.graph_objects
-				SET properties = ?,
-				    schema_version = ?,
-				    migration_archive = ?,
-				    updated_at = NOW()
-				WHERE id = ? AND project_id = ?
-			`, obj.Properties, restoredVersion, string(archiveJSON), obj.ID, projectID).Exec(ctx)
-			if patchErr != nil {
-				resp.ObjectsFailed++
-			} else {
-				resp.ToVersion = restoredVersion
-				resp.ObjectsRestored++
-			}
+			return listErr
 		}
 
 		if req.RestoreTypeRegistry {
@@ -872,6 +947,10 @@ func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string,
 		return nil
 	})
 	if err != nil {
+		var apErr *apperror.Error
+		if errors.As(err, &apErr) {
+			return nil, apErr
+		}
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 

@@ -476,6 +476,15 @@ type GraphConfig struct {
 	// DefaultListLimit is the default number of items returned by list endpoints when no limit is specified.
 	// Default: 100.
 	DefaultListLimit int `env:"GRAPH_DEFAULT_LIST_LIMIT" envDefault:"100"`
+
+	// MigrationScanMaxObjects is the hard cap on the number of objects a
+	// synchronous schema migrate/rollback request may scan. When a scan would
+	// exceed it the request aborts with a 4xx telling the caller to narrow the
+	// operation. Default: 10000. Ops note: this is a behaviour change for very
+	// large projects — previously these requests were unbounded; if a legitimate
+	// migration/rollback scans more than 10000 objects, raise
+	// GRAPH_MIGRATION_SCAN_MAX_OBJECTS rather than splitting the operation.
+	MigrationScanMaxObjects int `env:"GRAPH_MIGRATION_SCAN_MAX_OBJECTS" envDefault:"10000"`
 }
 
 // ChunkingConfig holds configuration for text chunking.
