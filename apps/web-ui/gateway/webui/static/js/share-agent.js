@@ -422,8 +422,8 @@
     var bubble = el(
       "div",
       role === "user"
-        ? "bg-primary text-primary-content max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
-        : "bg-base-100 border-base-content/10 max-w-[85%] rounded-2xl rounded-bl-sm border px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
+        ? "bg-primary text-primary-content w-full rounded-2xl rounded-br-sm px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
+        : "bg-base-100 border-base-content/10 w-full rounded-2xl rounded-bl-sm border px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
     );
     bubble.setAttribute("data-role", role);
     bubble.textContent = text;
