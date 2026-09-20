@@ -88,6 +88,27 @@ function filterSessions(list, filter) {
   return list.filter((s) => !s.isArchived); // "active" (and the client default)
 }
 
+function defaultShareConfig() {
+  return {
+    link_expiry_days: 30,
+    budget_window_seconds: 0,
+    budget_max_messages: 0,
+    budget_max_tokens: 0,
+    budget_max_cost_usd: 0,
+    max_active_sessions_per_user: 0,
+    max_concurrent_runs: 1,
+    max_approvals_per_session: 0,
+    approval_timeout_seconds: 0,
+    max_message_chars: 4000,
+    retention_days: 30,
+    require_email: false,
+    show_session_list: true,
+    sandbox_enabled: false,
+    allow_end_user_approvals: true,
+    tool_allowlist: [],
+  };
+}
+
 function publicConfig() {
   return {
     linkId: "link-1",
@@ -108,30 +129,39 @@ function publicConfig() {
   };
 }
 
+// publicConfigForLink maps a snake_case link config onto the sanitized camelCase
+// public config the exchange serves. Fixed identity/budget fields mirror
+// publicConfig(); the owner-tunable fields are derived from the stored config.
+function publicConfigForLink(linkConfig) {
+  const cfg = linkConfig || defaultShareConfig();
+  const out = {
+    linkId: "link-1",
+    agentName: "Memory",
+    agentDescription: "A helpful assistant.",
+    model: "deepseek-v4-flash",
+    requireEmail: !!cfg.require_email,
+    showSessionList: !!cfg.show_session_list,
+    maxMessageChars: cfg.max_message_chars,
+    allowEndUserApprovals: true,
+    sandboxEnabled: !!cfg.sandbox_enabled,
+    retentionDays: cfg.retention_days,
+    budgetMaxMessages: 0,
+    budgetMaxTokens: 0,
+    budgetMaxCostUSD: 0,
+    maxActiveSessionsPerUser: 0,
+    maxConcurrentRuns: 1,
+  };
+  if (cfg.welcome_message) out.welcomeMessage = cfg.welcome_message;
+  return out;
+}
+
 function shareLinkObj(l) {
   return {
     id: l.id,
     projectId: "p1",
     agentDefinitionId: l.agentId,
     label: l.label,
-    config: {
-      link_expiry_days: 30,
-      budget_window_seconds: 0,
-      budget_max_messages: 0,
-      budget_max_tokens: 0,
-      budget_max_cost_usd: 0,
-      max_active_sessions_per_user: 0,
-      max_concurrent_runs: 1,
-      max_approvals_per_session: 0,
-      approval_timeout_seconds: 0,
-      max_message_chars: 4000,
-      retention_days: 30,
-      require_email: false,
-      show_session_list: true,
-      sandbox_enabled: false,
-      allow_end_user_approvals: true,
-      tool_allowlist: [],
-    },
+    config: l.config,
     apiTokenPrefix: "sk_share",
     token: l.token || undefined, // only present at create/rotate
     createdAt: l.createdAt,
@@ -190,8 +220,11 @@ const server = http.createServer((req, res) => {
       return json(res, { error: { code: "share_link_revoked", message: "share link revoked" } });
     }
     const created = shareLinks.find((l) => l.token === key && !l.revokedAt);
-    if (VALID_KEYS.has(key) || created) {
+    if (VALID_KEYS.has(key)) {
       return json(res, publicConfig());
+    }
+    if (created) {
+      return json(res, publicConfigForLink(created.config));
     }
     res.statusCode = 401;
     return json(res, { error: { code: "share_link_not_found", message: "share link not found" } });
@@ -312,16 +345,18 @@ const server = http.createServer((req, res) => {
   if (ownerLinksMatch && req.method === "POST") {
     return readBody(req, (payload) => {
       const label = String(payload.label || "Untitled link");
+      const config = { ...defaultShareConfig(), ...(payload.config || {}) };
       const link = {
         id: `sl-${linkCounter}`,
         agentId: ownerLinksMatch[1],
         label,
         token: `sh_key_${linkCounter}`,
+        config,
         createdAt: nowISO(),
         updatedAt: nowISO(),
         lastUsedAt: null,
         revokedAt: null,
-        expiresAt: null,
+        expiresAt: config.link_expiry_days > 0 ? new Date(Date.now() + config.link_expiry_days * 86400e3).toISOString() : null,
       };
       linkCounter += 1;
       shareLinks.push(link);
