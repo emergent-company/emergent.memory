@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/adk/session/bunsession"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -2823,7 +2824,7 @@ func (r *Repository) FindExternalAgentBySlug(ctx context.Context, projectID, slu
 		return nil, err
 	}
 	for _, def := range defs {
-		if ACPSlugFromName(def.Name) == slug {
+		if acpslug.FromName(def.Name) == slug {
 			return def, nil
 		}
 	}
@@ -2845,81 +2846,11 @@ func (r *Repository) FindAgentDefinitionBySlug(ctx context.Context, projectID, s
 		return nil, fmt.Errorf("FindAgentDefinitionBySlug: %w", err)
 	}
 	for _, def := range defs {
-		if ACPSlugFromName(def.Name) == slug {
+		if acpslug.FromName(def.Name) == slug {
 			return def, nil
 		}
 	}
 	return nil, nil
-}
-
-// GetAgentStatusMetrics computes live metrics for an agent definition based on
-// runs from the last 30 days: average tokens per run, average duration in seconds,
-// and success rate (fraction of terminal runs that succeeded).
-// Returns nil when no runs exist in the window.
-func (r *Repository) GetAgentStatusMetrics(ctx context.Context, agentDefID string) (*AgentStatusMetrics, error) {
-	since := time.Now().Add(-30 * 24 * time.Hour)
-
-	// Compute success rate and average duration from agent_runs.
-	// We need the agent_id (legacy Agent), not the definition ID directly.
-	// agent_runs.agent_id references kb.agents.id, and agents have a definition_id.
-	// For simplicity we query runs whose agent's definition matches.
-	type runStats struct {
-		TotalRuns   int64    `bun:"total_runs"`
-		SuccessRuns int64    `bun:"success_runs"`
-		AvgDuration *float64 `bun:"avg_duration"`
-	}
-	var rs runStats
-	err := r.db.NewSelect().
-		TableExpr("kb.agent_runs AS ar").
-		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
-		ColumnExpr("COUNT(*) AS total_runs").
-		ColumnExpr("COUNT(*) FILTER (WHERE ar.status = 'completed') AS success_runs").
-		ColumnExpr("AVG(ar.duration_ms) FILTER (WHERE ar.duration_ms IS NOT NULL) AS avg_duration").
-		Where("a.definition_id = ?", agentDefID).
-		Where("ar.created_at >= ?", since).
-		Where("ar.status IN (?)", bun.In([]string{"completed", "failed", "cancelled", "skipped"})).
-		Scan(ctx, &rs)
-	if err != nil {
-		return nil, fmt.Errorf("GetAgentStatusMetrics runs: %w", err)
-	}
-	if rs.TotalRuns == 0 {
-		return nil, nil
-	}
-
-	metrics := &AgentStatusMetrics{}
-
-	// Success rate
-	rate := float64(rs.SuccessRuns) / float64(rs.TotalRuns)
-	metrics.SuccessRate = &rate
-
-	// Average duration (ms → seconds)
-	if rs.AvgDuration != nil {
-		secs := *rs.AvgDuration / 1000.0
-		metrics.AvgRunTimeSeconds = &secs
-	}
-
-	// Average tokens from llm_usage_events
-	type tokenStats struct {
-		AvgTokens *float64 `bun:"avg_tokens"`
-	}
-	var ts tokenStats
-	err = r.db.NewRaw(`
-		SELECT AVG(run_total) AS avg_tokens FROM (
-			SELECT lue.run_id,
-				SUM(lue.text_input_tokens + lue.image_input_tokens + lue.video_input_tokens + lue.audio_input_tokens + lue.output_tokens) AS run_total
-			FROM kb.llm_usage_events lue
-			JOIN kb.agent_runs ar ON ar.id = lue.run_id
-			JOIN kb.agents a ON a.id = ar.agent_id
-			WHERE a.definition_id = ?
-			  AND ar.created_at >= ?
-			GROUP BY lue.run_id
-		) sub`, agentDefID, since).Scan(ctx, &ts)
-	if err != nil {
-		return nil, fmt.Errorf("GetAgentStatusMetrics tokens: %w", err)
-	}
-	metrics.AvgRunTokens = ts.AvgTokens
-
-	return metrics, nil
 }
 
 // CreateACPSession inserts a new ACP session record.

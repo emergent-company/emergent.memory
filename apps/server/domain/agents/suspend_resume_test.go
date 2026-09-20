@@ -2,7 +2,6 @@ package agents
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,57 +79,6 @@ func TestSuspendSignalFromMap_WithResumeRunID(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, SuspendReasonAwaitingHuman, got.Reason)
 	assert.Equal(t, "q-789", got.QuestionID)
-}
-
-// ---------------------------------------------------------------------------
-// RunToACPObject: ResumeRunID populated from suspend_context
-// ---------------------------------------------------------------------------
-
-func TestRunToACPObject_ResumeRunID_FromSuspendContext(t *testing.T) {
-	resumeID := "run-resume-77"
-	run := &AgentRun{
-		ID:     "run-paused-1",
-		Status: RunStatusPaused,
-		SuspendContext: map[string]any{
-			"reason":        "awaiting_human",
-			"question_id":   "q-1",
-			"resume_run_id": resumeID,
-		},
-		CreatedAt: time.Now(),
-	}
-
-	obj := RunToACPObject(run, nil, nil)
-
-	require.NotNil(t, obj.ResumeRunID)
-	assert.Equal(t, resumeID, *obj.ResumeRunID)
-}
-
-func TestRunToACPObject_NoResumeRunID_WhenAbsent(t *testing.T) {
-	run := &AgentRun{
-		ID:     "run-paused-2",
-		Status: RunStatusPaused,
-		SuspendContext: map[string]any{
-			"reason":      "awaiting_human",
-			"question_id": "q-2",
-			// no resume_run_id yet
-		},
-		CreatedAt: time.Now(),
-	}
-
-	obj := RunToACPObject(run, nil, nil)
-	assert.Nil(t, obj.ResumeRunID)
-}
-
-func TestRunToACPObject_NoResumeRunID_WhenSuspendContextNil(t *testing.T) {
-	run := &AgentRun{
-		ID:             "run-normal-3",
-		Status:         RunStatusSuccess,
-		SuspendContext: nil,
-		CreatedAt:      time.Now(),
-	}
-
-	obj := RunToACPObject(run, nil, nil)
-	assert.Nil(t, obj.ResumeRunID)
 }
 
 // ---------------------------------------------------------------------------

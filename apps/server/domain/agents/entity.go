@@ -630,3 +630,19 @@ type ACPRunEvent struct {
 	// Relations
 	Run *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
 }
+
+// ACP run event types persisted in kb.acp_run_events.event_type. Reused by the
+// A2A v1.0 interface (GetTask history + SubscribeTask replay) for task-state
+// mapping and stream reconstruction.
+const (
+	ACPEventRunCreated    = "run.created"
+	ACPEventRunInProgress = "run.in-progress"
+	ACPEventRunAwaiting   = "run.awaiting"
+	ACPEventRunCompleted  = "run.completed"
+	ACPEventRunFailed     = "run.failed"
+	ACPEventRunCancelled  = "run.cancelled"
+	ACPEventMessagePart   = "message.part"
+	ACPEventError         = "error"
+	ACPEventToolCall      = "tool_call"
+	ACPEventToolResult    = "tool_result"
+)

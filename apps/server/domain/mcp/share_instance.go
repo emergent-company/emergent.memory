@@ -35,8 +35,7 @@ const instanceScopeBaseline = "projects:read"
 // safely constrained by a static per-instance tool allowlist and are rejected
 // from any non-null allowlist.
 var agentExecutionTools = map[string]bool{
-	"trigger_agent":   true,
-	"acp-trigger-run": true,
+	"trigger_agent": true,
 }
 
 // agentMutationTools create/update/delete agents, definitions, hooks, or answer

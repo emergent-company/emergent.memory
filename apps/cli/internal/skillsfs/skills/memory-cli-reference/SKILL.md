@@ -47,123 +47,102 @@ For self-hosted deployments, use 'memory server' to install and manage your serv
       --server string          Memory server URL
 ```
 
-## memory acp
+## memory a2a
 
-Agent Communication Protocol (ACP) operations
+A2A Protocol (A2A v1.0) agent operations
 
 ### Synopsis
 
-Commands for interacting with agents via the Agent Communication Protocol (ACP) v1 API.
+Commands for discovering and invoking agents via the A2A Protocol v1.0 HTTP+JSON API.
 
 ### Options
 
 ```
-  -h, --help   help for acp
+  -h, --help   help for a2a
 ```
 
-## memory acp agents
+## memory a2a discover
 
-Manage ACP agents
+Discover externally-visible agents (extended AgentCard)
 
 ### Synopsis
 
-Discover and inspect agents exposed via the Agent Communication Protocol.
+Fetch and display the authenticated extended AgentCard.
 
-### Options
-
-```
-  -h, --help   help for agents
-```
-
-## memory acp agents get
-
-Get an ACP agent manifest
-
-### Synopsis
-
-Get the full manifest for a specific ACP agent by its slug name.
-
-Displays the agent's name, description, capabilities, input/output modes,
-and status metrics. Use --json for the raw JSON response.
+The card lists every agent with visibility='external' in the current project
+as an A2A skill. Use --json for the raw JSON response.
 
 ```
-memory acp agents get <name> [flags]
+memory a2a discover [flags]
 ```
 
 ### Options
 
 ```
-  -h, --help   help for get
+  -h, --help   help for discover
 ```
 
-## memory acp agents list
+## memory a2a send
 
-List externally-visible ACP agents
+Send a message to an A2A agent
 
 ### Synopsis
 
-List all agents with visibility='external' that are exposed via ACP.
+Send a message to the agent identified by its A2A skill id (the RFC 1123
+slug shown by 'memory a2a discover').
 
-Displays a table with NAME, DESCRIPTION, VERSION, and SUCCESS RATE columns.
-Use --json to output the raw JSON response.
+The --mode flag controls execution:
+  sync   (default) — blocks until the task reaches a terminal state, prints output
+  async  — returns immediately with the task ID and state
+  stream — streams the agent's output to stdout in real time
+
+If a sync send pauses for human input (TASK_STATE_INPUT_REQUIRED), the CLI
+prompts you interactively and resumes the task automatically.
+
+Use --task <id> to resume an existing input-required task by ID; in that case
+the skill id positional is accepted but not re-sent (the server infers the
+agent from the task).
 
 ```
-memory acp agents list [flags]
+memory a2a send <agent-skill-id> [flags]
 ```
 
 ### Options
 
 ```
-  -h, --help   help for list
+  -h, --help             help for send
+      --message string   Input message for the agent (required)
+      --mode string      Execution mode: sync, async, stream (default "sync")
+      --task string      Resume an input-required task by ID
 ```
 
-## memory acp ping
+## memory a2a tasks
 
-Check that the ACP endpoint is reachable
+Inspect and manage A2A tasks
 
 ### Synopsis
 
-Ping the ACP v1 endpoint on the configured Memory server.
-
-This command does not require authentication.
-
-```
-memory acp ping [flags]
-```
+Get, list, and cancel A2A tasks.
 
 ### Options
 
 ```
-  -h, --help   help for ping
+  -h, --help   help for tasks
 ```
 
-## memory acp runs
+## memory a2a tasks cancel
 
-Manage ACP agent runs
+Cancel an A2A task
 
 ### Synopsis
 
-Create, inspect, cancel, and resume agent runs via ACP.
+Request cancellation of a running or queued A2A task.
 
-### Options
-
-```
-  -h, --help   help for runs
-```
-
-## memory acp runs cancel
-
-Cancel an ACP run
-
-### Synopsis
-
-Cancel a running or queued ACP run.
-
-Requests cancellation of the specified run. The run transitions to
-'cancelling' and eventually 'cancelled'.
+The task transitions to TASK_STATE_CANCELED. Cancelling a terminal task is
+rejected.
 
 ```
-memory acp runs cancel <agent-name> <run-id> [flags]
+memory a2a tasks cancel <id> [flags]
 ```
 
 ### Options
@@ -172,136 +151,48 @@ memory acp runs cancel <agent-name> <run-id> [flags]
   -h, --help   help for cancel
 ```
 
-## memory acp runs create
+## memory a2a tasks get
 
-Create a new ACP agent run
+Get an A2A task by ID
 
 ### Synopsis
 
-Create a new run for an ACP agent.
+Get the current state of an A2A task.
 
-Requires --message with the user's input text. The --mode flag controls
-execution mode:
-  sync   (default) — blocks until the run completes, prints output
-  async  — returns immediately with the run ID and status
-  stream — streams the agent's output to stdout in real-time
-
-If a sync run pauses for human input (status: input-required), the CLI
-will prompt you interactively and automatically resume the run.
-
-Use --session to link the run to an existing ACP session.
+Use --history-length to include history messages. Use --json for raw output.
 
 ```
-memory acp runs create <agent-name> [flags]
+memory a2a tasks get <id> [flags]
 ```
 
 ### Options
 
 ```
-  -h, --help             help for create
-      --message string   Input message for the agent (required)
-      --mode string      Execution mode: sync, async, stream (default "sync")
-      --session string   Link run to an existing ACP session ID
+  -h, --help                 help for get
+      --history-length int   Number of history messages to include
 ```
 
-## memory acp runs get
+## memory a2a tasks list
 
-Get an ACP run by ID
+List A2A tasks
 
 ### Synopsis
 
-Get the state of a specific ACP run.
+List project-scoped A2A tasks.
 
-Displays run status, output messages, and timing. If the run is paused
-(input-required), shows the pending question. Use --json for raw JSON output.
+Optionally filter by --context <id> and/or --status <state>. Use --json for
+the raw JSON response.
 
 ```
-memory acp runs get <agent-name> <run-id> [flags]
+memory a2a tasks list [flags]
 ```
 
 ### Options
 
 ```
-  -h, --help   help for get
-```
-
-## memory acp runs resume
-
-Resume a paused ACP run
-
-### Synopsis
-
-Resume an ACP run that is waiting for human input (status: input-required).
-
-Requires --message with the response to the agent's question.
-Use --mode to control execution mode (sync, async, stream).
-
-```
-memory acp runs resume <agent-name> <run-id> [flags]
-```
-
-### Options
-
-```
-  -h, --help             help for resume
-      --message string   Response message (required)
-      --mode string      Execution mode: sync, async, stream (default "sync")
-```
-
-## memory acp sessions
-
-Manage ACP sessions
-
-### Synopsis
-
-Create and inspect ACP sessions for grouping related agent runs.
-
-### Options
-
-```
-  -h, --help   help for sessions
-```
-
-## memory acp sessions create
-
-Create a new ACP session
-
-### Synopsis
-
-Create a new ACP session.
-
-Sessions group related agent runs together. Use --agent to scope the
-session to a specific agent.
-
-```
-memory acp sessions create [flags]
-```
-
-### Options
-
-```
-      --agent string   Scope session to a specific agent
-  -h, --help           help for create
-```
-
-## memory acp sessions get
-
-Get an ACP session
-
-### Synopsis
-
-Get details of an ACP session including its run history.
-
-Use --json for raw JSON output.
-
-```
-memory acp sessions get <session-id> [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for get
+      --context string   Filter tasks by context ID
+  -h, --help             help for list
+      --status string    Filter tasks by state (e.g. TASK_STATE_COMPLETED)
 ```
 
 ## memory adk-sessions
@@ -884,6 +775,238 @@ memory agents list [flags]
       --page int    Page number (1-based, used with --limit) (default 1)
 ```
 
+## memory agents mcp-endpoint
+
+Manage an agent's MCP endpoint and its keys
+
+### Synopsis
+
+Manage the MCP endpoint that an external MCP client uses to call an agent.
+
+The endpoint is agent-owned: one active endpoint per agent, with many labeled
+keys. Each key is an independently revocable, rotatable credential. Its secret is
+returned exactly once, on create or rotate.
+
+This is the opposite direction of 'memory agents mcp-servers', which manages the
+external MCP servers an agent can call.
+
+Examples:
+  memory agents mcp-endpoint show my-agent
+  memory agents mcp-endpoint create my-agent
+  memory agents mcp-endpoint keys create my-agent --label "Claude Desktop"
+  memory agents mcp-endpoint keys list my-agent --json
+  memory agents mcp-endpoint keys rotate <key-id> --yes
+  memory agents mcp-endpoint sessions my-agent --status active
+  memory agents mcp-endpoint revoke my-agent --yes
+
+### Options
+
+```
+  -h, --help   help for mcp-endpoint
+```
+
+## memory agents mcp-endpoint create
+
+Create an agent's MCP endpoint
+
+### Synopsis
+
+Create the single active MCP endpoint owned by an agent.
+
+Fails when the agent already has an active endpoint; revoke the existing one
+first. Prints the endpoint id and the MCP URL to paste into a client. Add keys
+with 'memory agents mcp-endpoint keys create'.
+
+```
+memory agents mcp-endpoint create [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for create
+```
+
+## memory agents mcp-endpoint keys
+
+Manage an MCP endpoint's labeled keys
+
+### Synopsis
+
+Create, list, revoke, and rotate the labeled credentials on an agent's MCP
+endpoint. Create and rotate print the raw secret exactly once.
+
+### Options
+
+```
+  -h, --help   help for keys
+```
+
+## memory agents mcp-endpoint keys create
+
+Create a labeled key on an endpoint
+
+### Synopsis
+
+Mint a labeled credential bound to the agent's MCP endpoint.
+
+The raw secret is printed exactly once and cannot be retrieved later; list shows
+only the label, status, and timestamps. Labels are unique per endpoint, ignoring
+case.
+
+Examples:
+  memory agents mcp-endpoint keys create my-agent --label "Claude Desktop"
+  memory agents mcp-endpoint keys create my-agent --label "CI" --expires-at 2026-12-31T00:00:00Z
+
+```
+memory agents mcp-endpoint keys create [agent] [flags]
+```
+
+### Options
+
+```
+      --expires-at string   Optional expiry as RFC3339 (e.g. 2026-12-31T00:00:00Z)
+  -h, --help                help for create
+      --label string        Key label, unique per endpoint (required)
+```
+
+## memory agents mcp-endpoint keys list
+
+List an endpoint's keys
+
+### Synopsis
+
+List the agent's MCP endpoint keys with label, status, creation time, and
+last-used time. Secrets are never shown — rotate or recreate a key if a secret
+is lost.
+
+Use --json for machine-readable output.
+
+```
+memory agents mcp-endpoint keys list [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for list
+      --json   Output as JSON
+```
+
+## memory agents mcp-endpoint keys revoke
+
+Revoke one key
+
+### Synopsis
+
+Revoke one key, immediately invalidating its secret without affecting the
+endpoint or its other keys. Prompts for confirmation unless --yes is passed.
+Idempotent.
+
+```
+memory agents mcp-endpoint keys revoke <key-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for revoke
+      --yes    Skip the confirmation prompt
+```
+
+## memory agents mcp-endpoint keys rotate
+
+Rotate one key's secret
+
+### Synopsis
+
+Issue a replacement secret for one key. The previous secret is invalidated
+immediately and the new secret is printed exactly once. The key identity is
+preserved, so existing sessions remain continuable. Prompts for confirmation
+unless --yes is passed.
+
+```
+memory agents mcp-endpoint keys rotate <key-id> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for rotate
+      --yes    Skip the confirmation prompt
+```
+
+## memory agents mcp-endpoint revoke
+
+Revoke an agent's MCP endpoint
+
+### Synopsis
+
+Revoke the agent's active MCP endpoint and all of its remaining keys,
+immediately invalidating their secrets. Prompts for confirmation unless --yes is
+passed. Idempotent: revoking an already-revoked endpoint succeeds.
+
+```
+memory agents mcp-endpoint revoke [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for revoke
+      --yes    Skip the confirmation prompt
+```
+
+## memory agents mcp-endpoint sessions
+
+List an endpoint's MCP sessions
+
+### Synopsis
+
+List the sessions created through the agent's MCP endpoint, most recently
+active first. Each row shows the session id, the owning key's label, status, turn
+count, total steps, and timestamps.
+
+Filter with --status (active, running, interrupted, expired). Use --json for
+machine-readable output.
+
+```
+memory agents mcp-endpoint sessions [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help            help for sessions
+      --json            Output as JSON
+      --status string   Filter by session status (active, running, interrupted, expired)
+```
+
+## memory agents mcp-endpoint show
+
+Show an agent's MCP endpoint
+
+### Synopsis
+
+Show the agent's active MCP endpoint: id, status, agent, creation time, and
+the MCP URL to paste into a client. Exits non-zero when the agent has no endpoint.
+
+The agent may be an id, a runtime agent name, or an agent-definition name or
+slug; when omitted on a terminal an agent picker is shown.
+
+Use --json for machine-readable output.
+
+```
+memory agents mcp-endpoint show [agent] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for show
+      --json   Output as JSON
+```
+
 ## memory agents mcp-servers
 
 Manage MCP servers
@@ -1321,7 +1444,7 @@ Delete a backup
 
 ### Synopsis
 
-Permanently delete a backup and its archive. Use --force to skip confirmation.
+Mark a backup as deleted (soft delete). The archive is retained until the server's retention cleanup removes it. Use --force to skip confirmation.
 
 ```
 memory backups delete <backupId> [flags]
@@ -4251,6 +4374,124 @@ memory provider models [provider] [flags]
       --type string     Filter by model type: embedding or generative
 ```
 
+## memory provider pricing
+
+Manage LLM pricing and project overrides
+
+### Synopsis
+
+Show global retail pricing and manage project-level manual pricing overrides.
+
+Global retail prices are synced from the provider registry and drive default LLM
+cost estimation. Manual overrides are in USD per 1 million tokens and only
+affect cost estimates for the given project (they override global retail).
+
+Subcommands:
+  list     List global retail pricing, or a project's overrides with --project
+  set      Create or update a pricing override for a project
+  delete   Remove a pricing override from a project
+
+Examples:
+  memory provider pricing list
+  memory provider pricing list --project <id>
+  memory provider pricing set --project <id> --provider deepseek --model deepseek-v4-pro --output 3.50
+  memory provider pricing delete --project <id> --provider deepseek --model deepseek-v4-pro
+
+### Options
+
+```
+  -h, --help   help for pricing
+```
+
+## memory provider pricing delete
+
+Delete a pricing override from a project
+
+### Synopsis
+
+Remove a pricing override for a project's provider + model pair. After
+deletion the project falls back to global retail pricing for that model.
+
+Examples:
+  memory provider pricing delete --project <id> --provider deepseek --model deepseek-v4-pro
+
+```
+memory provider pricing delete [flags]
+```
+
+### Options
+
+```
+  -h, --help              help for delete
+      --model string      Model name
+      --project string    Project ID (auto-detected from MEMORY_PROJECT_ID)
+      --provider string   Provider name (google, google-vertex, openai, or deepseek)
+```
+
+## memory provider pricing list
+
+List retail pricing (or a project's overrides with --project)
+
+### Synopsis
+
+List global retail pricing for every provider + model.
+
+With --project (or MEMORY_PROJECT_ID set), list that project's manual pricing
+overrides instead.
+
+Retail output is a table with columns: PROVIDER, MODEL, TEXT IN, IMAGE, VIDEO,
+AUDIO, OUTPUT, and LAST SYNCED. Override output replaces LAST SYNCED with UPDATED.
+
+Examples:
+  memory provider pricing list
+  memory provider pricing list --project <id>
+  memory provider pricing list --json
+
+```
+memory provider pricing list [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for list
+      --json             Output raw JSON
+      --project string   Project ID (auto-detected from MEMORY_PROJECT_ID)
+```
+
+## memory provider pricing set
+
+Set a pricing override for a project
+
+### Synopsis
+
+Create or update a pricing override for a project's provider + model pair.
+
+Prices are in USD per 1 million tokens. Omitted prices default to 0.
+
+Examples:
+  memory provider pricing set --project <id> --provider deepseek --model deepseek-v4-pro --output 3.50
+  memory provider pricing set --project <id> --provider openai --model gpt-4o --text-input 2.50 --output 10.00
+
+```
+memory provider pricing set [flags]
+```
+
+### Options
+
+```
+      --audio-input float   Audio input price per 1M tokens (USD)
+  -h, --help                help for set
+      --image-input float   Image input price per 1M tokens (USD)
+      --json                Output raw JSON
+      --model string        Model name
+      --output float        Output price per 1M tokens (USD)
+      --project string      Project ID (auto-detected from MEMORY_PROJECT_ID)
+      --provider string     Provider name (google, google-vertex, openai, or deepseek)
+      --text-input float    Text input price per 1M tokens (USD)
+      --video-input float   Video input price per 1M tokens (USD)
+```
+
 ## memory provider test
 
 Test LLM provider credentials with a live generate call
@@ -4956,7 +5197,10 @@ Roll back a schema migration by restoring archived property data
 
 Restore property data archived during a previous migration.
 
-Use --to-version to specify which schema version to roll back to.
+Use --to-version to name the target version of the migration being undone — it
+must match that migration's archive to_version (the version the objects were
+migrated TO), not the version to roll back to. Objects are restored to the
+archive's from_version.
 Use --restore-registry to also restore the type registry to the pre-migration state
 (re-installs the old schema types and removes new additions). This is a transactional
 operation — if any step fails, the entire rollback is reverted.
@@ -4970,7 +5214,7 @@ memory schemas migrate rollback [flags]
 ```
   -h, --help                help for rollback
       --restore-registry    Also restore type registry to the pre-migration state
-      --to-version string   Schema version to roll back to (required)
+      --to-version string   Target version of the migration to undo; must match the archive's to_version (required)
 ```
 
 ## memory schemas uninstall
@@ -5763,8 +6007,9 @@ On success, prints the full plaintext Token value prominently (this is the only
 time the full token is shown — save it immediately), followed by ID, Name, Type,
 Prefix, Scopes, and Created timestamp.
 
-Valid scopes: schema:read, data:read, data:write, agents:read, agents:write, projects:read, projects:write.
+Valid scopes: schema:read, schema:write, data:read, data:write, agents:read, agents:write, projects:read, projects:write, chat:use, graph:read, graph:write, schema:migrate, branches:read, branches:write, search, journal:read, journal:write, skills:read, skills:write, documents:read, documents:write, admin, admin:all.
 Scopes are comma-separated. Use --scopes all to grant full admin access (admin:all).
+Run 'memory tokens scopes' for a description of each scope.
 
 ```
 memory tokens create [flags]

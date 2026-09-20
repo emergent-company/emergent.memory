@@ -240,18 +240,6 @@ func (s *stubAgentToolHandler) ExecuteListADKSessions(_ context.Context, _ strin
 func (s *stubAgentToolHandler) ExecuteGetADKSession(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
 	return nil, nil
 }
-func (s *stubAgentToolHandler) ExecuteACPListAgents(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
-	return nil, nil
-}
-func (s *stubAgentToolHandler) ExecuteACPTriggerRun(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
-	return nil, nil
-}
-func (s *stubAgentToolHandler) ExecuteACPGetRunStatus(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
-	return nil, nil
-}
-func (s *stubAgentToolHandler) ExecuteACPGetRunEvents(_ context.Context, _ string, _ map[string]any) (*ToolResult, error) {
-	return nil, nil
-}
 func (s *stubAgentToolHandler) GetAgentToolDefinitions() []ToolDefinition { return nil }
 func (s *stubAgentToolHandler) GetAgentToolDefinitionsForProject(_ context.Context, _ string) []ToolDefinition {
 	return nil
