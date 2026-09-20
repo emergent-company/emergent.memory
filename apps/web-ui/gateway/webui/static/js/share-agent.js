@@ -443,7 +443,7 @@
       wrap.appendChild(avatar);
     }
     wrap.appendChild(el("div", "chat-header text-xs text-base-content/50", isUser ? "You" : (state.agentName || "Memory")));
-    var shell = el("div", "chat-bubble " + (isUser ? "chat-bubble-primary" : "chat-bubble-neutral") + " max-w-[85%]");
+    var shell = el("div", "chat-bubble " + (isUser ? "chat-bubble-primary" : "chat-bubble-neutral"));
     shell.setAttribute("data-role", role);
     var content = isUser
       ? el("p", "whitespace-pre-wrap break-words", text)

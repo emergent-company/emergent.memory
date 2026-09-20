@@ -185,8 +185,8 @@
     wrap.className = isUser ? "chat chat-end memory-rise" : "chat chat-start memory-rise";
     var bubble = document.createElement("div");
     bubble.className = isUser
-      ? "chat-bubble chat-bubble-primary max-w-[85%]"
-      : "chat-bubble chat-bubble-neutral max-w-[85%]";
+      ? "chat-bubble chat-bubble-primary"
+      : "chat-bubble chat-bubble-neutral";
     var p = document.createElement("p");
     p.className = "whitespace-pre-wrap break-words";
     p.style.opacity = "0.7"; // interim; committed turns go full opacity
