@@ -3,10 +3,10 @@ module github.com/emergent-company/emergent.memory/apps/cli
 go 1.25.0
 
 // Build against the in-repo SDK so the CLI can consume packages that are not yet
-// in a published SDK tag. The relative path resolves identically in a local
-// checkout (repo-root/apps/server/pkg/sdk) and in the Docker cli-builder stage,
-// which stages the SDK at /apps/server/pkg/sdk with the CLI at /build/cli
-// (see deploy/self-hosted/Dockerfile.server).
+// in a published SDK tag (e.g. pkg/sdk/backups, pkg/sdk/a2a). The relative path
+// resolves identically in a local checkout (repo-root/apps/server/pkg/sdk) and in
+// the Docker cli-builder stage, which stages the SDK at /apps/server/pkg/sdk with
+// the CLI at /build/cli (see deploy/self-hosted/Dockerfile.server).
 replace github.com/emergent-company/emergent.memory/apps/server/pkg/sdk => ../../apps/server/pkg/sdk
 
 require (
