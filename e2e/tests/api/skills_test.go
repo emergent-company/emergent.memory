@@ -232,6 +232,7 @@ func TestSkills_ListProjectSkills_IncludesGlobalSkills(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	globalName := uniqueName("global-skill-for-project-test")
@@ -263,6 +264,7 @@ func TestSkills_ListProjectSkills_ProjectSkillOverridesGlobal(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	skillName := uniqueName("override-skill")

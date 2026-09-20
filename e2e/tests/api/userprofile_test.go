@@ -27,6 +27,7 @@ func TestUserProfile_GetProfile_Success(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	resp := doAPILogged(t, rl, "GET", "/api/user/profile", e2eTestToken(), "", nil)
 	body := mustStatus(t, resp, http.StatusOK)
