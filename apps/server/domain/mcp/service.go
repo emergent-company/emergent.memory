@@ -2575,7 +2575,7 @@ func (s *Service) executeQueryEntities(ctx context.Context, projectID string, ar
 			Name:       e.Name,
 			Type:       e.TypeName,
 			Version:    e.Version,
-			Properties: e.Properties,
+			Properties: truncateProperties(e.Properties),
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
 		}
@@ -2785,7 +2785,7 @@ func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID strin
 			Name:       e.Name,
 			Type:       e.TypeName,
 			Version:    e.Version,
-			Properties: e.Properties,
+			Properties: truncateProperties(e.Properties),
 			CreatedAt:  e.CreatedAt,
 			UpdatedAt:  e.UpdatedAt,
 		}
@@ -3093,7 +3093,7 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			Key:        e.Key,
 			Name:       e.Name,
 			Type:       e.TypeName,
-			Properties: e.Properties,
+			Properties: truncateProperties(e.Properties),
 			CreatedAt:  e.CreatedAt,
 			BranchID:   branchIDStr,
 			BranchName: e.BranchName,
@@ -3151,7 +3151,7 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 			RelationshipID:   rel.ID.String(),
 			RelationshipType: rel.Type,
 			ConnectedEntity:  *srcEntity,
-			Properties:       rel.Properties,
+			Properties:       truncateProperties(rel.Properties),
 		})
 	}
 
@@ -3165,7 +3165,7 @@ func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, a
 			RelationshipID:   rel.ID.String(),
 			RelationshipType: rel.Type,
 			ConnectedEntity:  *dstEntity,
-			Properties:       rel.Properties,
+			Properties:       truncateProperties(rel.Properties),
 		})
 	}
 
@@ -3207,7 +3207,7 @@ func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uu
 		Type:       entity.Type,
 		Key:        entity.Key,
 		Name:       name,
-		Properties: entity.Properties,
+		Properties: truncateProperties(entity.Properties),
 	}, nil
 }
 
