@@ -184,17 +184,61 @@ func (s *BackupsImportSuite) TestImportBackupRoundTrip() {
 	}
 	s.Require().Equal("completed", restoreStatus, "clone restore did not complete: %v", restoreDone)
 
-	// 5. Assert the clone produced a new project with the expected org.
+	// 5. The completed clone restore reports the new project id. Use it as the
+	// authoritative clone id and register it for teardown so reruns stay
+	// idempotent.
+	targetProjectID, ok := restoreDone["targetProjectId"].(string)
+	s.Require().True(ok && targetProjectID != "", "completed clone restore must report targetProjectId: %v", restoreDone)
+	s.projectIDs = append(s.projectIDs, targetProjectID)
+
+	// Assert the clone produced a new project with the expected org.
 	var rows []struct {
 		ID             string `bun:"id"`
 		OrganizationID string `bun:"organization_id"`
 	}
-	err = s.DB.NewRaw(`SELECT id, organization_id FROM kb.projects WHERE name = ?`, targetName).Scan(s.Ctx, &rows)
+	err = s.DB.NewRaw(`SELECT id, organization_id FROM kb.projects WHERE id = ?`, targetProjectID).Scan(s.Ctx, &rows)
 	s.Require().NoError(err)
-	s.Require().Len(rows, 1, "clone should create exactly one project named %q", targetName)
+	s.Require().Len(rows, 1, "clone should create exactly one project with id %q", targetProjectID)
 	s.Equal(orgID, rows[0].OrganizationID, "clone project must belong to the target org")
 	s.NotEqual(projectID, rows[0].ID, "clone project id must differ from the source project id")
-	s.projectIDs = append(s.projectIDs, rows[0].ID)
+
+	// 6. #592 regression assertions on the clone's schema links.
+	//
+	// Clone-restore skips kb.project_schemas rows whose schema_id cannot be
+	// resolved through the clone id-remap table (those reference the SOURCE
+	// deployment's global builtin kb.graph_schemas UUID, absent from a
+	// project-scoped archive). The target's own trg_projects_install_builtins
+	// trigger then links the new clone to the TARGET's builtin row. Within a
+	// single deployment the source/target builtin UUIDs coincide, so the
+	// cross-deployment UUID divergence itself is covered only by the DB
+	// integration test apps/server/domain/backups/restorer_clone_db_test.go;
+	// this API suite proves the link resolves and is never dangling.
+
+	// (a) The clone links at least one builtin schema via the target's own
+	// builtin graph_schemas row (target provisioning produced the link, not the
+	// archive's foreign builtin UUID).
+	var builtinLinks []string
+	err = s.DB.NewRaw(`
+		SELECT gs.id
+		FROM kb.project_schemas ps
+		JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+		WHERE ps.project_id = ? AND gs.source = 'builtin'
+	`, targetProjectID).Scan(s.Ctx, &builtinLinks)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(builtinLinks, "clone must link at least one builtin schema (target provisioning)")
+
+	// (b) No kb.project_schemas row for the clone references a schema_id with no
+	// matching kb.graph_schemas.id — i.e. no dangling/foreign schema link. This
+	// is the exact #592 failure mode (project_schemas_schema_id_fkey).
+	var dangling int
+	err = s.DB.NewRaw(`
+		SELECT count(*)
+		FROM kb.project_schemas ps
+		LEFT JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
+		WHERE ps.project_id = ? AND gs.id IS NULL
+	`, targetProjectID).Scan(s.Ctx, &dangling)
+	s.Require().NoError(err)
+	s.Require().Zero(dangling, "clone must have no dangling project_schemas schema links (#592)")
 }
 
 // TestImportRejectsNonZip asserts a non-ZIP upload is rejected with 415.
