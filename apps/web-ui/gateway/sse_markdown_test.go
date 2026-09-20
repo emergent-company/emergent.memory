@@ -350,9 +350,31 @@ func TestRewriteChatStreamPassthroughEvents(t *testing.T) {
 			t.Errorf("event %q: out = %q, want verbatim", in, out)
 		}
 	}
-	// an event carrying no data line is skipped entirely.
+	// a non-comment event carrying no data line is skipped entirely.
 	if out := rewrite(t, "event: ping\n\n"); out != "" {
 		t.Errorf("data-less event should be skipped, got %q", out)
+	}
+}
+
+// TestRewriteChatStreamCommentForwarding asserts SSE comment/keepalive frames
+// (lines starting with ':') are forwarded verbatim rather than dropped, so a
+// server-side heartbeat reaches the client end-to-end.
+func TestRewriteChatStreamCommentForwarding(t *testing.T) {
+	stream := ": ping\n\n" +
+		`data: {"type":"done"}` + "\n\n" +
+		":\n\n"
+	out := rewrite(t, stream)
+	if !strings.HasPrefix(out, ": ping\n\n") {
+		t.Errorf("keepalive must be forwarded verbatim at its original position: %q", out)
+	}
+	if !strings.Contains(out, `"type":"done"`) {
+		t.Errorf("data event after keepalive lost: %q", out)
+	}
+	if !strings.HasSuffix(out, ":\n\n") {
+		t.Errorf("trailing bare comment must be forwarded: %q", out)
+	}
+	if strings.Count(out, ": ping") != 1 {
+		t.Errorf("keepalive duplicated or altered: %q", out)
 	}
 }
 
