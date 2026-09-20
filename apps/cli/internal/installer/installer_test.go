@@ -207,6 +207,8 @@ func TestWriteDockerCompose(t *testing.T) {
 		"memory-kreuzberg",
 		"pgvector/pgvector:pg17",
 		"ghcr.io/kreuzberg-dev/kreuzberg-full:4.10.3",
+		"quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
+		"quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z",
 	}
 
 	for _, check := range checks {
