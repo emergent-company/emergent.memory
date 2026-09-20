@@ -80,6 +80,33 @@ test.describe('public share page', () => {
     ).toBeVisible();
   });
 
+  test('the session rail stays hidden while the exchange is pending (no flash) for showSessionList:false links', async ({ page }) => {
+    // Hold the exchange response so we can observe the pre-config paint before
+    // applyConfig runs. This asserts the flash the server-rendered `hidden`
+    // class eliminates: the rail must already be hidden before the config that
+    // would (or would not) reveal it has even arrived.
+    let releaseExchange = () => {};
+    const held = new Promise<void>((resolve) => {
+      releaseExchange = resolve;
+    });
+    await page.route('**/share/api/exchange', async (route) => {
+      const response = await route.fetch();
+      await held;
+      await route.fulfill({ response });
+    });
+
+    await openShare(page, 'no-rail-key');
+
+    // Before the config response is released, the rail must already be hidden.
+    await expect(page.getByTestId('share-session-rail')).toBeHidden();
+
+    releaseExchange();
+
+    // Once the config resolves with showSessionList:false, it stays hidden.
+    await expect(page.locator('#share-agent-name')).toHaveText(AGENT_NAME);
+    await expect(page.getByTestId('share-session-rail')).toBeHidden();
+  });
+
   test('a session row renders, selecting it loads its transcript, and the archived filter switches the list', async ({ page }) => {
     await openShare(page, 'valid-key-123');
 
