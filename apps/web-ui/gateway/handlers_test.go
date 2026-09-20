@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -82,12 +83,13 @@ type fakeMemory struct {
 	created             []AgentDefinition
 	updatedAgent        *AgentDefinition // last agent passed to UpdateAgentDefinition
 	chatMsg             string
-	chatStream          string // SSE body returned by ChatStream when non-empty
-	chatErr             error  // ChatStream failure
-	questionID          string // question id received via RespondQuestion
-	questionResponse    string // response received via RespondQuestion
-	questionMessage     string // optional reject message received via RespondQuestion
-	questionCancelID    string // question id received via CancelQuestion
+	chatStream          string        // SSE body returned by ChatStream when non-empty
+	chatStreamReader    io.ReadCloser // overrides ChatStream's return body when non-nil
+	chatErr             error         // ChatStream failure
+	questionID          string        // question id received via RespondQuestion
+	questionResponse    string        // response received via RespondQuestion
+	questionMessage     string        // optional reject message received via RespondQuestion
+	questionCancelID    string        // question id received via CancelQuestion
 	approvals           []ToolApprovalItem
 	convErr             error // ListConversations failure
 	histErr             error // GetConversationHistory failure
@@ -547,6 +549,9 @@ func (f *fakeMemory) ChatStream(ctx context.Context, req ChatRequest) (io.ReadCl
 	f.chatMsg = req.Message
 	if f.chatErr != nil {
 		return nil, f.chatErr
+	}
+	if f.chatStreamReader != nil {
+		return f.chatStreamReader, nil
 	}
 	if f.chatStream != "" {
 		return io.NopCloser(strings.NewReader(f.chatStream)), nil
@@ -1648,6 +1653,82 @@ func TestChatStreams(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
 		t.Fatalf("content-type = %q", ct)
+	}
+}
+
+func TestChatStreamsFlushIncrementally(t *testing.T) {
+	pr, pw := io.Pipe()
+	release := make(chan struct{})
+	go func() {
+		_, _ = io.WriteString(pw, ": ping\n\n")
+		_, _ = io.WriteString(pw, `data: {"type":"token","token":"x"}`+"\n\n")
+		<-release
+		_, _ = io.WriteString(pw, `data: {"type":"done"}`+"\n\n")
+		_ = pw.Close()
+	}()
+
+	f := &fakeMemory{chatStreamReader: pr}
+	_, e := newTestServer(f)
+	srv := httptest.NewServer(e)
+	defer srv.Close()
+
+	// Bounded client timeout: without the per-write flush, the server never
+	// sends response headers until the handler returns, so Do blocks and
+	// returns "Client.Timeout exceeded while awaiting headers" within 3s — a
+	// fast, legible failure instead of a hung test.
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/chat", strings.NewReader(`{"message":"hi"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		close(release)
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("content-type = %q", ct)
+	}
+
+	// The first frame must arrive *before* release is closed: without the
+	// per-write flush, net/http buffers it and the read below blocks until the
+	// handler returns (i.e. until release is closed and the pipe closes), so
+	// this fails fast on a regression instead of hanging.
+	br := bufio.NewReader(resp.Body)
+	type lineResult struct {
+		line string
+		err  error
+	}
+	got := make(chan lineResult, 1)
+	go func() {
+		line, rerr := br.ReadString('\n')
+		got <- lineResult{line: line, err: rerr}
+	}()
+	select {
+	case res := <-got:
+		if res.err != nil {
+			close(release)
+			t.Fatalf("first line read error: %v", res.err)
+		}
+		if !strings.HasPrefix(res.line, ": ping") {
+			close(release)
+			t.Fatalf("first line = %q, want ': ping'", res.line)
+		}
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("first SSE frame did not flush within 3s — flush-per-write regression")
+	}
+
+	close(release)
+	rest, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if !strings.Contains(string(rest), `"type":"done"`) {
+		t.Fatalf("done event missing from body: %s", rest)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -196,10 +197,35 @@ func (s *Server) chat(c echo.Context) error {
 	go func() {
 		defer func() { _ = pw.Close() }()
 		if err := rewriteChatStream(pw, body); err != nil {
-			captureError(err)
+			// A closed pipe just means the client went away; don't report it.
+			if !errors.Is(err, io.ErrClosedPipe) && !errors.Is(err, io.EOF) {
+				captureError(err)
+			}
 		}
 	}()
-	return c.Stream(http.StatusOK, "text/event-stream", pr)
+	defer func() { _ = pr.Close() }()
+
+	// Stream with an explicit flush after every write. net/http buffers
+	// responses up to 2 KiB (bufferBeforeChunkingSize), so without flushing
+	// small SSE frames (heartbeat comments, short deltas) would sit in the
+	// buffer until it fills or the handler returns — long idle gaps would
+	// still be dropped by an intermediate proxy.
+	w := c.Response()
+	w.Header().Set(echo.HeaderContentType, "text/event-stream")
+	w.WriteHeader(http.StatusOK)
+	buf := make([]byte, 4096)
+	for {
+		n, err := pr.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return nil
+			}
+			w.Flush()
+		}
+		if err != nil {
+			return nil
+		}
+	}
 }
 
 func (s *Server) respondQuestion(c echo.Context) error {
