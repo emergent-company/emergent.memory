@@ -1,16 +1,15 @@
 ## Why
 
-`Repository.ListAll` (added in #519) walks **every** object in the project with a keyset cursor. Both `RollbackSchemaMigration` and `ExecuteSchemaMigration` call it from a synchronous HTTP request, and rollback has no type filter — it fetches every object before the `RunInTx` block. `max_objects` is applied *after* the full fetch (`objs[:maxObjs]`), so it bounds processing, not memory or IO. A project with a large object table turns the migrate/rollback endpoints into long-running, memory-heavy calls. Tracked as GitHub issue #521.
+`Repository.ListAll` (added in #519) walks **every** object in the project with a keyset cursor and accumulates the whole result set in memory. Both `RollbackSchemaMigration` and `ExecuteSchemaMigration` call it from a synchronous HTTP request, and rollback has no type filter — it fetches every object before the `RunInTx` block. `max_objects` is applied *after* the full fetch (`objs[:maxObjs]`), so it bounds processing, not memory or IO. A project with a large object table turns the migrate/rollback endpoints into long-running, memory-heavy calls. Tracked as GitHub issue #521.
 
 ## What Changes
 
-Push the archive predicate into SQL so the scan is bounded to objects that actually carry an archive, instead of fetching the whole project up front:
+Bound the synchronous scan in three ways, all in one change:
 
-- Add an opt-in `ListParams` filter (e.g. `OnlyWithMigrationArchive`) that appends `migration_archive <> '[]'::jsonb` to the `List`/`ListAll` query. Only objects with at least one archive entry are scanned.
-- Set the filter on the `RollbackSchemaMigration` and `ExecuteSchemaMigration` `ListAll` call sites.
-- Keep the correctness guarantee from #519: every *matching* object is still visited; the bound is on the scan set, not on completeness.
-
-This is the smallest of the directions in #521 and the highest-value for the common case (most projects have few or no archived objects). Page-by-page commits and a documented request-path bound remain possible follow-ups if measurement still shows a large archived population.
+1. **Archive predicate (rollback only).** Add an opt-in `ListParams.OnlyWithMigrationArchive` that appends `migration_archive <> '[]'::jsonb` to the base query, relying on the existing partial index `idx_graph_objects_has_archive`. It is set on **`RollbackSchemaMigration` only** — a rollback only ever restores objects that already carry an archive entry, so archive-free objects are irrelevant to it.
+   - The predicate is **NOT** applied to `ExecuteSchemaMigration`: a forward migration must also visit objects with an *empty* archive (a first-ever migration has zero archived objects, as do objects created after a prior migration). Filtering execute by archive would silently skip those objects and regress data migration.
+2. **Streaming, memory-bounded iteration.** Add `Repository.ListEach` / `ListEachTx`, keyset-cursor iterators that invoke a callback per page and never materialise the full result set. `ExecuteSchemaMigration` streams each type's objects page-by-page (preserving the per-type `max_objects` cap), and `RollbackSchemaMigration` streams inside its existing `db.RunInTx` so only one page is in memory and the data + registry restore stays atomic in one transaction.
+3. **Configurable hard safety cap.** Add `Graph.MigrationScanMaxObjects` (`GRAPH_MIGRATION_SCAN_MAX_OBJECTS`, default `10000`). Both migrate and rollback abort with a clear 4xx when a scan would exceed it (rollback's abort happens inside the transaction, so nothing is written). Rollback additionally gains a per-request `MaxObjects` cap on restored objects.
 
 ## Capabilities
 
@@ -20,10 +19,14 @@ This is the smallest of the directions in #521 and the highest-value for the com
 
 ### Modified Capabilities
 
-- `schema-migrator-api`: the batch scan contract is tightened — migrate/rollback SHALL bound their object scan to archive-carrying objects rather than scanning the entire project.
+- `schema-migrator-api`: the batch scan contract is tightened — rollback SHALL bound its scan to archive-carrying objects, migrate/rollback SHALL stream results page-by-page rather than materialising the full set, and the synchronous request path SHALL be bounded by a configurable hard cap that fails loudly when exceeded.
 
 ## Impact
 
-- `apps/server/domain/graph/repository.go`: `ListParams` gains an archive predicate flag; `buildObjectBaseQuery`/`List` applies the `migration_archive <> '[]'::jsonb` predicate when set.
-- `apps/server/domain/schemas/service.go`: `ExecuteSchemaMigration` and `RollbackSchemaMigration` set the flag on their `ListAll` calls.
+- `apps/server/internal/config/config.go`: `Graph.MigrationScanMaxObjects` (`GRAPH_MIGRATION_SCAN_MAX_OBJECTS`, default `10000`).
+- `apps/server/domain/graph/repository.go`: `ListParams.OnlyWithMigrationArchive`; predicate in `buildObjectBaseQueryWith`; `buildObjectBaseQuery` refactor to a caller-supplied handle; `ListEach`/`ListEachTx`; `ListAll` reimplemented as a thin wrapper over `ListEach`.
+- `apps/server/domain/schemas/entity.go`: `SchemaMigrationRollbackRequest.MaxObjects`.
+- `apps/server/domain/schemas/service.go`: stream execute and rollback; wire the config cap; apply `MaxObjects` on rollback.
+- `apps/server/domain/graph/migration_archive_list_db_test.go`, `apps/server/domain/schemas/bound_schema_migration_scan_db_test.go` (new): DB tests.
+- `apps/server/internal/testutil/server.go`, `apps/server/domain/blueprints/migration_test.go`, `apps/server/domain/schemas/restore_type_registry_db_test.go`, `apps/server/domain/schemas/schemas_list_db_test.go`: `NewService` now takes `*config.Config`.
 - No HTTP response shape changes, no database migrations.

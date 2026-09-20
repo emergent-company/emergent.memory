@@ -1,20 +1,47 @@
 ## ADDED Requirements
 
-### Requirement: Batch migration operations bound their object scan to archive-carrying objects
-The migrate and rollback operations SHALL restrict their object scan to objects that actually carry a migration archive, rather than fetching every object in the project. The scan SHALL still visit every object that matches the migration or rollback target.
+### Requirement: Rollback bounds its object scan to archive-carrying objects
+The rollback operation SHALL restrict its object scan to objects that carry at least one `migration_archive` entry (`migration_archive <> '[]'::jsonb`), rather than fetching every object in the project. The scan SHALL still visit every archive-carrying object, including across multiple list pages.
 
 #### Scenario: Rollback does not full-scan an archive-free project
 - **GIVEN** a project whose objects carry no `migration_archive` entries
 - **WHEN** a rollback executes
 - **THEN** the object scan SHALL NOT fetch every object in the project
-- **THEN** the rollback SHALL report zero objects restored without a full-table scan
+- **THEN** the rollback SHALL report zero objects restored
 
-#### Scenario: Migrate scans only affected archived objects
-- **WHEN** a forward migration executes and reads object archives
-- **THEN** the scan SHALL be bounded to objects with at least one `migration_archive` entry
-- **THEN** every affected object SHALL still be migrated and counted
+#### Scenario: Rollback restores only matching archived objects
+- **GIVEN** a project containing one object with an archive entry targeting the rollback version and one archive-free object
+- **WHEN** a rollback executes
+- **THEN** the archive-carrying object SHALL be restored
+- **THEN** the archive-free object SHALL NOT be restored
 
-#### Scenario: Completeness is preserved
+#### Scenario: Rollback completeness is preserved across pages
 - **GIVEN** a project with more archive-carrying objects than one list page
-- **WHEN** a migrate or rollback executes with the archive predicate
+- **WHEN** a rollback executes with the archive predicate
 - **THEN** every archive-carrying object SHALL be visited across pages
+
+### Requirement: Forward migration still visits archive-free objects
+The forward migration operation SHALL NOT filter its object scan by the presence of a `migration_archive` entry. Objects with an empty archive SHALL still be migrated and counted, because a first-ever migration has zero archived objects and objects created after a prior migration may also have none.
+
+#### Scenario: Migrate counts objects with an empty archive
+- **GIVEN** a project whose objects carry no `migration_archive` entries
+- **WHEN** a forward migration executes
+- **THEN** every object SHALL be migrated and counted
+
+### Requirement: Migrate and rollback stream results page-by-page
+Migrate and rollback SHALL iterate the affected object set one list page at a time rather than materialising the full result set in memory. A caller-supplied page callback SHALL be invoked once per page, and the iteration SHALL stop as soon as the callback returns an error without fetching further pages.
+
+#### Scenario: Full set is not materialised
+- **GIVEN** a result set larger than one list page
+- **WHEN** a migrate or rollback executes
+- **THEN** objects SHALL be processed one page at a time
+- **THEN** the whole result set SHALL NOT be accumulated in memory before processing
+
+### Requirement: Synchronous request path is bounded by a hard cap
+The synchronous migrate and rollback request path SHALL be bounded by a configurable hard cap on the number of objects scanned. When a scan would exceed the cap, the operation SHALL abort with a clear 4xx error stating the cap and that the operation must be narrowed.
+
+#### Scenario: Hard cap aborts with a clear error
+- **GIVEN** a configured hard cap of N scanned objects
+- **WHEN** a migrate or rollback scans more than N objects
+- **THEN** the operation SHALL abort with a 4xx error naming the cap
+- **THEN** for rollback the abort SHALL occur inside the transaction so nothing is written
