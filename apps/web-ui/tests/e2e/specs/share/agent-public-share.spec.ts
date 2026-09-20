@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 
 // Public agent-share surface (gateway /share/agent + /share/api/* and the
 // owner /agents/:id/share surface). Runs against the dev-mode (no-auth) mock
@@ -34,6 +34,30 @@ async function openShare(page: Page, key?: string): Promise<void> {
   await page.goto(target);
 }
 
+/** Extract the share key from a row's one-time public URL (the key rides the fragment). */
+async function keyFromRow(row: Locator): Promise<string> {
+  const url = ((await row.locator('[data-share-link-url]').textContent()) ?? '').trim();
+  const key = url.split('#')[1] ?? '';
+  expect(key).toMatch(/^sh_key_\d+$/);
+  return key;
+}
+
+/** The create-form toggles put their testid on the wrapping <label>; the checkbox sits inside. */
+function createToggle(page: Page, testId: string): Locator {
+  return page.getByTestId(testId).locator('input[type="checkbox"]');
+}
+
+/**
+ * Open the create page the way an owner does: from the list page's "New share
+ * link" call to action. The list has no inline form (it was split out).
+ */
+async function startCreate(page: Page): Promise<void> {
+  await page.goto(OWNER);
+  await page.getByTestId('share-new-link').click();
+  await expect(page).toHaveURL(/\/agents\/agent-1\/share\/new$/);
+  await expect(page.getByTestId('share-create-form')).toBeVisible();
+}
+
 test.describe('public share page', () => {
   test('loads without authentication (no login redirect) and resolves a bare visit to the invalid state', async ({ page }) => {
     await openShare(page);
@@ -54,6 +78,33 @@ test.describe('public share page', () => {
     await expect(
       page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' }),
     ).toBeVisible();
+  });
+
+  test('the session rail stays hidden while the exchange is pending (no flash) for showSessionList:false links', async ({ page }) => {
+    // Hold the exchange response so we can observe the pre-config paint before
+    // applyConfig runs. This asserts the flash the server-rendered `hidden`
+    // class eliminates: the rail must already be hidden before the config that
+    // would (or would not) reveal it has even arrived.
+    let releaseExchange = () => {};
+    const held = new Promise<void>((resolve) => {
+      releaseExchange = resolve;
+    });
+    await page.route('**/share/api/exchange', async (route) => {
+      const response = await route.fetch();
+      await held;
+      await route.fulfill({ response });
+    });
+
+    await openShare(page, 'no-rail-key');
+
+    // Before the config response is released, the rail must already be hidden.
+    await expect(page.getByTestId('share-session-rail')).toBeHidden();
+
+    releaseExchange();
+
+    // Once the config resolves with showSessionList:false, it stays hidden.
+    await expect(page.locator('#share-agent-name')).toHaveText(AGENT_NAME);
+    await expect(page.getByTestId('share-session-rail')).toBeHidden();
   });
 
   test('a session row renders, selecting it loads its transcript, and the archived filter switches the list', async ({ page }) => {
@@ -184,15 +235,22 @@ test.describe('public share page', () => {
 
 test.describe('owner share-link management', () => {
   test('creates a link, reveals/copies it, and revokes it', async ({ page }) => {
+    // List page: no inline form, a prominent "New share link" call to action.
     await page.goto(OWNER);
     await expect(page.getByTestId('share-links-panel')).toBeVisible();
+    await expect(page.getByTestId('share-create-form')).toHaveCount(0);
+    await page.getByTestId('share-new-link').click();
+
+    // Create page: the form lives here, reached from the list.
+    await expect(page).toHaveURL(/\/agents\/agent-1\/share\/new$/);
     await expect(page.getByTestId('share-create-form')).toBeVisible();
 
     const label = `E2E Share ${Date.now()}`;
     await page.getByTestId('share-create-label').fill(label);
     await page.getByTestId('share-create-submit').click();
 
-    // The new link renders with its one-time public URL (key in the fragment).
+    // Success renders the list (no redirect) with the one-time URL revealed: the
+    // new row carries it and an auto-open modal shows the same full link.
     const row = page.getByTestId('share-link-row').filter({ hasText: label });
     await expect(row).toBeVisible();
     const urlEl = row.locator('[data-share-link-url]');
@@ -200,6 +258,10 @@ test.describe('owner share-link management', () => {
     expect(createdUrl).toContain('/share/agent#sh_key_');
     const key = createdUrl.split('#')[1];
     expect(key).toMatch(/^sh_key_\d+$/);
+
+    const revealed = page.getByTestId('share-link-reveal-url');
+    await expect(revealed).toBeVisible();
+    await expect(revealed).toContainText(key);
 
     // Reload: the key is not recoverable at list time, so the copy action now
     // reveals it on demand — and returns the same key.
@@ -215,5 +277,141 @@ test.describe('owner share-link management', () => {
     const revokedRow = page.getByTestId('share-link-row').filter({ hasText: label });
     await expect(revokedRow.getByTestId('share-link-status')).toContainText('Revoked');
     await expect(page.getByTestId('share-links-flash')).toContainText('Share link revoked');
+  });
+});
+
+test.describe('owner share-link options', () => {
+  test('create a link with all options and verifies each is reflected', async ({ page }) => {
+    await startCreate(page);
+
+    const label = `E2E Options ${Date.now()}`;
+    await page.getByTestId('share-create-label').fill(label);
+    await page.getByTestId('share-create-expiry').selectOption('90');
+    await page.getByTestId('share-create-welcome').fill('Welcome to the demo.');
+
+    // Tick both tool checkboxes by stable tool id, not list order (agent tools:
+    // web_search, memory_write).
+    await page.locator('[data-testid="share-create-tool"][value="web_search"]').check();
+    await page.locator('[data-testid="share-create-tool"][value="memory_write"]').check();
+
+    await createToggle(page, 'share-create-require-email').check();
+    await createToggle(page, 'share-create-show-sessions').uncheck();
+    await createToggle(page, 'share-create-sandbox').check();
+
+    await page.getByTestId('share-create-max-sessions').fill('3');
+    await page.getByTestId('share-create-budget-messages').fill('50');
+    await page.getByTestId('share-create-budget-tokens').fill('10000');
+
+    await page.getByTestId('share-create-submit').click();
+
+    const row = page.getByTestId('share-link-row').filter({ hasText: label });
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('share-link-status')).toContainText('Active');
+
+    // Numeric caps are only rendered when the value is > 0.
+    await expect(row).toContainText('3 sessions / person');
+    await expect(row).toContainText('50 msg budget');
+    await expect(row).toContainText('10000 token budget');
+
+    // 90-day expiry → the Expires metadata shows a relative time, not "Never".
+    await expect(row.getByTestId('share-link-expires')).not.toContainText('Never');
+
+    // Behaviour chips render their label whether on or off.
+    await expect(row).toContainText('Requires email');
+    await expect(row).toContainText('Sandbox');
+
+    // Prove the create-form options reach the public page end-to-end.
+    const key = await keyFromRow(row);
+    await page.goto(PUBLIC + '#' + key);
+    await expect(page.getByTestId('share-email-gate')).toBeVisible();
+    await expect(page.locator('#share-first-load-desc')).toContainText('Welcome to the demo.');
+  });
+
+  test('a link created with never expiry shows Never', async ({ page }) => {
+    await startCreate(page);
+
+    const label = `E2E Never ${Date.now()}`;
+    await page.getByTestId('share-create-label').fill(label);
+    await page.getByTestId('share-create-expiry').selectOption('never');
+    await page.getByTestId('share-create-submit').click();
+
+    const row = page.getByTestId('share-link-row').filter({ hasText: label });
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('share-link-expires')).toContainText('Never');
+  });
+
+  test('rotating a link issues a new key', async ({ page }) => {
+    await startCreate(page);
+
+    const label = `E2E Rotate ${Date.now()}`;
+    await page.getByTestId('share-create-label').fill(label);
+    await page.getByTestId('share-create-submit').click();
+
+    const row = page.getByTestId('share-link-row').filter({ hasText: label });
+    await expect(row).toBeVisible();
+    const before = await keyFromRow(row);
+
+    // Reload: the key is no longer recoverable at list time, so the row's URL
+    // is empty until rotate reveals the fresh key.
+    await page.goto(OWNER);
+    const relisted = page.getByTestId('share-link-row').filter({ hasText: label });
+    await expect(relisted).toBeVisible();
+
+    page.once('dialog', (d) => d.accept());
+    await relisted.getByTestId('share-rotate-link').click();
+
+    // Rotation re-renders the page with the new one-time URL in the fragment.
+    const rotatedRow = page.getByTestId('share-link-row').filter({ hasText: label });
+    await expect(rotatedRow).toBeVisible();
+    await expect(rotatedRow.getByTestId('share-link-status')).toContainText('Active');
+    const after = await keyFromRow(rotatedRow);
+    expect(after).toMatch(/^sh_key_\d+$/);
+    expect(after).not.toBe(before);
+  });
+});
+
+test.describe('public share page (owner-created links)', () => {
+  test('a requireEmail link gates the composer until an email is entered', async ({ page }) => {
+    await startCreate(page);
+
+    const label = `E2E EmailGate ${Date.now()}`;
+    await page.getByTestId('share-create-label').fill(label);
+    await createToggle(page, 'share-create-require-email').check();
+    await page.getByTestId('share-create-submit').click();
+
+    const row = page.getByTestId('share-link-row').filter({ hasText: label });
+    await expect(row).toBeVisible();
+    const key = await keyFromRow(row);
+
+    await page.goto(PUBLIC + '#' + key);
+    await expect(page.getByTestId('share-email-gate')).toBeVisible();
+    await expect(page.getByTestId('share-input')).toBeDisabled();
+
+    await page.getByTestId('share-email-input').fill('visitor@example.com');
+    await page.getByTestId('share-email-submit').click();
+
+    await expect(page.getByTestId('share-email-gate')).toBeHidden();
+    await expect(page.getByTestId('share-input')).toBeEnabled();
+
+    await page.getByTestId('share-input').fill('hi');
+    await page.getByTestId('share-send').click();
+    await expect(page.locator('[data-role="assistant"]')).toContainText('Hello from share!');
+  });
+
+  test('showSessionList off hides the session rail', async ({ page }) => {
+    await startCreate(page);
+
+    const label = `E2E NoRail ${Date.now()}`;
+    await page.getByTestId('share-create-label').fill(label);
+    await createToggle(page, 'share-create-show-sessions').uncheck();
+    await page.getByTestId('share-create-submit').click();
+
+    const row = page.getByTestId('share-link-row').filter({ hasText: label });
+    await expect(row).toBeVisible();
+    const key = await keyFromRow(row);
+
+    await page.goto(PUBLIC + '#' + key);
+    await expect(page.locator('header')).toBeVisible();
+    await expect(page.getByTestId('share-session-rail')).toBeHidden();
   });
 });
