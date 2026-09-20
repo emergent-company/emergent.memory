@@ -51,6 +51,29 @@ func compiledCSS(t *testing.T) string {
 	return string(b)
 }
 
+// chatBubbleOverride returns the custom unlayered .chat-bubble rule from the
+// compiled CSS, or "" when absent. It is the only .chat-bubble rule that sets a
+// box-shadow — daisyUI's layered default has none — so the shadow uniquely
+// identifies the rule that is meant to beat daisyUI's width:fit-content/90%.
+func chatBubbleOverride(css string) string {
+	for {
+		start := strings.Index(css, ".chat-bubble{")
+		if start < 0 {
+			return ""
+		}
+		rest := css[start:]
+		end := strings.IndexByte(rest, '}')
+		if end < 0 {
+			return ""
+		}
+		rule := rest[:end+1]
+		if strings.Contains(rule, "box-shadow") {
+			return rule
+		}
+		css = rest[len(".chat-bubble{"):]
+	}
+}
+
 // TestCompiledCSSExcludesUnusedDaisyUIModules (change spec 4.2): daisyUI
 // modules the gateway never renders (audited) must be absent from the compiled
 // CSS, while used component styles + go-daisy custom CSS + icons remain.
@@ -94,5 +117,25 @@ func TestCompiledCSSDeterministic(t *testing.T) {
 	}
 	if len(a) < 50000 {
 		t.Errorf("compiled CSS suspiciously small (%d bytes)", len(a))
+	}
+}
+
+// TestChatBubbleFillsColumn guards the chat bubble sizing fix: daisyUI sizes
+// .chat-bubble to its content (width:fit-content; max-width:90%), so a short
+// message rendered as a narrow pill. The custom unlayered override must still
+// resolve width and max-width to 100% in the *compiled* output. A source-only
+// change is not enough to guard this: webui/static/css/app.css is generated
+// and gitignored, so a future Tailwind/daisyUI build could silently drop or
+// override these declarations while the Go page-markup tests still pass.
+func TestChatBubbleFillsColumn(t *testing.T) {
+	css := compiledCSS(t)
+	rule := chatBubbleOverride(css)
+	if rule == "" {
+		t.Fatal("compiled css missing the custom .chat-bubble override (no box-shadow rule)")
+	}
+	for _, decl := range []string{"width:100%", "max-width:100%"} {
+		if !strings.Contains(rule, decl) {
+			t.Errorf("chat-bubble override %q missing %q — a short message would render as a narrow pill", rule, decl)
+		}
 	}
 }
