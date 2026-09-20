@@ -178,25 +178,6 @@ func (h *Handler) CreateBackup(c echo.Context) error {
 	return c.JSON(http.StatusAccepted, backup)
 }
 
-// ImportBackup accepts a backup archive produced by another deployment and
-// registers it as a ready, imported backup for clone restore.
-// @Summary      Import backup archive
-// @Description  Accepts a backup ZIP archive (multipart/form-data field `file`, max 1 GiB) from another deployment, validates its manifest and checksums, stores it, and registers a `ready` backup flagged `imported`. Imported backups support clone restore only.
-// @Tags         backups
-// @Accept       multipart/form-data
-// @Produce      json
-// @Param        orgId path string true "Organization ID (UUID)"
-// @Param        file formData file true "Backup archive (ZIP)"
-// @Param        retentionDays formData int false "Retention days (1-365, default 30)"
-// @Success      201 {object} Backup "Backup registered (status: ready, imported: true)"
-// @Failure      400 {object} apperror.Error "Invalid archive"
-// @Failure      401 {object} apperror.Error "Unauthorized"
-// @Failure      403 {object} apperror.Error "Not a member of the target organization"
-// @Failure      413 {object} apperror.Error "Archive too large"
-// @Failure      415 {object} apperror.Error "Not a ZIP archive"
-// @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /api/v1/organizations/{orgId}/backups/import [post]
-// @Security     bearerAuth
 // parseRetentionDays reads the optional retentionDays form value, defaulting to
 // 30 when absent and validating the 1..365 range.
 func parseRetentionDays(c echo.Context) (int, *apperror.Error) {
@@ -215,10 +196,10 @@ func parseRetentionDays(c echo.Context) (int, *apperror.Error) {
 }
 
 // readArchiveUpload parses the multipart `file` field, enforcing the size cap
-// and ZIP signature, and returns the raw archive bytes.
+// and ZIP signature, and returns the raw archive bytes. The caller must have
+// already capped the request body with http.MaxBytesReader (see ImportBackup) so
+// that an oversized upload is rejected while being read, not after.
 func readArchiveUpload(c echo.Context) ([]byte, *apperror.Error) {
-	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, MaxImportArchiveSize+1024)
-
 	file, err := c.FormFile("file")
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -253,9 +234,34 @@ func readArchiveUpload(c echo.Context) ([]byte, *apperror.Error) {
 	return data, nil
 }
 
+// ImportBackup accepts a backup archive produced by another deployment and
+// registers it as a ready, imported backup for clone restore.
+// @Summary      Import backup archive
+// @Description  Accepts a backup ZIP archive (multipart/form-data field `file`, max 1 GiB) from another deployment, validates its manifest and checksums, stores it, and registers a `ready` backup flagged `imported`. Imported backups support clone restore only.
+// @Tags         backups
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        file formData file true "Backup archive (ZIP)"
+// @Param        retentionDays formData int false "Retention days (1-365, default 30)"
+// @Success      201 {object} Backup "Backup registered (status: ready, imported: true)"
+// @Failure      400 {object} apperror.Error "Invalid archive"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Not a member of the target organization"
+// @Failure      413 {object} apperror.Error "Archive too large"
+// @Failure      415 {object} apperror.Error "Not a ZIP archive"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v1/organizations/{orgId}/backups/import [post]
+// @Security     bearerAuth
 func (h *Handler) ImportBackup(c echo.Context) error {
 	user := auth.MustGetUser(c)
 	orgID := c.Param("orgId")
+
+	// Cap the request body before anything reads the form. Multipart parsing
+	// consumes the entire body (spilling parts past maxMemory to temp files), so
+	// a limit applied after the first FormValue/FormFile call would let an
+	// oversized upload be fully consumed before the cap is ever enforced.
+	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, MaxImportArchiveSize+1024)
 
 	// Org membership check first: authorization before any body work.
 	var memberCount int64
