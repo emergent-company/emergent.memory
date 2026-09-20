@@ -735,7 +735,8 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 	tools := render("tools")
 	for _, want := range []string{
 		`name="tool"`, `value="web_search"`, `value="memory_lookup"`, `value="code_exec"`,
-		`value="web_search" checked`,
+		// Pins ToggleInput's canonical attribute order (class before checked).
+		`value="web_search" class="toggle toggle-sm shrink-0" checked`,
 		`/agents/a1/settings/tools`,
 	} {
 		if !strings.Contains(tools, want) {
@@ -815,7 +816,8 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 		Agents:     []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 1, Tools: []MCPTool{{ToolName: "web_search"}}}},
 	}
-	if h := renderHTML(t, AgentSettingsPage(unlisted)); !strings.Contains(h, "Other") || !strings.Contains(h, `value="ha_get_state" checked`) {
+	// Pins ToggleInput's canonical attribute order (class before checked).
+	if h := renderHTML(t, AgentSettingsPage(unlisted)); !strings.Contains(h, "Other") || !strings.Contains(h, `value="ha_get_state" class="toggle toggle-sm shrink-0" checked`) {
 		t.Error("unlisted tool should appear checked in the Other group")
 	}
 
@@ -1915,18 +1917,21 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		`data-testid="tool-group-header-graph-write"`,
 		`data-tool-group="graph-write"`,
 		`name="groupPolicy.graph-write"`,
-		`name="groupEnabled.graph-write" value="on" checked`,
+		// Below: ToggleInput pins a canonical attribute order — type before name,
+		// class before checked. Semantically identical to the former hand-rolled
+		// markup; only the byte order differs.
+		`name="groupEnabled.graph-write" value="on" class="toggle toggle-sm" checked`,
 		`data-testid="tool-group-policy-graph-write"`,
 		`data-testid="tool-group-enabled-graph-write"`,
-		`name="tool" type="checkbox" value="entity-create" checked`,
-		`name="tool" type="checkbox" value="entity-delete"`,
+		`type="checkbox" name="tool" value="entity-create" class="toggle toggle-sm shrink-0" checked`,
+		`type="checkbox" name="tool" value="entity-delete"`,
 		"Override · Ask",               // entity-create has an explicit entry
 		"Inherits Graph · Write · Ask", // entity-delete has none
 		"builtin",                      // MCP server nested in the group that owns it
 		"Web", `name="groupPolicy.web"`,
-		`name="tool" type="checkbox" value="web_search"`,
+		`type="checkbox" name="tool" value="web_search"`,
 		`data-testid="tool-group-other"`,
-		`name="tool" type="checkbox" value="ha_get_state" checked`,
+		`type="checkbox" name="tool" value="ha_get_state" class="toggle toggle-sm shrink-0" checked`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("grouped tools page missing %q", want)
@@ -1960,7 +1965,9 @@ func TestRenderAgentSettingsToolGroups(t *testing.T) {
 		}}},
 	}
 	fh := renderHTML(t, AgentSettingsPage(fallback))
-	if !strings.Contains(fh, `name="tool" type="checkbox" value="web_search" checked`) {
+	// Pins ToggleInput's canonical attribute order (type before name, class
+	// before checked).
+	if !strings.Contains(fh, `type="checkbox" name="tool" value="web_search" class="toggle toggle-sm shrink-0" checked`) {
 		t.Error("fallback source-only grouping should still render server tools")
 	}
 	if strings.Contains(fh, `data-testid="tool-groups"`) {
@@ -2109,7 +2116,8 @@ func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
 		}
 	}
 	for _, group := range []string{"graph-write", "web"} {
-		if strings.Contains(html, `name="groupEnabled.`+group+`" value="on" checked`) {
+		// Pins ToggleInput's canonical attribute order (class before checked).
+		if strings.Contains(html, `name="groupEnabled.`+group+`" value="on" class="toggle toggle-sm" checked`) {
 			t.Errorf("group %s has no enabled members, switch must be off", group)
 		}
 	}
@@ -2128,7 +2136,9 @@ func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
 	if !strings.Contains(html, `data-testid="tool-group-other"`) {
 		t.Error("uncovered tools should render the Other group")
 	}
-	if !strings.Contains(html, `name="tool" type="checkbox" value="mac-ada_notes_search" checked`) {
+	// Pins ToggleInput's canonical attribute order (type before name, class
+	// before checked).
+	if !strings.Contains(html, `type="checkbox" name="tool" value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`) {
 		t.Error("uncovered relay tool should appear checked in Other")
 	}
 
@@ -2298,7 +2308,9 @@ func TestGoldenToolGroupsFixtureContract(t *testing.T) {
 	if !strings.Contains(html, "relay1") {
 		t.Error("relay-style group member should render under its relay node sub-group")
 	}
-	if !strings.Contains(html, `name="tool" type="checkbox" value="relay1_reminders_list" checked`) {
+	// Pins ToggleInput's canonical attribute order (type before name, class
+	// before checked).
+	if !strings.Contains(html, `type="checkbox" name="tool" value="relay1_reminders_list" class="toggle toggle-sm shrink-0" checked`) {
 		t.Error("relay-style member should render checked in its relay sub-group")
 	}
 
@@ -2308,11 +2320,13 @@ func TestGoldenToolGroupsFixtureContract(t *testing.T) {
 		!strings.Contains(html, `data-testid="tool-group-policy-schema-write"`) {
 		t.Error("a fully disabled group must still render its enable switch and policy select")
 	}
-	if strings.Contains(html, `name="groupEnabled.schema-write" value="on" checked`) {
+	// Pins ToggleInput's canonical attribute order (class before checked).
+	if strings.Contains(html, `name="groupEnabled.schema-write" value="on" class="toggle toggle-sm" checked`) {
 		t.Error("schema-write has no enabled members, its switch must be off")
 	}
 	for _, name := range []string{"schema-create", "schema-delete"} {
-		if !strings.Contains(html, `name="tool" type="checkbox" value="`+name+`"`) {
+		// Pins ToggleInput's canonical attribute order (type before name).
+		if !strings.Contains(html, `type="checkbox" name="tool" value="`+name+`"`) {
 			t.Errorf("disabled group member %s is missing from the panel", name)
 		}
 		if strings.Contains(html, `value="`+name+`" checked`) {
