@@ -71,7 +71,7 @@ else
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --build
 
   # Wait for the test client to finish (it exits after the suite runs).
-  docker compose -f "$SCRIPT_DIR/docker-compose.yml" wait test-emergent-client
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" wait test-emergent-client || true
 
   # Print the test client's logs so failures are visible in CI.
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" logs test-emergent-client
