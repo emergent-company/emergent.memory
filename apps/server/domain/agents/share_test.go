@@ -60,6 +60,11 @@ type fakeShareRepo struct {
 	createdAgent        *Agent
 	replacedTokenID     string
 	incrementedUsage    bool
+	incrementMessages   int
+	incrementTokens     int64
+	incrementCost       float64
+	runUsage            *RunTokenUsage
+	question            *AgentQuestion
 	accessLogs          []accessLogEntry
 }
 
@@ -215,8 +220,11 @@ func (f *fakeShareRepo) FindShareEndUser(_ context.Context, _, _ string) (*Agent
 }
 
 // --- usage ---
-func (f *fakeShareRepo) IncrementShareUsage(_ context.Context, _ string, _ time.Time, _ int, _ int64, _ float64) error {
+func (f *fakeShareRepo) IncrementShareUsage(_ context.Context, _ string, _ time.Time, messages int, tokens int64, costUSD float64) error {
 	f.incrementedUsage = true
+	f.incrementMessages = messages
+	f.incrementTokens = tokens
+	f.incrementCost = costUSD
 	return nil
 }
 func (f *fakeShareRepo) ReserveShareBudget(_ context.Context, _ string, _ time.Time, _ int, _ int64, _ float64, _ int64, _ float64) error {
@@ -258,10 +266,10 @@ func (f *fakeShareRepo) CreateACPSession(_ context.Context, s *ACPSession) error
 	return nil
 }
 func (f *fakeShareRepo) FindQuestionByID(_ context.Context, _ string) (*AgentQuestion, error) {
-	return nil, nil
+	return f.question, nil
 }
 func (f *fakeShareRepo) GetRunTokenUsage(_ context.Context, _ string) (*RunTokenUsage, error) {
-	return nil, nil
+	return f.runUsage, nil
 }
 func (f *fakeShareRepo) GetConversationFullHistory(_ context.Context, _ string) ([]*ConversationHistoryItem, error) {
 	return nil, nil
@@ -480,6 +488,52 @@ func TestRespondToQuestion_ForeignEndUserRef(t *testing.T) {
 
 	// The responder must have been NOT called.
 	assert.Equal(t, "", responder.captured.QuestionID)
+}
+
+// A resumed share run leg must record its usage, otherwise a visitor can cycle
+// approve/resume to spend above the per-link budget (the initial StreamMessage
+// only reconciles usage up to the first pause).
+func TestResumeSettled_RecordsResumeUsage(t *testing.T) {
+	repo := newFakeShareRepo()
+	repo.runUsage = &RunTokenUsage{
+		TotalInputTokens:  100,
+		TotalOutputTokens: 50,
+		EstimatedCostUSD:  0.02,
+	}
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	svc.resumeSettled(binding)(&ExecuteResult{RunID: "run-resumed"})
+
+	assert.True(t, repo.incrementedUsage, "resumed leg usage must be recorded")
+	assert.Equal(t, 0, repo.incrementMessages, "no message slot reserved for a resume leg")
+	assert.Equal(t, int64(150), repo.incrementTokens, "resume tokens must be recorded in full")
+	assert.InDelta(t, 0.02, repo.incrementCost, 1e-9, "resume cost must be recorded in full")
+}
+
+// RespondToQuestion must wire the OnRunSettled callback so the resumed leg's
+// usage is recorded after it settles.
+func TestRespondToQuestion_SetsOnRunSettled(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, ACPSessionID: "acp-1"}
+	repo.sessionByRunAndUser = repo.sessions["sess-1"]
+	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
+	repo.runUsage = &RunTokenUsage{TotalInputTokens: 10, TotalOutputTokens: 5, EstimatedCostUSD: 0.01}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.RespondToQuestion(context.Background(), binding, "sess-1", alice, "q-1", "approve", "", "iphash")
+	require.NoError(t, err)
+
+	require.NotNil(t, responder.captured.OnRunSettled, "RespondToQuestion must wire OnRunSettled")
+	responder.captured.OnRunSettled(&ExecuteResult{RunID: "run-resumed"})
+	assert.True(t, repo.incrementedUsage, "resumed leg usage must be recorded via the wired callback")
 }
 
 // Session cap is enforced.

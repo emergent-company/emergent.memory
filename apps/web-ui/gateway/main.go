@@ -46,6 +46,11 @@ func main() {
 
 	e := echo.New()
 	e.HideBanner = true
+	// Resolve the real client IP from X-Forwarded-For set by traefik. The default
+	// extractor trusts loopback/private/link-local peers, so the gateway — always
+	// reached through traefik on a private network — keys rate limits (and any
+	// future RealIP() use) on the client rather than traefik's socket address.
+	e.IPExtractor = echo.ExtractIPFromXFFHeader()
 	e.Use(requestLogger())
 	// Compress text/HTML/CSS/JS/JSON responses. The 185KB app CSS and go-daisy's
 	// 473KB CSS compress ~5-10x, and every HTMX partial swap shrinks too.

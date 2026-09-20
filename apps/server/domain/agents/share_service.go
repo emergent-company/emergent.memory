@@ -867,6 +867,44 @@ func (s *ShareService) recordUsage(ctx context.Context, binding *ShareLinkBindin
 	return s.repo.IncrementShareUsage(ctx, binding.Link.ID, periodStart, 0, tokens-perTurnTokens, cost-perTurnCost)
 }
 
+// resumeSettled returns the OnRunSettled callback for a share approval. It
+// records the resumed leg's actual token/cost usage against the link budget in
+// the current rolling window. Without this, a visitor could cycle approve/resume
+// to spend above the per-link budget, because recordUsage only reconciles the
+// initial StreamMessage leg up to the first pause and never the resumed leg.
+func (s *ShareService) resumeSettled(binding *ShareLinkBinding) func(*ExecuteResult) {
+	return func(result *ExecuteResult) {
+		if result == nil || result.RunID == "" {
+			return
+		}
+		window := time.Duration(binding.Config.BudgetWindowSeconds) * time.Second
+		if window <= 0 {
+			window = 24 * time.Hour
+		}
+		periodStart := time.Now().UTC().Truncate(window)
+		if err := s.recordResumeUsage(context.Background(), binding.Link.ID, periodStart, result.RunID); err != nil {
+			s.log.Warn("failed to record share resume usage",
+				slog.String("link_id", binding.Link.ID),
+				slog.String("run_id", result.RunID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+}
+
+// recordResumeUsage records the actual token/cost usage of a resumed run leg.
+// Unlike recordUsage, no per-turn allowance was reserved for the resume leg, so
+// the full actual usage is added (no reservation offset).
+func (s *ShareService) recordResumeUsage(ctx context.Context, linkID string, periodStart time.Time, runID string) error {
+	usage, err := s.repo.GetRunTokenUsage(ctx, runID)
+	if err != nil || usage == nil {
+		return nil // no usage recorded for this leg
+	}
+	tokens := usage.TotalInputTokens + usage.TotalOutputTokens
+	cost := usage.EstimatedCostUSD
+	return s.repo.IncrementShareUsage(ctx, linkID, periodStart, 0, tokens, cost)
+}
+
 // ============================================================================
 // Approvals (end-user respond/deny)
 // ============================================================================
@@ -933,6 +971,7 @@ func (s *ShareService) RespondToQuestion(ctx context.Context, binding *ShareLink
 		DisableAuthMint:        true,
 		MaxApprovalsPerSession: binding.Config.MaxApprovalsPerSession,
 		ACPSessionID:           session.ACPSessionID,
+		OnRunSettled:           s.resumeSettled(binding),
 	})
 }
 

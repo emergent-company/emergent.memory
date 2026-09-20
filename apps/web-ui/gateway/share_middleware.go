@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -88,29 +87,22 @@ func hashShareToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// directPeerIP returns the socket peer address (the trusted reverse proxy, e.g.
-// traefik), NOT the client-supplied X-Forwarded-For chain. It is the key for the
-// advisory per-IP rate-limit dimension: it cannot be spoofed by the client, but
-// it does not distinguish end users behind the proxy — the per-link bucket
-// (SHA-256 of the share token) is the authoritative, non-spoofable dimension.
-func directPeerIP(c echo.Context) string {
-	host, _, err := net.SplitHostPort(c.Request().RemoteAddr)
-	if err != nil {
-		return c.Request().RemoteAddr
-	}
-	return host
-}
-
-// shareRateLimit bounds the public share surface: per direct peer IP (advisory,
+// shareRateLimit bounds the public share surface: per client IP (advisory,
 // best-effort) always, and per share link (authoritative) when the request
 // carries a share cookie. On trip it returns 429 with the client-facing
 // rate-limited code.
+//
+// The client IP is resolved via c.RealIP(), backed by the echo IPExtractor set
+// in main.go (ExtractIPFromXFFHeader), so behind traefik the bucket keys on the
+// real client IP from X-Forwarded-For rather than collapsing every visitor into
+// the proxy's socket address. The per-link bucket (SHA-256 of the share token)
+// remains the authoritative, non-spoofable dimension.
 func (s *Server) shareRateLimit(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if s.shareIPLimiter == nil || s.shareLinkLimiter == nil {
 			return next(c)
 		}
-		if !s.shareIPLimiter.allow(directPeerIP(c)) {
+		if !s.shareIPLimiter.allow(c.RealIP()) {
 			return shareRateLimited(c)
 		}
 		if key := s.shareLinkKey(c); key != "" {

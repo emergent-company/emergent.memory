@@ -2722,6 +2722,13 @@ type RespondParams struct {
 	DisableAuthMint        bool
 	MaxApprovalsPerSession int
 	ACPSessionID           string
+
+	// OnRunSettled, if non-nil, is invoked (in the resume goroutine, with a
+	// background context) once the resumed run settles, carrying the result of
+	// executor.Resume. Share callers use it to reconcile budget usage from the
+	// resume leg: the initial StreamMessage records usage only up to the first
+	// pause, and the resumed leg spends more that must also be counted.
+	OnRunSettled func(result *ExecuteResult)
 }
 
 // RespondToQuestion is the shared core of the question-respond flow. It looks up
@@ -2965,6 +2972,12 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 					slog.String("error", repoErr.Error()),
 				)
 			}
+		}
+		// Notify the caller (share) that the resumed leg has settled so it can
+		// reconcile budget usage. Invoked last so Cleanup + failure marking are
+		// already reflected before any accounting runs.
+		if p.OnRunSettled != nil {
+			p.OnRunSettled(result)
 		}
 	}()
 
