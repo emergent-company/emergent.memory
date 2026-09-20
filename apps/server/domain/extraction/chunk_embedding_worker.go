@@ -133,16 +133,16 @@ func (w *ChunkEmbeddingWorker) Stop(ctx context.Context) error {
 	return nil
 }
 
-// recoverStaleJobsOnStartup recovers stale jobs on startup
+// recoverStaleJobsOnStartup recovers orphaned processing jobs on startup
 func (w *ChunkEmbeddingWorker) recoverStaleJobsOnStartup(ctx context.Context) {
-	recovered, err := w.jobs.RecoverStaleJobs(ctx, 10)
+	recovered, err := w.jobs.RecoverOrphanedProcessingJobs(ctx)
 	if err != nil {
-		w.log.Warn("failed to recover stale jobs on startup",
+		w.log.Warn("failed to recover orphaned jobs on startup",
 			slog.String("error", err.Error()))
 		return
 	}
 	if recovered > 0 {
-		w.log.Info("recovered stale chunk embedding jobs on startup",
+		w.log.Info("recovered orphaned chunk embedding jobs on startup",
 			slog.Int("count", recovered))
 	}
 }
@@ -312,13 +312,24 @@ func (w *ChunkEmbeddingWorker) processJob(ctx context.Context, job *ChunkEmbeddi
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
 
 	if err != nil {
-		// Embedding failed
+		// Embedding failed — distinguish permanent (bad model/creds) from transient (network, quota)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
-			w.log.Error("failed to mark job as failed",
+		if isPermanentEmbeddingError(err) {
+			w.log.Warn("chunk embedding permanently failed (non-retryable error)",
 				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
+				slog.String("error", err.Error()))
+			if markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, err); markErr != nil {
+				w.log.Error("failed to mark job as permanently failed",
+					slog.String("job_id", job.ID),
+					slog.String("error", markErr.Error()))
+			}
+		} else {
+			if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
+				w.log.Error("failed to mark job as failed",
+					slog.String("job_id", job.ID),
+					slog.String("error", markErr.Error()))
+			}
 		}
 		w.incrementFailure()
 		return fmt.Errorf("generate embedding: %w", err)

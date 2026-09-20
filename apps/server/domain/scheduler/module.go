@@ -20,6 +20,7 @@ var Module = fx.Module("scheduler",
 		ProvideStaleJobCleanupTask,
 		ProvideRetrievalTraceCleanupTask,
 		NewProjectDeletionTask,
+		ProvideEmbeddingJobPurgeTask,
 	),
 	fx.Invoke(
 		RegisterTasks,
@@ -39,6 +40,11 @@ type staleTaskParams struct {
 // available for injection by other modules (e.g. embedding control handler).
 func ProvideStaleJobCleanupTask(p staleTaskParams) *StaleJobCleanupTask {
 	return NewStaleJobCleanupTask(p.DB, p.Log, p.Cfg.StaleJobMinutes, p.Cfg.DocumentParsingStaleMinutes)
+}
+
+// ProvideEmbeddingJobPurgeTask creates the embedding job purge task.
+func ProvideEmbeddingJobPurgeTask(p staleTaskParams) *EmbeddingJobPurgeTask {
+	return NewEmbeddingJobPurgeTask(p.DB, p.Log, p.Cfg.EmbeddingJobRetentionDays)
 }
 
 // retrievalTraceTaskParams are the minimal deps needed to build the retrieval
@@ -65,6 +71,7 @@ type TaskParams struct {
 	Cfg                *Config
 	StaleJobTask       *StaleJobCleanupTask
 	RetrievalTraceTask *RetrievalTraceCleanupTask
+	EmbeddingPurgeTask *EmbeddingJobPurgeTask
 	Storage            *storage.Service
 	AppCfg             *appcfg.Config
 	UserSvc            *auth.UserProfileService
@@ -154,6 +161,14 @@ func RegisterTasks(p TaskParams) error {
 	if err := addScheduledTask(p.Scheduler, p.Log, "project_deletion_sweep",
 		p.Cfg.ProjectDeletionSweepSchedule, p.Cfg.ProjectDeletionSweepInterval, p.DeletionTask.Run); err != nil {
 		p.Log.Error("failed to register project deletion sweep task",
+			slog.String("error", err.Error()))
+	}
+
+	// Register embedding job purge task (daily at 5am by default). Deletes old
+	// terminal embedding jobs to prevent unbounded queue table growth.
+	if err := addScheduledTask(p.Scheduler, p.Log, "embedding_job_purge",
+		p.Cfg.EmbeddingJobPurgeSchedule, p.Cfg.EmbeddingJobPurgeInterval, p.EmbeddingPurgeTask.Run); err != nil {
+		p.Log.Error("failed to register embedding job purge task",
 			slog.String("error", err.Error()))
 	}
 
