@@ -266,6 +266,17 @@ asserts A's row is active after the first turn, that both A and B coexist in the
 rail after the second, and that resuming A switches the `#chat-agent` picker back
 to A and loads A's (not B's) transcript. Env-gated on `E2E_SCENARIO_LLM_API_KEY`.
 
+Scenario (approvals respond): `approvals-respond.spec.ts` drives a live
+human-in-the-loop tool approval end-to-end — scratch project → live provider →
+MCP server + synced tool → agent with `defaultToolPolicy: ask` → imperative chat
+turn → poll a sibling `/settings/approvals` tab (reload) until the pending
+Approve control appears → approve → assert the pending decision resolves. The
+chat SSE stream is bound to the request context, so the approvals page is opened
+in a sibling tab to keep the stream (and the run) alive while polling. Env-gated
+on `E2E_SCENARIO_LLM_API_KEY`; skips on env/provider rejection and when the model
+does not call the gated tool, hard-fails on page/selector regressions. Reject and
+Cancel share the same respond/cancel routes and remain uncovered (follow-up).
+
 Document extraction: `specs/documents/document-extraction-ui.spec.ts` uploads a
 document through the form and triggers extraction from the document detail page,
 asserting the PRG round-trip (`?uploaded=1` → `?extracted=1`) un-gated. A second

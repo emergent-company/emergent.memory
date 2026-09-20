@@ -15,9 +15,9 @@ Every Web UI flow that mints, mutates, or revokes a credential SHALL have a Play
 - **WHEN** a spec drives `/settings/mcp-servers/shares`, `/shares/new`, `/:id/edit`, `/:id/update`, `/:id/rotate`, `/:id/revoke`
 - **THEN** share creation shows a one-time token, rotation invalidates the previous token, and revocation removes the share from the list
 
-#### Scenario: Per-agent MCP share lifecycle
-- **WHEN** a spec creates, rotates, and revokes a share from the agent detail surface
-- **THEN** the agent's share list reflects each transition
+#### Scenario: Agent MCP endpoint key lifecycle
+- **WHEN** a spec creates a per-agent MCP endpoint and a labeled key, rotates the key, then revokes a key and the endpoint (`agent-mcp-keys-ui.spec.ts`)
+- **THEN** each transition is asserted: the one-time secret reveal, key identity preserved on rotate, the revoked key marked revoked, and the endpoint returning to its not-enabled state
 
 ### Requirement: Authorization-changing flows have behavioral e2e coverage
 Flows that change who can access a tenant or the graph SHALL have specs asserting both the permitted path and the rejected path.
