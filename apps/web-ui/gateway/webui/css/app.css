@@ -88,6 +88,13 @@
 @source "../**/*.templ";
 @source "../**/*.go";
 @source "../static/js/*.js";
+/* Named-group disclosure chevrons. go-daisy builds these class names at
+   runtime (`group-open/<name>:rotate-180`), so Tailwind cannot see them in any
+   scanned file — `group/cap` only compiled by accident because a vendored
+   go-daisy comment happens to contain the literal. Declare both explicitly so
+   the Built-in (`group/builtin`) and capability (`group/cap`) chevrons always
+   rotate. */
+@source inline("group-open/cap:rotate-180 group-open/builtin:rotate-180");
 /* go-daisy component source (vendored) — generate the utilities and lucide
    icons go-daisy's components emit, on demand, instead of loading go-daisy's
    pre-compiled bundle. Keep every OTHER vendored dependency out of the scan.
