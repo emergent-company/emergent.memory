@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"golang.org/x/sync/errgroup"
@@ -67,12 +68,26 @@ func (s *Server) uiObject(c echo.Context) error {
 	if err != nil {
 		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, nil, nil, nil, nil, err, "", flashErr, nil, nil, nil))
 	}
-	labelSuggestions := s.objectLabelSuggestions(ctx)
 
-	compiled, cerr := s.memory.GetCompiledTypes(ctx)
-	if cerr != nil {
-		captureError(cerr)
-	}
+	var (
+		labelSuggestions []string
+		compiled         *CompiledSchemaTypes
+		compiledErr      error
+		edges            []GraphRelationship
+		edgesErr         error
+		similar          []SimilarObject
+		similarErr       error
+	)
+	var g errgroup.Group
+	g.Go(func() error { labelSuggestions = s.objectLabelSuggestions(ctx); return nil })
+	g.Go(func() error { compiled, compiledErr = s.memory.GetCompiledTypes(ctx); return nil })
+	g.Go(func() error { edges, edgesErr = s.memory.GetObjectEdges(ctx, id); return nil })
+	g.Go(func() error { similar, similarErr = s.memory.GetSimilarObjects(ctx, id, 10); return nil })
+	_ = g.Wait()
+	captureError(compiledErr)
+	captureError(edgesErr)
+	captureError(similarErr)
+
 	var relTypes []CompiledType
 	var propDefs []objectPropertyDef
 	var typeUIByType map[string]typeUI
@@ -82,11 +97,7 @@ func (s *Server) uiObject(c echo.Context) error {
 		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 	}
 
-	edges, err := s.memory.GetObjectEdges(ctx, id)
-	captureError(err)
 	related := s.loadRelatedObjects(ctx, obj, edges)
-	similar, err := s.memory.GetSimilarObjects(ctx, id, 10)
-	captureError(err)
 
 	flashMsg := ""
 	if c.QueryParam("updated") != "" {
@@ -693,13 +704,45 @@ func distinctObjectLabels(objects []GraphObject) []string {
 // objectLabelSuggestions returns the project's existing distinct object labels
 // for the create form's label autocomplete — best-effort: an error or an empty
 // graph yields nil (the input then simply has no suggestions).
+const labelSuggestionsTTL = time.Minute
+
+type labelSuggestionsEntry struct {
+	labels    []string
+	expiresAt time.Time
+}
+
 func (s *Server) objectLabelSuggestions(ctx context.Context) []string {
+	pid := ""
+	if sc, ok := sessionContextFrom(ctx); ok {
+		pid = sc.ProjectID
+	}
+	if pid != "" {
+		s.labelCacheMu.Lock()
+		if s.labelCache != nil {
+			if e, ok := s.labelCache[pid]; ok && time.Now().Before(e.expiresAt) {
+				s.labelCacheMu.Unlock()
+				return e.labels
+			}
+		}
+		s.labelCacheMu.Unlock()
+	}
+
 	objects, err := s.memory.ListGraphObjects(ctx, "", "", nil)
 	if err != nil {
 		captureError(err)
 		return nil
 	}
-	return distinctObjectLabels(objects)
+	labels := distinctObjectLabels(objects)
+
+	if pid != "" {
+		s.labelCacheMu.Lock()
+		if s.labelCache == nil {
+			s.labelCache = make(map[string]labelSuggestionsEntry)
+		}
+		s.labelCache[pid] = labelSuggestionsEntry{labels: labels, expiresAt: time.Now().Add(labelSuggestionsTTL)}
+		s.labelCacheMu.Unlock()
+	}
+	return labels
 }
 
 // objectEndpointLabel resolves one relationship endpoint id to a display
