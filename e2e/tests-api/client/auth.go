@@ -2,29 +2,43 @@ package client
 
 // TestTokens provides server-aware test token selection.
 // Both servers now support the same token mappings after alignment.
+//
+// When constructed with a non-empty `token` (remote single-token mode), the
+// methods that represent a "valid, authenticated" identity (Admin, AllScopes,
+// Dynamic) all return that same token. The scope-enforcement methods
+// (NoScope, WithScope, GraphRead, ReadOnly) are left unchanged and are NOT
+// supported in single-token remote mode.
 type TestTokens struct {
 	serverType ServerType
+	token      string
 }
 
-// NewTestTokens creates a TestTokens helper for the given server type.
-func NewTestTokens(serverType ServerType) *TestTokens {
-	return &TestTokens{serverType: serverType}
+// NewTestTokens creates a TestTokens helper for the given server type and
+// optional single-token override (empty token = per-method hardcoded tokens).
+func NewTestTokens(serverType ServerType, token string) *TestTokens {
+	return &TestTokens{serverType: serverType, token: token}
 }
 
 // Tokens returns the TestTokens helper from the client.
 func (c *Client) Tokens() *TestTokens {
-	return NewTestTokens(c.serverType)
+	return NewTestTokens(c.serverType, c.token)
 }
 
 // Admin returns the admin token with full access.
 // Maps to test-admin-user on both servers (after NestJS alignment).
 func (t *TestTokens) Admin() string {
+	if t.token != "" {
+		return t.token
+	}
 	return "e2e-test-user"
 }
 
 // AllScopes returns a token with all scopes.
 // Note: Go uses "all-scopes", NestJS uses "e2e-all" - both give full access.
 func (t *TestTokens) AllScopes() string {
+	if t.token != "" {
+		return t.token
+	}
 	if t.serverType == ServerGo {
 		return "all-scopes"
 	}
@@ -32,12 +46,16 @@ func (t *TestTokens) AllScopes() string {
 }
 
 // NoScope returns a token with no scopes.
+// NOTE: scope-enforcement methods are unchanged and unsupported in
+// single-token remote mode (a single token cannot be scoped down).
 func (t *TestTokens) NoScope() string {
 	return "no-scope"
 }
 
 // WithScope returns a token with limited scopes.
-// Note: Scope sets differ between servers:
+// NOTE: scope-enforcement methods are unchanged and unsupported in
+// single-token remote mode (a single token cannot be scoped down).
+// Scope sets differ between servers:
 // - Go: documents:read, documents:write, project:read
 // - NestJS: org:read
 func (t *TestTokens) WithScope() string {
@@ -45,11 +63,15 @@ func (t *TestTokens) WithScope() string {
 }
 
 // GraphRead returns a token with graph read permissions.
+// NOTE: scope-enforcement methods are unchanged and unsupported in
+// single-token remote mode (a single token cannot be scoped down).
 func (t *TestTokens) GraphRead() string {
 	return "graph-read"
 }
 
 // ReadOnly returns a token with read-only permissions (Go only).
+// NOTE: scope-enforcement methods are unchanged and unsupported in
+// single-token remote mode (a single token cannot be scoped down).
 // For NestJS, falls back to with-scope.
 func (t *TestTokens) ReadOnly() string {
 	if t.serverType == ServerGo {
@@ -63,5 +85,8 @@ func (t *TestTokens) ReadOnly() string {
 // The token format is e2e-{suffix} which creates user test-user-e2e-{suffix} (NestJS)
 // or uses {suffix} directly as zitadel_user_id (Go for e2e-* pattern).
 func (t *TestTokens) Dynamic(suffix string) string {
+	if t.token != "" {
+		return t.token
+	}
 	return "e2e-" + suffix
 }

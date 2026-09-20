@@ -94,11 +94,19 @@ func (s *ProjectsTestSuite) createProject(orgID, name string) (string, error) {
 
 // addProjectMember adds a user to a project with the specified role.
 func (s *ProjectsTestSuite) addProjectMember(projectID, userID, role string) error {
+	if s.DB == nil {
+		s.T().Skip("project membership requires direct DB access; set E2E_SKIP_DB=false")
+		return nil
+	}
 	return testutil.CreateProjectMembership(s.Ctx, s.DB, projectID, userID, role)
 }
 
 // getAdminUserID returns the admin user's actual ID from the database.
 func (s *ProjectsTestSuite) getAdminUserID() string {
+	if s.DB == nil {
+		s.T().Skip("admin user lookup requires direct DB access; set E2E_SKIP_DB=false")
+		return ""
+	}
 	id, err := testutil.GetUserIDByZitadelID(s.Ctx, s.DB, testutil.AdminUser.ZitadelUserID)
 	s.Require().NoError(err)
 	return id
