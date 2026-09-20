@@ -77,7 +77,9 @@ else
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" logs test-emergent-client
 
   # Capture the test client's exit code for the script's own exit status.
-  exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$(docker compose -f "$SCRIPT_DIR/docker-compose.yml" ps -q test-emergent-client)")
+  # The client has a fixed container_name, so inspect it directly (ps -q only
+  # lists running containers and returns empty once the client has exited).
+  exit_code=$(docker inspect -f '{{.State.ExitCode}}' test-emergent-client)
 
   # Bring down cleanly regardless of outcome.
   docker compose -f "$SCRIPT_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true
