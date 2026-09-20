@@ -86,7 +86,11 @@ func tokenToolDefinitions() []ToolDefinition {
 // ============================================================================
 
 func (s *Service) executeListProjectAPITokens(ctx context.Context, projectID string) (*ToolResult, error) {
-	result, err := s.apitokenSvc.ListByProject(ctx, projectID)
+	userID := ""
+	if u := auth.UserFromContext(ctx); u != nil {
+		userID = u.ID
+	}
+	result, err := s.apitokenSvc.ListByProject(ctx, projectID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list_project_api_tokens: %w", err)
 	}

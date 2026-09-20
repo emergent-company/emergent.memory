@@ -1,6 +1,6 @@
 ## Why
 
-Clone restore (`POST /api/v1/organizations/:orgId/restore`, `mode=clone`) rolls back when the archive is replayed into a differently-bootstrapped deployment. Tracked as GitHub issue #592.
+Clone restore (`POST /api/v1/organizations/:orgId/restore`, `mode=clone`) rolls back when the archive is replayed into a differently-bootstrapped deployment. Tracked as GitHub issue #592; implemented and shipped in PR #597.
 
 `kb.graph_schemas` holds deployment-global builtin rows (e.g. `session-message-types`). `BuiltinSeeder` INSERTs them without an explicit `id`, so each deployment gets a different UUID. Migration 00146 installs trigger `trg_projects_install_builtins`, which links every new project to that deployment's own builtin row via `kb.project_schemas`. The exporter archives every table with `projectFilter: byProject` (`t.project_id = ?`), so global rows (`project_id IS NULL`) are never archived. The archive therefore contains `kb.project_schemas` rows whose `schema_id` points at the source deployment's builtin UUID, which does not exist in the target deployment — the FK `project_schemas_schema_id_fkey` fires and the whole restore transaction rolls back.
 

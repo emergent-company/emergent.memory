@@ -3,11 +3,15 @@ package memoryapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
 )
 
 const testToken = "emt_testtoken"
@@ -104,7 +108,7 @@ func TestCreateToken(t *testing.T) {
 }
 
 func TestListTokens(t *testing.T) {
-	srv, cap := newTestServer(t, http.StatusOK, `{"tokens":[{"id":"t1","name":"one","tokenPrefix":"emt_one","scopes":["data:read"],"createdAt":"2026-01-02T03:04:05Z"},{"id":"t2","name":"two","tokenPrefix":"emt_two","scopes":[],"createdAt":"2026-02-03T04:05:06Z","revokedAt":"2026-03-04T05:06:07Z"}]}`)
+	srv, cap := newTestServer(t, http.StatusOK, `{"tokens":[{"id":"t1","name":"one","tokenPrefix":"emt_one","scopes":["data:read"],"createdAt":"2026-01-02T03:04:05Z","isRevoked":false,"ownedByCaller":true},{"id":"t2","name":"two","tokenPrefix":"emt_two","scopes":[],"createdAt":"2026-02-03T04:05:06Z","revokedAt":"2026-03-04T05:06:07Z","isRevoked":true}]}`)
 	client := newClientFor(t, srv.URL)
 
 	tokens, err := client.ListTokens(context.Background(), "p1")
@@ -118,8 +122,20 @@ func TestListTokens(t *testing.T) {
 	if tokens[0].ID != "t1" || tokens[0].Name != "one" || tokens[0].Prefix != "emt_one" {
 		t.Errorf("tokens[0] = %+v", tokens[0])
 	}
+	if tokens[0].IsRevoked {
+		t.Errorf("tokens[0].IsRevoked = true, want false")
+	}
+	if !tokens[0].OwnedByCaller {
+		t.Errorf("tokens[0].OwnedByCaller = false, want true")
+	}
 	if tokens[1].RevokedAt == nil || *tokens[1].RevokedAt != "2026-03-04T05:06:07Z" {
 		t.Errorf("tokens[1].RevokedAt = %v, want the revoked timestamp", tokens[1].RevokedAt)
+	}
+	if !tokens[1].IsRevoked {
+		t.Errorf("tokens[1].IsRevoked = false, want true")
+	}
+	if tokens[1].OwnedByCaller {
+		t.Errorf("tokens[1].OwnedByCaller = true, want false")
 	}
 }
 
@@ -179,4 +195,38 @@ func TestNewBearerClientWithHTTPClientOption(t *testing.T) {
 	if cap.auth != "Bearer tok" {
 		t.Errorf("Authorization = %q, want Bearer tok", cap.auth)
 	}
+}
+
+func TestIsTokenNameExists(t *testing.T) {
+	t.Run("direct conflict", func(t *testing.T) {
+		if !IsTokenNameExists(&sdkerrors.Error{StatusCode: 409, Code: "token_name_exists", Message: "exists"}) {
+			t.Error("IsTokenNameExists(direct token_name_exists) = false, want true")
+		}
+	})
+	t.Run("wrapped conflict", func(t *testing.T) {
+		err := fmt.Errorf("memoryapi: create token: %w", &sdkerrors.Error{StatusCode: 409, Code: "token_name_exists", Message: "exists"})
+		if !IsTokenNameExists(err) {
+			t.Error("IsTokenNameExists(wrapped token_name_exists) = false, want true")
+		}
+	})
+	t.Run("empty code 409", func(t *testing.T) {
+		if IsTokenNameExists(&sdkerrors.Error{StatusCode: 409, Message: "conflict"}) {
+			t.Error("IsTokenNameExists(409 empty code) = true, want false")
+		}
+	})
+	t.Run("non-409 with token_name_exists code", func(t *testing.T) {
+		if IsTokenNameExists(&sdkerrors.Error{StatusCode: 400, Code: "token_name_exists", Message: "exists"}) {
+			t.Error("IsTokenNameExists(non-409 token_name_exists) = true, want false")
+		}
+	})
+	t.Run("different code", func(t *testing.T) {
+		if IsTokenNameExists(&sdkerrors.Error{StatusCode: 409, Code: "other", Message: "x"}) {
+			t.Error("IsTokenNameExists(different code) = true, want false")
+		}
+	})
+	t.Run("plain error", func(t *testing.T) {
+		if IsTokenNameExists(errors.New("boom")) {
+			t.Error("IsTokenNameExists(plain error) = true, want false")
+		}
+	})
 }

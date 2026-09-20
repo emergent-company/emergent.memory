@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -15,6 +16,27 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/labstack/echo/v4"
 )
+
+// MaxImportArchiveSize is the maximum accepted size (1 GiB) of an imported
+// backup archive uploaded via the import endpoint.
+const MaxImportArchiveSize int64 = 1 << 30
+
+// isZipArchive reports whether data starts with a ZIP local-file, empty-archive,
+// or spanned-archive signature (PK\x03\x04 / PK\x05\x06 / PK\x07\x08).
+func isZipArchive(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	if data[0] != 'P' || data[1] != 'K' {
+		return false
+	}
+	switch data[2] {
+	case 0x03, 0x05, 0x07:
+		return data[3] == data[2]+1
+	default:
+		return false
+	}
+}
 
 type Handler struct {
 	service *Service
@@ -154,6 +176,130 @@ func (h *Handler) CreateBackup(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusAccepted, backup)
+}
+
+// parseRetentionDays reads the optional retentionDays form value, defaulting to
+// 30 when absent and validating the 1..365 range.
+func parseRetentionDays(c echo.Context) (int, *apperror.Error) {
+	retentionDays := 30
+	if rd := c.FormValue("retentionDays"); rd != "" {
+		parsed, err := strconv.Atoi(rd)
+		if err != nil {
+			return 0, apperror.NewBadRequest("retentionDays must be an integer")
+		}
+		retentionDays = parsed
+	}
+	if retentionDays < 1 || retentionDays > 365 {
+		return 0, apperror.NewBadRequest("retentionDays must be between 1 and 365")
+	}
+	return retentionDays, nil
+}
+
+// readArchiveUpload parses the multipart `file` field, enforcing the size cap
+// and ZIP signature, and returns the raw archive bytes. The caller must have
+// already capped the request body with http.MaxBytesReader (see ImportBackup) so
+// that an oversized upload is rejected while being read, not after.
+func readArchiveUpload(c echo.Context) ([]byte, *apperror.Error) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return nil, apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+		}
+		return nil, apperror.NewBadRequest("file field is required")
+	}
+
+	if file.Size > MaxImportArchiveSize {
+		return nil, apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		return nil, apperror.NewInternal("failed to open uploaded file", err)
+	}
+	defer src.Close()
+
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to read uploaded file", err)
+	}
+	if int64(len(data)) > MaxImportArchiveSize {
+		return nil, apperror.New(http.StatusRequestEntityTooLarge, "file_too_large", "archive exceeds maximum size")
+	}
+
+	if !isZipArchive(data) {
+		return nil, apperror.New(http.StatusUnsupportedMediaType, "unsupported_media_type", "uploaded file must be a ZIP archive")
+	}
+
+	return data, nil
+}
+
+// ImportBackup accepts a backup archive produced by another deployment and
+// registers it as a ready, imported backup for clone restore.
+// @Summary      Import backup archive
+// @Description  Accepts a backup ZIP archive (multipart/form-data field `file`, max 1 GiB) from another deployment, validates its manifest and checksums, stores it, and registers a `ready` backup flagged `imported`. Imported backups support clone restore only.
+// @Tags         backups
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        orgId path string true "Organization ID (UUID)"
+// @Param        file formData file true "Backup archive (ZIP)"
+// @Param        retentionDays formData int false "Retention days (1-365, default 30)"
+// @Success      201 {object} Backup "Backup registered (status: ready, imported: true)"
+// @Failure      400 {object} apperror.Error "Invalid archive"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Not a member of the target organization"
+// @Failure      413 {object} apperror.Error "Archive too large"
+// @Failure      415 {object} apperror.Error "Not a ZIP archive"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/v1/organizations/{orgId}/backups/import [post]
+// @Security     bearerAuth
+func (h *Handler) ImportBackup(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	orgID := c.Param("orgId")
+
+	// Cap the request body before anything reads the form. Multipart parsing
+	// consumes the entire body (spilling parts past maxMemory to temp files), so
+	// a limit applied after the first FormValue/FormFile call would let an
+	// oversized upload be fully consumed before the cap is ever enforced.
+	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, MaxImportArchiveSize+1024)
+
+	// Org membership check first: authorization before any body work.
+	var memberCount int64
+	if err := h.service.repo.db.NewSelect().
+		Table("kb.organization_memberships").
+		ColumnExpr("count(*)").
+		Where("organization_id = ?", orgID).
+		Where("user_id = ?", user.ID).
+		Scan(c.Request().Context(), &memberCount); err != nil {
+		return apperror.NewInternal("failed to verify org membership", err)
+	}
+	if memberCount == 0 {
+		return apperror.NewForbidden("you are not a member of the target organization")
+	}
+
+	retentionDays, aerr := parseRetentionDays(c)
+	if aerr != nil {
+		return aerr
+	}
+
+	data, aerr := readArchiveUpload(c)
+	if aerr != nil {
+		return aerr
+	}
+
+	backup, err := h.service.ImportBackup(c.Request().Context(), orgID, user.ID, data, retentionDays)
+	if err != nil {
+		if errors.Is(err, ErrInvalidArchive) {
+			return apperror.NewBadRequest(err.Error())
+		}
+		h.log.Error("failed to import backup",
+			slog.String("org_id", orgID),
+			slog.Any("error", err),
+		)
+		return apperror.NewInternal("failed to import backup", err)
+	}
+
+	return c.JSON(http.StatusCreated, backup)
 }
 
 // GetBackup retrieves a specific backup by ID
@@ -341,6 +487,9 @@ func (h *Handler) restoreOverwrite(c echo.Context, ctx context.Context, user *au
 	}
 	if backup.Status != BackupStatusReady {
 		return apperror.NewBadRequest("backup is not ready for restore")
+	}
+	if backup.Imported {
+		return apperror.NewBadRequest("imported backups support clone restore only")
 	}
 	if backup.ProjectID != projectID {
 		return apperror.NewBadRequest("backup does not belong to this project")

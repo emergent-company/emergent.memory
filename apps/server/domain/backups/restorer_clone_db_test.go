@@ -15,10 +15,11 @@ import (
 
 // TestCloneRestoreSkipsUnresolvableSchemaLinks is the regression test for
 // GitHub issue #592: clone-restore into a differently-bootstrapped deployment
-// must skip kb.project_schemas rows whose schema_id points at the SOURCE
-// deployment's global builtin graph_schemas UUID (which does not exist in the
-// target) instead of failing the whole restore on the
-// project_schemas_schema_id_fkey constraint.
+// must skip kb.project_schemas and kb.project_edge_schema_registry rows whose
+// schema_id points at the SOURCE deployment's global builtin graph_schemas UUID
+// (which does not exist in the target) instead of failing the whole restore on
+// the project_schemas_schema_id_fkey / project_edge_schema_registry_schema_id_fkey
+// constraints.
 func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping database integration test in short mode")
@@ -54,7 +55,8 @@ func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 	}
 
 	// --- Deployment A (source): its own global builtin UUID, a project-owned
-	// schema, and two project_schemas links. ---
+	// schema, and links in both project_schemas and
+	// project_edge_schema_registry. ---
 	orgA := uuid.NewString()
 	projectA := uuid.NewString()
 	builtinA := uuid.NewString() // deployment A's global builtin schema UUID
@@ -68,6 +70,10 @@ func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 		uuid.NewString(), projectA, ownedA)
 	mustExec(srcDB.DB, `INSERT INTO kb.project_schemas (id, project_id, schema_id) VALUES (?, ?, ?)`,
 		uuid.NewString(), projectA, builtinA)
+	mustExec(srcDB.DB, `INSERT INTO kb.project_edge_schema_registry (id, project_id, schema_id, type_name) VALUES (?, ?, ?, ?)`,
+		uuid.NewString(), projectA, ownedA, "RELATES_TO")
+	mustExec(srcDB.DB, `INSERT INTO kb.project_edge_schema_registry (id, project_id, schema_id, type_name) VALUES (?, ?, ?, ?)`,
+		uuid.NewString(), projectA, builtinA, "OTHER_TYPE")
 
 	// --- Deployment B (target): its own global builtin UUID (different value),
 	// plus the target project the clone will populate. ---
@@ -84,8 +90,8 @@ func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 		uuid.NewString(), newProjectID, builtinB)
 
 	// Build the archive as the exporter would: graph_schemas carries only the
-	// project-owned row (global rows are filtered by project_id), while
-	// project_schemas carries both links (they are project-scoped).
+	// project-owned row (global rows are filtered by project_id), while the link
+	// tables carry both the owned and the builtin links (they are project-scoped).
 	archive := &Archive{
 		tableData: map[string][]byte{
 			"graph_schemas": mustNDJSON(t, []map[string]any{{
@@ -100,6 +106,10 @@ func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 			"project_schemas": mustNDJSON(t, []map[string]any{
 				{"id": uuid.NewString(), "project_id": projectA, "schema_id": ownedA},
 				{"id": uuid.NewString(), "project_id": projectA, "schema_id": builtinA},
+			}),
+			"project_edge_schema_registry": mustNDJSON(t, []map[string]any{
+				{"id": uuid.NewString(), "project_id": projectA, "schema_id": ownedA, "type_name": "RELATES_TO"},
+				{"id": uuid.NewString(), "project_id": projectA, "schema_id": builtinA, "type_name": "OTHER_TYPE"},
 			}),
 		},
 	}
@@ -139,19 +149,31 @@ func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 		t.Fatalf("inserted %d project_schemas rows, want 1 (builtin link must be skipped)", inserted)
 	}
 
+	erRows, err := archive.Rows("project_edge_schema_registry")
+	if err != nil {
+		t.Fatalf("archive project_edge_schema_registry rows: %v", err)
+	}
+	inserted, err = restorer.insertTableRows(ctx, tx, specs["project_edge_schema_registry"], erRows, remap)
+	if err != nil {
+		t.Fatalf("insert project_edge_schema_registry: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted %d project_edge_schema_registry rows, want 1 (builtin link must be skipped)", inserted)
+	}
+
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit clone transaction: %v", err)
 	}
 
-	countLinks := func(db *bun.DB, projectID, schemaID string) int {
+	countLinks := func(db *bun.DB, table, projectID, schemaID string) int {
 		t.Helper()
 		n, err := db.NewSelect().
-			Table("kb.project_schemas").
+			Table(table).
 			Where("project_id = ?", projectID).
 			Where("schema_id = ?", schemaID).
 			Count(ctx)
 		if err != nil {
-			t.Fatalf("count project_schemas: %v", err)
+			t.Fatalf("count %s: %v", table, err)
 		}
 		return n
 	}
@@ -161,17 +183,23 @@ func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 	if !ok {
 		t.Fatalf("owned schema %s was not registered in remap", ownedA)
 	}
-	if got := countLinks(dstDB.DB, newProjectID, ownedNew); got != 1 {
-		t.Errorf("project-owned link remapped = %d rows, want 1", got)
+	if got := countLinks(dstDB.DB, "kb.project_schemas", newProjectID, ownedNew); got != 1 {
+		t.Errorf("project-owned project_schemas link remapped = %d rows, want 1", got)
+	}
+	if got := countLinks(dstDB.DB, "kb.project_edge_schema_registry", newProjectID, ownedNew); got != 1 {
+		t.Errorf("project-owned project_edge_schema_registry link remapped = %d rows, want 1", got)
 	}
 
 	// No row references the source deployment's builtin UUID.
-	if got := countLinks(dstDB.DB, newProjectID, builtinA); got != 0 {
-		t.Errorf("source builtin link = %d rows, want 0", got)
+	if got := countLinks(dstDB.DB, "kb.project_schemas", newProjectID, builtinA); got != 0 {
+		t.Errorf("source builtin project_schemas link = %d rows, want 0", got)
+	}
+	if got := countLinks(dstDB.DB, "kb.project_edge_schema_registry", newProjectID, builtinA); got != 0 {
+		t.Errorf("source builtin project_edge_schema_registry link = %d rows, want 0", got)
 	}
 
 	// The target deployment's own builtin link remains present.
-	if got := countLinks(dstDB.DB, newProjectID, builtinB); got != 1 {
+	if got := countLinks(dstDB.DB, "kb.project_schemas", newProjectID, builtinB); got != 1 {
 		t.Errorf("target builtin link = %d rows, want 1", got)
 	}
 }
