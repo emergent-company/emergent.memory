@@ -205,20 +205,31 @@ func TestScalarHelpers(t *testing.T) {
 	}
 }
 
-func TestRemapRowUUIDsNullsOwnerUserID(t *testing.T) {
-	remap := map[string]string{}
-	cols := []dbColumn{
-		{Name: "id", DataType: "uuid", UDTName: "uuid"},
-		{Name: "owner_user_id", DataType: "uuid", UDTName: "uuid"},
+func TestChatConversationsNullForeignOwnerUserID(t *testing.T) {
+	// The chat_conversations spec must null owner_user_id when it cannot be
+	// remapped, so a foreign owner never lands as a dangling FK on clone.
+	specs := restoreTableOrder()
+	var spec *restoreTableSpec
+	for i := range specs {
+		if specs[i].name == "chat_conversations" {
+			spec = &specs[i]
+			break
+		}
 	}
-	row := map[string]any{
-		"id":            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-		"owner_user_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+	if spec == nil {
+		t.Fatal("chat_conversations table spec not found")
 	}
-	remapRowUUIDs(row, remap, []string{"owner_user_id"}, cols)
+	if got := spec.refs["owner_user_id"].action; got != refNull {
+		t.Fatalf("chat_conversations owner_user_id policy = %q, want %q", got, refNull)
+	}
 
-	if row["id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
-		t.Error("row id was not remapped to a fresh UUID")
+	row := map[string]any{"owner_user_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+	skip, err := applyRefs(row, map[string]string{}, spec.refs)
+	if err != nil {
+		t.Fatalf("applyRefs: %v", err)
+	}
+	if skip {
+		t.Fatal("applyRefs unexpectedly skipped the row")
 	}
 	if row["owner_user_id"] != nil {
 		t.Errorf("owner_user_id = %v, want nil (foreign owner must be nulled on clone)", row["owner_user_id"])
@@ -256,4 +267,72 @@ func TestFilterCloneMembershipsDropsForeignUsers(t *testing.T) {
 	if !seen["restorer-1"] {
 		t.Error("expected restorer-1 to be added")
 	}
+}
+
+func TestApplyRefs(t *testing.T) {
+	sourceID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	targetID := "11111111-1111-1111-1111-111111111111"
+	unmapped := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	remap := map[string]string{sourceID: targetID}
+
+	t.Run("value in remap is remapped", func(t *testing.T) {
+		row := map[string]any{"schema_id": sourceID}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refSkip}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false for a resolvable reference")
+		}
+		if got := row["schema_id"]; got != targetID {
+			t.Errorf("schema_id = %v, want %s", got, targetID)
+		}
+	})
+
+	t.Run("unmapped refNull is nulled", func(t *testing.T) {
+		row := map[string]any{"parent_document_id": unmapped}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"parent_document_id": {action: refNull}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false for refNull")
+		}
+		if row["parent_document_id"] != nil {
+			t.Errorf("parent_document_id = %v, want nil", row["parent_document_id"])
+		}
+	})
+
+	t.Run("unmapped refSkip skips row", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		skip, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refSkip}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !skip {
+			t.Fatal("expected skip=true for refSkip")
+		}
+	})
+
+	t.Run("unmapped refFail errors", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		_, err := applyRefs(row, remap, map[string]refPolicy{"schema_id": {action: refFail}})
+		if err == nil {
+			t.Fatal("expected error for refFail")
+		}
+	})
+
+	t.Run("unmapped with no policy preserves raw value", func(t *testing.T) {
+		row := map[string]any{"schema_id": unmapped}
+		skip, err := applyRefs(row, remap, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if skip {
+			t.Fatal("expected skip=false")
+		}
+		if got := row["schema_id"]; got != unmapped {
+			t.Errorf("schema_id = %v, want %s", got, unmapped)
+		}
+	})
 }

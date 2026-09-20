@@ -63,6 +63,7 @@ func wrapResult(data any) (*mcp.ToolResult, error) {
 				Text: string(jsonBytes),
 			},
 		},
+		StructuredContent: mcp.StructuredContentFromJSON(jsonBytes),
 	}, nil
 }
 

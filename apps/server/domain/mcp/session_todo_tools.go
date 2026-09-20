@@ -18,6 +18,9 @@ func sessionTodoToolDefinitions() []ToolDefinition {
 		{
 			Name:        "session-todo-list",
 			Description: "List todos for an agent session. Optionally filter by status (comma-separated: draft,pending,in_progress,completed,cancelled).",
+			OutputSchema: typedObjectOutputSchema(map[string]PropertySchema{
+				"todos": {Type: "array", Items: &PropertySchema{Type: "object"}},
+			}, []string{"todos"}),
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -34,8 +37,9 @@ func sessionTodoToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
-			Name:        "session-todo-update",
-			Description: "Update a session todo's status, content, or sort order.",
+			Name:         "session-todo-update",
+			Description:  "Update a session todo's status, content, or sort order.",
+			OutputSchema: objectOutputSchema(),
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -87,8 +91,18 @@ func (s *Service) executeSessionTodoList(ctx context.Context, args map[string]an
 	if err != nil {
 		return nil, err
 	}
+	return sessionTodoListResult(todos), nil
+}
+
+// sessionTodoListResult builds the session-todo-list tool result: the text
+// block stays the raw `[...]` array while structuredContent wraps it as
+// {"todos": [...]} (issue #586).
+func sessionTodoListResult(todos []*sessiontodos.SessionTodo) *ToolResult {
 	data, _ := json.Marshal(todos)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(data)}}}, nil
+	return &ToolResult{
+		Content:           []ContentBlock{{Type: "text", Text: string(data)}},
+		StructuredContent: map[string]any{"todos": todos},
+	}
 }
 
 func (s *Service) executeSessionTodoUpdate(ctx context.Context, args map[string]any) (*ToolResult, error) {
@@ -112,6 +126,5 @@ func (s *Service) executeSessionTodoUpdate(ctx context.Context, args map[string]
 	if err != nil {
 		return nil, err
 	}
-	data, _ := json.Marshal(todo)
-	return &ToolResult{Content: []ContentBlock{{Type: "text", Text: string(data)}}}, nil
+	return s.wrapResultCompact(todo)
 }
