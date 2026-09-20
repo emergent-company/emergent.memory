@@ -144,16 +144,16 @@ func (w *GraphEmbeddingWorker) Stop(ctx context.Context) error {
 	return nil
 }
 
-// recoverStaleJobsOnStartup recovers stale jobs on startup
+// recoverStaleJobsOnStartup recovers orphaned processing jobs on startup
 func (w *GraphEmbeddingWorker) recoverStaleJobsOnStartup(ctx context.Context) {
-	recovered, err := w.jobs.RecoverStaleJobs(ctx, 10)
+	recovered, err := w.jobs.RecoverOrphanedProcessingJobs(ctx)
 	if err != nil {
-		w.log.Warn("failed to recover stale jobs on startup",
+		w.log.Warn("failed to recover orphaned jobs on startup",
 			slog.String("error", err.Error()))
 		return
 	}
 	if recovered > 0 {
-		w.log.Info("recovered stale graph embedding jobs on startup",
+		w.log.Info("recovered orphaned graph embedding jobs on startup",
 			slog.Int("count", recovered))
 	}
 }

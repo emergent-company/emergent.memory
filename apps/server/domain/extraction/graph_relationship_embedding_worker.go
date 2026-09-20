@@ -150,13 +150,13 @@ func (w *GraphRelationshipEmbeddingWorker) Stop(ctx context.Context) error {
 }
 
 func (w *GraphRelationshipEmbeddingWorker) recoverStaleJobsOnStartup(ctx context.Context) {
-	recovered, err := w.jobs.RecoverStaleJobs(ctx, 10)
+	recovered, err := w.jobs.RecoverOrphanedProcessingJobs(ctx)
 	if err != nil {
-		w.log.Warn("failed to recover stale rel embedding jobs", slog.String("error", err.Error()))
+		w.log.Warn("failed to recover orphaned rel embedding jobs", slog.String("error", err.Error()))
 		return
 	}
 	if recovered > 0 {
-		w.log.Info("recovered stale relationship embedding jobs on startup", slog.Int("count", recovered))
+		w.log.Info("recovered orphaned relationship embedding jobs on startup", slog.Int("count", recovered))
 	}
 }
 

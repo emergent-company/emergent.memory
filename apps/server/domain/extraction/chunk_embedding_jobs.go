@@ -340,6 +340,29 @@ func (s *ChunkEmbeddingJobsService) RecoverStaleJobs(ctx context.Context, staleT
 	return int(count), nil
 }
 
+// RecoverOrphanedProcessingJobs resets ALL 'processing' jobs to 'pending'.
+// Called on worker startup: a freshly-started process has no in-flight work, so
+// every 'processing' job was left behind by a previous process that crashed or
+// was restarted. Resetting them makes the queue restart-resistant. (In a
+// multi-instance deployment this may briefly double-process a peer's job, which
+// is harmless because embedding generation is idempotent.)
+func (s *ChunkEmbeddingJobsService) RecoverOrphanedProcessingJobs(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
+		SET status = 'pending',
+			started_at = NULL,
+			scheduled_at = now(),
+			updated_at = now()
+		WHERE status = 'processing'`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("recover orphaned processing jobs: %w", err)
+	}
+	count, _ := result.RowsAffected()
+	if count > 0 {
+		s.log.Warn("recovered orphaned chunk embedding jobs on startup", slog.Int64("count", count))
+	}
+	return int(count), nil
+}
+
 // GetJob retrieves a job by ID
 func (s *ChunkEmbeddingJobsService) GetJob(ctx context.Context, id string) (*ChunkEmbeddingJob, error) {
 	job := &ChunkEmbeddingJob{}
