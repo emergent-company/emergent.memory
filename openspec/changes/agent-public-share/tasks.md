@@ -7,7 +7,7 @@
 - [x] 1.5 Resolve project/org exclusively from the bound share link; ignore/strip any client `X-Project-ID`/`X-Org-ID`
 - [x] 1.6 Add `rejectShareTokenOutsideSurface` guard in `RequireAuth`: 403 for any request carrying `share:agent-chat` outside `/api/share/agent`
 - [x] 1.7 Unit tests: reserved-scope rejection, mint-path-only marker, binding uniqueness, scope-without-binding denied, binding-without-scope denied, revoked/expired 410, project/org resolution ignores client headers, out-of-surface 403 (`share_scope_test.go`) (TDD)
-- [x] 1.8 Migration `00159_agent_share_links.sql` (creates `kb.agent_share_links`, `kb.agent_share_sessions`, `kb.agent_share_end_users`, `kb.agent_share_usage`, `kb.agent_tool_approvals.share_link_id`, `kb.agent_share_access_log`) + `apps/server/internal/testutil/schema.sql` snapshot update
+- [x] 1.8 Migration `00160_agent_share_links.sql` (creates `kb.agent_share_links`, `kb.agent_share_sessions`, `kb.agent_share_end_users`, `kb.agent_share_usage`, `kb.agent_tool_approvals.share_link_id`, `kb.agent_share_access_log`) + `apps/server/internal/testutil/schema.sql` snapshot update
 
 ## 2. Phase 1a — gateway public gate + sealed-cookie exchange
 

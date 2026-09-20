@@ -562,7 +562,7 @@ type AgentToolApproval struct {
 	UpdatedAt   time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 
 	// ShareLinkID is the public agent-share link this approval's run belongs to
-	// (nullable — nil for non-share runs). Added by migration 00159.
+	// (nullable — nil for non-share runs). Added by migration 00160.
 	ShareLinkID *string `bun:"share_link_id,type:uuid" json:"shareLinkId,omitempty"`
 
 	// ConversationID is the chat conversation this approval's run belongs to,
