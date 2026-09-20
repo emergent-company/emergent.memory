@@ -289,14 +289,8 @@ func assistantReply(ctx context.Context, repo agentOnceRepository, runID string)
 			continue
 		}
 		var b strings.Builder
-		for _, part := range memoryContentToACPParts(m.Content) {
-			if part.ContentType != "text/plain" || part.Content == "" {
-				continue
-			}
-			if b.Len() > 0 {
-				b.WriteByte('\n')
-			}
-			b.WriteString(part.Content)
+		if text, ok := m.Content["text"].(string); ok && text != "" {
+			b.WriteString(text)
 		}
 		if b.Len() > 0 {
 			return b.String(), nil

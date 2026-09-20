@@ -171,13 +171,6 @@ func run() error {
 	}
 
 	newEPs := []NewEP{
-		// ACP routes (agents)
-		{"ep-agents-acp-ping", "agents", "GET", "/acp/v1/ping", "Ping", "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-getrun", "agents", "GET", "/acp/v1/agents/:name/runs/:runId", "GetRun", "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-getrunevents", "agents", "GET", "/acp/v1/agents/:name/runs/:runId/events", "GetRunEvents", "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-createrun", "agents", "POST", "/acp/v1/agents/:name/runs", "CreateRun", "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-resumerun", "agents", "POST", "/acp/v1/agents/:name/runs/:runId/resume", "ResumeRun", "apps/server/domain/agents/acp_routes.go"},
-		{"ep-agents-acp-createsession", "agents", "POST", "/acp/v1/sessions", "CreateSession", "apps/server/domain/agents/acp_routes.go"},
 		{"ep-agents-getrunbyid", "agents", "GET", "/api/v1/runs/:runId", "GetRunByID", "apps/server/domain/agents/routes.go"},
 		// authinfo
 		{"ep-authinfo-issuer", "authinfo", "GET", "/api/auth/issuer", "Issuer", "apps/server/domain/authinfo/routes.go"},

@@ -128,12 +128,6 @@ type AgentToolHandler interface {
 	ExecuteListADKSessions(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 	ExecuteGetADKSession(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
 
-	// ACP (Agent Communication Protocol)
-	ExecuteACPListAgents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
-	ExecuteACPTriggerRun(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
-	ExecuteACPGetRunStatus(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
-	ExecuteACPGetRunEvents(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error)
-
 	// GetAgentToolDefinitions returns tool definitions for all agent tools
 	GetAgentToolDefinitions() []ToolDefinition
 
