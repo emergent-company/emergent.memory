@@ -66,7 +66,7 @@ func TestRenderAgentGeneralVisibilityDropdown(t *testing.T) {
 	if !strings.Contains(html, ">Visibility</h2>") {
 		t.Error("visibility section heading missing")
 	}
-	if !strings.Contains(html, "Controls who can discover this agent. Changes take effect immediately.") {
+	if !strings.Contains(html, "Controls who can discover this agent. Changes take effect after you save.") {
 		t.Error("visibility section description missing")
 	}
 	// appears after Appearance's controls (icon/color pickers)
