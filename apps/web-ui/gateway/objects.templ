@@ -220,7 +220,12 @@ templ propertyInput(def objectPropertyDef, vals []string) {
 	}}
 	if def.Type == "boolean" {
 		<input type="hidden" name={ "prop_" + def.Name } value="false"/>
-		<input type="checkbox" name={ "prop_" + def.Name } value="true" checked?={ v == "true" } class="toggle"/>
+		@fm.ToggleInput(fm.ToggleInputProps{
+			Name:    "prop_" + def.Name,
+			Value:   "true",
+			Checked: v == "true",
+			Class:   "toggle",
+		})
 	} else if def.Type == "date" {
 		<input name={ "prop_" + def.Name } type="date" value={ v } class="input w-full"/>
 	} else if def.Type == "number" {
