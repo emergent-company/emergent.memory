@@ -79,6 +79,24 @@ Non-trivial work is spec-driven **and** ships as a **single** pull request. The 
 - **Archive after merge.** Run `openspec archive` (sync delta specs → `openspec/specs/`) as a post-merge follow-up, never as a pre-implementation PR.
 - **PR description:** link the OpenSpec change directory and summarize the delta specs.
 
+## Out-of-Scope Findings — File a GitHub Issue
+
+While working, you'll notice things outside the current task: unrelated bugs, missing edge cases, refactors, feature ideas, or optional improvements. Do **not** fix them inline or let them silently disappear.
+
+- If a finding is **not part of the current task's scope**, create a GitHub issue instead of expanding the PR.
+- **Search first** to avoid duplicates: `gh issue list --repo emergent-company/emergent.memory --search "<keywords>"`. If a matching open issue exists, link to it rather than opening a new one.
+- **Get user confirmation before creating** — show the drafted title and body and let the user edit, add context, or decline. Do not open the issue autonomously. (Searching and linking to an existing issue do not require confirmation.)
+- **Create** with a clear title and body:
+
+  ```bash
+  gh issue create --repo emergent-company/emergent.memory \
+    --title "<concise summary>" \
+    --body "<what you found, where, why it matters, suggested fix if known>"
+  ```
+
+- If the finding relates to your current PR, reference it in the PR description or commit message (`Refs #<issue>`).
+- Never include secrets, tokens, or credentials in the issue body.
+
 ## Commands
 
 ```bash

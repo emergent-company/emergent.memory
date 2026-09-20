@@ -31,10 +31,13 @@ func main() {
 	}
 	defer sentry.Flush(2 * time.Second)
 	memory := NewMemoryClient(cfg.MemoryURL, cfg.MemoryToken, cfg.MemoryProjectID)
+	memory.shareRefSecret = cfg.ShareRefSecret
 	sup := NewSupervisor(memory, cfg.BridgeBin, cfg.BridgeArgs, cfg.BridgeWorkdir, cfg.SupervisorInterval, cfg.WorkerInternalKey, "http://127.0.0.1:"+cfg.Port)
 	s := &Server{cfg: cfg, memory: memory, supervisor: sup, bindings: newVoiceBindingStore(), shutdownCh: make(chan struct{})}
 	s.hub = newConversationHub(s)
 	s.registry = newAccountRegistry()
+	s.shareIPLimiter = newKeyedRateLimiter(cfg.ShareRateIPPerMin, cfg.ShareRateIPBurst)
+	s.shareLinkLimiter = newKeyedRateLimiter(cfg.ShareRateLinkPerMin, cfg.ShareRateLinkBurst)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -43,7 +46,12 @@ func main() {
 
 	e := echo.New()
 	e.HideBanner = true
-	e.Use(middleware.RequestLogger())
+	// Resolve the real client IP from X-Forwarded-For set by traefik. The default
+	// extractor trusts loopback/private/link-local peers, so the gateway — always
+	// reached through traefik on a private network — keys rate limits (and any
+	// future RealIP() use) on the client rather than traefik's socket address.
+	e.IPExtractor = echo.ExtractIPFromXFFHeader()
+	e.Use(requestLogger())
 	// Compress text/HTML/CSS/JS/JSON responses. The 185KB app CSS and go-daisy's
 	// 473KB CSS compress ~5-10x, and every HTMX partial swap shrinks too.
 	// echo's Gzip compresses by length, not content-type, so it would also gzip
@@ -202,6 +210,30 @@ func main() {
 	e.GET("/auth/callback", s.authCallback)
 	e.POST("/auth/logout", s.authLogout)
 	e.POST("/auth/switch", s.authSwitch)
+	// Public agent-share (anonymous end users; see share.go). The share key
+	// arrives in the URL fragment and is exchanged once for a sealed cookie;
+	// every /share/api/* call rides that cookie. Exempt from the session/key
+	// gate via publicAuthPath. Hardened + rate-limited at route scope only
+	// (shareSecurityHeaders / shareRateLimit never apply to the authed app).
+	share := e.Group("/share")
+	share.Use(shareSecurityHeaders, s.shareRateLimit)
+	share.GET("/agent", s.sharePage)
+	share.GET("/api/config", s.shareConfig)
+	share.POST("/api/exchange", s.shareExchange)
+	share.POST("/api/chat", s.shareChat)
+	share.GET("/api/sessions", s.shareListSessions)
+	share.POST("/api/sessions", s.shareCreateSession)
+	share.GET("/api/sessions/:id", s.shareGetSession)
+	share.POST("/api/sessions/:id/archive", s.shareArchiveSession)
+	share.GET("/api/questions", s.shareQuestions)
+	share.POST("/api/sessions/:id/approvals/:questionId", s.shareApprove)
+	share.GET("/api/partial/sessions", s.sharePartialSessions)
+	// Owner agent-share management (session-gated; see share_owner.go).
+	e.GET("/agents/:id/share", s.uiAgentShare)
+	e.POST("/agents/:id/share-links", s.uiAgentShareCreate)
+	e.POST("/agents/:id/share-links/:linkId/rotate", s.uiAgentShareRotate)
+	e.POST("/agents/:id/share-links/:linkId/revoke", s.uiAgentShareRevoke)
+	e.GET("/agents/:id/share-links/:linkId/reveal", s.uiAgentShareReveal)
 	// Project switcher + create (PRG form posts; see project_ui.go).
 	e.POST("/projects", s.uiCreateProject)
 	e.POST("/projects/activate", s.uiActivateProject)

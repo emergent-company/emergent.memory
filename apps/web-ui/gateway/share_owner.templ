@@ -1,0 +1,31 @@
+package main
+
+import (
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// AgentSharePage renders the owner-facing share-links page: the agent header,
+// the section sub-nav, and the ShareLinksPanel. A flash banner surfaces the
+// one-time URL after create/rotate.
+templ AgentSharePage(data shareLinksPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "Share links")
+			@layout.Rail(agentSubNav(data.Agent.ID, "share", ""), nil) {
+				if data.FlashMsg != "" {
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertSuccess,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--circle-check",
+						Message: data.FlashMsg,
+						Attrs:   templ.Attributes{"data-testid": "share-links-flash"},
+					})
+				}
+				@ShareLinksPanel(data.Panel)
+			}
+		}
+	}
+}

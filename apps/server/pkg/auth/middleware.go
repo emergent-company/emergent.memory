@@ -131,6 +131,34 @@ func NewMiddleware(p MiddlewareParams) *Middleware {
 	return m
 }
 
+// shareAgentChatScope is the reserved marker scope minted on public agent-share
+// link keys. It is only valid under /api/share/agent (see RequireAuth).
+const shareAgentChatScope = "share:agent-chat"
+
+// hasShareChatScope reports whether scopes contains the share:agent-chat marker.
+func hasShareChatScope(scopes []string) bool {
+	for _, s := range scopes {
+		if s == shareAgentChatScope {
+			return true
+		}
+	}
+	return false
+}
+
+// rejectShareTokenOutsideSurface returns a 403 error when the request path is
+// outside /api/share/agent but the token carries the share:agent-chat marker.
+// It is a pure function so it can be unit-tested independently of the auth
+// pipeline.
+func rejectShareTokenOutsideSurface(path string, scopes []string) error {
+	if !hasShareChatScope(scopes) {
+		return nil
+	}
+	if strings.HasPrefix(path, "/api/share/agent") {
+		return nil
+	}
+	return apperror.NewForbidden("share:agent-chat credentials are only valid on share endpoints")
+}
+
 // RequireAuth returns middleware that requires authentication
 func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -176,6 +204,15 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 
 			// Store user in Echo context (for handler-layer access via GetUser(c))
 			c.Set(string(UserContextKey), user)
+
+			// Fail closed: a share:agent-chat token is only valid under
+			// /api/share/agent. Reject it anywhere else (defense in depth — the
+			// key also carries no other scopes) so a leaked share key cannot reach
+			// project/member endpoints. Owner-management routes use normal user
+			// tokens and are unaffected.
+			if err := rejectShareTokenOutsideSurface(c.Request().URL.Path, user.Scopes); err != nil {
+				return m.authError(c, err)
+			}
 
 			// Inject auth data into the request's context.Context so
 			// downstream service layers can access user, project ID,
