@@ -153,11 +153,23 @@ func truncatePropertyValue(v any) any {
 }
 
 func truncateString(s string) string {
-	runes := []rune(s)
-	if len(runes) <= maxPropertyValueChars {
+	// Single pass over the string: count runes and, once the cap is reached,
+	// record the byte offset of the first rune past it. This avoids the full
+	// allocation of []rune(s), which would otherwise materialize the entire
+	// blob before truncation and reintroduce the memory pressure this guard
+	// exists to prevent.
+	cut := len(s)
+	runes := 0
+	for i := range s {
+		if runes == maxPropertyValueChars {
+			cut = i
+		}
+		runes++
+	}
+	if runes <= maxPropertyValueChars {
 		return s
 	}
-	return string(runes[:maxPropertyValueChars]) + "… [truncated " + strconv.Itoa(len(runes)-maxPropertyValueChars) + " chars]"
+	return s[:cut] + "… [truncated " + strconv.Itoa(runes-maxPropertyValueChars) + " chars]"
 }
 
 // slimEntity renders a graph object as a compact map for LLM consumption.

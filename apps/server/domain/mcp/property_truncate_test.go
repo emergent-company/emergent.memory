@@ -44,6 +44,27 @@ func TestTruncateString(t *testing.T) {
 			t.Errorf("truncateString(at cap) changed string")
 		}
 	})
+
+	t.Run("multi-byte runes truncated at rune boundary", func(t *testing.T) {
+		// 4500 3-byte runes — the byte offset must land on a rune boundary,
+		// not slice mid-rune.
+		s := strings.Repeat("界", 4500)
+		got := truncateString(s)
+
+		prefix := strings.Repeat("界", maxPropertyValueChars)
+		if !strings.HasPrefix(got, prefix) {
+			t.Errorf("truncateString did not keep the first %d multi-byte runes", maxPropertyValueChars)
+		}
+		if !strings.Contains(got, "[truncated 500 chars]") {
+			t.Errorf("truncateString marker missing: %q", got)
+		}
+		if !strings.HasSuffix(got, "界… [truncated 500 chars]") {
+			t.Errorf("truncateString = %q, want multi-byte prefix + marker", got)
+		}
+		if strings.Contains(got, "\uFFFD") {
+			t.Errorf("truncateString produced an invalid rune (mid-rune slice): %q", got)
+		}
+	})
 }
 
 func TestTruncateProperties(t *testing.T) {
