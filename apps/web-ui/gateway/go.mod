@@ -6,7 +6,7 @@ require (
 	github.com/a-h/templ v0.3.1020
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/emergent-company/go-daisy v0.12.1-0.20260920082201-781477d2006b
+	github.com/emergent-company/go-daisy v0.12.1-0.20260920192002-592bb1167513
 	github.com/getsentry/sentry-go v0.49.0
 	github.com/labstack/echo/v4 v4.15.1
 	github.com/livekit/protocol v1.50.4
@@ -15,6 +15,7 @@ require (
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/net v0.55.0
 	golang.org/x/sync v0.21.0
+	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -91,7 +92,6 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.81.1 // indirect
