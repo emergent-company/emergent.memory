@@ -114,7 +114,7 @@ func (h *Handler) ListBackups(c echo.Context) error {
 	if cursorStr := c.QueryParam("cursor"); cursorStr != "" {
 		parsed, err := ParseCursor(cursorStr)
 		if err != nil {
-			return apperror.ErrBadRequest.WithMessage("invalid cursor")
+			return apperror.NewBadRequest("invalid cursor")
 		}
 		cursor = parsed
 	}
