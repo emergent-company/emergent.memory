@@ -30656,6 +30656,9 @@ const docTemplate = `{
         "domain_schemas.SchemaMigrationRollbackRequest": {
             "type": "object",
             "properties": {
+                "max_objects": {
+                    "type": "integer"
+                },
                 "restore_type_registry": {
                     "type": "boolean"
                 },

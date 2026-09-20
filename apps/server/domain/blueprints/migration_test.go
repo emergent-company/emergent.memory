@@ -36,7 +36,7 @@ func newMigrationService(t *testing.T, db *bun.DB) (*Service, *schemas.Service, 
 		nil, nil, nil, nil, nil, nil)
 
 	schemasRepo := schemas.NewRepository(db, log)
-	schemasSvc := schemas.NewService(schemasRepo, graphSvc, log)
+	schemasSvc := schemas.NewService(schemasRepo, graphSvc, log, cfg)
 
 	repo := NewRepository(db, log)
 	skillsRepo := skills.NewRepository(db, log)
