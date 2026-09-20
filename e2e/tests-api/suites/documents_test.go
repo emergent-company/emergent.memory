@@ -29,7 +29,7 @@ func (s *DocumentsTestSuite) SetupTest() {
 func (s *DocumentsTestSuite) TearDownTest() {
 	// Clean up any documents created during the test
 	for _, id := range s.createdDocIDs {
-		_, _ = s.Client.DELETE("/api/v2/documents/"+id,
+		_, _ = s.Client.DELETE("/api/documents/"+id,
 			s.AdminAuth(),
 			s.ProjectHeader(),
 		)
@@ -43,7 +43,7 @@ func (s *DocumentsTestSuite) createDocument(filename, content string) (string, m
 		"content":  content,
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -67,7 +67,7 @@ func (s *DocumentsTestSuite) createDocument(filename, content string) (string, m
 func (s *DocumentsTestSuite) TestListDocuments_Empty() {
 	// First clean any existing documents by creating fresh unique context
 	// Note: In external tests we may have leftover data, so we check structure not count
-	resp, err := s.Client.GET("/api/v2/documents",
+	resp, err := s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "1"),
@@ -94,7 +94,7 @@ func (s *DocumentsTestSuite) TestListDocuments_ReturnsDocuments() {
 	id2, _ := s.createDocument("list-test-doc-2.txt", "Content 2")
 
 	// List documents
-	resp, err := s.Client.GET("/api/v2/documents",
+	resp, err := s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -128,7 +128,7 @@ func (s *DocumentsTestSuite) TestListDocuments_FilterBySourceType() {
 	s.createDocument("source-type-test.txt", "Content")
 
 	// Filter by sourceType=upload (default)
-	resp, err := s.Client.GET("/api/v2/documents",
+	resp, err := s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("sourceType", "upload"),
@@ -151,7 +151,7 @@ func (s *DocumentsTestSuite) TestListDocuments_FilterRootOnly() {
 	rootID, _ := s.createDocument("root-doc.txt", "Root content")
 
 	// Filter by rootOnly=true
-	resp, err := s.Client.GET("/api/v2/documents",
+	resp, err := s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("rootOnly", "true"),
@@ -191,7 +191,7 @@ func (s *DocumentsTestSuite) TestListDocuments_Limit() {
 	}
 
 	// Request with limit=2
-	resp, err := s.Client.GET("/api/v2/documents",
+	resp, err := s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "2"),
@@ -220,7 +220,7 @@ func (s *DocumentsTestSuite) TestListDocuments_CursorPagination() {
 	}
 
 	// First page
-	resp, err := s.Client.GET("/api/v2/documents",
+	resp, err := s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "2"),
@@ -250,7 +250,7 @@ func (s *DocumentsTestSuite) TestListDocuments_CursorPagination() {
 	}
 
 	// Second page using cursor
-	resp, err = s.Client.GET("/api/v2/documents",
+	resp, err = s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "2"),
@@ -276,7 +276,7 @@ func (s *DocumentsTestSuite) TestListDocuments_CursorPagination() {
 
 func (s *DocumentsTestSuite) TestListDocuments_InvalidLimit() {
 	// Request with limit > 500
-	resp, err := s.Client.GET("/api/v2/documents",
+	resp, err := s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "1000"),
@@ -295,7 +295,7 @@ func (s *DocumentsTestSuite) TestListDocuments_InvalidLimit() {
 
 func (s *DocumentsTestSuite) TestListDocuments_InvalidCursor() {
 	// Request with invalid cursor
-	resp, err := s.Client.GET("/api/v2/documents",
+	resp, err := s.Client.GET("/api/documents",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("cursor", "not-valid-base64!!!"),
@@ -321,7 +321,7 @@ func (s *DocumentsTestSuite) TestGetDocument_Success() {
 	id, _ := s.createDocument("get-test.txt", "Hello, World!")
 
 	// Get the document
-	resp, err := s.Client.GET("/api/v2/documents/"+id,
+	resp, err := s.Client.GET("/api/documents/"+id,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -340,7 +340,7 @@ func (s *DocumentsTestSuite) TestGetDocument_Success() {
 }
 
 func (s *DocumentsTestSuite) TestGetDocument_NotFound() {
-	resp, err := s.Client.GET("/api/v2/documents/00000000-0000-0000-0000-000000000999",
+	resp, err := s.Client.GET("/api/documents/00000000-0000-0000-0000-000000000999",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -357,7 +357,7 @@ func (s *DocumentsTestSuite) TestGetDocument_NotFound() {
 }
 
 func (s *DocumentsTestSuite) TestGetDocument_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp, err := s.Client.GET("/api/documents/00000000-0000-0000-0000-000000000001",
 		s.ProjectHeader(),
 	)
 
@@ -366,7 +366,7 @@ func (s *DocumentsTestSuite) TestGetDocument_RequiresAuth() {
 }
 
 func (s *DocumentsTestSuite) TestGetDocument_RequiresProjectID() {
-	resp, err := s.Client.GET("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp, err := s.Client.GET("/api/documents/00000000-0000-0000-0000-000000000001",
 		s.AdminAuth(),
 	)
 
@@ -384,7 +384,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_Success() {
 		"content":  "Hello, World!",
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -410,7 +410,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_DefaultFilename() {
 		"content": "Some content without filename",
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -431,7 +431,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_EmptyContent() {
 		"content":  "",
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -455,7 +455,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_Deduplication() {
 		"content":  uniqueContent,
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -475,7 +475,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_Deduplication() {
 		"content":  uniqueContent,
 	}
 
-	resp, err = s.Client.POST("/api/v2/documents", body2,
+	resp, err = s.Client.POST("/api/documents", body2,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -505,7 +505,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_FilenameTooLong() {
 		"content":  "Some content",
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -527,7 +527,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_RequiresAuth() {
 		"content":  "Content",
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.ProjectHeader(),
 	)
 
@@ -541,7 +541,7 @@ func (s *DocumentsTestSuite) TestCreateDocument_RequiresProjectID() {
 		"content":  "Content",
 	}
 
-	resp, err := s.Client.POST("/api/v2/documents", body,
+	resp, err := s.Client.POST("/api/documents", body,
 		s.AdminAuth(),
 	)
 
@@ -560,7 +560,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_Success() {
 	// Remove from tracking since we're deleting it
 	s.createdDocIDs = s.createdDocIDs[:len(s.createdDocIDs)-1]
 
-	resp, err := s.Client.DELETE("/api/v2/documents/"+id,
+	resp, err := s.Client.DELETE("/api/documents/"+id,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -575,7 +575,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_Success() {
 	s.NotNil(respBody["summary"])
 
 	// Verify document is actually deleted
-	getResp, err := s.Client.GET("/api/v2/documents/"+id,
+	getResp, err := s.Client.GET("/api/documents/"+id,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -584,7 +584,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_Success() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_NotFound() {
-	resp, err := s.Client.DELETE("/api/v2/documents/00000000-0000-0000-0000-000000000999",
+	resp, err := s.Client.DELETE("/api/documents/00000000-0000-0000-0000-000000000999",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -594,7 +594,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_NotFound() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_InvalidUUID() {
-	resp, err := s.Client.DELETE("/api/v2/documents/not-a-uuid",
+	resp, err := s.Client.DELETE("/api/documents/not-a-uuid",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -611,7 +611,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_InvalidUUID() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_RequiresAuth() {
-	resp, err := s.Client.DELETE("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp, err := s.Client.DELETE("/api/documents/00000000-0000-0000-0000-000000000001",
 		s.ProjectHeader(),
 	)
 
@@ -620,7 +620,7 @@ func (s *DocumentsTestSuite) TestDeleteDocument_RequiresAuth() {
 }
 
 func (s *DocumentsTestSuite) TestDeleteDocument_RequiresProjectID() {
-	resp, err := s.Client.DELETE("/api/v2/documents/00000000-0000-0000-0000-000000000001",
+	resp, err := s.Client.DELETE("/api/documents/00000000-0000-0000-0000-000000000001",
 		s.AdminAuth(),
 	)
 
@@ -645,7 +645,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_Success() {
 		"ids": []string{id1, id2},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/documents", body,
+	resp, err := s.Client.DELETEWithBody("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -660,14 +660,14 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_Success() {
 	s.Equal(float64(2), respBody["deleted"])
 
 	// Verify documents are deleted, but doc3 remains
-	getResp, err := s.Client.GET("/api/v2/documents/"+id1,
+	getResp, err := s.Client.GET("/api/documents/"+id1,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
 	s.Require().NoError(err)
 	s.Equal(http.StatusNotFound, getResp.StatusCode)
 
-	getResp, err = s.Client.GET("/api/v2/documents/"+id3,
+	getResp, err = s.Client.GET("/api/documents/"+id3,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -687,7 +687,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_PartialNotFound() {
 		"ids": []string{id1, "00000000-0000-0000-0000-000000000999"},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/documents", body,
+	resp, err := s.Client.DELETEWithBody("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -712,7 +712,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_EmptyArray() {
 		"ids": []string{},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/documents", body,
+	resp, err := s.Client.DELETEWithBody("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -733,7 +733,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_InvalidUUID() {
 		"ids": []string{"not-a-uuid", "also-not-valid"},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/documents", body,
+	resp, err := s.Client.DELETEWithBody("/api/documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -747,7 +747,7 @@ func (s *DocumentsTestSuite) TestBulkDeleteDocuments_RequiresAuth() {
 		"ids": []string{"00000000-0000-0000-0000-000000000001"},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/documents", body,
+	resp, err := s.Client.DELETEWithBody("/api/documents", body,
 		s.ProjectHeader(),
 	)
 

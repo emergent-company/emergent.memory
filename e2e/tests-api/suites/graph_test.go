@@ -32,14 +32,14 @@ func (s *GraphTestSuite) SetupTest() {
 func (s *GraphTestSuite) TearDownTest() {
 	// Clean up relationships first (they reference objects)
 	for _, id := range s.createdRelationshipIDs {
-		_, _ = s.Client.DELETE("/api/v2/graph/relationships/"+id,
+		_, _ = s.Client.DELETE("/api/graph/relationships/"+id,
 			s.AdminAuth(),
 			s.ProjectHeader(),
 		)
 	}
 	// Then clean up objects
 	for _, id := range s.createdObjectIDs {
-		_, _ = s.Client.DELETE("/api/v2/graph/objects/"+id,
+		_, _ = s.Client.DELETE("/api/graph/objects/"+id,
 			s.AdminAuth(),
 			s.ProjectHeader(),
 		)
@@ -55,7 +55,7 @@ func (s *GraphTestSuite) createObject(objType string, properties map[string]any)
 		body["properties"] = properties
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects", body,
+	resp, err := s.Client.POST("/api/graph/objects", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -83,7 +83,7 @@ func (s *GraphTestSuite) createRelationship(relType, srcID, dstID string, proper
 		body["properties"] = properties
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/relationships", body,
+	resp, err := s.Client.POST("/api/graph/relationships", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -115,7 +115,7 @@ func (s *GraphTestSuite) TestCreateObject_Success() {
 		"labels": []string{"security", "mvp"},
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects", body,
+	resp, err := s.Client.POST("/api/graph/objects", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -144,7 +144,7 @@ func (s *GraphTestSuite) TestCreateObject_RequiresAuth() {
 		"type": "Requirement",
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects", body,
+	resp, err := s.Client.POST("/api/graph/objects", body,
 		s.ProjectHeader(),
 	)
 
@@ -157,7 +157,7 @@ func (s *GraphTestSuite) TestCreateObject_RequiresProjectID() {
 		"type": "Requirement",
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects", body,
+	resp, err := s.Client.POST("/api/graph/objects", body,
 		s.AdminAuth(),
 	)
 
@@ -170,7 +170,7 @@ func (s *GraphTestSuite) TestCreateObject_MissingType() {
 		"status": "draft",
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects", body,
+	resp, err := s.Client.POST("/api/graph/objects", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -184,7 +184,7 @@ func (s *GraphTestSuite) TestCreateObject_MinimalFields() {
 		"type": "Task",
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects", body,
+	resp, err := s.Client.POST("/api/graph/objects", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -214,7 +214,7 @@ func (s *GraphTestSuite) TestGetObject_Success() {
 	})
 
 	// Get the object
-	resp, err := s.Client.GET("/api/v2/graph/objects/"+id,
+	resp, err := s.Client.GET("/api/graph/objects/"+id,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -230,7 +230,7 @@ func (s *GraphTestSuite) TestGetObject_Success() {
 }
 
 func (s *GraphTestSuite) TestGetObject_NotFound() {
-	resp, err := s.Client.GET("/api/v2/graph/objects/"+uuid.New().String(),
+	resp, err := s.Client.GET("/api/graph/objects/"+uuid.New().String(),
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -249,7 +249,7 @@ func (s *GraphTestSuite) TestListObjects_ReturnsObjects() {
 	s.createObject("Requirement", map[string]any{"title": "List Test 2"})
 	s.createObject("Decision", map[string]any{"title": "List Test 3"})
 
-	resp, err := s.Client.GET("/api/v2/graph/objects/search",
+	resp, err := s.Client.GET("/api/graph/objects/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -273,7 +273,7 @@ func (s *GraphTestSuite) TestListObjects_FilterByType() {
 	s.createObject("Decision", nil)
 	s.createObject("Requirement", nil)
 
-	resp, err := s.Client.GET("/api/v2/graph/objects/search",
+	resp, err := s.Client.GET("/api/graph/objects/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("types", "Decision"),
@@ -301,7 +301,7 @@ func (s *GraphTestSuite) TestListObjects_Pagination_Limit() {
 	}
 
 	// Request with limit=2
-	resp, err := s.Client.GET("/api/v2/graph/objects/search",
+	resp, err := s.Client.GET("/api/graph/objects/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "2"),
@@ -327,7 +327,7 @@ func (s *GraphTestSuite) TestListObjects_Pagination_Cursor() {
 	}
 
 	// First page
-	resp1, err := s.Client.GET("/api/v2/graph/objects/search",
+	resp1, err := s.Client.GET("/api/graph/objects/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "2"),
@@ -344,7 +344,7 @@ func (s *GraphTestSuite) TestListObjects_Pagination_Cursor() {
 	cursor := page1["next_cursor"].(string)
 
 	// Second page using cursor
-	resp2, err := s.Client.GET("/api/v2/graph/objects/search",
+	resp2, err := s.Client.GET("/api/graph/objects/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "2"),
@@ -377,7 +377,7 @@ func (s *GraphTestSuite) TestListObjects_Pagination_Cursor() {
 }
 
 func (s *GraphTestSuite) TestListObjects_InvalidCursor() {
-	resp, err := s.Client.GET("/api/v2/graph/objects/search",
+	resp, err := s.Client.GET("/api/graph/objects/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("cursor", "invalid-cursor-format"),
@@ -405,7 +405,7 @@ func (s *GraphTestSuite) TestPatchObject_Success() {
 		},
 	}
 
-	resp, err := s.Client.PATCH("/api/v2/graph/objects/"+id, body,
+	resp, err := s.Client.PATCH("/api/graph/objects/"+id, body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -443,7 +443,7 @@ func (s *GraphTestSuite) TestPatchObject_MergesProperties() {
 		},
 	}
 
-	resp, err := s.Client.PATCH("/api/v2/graph/objects/"+id, body,
+	resp, err := s.Client.PATCH("/api/graph/objects/"+id, body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -473,7 +473,7 @@ func (s *GraphTestSuite) TestDeleteObject_Success() {
 	id, _ := s.createObject("Requirement", nil)
 
 	// Delete the object
-	resp, err := s.Client.DELETE("/api/v2/graph/objects/"+id,
+	resp, err := s.Client.DELETE("/api/graph/objects/"+id,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -490,7 +490,7 @@ func (s *GraphTestSuite) TestDeleteObject_Success() {
 	}
 
 	// Verify object doesn't appear in normal list
-	listResp, err := s.Client.GET("/api/v2/graph/objects/search",
+	listResp, err := s.Client.GET("/api/graph/objects/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -507,7 +507,7 @@ func (s *GraphTestSuite) TestDeleteObject_Success() {
 }
 
 func (s *GraphTestSuite) TestDeleteObject_NotFound() {
-	resp, err := s.Client.DELETE("/api/v2/graph/objects/"+uuid.New().String(),
+	resp, err := s.Client.DELETE("/api/graph/objects/"+uuid.New().String(),
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -524,7 +524,7 @@ func (s *GraphTestSuite) TestRestoreObject_Success() {
 	// Create and delete an object
 	id, _ := s.createObject("Requirement", nil)
 
-	deleteResp, err := s.Client.DELETE("/api/v2/graph/objects/"+id,
+	deleteResp, err := s.Client.DELETE("/api/graph/objects/"+id,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -532,7 +532,7 @@ func (s *GraphTestSuite) TestRestoreObject_Success() {
 	s.Require().Equal(http.StatusOK, deleteResp.StatusCode)
 
 	// Get the deleted object to find its tombstone ID
-	listResp, err := s.Client.GET("/api/v2/graph/objects/search",
+	listResp, err := s.Client.GET("/api/graph/objects/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("include_deleted", "true"),
@@ -554,7 +554,7 @@ func (s *GraphTestSuite) TestRestoreObject_Success() {
 	s.Require().NotEmpty(deletedID, "Could not find deleted object")
 
 	// Restore the object
-	resp, err := s.Client.POST("/api/v2/graph/objects/"+deletedID+"/restore", nil,
+	resp, err := s.Client.POST("/api/graph/objects/"+deletedID+"/restore", nil,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -586,7 +586,7 @@ func (s *GraphTestSuite) TestGetObjectHistory_Success() {
 		},
 	}
 
-	patchResp, err := s.Client.PATCH("/api/v2/graph/objects/"+id, body,
+	patchResp, err := s.Client.PATCH("/api/graph/objects/"+id, body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -597,7 +597,7 @@ func (s *GraphTestSuite) TestGetObjectHistory_Success() {
 	s.createdObjectIDs = append(s.createdObjectIDs, patchObj["id"].(string))
 
 	// Get history
-	resp, err := s.Client.GET("/api/v2/graph/objects/"+id+"/history",
+	resp, err := s.Client.GET("/api/graph/objects/"+id+"/history",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -627,7 +627,7 @@ func (s *GraphTestSuite) TestGetObjectEdges_Empty() {
 	id, _ := s.createObject("Requirement", nil)
 
 	// Get edges
-	resp, err := s.Client.GET("/api/v2/graph/objects/"+id+"/edges",
+	resp, err := s.Client.GET("/api/graph/objects/"+id+"/edges",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -653,7 +653,7 @@ func (s *GraphTestSuite) TestGetObjectEdges_WithRelationships() {
 	s.createRelationship("DEPENDS_ON", srcID, dstID, nil)
 
 	// Get edges for source object
-	resp, err := s.Client.GET("/api/v2/graph/objects/"+srcID+"/edges",
+	resp, err := s.Client.GET("/api/graph/objects/"+srcID+"/edges",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -670,7 +670,7 @@ func (s *GraphTestSuite) TestGetObjectEdges_WithRelationships() {
 	s.Empty(incoming)
 
 	// Get edges for destination object
-	resp2, err := s.Client.GET("/api/v2/graph/objects/"+dstID+"/edges",
+	resp2, err := s.Client.GET("/api/graph/objects/"+dstID+"/edges",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -707,7 +707,7 @@ func (s *GraphTestSuite) TestCreateRelationship_Success() {
 		"weight": 0.8,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/relationships", body,
+	resp, err := s.Client.POST("/api/graph/relationships", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -741,7 +741,7 @@ func (s *GraphTestSuite) TestCreateRelationship_RequiresAuth() {
 		"dst_id": dstID,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/relationships", body,
+	resp, err := s.Client.POST("/api/graph/relationships", body,
 		s.ProjectHeader(),
 	)
 
@@ -758,7 +758,7 @@ func (s *GraphTestSuite) TestCreateRelationship_MissingType() {
 		"dst_id": dstID,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/relationships", body,
+	resp, err := s.Client.POST("/api/graph/relationships", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -776,7 +776,7 @@ func (s *GraphTestSuite) TestCreateRelationship_SelfLoopNotAllowed() {
 		"dst_id": objID, // Same as src
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/relationships", body,
+	resp, err := s.Client.POST("/api/graph/relationships", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -794,7 +794,7 @@ func (s *GraphTestSuite) TestCreateRelationship_EndpointNotFound() {
 		"dst_id": uuid.New().String(), // Non-existent
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/relationships", body,
+	resp, err := s.Client.POST("/api/graph/relationships", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -818,7 +818,7 @@ func (s *GraphTestSuite) TestCreateRelationship_Idempotent() {
 	}
 
 	// First creation
-	resp1, err := s.Client.POST("/api/v2/graph/relationships", body,
+	resp1, err := s.Client.POST("/api/graph/relationships", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -829,7 +829,7 @@ func (s *GraphTestSuite) TestCreateRelationship_Idempotent() {
 	s.createdRelationshipIDs = append(s.createdRelationshipIDs, rel1["id"].(string))
 
 	// Second creation with same properties
-	resp2, err := s.Client.POST("/api/v2/graph/relationships", body,
+	resp2, err := s.Client.POST("/api/graph/relationships", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -854,7 +854,7 @@ func (s *GraphTestSuite) TestGetRelationship_Success() {
 	relID, created := s.createRelationship("DEPENDS_ON", srcID, dstID, nil)
 
 	// Get the relationship
-	resp, err := s.Client.GET("/api/v2/graph/relationships/"+relID,
+	resp, err := s.Client.GET("/api/graph/relationships/"+relID,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -872,7 +872,7 @@ func (s *GraphTestSuite) TestGetRelationship_Success() {
 }
 
 func (s *GraphTestSuite) TestGetRelationship_NotFound() {
-	resp, err := s.Client.GET("/api/v2/graph/relationships/"+uuid.New().String(),
+	resp, err := s.Client.GET("/api/graph/relationships/"+uuid.New().String(),
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -895,7 +895,7 @@ func (s *GraphTestSuite) TestListRelationships_FilterByType() {
 	s.createRelationship("IMPLEMENTS", srcID, dst2ID, nil)
 
 	// Filter by type
-	resp, err := s.Client.GET("/api/v2/graph/relationships/search",
+	resp, err := s.Client.GET("/api/graph/relationships/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("type", "DEPENDS_ON"),
@@ -924,7 +924,7 @@ func (s *GraphTestSuite) TestListRelationships_FilterBySrcID() {
 	s.createRelationship("DEPENDS_ON", src2ID, dstID, nil)
 
 	// Filter by src_id
-	resp, err := s.Client.GET("/api/v2/graph/relationships/search",
+	resp, err := s.Client.GET("/api/graph/relationships/search",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("src_id", src1ID),
@@ -962,7 +962,7 @@ func (s *GraphTestSuite) TestPatchRelationship_Success() {
 		"weight": 0.9,
 	}
 
-	resp, err := s.Client.PATCH("/api/v2/graph/relationships/"+relID, body,
+	resp, err := s.Client.PATCH("/api/graph/relationships/"+relID, body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1000,7 +1000,7 @@ func (s *GraphTestSuite) TestPatchRelationship_MergesProperties() {
 		},
 	}
 
-	resp, err := s.Client.PATCH("/api/v2/graph/relationships/"+relID, body,
+	resp, err := s.Client.PATCH("/api/graph/relationships/"+relID, body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1031,7 +1031,7 @@ func (s *GraphTestSuite) TestDeleteRelationship_Success() {
 	relID, _ := s.createRelationship("DEPENDS_ON", srcID, dstID, nil)
 
 	// Delete the relationship
-	resp, err := s.Client.DELETE("/api/v2/graph/relationships/"+relID,
+	resp, err := s.Client.DELETE("/api/graph/relationships/"+relID,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1065,7 +1065,7 @@ func (s *GraphTestSuite) TestRestoreRelationship_Success() {
 	relID, created := s.createRelationship("DEPENDS_ON", srcID, dstID, nil)
 
 	// Delete
-	deleteResp, err := s.Client.DELETE("/api/v2/graph/relationships/"+relID,
+	deleteResp, err := s.Client.DELETE("/api/graph/relationships/"+relID,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1076,7 +1076,7 @@ func (s *GraphTestSuite) TestRestoreRelationship_Success() {
 	deletedID := deleted["id"].(string)
 
 	// Restore
-	resp, err := s.Client.POST("/api/v2/graph/relationships/"+deletedID+"/restore", nil,
+	resp, err := s.Client.POST("/api/graph/relationships/"+deletedID+"/restore", nil,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1113,7 +1113,7 @@ func (s *GraphTestSuite) TestGetRelationshipHistory_Success() {
 		},
 	}
 
-	patchResp, err := s.Client.PATCH("/api/v2/graph/relationships/"+relID, patchBody,
+	patchResp, err := s.Client.PATCH("/api/graph/relationships/"+relID, patchBody,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1124,7 +1124,7 @@ func (s *GraphTestSuite) TestGetRelationshipHistory_Success() {
 	s.createdRelationshipIDs = append(s.createdRelationshipIDs, patchRel["id"].(string))
 
 	// Get history
-	resp, err := s.Client.GET("/api/v2/graph/relationships/"+relID+"/history",
+	resp, err := s.Client.GET("/api/graph/relationships/"+relID+"/history",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1148,7 +1148,7 @@ func (s *GraphTestSuite) TestGetRelationshipHistory_Success() {
 // =============================================================================
 
 func (s *GraphTestSuite) TestFTSSearch_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/graph/objects/fts",
+	resp, err := s.Client.GET("/api/graph/objects/fts",
 		s.ProjectHeader(),
 		client.WithQuery("q", "test"),
 	)
@@ -1158,7 +1158,7 @@ func (s *GraphTestSuite) TestFTSSearch_RequiresAuth() {
 }
 
 func (s *GraphTestSuite) TestFTSSearch_RequiresQuery() {
-	resp, err := s.Client.GET("/api/v2/graph/objects/fts",
+	resp, err := s.Client.GET("/api/graph/objects/fts",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1168,7 +1168,7 @@ func (s *GraphTestSuite) TestFTSSearch_RequiresQuery() {
 }
 
 func (s *GraphTestSuite) TestFTSSearch_EmptyResults() {
-	resp, err := s.Client.GET("/api/v2/graph/objects/fts",
+	resp, err := s.Client.GET("/api/graph/objects/fts",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("q", fmt.Sprintf("nonexistent_%s", uuid.New().String())),
@@ -1191,7 +1191,7 @@ func (s *GraphTestSuite) TestFTSSearch_WithFilters() {
 	})
 
 	// Search with type filter
-	resp, err := s.Client.GET("/api/v2/graph/objects/fts",
+	resp, err := s.Client.GET("/api/graph/objects/fts",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("q", "authentication"),
@@ -1223,7 +1223,7 @@ func (s *GraphTestSuite) TestVectorSearch_RequiresAuth() {
 		"vector": vector,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects/vector-search", body,
+	resp, err := s.Client.POST("/api/graph/objects/vector-search", body,
 		s.ProjectHeader(),
 	)
 
@@ -1232,7 +1232,7 @@ func (s *GraphTestSuite) TestVectorSearch_RequiresAuth() {
 }
 
 func (s *GraphTestSuite) TestVectorSearch_RequiresVector() {
-	resp, err := s.Client.POST("/api/v2/graph/objects/vector-search", map[string]any{},
+	resp, err := s.Client.POST("/api/graph/objects/vector-search", map[string]any{},
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1252,7 +1252,7 @@ func (s *GraphTestSuite) TestVectorSearch_EmptyResults() {
 		"vector": vector,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects/vector-search", body,
+	resp, err := s.Client.POST("/api/graph/objects/vector-search", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1281,7 +1281,7 @@ func (s *GraphTestSuite) TestVectorSearch_WithFilters() {
 		"maxDistance": 0.5,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/objects/vector-search", body,
+	resp, err := s.Client.POST("/api/graph/objects/vector-search", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1305,7 +1305,7 @@ func (s *GraphTestSuite) TestHybridSearch_RequiresAuth() {
 		"query": "test",
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/search", body,
+	resp, err := s.Client.POST("/api/graph/search", body,
 		s.ProjectHeader(),
 	)
 
@@ -1314,7 +1314,7 @@ func (s *GraphTestSuite) TestHybridSearch_RequiresAuth() {
 }
 
 func (s *GraphTestSuite) TestHybridSearch_RequiresQueryOrVector() {
-	resp, err := s.Client.POST("/api/v2/graph/search", map[string]any{},
+	resp, err := s.Client.POST("/api/graph/search", map[string]any{},
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1328,7 +1328,7 @@ func (s *GraphTestSuite) TestHybridSearch_QueryOnly() {
 		"query": "authentication",
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/search", body,
+	resp, err := s.Client.POST("/api/graph/search", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1354,7 +1354,7 @@ func (s *GraphTestSuite) TestHybridSearch_VectorOnly() {
 		"vector": vector,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/search", body,
+	resp, err := s.Client.POST("/api/graph/search", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1382,7 +1382,7 @@ func (s *GraphTestSuite) TestHybridSearch_QueryAndVector() {
 		"vectorWeight":  0.3,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/search", body,
+	resp, err := s.Client.POST("/api/graph/search", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -1404,7 +1404,7 @@ func (s *GraphTestSuite) TestHybridSearch_WithFilters() {
 		"limit":  10,
 	}
 
-	resp, err := s.Client.POST("/api/v2/graph/search", body,
+	resp, err := s.Client.POST("/api/graph/search", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)

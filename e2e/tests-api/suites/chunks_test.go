@@ -87,7 +87,7 @@ func (s *ChunksTestSuite) createTestChunk(documentID string, index int, text str
 
 func (s *ChunksTestSuite) TestListChunks_Empty() {
 	// Note: May not be truly empty if other tests left data, but structure should be correct
-	resp, err := s.Client.GET("/api/v2/chunks",
+	resp, err := s.Client.GET("/api/chunks",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("limit", "1"),
@@ -115,7 +115,7 @@ func (s *ChunksTestSuite) TestListChunks_ReturnsChunks() {
 	s.createTestChunk(docID, 1, "Second chunk text")
 
 	// List chunks
-	resp, err := s.Client.GET("/api/v2/chunks",
+	resp, err := s.Client.GET("/api/chunks",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("documentId", docID),
@@ -150,7 +150,7 @@ func (s *ChunksTestSuite) TestListChunks_FilterByDocumentID() {
 	s.createTestChunk(doc2ID, 0, "Doc 2 Chunk 1")
 
 	// Filter by doc1
-	resp, err := s.Client.GET("/api/v2/chunks",
+	resp, err := s.Client.GET("/api/chunks",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("documentId", doc1ID),
@@ -174,7 +174,7 @@ func (s *ChunksTestSuite) TestListChunks_FilterByDocumentID() {
 }
 
 func (s *ChunksTestSuite) TestListChunks_InvalidDocumentID() {
-	resp, err := s.Client.GET("/api/v2/chunks",
+	resp, err := s.Client.GET("/api/chunks",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("documentId", "invalid-uuid"),
@@ -185,7 +185,7 @@ func (s *ChunksTestSuite) TestListChunks_InvalidDocumentID() {
 }
 
 func (s *ChunksTestSuite) TestListChunks_RequiresAuth() {
-	resp, err := s.Client.GET("/api/v2/chunks",
+	resp, err := s.Client.GET("/api/chunks",
 		s.ProjectHeader(),
 	)
 
@@ -194,7 +194,7 @@ func (s *ChunksTestSuite) TestListChunks_RequiresAuth() {
 }
 
 func (s *ChunksTestSuite) TestListChunks_RequiresProjectID() {
-	resp, err := s.Client.GET("/api/v2/chunks",
+	resp, err := s.Client.GET("/api/chunks",
 		s.AdminAuth(),
 	)
 
@@ -213,7 +213,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_Success() {
 	// Remove from tracking since we're deleting it
 	s.createdChunkIDs = s.createdChunkIDs[:len(s.createdChunkIDs)-1]
 
-	resp, err := s.Client.DELETE("/api/v2/chunks/"+chunkID,
+	resp, err := s.Client.DELETE("/api/chunks/"+chunkID,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -222,7 +222,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_Success() {
 	s.Equal(http.StatusNoContent, resp.StatusCode)
 
 	// Verify chunk is deleted by trying to list it
-	listResp, err := s.Client.GET("/api/v2/chunks",
+	listResp, err := s.Client.GET("/api/chunks",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("documentId", docID),
@@ -235,7 +235,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_Success() {
 }
 
 func (s *ChunksTestSuite) TestDeleteChunk_NotFound() {
-	resp, err := s.Client.DELETE("/api/v2/chunks/00000000-0000-0000-0000-000000000999",
+	resp, err := s.Client.DELETE("/api/chunks/00000000-0000-0000-0000-000000000999",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -245,7 +245,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_NotFound() {
 }
 
 func (s *ChunksTestSuite) TestDeleteChunk_InvalidUUID() {
-	resp, err := s.Client.DELETE("/api/v2/chunks/invalid-uuid",
+	resp, err := s.Client.DELETE("/api/chunks/invalid-uuid",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -255,7 +255,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_InvalidUUID() {
 }
 
 func (s *ChunksTestSuite) TestDeleteChunk_RequiresAuth() {
-	resp, err := s.Client.DELETE("/api/v2/chunks/"+testutil.NewUUID(),
+	resp, err := s.Client.DELETE("/api/chunks/"+testutil.NewUUID(),
 		s.ProjectHeader(),
 	)
 
@@ -264,7 +264,7 @@ func (s *ChunksTestSuite) TestDeleteChunk_RequiresAuth() {
 }
 
 func (s *ChunksTestSuite) TestDeleteChunk_RequiresProjectID() {
-	resp, err := s.Client.DELETE("/api/v2/chunks/"+testutil.NewUUID(),
+	resp, err := s.Client.DELETE("/api/chunks/"+testutil.NewUUID(),
 		s.AdminAuth(),
 	)
 
@@ -288,7 +288,7 @@ func (s *ChunksTestSuite) TestBulkDeleteChunks_Success() {
 		"ids": []string{chunk1ID, chunk2ID},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/chunks", body,
+	resp, err := s.Client.DELETEWithBody("/api/chunks", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -317,7 +317,7 @@ func (s *ChunksTestSuite) TestBulkDeleteChunks_PartialNotFound() {
 		"ids": []string{chunkID, nonExistentID},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/chunks", body,
+	resp, err := s.Client.DELETEWithBody("/api/chunks", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -338,7 +338,7 @@ func (s *ChunksTestSuite) TestBulkDeleteChunks_EmptyArray() {
 		"ids": []string{},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/chunks", body,
+	resp, err := s.Client.DELETEWithBody("/api/chunks", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -352,7 +352,7 @@ func (s *ChunksTestSuite) TestBulkDeleteChunks_RequiresAuth() {
 		"ids": []string{testutil.NewUUID()},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/chunks", body,
+	resp, err := s.Client.DELETEWithBody("/api/chunks", body,
 		s.ProjectHeader(),
 	)
 
@@ -373,7 +373,7 @@ func (s *ChunksTestSuite) TestDeleteByDocument_Success() {
 	// Clear tracking since we're deleting them
 	s.createdChunkIDs = nil
 
-	resp, err := s.Client.DELETE("/api/v2/chunks/by-document/"+docID,
+	resp, err := s.Client.DELETE("/api/chunks/by-document/"+docID,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -393,7 +393,7 @@ func (s *ChunksTestSuite) TestDeleteByDocument_NoChunks() {
 	docID := s.createTestDocument("no-chunks-doc.txt")
 	// No chunks created
 
-	resp, err := s.Client.DELETE("/api/v2/chunks/by-document/"+docID,
+	resp, err := s.Client.DELETE("/api/chunks/by-document/"+docID,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -409,7 +409,7 @@ func (s *ChunksTestSuite) TestDeleteByDocument_NoChunks() {
 }
 
 func (s *ChunksTestSuite) TestDeleteByDocument_InvalidUUID() {
-	resp, err := s.Client.DELETE("/api/v2/chunks/by-document/invalid-uuid",
+	resp, err := s.Client.DELETE("/api/chunks/by-document/invalid-uuid",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -419,7 +419,7 @@ func (s *ChunksTestSuite) TestDeleteByDocument_InvalidUUID() {
 }
 
 func (s *ChunksTestSuite) TestDeleteByDocument_RequiresAuth() {
-	resp, err := s.Client.DELETE("/api/v2/chunks/by-document/"+testutil.NewUUID(),
+	resp, err := s.Client.DELETE("/api/chunks/by-document/"+testutil.NewUUID(),
 		s.ProjectHeader(),
 	)
 
@@ -445,7 +445,7 @@ func (s *ChunksTestSuite) TestBulkDeleteByDocuments_Success() {
 		"documentIds": []string{doc1ID, doc2ID},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/chunks/by-documents", body,
+	resp, err := s.Client.DELETEWithBody("/api/chunks/by-documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -469,7 +469,7 @@ func (s *ChunksTestSuite) TestBulkDeleteByDocuments_EmptyArray() {
 		"documentIds": []string{},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/chunks/by-documents", body,
+	resp, err := s.Client.DELETEWithBody("/api/chunks/by-documents", body,
 		s.AdminAuth(),
 		s.ProjectHeader(),
 	)
@@ -483,7 +483,7 @@ func (s *ChunksTestSuite) TestBulkDeleteByDocuments_RequiresAuth() {
 		"documentIds": []string{testutil.NewUUID()},
 	}
 
-	resp, err := s.Client.DELETEWithBody("/api/v2/chunks/by-documents", body,
+	resp, err := s.Client.DELETEWithBody("/api/chunks/by-documents", body,
 		s.ProjectHeader(),
 	)
 
@@ -504,7 +504,7 @@ func (s *ChunksTestSuite) TestListChunks_ReturnsAllChunksForDocument() {
 	}
 
 	// Request all chunks for document
-	resp, err := s.Client.GET("/api/v2/chunks",
+	resp, err := s.Client.GET("/api/chunks",
 		s.AdminAuth(),
 		s.ProjectHeader(),
 		client.WithQuery("documentId", docID),
