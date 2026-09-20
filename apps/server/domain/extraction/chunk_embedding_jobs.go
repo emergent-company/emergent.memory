@@ -310,6 +310,26 @@ func (s *ChunkEmbeddingJobsService) MarkFailed(ctx context.Context, id string, j
 	return nil
 }
 
+// MarkPermanentlyFailed marks a job as failed without scheduling a retry.
+// Use this for terminal errors where retrying will never succeed (e.g. the
+// project has no embedding model configured).
+func (s *ChunkEmbeddingJobsService) MarkPermanentlyFailed(ctx context.Context, id string, jobErr error) error {
+	errorMessage := truncateError(jobErr.Error())
+	_, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
+		SET status = 'failed',
+			last_error = ?,
+			updated_at = now()
+		WHERE id = ?`,
+		errorMessage, id).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("mark permanently failed: %w", err)
+	}
+	s.log.Warn("chunk embedding job permanently failed (no retry)",
+		slog.String("job_id", id),
+		slog.String("error", errorMessage))
+	return nil
+}
+
 // RecoverStaleJobs recovers jobs stuck in 'processing' status.
 // This can happen when the server restarts while jobs are being processed.
 func (s *ChunkEmbeddingJobsService) RecoverStaleJobs(ctx context.Context, staleThresholdMinutes int) (int, error) {
@@ -337,6 +357,29 @@ func (s *ChunkEmbeddingJobsService) RecoverStaleJobs(ctx context.Context, staleT
 			slog.Int("threshold_minutes", staleThresholdMinutes))
 	}
 
+	return int(count), nil
+}
+
+// RecoverOrphanedProcessingJobs resets ALL 'processing' jobs to 'pending'.
+// Called on worker startup: a freshly-started process has no in-flight work, so
+// every 'processing' job was left behind by a previous process that crashed or
+// was restarted. Resetting them makes the queue restart-resistant. (In a
+// multi-instance deployment this may briefly double-process a peer's job, which
+// is harmless because embedding generation is idempotent.)
+func (s *ChunkEmbeddingJobsService) RecoverOrphanedProcessingJobs(ctx context.Context) (int, error) {
+	result, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
+		SET status = 'pending',
+			started_at = NULL,
+			scheduled_at = now(),
+			updated_at = now()
+		WHERE status = 'processing'`).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("recover orphaned processing jobs: %w", err)
+	}
+	count, _ := result.RowsAffected()
+	if count > 0 {
+		s.log.Warn("recovered orphaned chunk embedding jobs on startup", slog.Int64("count", count))
+	}
 	return int(count), nil
 }
 

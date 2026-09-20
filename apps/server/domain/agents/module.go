@@ -35,7 +35,6 @@ var Module = fx.Module("agents",
 		provideSessionService,
 		provideAgentExecutor,
 		provideHandler,
-		provideACPHandler,
 		provideA2AHandler,
 		provideTriggerService,
 		provideMCPToolHandler,
@@ -53,7 +52,6 @@ var Module = fx.Module("agents",
 	),
 	fx.Invoke(
 		RegisterRoutes,
-		RegisterACPRoutes,
 		RegisterShareRoutes,
 		RegisterA2ARoutes,
 		registerAgentTriggers,
@@ -128,11 +126,6 @@ func (a *providerPricingAdapter) lookupModelPricing(ctx context.Context, model s
 		return "", 0, 0, false
 	}
 	return string(p.Provider), p.TextInputPrice, p.OutputPrice, true
-}
-
-// provideACPHandler creates an ACPHandler from fx dependencies.
-func provideACPHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger) *ACPHandler {
-	return NewACPHandler(repo, executor, eventsSvc, log)
 }
 
 // provideA2AHandler creates an A2AHandler from fx dependencies.

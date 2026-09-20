@@ -10,6 +10,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // A2AHandler handles A2A v1.0 HTTP+JSON requests. Discovery is implemented
@@ -38,6 +39,20 @@ func NewA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.
 		h.appURL = strings.TrimRight(cfg.AppURL, "/")
 	}
 	return h
+}
+
+// acpProjectID extracts the project ID from the authenticated user context.
+// Shared by the A2A v1.0 surface (message/stream/discovery) — kept under its
+// original name after the ACP HTTP layer was removed.
+func acpProjectID(c echo.Context) (string, error) {
+	user := auth.GetUser(c)
+	if user == nil {
+		return "", apperror.ErrUnauthorized
+	}
+	if user.ProjectID == "" {
+		return "", apperror.NewBadRequest("project context is required (set via API token)")
+	}
+	return user.ProjectID, nil
 }
 
 // A2ACardVersion is the static AgentCard version string.

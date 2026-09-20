@@ -1,8 +1,4 @@
-## Purpose
-
-ACP sessions are thin containers that group related runs for an agent. The server exposes create and get endpoints, persists sessions in the `kb.acp_sessions` table with a `kb.agent_runs.acp_session_id` link, and guards both endpoints with `agents:read`/`agents:write` scopes.
-
-## Requirements
+## REMOVED Requirements
 
 ### Requirement: Create ACP session
 The system SHALL expose `POST /acp/v1/sessions` that creates a new thin session for grouping related runs. The request body MAY include an optional `agent_name` field to scope the session to a specific agent. The server SHALL respond with HTTP 201 and the session object containing `id`, `agent_name` (if scoped), `created_at`, and an empty `history` array.

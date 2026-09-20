@@ -40,6 +40,8 @@ type SharePublicConfig struct {
 	MaxActiveSessionsPerUser int     `json:"maxActiveSessionsPerUser"`
 	MaxConcurrentRuns        int     `json:"maxConcurrentRuns"`
 	WelcomeMessage           string  `json:"welcomeMessage,omitempty"`
+	Icon                     string  `json:"icon,omitempty"`
+	Color                    string  `json:"color,omitempty"`
 }
 
 // ShareSession is the end-user-facing representation of a share session.
@@ -51,10 +53,13 @@ type ShareSession struct {
 	CreatedAt      time.Time  `json:"createdAt"`
 }
 
-// ShareMessage is one plain-text message in a share session transcript.
+// ShareMessage is one message in a share session transcript. The server sends
+// plain text (role + content); the gateway adds an `html` field for assistant
+// messages (sanitized markdown) so the client can render it directly.
 type ShareMessage struct {
-	Role    string `json:"role"`    // "user" | "assistant"
-	Content string `json:"content"` // plain text
+	Role    string `json:"role"`           // "user" | "assistant"
+	Content string `json:"content"`        // plain text
+	HTML    string `json:"html,omitempty"` // sanitized markdown (assistant only)
 }
 
 // ShareSessionDetail is the transcript-bearing response for
@@ -155,6 +160,20 @@ type ShareLinkConfigInput struct {
 type ShareLinkCreateInput struct {
 	Label  string                `json:"label"`
 	Config *ShareLinkConfigInput `json:"config,omitempty"`
+}
+
+// ShareOwnerSession is the owner-facing representation of a share session,
+// scoped to a project. It carries the backing agent definition id + name so the
+// owner chat rail can filter and title shared sessions.
+type ShareOwnerSession struct {
+	ID                string     `json:"id"`
+	AgentDefinitionID string     `json:"agentDefinitionId"`
+	AgentName         string     `json:"agentName"`
+	Title             string     `json:"title,omitempty"`
+	ACPSessionID      string     `json:"acpSessionId"`
+	IsArchived        bool       `json:"isArchived"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	LastActivityAt    *time.Time `json:"lastActivityAt,omitempty"`
 }
 
 // --- public share request plumbing ------------------------------------------
@@ -397,4 +416,28 @@ func (m *MemoryClient) RevealShareLink(ctx context.Context, linkID string) (stri
 		return "", err
 	}
 	return out.Key, nil
+}
+
+// ListShareSessionsByProject returns the project's share sessions (across all
+// of its links), newest activity first.
+func (m *MemoryClient) ListShareSessionsByProject(ctx context.Context) ([]ShareOwnerSession, error) {
+	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/share-sessions"
+	var out []ShareOwnerSession
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetShareSessionTranscript returns the plain user/assistant transcript for an
+// owner-scoped share session.
+func (m *MemoryClient) GetShareSessionTranscript(ctx context.Context, id string) ([]ShareMessage, error) {
+	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/share-sessions/" + url.PathEscape(id)
+	var out struct {
+		Messages []ShareMessage `json:"messages"`
+	}
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Messages, nil
 }

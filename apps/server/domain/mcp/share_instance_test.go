@@ -380,18 +380,6 @@ func (s *stubAgentHandler) ExecuteListADKSessions(context.Context, string, map[s
 func (s *stubAgentHandler) ExecuteGetADKSession(context.Context, string, map[string]any) (*ToolResult, error) {
 	return nil, nil
 }
-func (s *stubAgentHandler) ExecuteACPListAgents(context.Context, string, map[string]any) (*ToolResult, error) {
-	return nil, nil
-}
-func (s *stubAgentHandler) ExecuteACPTriggerRun(context.Context, string, map[string]any) (*ToolResult, error) {
-	return nil, nil
-}
-func (s *stubAgentHandler) ExecuteACPGetRunStatus(context.Context, string, map[string]any) (*ToolResult, error) {
-	return nil, nil
-}
-func (s *stubAgentHandler) ExecuteACPGetRunEvents(context.Context, string, map[string]any) (*ToolResult, error) {
-	return nil, nil
-}
 func (s *stubAgentHandler) GetAgentToolDefinitions() []ToolDefinition { return nil }
 func (s *stubAgentHandler) GetAgentToolDefinitionsForProject(context.Context, string) []ToolDefinition {
 	return nil

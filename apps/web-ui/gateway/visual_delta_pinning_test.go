@@ -24,11 +24,11 @@ const (
 )
 
 // TestAgentDashboardHeaderLeadingTileStructure pins the structural position of
-// the leading icon tile after the header migrated to nav.PageHeading's Leading
-// slot. It parses the rendered DOM and asserts the tile is a DIRECT child of
-// the mb-6 wrapper (a sibling preceding, and not nested inside, the breadcrumbs
-// and the flex title/actions row), that the tile is not a descendant of the
-// flex row at all, and that the h1 lives inside the flex row. It also locks the
+// the agent icon tile after it moved inline: the tile is now a descendant of
+// the flex title/actions row, on the same flex line as (and ordered before) the
+// h1, rather than a direct child of the mb-6 wrapper above the breadcrumbs.
+// checkHeaderDOM asserts the tile is not a direct wrapper child and shares the
+// h1's inline-flex parent with document order tile < h1. The test also locks the
 // Bare guard (leading tile dropped) and the tile markup itself.
 func TestAgentDashboardHeaderLeadingTileStructure(t *testing.T) {
 	declared := &AgentDefinition{
@@ -70,12 +70,12 @@ func TestAgentDashboardHeaderLeadingTileStructure(t *testing.T) {
 
 	t.Run("bare drops leading tile", func(t *testing.T) {
 		rendered := renderHTML(t, detailHeader(nil, "", "diane", "", detailHeaderOpts{
-			Margin:    "mb-6",
-			Dashboard: true,
-			Bare:      true,
-			Leading:   agentIconTile("database", "#2563EB"),
+			Margin:       "mb-6",
+			Dashboard:    true,
+			Bare:         true,
+			TitleLeading: agentIconTile("database", "#2563EB"),
 		}))
-		// The Bare guard ignores Leading entirely — no tile icon/class survives.
+		// The Bare guard ignores TitleLeading entirely — no tile icon/class survives.
 		if findElementByClass(parseDOM(t, rendered), strings.Fields(tileMark)...) != nil {
 			t.Error("bare header must drop the leading tile element")
 		}
@@ -88,10 +88,10 @@ func TestAgentDashboardHeaderLeadingTileStructure(t *testing.T) {
 }
 
 // checkHeaderDOM asserts the DOM-structure invariants shared by the declared
-// and neutral header variants: the leading tile, breadcrumbs, and flex
-// title/actions row are all direct children of the mb-6 wrapper in that order,
-// the tile is not nested inside the flex row, and the h1 lives inside the flex
-// row.
+// and neutral header variants: the breadcrumbs and the flex title/actions row
+// are direct children of the mb-6 wrapper, the icon tile now lives INSIDE the
+// flex row on the same inline flex line as the h1, and the tile is ordered
+// before the h1 (inline leading position, not above the breadcrumbs).
 func checkHeaderDOM(t *testing.T, doc *html.Node) {
 	t.Helper()
 
@@ -106,31 +106,38 @@ func checkHeaderDOM(t *testing.T, doc *html.Node) {
 			wrapper != nil, tile != nil, crumbs != nil, flex != nil, h1 != nil)
 	}
 
-	// Core fix: the tile must be a direct child of the outer wrapper, not
-	// nested inside the breadcrumbs or the flex row.
-	if tile.Parent != wrapper {
-		t.Errorf("leading tile parent = %s, want outer wrapper", nodeDesc(tile.Parent))
-	}
+	// Breadcrumbs and the flex title/actions row stay direct children of the
+	// outer wrapper, in that order.
 	if crumbs.Parent != wrapper {
 		t.Errorf("breadcrumbs parent = %s, want outer wrapper", nodeDesc(crumbs.Parent))
 	}
 	if flex.Parent != wrapper {
 		t.Errorf("flex title/actions row parent = %s, want outer wrapper", nodeDesc(flex.Parent))
 	}
-
-	// Document order among the wrapper's element children: tile < crumbs < flex.
-	if ti, ci, fi := childIndexOf(wrapper, tile), childIndexOf(wrapper, crumbs), childIndexOf(wrapper, flex); ti < 0 || ti >= ci || ci >= fi {
-		t.Errorf("wrapper child order wrong: tile=%d crumbs=%d flex=%d, want tile < crumbs < flex", ti, ci, fi)
+	if ci, fi := childIndexOf(wrapper, crumbs), childIndexOf(wrapper, flex); ci < 0 || ci >= fi {
+		t.Errorf("wrapper child order wrong: crumbs=%d flex=%d, want crumbs < flex", ci, fi)
 	}
 
-	// Belt-and-braces: the tile must not sit inside the flex row at all.
-	if isDescendantOf(tile, flex) {
-		t.Error("leading tile must not be a descendant of the flex title/actions row")
+	// Core fix: the tile moved from a direct wrapper child (above the
+	// breadcrumbs) to an inline member of the flex title/actions row.
+	if tile.Parent == wrapper {
+		t.Error("icon tile must not be a direct child of the outer wrapper (it belongs inline in the flex row)")
 	}
-
-	// The h1 belongs inside the flex row (its title column).
+	if !isDescendantOf(tile, flex) {
+		t.Error("icon tile must be a descendant of the flex title/actions row")
+	}
 	if !isDescendantOf(h1, flex) {
 		t.Error("h1 must be a descendant of the flex title/actions row")
+	}
+
+	// Inline placement: the tile and the h1 share the title's inline flex line,
+	// with the tile first in document order.
+	if tile.Parent != h1.Parent {
+		t.Errorf("icon tile and h1 must share the inline flex line parent: tile parent=%s h1 parent=%s",
+			nodeDesc(tile.Parent), nodeDesc(h1.Parent))
+	}
+	if ti, hi := childIndexOf(tile.Parent, tile), childIndexOf(h1.Parent, h1); ti < 0 || ti >= hi {
+		t.Errorf("inline order wrong: tile=%d h1=%d, want tile < h1", ti, hi)
 	}
 }
 

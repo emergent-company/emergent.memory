@@ -1,0 +1,69 @@
+package main
+
+import (
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// ShareSessionTranscriptPage renders a read-only transcript of an owner-shared
+// session: user turns as right-aligned primary bubbles, assistant turns as
+// left-aligned neutral bubbles (markdown-rendered). There is no composer — the
+// owner inspects this transcript, never replies into it.
+templ ShareSessionTranscriptPage(id string, messages []ShareMessage, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		<div class="mb-4">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/chat",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--arrow-left",
+			}) {
+				Back to chat
+			}
+		</div>
+		if loadErr != nil {
+			@pageError("Shared session unavailable", loadErr)
+		} else if len(messages) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--messages-square",
+				Title:       "No messages",
+				Description: "This shared session has no recorded messages.",
+				Bordered:    true,
+			})
+		} else {
+			<div class="space-y-3">
+				for _, m := range messages {
+					@shareSessionTranscriptMessage(m)
+				}
+			</div>
+		}
+	}
+}
+
+// shareSessionTranscriptMessage renders one share-session message as a daisyUI
+// chat bubble: end-user turns right-aligned in a primary bubble, everything
+// else left-aligned under the assistant's bot avatar.
+templ shareSessionTranscriptMessage(m ShareMessage) {
+	if m.Role == "user" {
+		<div class="chat chat-end">
+			<div class="chat-image bg-primary/10 text-primary border-primary/20 flex items-center justify-center rounded-full border p-2">
+				@ui.IconSpan("lucide--user", "size-5")
+			</div>
+			<div class="chat-header text-xs text-base-content/50">End user</div>
+			<div class="chat-bubble chat-bubble-primary max-w-[85%]">
+				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(m.Content))</div>
+			</div>
+		</div>
+	} else {
+		<div class="chat chat-start">
+			<div class="chat-image bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">
+				@ui.IconSpan("lucide--bot", "size-5")
+			</div>
+			<div class="chat-header text-xs text-base-content/50">Assistant</div>
+			<div class="chat-bubble chat-bubble-neutral max-w-[85%]">
+				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(m.Content))</div>
+			</div>
+		</div>
+	}
+}

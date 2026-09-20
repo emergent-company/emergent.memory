@@ -45,7 +45,7 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 					<!-- Session picker: the assistant agent's past conversations.
 					     The menu is rebuilt by sidepanel.js (New session + recent
 					     sessions, last 3 by default with a "show all" footer). -->
-					<div class="dropdown dropdown-end">
+					@ui.Dropdown(ui.DropdownEnd, nil) {
 						@ui.Button(ui.ButtonProps{
 							Type:       ui.ButtonTypeButton,
 							Variant:    ui.ButtonGhost,
@@ -63,16 +63,10 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 							<span id="sidepanel-session-label" class="max-w-24 truncate text-base-content/55">New session</span>
 							<span class="iconify lucide--chevron-down size-3 text-base-content/35" aria-hidden="true"></span>
 						}
-						<ul
-							id="sidepanel-session-menu"
-							tabindex="0"
-							role="menu"
-							aria-label="Assistant sessions"
-							class="dropdown-content z-[1] menu menu-sm mt-1 max-h-96 w-64 overflow-y-auto rounded-box border border-base-200 bg-base-100 p-1 shadow-xl"
-						>
+						@ui.DropdownMenu(templ.Attributes{"id": "sidepanel-session-menu", "aria-label": "Assistant sessions", "class": "w-64 max-h-96 overflow-y-auto"}) {
 							<!-- populated by sidepanel.js -->
-						</ul>
-					</div>
+						}
+					}
 					<!-- Double-width toggle (drawer only; hidden below md where the
 					     drawer is already full-width, and hidden in modal mode). -->
 					@ui.Button(ui.ButtonProps{

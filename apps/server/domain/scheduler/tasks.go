@@ -241,22 +241,22 @@ func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConf
 	)
 
 	if cfg.hasStartedAt && cfg.hasCompletedAt {
-		// Tables with started_at and completed_at columns. Mark any non-terminal
-		// job stale when it has an old started_at, or when it never started
-		// (started_at IS NULL) but has an old created_at.
+		// Only mark jobs that actually started (processing/running) and are stuck.
+		// Jobs still 'pending' (started_at IS NULL) are not stale — they are queued
+		// behind a backlog and will be processed when the worker catches up.
+		// Marking them failed caused a re-enqueue loop: the sweep re-queued them,
+		// they sat 'pending' again, and got failed again (97k jobs hit this).
 		query = `
 			UPDATE ` + cfg.table + `
 			SET status = 'failed',
 				` + cfg.errorColumn + ` = 'Job marked as stale during cleanup',
 				completed_at = NOW(),
 				updated_at = NOW()
-		WHERE status IN ('pending', 'processing', 'running')
-		AND (
-			(started_at IS NOT NULL AND started_at < ?)
-			OR (started_at IS NULL AND created_at < ?)
-		)
+		WHERE status IN ('processing', 'running')
+		AND started_at IS NOT NULL
+		AND started_at < ?
 		`
-		args = []any{cutoff, cutoff}
+		args = []any{cutoff}
 	} else {
 		// Tables without started_at (like email_jobs) - use created_at only
 		query = `

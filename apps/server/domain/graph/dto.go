@@ -67,6 +67,10 @@ type GraphObjectResponse struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	RevisionCount     *int       `json:"revision_count,omitempty"`
 	RelationshipCount *int       `json:"relationship_count,omitempty"`
+
+	// Embedding status (computed): embedded | pending | processing | failed | dead_letter | missing
+	EmbeddingStatus    string     `json:"embedding_status,omitempty"`
+	EmbeddingUpdatedAt *time.Time `json:"embedding_updated_at,omitempty"`
 }
 
 // MarshalJSON emits both legacy (id, canonical_id) and new (version_id, entity_id)
@@ -94,33 +98,35 @@ func (o *GraphObject) ToResponse() *GraphObjectResponse {
 	}
 
 	return &GraphObjectResponse{
-		ID:                o.ID,
-		OrgID:             o.OrgID,
-		ProjectID:         o.ProjectID,
-		BranchID:          o.BranchID,
-		CanonicalID:       o.CanonicalID,
-		SupersedesID:      o.SupersedesID,
-		Version:           o.Version,
-		Type:              o.Type,
-		Key:               o.Key,
-		Status:            o.Status,
-		Namespace:         o.Namespace,
-		Properties:        o.Properties,
-		Labels:            o.Labels,
-		SchemaVersion:     o.SchemaVersion,
-		DeletedAt:         o.DeletedAt,
-		DeleteReason:      o.DeleteReason,
-		ChangeSummary:     o.ChangeSummary,
-		ContentHash:       contentHash,
-		ExternalSource:    o.ExternalSource,
-		ExternalID:        o.ExternalID,
-		ExternalURL:       o.ExternalURL,
-		ExternalParentID:  o.ExternalParentID,
-		SyncedAt:          o.SyncedAt,
-		ExternalUpdatedAt: o.ExternalUpdatedAt,
-		CreatedAt:         o.CreatedAt,
-		RevisionCount:     o.RevisionCount,
-		RelationshipCount: o.RelationshipCount,
+		ID:                 o.ID,
+		OrgID:              o.OrgID,
+		ProjectID:          o.ProjectID,
+		BranchID:           o.BranchID,
+		CanonicalID:        o.CanonicalID,
+		SupersedesID:       o.SupersedesID,
+		Version:            o.Version,
+		Type:               o.Type,
+		Key:                o.Key,
+		Status:             o.Status,
+		Namespace:          o.Namespace,
+		Properties:         o.Properties,
+		Labels:             o.Labels,
+		SchemaVersion:      o.SchemaVersion,
+		DeletedAt:          o.DeletedAt,
+		DeleteReason:       o.DeleteReason,
+		ChangeSummary:      o.ChangeSummary,
+		ContentHash:        contentHash,
+		ExternalSource:     o.ExternalSource,
+		ExternalID:         o.ExternalID,
+		ExternalURL:        o.ExternalURL,
+		ExternalParentID:   o.ExternalParentID,
+		SyncedAt:           o.SyncedAt,
+		ExternalUpdatedAt:  o.ExternalUpdatedAt,
+		CreatedAt:          o.CreatedAt,
+		RevisionCount:      o.RevisionCount,
+		RelationshipCount:  o.RelationshipCount,
+		EmbeddingStatus:    o.EmbeddingStatus,
+		EmbeddingUpdatedAt: o.EmbeddingUpdatedAt,
 	}
 }
 

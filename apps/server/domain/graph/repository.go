@@ -403,13 +403,14 @@ func (r *Repository) list(ctx context.Context, db bun.IDB, params ListParams) ([
 		"type", "key", "status", "properties", "labels", "change_summary",
 		"created_at", "updated_at", "deleted_at", "actor_type", "actor_id", "schema_version",
 		"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
-		"content_hash"}
+		"content_hash", "embedding_updated_at"}
 	if params.IncludeMigrationArchive {
 		// Opt-in only — see ListParams.IncludeMigrationArchive. Without this the
 		// column is omitted and obj.MigrationArchive always scans as empty.
 		columns = append(columns, "migration_archive")
 	}
-	q := r.buildObjectBaseQueryWith(db, params).Column(columns...)
+	q := r.buildObjectBaseQueryWith(db, params).Column(columns...).
+		ColumnExpr(embeddingStatusExpr + " AS embedding_status")
 
 	// Property-based ordering: ORDER BY the JSONB property accessor with id as a
 	// tiebreaker. Keyset cursor pagination encodes (created_at, id), which is
@@ -556,6 +557,7 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 	var objects []GraphObject
 	err := r.db.NewSelect().
 		Model(&objects).
+		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
 		Where("deleted_at IS NULL").
@@ -615,6 +617,7 @@ func (r *Repository) GetHeadByCanonicalID(ctx context.Context, db bun.IDB, proje
 	var obj GraphObject
 	q := db.NewSelect().
 		Model(&obj).
+		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL") // HEAD version
@@ -1569,6 +1572,35 @@ func buildWhereClause(conditions []string) string {
 	}
 	return "WHERE " + strings.Join(conditions, " AND ")
 }
+
+// embeddingStatusExpr is the SQL CASE expression that computes the per-object
+// embedding status. It must be selected with an `AS embedding_status` alias and
+// scanned into the GraphObject.EmbeddingStatus scanonly field.
+//
+// Classification precedence:
+//  1. embedding_v2 IS NOT NULL -> 'embedded'
+//  2. latest kb.graph_embedding_jobs row (ordered by created_at DESC):
+//     pending/processing/failed/dead_letter pass through; completed/cancelled -> 'missing'
+//  3. no job row -> 'missing'
+//
+// Uses the `go` table alias from the GraphObject bun model. Keep in sync with
+// embeddingStatus() in embedding_status_test.go.
+const embeddingStatusExpr = `CASE
+	WHEN go.embedding_v2 IS NOT NULL THEN 'embedded'
+	ELSE COALESCE((
+		SELECT CASE j.status
+			WHEN 'pending' THEN 'pending'
+			WHEN 'processing' THEN 'processing'
+			WHEN 'failed' THEN 'failed'
+			WHEN 'dead_letter' THEN 'dead_letter'
+			ELSE 'missing'
+		END
+		FROM kb.graph_embedding_jobs j
+		WHERE j.object_id = go.id
+		ORDER BY j.created_at DESC
+		LIMIT 1
+	), 'missing')
+END`
 
 // graphObjectColumns is the list of columns to select for GraphObject.
 const graphObjectColumns = `id, project_id, branch_id, canonical_id, supersedes_id, version,

@@ -1,8 +1,4 @@
-## Purpose
-
-ACP access is also exposed as MCP tools so agents can drive ACP operations without HTTP. The server registers `acp-list-agents`, `acp-trigger-run`, and `acp-get-run-status` tools that call internal services directly and follow the existing MCP tool-definition pattern.
-
-## Requirements
+## REMOVED Requirements
 
 ### Requirement: MCP tool `acp-list-agents`
 The system SHALL register an `acp-list-agents` MCP tool in `MCPToolHandler` that lists externally-visible agents via ACP semantics. The tool SHALL call internal service methods directly (not HTTP) and return a JSON array of agent manifests matching the ACP discovery format. The tool SHALL accept no required parameters and an optional `include_status` boolean parameter.
@@ -73,12 +69,23 @@ The system SHALL register an `acp-get-run-status` MCP tool in `MCPToolHandler` t
 - **WHEN** an MCP client calls `acp-get-run-status` with `agent_name: "wrong-agent"` for a run that belongs to a different agent
 - **THEN** the tool returns an error: "Run not found" (agent name mismatch treated as not found)
 
+### Requirement: MCP tool `acp-get-run-events`
+The system SHALL register an `acp-get-run-events` MCP tool in `MCPToolHandler` that fetches the full persisted event log for a completed or in-progress run. The tool SHALL accept `agent_name` (required, string) and `run_id` (required, string). The tool SHALL return all trajectory events (tool calls, thought chunks, message parts, run lifecycle) in ACP SSE format.
+
+#### Scenario: Get events of a completed run
+- **WHEN** an MCP client calls `acp-get-run-events` with `agent_name: "my-agent"` and `run_id: "<runId>"`
+- **THEN** the tool returns the persisted event log for the run, including lifecycle and tool-call events
+
+#### Scenario: Get events of an in-progress run
+- **WHEN** an MCP client calls `acp-get-run-events` for a run that is still running
+- **THEN** the tool returns the events persisted so far for that run
+
 ### Requirement: MCP tool definitions follow existing pattern
-All three ACP MCP tools SHALL be registered in `MCPToolHandler.GetAgentToolDefinitions()` using the same `mcp.ToolDefinition` structure as existing tools. Each tool definition SHALL include `name`, `description`, and `inputSchema` with JSON Schema property definitions.
+All four ACP MCP tools SHALL be registered in `MCPToolHandler.GetAgentToolDefinitions()` using the same `mcp.ToolDefinition` structure as existing tools. Each tool definition SHALL include `name`, `description`, and `inputSchema` with JSON Schema property definitions.
 
 #### Scenario: Tool definitions include ACP tools
 - **WHEN** `GetAgentToolDefinitions()` is called
-- **THEN** the returned slice includes definitions for `acp-list-agents`, `acp-trigger-run`, and `acp-get-run-status`
+- **THEN** the returned slice includes definitions for `acp-list-agents`, `acp-trigger-run`, `acp-get-run-status`, and `acp-get-run-events`
 
 #### Scenario: Tool definitions have proper input schemas
 - **WHEN** the `acp-trigger-run` tool definition is inspected

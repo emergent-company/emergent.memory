@@ -108,10 +108,6 @@ var internalToolNames = map[string]struct{}{
 	"agent-question-respond":      {},
 	"adk-session-list":            {},
 	"adk-session-get":             {},
-	"acp-list-agents":             {},
-	"acp-trigger-run":             {},
-	"acp-get-run-status":          {},
-	"acp-get-run-events":          {},
 	"set_session_title":           {},
 
 	// ── MCP registry ────────────────────────────────────────────────────────

@@ -228,9 +228,13 @@ func main() {
 	share.GET("/api/questions", s.shareQuestions)
 	share.POST("/api/sessions/:id/approvals/:questionId", s.shareApprove)
 	share.GET("/api/partial/sessions", s.sharePartialSessions)
-	// Owner agent-share management (session-gated; see share_owner.go).
+	// Owner agent-share management (session-gated; see share_owner.go). The
+	// list lives at /share; create is a standalone page at /share/new (mirroring
+	// MCP Sharing). Create and rotate render the list with the one-time URL
+	// revealed directly (no redirect).
 	e.GET("/agents/:id/share", s.uiAgentShare)
-	e.POST("/agents/:id/share-links", s.uiAgentShareCreate)
+	e.GET("/agents/:id/share/new", s.uiAgentShareNewPage)
+	e.POST("/agents/:id/share/new", s.uiAgentShareCreate)
 	e.POST("/agents/:id/share-links/:linkId/rotate", s.uiAgentShareRotate)
 	e.POST("/agents/:id/share-links/:linkId/revoke", s.uiAgentShareRevoke)
 	e.GET("/agents/:id/share-links/:linkId/reveal", s.uiAgentShareReveal)
@@ -285,6 +289,7 @@ func main() {
 	e.POST("/objects", s.uiObjectCreate)
 	e.POST("/objects/:id", s.uiObjectUpdate)
 	e.POST("/objects/:id/relationships", s.uiObjectRelationshipCreate)
+	e.GET("/embeddings", s.uiEmbeddings)
 	e.GET("/schema", s.uiSchema)
 	e.GET("/schema/add", s.uiSchemaAdd)
 	e.POST("/schema/add", s.uiSchemaInstall, s.requireSchemaWrite)
@@ -438,6 +443,7 @@ func main() {
 	// Session trace/log viewer and usage dashboard.
 	e.GET("/sessions", s.uiSessions)
 	e.GET("/sessions/:id", s.uiSession)
+	e.GET("/share-sessions/:id", s.uiShareSessionTranscript)
 	e.GET("/usage", s.uiUsage)
 
 	srv := &http.Server{

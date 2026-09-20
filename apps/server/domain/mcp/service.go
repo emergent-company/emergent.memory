@@ -1922,14 +1922,6 @@ func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName st
 	case "agent-list-available":
 		return s.delegateAgentTool(ctx, projectID, toolName, args)
 
-	// ACP (Agent Communication Protocol) tools
-	case "acp-list-agents":
-		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "acp-trigger-run":
-		return s.delegateAgentTool(ctx, projectID, toolName, args)
-	case "acp-get-run-status":
-		return s.delegateAgentTool(ctx, projectID, toolName, args)
-
 	// MCP Registry tools
 	case "mcp-server-list":
 		return s.delegateRegistryTool(ctx, projectID, toolName, args)
@@ -4868,16 +4860,6 @@ func (s *Service) delegateAgentToolInner(ctx context.Context, projectID, toolNam
 	// Agent Catalog
 	case "agent-list-available":
 		return s.agentToolHandler.ExecuteListAvailableAgents(ctx, projectID, args)
-
-	// ACP (Agent Communication Protocol)
-	case "acp-list-agents":
-		return s.agentToolHandler.ExecuteACPListAgents(ctx, projectID, args)
-	case "acp-trigger-run":
-		return s.agentToolHandler.ExecuteACPTriggerRun(ctx, projectID, args)
-	case "acp-get-run-status":
-		return s.agentToolHandler.ExecuteACPGetRunStatus(ctx, projectID, args)
-	case "acp-get-run-events":
-		return s.agentToolHandler.ExecuteACPGetRunEvents(ctx, projectID, args)
 
 	default:
 		return nil, fmt.Errorf("unknown agent tool: %s", toolName)

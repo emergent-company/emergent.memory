@@ -340,6 +340,13 @@
           closeSessionRail();
           resumeRun(runId, t);
         }
+      } else if (t.getAttribute("data-action") === "open-share") {
+        // owner-shared session rows open a read-only transcript on a separate
+        // page (they are not resumable in this workspace).
+        var shareId = t.getAttribute("data-share-id");
+        if (shareId) {
+          window.location.href = "/share-sessions/" + encodeURIComponent(shareId);
+        }
       } else if (t.getAttribute("data-action") === "toggle-chat-rail") {
         var rail = document.getElementById("chat-rail");
         if (rail) rail.classList.toggle("hidden");
@@ -998,13 +1005,9 @@
       if (!rec) return;
       thinkingMap[id] = rec;
       thinkingOrder.push(id);
-      // The assistant bubble is opened before the stream begins (it shows the
-      // typing indicator), so a freshly appended thinking badge would land
-      // BELOW the answer. Reposition it above the bubble so reasoning reads
-      // before the reply, not after.
-      if (bubble && rec.details && rec.details.parentElement) {
-        messages.insertBefore(rec.details.parentElement, bubble);
-      }
+      // Keep the badge in arrival order (below the in-progress assistant
+      // bubble), like tool chips — chronological, not hoisted above the reply.
+      // createThinkingBlock already appended it to the end of the stream.
     }
 
     if (text) {
@@ -1082,6 +1085,27 @@
       text: p.text,
       done: p.done,
     });
+  }
+
+  // Test hook: inject a synthetic tool event into the live code path so tool
+  // chips can be verified in the browser alongside thinking (DOM order).
+  // Harmless in production.
+  function debugTool(payload) {
+    var p = payload || {};
+    handleToolEvent({
+      tool: p.tool || "tool",
+      status: p.status || "running",
+      result: p.result,
+      error: p.error,
+      resultHtml: p.resultHtml,
+    });
+  }
+
+  // Test hook: open the in-progress assistant bubble directly (mirrors the
+  // streaming open path) so DOM-order tests can position badges relative to it.
+  // Harmless in production.
+  function debugOpenBubble() {
+    openAssistantBubble();
   }
 
   /* ---------- SSE handling ---------- */
@@ -2057,6 +2081,8 @@
   window.MemoryChat = {
     init: init,
     _debugThinking: debugThinking,
+    _debugTool: debugTool,
+    _debugOpenBubble: debugOpenBubble,
     refreshSessionRail: refreshSessionRail,
     applyRailBadges: applyRailBadges,
     refreshDock: refreshDock,

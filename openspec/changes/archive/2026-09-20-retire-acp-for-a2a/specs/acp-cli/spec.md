@@ -1,8 +1,4 @@
-## Purpose
-
-The `memory acp` command group wraps the ACP HTTP API for terminal use. It exposes `ping`, `agents`, `runs`, and `sessions` subcommands backed by the Go SDK client in `pkg/sdk/acp/`, with human-readable and `--json` output modes.
-
-## Requirements
+## REMOVED Requirements
 
 ### Requirement: CLI command group `memory acp`
 The CLI SHALL provide a top-level `memory acp` command group containing subcommands for ACP operations. The command group SHALL use the Go SDK client at `pkg/sdk/acp/client.go` to make HTTP calls to `/acp/v1/` endpoints on the configured Memory server.

@@ -63,7 +63,7 @@
   --color-warning: oklch(0.81 0.155 82);
   --color-warning-content: oklch(0.2 0.04 82);
   --color-error: oklch(0.63 0.2 26);
-  --color-error-content: oklch(0.97 0.01 26);
+  --color-error-content: oklch(0.2 0.04 26);
 
   --radius-selector: 1rem;
   --radius-field: 0.25rem;
@@ -282,6 +282,15 @@ div:has(> #_layout-topbar) {
 #chat-log::-webkit-scrollbar-track { background: transparent; }
 
 .chat-bubble {
+  /* daisyUI sizes the bubble to its content (width: fit-content; max-width:
+     90%), so a short message renders as a narrow pill and only widens as the
+     text grows — the transcript looks content-driven instead of full-width.
+     Force the bubble to fill its chat grid column so the conversation always
+     reads full-width regardless of message length. Unlayered on purpose: it
+     beats daisyUI's layered defaults and any max-w-* utility (e.g. the
+     max-w-[85%] the renderers used to carry). */
+  width: 100%;
+  max-width: 100%;
   box-shadow: 0 1px 2px oklch(0 0 0 / 0.2);
 }
 .chat-bubble.chat-bubble-neutral {

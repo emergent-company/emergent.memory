@@ -1,8 +1,4 @@
-## Purpose
-
-The ACP discovery HTTP API exposes an agent catalog to external ACP clients. It provides an unauthenticated ping health endpoint plus authenticated endpoints to list externally-visible agents, fetch an agent manifest by slug, compute live status metrics, and normalize agent names into slugs. Access is governed by `agents:read` scopes.
-
-## Requirements
+## REMOVED Requirements
 
 ### Requirement: ACP ping endpoint
 The system SHALL expose `GET /acp/v1/ping` that returns HTTP 200 with an empty JSON body `{}`. This endpoint SHALL NOT require authentication and SHALL be used for health checks by ACP clients.

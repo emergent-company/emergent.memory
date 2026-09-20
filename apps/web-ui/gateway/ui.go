@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/a-h/templ"
@@ -90,6 +91,7 @@ func sidebarGroups() []layout.SidebarGroup {
 			Label: "Memory Browser",
 			Items: []layout.SidebarItem{
 				{Label: "Objects", Href: "/objects", Icon: "lucide--box"},
+				{Label: "Embeddings", Href: "/embeddings", Icon: "lucide--scan-line"},
 				{Label: "Schema", Href: "/schema", Icon: "lucide--git-branch"},
 				{Label: "Documents", Href: "/documents", Icon: "lucide--file-text"},
 				{Label: "Backups", Href: "/backups", Icon: "lucide--archive"},
@@ -409,10 +411,10 @@ func (s *Server) uiAgents(c echo.Context) error {
 // /partial/chat-rail refresh endpoint. Each conversation row also carries its
 // derived run bucket and pending-work counts (best-effort: a failed history
 // fetch leaves the row at the "done" bucket with zero counts).
-func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSummary, appearances map[string]agentAppearance, convs *ConversationList, schedRuns []scheduledRunRow, err error) {
+func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSummary, appearances map[string]agentAppearance, convs *ConversationList, schedRuns []scheduledRunRow, shared []sharedSessionRow, err error) {
 	agents, err = s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	appearances = make(map[string]agentAppearance, len(agents))
 	for _, a := range agents {
@@ -446,7 +448,8 @@ func (s *Server) chatRailData(ctx context.Context) (agents []AgentDefinitionSumm
 		convs.Conversations[i].PendingQuestions = len(st.pendingQuestions)
 	}
 	schedRuns = s.chatScheduledRuns(ctx, appearances)
-	return agents, appearances, convs, schedRuns, nil
+	shared = s.chatSharedSessions(ctx)
+	return agents, appearances, convs, schedRuns, shared, nil
 }
 
 // chatModelWarnings returns agentID → message for every agent whose chats
@@ -544,26 +547,27 @@ func (s *Server) chatRunControlFor(ctx context.Context, convID string) chatRunCo
 // ?prompt=<msg> pre-fills (and auto-sends) a first message.
 func (s *Server) uiChat(c echo.Context) error {
 	ctx := c.Request().Context()
-	agents, appearances, convs, schedRuns, err := s.chatRailData(ctx)
+	agents, appearances, convs, schedRuns, shared, err := s.chatRailData(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, "", "", "", err, true, nil))
+		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, nil, "", "", "", err, true, nil))
 	}
 	modelWarnings := s.chatModelWarnings(ctx, agents)
 	convID := c.QueryParam("c")
-	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, appearances, schedRuns, c.QueryParam("agent"), convID, c.QueryParam("prompt"), nil, s.voiceEnabled(ctx), modelWarnings, s.chatRunControlFor(ctx, convID)))
+	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, appearances, schedRuns, shared, c.QueryParam("agent"), convID, c.QueryParam("prompt"), nil, s.voiceEnabled(ctx), modelWarnings, s.chatRunControlFor(ctx, convID)))
 }
 
 // uiChatRail returns the session-rail list HTML as a fragment, so chat.js can
 // refresh the rail after a new conversation appears without rebuilding the
 // row markup client-side.
 func (s *Server) uiChatRail(c echo.Context) error {
-	_, appearances, convs, schedRuns, err := s.chatRailData(c.Request().Context())
+	_, appearances, convs, schedRuns, shared, err := s.chatRailData(c.Request().Context())
 	if err != nil {
 		convs = &ConversationList{}
 		appearances = map[string]agentAppearance{}
 		schedRuns = nil
+		shared = nil
 	}
-	render.RenderPartial(c.Response().Writer, c.Request(), chatRailList(convs, appearances, schedRuns, c.QueryParam("c")))
+	render.RenderPartial(c.Response().Writer, c.Request(), chatRailList(convs, appearances, schedRuns, shared, c.QueryParam("c")))
 	return nil
 }
 
@@ -588,6 +592,48 @@ type scheduledRunRow struct {
 	// undeclared or the definition is unknown), resolved in chatScheduledRuns.
 	Icon  string
 	Color string
+}
+
+// sharedSessionRow is one owner-shared session rendered in the chat session
+// rail (data-origin="shared"). It opens a read-only transcript on a separate
+// page, so it carries no run/bucket state — just identity, title, and time.
+type sharedSessionRow struct {
+	ID                string
+	AgentDefinitionID string
+	AgentName         string
+	Title             string
+	IsArchived        bool
+	ActivityRelative  string
+}
+
+// chatSharedSessions collects the project's owner-shared sessions (created by
+// anonymous end users via agent-share links) for the chat session rail. Rows
+// open a read-only transcript on a separate page (data-action="open-share").
+func (s *Server) chatSharedSessions(ctx context.Context) []sharedSessionRow {
+	sessions, err := s.memory.ListShareSessionsByProject(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]sharedSessionRow, 0, len(sessions))
+	for _, sess := range sessions {
+		title := sess.Title
+		if title == "" {
+			title = sess.AgentName
+		}
+		last := sess.CreatedAt
+		if sess.LastActivityAt != nil {
+			last = *sess.LastActivityAt
+		}
+		out = append(out, sharedSessionRow{
+			ID:                sess.ID,
+			AgentDefinitionID: sess.AgentDefinitionID,
+			AgentName:         sess.AgentName,
+			Title:             title,
+			IsArchived:        sess.IsArchived,
+			ActivityRelative:  relTime(last.UTC().Format(time.RFC3339)),
+		})
+	}
+	return out
 }
 
 // chatScheduledRuns collects recent runs of schedule-triggered agents for the

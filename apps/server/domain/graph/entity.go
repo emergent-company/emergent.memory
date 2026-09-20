@@ -47,7 +47,7 @@ type GraphObject struct {
 	FTS *string `bun:"fts,type:tsvector" json:"-"`
 
 	// Embedding fields
-	EmbeddingUpdatedAt *time.Time `bun:"embedding_updated_at" json:"-"`
+	EmbeddingUpdatedAt *time.Time `bun:"embedding_updated_at" json:"embedding_updated_at,omitempty"`
 	// Note: embedding_v2 is vector(768), handled via raw SQL for pgvector queries
 
 	// Extraction metadata
@@ -78,6 +78,11 @@ type GraphObject struct {
 	// Computed fields (not stored, populated by queries)
 	RevisionCount     *int `bun:"-" json:"revision_count,omitempty"`
 	RelationshipCount *int `bun:"-" json:"relationship_count,omitempty"`
+
+	// EmbeddingStatus is a computed column (not stored) derived from the
+	// embedding_v2 vector and the latest kb.graph_embedding_jobs row. Values:
+	// embedded | pending | processing | failed | dead_letter | missing.
+	EmbeddingStatus string `bun:"embedding_status,scanonly" json:"embedding_status,omitempty"`
 }
 
 // GraphRelationship represents a versioned edge between two graph objects.
