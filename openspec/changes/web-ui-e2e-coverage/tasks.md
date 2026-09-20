@@ -42,7 +42,7 @@
 
 ## 4. Phase 4 — Agent & skill CRUD, org admin
 
-- [ ] 4.1 `specs/agents/agent-edit-ui.spec.ts`: `POST /agents/:id/update` persists name/model/tools and is reflected on detail
+- [x] 4.1 `specs/agents/agent-edit-ui.spec.ts`: name edit via `POST /agents/:id/settings/general` (`?updated=1`, persisted across reload). Model + tools editing are already covered by `agent-model-switch-ui` and `agent-tool-groups-ui`, so this closes the remaining name-edit gap.
 - [ ] 4.2 `specs/agents/agent-delete-ui.spec.ts`: delete via modal + activate/deactivate (`/api/agents/:id/activate|deactivate`); assert list/status transitions
 - [ ] 4.3 `specs/agents/agent-memories-ui.spec.ts`: `/agents/:id/memories` renders and paginates memories
 - [x] 4.4 `specs/agents/agent-sandbox-update-ui.spec.ts`: `POST /agents/:id/sandbox/update` persists sandbox settings (enable switch, base image, fixed repo source + URL/branch, tool allowlist, cpu/memory/disk, setup commands, env vars) across a full reload; plus a fixed-source-without-URL rejection guard.
@@ -62,7 +62,7 @@
 - [x] 5.6 `specs/settings/settings-overrides-ui.spec.ts`: creates then deletes a scratch `E2E override …` (`POST /settings/overrides`, `/:agentName/delete`), asserting both states across reloads, plus a no-leftovers guard test. No scratch agent is needed — overrides are name-keyed project settings and memory performs no agent-existence check.
 - [ ] 5.7 `specs/settings/settings-editor-remember-ui.spec.ts`: `POST /settings/remember/:field` persists. The `POST /settings/editor` half is already covered by 5.1, so this task reduces to the remember-field route.
 - [ ] 5.8 `specs/settings/mcp-nodes-ui.spec.ts`: `/settings/mcp-nodes` lists nodes and `POST /settings/mcp-nodes/remove` works
-- [ ] 5.9 `specs/sessions/usage-charts-ui.spec.ts`: assert `stat-total-tokens`/`stat-estimated-cost`/`stat-sessions`/`stat-month-spend` render and `usage-token-chart`/`usage-session-chart` draw from `#usage-timeseries`
+- [x] 5.9 `specs/sessions/usage-charts-ui.spec.ts`: asserts `stat-total-tokens`/`stat-estimated-cost`/`stat-sessions` + `usage-token-chart`/`usage-session-chart` + `#usage-timeseries` render. `stat-month-spend` is intentionally not asserted — it is omitted when the backend reports no month-spend data (`hasMonthSpend`), so requiring it would flake on an idle tenant.
 - [ ] 5.10 `specs/sessions/session-detail-ui.spec.ts`: `/sessions/:id` renders timeline, run grouping and tool-call details
 - [ ] 5.11 `specs/skills-schedules/schedule-lifecycle-ui.spec.ts`: `/schedules/:id` detail, `/:id/update`, `/:id/trigger`, `/:id/toggle`, `/:id/delete`, and `/runs/:runId` run detail
 - [ ] 5.12 Phase 5 verify: `task e2e:test -- --project=mutations`
