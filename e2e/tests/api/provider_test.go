@@ -60,6 +60,7 @@ func TestProvider_SaveGoogleAICredential_MissingAPIKey(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	_, orgID := setupProjectLogged(t, rl)
 	resp := doAPIWithOrg(t, "PUT", providerOrgURL(orgID, "/google"),
@@ -72,6 +73,7 @@ func TestProvider_SaveGoogleAICredential_WrongOrg(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	_, orgID := setupProjectLogged(t, rl)
 	otherOrgID := "00000000-0000-0000-0000-ffff00000001"

@@ -357,6 +357,7 @@ func TestMCP_RPC_ToolsCall_SchemaVersion(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	initMCPSession(t)
 	parsed := callMCPRPCTool(t, "", "schema-version", map[string]any{}, 3)
@@ -399,6 +400,7 @@ func TestMCP_RPC_ToolsCall_QueryEntities_MissingTypeName(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	initMCPSessionWithProject(t, projectID)
@@ -414,6 +416,7 @@ func TestMCP_RPC_ToolsCall_QueryEntities_Empty(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	initMCPSessionWithProject(t, projectID)
@@ -431,6 +434,7 @@ func TestMCP_RPC_ToolsCall_QueryEntities_ReturnsLatestVersionOnly(t *testing.T) 
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	initMCPSessionWithProject(t, projectID)
@@ -484,6 +488,7 @@ func TestMCP_RPC_ToolsCall_QueryEntities_StableCanonicalID(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	initMCPSessionWithProject(t, projectID)
@@ -535,6 +540,7 @@ func TestMCP_RPC_ToolsCall_QueryEntities_PaginationCountsOnlyLatestVersions(t *t
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	initMCPSessionWithProject(t, projectID)

@@ -160,6 +160,7 @@ func TestMCPSSE_Tool_SchemaVersion(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	sessionID := initAPIUnifiedMCPSession(t, "")
 	body := callAPIMCPTool(t, "", sessionID, "schema-version", map[string]any{})
@@ -180,6 +181,7 @@ func TestMCPSSE_Tool_ListTemplatePacks(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	sessionID := initAPIUnifiedMCPSession(t, "")
 	body := callAPIMCPTool(t, "", sessionID, "schema-list", map[string]any{})
@@ -199,6 +201,7 @@ func TestMCPSSE_Tool_ListTemplatePacks_WithPagination(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	sessionID := initAPIUnifiedMCPSession(t, "")
 	body := callAPIMCPTool(t, "", sessionID, "schema-list", map[string]any{
@@ -221,6 +224,7 @@ func TestMCPSSE_Tool_GetTemplatePack_NotFound(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	sessionID := initAPIUnifiedMCPSession(t, "")
 	body := callAPIMCPTool(t, "", sessionID, "schema-get", map[string]any{
@@ -285,6 +289,7 @@ func TestMCPSSE_Tool_QueryEntities_EmptyResult(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	sessionID := initAPIUnifiedMCPSession(t, projectID)
@@ -305,6 +310,7 @@ func TestMCPSSE_Tool_QueryEntities_WithPagination(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	sessionID := initAPIUnifiedMCPSession(t, projectID)

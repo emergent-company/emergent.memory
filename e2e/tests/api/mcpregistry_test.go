@@ -589,6 +589,7 @@ func TestMCPRegistry_InstallFromRegistry_StdioOnlyBlocked(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	resp := doAPILogged(t, rl, "POST", "/api/admin/mcp-registry/install", e2eTestToken(), projectID, jsonBody(map[string]any{

@@ -95,6 +95,7 @@ func TestSkills_CreateGlobal_Success(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	skill := createGlobalSkill(t, uniqueName("test-create-skill"), "A test skill", "# Test\nDo the thing.")
 	if skill["scope"] != "global" {
@@ -109,6 +110,7 @@ func TestSkills_CreateGlobal_InvalidName(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	resp := doAPILogged(t, rl, "POST", "/api/skills", e2eTestToken(), "", jsonBody(map[string]any{
 		"name":        "Invalid Name With Spaces",
@@ -122,6 +124,7 @@ func TestSkills_CreateGlobal_DuplicateName(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	name := uniqueName("duplicate-skill")
 	createGlobalSkill(t, name, "First", "content")
@@ -142,6 +145,7 @@ func TestSkills_GetSkill_Success(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	created := createGlobalSkill(t, uniqueName("get-skill-test"), "Get me", "content body")
 	id := created["id"].(string)

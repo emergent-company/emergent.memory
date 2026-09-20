@@ -417,6 +417,7 @@ func TestProjects_DeleteSuccess(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
 
 	orgID := createOrg(t, uniqueName("e2e-del-proj-org"))
 	projectID := createProject(t, orgID, uniqueName("e2e-delete-proj"))
