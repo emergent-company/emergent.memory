@@ -1,8 +1,10 @@
 package main
 
 import (
+	"slices"
 	"strconv"
 
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
@@ -13,14 +15,18 @@ var shareManageScriptOnce = templ.NewOnceHandle()
 
 // --- Owner share-link management --------------------------------------------
 //
-// ShareLinksPanel is the owner-facing management surface for an agent's public
-// share links. It is designed to render inside the agent detail page (the wiring
-// lane passes it to a tab or section) and performs no I/O of its own: every
-// action is a real form POST so it works without JavaScript, and the client JS
-// on this file only adds the copy-link affordance.
+// The owner-facing surface is split into two pages, mirroring MCP Sharing:
 //
-// The wiring lane sets CreateAction + each row's RotateURL/RevokeURL to the
-// gateway routes it mounts. Nothing here assumes a route shape.
+//   - the list page (GET /agents/:id/share) shows the public-URL banner, every
+//     link's card, and a "New share link" call to action;
+//   - the create page (GET /agents/:id/share/new) holds the full form with its
+//     own back-link.
+//
+// Create and rotate render the list page directly (no redirect) with a
+// one-time reveal: the raw key exists only in that response and must never
+// round-trip through a URL. The components below do no I/O of their own — every
+// action is a real form POST, so the surface works without JavaScript; the
+// script on this file only adds the copy-link affordance.
 
 // ShareLinkStatus is a share link's lifecycle status.
 type ShareLinkStatus string
@@ -35,7 +41,9 @@ const (
 type ShareLinkRow struct {
 	ID    string
 	Label string
-	// URL is the full public link, including its key fragment.
+	// URL is the full public link, including its key fragment. It is empty at
+	// list time (the key is not stored); it is populated only for the link that
+	// was just created/rotated in this response.
 	URL string
 	// Status drives the row's badge and which actions are available.
 	Status ShareLinkStatus
@@ -49,7 +57,7 @@ type ShareLinkRow struct {
 	ExpiresRelative string
 	ExpiresNever    bool
 
-	// Behaviour summary shown as chips.
+	// Access and limits summary.
 	RequireEmail       bool
 	ShowSessionList    bool
 	Sandbox            bool
@@ -94,28 +102,50 @@ type ShareLinkCreateValues struct {
 	BudgetTokens       string
 }
 
-// ShareLinksPanelProps configures ShareLinksPanel.
-type ShareLinksPanelProps struct {
-	// AgentID is the owning agent's id (used for element ids/labels only).
-	AgentID string
+// ShareLinksPageProps configures the list page body.
+type ShareLinksPageProps struct {
 	// PublicBaseURL is the share host shown in the "public URL" banner
 	// (e.g. "https://memory.example.com/share"). Empty hides the banner.
 	PublicBaseURL string
-	// CreateAction is where the create form POSTs.
-	CreateAction string
+	// NewLinkURL is the create page's address for the header call to action.
+	NewLinkURL string
 	// Links are the agent's existing share links, newest first.
 	Links []ShareLinkRow
+	// Error is a page-level error shown above the list.
+	Error string
+}
+
+// ShareLinkCreatePageProps configures the create page body.
+type ShareLinkCreatePageProps struct {
+	// CreateAction is where the create form POSTs.
+	CreateAction string
+	// CancelURL returns to the list page.
+	CancelURL string
 	// Tools is the tool allowlist picker's options.
 	Tools []ShareToolOption
 	// Values preserves the create form across a failed submit.
 	Values ShareLinkCreateValues
-	// Error is a form-level error shown above the create form.
+	// Error is a form-level error shown above the form.
 	Error string
 }
 
-// ShareLinksPanel renders the full share-link management surface: the public
-// URL banner, the existing links (or empty state), and the create form.
-templ ShareLinksPanel(props ShareLinksPanelProps) {
+// ShareLinkReveal carries the one-time full URL rendered after a create or
+// rotate. It exists only in that one response — the raw key is never persisted
+// and never round-trips through a URL.
+type ShareLinkReveal struct {
+	// LinkID ties the reveal to the row that should show its URL.
+	LinkID  string
+	Heading string
+	Label   string
+	URL     string
+}
+
+// --- list page body ----------------------------------------------------------
+
+// ShareLinksListPanel renders the list page body: the section header with its
+// "New share link" call to action, the public URL banner, and the links (or
+// empty state).
+templ ShareLinksListPanel(props ShareLinksPageProps) {
 	<section class="space-y-6" data-testid="share-links-panel" aria-labelledby="share-links-heading">
 		@ShareLinksHeader(props)
 		@SharePublicURLBanner(props.PublicBaseURL)
@@ -128,13 +158,13 @@ templ ShareLinksPanel(props ShareLinksPanelProps) {
 				Attrs:   templ.Attributes{"data-testid": "share-links-error"},
 			})
 		}
-		@ShareLinksList(props.Links)
-		@ShareLinkCreateForm(props)
+		@ShareLinksList(props.Links, props.NewLinkURL)
+		@shareManageScript()
 	</section>
 }
 
-// ShareLinksHeader labels the section.
-templ ShareLinksHeader(_ ShareLinksPanelProps) {
+// ShareLinksHeader labels the section and carries the primary call to action.
+templ ShareLinksHeader(props ShareLinksPageProps) {
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div>
 			<h2 id="share-links-heading" class="text-lg font-semibold tracking-tight">Share links</h2>
@@ -142,6 +172,16 @@ templ ShareLinksHeader(_ ShareLinksPanelProps) {
 				Let people outside your workspace chat with this agent. Each link has its own settings, and you can turn one off at any time.
 			</p>
 		</div>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    props.NewLinkURL,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--plus",
+			Attrs:   templ.Attributes{"data-testid": "share-new-link"},
+		}) {
+			New share link
+		}
 	</div>
 }
 
@@ -162,10 +202,10 @@ templ SharePublicURLBanner(base string) {
 }
 
 // ShareLinksList renders the existing links or the empty state.
-templ ShareLinksList(links []ShareLinkRow) {
+templ ShareLinksList(links []ShareLinkRow, newLinkURL string) {
 	<div data-testid="share-links-list">
 		if len(links) == 0 {
-			@shareLinksEmpty()
+			@shareLinksEmpty(newLinkURL)
 		}
 		if len(links) > 0 {
 			<div class="space-y-4">
@@ -177,38 +217,40 @@ templ ShareLinksList(links []ShareLinkRow) {
 	</div>
 }
 
-// shareLinksEmpty is the no-links empty state.
-templ shareLinksEmpty() {
+// shareLinksEmpty is the no-links empty state with its own create call to
+// action.
+templ shareLinksEmpty(newLinkURL string) {
 	<div data-testid="share-links-empty">
 		@ui.EmptyState(ui.EmptyStateProps{
 			Icon:        "lucide--share-2",
 			Title:       "No share links yet",
-			Description: "Create a link below to let someone outside your workspace chat with this agent.",
+			Description: "Create a link to let someone outside your workspace chat with this agent.",
 			IconStyle:   ui.EmptyStateIconTile,
 			Bordered:    true,
+			ActionHref:  newLinkURL,
+			ActionLabel: "New share link",
+			ActionIcon:  "lucide--plus",
 		})
 	</div>
 }
 
-// shareLinkRowItem is one link's card: status, metadata, behaviour chips, and
-// the copy / rotate / revoke actions.
+// --- link card ---------------------------------------------------------------
+
+// shareLinkRowItem is one link's card, in four bands: a title row (name, status,
+// rotate/revoke actions); a prominent share-link block (readable URL + Copy
+// link); a single tidy metadata line (created / last used / expires); and a
+// labelled "Access & limits" section grouping the behaviour toggles and numeric
+// caps.
 templ shareLinkRowItem(link ShareLinkRow) {
 	<div class="card card-border bg-base-100" data-testid="share-link-row" data-link-id={ link.ID }>
 		<div class="card-body gap-4 p-4">
 			<div class="flex flex-wrap items-start justify-between gap-3">
-				<div class="min-w-0">
-					<div class="flex items-center gap-2">
-						<h3 class="truncate text-sm font-semibold">{ shareLinkTitle(link) }</h3>
-						@shareLinkStatusBadge(link.Status)
-					</div>
-					<p class="text-base-content/45 mt-0.5 truncate font-mono text-xs" data-share-link-url>{ link.URL }</p>
+				<div class="flex min-w-0 items-center gap-2">
+					@ui.IconSpan("lucide--link", "size-4 shrink-0 text-primary/70")
+					<h3 class="truncate text-sm font-semibold">{ shareLinkTitle(link) }</h3>
+					@shareLinkStatusBadge(link.Status)
 				</div>
 				<div class="flex shrink-0 items-center gap-1">
-					if link.URL != "" {
-						@shareCopyButton(link.URL, "share-copy-link", "Copy link")
-					} else if link.RevealURL != "" && link.Status != ShareLinkRevoked {
-						@shareRevealCopyButton(link.RevealURL, "Copy link")
-					}
 					if link.RotateURL != "" && link.Status == ShareLinkActive {
 						<form method="post" action={ templ.URL(link.RotateURL) } hx-confirm="Rotate this link? The old URL stops working immediately and a new one is issued.">
 							@ui.Button(ui.ButtonProps{
@@ -238,30 +280,66 @@ templ shareLinkRowItem(link ShareLinkRow) {
 					}
 				</div>
 			</div>
-			<dl class="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-				<div>
-					<dt class="text-base-content/45 text-xs">Created</dt>
-					<dd class="text-sm">{ shareTimeCell(link.CreatedAt, link.CreatedRelative) }</dd>
-				</div>
-				<div>
-					<dt class="text-base-content/45 text-xs">Last used</dt>
-					<dd class="text-sm">{ shareTimeCell(link.LastUsedAt, link.LastUsedRelative) }</dd>
-				</div>
-				<div>
-					<dt class="text-base-content/45 text-xs">Expires</dt>
-					<dd class="text-sm">
-						if link.ExpiresNever {
-							Never
-						} else {
-							{ shareTimeCell(link.ExpiresAt, link.ExpiresRelative) }
-						}
-					</dd>
-				</div>
-			</dl>
-			<div class="flex flex-wrap gap-1.5">
-				@shareBehaviourChip("lucide--mail", "Requires email", link.RequireEmail)
-				@shareBehaviourChip("lucide--history", "Shows session list", link.ShowSessionList)
-				@shareBehaviourChip("lucide--shield-alert", "Sandbox", link.Sandbox)
+			@shareLinkURLBlock(link)
+			<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/55">
+				<span data-testid="share-link-created">
+					@components.MetaChip("lucide--calendar-plus", "created "+shareTimeCell(link.CreatedAt, link.CreatedRelative))
+				</span>
+				<span data-testid="share-link-last-used">
+					@components.MetaChip("lucide--clock", "last used "+shareTimeCell(link.LastUsedAt, link.LastUsedRelative))
+				</span>
+				<span data-testid="share-link-expires">
+					@components.MetaChip("lucide--calendar-x", "expires "+shareLinkExpiresLabel(link))
+				</span>
+			</div>
+			@shareLinkAccessSection(link)
+		</div>
+	</div>
+}
+
+// shareLinkURLBlock is the prominent share-link band: the copy control plus the
+// full URL rendered in a readable, break-all field. At list time the key is not
+// known, so the field is empty until the owner chooses Copy link (which fetches
+// the reveal endpoint) or rotates the link.
+templ shareLinkURLBlock(link ShareLinkRow) {
+	if link.Status == ShareLinkRevoked {
+		<div class="rounded-box border border-base-content/10 bg-base-200/30 px-3 py-2.5" data-testid="share-link-revoked">
+			<p class="text-base-content/55 flex items-center gap-1.5 text-xs">
+				@ui.IconSpan("lucide--ban", "size-3.5")
+				This link was revoked and no longer works.
+			</p>
+		</div>
+	} else {
+		<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3">
+			<div class="flex flex-wrap items-center justify-between gap-2">
+				<p class="text-base-content/50 text-[11px] font-semibold tracking-wide uppercase">Share link</p>
+				if link.URL != "" {
+					@shareCopyButton(link.URL, "share-copy-link", "Copy link")
+				} else if link.RevealURL != "" {
+					@shareRevealCopyButton(link.RevealURL, "Copy link")
+				}
+			</div>
+			<p class="text-base-content/75 mt-2 font-mono text-xs break-all" data-share-link-url>{ link.URL }</p>
+			if link.URL == "" && link.RevealURL != "" {
+				<p class="text-base-content/45 mt-1 text-xs">Copy link fetches the full URL. It isn't stored here until you do.</p>
+			}
+		</div>
+	}
+}
+
+// shareLinkAccessSection groups the on/off behaviours and the numeric caps under
+// one labelled heading, so the row reads as "what this link allows" rather than
+// a flat chip dump.
+templ shareLinkAccessSection(link ShareLinkRow) {
+	<div class="rounded-box border border-base-200 bg-base-200/30 p-3" data-testid="share-link-access">
+		<p class="text-base-content/50 text-[11px] font-semibold tracking-wide uppercase">Access &amp; limits</p>
+		<div class="mt-2 flex flex-wrap gap-1.5">
+			@shareBehaviourChip("lucide--mail", "Requires email", link.RequireEmail)
+			@shareBehaviourChip("lucide--history", "Shows session list", link.ShowSessionList)
+			@shareBehaviourChip("lucide--shield-alert", "Sandbox", link.Sandbox)
+		</div>
+		if shareLinkHasLimits(link) {
+			<div class="mt-2 flex flex-wrap gap-1.5">
 				if link.MaxSessionsPerUser > 0 {
 					@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(link.MaxSessionsPerUser) + " sessions / person", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 				}
@@ -272,7 +350,9 @@ templ shareLinkRowItem(link ShareLinkRow) {
 					@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(link.BudgetTokens) + " token budget", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 				}
 			</div>
-		</div>
+		} else {
+			<p class="text-base-content/45 mt-2 text-xs">No session or usage limits.</p>
+		}
 	</div>
 }
 
@@ -294,9 +374,59 @@ templ shareLinkStatusBadge(status ShareLinkStatus) {
 	</span>
 }
 
-// ShareLinkCreateForm is the create-link form. It posts JSON-less form fields;
-// the wiring lane interprets them.
-templ ShareLinkCreateForm(props ShareLinksPanelProps) {
+// --- reveal modal ------------------------------------------------------------
+
+// ShareLinkRevealModal is the one-time visible full URL shown, open, on the
+// list page after a create or rotate. The raw key exists only in this response;
+// closing the dialog returns to the list and the key is gone for good.
+templ ShareLinkRevealModal(r ShareLinkReveal) {
+	@components.SecretRevealModal(components.SecretRevealProps{
+		Heading:      r.Heading,
+		Name:         r.Label,
+		Noun:         "link",
+		SecretID:     "share-link-reveal-url",
+		SecretTestID: "share-link-reveal-url",
+		Secret:       r.URL,
+		CopyLabel:    "Copy link",
+		Warning:      "This full link is shown only once. If you lose it, rotate the link to issue a new one.",
+		DialogID:     "share-link-reveal-modal",
+		Attrs:        templ.Attributes{"data-share-link-reveal": "true"},
+		AutoOpen:     true,
+	})
+}
+
+// --- create page body --------------------------------------------------------
+
+// ShareLinkCreatePanel is the create page body: the back-link, its heading, the
+// form-level error, and the form itself.
+templ ShareLinkCreatePanel(props ShareLinkCreatePageProps) {
+	<section class="space-y-5" data-testid="share-create-panel" aria-labelledby="share-create-heading">
+		<div>
+			<a href={ templ.URL(props.CancelURL) } class="link link-hover text-base-content/60 inline-flex items-center gap-1 text-sm" data-testid="share-create-back">
+				@ui.IconSpan("lucide--arrow-left", "size-4")
+				Share links
+			</a>
+			<h2 id="share-create-heading" class="mt-2 text-lg font-semibold tracking-tight">New share link</h2>
+			<p class="text-base-content/55 mt-1 max-w-xl text-sm">
+				Choose how this link works. New links start active, and you can turn one off at any time.
+			</p>
+		</div>
+		if props.Error != "" {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--alert-circle",
+				Message: props.Error,
+				Attrs:   templ.Attributes{"data-testid": "share-create-error"},
+			})
+		}
+		@ShareLinkCreateForm(props)
+	</section>
+}
+
+// ShareLinkCreateForm is the create-link form. It posts plain form fields; the
+// wiring lane interprets them.
+templ ShareLinkCreateForm(props ShareLinkCreatePageProps) {
 	<form
 		id="share-create-link"
 		data-testid="share-create-form"
@@ -306,8 +436,8 @@ templ ShareLinkCreateForm(props ShareLinksPanelProps) {
 	>
 		<div class="card-body gap-4 p-4">
 			<div>
-				<h3 class="text-sm font-semibold">Create a share link</h3>
-				<p class="text-base-content/50 mt-0.5 text-xs">New links start active. You can revoke one at any time.</p>
+				<h3 class="text-sm font-semibold">Link settings</h3>
+				<p class="text-base-content/50 mt-0.5 text-xs">Every field below applies to this one link.</p>
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
 				@form.FormField(form.FormFieldProps{
@@ -374,6 +504,16 @@ templ ShareLinkCreateForm(props ShareLinksPanelProps) {
 			</div>
 			<div class="flex justify-end gap-2 pt-1">
 				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    props.CancelURL,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--x",
+					Attrs:   templ.Attributes{"data-testid": "share-create-cancel"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonPrimary,
 					Size:    ui.ButtonSM,
@@ -385,7 +525,6 @@ templ ShareLinkCreateForm(props ShareLinksPanelProps) {
 			</div>
 		</div>
 	</form>
-	@shareManageScript()
 }
 
 // shareToolPicker is the tool allowlist: a scrollable checkbox list. Leaving all
@@ -461,13 +600,16 @@ templ shareSandboxToggle(checked bool) {
 	</div>
 }
 
-// shareCopyButton renders a copy-to-clipboard button. The URL lives in a
-// data attribute (never an inline handler) and shareManageScript() wires the
-// click; without JavaScript the URL is still shown as text elsewhere.
+// --- copy controls + script --------------------------------------------------
+
+// shareCopyButton renders a copy-to-clipboard button for an already-known URL.
+// The URL lives in a data attribute (never an inline handler) and
+// shareManageScript() wires the click; without JavaScript the URL is still
+// shown as text in the link block.
 templ shareCopyButton(value string, testID string, label string) {
 	<button
 		type="button"
-		class="btn btn-ghost btn-sm gap-2"
+		class="btn btn-primary btn-sm gap-2"
 		data-copy-link={ value }
 		data-testid={ testID }
 		aria-label={ label }
@@ -479,11 +621,11 @@ templ shareCopyButton(value string, testID string, label string) {
 
 // shareRevealCopyButton is the row's copy action for an existing link whose key
 // is not present at list time. It fetches the reveal endpoint on demand, copies
-// the full URL, and surfaces it inline (see shareManageScript).
+// the full URL, and fills the readable link field inline (see shareManageScript).
 templ shareRevealCopyButton(revealURL string, label string) {
 	<button
 		type="button"
-		class="btn btn-ghost btn-sm gap-2"
+		class="btn btn-primary btn-sm gap-2"
 		data-reveal-url={ revealURL }
 		data-testid="share-copy-link"
 		aria-label={ label }
@@ -520,7 +662,7 @@ templ shareManageScript() {
 				});
 			});
 			// On-demand reveal: fetch the key, build/copy the full URL, and show
-			// it inline in the row. The key is never rendered during list build.
+			// it in the row's link field. The key is never rendered during list build.
 			document.addEventListener("click", function (ev) {
 				var btn = ev.target && ev.target.closest ? ev.target.closest("[data-reveal-url]") : null;
 				if (!btn) return;
@@ -539,6 +681,18 @@ templ shareManageScript() {
 						btn.dataset.revealing = "false";
 					}, 2000);
 				};
+				var showURL = function (text) {
+					if (!urlEl) return;
+					urlEl.textContent = text;
+					urlEl.classList.remove("text-error");
+					urlEl.classList.add("text-base-content/75");
+				};
+				var showError = function (text) {
+					if (!urlEl) return;
+					urlEl.textContent = text;
+					urlEl.classList.remove("text-base-content/75");
+					urlEl.classList.add("text-error");
+				};
 				fetch(url, { headers: { Accept: "application/json" } })
 					.then(function (res) {
 						return res.json().catch(function () { return {}; }).then(function (body) {
@@ -547,12 +701,12 @@ templ shareManageScript() {
 					})
 					.then(function (r) {
 						if (r.ok && r.body && r.body.url) {
-							if (urlEl) urlEl.textContent = r.body.url;
+							showURL(r.body.url);
 							copyText(r.body.url, function () {});
 							finish("Copied");
 						} else if (r.body && r.body.code === "not_recoverable") {
-							if (urlEl) urlEl.textContent = "Key not recoverable — rotate this link to issue a new one.";
-							finish("Not recoverable");
+							showError("Not recoverable — rotate this link to issue a new one.");
+							finish("Rotate to recover");
 						} else {
 							finish("Copy failed");
 						}
@@ -585,6 +739,20 @@ func shareTimeCell(absolute string, relative string) string {
 	return "—"
 }
 
+// shareLinkExpiresLabel is the expiry value shown in the metadata line: "Never"
+// when the link has no expiry, else the relative/absolute time.
+func shareLinkExpiresLabel(link ShareLinkRow) string {
+	if link.ExpiresNever {
+		return "Never"
+	}
+	return shareTimeCell(link.ExpiresAt, link.ExpiresRelative)
+}
+
+// shareLinkHasLimits reports whether the link sets any numeric cap.
+func shareLinkHasLimits(link ShareLinkRow) bool {
+	return link.MaxSessionsPerUser > 0 || link.BudgetMessages > 0 || link.BudgetTokens > 0
+}
+
 // shareBehaviourChip shows an on/off behaviour as a badge (off = ghost).
 templ shareBehaviourChip(icon string, label string, on bool) {
 	if on {
@@ -615,13 +783,5 @@ func shareExpiryOptions() []form.SelectOption {
 }
 
 func shareToolSelected(t ShareToolOption, selected []string) bool {
-	if t.Selected {
-		return true
-	}
-	for _, id := range selected {
-		if id == t.ID {
-			return true
-		}
-	}
-	return false
+	return t.Selected || slices.Contains(selected, t.ID)
 }
