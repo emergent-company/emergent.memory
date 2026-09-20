@@ -426,8 +426,10 @@
   // chat uses (chat-stream.js: chat chat-start/end + chat-bubble + a per-message
   // header, with the assistant leading with an avatar tile). The assistant
   // content lives in a .memory-md wrapper so the shared markdown styles apply;
-  // the returned node is the content container (the streaming engine writes
-  // tokens and moves the caret there).
+  // the share surface only ever streams plain-text token deltas (no `html`
+  // frames), so whitespace-pre-wrap keeps multiline history and tokens from
+  // collapsing their line breaks. The returned node is the content container
+  // (the streaming engine writes tokens and moves the caret there).
   function appendBubble(role, text, streaming) {
     var isUser = role === "user";
     var wrap = el("div", "chat " + (isUser ? "chat-end" : "chat-start") + " memory-rise");
@@ -443,7 +445,7 @@
     shell.setAttribute("data-role", role);
     var content = isUser
       ? el("p", "whitespace-pre-wrap break-words", text)
-      : el("div", "memory-md break-words", text);
+      : el("div", "memory-md whitespace-pre-wrap break-words", text);
     // The caret only appears once the first token lands; while the reply is
     // still pending the external #share-typing dots own the wait state, exactly
     // like the app chat's empty assistant bubble.
