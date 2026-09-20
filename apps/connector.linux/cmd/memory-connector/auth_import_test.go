@@ -183,3 +183,94 @@ func TestAuthImportUnexpectedArgumentIsUsageError(t *testing.T) {
 		t.Errorf("code = %d, want 2", code)
 	}
 }
+
+func TestAuthImportMergesStoredRefreshToken(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "memory-connector.yml")
+	serverURL := "https://memory.example.test"
+
+	// Pre-seed a refreshable session whose refresh token must survive an
+	// import payload that omits it.
+	m := account.NewManager(account.BaseDirForConfig(configPath))
+	if err := m.Save(serverURL, &account.Session{
+		ServerURL:    serverURL,
+		IssuerURL:    "https://issuer.test",
+		AccessToken:  "stored-access",
+		RefreshToken: "stored-refresh",
+		ExpiresAt:    time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+		UserEmail:    "user@example.com",
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	withAuthStdin(t, `{"access_token":"at-new","expires_at":"2031-01-02T03:04:05Z",`+
+		`"issuer":"https://issuer.test","email":"user@example.com"}`)
+
+	code, _, stderr := runAuthCapture("import", "--config", configPath, "--server", serverURL)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if sess.RefreshToken != "stored-refresh" {
+		t.Errorf("RefreshToken = %q, want stored-refresh retained", sess.RefreshToken)
+	}
+	if sess.AccessToken != "at-new" {
+		t.Errorf("AccessToken = %q, want at-new", sess.AccessToken)
+	}
+}
+
+func TestAuthImportRefreshTokenReplacesStored(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "memory-connector.yml")
+	serverURL := "https://memory.example.test"
+
+	m := account.NewManager(account.BaseDirForConfig(configPath))
+	if err := m.Save(serverURL, &account.Session{
+		ServerURL:    serverURL,
+		AccessToken:  "stored-access",
+		RefreshToken: "stored-refresh",
+		ExpiresAt:    time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	withAuthStdin(t, `{"access_token":"at-new","refresh_token":"rt-new","expires_at":"2031-01-02T03:04:05Z"}`)
+
+	code, _, stderr := runAuthCapture("import", "--config", configPath, "--server", serverURL)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if sess.RefreshToken != "rt-new" {
+		t.Errorf("RefreshToken = %q, want rt-new (payload wins)", sess.RefreshToken)
+	}
+}
+
+func TestAuthImportNoStoredSessionStoresNoRefreshToken(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "memory-connector.yml")
+	serverURL := "https://memory.example.test"
+
+	withAuthStdin(t, `{"access_token":"at-1","expires_at":"2030-01-02T03:04:05Z"}`)
+
+	code, _, stderr := runAuthCapture("import", "--config", configPath, "--server", serverURL)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	sess, err := account.NewManager(account.BaseDirForConfig(configPath)).SessionFor(serverURL)
+	if err != nil || sess == nil {
+		t.Fatalf("SessionFor = (%v, %v), want a persisted session", sess, err)
+	}
+	if sess.RefreshToken != "" {
+		t.Errorf("RefreshToken = %q, want empty with no stored session", sess.RefreshToken)
+	}
+}

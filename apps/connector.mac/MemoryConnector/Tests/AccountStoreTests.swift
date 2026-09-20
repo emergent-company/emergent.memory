@@ -274,7 +274,7 @@ final class AccountStoreTests: XCTestCase {
     // MARK: - Connector CLI session bridge
 
     @MainActor
-    func testSignInImportsSessionIntoConnectorCLI() async throws {
+    func testSignInDoesNotImportSessionIntoConnectorCLI() async throws {
         stubComplete(email: "a@example.test")
         stubAccessToken([prodServer: "access-1"])
         cli.on("auth import", json: """
@@ -284,18 +284,11 @@ final class AccountStoreTests: XCTestCase {
 
         _ = try await signIn(store, .prod)
 
-        XCTAssertTrue(cli.called("auth import"), "sign-in bridges the session into the CLI")
-        let call = try XCTUnwrap(cli.stdinCalls.last {
-            Array($0.arguments.prefix(2)).joined(separator: " ") == "auth import"
-        })
-        XCTAssertEqual(Self.flagValue("--server", in: call.arguments), prodServer)
-
-        let body = try XCTUnwrap(call.body)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
-        XCTAssertEqual(json["access_token"], "access-1")
-        XCTAssertEqual(json["email"], "a@example.test")
-        XCTAssertEqual(json["issuer"], Environment.prod.issuerString)
-        XCTAssertEqual(json["expires_at"], "2030-01-02T03:04:05Z")
+        XCTAssertTrue(cli.called("auth start"), "sign-in starts the CLI login")
+        XCTAssertTrue(cli.called("auth complete"), "sign-in completes the CLI login")
+        XCTAssertFalse(cli.called("auth import"),
+                       "sign-in must not re-import (and thereby overwrite) the session the CLI just stored")
+        XCTAssertTrue(store.isEffectivelySignedIn)
     }
 
     @MainActor

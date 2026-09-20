@@ -226,12 +226,6 @@ final class AccountStore: ObservableObject {
                 throw OIDCError.invalidResponse("the connector did not complete sign-in")
             }
 
-            // Bridge the freshly established session through `auth import` so
-            // the CLI config that `projects list` reads is guaranteed to carry
-            // it. Best-effort: `auth complete` already stored the session, so a
-            // failed bridge must not fail the sign-in.
-            _ = await importSessionToConnectorCLI(environment: environment, email: status.email)
-
             let accountID = Self.accountID(environment: environment, email: status.email)
             let account = Account(id: accountID,
                                   environmentID: environment.id,
