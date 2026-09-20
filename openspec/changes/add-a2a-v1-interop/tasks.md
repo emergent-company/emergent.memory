@@ -84,10 +84,10 @@ Legend: `[x]` implemented and unit-tested in this change; `[ ]` deferred or pend
 
 ## 9. Conformance gates
 
-- [x] 9.1 Add golden-file tests for AgentCard (global + extended) and Task JSON shapes
+- [ ] 9.1 Add checked-in golden fixture files for AgentCard (global + extended) and Task JSON shapes *(deferred; no fixture files exist — current coverage is inline assertions in the DTO/mapping/discovery tests: camelCase keys, `TaskState`/`Role` enum spelling, oneof serialization, no-tenant-leak, required AgentCard fields)*
 - [x] 9.2 Add a test asserting every emitted `TaskState` is a member of the A2A enum and no internal string leaks
 - [ ] 9.3 Wire the official `a2a-tck` suite into CI as a non-blocking smoke job *(deferred; TCK is currently 0.3-wire)*
-- [ ] 9.4 Document the 0.3-wire TCK limitation and the golden-file v1.0 coverage in the change docs *(design Risk section records the gap; CI wiring pending)*
+- [ ] 9.4 Document the 0.3-wire TCK limitation and the v1.0 shape-assertion coverage in the change docs *(deferred; design.md Risk section records the gap; CI wiring pending)*
 
 ## 10. Verification
 

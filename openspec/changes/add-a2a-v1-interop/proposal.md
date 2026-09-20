@@ -19,7 +19,7 @@ The result is a private protocol that external clients can only use through besp
 - Hand-write the A2A DTOs and Echo handlers. Do **not** adopt `github.com/a2aproject/a2a-go/v2` for this milestone (our project-bound bearer auth and single-project tenancy would be force-fit around its auth/multi-tenancy model, while the wire types still need mapping). Revisit the SDK only when a JSON-RPC or gRPC binding is actually demanded.
 - **Deprecate** `/acp/v1/` and `/agent-chat/v1/` with `Deprecation` / `Sunset` headers, migrate all first-party consumers to A2A, then delete the ACP implementation in a later release.
 - Add a first-party `pkg/sdk/a2a` client and a `memory a2a` CLI command group; repoint or retire the `acp-*` MCP tools.
-- Add A2A conformance smoke tests (golden-file JSON shapes) and wire the official `a2a-tck` suite into CI as a smoke gate, with the 0.3-vs-1.0 coverage gap documented.
+- Add A2A conformance shape-assertion tests (camelCase keys, `TaskState`/`Role` enum spelling, oneof serialization, no-tenant-leak). Wiring the official `a2a-tck` suite into CI and checking in golden fixtures are deferred until the TCK supports the 1.0 wire format, with the 0.3-vs-1.0 coverage gap documented.
 
 ## Capabilities
 
@@ -28,7 +28,7 @@ The result is a private protocol that external clients can only use through besp
 - `a2a-discovery`: Unauthenticated global AgentCard at `/.well-known/agent-card.json` and authenticated per-project `GET /extendedAgentCard`, including `supportedInterfaces[]`, `capabilities`, `skills[]`, and `securitySchemes`/`securityRequirements`. Enforces the hard invariant that public discovery leaks no tenant data.
 - `a2a-message-flow`: `POST /message:send`, `POST /message:stream`, `GET /tasks/{id}`, `GET /tasks`, `POST /tasks/{id}:cancel`; the `Task`/`Message`/`Part`/`Artifact` data model; mapping to `AgentRun`; `contextId` ↔ session mapping; status and streaming-event mapping.
 - `a2a-hitl`: Human-in-the-loop over A2A — `TASK_STATE_INPUT_REQUIRED` with a prompt in `status.message`, resume by sending a new `Message` carrying `taskId`, and the documented streaming behavior across the interruption.
-- `a2a-conformance`: `A2A-Version` negotiation, `google.rpc.Status` error envelope, and conformance smoke/TCK gates.
+- `a2a-conformance`: `A2A-Version` negotiation, `google.rpc.Status` error envelope, and conformance shape-assertion tests; the official TCK smoke gate is deferred.
 - `a2a-acp-migration`: Deprecation signaling on `/acp/v1/` + `/agent-chat/v1/`, migration of CLI/SDK/MCP consumers, and the eventual removal of the ACP implementation.
 
 ### Modified Capabilities

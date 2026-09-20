@@ -2,10 +2,12 @@ package agents
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/acpslug"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
@@ -17,11 +19,25 @@ type A2AHandler struct {
 	executor  *AgentExecutor
 	eventsSvc *events.Service
 	log       *slog.Logger
+
+	// a2aOrigin is the configured public origin (config.A2AOrigin) advertised in
+	// AgentCards. Empty means the origin is derived from the incoming request.
+	a2aOrigin string
+
+	// appURL is the configured application base URL (config.AppURL). It is used
+	// as the advertised interface origin when A2A_ORIGIN is unset, before any
+	// request-derived (and therefore spoofable) origin is considered.
+	appURL string
 }
 
 // NewA2AHandler creates a new A2A handler.
-func NewA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger) *A2AHandler {
-	return &A2AHandler{repo: repo, executor: executor, eventsSvc: eventsSvc, log: log}
+func NewA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger, cfg *config.Config) *A2AHandler {
+	h := &A2AHandler{repo: repo, executor: executor, eventsSvc: eventsSvc, log: log}
+	if cfg != nil {
+		h.a2aOrigin = strings.TrimRight(cfg.A2AOrigin, "/")
+		h.appURL = strings.TrimRight(cfg.AppURL, "/")
+	}
+	return h
 }
 
 // A2ACardVersion is the static AgentCard version string.
@@ -149,12 +165,54 @@ func (h *A2AHandler) extendedAgentCard(c echo.Context, projectID string) (AgentC
 	return ExtendedAgentCardFromSkills(skills), nil
 }
 
+// resolveInterfaceOrigin returns the public origin advertised as
+// supportedInterfaces[].url. Precedence: configured A2A_ORIGIN, then configured
+// APP_URL, then the incoming request (honouring X-Forwarded-Proto/Host as a last
+// resort). A spoofed X-Forwarded-Host/Proto header therefore cannot point
+// unauthenticated clients at an attacker-controlled origin when either config
+// value is set.
+func (h *A2AHandler) resolveInterfaceOrigin(c echo.Context) string {
+	if h.a2aOrigin != "" {
+		return h.a2aOrigin
+	}
+	if h.appURL != "" {
+		return h.appURL
+	}
+
+	scheme := c.Scheme()
+	if xf := c.Request().Header.Get("X-Forwarded-Proto"); xf != "" {
+		scheme = xf
+	}
+	if scheme == "" {
+		scheme = "http"
+	}
+
+	host := c.Request().Host
+	if xf := c.Request().Header.Get("X-Forwarded-Host"); xf != "" {
+		host = xf
+	}
+	if host == "" {
+		host = "localhost"
+	}
+
+	return scheme + "://" + host
+}
+
+// withInterfaceOrigin returns a copy of the card with the advertised interface
+// URL populated (see resolveInterfaceOrigin).
+func (h *A2AHandler) withInterfaceOrigin(c echo.Context, card AgentCard) AgentCard {
+	for i := range card.SupportedInterfaces {
+		card.SupportedInterfaces[i].URL = h.resolveInterfaceOrigin(c)
+	}
+	return card
+}
+
 // GlobalAgentCardHandler serves GET /.well-known/agent-card.json (no auth).
 func (h *A2AHandler) GlobalAgentCardHandler(c echo.Context) error {
 	if _, a2aErr := ResolveA2AVersion(c); a2aErr != nil {
 		return writeA2AError(c, a2aErr)
 	}
-	return writeA2AJSON(c, GlobalAgentCard())
+	return writeA2AJSON(c, h.withInterfaceOrigin(c, GlobalAgentCard()))
 }
 
 // ExtendedAgentCardHandler serves GET /extendedAgentCard (agents:read).
@@ -172,8 +230,11 @@ func (h *A2AHandler) ExtendedAgentCardHandler(c echo.Context) error {
 
 	card, err := h.extendedAgentCard(c, projectID)
 	if err != nil {
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		// Log the wrapped cause server-side and return a stable wire message so
+		// DB/provider details never leak to authenticated callers.
+		h.log.Error("failed to build extended agent card", "error", err)
+		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to build extended agent card"))
 	}
 
-	return writeA2AJSON(c, card)
+	return writeA2AJSON(c, h.withInterfaceOrigin(c, card))
 }

@@ -79,6 +79,65 @@ The system SHALL translate internal message content into A2A unified `Part` obje
 - **WHEN** a run includes a tool call
 - **THEN** an artifact contains a `data` part carrying the tool name and input/output
 
+#### Scenario: Tool-call trajectory surfaces as artifacts
+- **WHEN** a completed run executed one or more tool calls
+- **THEN** the task's `artifacts` include a data-part artifact per tool call carrying the tool name and input/output, consistent across `GET /tasks/{id}`, `message:send`, and `GET /tasks`
+
+#### Scenario: Final text artifact carries a stable id
+- **WHEN** a task carries a final text artifact
+- **THEN** the artifact has a non-empty `artifactId` (e.g. `"result"`)
+
+### Requirement: Message role mapping
+The facade SHALL map internal message roles to A2A roles such that only the literal `"user"` role maps to `ROLE_USER`; every other author maps to `ROLE_AGENT` (the executor persists assistant turns under the sanitized agent name, not `"assistant"`). Unknown roles SHALL NOT default to `ROLE_USER`.
+
+#### Scenario: User maps to ROLE_USER
+- **WHEN** a run message has role `"user"`
+- **THEN** it maps to `ROLE_USER`
+
+#### Scenario: Non-user maps to ROLE_AGENT
+- **WHEN** a run message has an agent-authored, assistant, or sanitized-agent-name role
+- **THEN** it maps to `ROLE_AGENT`
+
+### Requirement: History privacy
+The system SHALL NOT serialize internal-only messages into A2A task history. Roles `system`, `tool`, `tool_result`, `reasoning`, and `operator` are internal implementation detail and SHALL be skipped, as SHALL any message that ends up with zero text parts. Only user turns and agent-authored text turns are exposed.
+
+#### Scenario: Internal roles are excluded from history
+- **WHEN** a run's messages include `system`, `tool`, `tool_result`, `reasoning`, or `operator` roles
+- **THEN** none of those messages appear in the task `history`
+
+#### Scenario: Empty-content messages are excluded
+- **WHEN** a run message yields no text part
+- **THEN** it is omitted from the task `history`
+
+### Requirement: Send message field validation
+Before routing or execution, the server SHALL reject a `SendMessageRequest` whose `message.messageId` is empty or whose `message.role` is not a valid client role (`ROLE_USER`). An empty or `ROLE_UNSPECIFIED` role SHALL be rejected.
+
+#### Scenario: Missing messageId is rejected
+- **WHEN** a client sends `message:send` with an empty `message.messageId`
+- **THEN** the server responds with HTTP 400 and an `INVALID_ARGUMENT` validation envelope
+
+#### Scenario: Missing or unspecified role is rejected
+- **WHEN** a client sends `message:send` with an empty or `ROLE_UNSPECIFIED` role
+- **THEN** the server responds with HTTP 400 and an `INVALID_ARGUMENT` validation envelope
+
+### Requirement: Send message response shape
+The server SHALL respond to `message:send` with exactly one variant of the member-presence union (`task` XOR `message`). It SHALL return the `task` variant only; the task's artifacts and history already carry the result. An async send SHALL return a task with a non-empty `contextId`.
+
+#### Scenario: Response carries task only
+- **WHEN** `message:send` completes synchronously
+- **THEN** the response contains `task` and does not also contain `message`
+
+#### Scenario: Async send returns non-empty contextId
+- **WHEN** a client sends `message:send` with `configuration.returnImmediately: true`
+- **THEN** the returned task has a non-empty `contextId` matching the lazily-created or supplied context
+
+### Requirement: Resume returnImmediately
+When resuming an `INPUT_REQUIRED` task with `configuration.returnImmediately: true`, the server SHALL execute the resume asynchronously and immediately return the stable task snapshot for the same `taskId`, reflecting a non-terminal (WORKING) state rather than a stale `INPUT_REQUIRED`, with `contextId` populated.
+
+#### Scenario: Async resume returns immediately
+- **WHEN** a client resumes a paused task with `returnImmediately: true`
+- **THEN** the server returns the stable task snapshot with the same `taskId` without blocking, and the snapshot is not `TASK_STATE_INPUT_REQUIRED`
+
 ### Requirement: Context continuity
 `Task.contextId` SHALL map to the existing session record (`kb.acp_sessions`). When a client sends a message without `contextId`, the server SHALL create a context lazily; when `contextId` is supplied, the server SHALL link the task to it.
 
@@ -112,6 +171,10 @@ The system SHALL expose `GET /tasks/{id}` and project-scoped `GET /tasks`, requi
 #### Scenario: List is filtered by context
 - **WHEN** a client sends `GET /tasks?contextId=<id>`
 - **THEN** the response contains only tasks linked to that context
+
+#### Scenario: List reflects chain tail status, history, and artifacts
+- **WHEN** a task was resumed (creating an internal resume chain)
+- **THEN** `GET /tasks` reports the chain tail's status, and each listed task carries its latest history and tool-call artifacts consistent with `GET /tasks/{id}`
 
 ### Requirement: Cancel task endpoint
 The system SHALL expose `POST /tasks/{id}:cancel` requiring `agents:write`. Cancelling a running task SHALL request cancellation of the underlying run and the task SHALL eventually report `TASK_STATE_CANCELED`. Cancelling a terminal task SHALL be rejected.
@@ -147,6 +210,10 @@ The system SHALL expose `POST /message:stream` returning `text/event-stream`, wh
 - **WHEN** the run reaches a terminal A2A state
 - **THEN** the server closes the SSE stream after emitting the terminal event
 
+#### Scenario: Stream validates message fields
+- **WHEN** a client sends `message:stream` with an empty `messageId` or an invalid/empty role
+- **THEN** the server responds with HTTP 400 and an `INVALID_ARGUMENT` validation envelope (before any SSE stream is opened)
+
 ### Requirement: Subscribe to task endpoint
 The system SHALL expose `POST /tasks/{id}:subscribe` (per the spec's HTTP binding section) allowing a client to attach to an existing task's event stream and receive ordered updates without resending the message.
 
@@ -158,9 +225,28 @@ The system SHALL expose `POST /tasks/{id}:subscribe` (per the spec's HTTP bindin
 - **WHEN** a client subscribes to an unknown task id
 - **THEN** the server responds with HTTP 404 and a `TASK_NOT_FOUND` reason
 
+#### Scenario: Subscribe closes at terminal state
+- **WHEN** a subscribed task reaches a terminal A2A state (completed/failed/canceled)
+- **THEN** the server ends the SSE stream after emitting the terminal event
+
+#### Scenario: Subscribe replays translated delta payloads
+- **WHEN** a client subscribes to an in-progress task that has persisted artifact/message delta events
+- **THEN** it receives the corresponding `artifactUpdate`/`message`/`statusUpdate` events reconstructed from the persisted payload
+
 ### Requirement: Scopes for message flow
 `POST /message:send`, `POST /message:stream`, and `POST /tasks/{id}:cancel` SHALL require `agents:write`. `GET /tasks/{id}`, `GET /tasks`, and `POST /tasks/{id}:subscribe` SHALL require `agents:read`.
 
 #### Scenario: Read-only token cannot send
 - **WHEN** a client sends a message with a token having only `agents:read`
 - **THEN** the server responds with HTTP 403
+
+#### Scenario: Streaming auth/scope errors use the A2A envelope
+- **WHEN** an unauthenticated or under-scoped client hits `message:stream` or `tasks/{id}:subscribe`
+- **THEN** the server responds with the A2A `google.rpc.Status` envelope (401 `UNAUTHENTICATED` / 403 `PERMISSION_DENIED`), not the platform error shape, and a successfully-started SSE response is not buffered
+
+### Requirement: Push notification config endpoints
+The push-notification-config endpoints (`GET`/`POST`/`PUT`/`DELETE` on `/tasks/{id}/pushNotificationConfigs` and `/tasks/{id}/pushNotificationConfigs/{configId}`) SHALL return the explicit `PUSH_NOTIFICATION_NOT_SUPPORTED` envelope (HTTP 400) rather than a generic 404, because push notifications are not implemented in this milestone.
+
+#### Scenario: Every push-config verb is covered
+- **WHEN** a client calls any push-notification-config endpoint (list, create, get, update, bulk-delete, delete)
+- **THEN** the server responds with HTTP 400 and a `PUSH_NOTIFICATION_NOT_SUPPORTED` detail reason

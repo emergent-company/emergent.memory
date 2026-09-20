@@ -199,6 +199,8 @@ func a2aStreamSend(ctx context.Context, client *a2a.Client, req a2a.SendMessageR
 	}
 	defer func() { _ = stream.Close() }()
 
+	printed := newArtifactTextTracker()
+
 	for {
 		event, err := stream.Next()
 		if err == io.EOF {
@@ -211,10 +213,9 @@ func a2aStreamSend(ctx context.Context, client *a2a.Client, req a2a.SendMessageR
 
 		switch {
 		case event.ArtifactUpdate != nil:
-			for _, p := range event.ArtifactUpdate.Artifact.Parts {
-				if p.Text != nil {
-					fmt.Print(*p.Text)
-				}
+			art := event.ArtifactUpdate.Artifact
+			if s := printed.suffix(art.ArtifactID, a2aArtifactText(art)); s != "" {
+				fmt.Print(s)
 			}
 		case event.StatusUpdate != nil:
 			if event.StatusUpdate.Status.State == a2a.TaskStateFailed {
@@ -305,6 +306,40 @@ func a2aMessageText(m *a2a.Message) string {
 		}
 	}
 	return sb.String()
+}
+
+// a2aArtifactText joins the text parts of an artifact into a single string.
+func a2aArtifactText(a a2a.Artifact) string {
+	var sb strings.Builder
+	for _, p := range a.Parts {
+		if p.Text != nil {
+			sb.WriteString(*p.Text)
+		}
+	}
+	return sb.String()
+}
+
+// artifactTextTracker tracks how much of each artifact's text has already been
+// printed, keyed by artifact id, so streaming updates emit only newly appended
+// text rather than the full growing text every time.
+type artifactTextTracker struct {
+	printed map[string]int
+}
+
+func newArtifactTextTracker() *artifactTextTracker {
+	return &artifactTextTracker{printed: make(map[string]int)}
+}
+
+// suffix returns the newly appended portion of text for artifactID and records
+// it as printed. It returns "" for repeated/identical updates and for first
+// appearances whose text has not grown beyond what was already seen.
+func (t *artifactTextTracker) suffix(artifactID, text string) string {
+	prev := t.printed[artifactID]
+	if len(text) <= prev {
+		return ""
+	}
+	t.printed[artifactID] = len(text)
+	return text[prev:]
 }
 
 // ── memory a2a tasks ─────────────────────────────────────────────────────────

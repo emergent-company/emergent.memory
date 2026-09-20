@@ -15,6 +15,10 @@ The system SHALL expose an unauthenticated `GET /.well-known/agent-card.json` re
 - **WHEN** a client fetches the global AgentCard
 - **THEN** `supportedInterfaces` contains exactly one entry with `protocolBinding: "HTTP+JSON"` and `protocolVersion: "1.0"`
 
+#### Scenario: Interface origin prefers configured values
+- **WHEN** the server is configured with `A2A_ORIGIN` or `APP_URL`
+- **THEN** `supportedInterfaces[].url` uses the configured origin (`A2A_ORIGIN` preferred over `APP_URL`), ignoring client-supplied `X-Forwarded-Host`/`X-Forwarded-Proto` so a spoofed header cannot point clients at an attacker-controlled origin
+
 #### Scenario: Global card declares extended-card support
 - **WHEN** a client fetches the global AgentCard
 - **THEN** `capabilities.extendedAgentCard` is `true` and `capabilities.streaming` is `true`

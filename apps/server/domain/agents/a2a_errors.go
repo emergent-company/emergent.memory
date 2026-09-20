@@ -28,8 +28,11 @@ const (
 	A2ACodeTaskNotCancelable            A2AErrorCode = -32002
 	A2ACodePushNotificationNotSupported A2AErrorCode = -32003
 	A2ACodeUnsupportedOperation         A2AErrorCode = -32004
+	A2ACodeMethodNotAllowed             A2AErrorCode = -32005
 	A2ACodeInvalidAgentResponse         A2AErrorCode = -32006
 	A2ACodeVersionNotSupported          A2AErrorCode = -32009
+	A2ACodeUnauthenticated              A2AErrorCode = -32010
+	A2ACodePermissionDenied             A2AErrorCode = -32011
 )
 
 // A2AErrorReason is the UPPER_SNAKE error reason emitted in the details entry.
@@ -42,16 +45,26 @@ const (
 	A2AReasonUnsupportedOperation         A2AErrorReason = "UNSUPPORTED_OPERATION"
 	A2AReasonInvalidAgentResponse         A2AErrorReason = "INVALID_AGENT_RESPONSE"
 	A2AReasonVersionNotSupported          A2AErrorReason = "VERSION_NOT_SUPPORTED"
+	A2AReasonMethodNotAllowed             A2AErrorReason = "METHOD_NOT_ALLOWED"
+	A2AReasonUnauthenticated              A2AErrorReason = "UNAUTHENTICATED"
+	A2AReasonPermissionDenied             A2AErrorReason = "PERMISSION_DENIED"
 )
 
 // HTTPStatus maps an A2A error code to its HTTP status code.
-// -32001→404, -32002/-32003/-32004/-32009→400, -32006→500.
+// -32001→404, -32002/-32003/-32004/-32009→400, -32006→500,
+// -32005→405, -32010→401, -32011→403.
 func (c A2AErrorCode) HTTPStatus() int {
 	switch c {
 	case A2ACodeTaskNotFound:
 		return http.StatusNotFound
 	case A2ACodeInvalidAgentResponse:
 		return http.StatusInternalServerError
+	case A2ACodeUnauthenticated:
+		return http.StatusUnauthorized
+	case A2ACodePermissionDenied:
+		return http.StatusForbidden
+	case A2ACodeMethodNotAllowed:
+		return http.StatusMethodNotAllowed
 	default:
 		return http.StatusBadRequest
 	}
@@ -123,6 +136,12 @@ func statusName(httpStatus int) string {
 		return "NOT_FOUND"
 	case http.StatusInternalServerError:
 		return "INTERNAL"
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden:
+		return "PERMISSION_DENIED"
+	case http.StatusMethodNotAllowed:
+		return "METHOD_NOT_ALLOWED"
 	default:
 		return "INVALID_ARGUMENT"
 	}

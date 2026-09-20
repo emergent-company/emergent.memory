@@ -83,13 +83,98 @@ func TestAgentRunMessageToA2AMessage_UserText(t *testing.T) {
 	assert.Equal(t, "do it", *m.Parts[0].Text)
 }
 
-func TestAgentRunMessageToA2AMessage_SystemAndToolResultMapToAgent(t *testing.T) {
-	for _, role := range []string{"system", "tool_result"} {
-		msg := &AgentRunMessage{Role: role, Content: map[string]any{"text": "x"}}
+func TestAgentRunMessageToA2AMessage_SystemAndToolResultFiltered(t *testing.T) {
+	for _, role := range []string{"system", "tool", "tool_result", ""} {
+		msg := &AgentRunMessage{ID: "m-x", Role: role, Content: map[string]any{"text": "x"}}
 		m := AgentRunMessageToA2AMessage(msg)
-		require.NotNil(t, m)
-		assert.Equal(t, RoleAgent, m.Role, "role %q should map to ROLE_AGENT", role)
+		assert.Nil(t, m, "role %q must be filtered from A2A history", role)
 	}
+}
+
+func TestAgentRunMessageToA2AMessage_SanitizedAgentNameMapsToAgent(t *testing.T) {
+	msg := &AgentRunMessage{
+		ID:      "m-3",
+		Role:    "Research_Agent",
+		Content: map[string]any{"text": "computed answer"},
+	}
+	m := AgentRunMessageToA2AMessage(msg)
+	require.NotNil(t, m)
+	assert.Equal(t, RoleAgent, m.Role, "sanitized agent name must map to ROLE_AGENT")
+	assert.Equal(t, "m-3", m.MessageID)
+	require.Len(t, m.Parts, 1)
+	assert.Equal(t, "computed answer", *m.Parts[0].Text)
+}
+
+func TestMapRoleToA2A_Classification(t *testing.T) {
+	cases := map[string]Role{
+		"user":           RoleUser,
+		"assistant":      RoleAgent,
+		"Research_Agent": RoleAgent,
+		"operator":       RoleAgent,
+		"reasoning":      RoleAgent,
+	}
+	for role, want := range cases {
+		assert.Equal(t, want, MapRoleToA2A(role), "role %q", role)
+	}
+}
+
+func TestIsA2AHistoryRole(t *testing.T) {
+	cases := map[string]bool{
+		"user":           true,
+		"assistant":      true,
+		"Research_Agent": true,
+		"system":         false,
+		"tool":           false,
+		"tool_result":    false,
+		"":               false,
+	}
+	for role, want := range cases {
+		assert.Equal(t, want, isA2AHistoryRole(role), "role %q", role)
+	}
+}
+
+func TestMessagesToA2A_FiltersSystemAndTool(t *testing.T) {
+	messages := []AgentRunMessage{
+		{Role: "system", Content: map[string]any{"text": "secret prompt"}},
+		{Role: "user", Content: map[string]any{"text": "hi"}},
+		{Role: "tool_result", Content: map[string]any{"text": "raw output"}},
+		{Role: "Research_Agent", Content: map[string]any{"text": "answer"}},
+	}
+	out := MessagesToA2A(messages)
+	require.Len(t, out, 2)
+	assert.Equal(t, RoleUser, out[0].Role)
+	assert.Equal(t, "hi", *out[0].Parts[0].Text)
+	assert.Equal(t, RoleAgent, out[1].Role)
+	assert.Equal(t, "answer", *out[1].Parts[0].Text)
+}
+
+func TestTextStatusMessage_HasMessageID(t *testing.T) {
+	m := textStatusMessage("boom")
+	require.NotNil(t, m)
+	assert.NotEmpty(t, m.MessageID, "generated status message must carry a messageId")
+	assert.Equal(t, RoleAgent, m.Role)
+	require.Len(t, m.Parts, 1)
+	assert.Equal(t, "boom", *m.Parts[0].Text)
+}
+
+func TestFinalTextArtifact_UsesSanitizedAgentName(t *testing.T) {
+	messages := []AgentRunMessage{
+		{Role: "user", Content: map[string]any{"text": "question"}},
+		{Role: "Research_Agent", Content: map[string]any{"text": "final answer"}},
+	}
+	artifacts := finalTextArtifact(messages)
+	require.Len(t, artifacts, 1)
+	assert.Equal(t, "result", artifacts[0].ArtifactID, "final text artifact must carry a non-empty artifactId")
+	require.Len(t, artifacts[0].Parts, 1)
+	assert.Equal(t, "final answer", *artifacts[0].Parts[0].Text)
+}
+
+func TestFinalTextArtifact_IgnoresSystemAndTool(t *testing.T) {
+	messages := []AgentRunMessage{
+		{Role: "system", Content: map[string]any{"text": "prompt"}},
+		{Role: "tool_result", Content: map[string]any{"text": "raw"}},
+	}
+	assert.Nil(t, finalTextArtifact(messages))
 }
 
 func TestToolCallDataPart(t *testing.T) {
@@ -112,6 +197,29 @@ func TestToolCallDataPart(t *testing.T) {
 	assert.Contains(t, string(j), `"toolName":"search"`)
 	assert.Contains(t, string(j), `"data"`)
 	assert.NotContains(t, string(j), `"kind"`)
+}
+
+func TestToolCallArtifacts(t *testing.T) {
+	toolCalls := []*AgentRunToolCall{
+		{ID: "tc-1", ToolName: "search", Input: map[string]any{"q": "x"}, Output: map[string]any{"r": "y"}},
+		{ID: "tc-2", ToolName: "entity-query", Input: map[string]any{"t": "person"}, Output: map[string]any{}},
+	}
+	artifacts := toolCallArtifacts(toolCalls)
+	require.Len(t, artifacts, 2)
+
+	assert.Equal(t, "tc-1", artifacts[0].ArtifactID)
+	assert.Equal(t, "search", artifacts[0].Name)
+	require.Len(t, artifacts[0].Parts, 1)
+	assert.NotNil(t, artifacts[0].Parts[0].Data)
+	assert.Nil(t, artifacts[0].Parts[0].Text)
+
+	assert.Equal(t, "tc-2", artifacts[1].ArtifactID)
+	assert.Equal(t, "entity-query", artifacts[1].Name)
+}
+
+func TestToolCallArtifacts_NilAndEmpty(t *testing.T) {
+	assert.Empty(t, toolCallArtifacts(nil))
+	assert.Empty(t, toolCallArtifacts([]*AgentRunToolCall{nil}))
 }
 
 func TestRunToA2ATask_StableID_NoResumeRunID(t *testing.T) {
@@ -179,4 +287,36 @@ func TestRunToA2ATask_NoSessionNilContextID(t *testing.T) {
 	run := &AgentRun{ID: "run-x", Status: RunStatusRunning}
 	task := RunToA2ATask(run, nil, nil, nil)
 	assert.Equal(t, "", task.ContextID)
+}
+
+func TestIsInternalOnlyRole_ReasoningAndOperator(t *testing.T) {
+	for _, role := range []string{"reasoning", "operator", "system", "tool", "tool_result"} {
+		assert.True(t, isInternalOnlyRole(role), "role %q must be internal-only", role)
+		assert.False(t, isA2AHistoryRole(role), "role %q must be excluded from history", role)
+	}
+	assert.False(t, isInternalOnlyRole("user"))
+	assert.False(t, isInternalOnlyRole("assistant"))
+	assert.False(t, isInternalOnlyRole("Research_Agent"))
+}
+
+func TestAgentRunMessageToA2AMessage_ZeroTextDropped(t *testing.T) {
+	// A history message with no text content (e.g. a turn whose payload was
+	// tool data) must be dropped, not serialized as an empty-part Message.
+	assert.Nil(t, AgentRunMessageToA2AMessage(&AgentRunMessage{ID: "m", Role: "assistant", Content: map[string]any{}}))
+	assert.Nil(t, AgentRunMessageToA2AMessage(&AgentRunMessage{ID: "m", Role: "user", Content: map[string]any{"text": ""}}))
+}
+
+func TestMessagesToA2A_SkipsReasoningAndOperator(t *testing.T) {
+	messages := []AgentRunMessage{
+		{Role: "reasoning", Content: map[string]any{"text": "chain of thought"}},
+		{Role: "operator", Content: map[string]any{"text": "planning text"}},
+		{Role: "user", Content: map[string]any{"text": "hi"}},
+		{Role: "Research_Agent", Content: map[string]any{"text": "answer"}},
+	}
+	out := MessagesToA2A(messages)
+	require.Len(t, out, 2)
+	assert.Equal(t, RoleUser, out[0].Role)
+	assert.Equal(t, "hi", *out[0].Parts[0].Text)
+	assert.Equal(t, RoleAgent, out[1].Role)
+	assert.Equal(t, "answer", *out[1].Parts[0].Text)
 }

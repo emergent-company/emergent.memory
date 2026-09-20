@@ -188,3 +188,86 @@ func TestGlobalAgentCardHandler_ContentType(t *testing.T) {
 	assert.Equal(t, A2APlatformName, card["name"])
 	assert.False(t, strings.Contains(rec.Body.String(), "projectId"))
 }
+
+func TestGlobalAgentCardHandler_InterfaceURLNonEmpty(t *testing.T) {
+	h := newTestA2AHandler()
+	c, rec := newA2AEchoContextNoAuth(http.MethodGet, "/.well-known/agent-card.json")
+
+	require.NoError(t, h.GlobalAgentCardHandler(c))
+
+	var card AgentCard
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &card))
+	require.Len(t, card.SupportedInterfaces, 1)
+	assert.NotEmpty(t, card.SupportedInterfaces[0].URL, "supportedInterfaces[0].url must not be empty")
+	assert.False(t, strings.Contains(rec.Body.String(), `"url":""`))
+}
+
+func TestResolveInterfaceOrigin_ConfiguredOriginWins(t *testing.T) {
+	h := &A2AHandler{a2aOrigin: "https://api.dev.emergent-company.ai"} // constructor trims trailing slash
+	c, _ := newA2AEchoContextNoAuth(http.MethodGet, "/")
+
+	assert.Equal(t, "https://api.dev.emergent-company.ai", h.resolveInterfaceOrigin(c))
+}
+
+func TestResolveInterfaceOrigin_DerivedFromRequest(t *testing.T) {
+	h := newTestA2AHandler() // a2aOrigin == ""
+	c, _ := newA2AEchoContextNoAuth(http.MethodGet, "/")
+
+	origin := h.resolveInterfaceOrigin(c)
+	assert.NotEmpty(t, origin)
+	assert.True(t, strings.HasPrefix(origin, "http://"), "derived origin should be a valid scheme://host, got %q", origin)
+}
+
+func TestResolveInterfaceOrigin_AppURLWinsOverForwardedHeader(t *testing.T) {
+	// A spoofed X-Forwarded-Host must not override the configured APP_URL.
+	h := &A2AHandler{appURL: "https://app.emergent-company.ai"}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-Host", "attacker.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	assert.Equal(t, "https://app.emergent-company.ai", h.resolveInterfaceOrigin(c))
+}
+
+func TestResolveInterfaceOrigin_A2AOriginWinsOverAppURL(t *testing.T) {
+	h := &A2AHandler{a2aOrigin: "https://api.dev.emergent-company.ai", appURL: "https://app.emergent-company.ai"}
+	c, _ := newA2AEchoContextNoAuth(http.MethodGet, "/")
+
+	assert.Equal(t, "https://api.dev.emergent-company.ai", h.resolveInterfaceOrigin(c))
+}
+
+func TestResolveInterfaceOrigin_ForwardedHeaderLastResort(t *testing.T) {
+	// With neither config set, the request-derived origin (including forwarded
+	// headers) is used as a last resort.
+	h := &A2AHandler{}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-Host", "proxy.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	assert.Equal(t, "https://proxy.example.com", h.resolveInterfaceOrigin(c))
+}
+
+func TestExtendedAgentCardHandler_InternalErrorDoesNotLeak(t *testing.T) {
+	// newUUIDSyntaxRepository makes every DB query fail with a Postgres 22P02
+	// syntax error, which the old code would have leaked into the envelope via
+	// err.Error(). The fix returns a stable wire message and logs the cause.
+	h := &A2AHandler{repo: newUUIDSyntaxRepository(t), log: slog.Default()}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/extendedAgentCard", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "u", ProjectID: "proj-test-id"})
+
+	require.NoError(t, h.ExtendedAgentCardHandler(c))
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	body := rec.Body.String()
+	assert.NotContains(t, body, "22P02", "internal SQLSTATE must not leak")
+	assert.NotContains(t, body, "invalid input syntax", "internal driver detail must not leak")
+	assert.Contains(t, body, "failed to build extended agent card")
+}

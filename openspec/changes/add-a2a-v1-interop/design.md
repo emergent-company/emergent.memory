@@ -22,7 +22,7 @@ Target protocol: **A2A Protocol v1.0** (`a2a.proto`, package `lf.a2a.v1`; JSON i
 - Support streaming (SSE) and human-in-the-loop (`TASK_STATE_INPUT_REQUIRED` + `taskId` resume).
 - Negotiate protocol version and emit spec-shaped errors.
 - Deprecate, migrate off, and later delete the ACP implementation.
-- Add conformance smoke tests and wire the official TCK as a non-blocking gate.
+- Add conformance shape-assertion tests; defer wiring the official TCK as a non-blocking gate until the TCK supports the 1.0 wire format.
 
 **Non-Goals:**
 
@@ -192,7 +192,7 @@ The `acp-list-agents`, `acp-trigger-run`, `acp-get-run-status`, and `acp-get-run
 ## Risks / Trade-offs
 
 - **Multi-tenant well-known path (highest).** An unauthenticated global path cannot be tenant-aware. Mitigation: the global card is static/config-only with a unit test asserting no tenant identifiers leak; all per-project data stays behind `/extendedAgentCard`.
-- **TCK 0.3-vs-1.0 gap.** Passing the official suite today does not prove v1.0 conformance. Mitigation: treat TCK as a smoke gate, add golden-file tests for v1.0 JSON shapes (camelCase, single-L `CANCELED`, `TASK_STATE_*` strings), and validate against the proto.
+- **TCK 0.3-vs-1.0 gap.** Passing the official suite today does not prove v1.0 conformance. Mitigation: defer TCK CI wiring until it supports the 1.0 wire format; assert v1.0 JSON shapes inline (camelCase, single-L `CANCELED`, `TASK_STATE_*` strings) and validate against the proto.
 - **SDK maturity / supply chain.** Mitigated by hand-rolling (Decision 2); re-evaluate per binding later.
 - **SSE across HITL.** Holding a stream open across an async human turn needs new coordination. Mitigation: ship the closing-stream deviation first (Decision 4).
 - **Single-server streaming.** The current in-process channel design only streams from the server running the run. Acceptable while Memory is single-server; revisit with the `events.Service` bus.

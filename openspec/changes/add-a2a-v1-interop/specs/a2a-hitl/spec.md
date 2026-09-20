@@ -15,6 +15,10 @@ When an agent run pauses awaiting human input — whether from an `ask_user` que
 - **WHEN** a task is in `TASK_STATE_INPUT_REQUIRED`
 - **THEN** the caller can distinguish a question pause from a tool-approval pause via task metadata
 
+#### Scenario: Streamed input-required carries the discriminator
+- **WHEN** a streaming run pauses for input
+- **THEN** the emitted `statusUpdate` with `TASK_STATE_INPUT_REQUIRED` carries metadata distinguishing `ask_user` from `tool_approval` (the same `hitlMetadata` discriminator used by task reconstruction)
+
 ### Requirement: Resume by follow-up message
 A client SHALL resume an interrupted task by sending a new `Message` with the same `taskId` (and no separate resume route). The server SHALL treat presence of `message.taskId` as the resume signal and SHALL reuse the same `Task.id`.
 

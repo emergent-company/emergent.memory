@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -248,7 +249,7 @@ func TestA2ASendMessage_UnsupportedVersion_Returns400(t *testing.T) {
 
 func TestA2ASendMessage_EmptyParts_Returns400(t *testing.T) {
 	h := newTestA2AHandler()
-	c, rec := newA2AMessageContext(http.MethodPost, "/message:send", `{"message":{"role":"user","parts":[]}}`, true)
+	c, rec := newA2AMessageContext(http.MethodPost, "/message:send", `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[]}}`, true)
 
 	require.NoError(t, h.SendMessage(c))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
@@ -259,7 +260,26 @@ func TestA2ASendMessage_EmptyParts_Returns400(t *testing.T) {
 
 func TestA2ASendMessage_NoTextPart_Returns400(t *testing.T) {
 	h := newTestA2AHandler()
-	body := `{"message":{"role":"user","parts":[{"data":{"toolName":"search"}}]}}`
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"data":{"toolName":"search"}}]}}`
+	c, rec := newA2AMessageContext(http.MethodPost, "/message:send", body, true)
+
+	require.NoError(t, h.SendMessage(c))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, "INVALID_ARGUMENT", mustA2AErr(t, rec).Error.Details[0].Reason)
+}
+
+func TestA2ASendMessage_MissingMessageID_Returns400(t *testing.T) {
+	h := newTestA2AHandler()
+	c, rec := newA2AMessageContext(http.MethodPost, "/message:send", `{"message":{"role":"ROLE_USER","parts":[{"text":"hi"}]}}`, true)
+
+	require.NoError(t, h.SendMessage(c))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, "INVALID_ARGUMENT", mustA2AErr(t, rec).Error.Details[0].Reason)
+}
+
+func TestA2ASendMessage_InvalidRole_Returns400(t *testing.T) {
+	h := newTestA2AHandler()
+	body := `{"message":{"messageId":"m1","role":"bogus","parts":[{"text":"hi"}]}}`
 	c, rec := newA2AMessageContext(http.MethodPost, "/message:send", body, true)
 
 	require.NoError(t, h.SendMessage(c))
@@ -277,7 +297,7 @@ func TestA2ASendMessage_InvalidBody_Returns400(t *testing.T) {
 
 func TestA2ASendMessage_ValidBody_ReachesRepo_Panics(t *testing.T) {
 	h := newTestA2AHandler()
-	body := `{"message":{"role":"user","parts":[{"text":"hello"}]}}`
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}]}}`
 	c, _ := newA2AMessageContext(http.MethodPost, "/message:send", body, true)
 
 	assertPanics(t, func() { _ = h.SendMessage(c) })
@@ -425,7 +445,7 @@ func TestA2ASendMessage_WithSkillID_ReachesRepo_Panics(t *testing.T) {
 	// resolution (resolveA2AAgentBySkillID → repo) rather than the assistant
 	// fallback. With a nil repo this reaches the first DB call and panics.
 	h := newTestA2AHandler()
-	body := `{"message":{"role":"user","parts":[{"text":"hello"}],"metadata":{"skillId":"my-agent"}}}`
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}],"metadata":{"skillId":"my-agent"}}}`
 	c, _ := newA2AMessageContext(http.MethodPost, "/message:send", body, true)
 
 	assertPanics(t, func() { _ = h.SendMessage(c) })
@@ -434,8 +454,91 @@ func TestA2ASendMessage_WithSkillID_ReachesRepo_Panics(t *testing.T) {
 func TestA2ASendMessage_WithoutSkillID_StillReachesRepo_Panics(t *testing.T) {
 	// No metadata skill id → assistant fallback path; still reaches repo.
 	h := newTestA2AHandler()
-	body := `{"message":{"role":"user","parts":[{"text":"hello"}]}}`
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}]}}`
 	c, _ := newA2AMessageContext(http.MethodPost, "/message:send", body, true)
 
 	assertPanics(t, func() { _ = h.SendMessage(c) })
+}
+
+// ============================================================================
+// New helpers (role validation, terminal-state, returnImmediately, snapshot)
+// ============================================================================
+
+func TestA2AIsValidRole(t *testing.T) {
+	assert.True(t, isValidA2ARole(RoleUser))
+	assert.True(t, isValidA2ARole(RoleAgent))
+	assert.False(t, isValidA2ARole(RoleUnspecified))
+	assert.False(t, isValidA2ARole(""))
+	assert.False(t, isValidA2ARole("user"))
+	assert.False(t, isValidA2ARole("ROLE_BOGUS"))
+}
+
+func TestA2AIsTerminalTaskState(t *testing.T) {
+	cases := map[TaskState]bool{
+		TaskStateCompleted:     true,
+		TaskStateFailed:        true,
+		TaskStateCanceled:      true,
+		TaskStateSubmitted:     false,
+		TaskStateWorking:       false,
+		TaskStateInputRequired: false,
+		TaskStateUnspecified:   false,
+	}
+	for state, want := range cases {
+		assert.Equal(t, want, isTerminalTaskState(state), "state %q", state)
+	}
+}
+
+func TestA2AReturnImmediately(t *testing.T) {
+	assert.False(t, a2aReturnImmediately(nil))
+	assert.False(t, a2aReturnImmediately(&SendMessageConfiguration{}))
+	assert.True(t, a2aReturnImmediately(&SendMessageConfiguration{ReturnImmediately: true}))
+}
+
+func TestAsyncTaskSnapshot_CarriesContextID(t *testing.T) {
+	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
+	task := asyncTaskSnapshot(run, "ctx-9")
+	assert.Equal(t, "run-1", task.ID)
+	assert.Equal(t, "ctx-9", task.ContextID)
+	assert.Equal(t, TaskStateWorking, task.Status.State)
+	// The input run must not be mutated.
+	assert.Nil(t, run.ACPSessionID)
+}
+
+func TestResumeAsyncSnapshot_WorkingSnapshot(t *testing.T) {
+	latest := &AgentRun{
+		ID:             "resume-2",
+		Status:         RunStatusPaused,
+		ACPSessionID:   strPtr("ctx-1"),
+		SuspendContext: map[string]any{"reason": "awaiting_human"},
+	}
+	task := resumeAsyncSnapshot(latest, "root-1")
+
+	assert.Equal(t, "root-1", task.ID, "async resume snapshot must use the stable task id")
+	assert.Equal(t, "ctx-1", task.ContextID)
+	assert.Equal(t, TaskStateWorking, task.Status.State, "async resume snapshot must be WORKING, not INPUT_REQUIRED")
+	assert.Nil(t, task.Status.Message)
+
+	// The input run must not be mutated: the persisted row stays paused until
+	// executor.Resume creates the child run.
+	assert.Equal(t, RunStatusPaused, latest.Status)
+	assert.Equal(t, "resume-2", latest.ID)
+}
+
+func TestA2AGetTask_InternalErrorDoesNotLeak(t *testing.T) {
+	h := &A2AHandler{repo: newUUIDSyntaxRepository(t), log: slog.Default()}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/tasks/task-123", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "u", ProjectID: "proj-test-id"})
+	c.SetParamNames("id")
+	c.SetParamValues("task-123")
+
+	require.NoError(t, h.GetTask(c))
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	body := rec.Body.String()
+	assert.NotContains(t, body, "22P02", "internal SQLSTATE must not leak into the A2A error message")
+	assert.NotContains(t, body, "invalid input syntax", "internal driver detail must not leak into the A2A error message")
+	assert.Contains(t, body, "failed to load task", "wire message must be the stable message")
 }

@@ -128,8 +128,8 @@ func provideACPHandler(repo *Repository, executor *AgentExecutor, eventsSvc *eve
 }
 
 // provideA2AHandler creates an A2AHandler from fx dependencies.
-func provideA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger) *A2AHandler {
-	return NewA2AHandler(repo, executor, eventsSvc, log)
+func provideA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.Service, log *slog.Logger, cfg *config.Config) *A2AHandler {
+	return NewA2AHandler(repo, executor, eventsSvc, log, cfg)
 }
 
 // provideTriggerService creates a TriggerService from fx dependencies.

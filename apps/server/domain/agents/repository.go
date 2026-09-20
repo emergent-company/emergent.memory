@@ -3720,10 +3720,19 @@ func (r *Repository) FindLatestRunInChain(ctx context.Context, runID string) (*A
 	return current, nil
 }
 
-// ListA2ARuns returns top-level (non-resume) runs for a project, optionally
-// filtered by context (acp_session_id) and a set of internal statuses, with the
-// total count. Resumed-from runs are excluded so each logical A2A task appears
-// exactly once.
+// ListA2ARuns returns the logical A2A tasks for a project, optionally filtered
+// by context (acp_session_id) and a set of internal statuses, with the total
+// count. Each logical task is represented by its resume-chain tail: a resumed
+// task leaves its root run in a non-terminal "working" state while the terminal
+// state lives on the child run created by executor.Resume, so listing the roots
+// alone would report a completed/failed resumed task as WORKING forever and
+// break completed/failed filters.
+//
+// Behaviour change: status filtering is applied to the chain tail (not the
+// root), and pagination happens in memory after tail resolution, so this scans
+// all root runs for the project (bounded in practice by per-project task volume
+// and the A2A page size). The returned runs keep the stable root ID as the task
+// id while carrying the tail's status/updated fields.
 func (r *Repository) ListA2ARuns(ctx context.Context, projectID, contextID string, statuses []AgentRunStatus, limit, offset int) ([]*AgentRun, int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -3732,32 +3741,65 @@ func (r *Repository) ListA2ARuns(ctx context.Context, projectID, contextID strin
 		offset = 0
 	}
 
-	q := r.db.NewSelect().
+	rootsQuery := r.db.NewSelect().
 		Model((*AgentRun)(nil)).
 		Join("JOIN kb.agents AS a ON a.id = ar.agent_id").
 		Where("a.project_id = ?", projectID).
 		Where("ar.resumed_from IS NULL")
 
 	if contextID != "" {
-		q = q.Where("ar.acp_session_id = ?", contextID)
-	}
-	if len(statuses) > 0 {
-		q = q.Where("ar.status IN (?)", bun.In(statuses))
+		rootsQuery = rootsQuery.Where("ar.acp_session_id = ?", contextID)
 	}
 
-	totalCount, err := q.Count(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("ListA2ARuns count: %w", err)
+	var roots []*AgentRun
+	if err := rootsQuery.Order("ar.created_at DESC").Scan(ctx, &roots); err != nil {
+		return nil, 0, fmt.Errorf("ListA2ARuns roots: %w", err)
 	}
 
-	var runs []*AgentRun
-	err = q.Order("ar.created_at DESC").
-		Limit(limit).
-		Offset(offset).
-		Scan(ctx, &runs)
-	if err != nil {
-		return nil, 0, fmt.Errorf("ListA2ARuns: %w", err)
+	tails := make([]*AgentRun, 0, len(roots))
+	for _, root := range roots {
+		tail, err := r.FindLatestRunInChain(ctx, root.ID)
+		if err != nil {
+			return nil, 0, fmt.Errorf("ListA2ARuns chain: %w", err)
+		}
+		if len(statuses) > 0 && !containsAgentRunStatus(statuses, tail.Status) {
+			continue
+		}
+		tails = append(tails, a2aListingRun(root, tail))
 	}
 
-	return runs, totalCount, nil
+	totalCount := len(tails)
+
+	if offset >= len(tails) {
+		return []*AgentRun{}, totalCount, nil
+	}
+	end := offset + limit
+	if end > len(tails) {
+		end = len(tails)
+	}
+
+	return tails[offset:end], totalCount, nil
+}
+
+// containsAgentRunStatus reports whether s is in statuses.
+func containsAgentRunStatus(statuses []AgentRunStatus, s AgentRunStatus) bool {
+	for _, x := range statuses {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// a2aListingRun returns the run that should represent a logical task in a
+// listing: the chain tail's state/fields, but with the stable root ID as the
+// task id (the id clients receive from message:send and use in subsequent
+// get/cancel/subscribe calls). Pure and unit-testable.
+func a2aListingRun(root, tail *AgentRun) *AgentRun {
+	if tail == nil {
+		tail = root
+	}
+	effective := *tail
+	effective.ID = root.ID
+	return &effective
 }

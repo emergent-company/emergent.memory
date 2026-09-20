@@ -173,7 +173,7 @@ func TestA2AStreamTranslator_CompletedEvents_NoText_NoMessage(t *testing.T) {
 func TestA2AStreamTranslator_InputRequiredEvents_CarriesPrompt(t *testing.T) {
 	tr := newA2aStreamTranslator("t1", "c1")
 
-	events := tr.inputRequiredEvents("Approve this action?")
+	events := tr.inputRequiredEvents("Approve this action?", nil)
 	require.Len(t, events, 1)
 	su := events[0].StatusUpdate
 	require.NotNil(t, su)
@@ -181,7 +181,34 @@ func TestA2AStreamTranslator_InputRequiredEvents_CarriesPrompt(t *testing.T) {
 	require.NotNil(t, su.Status.Message)
 	assert.Equal(t, RoleAgent, su.Status.Message.Role)
 	assert.Equal(t, "Approve this action?", *su.Status.Message.Parts[0].Text)
+	assert.Nil(t, su.Metadata, "no run → no HITL discriminator metadata")
 	assertSingleMember(t, events[0])
+}
+
+func TestA2AStreamTranslator_InputRequiredEvents_AskUserMetadata(t *testing.T) {
+	tr := newA2aStreamTranslator("t1", "c1")
+	run := &AgentRun{ID: "t1", Status: RunStatusPaused, SuspendContext: map[string]any{"reason": "awaiting_human"}}
+
+	events := tr.inputRequiredEvents("Which environment?", run)
+	require.Len(t, events, 1)
+	su := events[0].StatusUpdate
+	require.NotNil(t, su)
+	assert.Equal(t, TaskStateInputRequired, su.Status.State)
+	require.NotNil(t, su.Metadata)
+	assert.Equal(t, "ask_user", su.Metadata["pauseSource"])
+}
+
+func TestA2AStreamTranslator_InputRequiredEvents_ToolApprovalMetadata(t *testing.T) {
+	tr := newA2aStreamTranslator("t1", "c1")
+	run := &AgentRun{ID: "t1", Status: RunStatusPaused, SuspendContext: map[string]any{"reason": "awaiting_tool_confirm"}}
+
+	events := tr.inputRequiredEvents("Approve run_shell?", run)
+	require.Len(t, events, 1)
+	su := events[0].StatusUpdate
+	require.NotNil(t, su)
+	assert.Equal(t, TaskStateInputRequired, su.Status.State)
+	require.NotNil(t, su.Metadata)
+	assert.Equal(t, "tool_approval", su.Metadata["pauseSource"])
 }
 
 func TestA2AStreamTranslator_FailedEvents_CancelledEvents(t *testing.T) {
@@ -271,7 +298,7 @@ func TestA2AStreamMessage_UnsupportedVersion_ReturnsJSONErrorNotSSE(t *testing.T
 
 func TestA2AStreamMessage_EmptyParts_Returns400(t *testing.T) {
 	h := newTestA2AHandler()
-	c, rec := newA2AMessageContext(http.MethodPost, "/message:stream", `{"message":{"role":"user","parts":[]}}`, true)
+	c, rec := newA2AMessageContext(http.MethodPost, "/message:stream", `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[]}}`, true)
 
 	require.NoError(t, h.StreamMessage(c))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
@@ -280,7 +307,7 @@ func TestA2AStreamMessage_EmptyParts_Returns400(t *testing.T) {
 
 func TestA2AStreamMessage_NoTextPart_Returns400(t *testing.T) {
 	h := newTestA2AHandler()
-	body := `{"message":{"role":"user","parts":[{"data":{"toolName":"search"}}]}}`
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"data":{"toolName":"search"}}]}}`
 	c, rec := newA2AMessageContext(http.MethodPost, "/message:stream", body, true)
 
 	require.NoError(t, h.StreamMessage(c))
@@ -298,7 +325,7 @@ func TestA2AStreamMessage_InvalidBody_Returns400(t *testing.T) {
 
 func TestA2AStreamMessage_ValidBody_ReachesRepo_Panics(t *testing.T) {
 	h := newTestA2AHandler()
-	body := `{"message":{"role":"user","parts":[{"text":"hello"}]}}`
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}]}}`
 	c, _ := newA2AMessageContext(http.MethodPost, "/message:stream", body, true)
 
 	assertPanics(t, func() { _ = h.StreamMessage(c) })
@@ -306,8 +333,112 @@ func TestA2AStreamMessage_ValidBody_ReachesRepo_Panics(t *testing.T) {
 
 func TestA2AStreamMessage_WithSkillID_ReachesRepo_Panics(t *testing.T) {
 	h := newTestA2AHandler()
-	body := `{"message":{"role":"user","parts":[{"text":"hello"}],"metadata":{"skillId":"my-agent"}}}`
+	body := `{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}],"metadata":{"skillId":"my-agent"}}}`
 	c, _ := newA2AMessageContext(http.MethodPost, "/message:stream", body, true)
 
 	assertPanics(t, func() { _ = h.StreamMessage(c) })
+}
+
+func TestA2AStreamMessage_MissingMessageID_Returns400(t *testing.T) {
+	h := newTestA2AHandler()
+	c, rec := newA2AMessageContext(http.MethodPost, "/message:stream", `{"message":{"role":"ROLE_USER","parts":[{"text":"hi"}]}}`, true)
+
+	require.NoError(t, h.StreamMessage(c))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, "INVALID_ARGUMENT", mustA2AErr(t, rec).Error.Details[0].Reason)
+}
+
+func TestA2AStreamMessage_MissingRole_Returns400(t *testing.T) {
+	h := newTestA2AHandler()
+	body := `{"message":{"messageId":"m1","role":"ROLE_UNSPECIFIED","parts":[{"text":"hi"}]}}`
+	c, rec := newA2AMessageContext(http.MethodPost, "/message:stream", body, true)
+
+	require.NoError(t, h.StreamMessage(c))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, "INVALID_ARGUMENT", mustA2AErr(t, rec).Error.Details[0].Reason)
+}
+
+// ============================================================================
+// [B] final message id · [K] initial SUBMITTED task · [L] payload round-trip
+// ============================================================================
+
+func TestA2AStreamTranslator_FinalMessage_HasMessageID(t *testing.T) {
+	tr := newA2aStreamTranslator("t1", "c1")
+	_ = tr.translate(StreamEvent{Type: StreamEventTextDelta, Text: "the answer"})
+
+	msg := tr.finalMessage(nil)
+	require.NotNil(t, msg)
+	assert.NotEmpty(t, msg.MessageID, "generated final message must carry a non-empty messageId")
+	assert.Equal(t, RoleAgent, msg.Role)
+}
+
+func TestA2AInitialTask_ForcesSubmitted(t *testing.T) {
+	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
+
+	task := a2aInitialTask(run, "task-1", "ctx-1")
+
+	assert.Equal(t, "task-1", task.ID)
+	assert.Equal(t, "ctx-1", task.ContextID)
+	assert.Equal(t, TaskStateSubmitted, task.Status.State,
+		"the initial streamed task must be SUBMITTED even though the internal run is WORKING")
+}
+
+func TestA2AStreamPayload_RoundTripsThroughEventData(t *testing.T) {
+	sr := StreamResponse{
+		ArtifactUpdate: &TaskArtifactUpdateEvent{
+			TaskID:    "t1",
+			ContextID: "c1",
+			Artifact:  Artifact{ArtifactID: "artifact-t1", Parts: []Part{TextPart("hi")}},
+		},
+	}
+
+	payload := a2aStreamPayload(sr)
+	require.NotNil(t, payload)
+	require.NotNil(t, payload["stream"])
+
+	// Simulate the jsonb round-trip: marshal to JSON, decode back into
+	// map[string]any (what bun returns from the acp_run_events.data column).
+	j := mustJSON(t, payload)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal([]byte(j), &decoded))
+
+	got, ok := a2aStreamResponseFromEventData(decoded, "t1", "c1")
+	require.True(t, ok)
+	require.NotNil(t, got.ArtifactUpdate)
+	assert.Equal(t, "artifact-t1", got.ArtifactUpdate.Artifact.ArtifactID)
+	require.Len(t, got.ArtifactUpdate.Artifact.Parts, 1)
+	assert.Equal(t, "hi", *got.ArtifactUpdate.Artifact.Parts[0].Text)
+}
+
+func TestA2AStreamResponseFromEventData_NoPayloadFallsBack(t *testing.T) {
+	// A lifecycle-only event (no "stream" key) must return ok=false so callers
+	// fall back to a2aStreamResponseFromEventType.
+	_, ok := a2aStreamResponseFromEventData(map[string]any{"type": ACPEventRunCompleted}, "t1", "c1")
+	assert.False(t, ok)
+
+	_, ok = a2aStreamResponseFromEventData(nil, "t1", "c1")
+	assert.False(t, ok)
+
+	_, ok = a2aStreamResponseFromEventData(map[string]any{"stream": nil}, "t1", "c1")
+	assert.False(t, ok)
+}
+
+func TestA2AStreamResponseFromEventData_StatusUpdatePayload(t *testing.T) {
+	sr := StreamResponse{
+		StatusUpdate: &TaskStatusUpdateEvent{
+			TaskID:    "t1",
+			ContextID: "c1",
+			Status:    TaskStatus{State: TaskStateWorking},
+		},
+	}
+	payload := a2aStreamPayload(sr)
+	j := mustJSON(t, payload)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal([]byte(j), &decoded))
+
+	got, ok := a2aStreamResponseFromEventData(decoded, "t1", "c1")
+	require.True(t, ok)
+	require.NotNil(t, got.StatusUpdate)
+	assert.Equal(t, TaskStateWorking, got.StatusUpdate.Status.State)
+	assert.False(t, isTerminalTaskState(got.StatusUpdate.Status.State))
 }

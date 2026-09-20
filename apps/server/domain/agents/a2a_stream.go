@@ -132,7 +132,7 @@ func (t *a2aStreamTranslator) finalMessage(messages []AgentRunMessage) *Message 
 	if text == "" {
 		return nil
 	}
-	msg := &Message{Role: RoleAgent, Parts: []Part{TextPart(text)}}
+	msg := &Message{MessageID: newA2AMessageID(), Role: RoleAgent, Parts: []Part{TextPart(text)}}
 	if len(t.thinking) > 0 {
 		msg.Metadata = map[string]any{"thinking": strings.Join(t.thinking, "\n")}
 	}
@@ -158,10 +158,23 @@ func (t *a2aStreamTranslator) failedEvents(errMsg string) []StreamResponse {
 }
 
 // inputRequiredEvents builds the terminal sequence for a HITL pause: a single
-// INPUT_REQUIRED statusUpdate carrying the prompt in status.message. The stream
-// closes after it (documented milestone-1 deviation).
-func (t *a2aStreamTranslator) inputRequiredEvents(prompt string) []StreamResponse {
-	return []StreamResponse{a2aStatusUpdate(t.taskID, t.contextID, TaskStateInputRequired, prompt)}
+// INPUT_REQUIRED statusUpdate carrying the prompt in status.message plus the
+// pause-source discriminator (ask_user vs tool_approval) in status-level
+// metadata so a resuming client can tell the two apart. The stream closes after
+// it (documented milestone-1 deviation).
+func (t *a2aStreamTranslator) inputRequiredEvents(prompt string, run *AgentRun) []StreamResponse {
+	su := &TaskStatusUpdateEvent{
+		TaskID:    t.taskID,
+		ContextID: t.contextID,
+		Status:    TaskStatus{State: TaskStateInputRequired},
+	}
+	if prompt != "" {
+		su.Status.Message = textStatusMessage(prompt)
+	}
+	if md := hitlMetadata(run); md != nil {
+		su.Metadata = md
+	}
+	return []StreamResponse{{StatusUpdate: su}}
 }
 
 // cancelledEvents builds the terminal sequence for a cancelled run.
@@ -246,15 +259,39 @@ func (h *A2AHandler) persistA2AEvent(ctx context.Context, runID, eventType strin
 	}
 }
 
-// emitA2ABus publishes an A2A lifecycle event onto the events.Service SSE bus so
-// SubscribeTask receives live status transitions for streamed tasks.
-func (h *A2AHandler) emitA2ABus(projectID, runID, eventType string) {
+// a2aStreamPayload wraps a translated StreamResponse as the payload stored on a
+// persisted run event (and carried on the bus) so SubscribeTask can replay the
+// full artifact/message/status delta rather than just the lifecycle type. The
+// key "stream" is what a2aStreamResponseFromEventData decodes on the other end.
+func a2aStreamPayload(sr StreamResponse) map[string]any {
+	return map[string]any{"stream": sr}
+}
+
+// emitA2ABus publishes an A2A event onto the events.Service SSE bus so
+// SubscribeTask receives live status transitions and translated deltas for
+// streamed tasks. payload (when non-nil) carries the translated StreamResponse
+// under the "stream" key; lifecycle-only events pass nil.
+func (h *A2AHandler) emitA2ABus(projectID, runID, eventType string, payload map[string]any) {
 	if h.eventsSvc == nil || projectID == "" {
 		return
 	}
-	h.eventsSvc.EmitCreated(events.EntityAgentRun, runID, projectID, &events.EmitOptions{
-		Data: map[string]any{"type": eventType, "run_id": runID},
-	})
+	data := map[string]any{"type": eventType, "run_id": runID}
+	for k, v := range payload {
+		data[k] = v
+	}
+	h.eventsSvc.EmitCreated(events.EntityAgentRun, runID, projectID, &events.EmitOptions{Data: data})
+}
+
+// a2aInitialTask builds the SUBMITTED snapshot emitted as the first event of a
+// new-task stream. CreateRunWithOptions creates the run with the internal
+// RunStatusRunning, so a plain RunToA2ATask would serialize WORKING; the A2A
+// wire contract is SUBMITTED-first, so the state is forced here.
+func a2aInitialTask(run *AgentRun, taskID, contextID string) Task {
+	task := RunToA2ATask(run, nil, nil, nil)
+	task.ID = taskID
+	task.ContextID = contextID
+	task.Status.State = TaskStateSubmitted
+	return task
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +314,15 @@ func (h *A2AHandler) StreamMessage(c echo.Context) error {
 	var req SendMessageRequest
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
 		return writeA2AError(c, a2aValidationError("invalid request body"))
+	}
+
+	// Validate required A2A Message fields before routing or execution, matching
+	// SendMessage's gate.
+	if req.Message.MessageID == "" {
+		return writeA2AError(c, a2aValidationError("message.messageId is required"))
+	}
+	if !isValidA2ARole(req.Message.Role) {
+		return writeA2AError(c, a2aValidationError("message.role is required and must be ROLE_USER or ROLE_AGENT"))
 	}
 
 	userMessage := a2aUserMessageFromParts(req.Message.Parts)
@@ -306,13 +352,15 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		if errors.Is(err, errA2ASkillNotFound) {
 			return writeA2AError(c, a2aSkillNotFoundError(skillID))
 		}
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, err.Error()))
+		h.log.Error("failed to resolve agent", "project_id", projectID, "error", err)
+		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to resolve agent"))
 	}
 
 	if contextID != "" {
 		session, err := h.repo.GetACPSession(ctx, projectID, contextID)
 		if err != nil {
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load context: "+err.Error()))
+			h.log.Error("failed to load context", "context_id", contextID, "error", err)
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load context"))
 		}
 		if session == nil {
 			return writeA2AError(c, a2aValidationError("unknown contextId"))
@@ -320,7 +368,8 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 	} else {
 		session := &ACPSession{ProjectID: projectID, AgentName: strPtr(def.Name)}
 		if err := h.repo.CreateACPSession(ctx, session); err != nil {
-			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create context: "+err.Error()))
+			h.log.Error("failed to create context", "project_id", projectID, "error", err)
+			return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create context"))
 		}
 		contextID = session.ID
 	}
@@ -332,7 +381,8 @@ func (h *A2AHandler) streamNewTask(c echo.Context, projectID, userID, userMessag
 		TriggerMessage: &userMessage,
 	})
 	if err != nil {
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create run: "+err.Error()))
+		h.log.Error("failed to create run", "agent_id", agent.ID, "error", err)
+		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to create run"))
 	}
 
 	if err := h.repo.UpdateRunACPSessionID(ctx, run.ID, contextID); err != nil {
@@ -360,7 +410,8 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 
 	original, err := h.repo.FindRunByID(ctx, taskID)
 	if err != nil {
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load task: "+err.Error()))
+		h.log.Error("failed to load task", "task_id", taskID, "error", err)
+		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to load task"))
 	}
 	if original == nil || original.Agent == nil || original.Agent.ProjectID != projectID {
 		return writeA2AError(c, NewA2AError(A2ACodeTaskNotFound, A2AReasonTaskNotFound, "task not found"))
@@ -384,7 +435,8 @@ func (h *A2AHandler) streamResumeTask(c echo.Context, projectID, userID, userMes
 
 	claimed, err := h.repo.AnswerQuestion(ctx, questions[0].ID, userMessage, userID)
 	if err != nil {
-		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question: "+err.Error()))
+		h.log.Error("failed to answer question", "task_id", taskID, "error", err)
+		return writeA2AError(c, NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "failed to answer question"))
 	}
 	if !claimed {
 		return writeA2AError(c, a2aInvalidStateError("question is no longer pending"))
@@ -448,14 +500,12 @@ func (h *A2AHandler) streamRun(
 	}
 	lifecycle := func(eventType string) {
 		h.persistA2AEvent(bgCtx, taskID, eventType, nil)
-		h.emitA2ABus(projectID, taskID, eventType)
+		h.emitA2ABus(projectID, taskID, eventType, nil)
 	}
 
 	// Initial task (SUBMITTED) on the new-task path only.
 	if !resume {
-		task := RunToA2ATask(run, nil, nil, nil)
-		task.ID = taskID
-		task.ContextID = contextID
+		task := a2aInitialTask(run, taskID, contextID)
 		write(StreamResponse{Task: &task})
 		lifecycle(ACPEventRunCreated)
 	}
@@ -464,14 +514,25 @@ func (h *A2AHandler) streamRun(
 	write(a2aStatusUpdate(taskID, contextID, TaskStateWorking, ""))
 	lifecycle(ACPEventRunInProgress)
 
-	// Translate + emit streaming deltas as they arrive, persisting each delta
-	// alongside emission (mirror makeEventPersistingCallback).
+	// Translate + emit streaming deltas as they arrive, persisting each delta's
+	// translated payload (and fanning it out to the bus) so a subscribe client
+	// can replay the same artifactUpdate/message events.
 	execReq.StreamCallback = func(ev StreamEvent) {
-		for _, sr := range tr.translate(ev) {
+		resps := tr.translate(ev)
+		for _, sr := range resps {
 			_ = writer.WriteData(sr)
 		}
 		if et, ok := a2aDeltaEventType(ev); ok {
-			h.persistA2AEvent(bgCtx, taskID, et, nil)
+			for _, sr := range resps {
+				h.persistA2AEvent(bgCtx, taskID, et, a2aStreamPayload(sr))
+				h.emitA2ABus(projectID, taskID, et, a2aStreamPayload(sr))
+			}
+			if len(resps) == 0 {
+				// Thinking folds into final-message metadata and has no wire
+				// member; persist it as a payload-less message.part for replay
+				// consistency but do not fan it out to subscribers.
+				h.persistA2AEvent(bgCtx, taskID, et, nil)
+			}
 		}
 	}
 
@@ -508,7 +569,7 @@ func (h *A2AHandler) streamTerminal(
 	}
 	lifecycle := func(eventType string) {
 		h.persistA2AEvent(ctx, taskID, eventType, nil)
-		h.emitA2ABus(projectID, taskID, eventType)
+		h.emitA2ABus(projectID, taskID, eventType, nil)
 	}
 
 	if execErr != nil {
@@ -534,14 +595,19 @@ func (h *A2AHandler) streamTerminal(
 	switch result.Status {
 	case RunStatusPaused:
 		// HITL (documented milestone-1 deviation): emit INPUT_REQUIRED with the
-		// prompt in status.message and close the stream. The client resumes with
-		// a new message:stream/message:send carrying the same taskId.
+		// prompt in status.message and the pause-source discriminator in
+		// metadata, then close the stream. The client resumes with a new
+		// message:stream/message:send carrying the same taskId.
 		prompt := ""
+		var pausedRun *AgentRun
 		questions, _ := h.repo.FindPendingQuestionsByRunID(ctx, runID)
 		if len(questions) > 0 {
 			prompt = questions[0].Question
 		}
-		for _, sr := range tr.inputRequiredEvents(prompt) {
+		if r, _ := h.repo.FindRunByID(ctx, runID); r != nil {
+			pausedRun = r
+		}
+		for _, sr := range tr.inputRequiredEvents(prompt, pausedRun) {
 			write(sr)
 		}
 		lifecycle(ACPEventRunAwaiting)
