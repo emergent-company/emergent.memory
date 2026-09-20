@@ -547,6 +547,21 @@ func (r *Repository) Count(ctx context.Context, params ListParams) (int, error) 
 	return count, nil
 }
 
+// graphObjectDetailColumns lists every persisted GraphObject column except the
+// pgvector embedding_v2 (which has no struct field and cannot be scanned by
+// Bun). GetByID/GetHeadByCanonicalID select these explicitly alongside the
+// computed embedding_status; selecting go.* would pull in embedding_v2 and
+// fail the scan with "does not have column embedding_v2".
+var graphObjectDetailColumns = []string{
+	"id", "project_id", "branch_id", "canonical_id", "supersedes_id", "version",
+	"merged_to_canonical_id", "type", "key", "status", "namespace",
+	"properties", "labels", "change_summary", "content_hash",
+	"created_at", "updated_at", "deleted_at", "delete_reason", "last_accessed_at",
+	"fts", "embedding_updated_at",
+	"extraction_job_id", "extraction_confidence", "needs_review", "reviewed_by", "reviewed_at",
+	"actor_type", "actor_id", "schema_version", "migration_archive",
+}
+
 // GetByID returns a graph object by its physical ID or canonical ID.
 // It accepts either type of ID transparently:
 //   - If the ID matches a physical id, returns that object
@@ -557,7 +572,7 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 	var objects []GraphObject
 	err := r.db.NewSelect().
 		Model(&objects).
-		ColumnExpr("go.*").
+		Column(graphObjectDetailColumns...).
 		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
@@ -618,7 +633,7 @@ func (r *Repository) GetHeadByCanonicalID(ctx context.Context, db bun.IDB, proje
 	var obj GraphObject
 	q := db.NewSelect().
 		Model(&obj).
-		ColumnExpr("go.*").
+		Column(graphObjectDetailColumns...).
 		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
