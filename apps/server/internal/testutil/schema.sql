@@ -1118,6 +1118,7 @@ CREATE TABLE kb.backups (
     parent_backup_id uuid,
     baseline_backup_id uuid,
     change_window jsonb,
+    imported boolean DEFAULT false NOT NULL,
     CONSTRAINT backups_backup_type_check CHECK ((backup_type = ANY (ARRAY['full'::text, 'incremental'::text]))),
     CONSTRAINT backups_progress_check CHECK (((progress >= 0) AND (progress <= 100))),
     CONSTRAINT backups_status_check CHECK ((status = ANY (ARRAY['creating'::text, 'ready'::text, 'failed'::text, 'deleted'::text])))
@@ -6137,14 +6138,6 @@ ALTER TABLE ONLY kb.backups
 
 ALTER TABLE ONLY kb.backups
     ADD CONSTRAINT backups_parent_backup_id_fkey FOREIGN KEY (parent_backup_id) REFERENCES kb.backups(id);
-
-
---
--- Name: backups backups_project_id_fkey; Type: FK CONSTRAINT; Schema: kb; Owner: -
---
-
-ALTER TABLE ONLY kb.backups
-    ADD CONSTRAINT backups_project_id_fkey FOREIGN KEY (project_id) REFERENCES kb.projects(id) ON DELETE CASCADE;
 
 
 --

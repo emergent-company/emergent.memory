@@ -32,13 +32,15 @@ func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provid
 
 // APIToken represents an API token (includes full token value if retrieved by ID)
 type APIToken struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Prefix    string   `json:"tokenPrefix"`
-	Token     string   `json:"token,omitempty"` // Full token value - available when retrieved by ID
-	Scopes    []string `json:"scopes"`
-	CreatedAt string   `json:"createdAt"`
-	RevokedAt *string  `json:"revokedAt,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Prefix        string   `json:"tokenPrefix"`
+	Token         string   `json:"token,omitempty"` // Full token value - available when retrieved by ID
+	Scopes        []string `json:"scopes"`
+	CreatedAt     string   `json:"createdAt"`
+	RevokedAt     *string  `json:"revokedAt,omitempty"`
+	IsRevoked     bool     `json:"isRevoked"`
+	OwnedByCaller bool     `json:"ownedByCaller,omitempty"`
 }
 
 // CreateTokenResponse represents the response when creating a token (includes full token value)

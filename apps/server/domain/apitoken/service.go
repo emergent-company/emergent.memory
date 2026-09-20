@@ -277,8 +277,9 @@ func (s *Service) GetUserProjectRole(ctx context.Context, projectID, userID stri
 	return s.repo.GetUserProjectRole(ctx, projectID, userID)
 }
 
-// ListByProject returns all tokens for a project
-func (s *Service) ListByProject(ctx context.Context, projectID string) (*ApiTokenListResponseDTO, error) {
+// ListByProject returns all tokens for a project, marking the caller's own
+// tokens via OwnedByCaller.
+func (s *Service) ListByProject(ctx context.Context, projectID, callerUserID string) (*ApiTokenListResponseDTO, error) {
 	tokens, err := s.repo.ListByProject(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -287,6 +288,7 @@ func (s *Service) ListByProject(ctx context.Context, projectID string) (*ApiToke
 	dtos := make([]ApiTokenDTO, len(tokens))
 	for i, t := range tokens {
 		dtos[i] = t.ToDTO()
+		dtos[i].OwnedByCaller = t.UserID != nil && *t.UserID == callerUserID
 	}
 
 	return &ApiTokenListResponseDTO{
