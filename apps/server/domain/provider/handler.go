@@ -564,10 +564,23 @@ func parseTimeRange(c echo.Context) (since, until *time.Time) {
 // Identical shape to TestProviderResponse but scoped to a project's credential config.
 type TestProjectProviderResponse = TestProviderResponse
 
-// TestProjectProvider sends a live generate call using a project's configured provider credentials.
+// testProjectProviderRequest is the OPTIONAL JSON body accepted by
+// TestProjectProvider. When omitted (or when Model is empty), the endpoint runs
+// the existing generate-then-embed test on the credential's configured models.
+// When Model is set, the endpoint tests exactly that model; ModelType selects
+// the test path ("generative" is the default, "embedding" runs the embed test).
+type testProjectProviderRequest struct {
+	Model     string `json:"model"`
+	ModelType string `json:"modelType"`
+}
+
+// TestProjectProvider sends a live test call using a project's configured
+// provider credentials. An optional JSON body ({model, modelType}) selects an
+// explicit model to test instead of the credential's configured model.
 // @Summary Test a project provider with a live generate call
 // @Param projectId path string true "Project ID"
 // @Param provider path string true "Provider name"
+// @Param body body testProjectProviderRequest false "Optional model override"
 // @Success 200 {object} TestProjectProviderResponse
 // @Failure 400 {object} apperror.Error
 // @Failure 401 {object} apperror.Error
@@ -576,6 +589,19 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 	projectID := c.Param("projectId")
 	providerParam := c.Param("provider")
 	p := ProviderType(providerParam)
+
+	// Optional body: lets callers test an explicit model (generative or
+	// embedding) rather than the credential's configured model. An empty body
+	// (or an empty model) leaves behaviour byte-for-byte unchanged.
+	var req testProjectProviderRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if req.Model != "" && req.ModelType != "" &&
+		req.ModelType != string(ModelTypeGenerative) &&
+		req.ModelType != string(ModelTypeEmbedding) {
+		return apperror.ErrBadRequest.WithMessage("invalid modelType: must be \"generative\" or \"embedding\"")
+	}
 
 	ctx := auth.ContextWithProjectID(c.Request().Context(), projectID)
 
@@ -588,6 +614,37 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 	}
 
 	start := time.Now()
+
+	// Explicit model override: run only the requested test path.
+	if req.Model != "" && req.ModelType == string(ModelTypeEmbedding) {
+		embModel, embErr := h.catalog.TestEmbedForModel(ctx, p, cred, req.Model)
+		if embErr != nil {
+			return apperror.ErrBadRequest.WithMessage("provider test failed: " + embErr.Error())
+		}
+		return c.JSON(http.StatusOK, TestProjectProviderResponse{
+			Provider:       providerParam,
+			Model:          req.Model,
+			EmbeddingModel: embModel,
+			EmbeddingOK:    embModel != "not supported",
+			LatencyMs:      time.Since(start).Milliseconds(),
+		})
+	}
+
+	if req.Model != "" {
+		// Generative override (also the default when modelType is omitted).
+		reply, genErr := h.catalog.TestGenerateForModel(ctx, p, cred, req.Model)
+		if genErr != nil {
+			return apperror.ErrBadRequest.WithMessage("provider test failed: " + genErr.Error())
+		}
+		return c.JSON(http.StatusOK, TestProjectProviderResponse{
+			Provider:  providerParam,
+			Model:     req.Model,
+			Reply:     reply,
+			LatencyMs: time.Since(start).Milliseconds(),
+		})
+	}
+
+	// No body / empty model: existing behaviour unchanged.
 	model, reply, err := h.catalog.TestGenerate(ctx, p, cred)
 	if err != nil {
 		return apperror.ErrBadRequest.WithMessage("provider test failed: " + err.Error())
