@@ -66,6 +66,12 @@ The server SHALL run a reconciliation pass that destroys sandbox containers whic
 - **WHEN** another reconciliation pass is triggered
 - **THEN** the second pass SHALL be a no-op
 
+#### Scenario: An unavailable reference store aborts before destruction
+- **GIVEN** the workspace reference store is absent or cannot list active workspaces
+- **WHEN** reconciliation runs
+- **THEN** no container or volume SHALL be destroyed
+- **AND** the failure SHALL be logged
+
 #### Scenario: Container enumeration failure aborts before destruction
 - **GIVEN** the Docker daemon cannot enumerate sandbox containers
 - **AND** labelled workspace volumes exist, some belonging to live containers
@@ -104,6 +110,26 @@ The server SHALL refresh a per-container liveness lease for every warm-pool cont
 - **GIVEN** a warm-pool container whose lease volume has an empty or unparseable creation time
 - **WHEN** reconciliation evaluates the container
 - **THEN** the lease SHALL be treated as unknown and the container SHALL be spared
+
+#### Scenario: Concurrent lease refreshes never remove the only lease
+- **GIVEN** a warm-pool container whose liveness lease is refreshed concurrently by more than one caller
+- **WHEN** the concurrent refreshes complete
+- **THEN** at least one lease for that container SHALL remain
+- **AND** reconciliation SHALL still observe the owner as live
+
+#### Scenario: Liveness is re-validated immediately before destruction
+- **GIVEN** reconciliation's lease snapshot shows a warm-pool container's owner as dead
+- **AND** the owner refreshes that container's lease before the container is destroyed
+- **WHEN** reconciliation is about to destroy the container
+- **THEN** it SHALL re-read the lease and spare the container
+- **AND** the skip SHALL be recorded with a reason
+
+#### Scenario: Normal teardown removes the container's leases
+- **GIVEN** a warm-pool container is destroyed through the provider's normal destroy path
+- **WHEN** the destroy completes and the container is gone
+- **THEN** its liveness lease volumes SHALL be removed
+- **AND** a later reconciliation pass SHALL find no lease for that container
+- **AND** a container that could not be removed SHALL keep its lease
 
 #### Scenario: Leases of dead containers are reclaimed
 - **GIVEN** a liveness-lease volume exists whose container ID is absent from the container list
@@ -179,6 +205,32 @@ The warm pool SHALL keep the number of containers it manages equal to the config
 - **GIVEN** repeated acquire and replenish cycles occur
 - **WHEN** the pool reaches steady state
 - **THEN** the number of containers managed by the pool SHALL equal the configured target
+
+### Requirement: The warm pool SHALL pre-boot only the reconciled provider
+
+The warm pool SHALL create pre-booted containers only through the provider that supports label-scoped enumeration and per-container liveness leases. If that provider is unavailable, or does not implement those capabilities, the pool SHALL fail to create that warm container rather than pre-boot a container reconciliation cannot enumerate or keep alive.
+
+#### Scenario: Warm containers are pre-booted through the reconciled provider
+- **GIVEN** agent sandboxes are enabled and the warm pool has a positive target
+- **WHEN** the pool creates a warm container
+- **THEN** the container SHALL be created through the label-enumerating, lease-capable provider
+- **AND** it SHALL be discoverable by the reconciliation label query
+
+#### Scenario: A provider that cannot be reconciled is refused
+- **GIVEN** the label-enumerating, lease-capable provider is unavailable
+- **WHEN** the warm pool attempts to create a warm container
+- **THEN** the attempt SHALL fail and be logged
+- **AND** no container that reconciliation cannot enumerate SHALL be pre-booted
+
+### Requirement: Clients SHALL NOT be able to supply a provider container reference
+
+The provider container/VM reference persisted with a workspace SHALL be assigned by the server. A client-supplied provider container reference SHALL be ignored when creating a workspace, so an API caller cannot shield an unrelated container from reconciliation.
+
+#### Scenario: A client-supplied provider container reference is ignored
+- **GIVEN** a workspace creation request whose body sets a provider container reference
+- **WHEN** the server decodes the request and persists the workspace
+- **THEN** the persisted workspace SHALL NOT carry the client-supplied reference
+- **AND** the container named by the client SHALL remain eligible for reconciliation
 
 ### Requirement: Reconciliation SHALL be observable
 

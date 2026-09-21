@@ -32,6 +32,12 @@ type fakeResourceManager struct {
 	release   chan struct{} // when non-nil, ListSandboxContainers blocks on it
 	startOnce sync.Once
 
+	// leaseCalls counts ListHeartbeatLeases invocations. When leasesOnCall is set,
+	// it is consulted instead of the static heartbeats map, letting a test return a
+	// stale lease on the first call and a fresh lease on a later call.
+	leaseCalls   atomic.Int64
+	leasesOnCall func(call int64) []HeartbeatLease
+
 	mu                  sync.Mutex
 	destroyedContainers []string
 	destroyedVolumes    []string
@@ -58,6 +64,9 @@ func (f *fakeResourceManager) ListSandboxVolumes(_ context.Context) ([]SandboxVo
 func (f *fakeResourceManager) ListHeartbeatLeases(_ context.Context) ([]HeartbeatLease, error) {
 	if f.listHeartbeatsErr != nil {
 		return nil, f.listHeartbeatsErr
+	}
+	if f.leasesOnCall != nil {
+		return f.leasesOnCall(f.leaseCalls.Add(1)), nil
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -455,6 +464,34 @@ func TestReconciler_WarmPoolZeroLeaseTimestamp_Spared(t *testing.T) {
 	assert.Empty(t, mgr.destroyedContainers, "a zero lease timestamp must spare the container")
 	// Skipped counts the spared container and its (present) lease volume.
 	assert.Equal(t, 2, result.Skipped)
+}
+
+func TestReconciler_WarmPoolLeaseRefreshedAfterSnapshot_Spared(t *testing.T) {
+	// The pass snapshots a stale lease (owner looks dead), but the owner refreshes
+	// the lease before the container is destroyed. The recheck must spare the
+	// container and protect its workspace volume (stale-snapshot TOCTOU).
+	stale := testNow.Add(-30 * time.Minute)
+	fresh := testNow.Add(-1 * time.Minute)
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{sandboxContainer("warm-toctou", warmLabels("vol-toctou"), 5*time.Hour)},
+		heartbeats: map[string]time.Time{"warm-toctou": stale},
+	}
+	mgr.leasesOnCall = func(call int64) []HeartbeatLease {
+		ts := stale
+		if call >= 2 {
+			ts = fresh
+		}
+		return []HeartbeatLease{{Volume: heartbeatVolumeName("warm-toctou"), ContainerID: "warm-toctou", CreatedAt: ts}}
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	result := r.Reconcile(context.Background())
+
+	assert.NotContains(t, mgr.destroyedContainers, "warm-toctou", "a container whose lease refreshed after the snapshot must be spared")
+	assert.NotContains(t, mgr.destroyedVolumes, "vol-toctou", "the spared container's volume must be protected")
+	// Skipped counts the spared container and its (present) lease volume.
+	assert.Equal(t, 2, result.Skipped)
+	assert.Equal(t, int64(2), mgr.leaseCalls.Load(), "liveness must be re-read before destroying a warm-pool container")
 }
 
 // --- Lease-volume cleanup ---

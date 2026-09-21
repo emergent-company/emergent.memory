@@ -304,6 +304,15 @@ func TestGVisorProvider_DestroySandboxVolume_Idempotent(t *testing.T) {
 	assert.Equal(t, []string{"missing"}, fake.removedVolumes)
 }
 
+func TestParseContainerCreatedAt(t *testing.T) {
+	assert.True(t, parseContainerCreatedAt(0).IsZero(), "zero must be treated as unknown, not 1970")
+	assert.True(t, parseContainerCreatedAt(-1).IsZero(), "negative must be treated as unknown")
+
+	want := time.Unix(1700000000, 0)
+	assert.Equal(t, want, parseContainerCreatedAt(1700000000))
+	assert.True(t, parseContainerCreatedAt(1700000000).Equal(want))
+}
+
 func TestIsPrimaryWorkspaceVolume(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -390,6 +399,92 @@ func TestGVisorProvider_ListHeartbeatLeases(t *testing.T) {
 	require.Len(t, leases, 1)
 	assert.Equal(t, "hb-1", leases[0].Volume)
 	assert.Equal(t, "c1", leases[0].ContainerID)
+}
+
+// TestGVisorProvider_BeatContainerHeartbeat_ConcurrentNeverLosesLease is the
+// regression test for the create+prune race: without beatMu, two concurrent beats
+// for the same container can each prune the other's freshly created lease, leaving
+// no lease at all and breaking the "a lease is always present" invariant.
+func TestGVisorProvider_BeatContainerHeartbeat_ConcurrentNeverLosesLease(t *testing.T) {
+	skipWithoutDocker(t)
+
+	p := newRealGVisorProvider(t)
+	const containerID = "concurrent-heartbeat-regression"
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		p.removeHeartbeatLeasesForContainer(ctx, containerID)
+	})
+
+	const n = 8
+	var wg sync.WaitGroup
+	errCh := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := p.BeatContainerHeartbeat(context.Background(), containerID); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatalf("BeatContainerHeartbeat returned an error: %v", err)
+	}
+
+	leases, err := p.ListHeartbeatLeases(context.Background())
+	require.NoError(t, err)
+	count := 0
+	for _, l := range leases {
+		if l.ContainerID == containerID {
+			count++
+		}
+	}
+	assert.GreaterOrEqual(t, count, 1, "at least one lease for the container must survive concurrent beats")
+}
+
+// TestGVisorProvider_Destroy_RemovesHeartbeatLeases is the regression test for the
+// normal destroy path: Destroy must remove the container's liveness leases, not
+// just its workspace volume. WarmPool.Stop, the Acquire staleness discard, drainExcess
+// and CleanupJob all route through Destroy, so a graceful destroy that left leases
+// behind would accumulate heartbeat volumes until a later reconciliation pass.
+func TestGVisorProvider_Destroy_RemovesHeartbeatLeases(t *testing.T) {
+	skipWithoutDocker(t)
+
+	p := newRealGVisorProvider(t)
+	const containerID = "destroy-heartbeat-regression"
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		p.removeHeartbeatLeasesForContainer(ctx, containerID)
+	})
+
+	require.NoError(t, p.BeatContainerHeartbeat(context.Background(), containerID))
+
+	// A lease must exist before destroy.
+	leases, err := p.ListHeartbeatLeases(context.Background())
+	require.NoError(t, err)
+	count := 0
+	for _, l := range leases {
+		if l.ContainerID == containerID {
+			count++
+		}
+	}
+	require.GreaterOrEqual(t, count, 1, "a lease must exist before destroy")
+
+	// Destroy tolerates a missing container (idempotent) but must still remove leases.
+	require.NoError(t, p.Destroy(context.Background(), containerID))
+
+	leases, err = p.ListHeartbeatLeases(context.Background())
+	require.NoError(t, err)
+	for _, l := range leases {
+		assert.NotEqual(t, containerID, l.ContainerID, "Destroy must remove every lease for the container")
+	}
 }
 
 func TestGVisorProvider_ListSandboxVolumes_ExcludesHeartbeatLeases(t *testing.T) {

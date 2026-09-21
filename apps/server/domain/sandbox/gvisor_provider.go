@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -37,6 +38,13 @@ type GVisorProvider struct {
 	runtimeName  string // "runsc" or "" (default)
 	networkName  string // Docker network for container isolation
 	defaultImage string // Override for default workspace image
+
+	// beatMu serializes heartbeat lease mutations (create + prune) process-locally.
+	// Without it, two concurrent beats for the same container could each create a
+	// lease and prune the other's, leaving no lease at all. Held for the whole
+	// create+prune sequence in BeatContainerHeartbeat and during teardown's lease
+	// removal in removeHeartbeatLeasesForContainer.
+	beatMu sync.Mutex
 }
 
 // GVisorProviderConfig holds configuration for the gVisor provider.
@@ -332,6 +340,12 @@ func (p *GVisorProvider) Destroy(ctx context.Context, providerID string) error {
 	if err := p.removeWorkspaceVolume(ctx, volumeName); err != nil {
 		p.log.Warn("failed to remove workspace volume", "volume", volumeName, "error", err)
 	}
+
+	// Normal teardown removes the container's liveness leases so a graceful destroy
+	// does not leak heartbeat volumes until a later reconciliation pass. Only
+	// reached once the container is confirmed removed above; a container that still
+	// exists (real ContainerRemove error) returns earlier and keeps its lease.
+	p.removeHeartbeatLeasesForContainer(ctx, providerID)
 
 	p.log.Info("workspace container destroyed", "container_id", providerID[:min(12, len(providerID))])
 	return nil

@@ -623,17 +623,21 @@ func (wp *WarmPool) drainExcess(ctx context.Context, target int) error {
 	return nil
 }
 
-// createWarmContainer provisions a new pre-booted container using the default provider.
-// image specifies the Docker image to use; empty string uses the provider's default.
+// createWarmContainer provisions a new pre-booted container using the gVisor
+// provider. image specifies the Docker image to use; empty string uses the
+// provider's default.
+//
+// The pool is deliberately restricted to the provider that supports label
+// enumeration + liveness leases: the gVisor provider. Firecracker and E2B
+// containers carry no Docker labels and implement neither SandboxResourceManager
+// nor ContainerHeartbeater, so they would leak exactly as before the fix.
 func (wp *WarmPool) createWarmContainer(ctx context.Context, image string) (*warmContainer, error) {
-	// Select the default provider for agent workspaces
-	provider, providerType, err := wp.orchestrator.SelectProvider(
-		ContainerTypeAgentSandbox,
-		DeploymentSelfHosted,
-		"auto",
-	)
+	provider, err := wp.orchestrator.GetProvider(ProviderGVisor)
 	if err != nil {
-		return nil, fmt.Errorf("no provider available for warm pool: %w", err)
+		return nil, fmt.Errorf("gVisor provider unavailable for warm pool: %w", err)
+	}
+	if _, ok := provider.(ContainerHeartbeater); !ok {
+		return nil, fmt.Errorf("provider %T does not implement ContainerHeartbeater", provider)
 	}
 
 	result, err := provider.Create(ctx, &CreateContainerRequest{
@@ -644,12 +648,12 @@ func (wp *WarmPool) createWarmContainer(ctx context.Context, image string) (*war
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create warm container via %s: %w", providerType, err)
+		return nil, fmt.Errorf("failed to create warm container via %s: %w", ProviderGVisor, err)
 	}
 
 	return &warmContainer{
 		providerID:   result.ProviderID,
-		providerType: providerType,
+		providerType: ProviderGVisor,
 		image:        image,
 		imageDigest:  result.ImageDigest,
 		createdAt:    time.Now(),

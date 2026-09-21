@@ -40,7 +40,7 @@ docker ps -a --filter label=memory.workspace=true \
 
 # Warm-pool containers only
 docker ps -a --filter label=memory.warm-pool=true \
-  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Generated}}'
+  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.CreatedAt}}'
 
 # Count of running labelled containers
 docker ps --filter label=memory.workspace=true -q | wc -l

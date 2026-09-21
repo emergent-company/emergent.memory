@@ -287,6 +287,21 @@ func TestWarmContainer_Accessors(t *testing.T) {
 
 // --- Tests with mock provider (uses mockProvider from orchestrator_test.go) ---
 
+func TestWarmPool_CreateWarmContainer_RequiresGVisor(t *testing.T) {
+	// The warm pool is deliberately restricted to the gVisor provider: it is the
+	// only self-hosted provider that carries Docker labels and implements label
+	// enumeration + liveness leases. A non-gVisor provider must not pre-boot
+	// containers, or they would leak exactly as before the fix.
+	orch := NewOrchestrator(testLogger())
+	orch.RegisterProvider(ProviderFirecracker, &mockProvider{name: "fc", providerType: ProviderFirecracker, healthy: true})
+
+	wp := NewWarmPool(orch, testLogger(), WarmPoolConfig{Size: 1})
+
+	_, err := wp.createWarmContainer(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not registered", "a non-gVisor-only orchestrator must fail warm-container creation")
+}
+
 func TestWarmPool_Start_WithMockProvider(t *testing.T) {
 	orch := NewOrchestrator(testLogger())
 	mock := &mockProvider{name: "wp-test", providerType: ProviderGVisor, healthy: true}

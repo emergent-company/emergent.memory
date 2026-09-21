@@ -114,18 +114,22 @@ func (r *Reconciler) Reconcile(ctx context.Context) ReconcileResult {
 	}
 
 	// Cross-check against the DB: any container referenced by a workspace record
-	// that is not stopped/errored is live work and must not be touched.
+	// that is not stopped/errored is live work and must not be touched. A nil store
+	// cannot prove anything, so it must abort the pass — an empty reference set
+	// would otherwise let reconciliation destroy a live DB-referenced container.
+	if r.store == nil {
+		r.log.Error("reconciliation aborted: workspace reference store unavailable")
+		return result
+	}
+	active, err := r.store.ListActive(ctx)
+	if err != nil {
+		r.log.Error("reconciliation aborted: failed to list active workspaces", "error", err)
+		return result
+	}
 	refs := map[string]*AgentSandbox{}
-	if r.store != nil {
-		active, err := r.store.ListActive(ctx)
-		if err != nil {
-			r.log.Error("reconciliation aborted: failed to list active workspaces", "error", err)
-			return result
-		}
-		for _, ws := range active {
-			if ws != nil && ws.ProviderWorkspaceID != "" {
-				refs[ws.ProviderWorkspaceID] = ws
-			}
+	for _, ws := range active {
+		if ws != nil && ws.ProviderWorkspaceID != "" {
+			refs[ws.ProviderWorkspaceID] = ws
 		}
 	}
 
@@ -163,6 +167,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) ReconcileResult {
 	for _, c := range containers {
 		volumeName := c.Labels[workspaceVolumeLabel]
 		reason := r.decide(c, refs, heartbeats, heartbeatsOK, now)
+		if reason == "" && c.Labels[warmPoolLabel] == "true" {
+			// The pass snapshotted leases earlier; a peer may have created a fresh
+			// lease since, so re-validate liveness immediately before destroying a
+			// warm-pool container (stale-snapshot TOCTOU).
+			reason = r.recheckWarmPoolLiveness(ctx, mgr, c.ID, now)
+		}
 		if reason != "" {
 			result.Skipped++
 			if volumeName != "" {
@@ -333,6 +343,41 @@ func (r *Reconciler) decide(c SandboxContainerInfo, refs map[string]*AgentSandbo
 		return "grace_period"
 	}
 
+	return ""
+}
+
+// recheckWarmPoolLiveness re-reads the liveness lease for a warm-pool container
+// immediately before it is destroyed. The pass snapshotted leases earlier, so a
+// peer that created a fresh lease in the interim is invisible to the cached
+// snapshot; this closes that TOCTOU. It returns a non-empty skip reason when the
+// owner appears alive now (or liveness cannot be confirmed), sparing the container.
+func (r *Reconciler) recheckWarmPoolLiveness(ctx context.Context, mgr SandboxResourceManager, containerID string, now time.Time) string {
+	leases, err := mgr.ListHeartbeatLeases(ctx)
+	if err != nil {
+		// Re-read failed: fail safe and spare the container rather than risk
+		// reaping a live peer's pool on a transient Docker error.
+		return "peer_live_recheck"
+	}
+
+	var newest time.Time
+	found := false
+	for _, lease := range leases {
+		if lease.ContainerID != containerID {
+			continue
+		}
+		found = true
+		if lease.CreatedAt.After(newest) {
+			newest = lease.CreatedAt
+		}
+	}
+
+	// No lease at all means the owner is confirmed absent (matches the snapshot's
+	// "missing heartbeat" verdict), so the container may still be reaped. A lease
+	// whose timestamp is zero/unknown, or fresher than the TTL, means the owner
+	// looks alive now: spare the container.
+	if found && (newest.IsZero() || now.Sub(newest) < r.heartbeatTTL) {
+		return "peer_live_recheck"
+	}
 	return ""
 }
 

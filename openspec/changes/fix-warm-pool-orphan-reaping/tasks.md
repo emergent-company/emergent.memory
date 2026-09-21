@@ -65,3 +65,15 @@
 - [x] 8.5 Document the handler acquire → DB-write window as lease-bridged (or make it atomic)
 - [x] 8.6 Correct D4/spec/docs: startup spares a just-crashed peer until its lease expires
 - [x] 8.7 Unit tests for all of the above
+
+## 9. Third review follow-ups (Copilot review, concurrency and fail-safe)
+
+- [x] 9.1 Serialize heartbeat beat+prune per provider so concurrent refresh cannot remove the only lease (with concurrency regression test)
+- [x] 9.2 Normalize non-positive Docker container creation timestamps to the zero time so unknown ages fail safe (with unit test)
+- [x] 9.3 Re-validate a warm-pool container's lease immediately before destruction (stale-snapshot TOCTOU; with fake-driven test)
+- [x] 9.4 Abort reconciliation when the workspace reference store is unavailable instead of proceeding with an empty reference set
+- [x] 9.5 Make `provider_workspace_id` internal-only (`json:"-"`) so a client cannot shield an unrelated container (with decode test)
+- [x] 9.6 Restrict warm-pool pre-booting to the reconciled, lease-capable provider (with test)
+- [x] 9.7 Remove liveness leases on the normal `Destroy` path, not only `DestroySandboxContainer` (with Docker-backed test)
+- [x] 9.8 Fix `OPERATIONS.md` docker `ps --format` field (`.CreatedAt`, not `.Generated`) and the stale "reclaimed by the next start" wording in `proposal.md`
+- [x] 9.9 Update `design.md` (D2a, D7, D8, D9) and the delta spec to match, and re-run `openspec validate --strict`

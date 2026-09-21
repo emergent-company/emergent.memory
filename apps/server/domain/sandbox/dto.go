@@ -13,10 +13,12 @@ type CreateWorkspaceRequest struct {
 	Provider      string        `json:"provider,omitempty"` // "firecracker", "e2b", "gvisor", or "auto"
 	RepositoryURL string        `json:"repository_url,omitempty"`
 	Branch        string        `json:"branch,omitempty"`
-	// ProviderWorkspaceID is the already-created container/VM ID. When set, it is
-	// persisted in the same INSERT as the row so a peer reconciler never observes
-	// the container as ownerless-and-unreferenced while it is being provisioned.
-	ProviderWorkspaceID string          `json:"provider_workspace_id,omitempty"`
+	// ProviderWorkspaceID is the already-created container/VM ID. It is internal-only:
+	// set by auto_provisioner.go in the atomic-insert path, never from client JSON.
+	// When set, it is persisted in the same INSERT as the row so a peer reconciler
+	// never observes the container as ownerless-and-unreferenced while it is being
+	// provisioned.
+	ProviderWorkspaceID string          `json:"-"`
 	DeploymentMode      string          `json:"deployment_mode,omitempty"` // "managed" or "self-hosted"
 	ResourceLimits      *ResourceLimits `json:"resource_limits,omitempty"`
 	WarmStart           bool            `json:"warm_start,omitempty"`

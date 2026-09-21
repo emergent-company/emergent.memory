@@ -188,11 +188,17 @@ func (p *GVisorProvider) DestroyHeartbeatLease(ctx context.Context, volumeName s
 // BeatContainerHeartbeat refreshes the liveness lease for a container by creating
 // a fresh heartbeat volume, then removing older leases for the same container.
 // Creation-before-removal means a lease for the container is always present, so a
-// concurrent reconciler never observes a live owner as missing.
+// concurrent reconciler never observes a live owner as missing. The create+prune
+// sequence is serialized process-locally (beatMu): without that, two concurrent
+// beats for the same container could each create a lease and then prune the
+// other's, ending with no lease at all and breaking the always-present invariant.
 func (p *GVisorProvider) BeatContainerHeartbeat(ctx context.Context, containerID string) error {
 	if containerID == "" {
 		return nil
 	}
+
+	p.beatMu.Lock()
+	defer p.beatMu.Unlock()
 
 	name := fmt.Sprintf("memory-hb-%s-%d", hashContainerID(containerID), time.Now().UnixNano())
 	_, err := p.client.VolumeCreate(ctx, volume.CreateOptions{
@@ -254,7 +260,7 @@ func (p *GVisorProvider) ListSandboxContainers(ctx context.Context) ([]SandboxCo
 			Labels:    c.Labels,
 			State:     string(c.State),
 			Running:   c.State == container.StateRunning,
-			CreatedAt: time.Unix(c.Created, 0),
+			CreatedAt: parseContainerCreatedAt(c.Created),
 		}
 		if len(c.Names) > 0 {
 			info.Name = strings.TrimPrefix(c.Names[0], "/")
@@ -319,10 +325,14 @@ func (p *GVisorProvider) DestroySandboxContainer(ctx context.Context, containerI
 
 // removeHeartbeatLeasesForContainer best-effort removes every lease volume for a
 // container. Used by normal teardown so a destroyed container does not leak leases.
+// It is serialized against BeatContainerHeartbeat via beatMu so teardown cannot
+// interleave with a concurrent beat for the same container.
 func (p *GVisorProvider) removeHeartbeatLeasesForContainer(ctx context.Context, containerID string) {
 	if containerID == "" {
 		return
 	}
+	p.beatMu.Lock()
+	defer p.beatMu.Unlock()
 	resp, err := p.client.VolumeList(ctx, volume.ListOptions{
 		Filters: filters.NewArgs(
 			filters.Arg("label", heartbeatLabel+"="+containerID),
@@ -361,6 +371,19 @@ func (p *GVisorProvider) removeWorkspaceVolume(ctx context.Context, volumeName s
 		return fmt.Errorf("failed to remove workspace volume %s: %w", volumeName, err)
 	}
 	return nil
+}
+
+// parseContainerCreatedAt converts a Docker container's Created unix-seconds value
+// to a time.Time. A non-positive value (unknown) becomes the zero time.Time, which
+// callers must treat as "unknown" and fail safe (spare the resource). This matters
+// because time.Unix(0, 0) is the 1970 epoch, not the zero time: withinGrace would
+// otherwise see an ancient container and destroy a live one. The same contract as
+// parseVolumeCreatedAt, which handles the volume-side string form.
+func parseContainerCreatedAt(sec int64) time.Time {
+	if sec <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }
 
 // parseVolumeCreatedAt parses the Docker volume CreatedAt string. It returns the

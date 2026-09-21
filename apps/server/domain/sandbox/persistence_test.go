@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -26,6 +27,16 @@ func TestBuildWorkspaceEntity_PersistsProviderWorkspaceID(t *testing.T) {
 }
 
 // --- DTO Tests ---
+
+func TestCreateWorkspaceRequest_ProviderWorkspaceIDNotClientSettable(t *testing.T) {
+	// provider_workspace_id is internal-only (set by auto_provisioner.go in the
+	// atomic-insert path). A client must not be able to protect an unrelated
+	// container from reconciliation by supplying it in the request body.
+	body := []byte(`{"container_type":"agent_sandbox","provider_workspace_id":"attacker-owned"}`)
+	var req CreateWorkspaceRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	assert.Empty(t, req.ProviderWorkspaceID, "provider_workspace_id must not decode from client JSON")
+}
 
 func TestAttachSessionRequest(t *testing.T) {
 	req := AttachSessionRequest{AgentSessionID: "session-abc-123"}

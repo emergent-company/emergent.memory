@@ -49,6 +49,8 @@ Docker labels already exist (`memory.workspace=true`, `workspace.type`, `workspa
 
 **Rationale**: Between acquiring a warm container and writing its DB reference there is a window where a peer reconciler sees the container as ownerless-and-unreferenced; an hours-old warm container is already past grace and was previously destroyed. One atomic INSERT removes the window. (Defence in depth: the acquired container is also owned by the provisioning process's owner label, so that process's own reconciliation never touches it.)
 
+**Not client-settable**: the field is tagged `json:"-"`, so the value can only be set in-process by the auto-provisioner. Otherwise any authenticated caller of the create-workspace endpoint could name an arbitrary container ID and have reconciliation spare that unrelated resource while the handler provisions the real one.
+
 **Handler path (documented, not atomic)**: `handler.go` creates the workspace row synchronously and only then provisions the container, so it cannot use the single-INSERT path. It instead bridges the acquire → DB-write window with the liveness lease: it refreshes the acquired container's lease immediately and then persists `provider_workspace_id` via a follow-up UPDATE. A warm container's lease is at most one heartbeat interval old at acquisition, so it remains fresh (`peer_live`) for up to `3 × WORKSPACE_OWNER_HEARTBEAT_MIN` — far longer than the UPDATE takes — so a peer reconciler spares it throughout. This claim is explicit in the code comments at the acquire and update sites.
 
 **Alternatives considered**: Keep the follow-up UPDATE and rely on grace — insufficient: the container is older than the grace window by construction. Route the handler through `createWorkspaceWithContainer` — not possible without creating a second row; the handler's row pre-exists provisioning.
@@ -97,6 +99,10 @@ Because Docker container/volume labels are immutable after creation, the lease c
 
 **Lease lifecycle (no leak)**: Lease volumes are not `memory.workspace=true`, so the workspace volume sweep never sees them; they are cleaned up explicitly both on normal teardown (`DestroySandboxContainer` removes the container's leases) and by the reconciler, which removes any lease whose container ID is absent from the current container list. That bounds lease count even when an owner dies mid-cycle and no longer prunes its own old leases. Lease removal is label-scoped to `memory.owner.heartbeat` only and is idempotent.
 
+**Serialized refresh (no zero-lease race)**: refresh is a create-then-prune pair, and two concurrent refreshes for the same container (the pool loop and the handler's acquire bridge) could otherwise each create a lease and prune the other's, ending with *no* lease at all and breaking the always-present invariant above. Beat+prune is therefore serialized process-local (per-provider mutex); a container is only ever beaten by its owning process, so process-local serialization is sufficient. Teardown's lease removal takes the same lock.
+
+**Pre-destroy re-validation**: the pass snapshots leases once and may destroy a container later in the same pass. A peer that refreshed a lease in the interim is invisible to the cached snapshot, so immediately before destroying a warm-pool container the reconciler re-reads that container's lease and spares it if the owner now looks live (or if the re-read fails — fail safe). A *missing* lease is not re-created by this re-read, so it still means "owner dead" and the container remains reapable.
+
 **Fail-safe lease timestamps**: An unparseable lease timestamp yields the zero time. The reconciler treats a zero lease timestamp as *unknown* and spares the container (`heartbeat_unknown`), never as stale — consistent with the grace-period fail-safe (D3).
 
 **Alternatives considered**: DB rows for warm containers (heavier, skews `CountActive`) — still needs liveness. A fixed long TTL — delays the leak fix instead of bounding it. Process-wide (not per-container) heartbeat — would keep a dropped container alive as long as any container is tracked. Relying on `removeOlderHeartbeats` alone to prune leases — leaks a lease per crash, because a dead owner cannot run its own pruning.
@@ -107,7 +113,17 @@ Because Docker container/volume labels are immutable after creation, the lease c
 
 **Rationale**: The container list is what builds the protected-volume set. Continuing the volume sweep with an empty list would destroy the workspace volume of a live container — data loss. Volume enumeration failure, by contrast, is safe to skip (nothing is destroyed), and heartbeat-lookup failure fails safe for warm-pool containers only.
 
+**Reference store is equally mandatory**: a workspace reference is the other protection leg, so a nil or failing store aborts the pass like a failing container list. An empty `refs` map cannot be distinguished from "no active workspaces" and would silently destroy live DB-referenced containers.
+
 **Alternatives considered**: Treat all enumeration as best-effort — the observed data-loss bug. Abort on any error — safe but needlessly skips the TTL reaper; not warranted.
+
+### D9: The warm pool pre-boots only the reconciled provider
+
+**Choice**: `WarmPool.createWarmContainer` resolves the gVisor provider explicitly (and requires it to implement `ContainerHeartbeater`) instead of asking the orchestrator for the "auto" self-hosted agent-sandbox provider.
+
+**Rationale**: the self-hosted provider order is Firecracker → gVisor → E2B, and on a KVM-enabled host that picks Firecracker. Firecracker/E2B containers carry no Docker labels and implement neither `SandboxResourceManager` nor `ContainerHeartbeater`, while reconciliation resolves the gVisor provider only — so a warm pool on such a host would pre-boot containers that are never enumerated, never kept alive by a lease, and never reaped: the original leak, unchanged. Restricting the pool to the reconciled provider makes "no sandbox container can outlive its owner" hold on every supported deployment class. Non-Docker providers would need their own ownership + enumeration implementation before they can back the warm pool.
+
+**Alternatives considered**: implement label enumeration + leases for Firecracker/E2B now — out of scope for this change and untestable here; fall back to "no warm pool" silently on non-Docker hosts — acceptable in effect, but the explicit error is observable.
 
 ## Risks / Trade-offs
 
@@ -117,6 +133,7 @@ Because Docker container/volume labels are immutable after creation, the lease c
 - **Cost of enumeration with many containers** (190 now) → single `ContainerList`/`VolumeList` by label per cycle; negligible against a 60-minute interval. Guard with a bounded context timeout.
 - **Existing 184 prod orphans predate the fix and carry no ownership label** → they are ownerless and will be reclaimed by the first post-deploy reconcile; until then they consume resources. A one-off operator cleanup (tasks §5) reclaims them immediately at deploy time.
 - **Two concurrent server instances** (rolling deploy) → the grace period plus ownership label prevent cross-instance destruction; a container owned by a peer that then crashes becomes ownerless and is reclaimed on the next cycle.
+- **Warm pool unavailable on non-Docker hosts** → by D9 the pool refuses to pre-boot through a provider that cannot be reconciled, so a Firecracker/E2B-only host loses warm starts rather than leaking containers. Deliberate trade-off: correctness of the leak guarantee over warm-start latency.
 
 ## Migration Plan
 
