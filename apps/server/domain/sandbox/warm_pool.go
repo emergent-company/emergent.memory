@@ -96,6 +96,12 @@ type WarmPool struct {
 	// Defaults to resolving via the registered GVisorProvider. Can be overridden in tests.
 	digestResolver func(image string) string
 
+	// heartbeatInterval is how often liveness leases are refreshed for tracked
+	// containers (WORKSPACE_OWNER_HEARTBEAT_MIN, default 2m).
+	heartbeatInterval time.Duration
+	// heartbeatOnce ensures only one heartbeat goroutine runs per pool.
+	heartbeatOnce sync.Once
+
 	// Pool of ready containers
 	containers []*warmContainer
 
@@ -115,11 +121,12 @@ func NewWarmPool(orchestrator *Orchestrator, log *slog.Logger, config WarmPoolCo
 		cap = 0
 	}
 	return &WarmPool{
-		config:       config,
-		orchestrator: orchestrator,
-		log:          log.With("component", "warm-pool"),
-		containers:   make([]*warmContainer, 0, cap),
-		stopCh:       make(chan struct{}),
+		config:            config,
+		orchestrator:      orchestrator,
+		log:               log.With("component", "warm-pool"),
+		heartbeatInterval: defaultOwnerHeartbeatInterval,
+		containers:        make([]*warmContainer, 0, cap),
+		stopCh:            make(chan struct{}),
 	}
 }
 
@@ -212,7 +219,64 @@ func (wp *WarmPool) Start(ctx context.Context) error {
 		"target", totalTarget,
 	)
 
+	// Start refreshing liveness leases for the containers we track. This is what
+	// lets a peer reconciler distinguish this live pool from a dead predecessor's.
+	wp.heartbeatOnce.Do(func() { go wp.heartbeatLoop() })
+
 	return nil
+}
+
+// heartbeatLoop periodically refreshes liveness leases for tracked warm containers.
+func (wp *WarmPool) heartbeatLoop() {
+	interval := wp.heartbeatInterval
+	if interval <= 0 {
+		interval = defaultOwnerHeartbeatInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	wp.beatContainers(context.Background())
+
+	for {
+		select {
+		case <-ticker.C:
+			wp.beatContainers(context.Background())
+		case <-wp.stopCh:
+			return
+		}
+	}
+}
+
+// beatContainers refreshes the liveness lease of every container currently tracked
+// by the pool. Containers dropped from the pool are intentionally not beaten, so
+// their leases go stale and reconciliation can reap them.
+func (wp *WarmPool) beatContainers(ctx context.Context) {
+	wp.mu.Lock()
+	snapshot := make([]*warmContainer, len(wp.containers))
+	copy(snapshot, wp.containers)
+	wp.mu.Unlock()
+
+	if wp.orchestrator == nil {
+		return
+	}
+
+	for _, wc := range snapshot {
+		provider, err := wp.orchestrator.GetProvider(wc.providerType)
+		if err != nil {
+			continue
+		}
+		beater, ok := provider.(ContainerHeartbeater)
+		if !ok {
+			continue
+		}
+		if err := beater.BeatContainerHeartbeat(ctx, wc.providerID); err != nil {
+			wp.log.Warn("failed to refresh warm container heartbeat",
+				"provider_id", wc.providerID,
+				"error", err,
+			)
+		}
+	}
 }
 
 // Stop shuts down the warm pool and destroys all pre-booted containers.
@@ -576,7 +640,7 @@ func (wp *WarmPool) createWarmContainer(ctx context.Context, image string) (*war
 		ContainerType: ContainerTypeAgentSandbox,
 		BaseImage:     image,
 		Labels: map[string]string{
-			"memory.warm-pool": "true",
+			warmPoolLabel: "true",
 		},
 	})
 	if err != nil {

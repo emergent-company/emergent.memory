@@ -37,17 +37,27 @@ Docker labels already exist (`memory.workspace=true`, `workspace.type`, `workspa
 
 ### D2: Ownership is an explicit process-identity label, plus a DB cross-check
 
-**Choice**: Every created container carries an ownership label identifying the creating process instance (host + PID + boot/instance token). A container is *owned* if that identity matches the current process, or a DB row references it as active.
+**Choice**: Every created container carries an ownership label identifying the creating process instance (host + PID + boot/instance token). The current process skips containers whose owner label matches its own identity; a DB row that is not stopped/errored protects the container it references.
 
-**Rationale**: Prevents self-destruction of the current pool (which is never in a DB row) and avoids reaping a concurrent process's containers. Unlabelled-with-ownership containers from older versions are treated as ownerless and reclaimed only after the grace period.
+**Rationale**: The owner label prevents self-destruction of the current pool (which is never in a DB row). It does **not** by itself distinguish a live peer from a dead predecessor — a second process always has a different identity. Peer safety therefore rests on the liveness lease in D7; the owner label is only the self-protection leg. Containers labelled by older versions (no owner) are treated as ownerless and reclaimed subject to the grace window.
 
 **Alternatives considered**: Reap everything except in-memory IDs — fails after restart, because the new process's own pool would be in memory only from `Start` onward and pre-`Start` timing could destroy a just-created pool. DB-only ownership — blind to warm containers by construction (the actual defect).
+
+### D2a: The container reference is persisted atomically with the workspace row
+
+**Choice**: `CreateWorkspaceRequest` carries `ProviderWorkspaceID`, and `Service.Create` includes it in the single INSERT. The auto-provisioner passes the acquired/created container ID into that call instead of writing it in a later UPDATE.
+
+**Rationale**: Between acquiring a warm container and writing its DB reference there is a window where a peer reconciler sees the container as ownerless-and-unreferenced; an hours-old warm container is already past grace and was previously destroyed. One atomic INSERT removes the window. (Defence in depth: the acquired container is also owned by the provisioning process's owner label, so that process's own reconciliation never touches it.)
+
+**Alternatives considered**: Keep the follow-up UPDATE and rely on grace — insufficient: the container is older than the grace window by construction.
 
 ### D3: Grace period before destruction, configurable
 
 **Choice**: Never destroy a container younger than a grace period (default 15 minutes, override `WORKSPACE_RECONCILE_GRACE_MIN`).
 
 **Rationale**: A container created moments ago by a *starting* process (or a peer instance mid-`Start`) is indistinguishable from an orphan by labels alone. The grace window makes reconciliation safe against startup races, at the cost of orphan lifetime ≈ grace period, which is irrelevant at a 60-minute interval.
+
+**Fail-safe direction**: The grace decision fails safe. A missing or unparseable creation timestamp is treated as *inside* the window (spare the resource), never as "old and eligible". Reaping only happens on a positively-parsed timestamp older than the grace window. The one exception is a warm-pool container whose liveness lease is positively stale/missing (D7).
 
 **Alternatives considered**: Reap immediately — risks destroying a live pool during overlapping restarts (rolling deploy: old process exiting, new process starting). Grace period is the cheap, standard fix.
 
@@ -59,23 +69,44 @@ Docker labels already exist (`memory.workspace=true`, `workspace.type`, `workspa
 
 **Alternatives considered**: Interval only — leaves orphans running for a full hour after every deploy, which is exactly the accumulation pattern observed. Separate ticker — duplicate lifecycle to maintain.
 
-### D5: The warm pool converges instead of leaking at the edges
+### D5: The warm pool converges its own view; Docker-level surplus belongs to reconciliation
 
-**Choice**: On `Start`, destroy surplus containers for managed images beyond the target and treat ownership labels as authoritative; in the `Acquire` staleness path, destroy the discarded container before creating its replacement.
+**Choice**: On `Start`, the pool converges the containers it already tracks in memory to the per-image target (destroying surplus it owns) and creates only the shortfall; the `Acquire` staleness path destroys the discarded container before creating its replacement.
 
-**Rationale**: Fixes the secondary growth paths inside a *single* process, not just cross-restart orphaning. Container creation stays bounded by the configured target.
+**Rationale**: `WarmPool` only knows the containers in its in-memory slice; it cannot enumerate Docker and therefore cannot reclaim containers it never tracked. Its job is to stop *creating* surplus and to destroy what it does track. Reclaiming Docker-level surplus (predecessors, previously-dropped containers) is the reconciler's job (D1/D4). Together they bound the host count. Making `Start` create only the shortfall also means a repeated `Start` no longer duplicates the pool.
 
-**Alternatives considered**: Only reconcile periodically — leaves transient surplus; harmless given D4 but trivially avoidable.
+**Alternatives considered**: Only reconcile periodically — leaves transient surplus; harmless given D4 but trivially avoidable. Have `Start` enumerate Docker and reconcile — duplicates D1's responsibility and couples the pool to the Docker client.
 
 ### D6: MCP persistent containers are excluded explicitly, not implicitly
 
-**Choice**: Reconciliation skips containers that a DB row marks `lifecycle = persistent` or whose `container_type = mcp_server`.
+**Choice**: Reconciliation skips a container when (a) a live DB row references it and that row is `lifecycle = persistent` or `container_type = mcp_server`, or (b) the container itself carries the `workspace.type = mcp_server` label (covers a persistent container even if its row is transiently absent).
 
 **Rationale**: They legitimately have `expires_at NULL` and are started on boot by `ListPersistentMCPServers`. Skipping them explicitly — and documenting why — prevents a future reader from "fixing" the exclusion, and prevents a reaper from deleting hosted MCP servers.
 
+**Note on a rejected label**: an earlier draft also checked a `workspace.lifecycle` label. That label is never written at create time (Docker labels are immutable and the provider is not given the lifecycle), so the check was dead code and has been removed rather than left as fake coverage. Persistent exclusion therefore rests on the DB row and the `workspace.type` label above.
+
+### D7: Peer liveness is a refreshed per-container heartbeat lease
+
+**Choice**: Each warm-pool process refreshes a liveness lease for every container it currently tracks, every `WORKSPACE_OWNER_HEARTBEAT_MIN` (default 2 minutes). Reconciliation spares a warm-pool container whose lease is fresher than `3 × WORKSPACE_OWNER_HEARTBEAT_MIN`; a missing or stale lease means the owner is presumed dead and the container is reapable. Non-warm containers keep the owner/DB/grace logic.
+
+Because Docker container/volume labels are immutable after creation, the lease cannot literally be a label mutated on the container. It is a dedicated Docker volume per tracked container, labelled `memory.owner.heartbeat = <container ID>`; its creation time is the heartbeat timestamp. Refresh creates a new lease volume and then removes older ones for the same container, so a lease is always present during refresh (no reader-visible gap).
+
+**Rationale**: Ownership alone cannot tell a live peer from a dead predecessor (D2). Warm-pool containers are idle for hours, so a fixed grace window cannot protect them. A heartbeat is the minimum mechanism that makes "owner is still alive" observable after process death: predecessors stop beating, so their leases go stale and their containers are reclaimed; a live peer keeps beating, so its pool is spared. Tying refresh to the pool's *tracked* set (not merely to the process) means a container the pool drops is no longer kept alive by the heartbeat.
+
+**Alternatives considered**: DB rows for warm containers (heavier, skews `CountActive`) — still needs liveness. A fixed long TTL — delays the leak fix instead of bounding it. Process-wide (not per-container) heartbeat — would keep a dropped container alive as long as any container is tracked.
+
+### D8: Container enumeration is mandatory; failure aborts the pass
+
+**Choice**: If `ListSandboxContainers` fails, reconciliation aborts before any destruction. If `ListContainerHeartbeats` fails, the pass still runs but every warm-pool container is spared (`heartbeat_unknown`).
+
+**Rationale**: The container list is what builds the protected-volume set. Continuing the volume sweep with an empty list would destroy the workspace volume of a live container — data loss. Volume enumeration failure, by contrast, is safe to skip (nothing is destroyed), and heartbeat-lookup failure fails safe for warm-pool containers only.
+
+**Alternatives considered**: Treat all enumeration as best-effort — the observed data-loss bug. Abort on any error — safe but needlessly skips the TTL reaper; not warranted.
+
 ## Risks / Trade-offs
 
-- **Destroying live work if ownership detection is wrong** → mitigated by D2 (current-process identity), D3 (grace period), DB active-row cross-check, and the "never reap workspaces with status active/running" guard. Unit tests must cover each skip path.
+- **Destroying live work if ownership detection is wrong** → mitigated by D2 (current-process identity + DB active-row cross-check), D7 (peer liveness lease), D3 (fail-safe grace period), D8 (abort if the container list is unavailable), and the persistent-MCP exclusion. Unit tests cover each skip path.
+- **Heartbeat lease churn** → one small volume per tracked warm container, refreshed at `WORKSPACE_OWNER_HEARTBEAT_MIN`; old leases are removed on refresh. Trivial volume count (pool target) at a 60-minute reconcile interval.
 - **Docker API surface growth** → enumeration reuses the existing Docker client and `Destroy` path; no new dependency.
 - **Cost of enumeration with many containers** (190 now) → single `ContainerList`/`VolumeList` by label per cycle; negligible against a 60-minute interval. Guard with a bounded context timeout.
 - **Existing 184 prod orphans predate the fix and carry no ownership label** → they are ownerless and will be reclaimed by the first post-deploy reconcile; until then they consume resources. A one-off operator cleanup (tasks §5) reclaims them immediately at deploy time.

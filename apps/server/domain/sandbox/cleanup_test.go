@@ -174,6 +174,19 @@ func TestCleanupJob_RunCycleInvokesReconcile(t *testing.T) {
 	assert.Equal(t, int64(1), spy.calls.Load(), "cycle should run reconciliation once")
 }
 
+func TestCleanupJob_RunInitialCycleDoesNotReconcile(t *testing.T) {
+	// Startup reconciliation is run exactly once by the module (after provider
+	// registration); the cleanup job's initial pass must not duplicate it.
+	spy := &spyReconciler{}
+
+	job := NewCleanupJob(nil, nil, testLogger(), DefaultCleanupConfig())
+	job.SetReconciler(spy, true)
+
+	job.runInitialCycle(context.Background())
+
+	assert.Equal(t, int64(0), spy.calls.Load(), "initial cycle must not reconcile")
+}
+
 func TestCleanupJob_RunCycleSkipsReconcileWhenDisabled(t *testing.T) {
 	spy := &spyReconciler{}
 

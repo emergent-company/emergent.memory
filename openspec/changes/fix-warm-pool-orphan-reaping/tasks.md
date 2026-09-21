@@ -43,3 +43,15 @@
 - [x] 6.2 Update `docs/agent-sandbox/DEPLOYMENT.md` with warm-pool lifecycle and reconciliation behaviour
 - [x] 6.3 Add/extend operator docs for inspecting and cleaning labelled sandbox containers and volumes
 - [x] 6.4 Run `openspec validate fix-warm-pool-orphan-reaping` and `go build ./...` + `go test ./domain/sandbox/...` from `apps/server`
+
+## 7. Review follow-ups (peer safety and fail-safe)
+
+- [x] 7.1 Abort reconciliation when container enumeration fails — never sweep volumes from an empty container list
+- [x] 7.2 Persist `provider_workspace_id` atomically with the workspace INSERT (close the acquire → DB-write window)
+- [x] 7.3 Per-container warm-pool liveness heartbeat lease; reconciler spares fresh leases, reaps stale/missing
+- [x] 7.4 Add `WORKSPACE_OWNER_HEARTBEAT_MIN` (default 2) and wire refresh interval + `3 ×` staleness threshold
+- [x] 7.5 Remove dead `workspace.lifecycle` label check (label never written at create time)
+- [x] 7.6 Fail-safe timestamps: unknown/zero creation time spares the resource
+- [x] 7.7 Startup reconciliation runs once (cleanup initial pass no longer reconciles)
+- [x] 7.8 Update `design.md`, `spec.md`, `OPERATIONS.md`/`DEPLOYMENT.md` to match implementation
+- [x] 7.9 Unit tests for all of the above

@@ -14,9 +14,22 @@ Every container and workspace volume created by the server carries:
 | `workspace.volume` | containers      | name of the container's workspace volume                  |
 | `memory.owner`     | containers, volumes | owning process identity (`host:pid:start-token`)      |
 | `memory.warm-pool` | containers      | `true` on warm-pool (pre-booted) containers               |
+| `memory.owner.heartbeat` | lease volumes | value is a container ID; volume creation time is the lease timestamp |
 
 `memory.owner` is written at create time and survives process death, so after a crash
-you can tell which resources the current process owns.
+you can tell which resources the current process owns. It only proves *who created* a
+container, not whether that process is alive — that is the job of the heartbeat lease.
+
+### Liveness lease
+
+Docker labels are immutable, so a warm-pool process cannot mutate a heartbeat label on
+its own containers. Instead, every `WORKSPACE_OWNER_HEARTBEAT_MIN` (default 2) each
+process creates a small lease volume per tracked container, labelled
+`memory.owner.heartbeat=<container ID>`. The volume's creation time is the heartbeat.
+Old leases for the same container are removed as newer ones are written. A predecessor
+that dies stops writing leases, so its leases age out and its containers become
+reapable; a live peer keeps writing, so its pool is spared. A container the pool drops
+is no longer beaten, so it cannot be kept alive by a running owner.
 
 ## Inspecting labelled resources
 
@@ -44,12 +57,21 @@ docker volume ls --filter label=memory.workspace=true -q | wc -l
 Reconciliation runs once at startup (gated on `ENABLE_AGENT_SANDBOXES`) and then on every
 `WORKSPACE_CLEANUP_INTERVAL_MIN` tick. It:
 
-1. Enumerates containers and volumes labelled `memory.workspace=true`.
-2. Skips resources owned by the current process (`memory.owner` matches).
-3. Skips containers referenced by a workspace record that is not `stopped`/`error`.
-4. Skips persistent MCP containers (`lifecycle=persistent` / `container_type=mcp_server`).
-5. Skips resources younger than `WORKSPACE_RECONCILE_GRACE_MIN` (default 15 minutes).
-6. Destroys the remainder, container and its `workspace.volume` together, and logs each
+1. Enumerates containers and volumes labelled `memory.workspace=true`. **If container
+   enumeration fails the pass aborts with nothing destroyed** (the container list is
+   what protects live volumes).
+2. Reads per-container liveness leases (`memory.owner.heartbeat`). If this fails, all
+   warm-pool containers are spared for the pass.
+3. Skips resources owned by the current process (`memory.owner` matches).
+4. Skips containers referenced by a workspace record that is not `stopped`/`error`.
+5. Skips persistent MCP containers (DB row `lifecycle=persistent` / `container_type=mcp_server`,
+   or the container's `workspace.type=mcp_server` label).
+6. Skips a warm-pool container whose liveness lease is fresher than
+   `3 × WORKSPACE_OWNER_HEARTBEAT_MIN`. A missing/stale lease means the owner is presumed
+   dead and the container is reapable.
+7. Skips resources whose creation time is unknown (unparseable), and resources younger
+   than `WORKSPACE_RECONCILE_GRACE_MIN` (default 15 minutes).
+8. Destroys the remainder, container and its `workspace.volume` together, and logs each
    destruction with identifier, labels, age and reason.
 
 ### Verifying after a deploy
@@ -63,7 +85,16 @@ docker volume ls --filter label=memory.workspace=true
 ```
 
 Server logs (component `sandbox-reconcile`) report a summary per pass:
-`reconciled=… skipped=… failed=… grace_period=…`.
+`reconciled=… skipped=… failed=… grace_period=…`. Skip reasons include `owned`, `active`,
+`persistent`, `peer_live`, `heartbeat_unknown`, `grace_period`, `in_use` and `not_primary`.
+
+### Knobs
+
+| Variable                        | Default | Effect                                                        |
+| ------------------------------- | ------- | ------------------------------------------------------------- |
+| `WORKSPACE_RECONCILE_ENABLED`   | `true`  | Disable the pass entirely (not recommended)                    |
+| `WORKSPACE_RECONCILE_GRACE_MIN` | `15`    | Minutes before an ownerless resource may be destroyed          |
+| `WORKSPACE_OWNER_HEARTBEAT_MIN` | `2`     | Lease refresh interval; staleness threshold is `3 ×` this value |
 
 ## One-off cleanup of pre-fix orphans
 

@@ -9,13 +9,17 @@ import (
 
 // CreateWorkspaceRequest is the request DTO for creating a workspace.
 type CreateWorkspaceRequest struct {
-	ContainerType  ContainerType   `json:"container_type" validate:"required"`
-	Provider       string          `json:"provider,omitempty"` // "firecracker", "e2b", "gvisor", or "auto"
-	RepositoryURL  string          `json:"repository_url,omitempty"`
-	Branch         string          `json:"branch,omitempty"`
-	DeploymentMode string          `json:"deployment_mode,omitempty"` // "managed" or "self-hosted"
-	ResourceLimits *ResourceLimits `json:"resource_limits,omitempty"`
-	WarmStart      bool            `json:"warm_start,omitempty"`
+	ContainerType ContainerType `json:"container_type" validate:"required"`
+	Provider      string        `json:"provider,omitempty"` // "firecracker", "e2b", "gvisor", or "auto"
+	RepositoryURL string        `json:"repository_url,omitempty"`
+	Branch        string        `json:"branch,omitempty"`
+	// ProviderWorkspaceID is the already-created container/VM ID. When set, it is
+	// persisted in the same INSERT as the row so a peer reconciler never observes
+	// the container as ownerless-and-unreferenced while it is being provisioned.
+	ProviderWorkspaceID string          `json:"provider_workspace_id,omitempty"`
+	DeploymentMode      string          `json:"deployment_mode,omitempty"` // "managed" or "self-hosted"
+	ResourceLimits      *ResourceLimits `json:"resource_limits,omitempty"`
+	WarmStart           bool            `json:"warm_start,omitempty"`
 	// MCP-specific fields
 	MCPConfig *MCPConfig `json:"mcp_config,omitempty"`
 }

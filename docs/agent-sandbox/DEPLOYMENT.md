@@ -82,6 +82,7 @@ E2B provides managed sandboxes via their cloud API. No local infrastructure requ
 | ------------------------------- | ------- | --------------------------------------------------------------- |
 | `WORKSPACE_RECONCILE_ENABLED`   | `true`  | Toggle label-driven orphan reconciliation                       |
 | `WORKSPACE_RECONCILE_GRACE_MIN` | `15`    | Minutes an ownerless resource must exist before it is destroyed |
+| `WORKSPACE_OWNER_HEARTBEAT_MIN` | `2`     | Warm-pool owner liveness heartbeat interval; leases older than `3 ×` this are treated as a dead owner |
 
 ### Network Isolation
 
@@ -165,10 +166,15 @@ labelled sandbox resources by label so orphans from a previous process are recla
 - Every sandbox container and workspace volume carries `memory.workspace=true`,
   `workspace.type`, `workspace.volume` (containers), and `memory.owner`
   (host + PID + per-process start token).
+- Each warm-pool process refreshes a per-container liveness lease
+  (`memory.owner.heartbeat`, interval `WORKSPACE_OWNER_HEARTBEAT_MIN`) for the containers
+  it tracks, so a peer can distinguish a live pool from a dead predecessor.
 - On startup, and then on every `WORKSPACE_CLEANUP_INTERVAL_MIN` tick, the server lists
   containers and volumes labelled `memory.workspace=true` and destroys those that are
-  neither owned by the current process nor referenced by a workspace record that is not
-  stopped/errored — after the grace period (`WORKSPACE_RECONCILE_GRACE_MIN`).
+  neither owned by the current process, nor backed by a fresh owner heartbeat, nor
+  referenced by a workspace record that is not stopped/errored — after the grace period
+  (`WORKSPACE_RECONCILE_GRACE_MIN`). If container enumeration fails, the pass aborts
+  without destroying anything.
 - Persistent MCP containers (`lifecycle=persistent` / `container_type=mcp_server`) are
   excluded explicitly and are never reconciled.
 - The warm pool converges to `WORKSPACE_WARM_POOL_SIZE` per managed image: on start it

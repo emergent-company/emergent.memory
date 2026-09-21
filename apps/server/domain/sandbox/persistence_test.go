@@ -2,10 +2,28 @@ package sandbox
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// BLOCKING 2a: the container reference must be part of the initial INSERT so a
+// peer reconciler never observes a live container as ownerless-and-unreferenced.
+func TestBuildWorkspaceEntity_PersistsProviderWorkspaceID(t *testing.T) {
+	req := &CreateWorkspaceRequest{
+		ContainerType:       ContainerTypeAgentSandbox,
+		Provider:            string(ProviderGVisor),
+		ProviderWorkspaceID: "memory-ws-1789981075911325025",
+	}
+
+	ws := buildWorkspaceEntity(req, ProviderGVisor, LifecycleEphemeral, DeploymentSelfHosted, nil, 24*time.Hour)
+
+	assert.Equal(t, "memory-ws-1789981075911325025", ws.ProviderWorkspaceID)
+	assert.Equal(t, StatusCreating, ws.Status)
+	assert.Equal(t, LifecycleEphemeral, ws.Lifecycle)
+	require.NotNil(t, ws.ExpiresAt, "ephemeral workspaces still get a TTL")
+}
 
 // --- DTO Tests ---
 

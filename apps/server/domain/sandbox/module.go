@@ -131,7 +131,11 @@ func newCleanupJob(store *Store, orchestrator *Orchestrator, log *slog.Logger, c
 // newReconciler creates the label-driven orphan reconciler from configuration.
 func newReconciler(store *Store, orchestrator *Orchestrator, log *slog.Logger, cfg *config.Config) *Reconciler {
 	grace := time.Duration(cfg.Sandbox.ReconcileGraceMin) * time.Minute
-	return NewReconciler(orchestrator, store, grace, log)
+	rec := NewReconciler(orchestrator, store, grace, log)
+	if cfg.Sandbox.OwnerHeartbeatMin > 0 {
+		rec.heartbeatTTL = ownerHeartbeatTTLMultiplier * time.Duration(cfg.Sandbox.OwnerHeartbeatMin) * time.Minute
+	}
+	return rec
 }
 
 // registerProviders registers all available workspace providers with the orchestrator.
@@ -239,7 +243,11 @@ func newWarmPool(orchestrator *Orchestrator, log *slog.Logger, cfg *config.Confi
 			}
 		}
 	}
-	return NewWarmPool(orchestrator, log, poolCfg)
+	pool := NewWarmPool(orchestrator, log, poolCfg)
+	if cfg.Sandbox.OwnerHeartbeatMin > 0 {
+		pool.heartbeatInterval = time.Duration(cfg.Sandbox.OwnerHeartbeatMin) * time.Minute
+	}
+	return pool
 }
 
 // startWarmPool initializes the warm pool on server start if enabled.

@@ -22,7 +22,7 @@ The server SHALL apply a stable owning-process identity label to every sandbox c
 
 ### Requirement: Ownerless sandbox containers and volumes SHALL be reconciled
 
-The server SHALL run a reconciliation pass that destroys sandbox containers which are neither owned by the current process nor referenced by a live workspace record, together with the volume named by their `workspace.volume` label. Containers that are still owned by the current process, referenced by a workspace record that is not stopped or errored, or marked persistent SHALL NOT be destroyed. A container created more recently than the configured grace period SHALL NOT be destroyed.
+The server SHALL run a reconciliation pass that destroys sandbox containers which are neither owned by the current process, nor protected by a fresh owner liveness lease (see the peer-liveness requirement), nor referenced by a live workspace record, together with the volume named by their `workspace.volume` label. Containers that are still owned by the current process, referenced by a workspace record that is not stopped or errored, or marked persistent SHALL NOT be destroyed. A container created more recently than the configured grace period SHALL NOT be destroyed. If enumeration of sandbox containers fails, reconciliation SHALL abort before destroying any container or volume.
 
 #### Scenario: Orphans left by an ungraceful restart are reclaimed automatically
 - **GIVEN** a previous server process created warm-pool containers and exited without running its shutdown hook
@@ -66,6 +66,40 @@ The server SHALL run a reconciliation pass that destroys sandbox containers whic
 - **WHEN** another reconciliation pass is triggered
 - **THEN** the second pass SHALL be a no-op
 
+#### Scenario: Container enumeration failure aborts before destruction
+- **GIVEN** the Docker daemon cannot enumerate sandbox containers
+- **AND** labelled workspace volumes exist, some belonging to live containers
+- **WHEN** reconciliation runs
+- **THEN** no container or volume SHALL be destroyed
+- **AND** the failure SHALL be logged
+
+### Requirement: A warm-pool container whose owner is still alive SHALL be spared
+
+The server SHALL refresh a per-container liveness lease for every warm-pool container it tracks, at an interval of `WORKSPACE_OWNER_HEARTBEAT_MIN`. Reconciliation SHALL NOT destroy a warm-pool container whose lease is fresher than `3 × WORKSPACE_OWNER_HEARTBEAT_MIN`. A missing or stale lease SHALL mean the owner is presumed dead and the container SHALL be eligible for destruction subject to the grace period. A container the warm pool no longer tracks SHALL NOT be kept alive by the owner's lease. The lease representation SHALL be durable and readable after the owning process exits.
+
+#### Scenario: A live peer's warm-pool container is spared
+- **GIVEN** a peer process owns a warm-pool container older than the grace period
+- **AND** its liveness lease is fresher than `3 × WORKSPACE_OWNER_HEARTBEAT_MIN`
+- **WHEN** reconciliation runs
+- **THEN** the container SHALL NOT be destroyed
+
+#### Scenario: A stale heartbeat is reapable
+- **GIVEN** a warm-pool container whose owner has stopped refreshing its lease
+- **AND** its newest lease is older than `3 × WORKSPACE_OWNER_HEARTBEAT_MIN`
+- **WHEN** reconciliation runs
+- **THEN** the container SHALL be destroyed once past the grace period
+
+#### Scenario: A missing heartbeat is treated as stale
+- **GIVEN** a warm-pool container with no liveness lease
+- **WHEN** reconciliation runs
+- **THEN** the container SHALL be treated as ownerless and be eligible for destruction once past the grace period
+
+#### Scenario: Dropped containers are not resurrected by a live owner
+- **GIVEN** the warm pool no longer tracks a container it previously created
+- **AND** the owning process is still running
+- **WHEN** the dropped container's lease is no longer refreshed
+- **THEN** reconciliation SHALL treat it as ownerless and destroy it once past the grace period
+
 ### Requirement: Reconciliation SHALL run at startup and on the cleanup interval
 
 The server SHALL run reconciliation once after providers are registered at startup and thereafter on the existing cleanup interval. Both SHALL be gated on agent sandboxes being enabled.
@@ -89,12 +123,17 @@ The server SHALL run reconciliation once after providers are registered at start
 
 ### Requirement: Reconciliation behaviour SHALL be configurable
 
-The grace period before an ownerless sandbox resource may be destroyed SHALL be configurable, and reconciliation SHALL be independently disableable, without requiring a schema change.
+The grace period before an ownerless sandbox resource may be destroyed, and the owner heartbeat refresh interval, SHALL be configurable, and reconciliation SHALL be independently disableable, without requiring a schema change.
 
 #### Scenario: Configured grace period is honoured
 - **GIVEN** the grace period is configured to a non-default value
 - **WHEN** reconciliation evaluates an ownerless container
 - **THEN** the configured grace period SHALL be applied to the destruction decision
+
+#### Scenario: Configured heartbeat interval sets the staleness threshold
+- **GIVEN** `WORKSPACE_OWNER_HEARTBEAT_MIN` is configured to a non-default value
+- **WHEN** reconciliation evaluates a warm-pool container's liveness lease
+- **THEN** the staleness threshold SHALL be `3 × WORKSPACE_OWNER_HEARTBEAT_MIN`
 
 ### Requirement: Warm pool SHALL converge to its configured target
 

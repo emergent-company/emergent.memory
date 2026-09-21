@@ -20,6 +20,11 @@ type fakeResourceManager struct {
 	containers []SandboxContainerInfo
 	volumes    []SandboxVolumeInfo
 
+	heartbeats        map[string]time.Time
+	listContainersErr error
+	listVolumesErr    error
+	listHeartbeatsErr error
+
 	destroyErr map[string]error // keyed by container ID or volume name
 
 	listCalls atomic.Int64
@@ -42,11 +47,15 @@ func (f *fakeResourceManager) ListSandboxContainers(_ context.Context) ([]Sandbo
 		<-f.release
 	}
 	f.listCalls.Add(1)
-	return f.containers, nil
+	return f.containers, f.listContainersErr
 }
 
 func (f *fakeResourceManager) ListSandboxVolumes(_ context.Context) ([]SandboxVolumeInfo, error) {
-	return f.volumes, nil
+	return f.volumes, f.listVolumesErr
+}
+
+func (f *fakeResourceManager) ListContainerHeartbeats(_ context.Context) (map[string]time.Time, error) {
+	return f.heartbeats, f.listHeartbeatsErr
 }
 
 func (f *fakeResourceManager) DestroySandboxContainer(_ context.Context, id, volumeName string) error {
@@ -105,6 +114,12 @@ func primaryLabels(volume string) map[string]string {
 		workspaceTypeLabel:   string(ContainerTypeAgentSandbox),
 		workspaceVolumeLabel: volume,
 	}
+}
+
+func warmLabels(volume string) map[string]string {
+	labels := primaryLabels(volume)
+	labels[warmPoolLabel] = "true"
+	return labels
 }
 
 // --- R2: ownerless orphans are reconciled ---
@@ -186,18 +201,6 @@ func TestReconciler_PersistentMCP_Kept(t *testing.T) {
 		assert.Equal(t, 1, result.Skipped)
 	})
 
-	t.Run("lifecycle label marks persistent", func(t *testing.T) {
-		labels := primaryLabels("vol-p")
-		labels[workspaceLifecycleLabel] = string(LifecyclePersistent)
-		mgr := &fakeResourceManager{
-			containers: []SandboxContainerInfo{sandboxContainer("c-p", labels, time.Hour)},
-		}
-		r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
-
-		r.Reconcile(context.Background())
-
-		assert.Empty(t, mgr.destroyedContainers)
-	})
 }
 
 func TestReconciler_ContainerWithinGrace_Kept(t *testing.T) {
@@ -299,6 +302,150 @@ func TestReconciler_NonPrimaryAndOwnedVolumes_Protected(t *testing.T) {
 	assert.Empty(t, mgr.destroyedVolumes)
 }
 
+// --- BLOCKING 1: container-enumeration failure must abort the pass ---
+
+func TestReconciler_ContainerListFailure_NoVolumeDestruction(t *testing.T) {
+	mgr := &fakeResourceManager{
+		listContainersErr: errors.New("docker daemon unavailable"),
+		// A live container's volume exists, but the container itself is invisible
+		// because enumeration failed. It must not be reaped as an orphan volume.
+		volumes: []SandboxVolumeInfo{
+			{
+				Name:      "vol-live",
+				Labels:    map[string]string{defaultRuntimeLabel: "true", workspaceTypeLabel: "agent_sandbox"},
+				CreatedAt: testNow.Add(-time.Hour),
+			},
+		},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	result := r.Reconcile(context.Background())
+
+	assert.Empty(t, mgr.destroyedContainers)
+	assert.Empty(t, mgr.destroyedVolumes, "container-list failure must abort before the volume sweep")
+	assert.Equal(t, ReconcileResult{}, result)
+}
+
+// --- R2/peer liveness: heartbeat lease ---
+
+func TestReconciler_WarmPoolFreshHeartbeat_LivePeerSpared(t *testing.T) {
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{sandboxContainer("warm-peer", warmLabels("vol-peer"), 5*time.Hour)},
+		heartbeats: map[string]time.Time{"warm-peer": testNow.Add(-1 * time.Minute)},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	result := r.Reconcile(context.Background())
+
+	assert.Empty(t, mgr.destroyedContainers, "a live peer's warm container must be spared by its fresh heartbeat")
+	assert.Empty(t, mgr.destroyedVolumes)
+	assert.Equal(t, 1, result.Skipped)
+}
+
+func TestReconciler_WarmPoolStaleHeartbeat_Reaped(t *testing.T) {
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{sandboxContainer("warm-dead", warmLabels("vol-dead"), 5*time.Hour)},
+		// Older than 3 × heartbeat interval (default TTL 6m).
+		heartbeats: map[string]time.Time{"warm-dead": testNow.Add(-30 * time.Minute)},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	result := r.Reconcile(context.Background())
+
+	assert.Equal(t, []string{"warm-dead"}, mgr.destroyedContainers, "a stale heartbeat means the owner is dead")
+	assert.Equal(t, []string{"vol-dead"}, mgr.destroyedVolumes)
+	assert.Equal(t, 1, result.Reconciled)
+}
+
+func TestReconciler_WarmPoolMissingHeartbeat_Reaped(t *testing.T) {
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{sandboxContainer("warm-hb-less", warmLabels("vol-hb-less"), 5*time.Hour)},
+		heartbeats: map[string]time.Time{},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	result := r.Reconcile(context.Background())
+
+	assert.Equal(t, []string{"warm-hb-less"}, mgr.destroyedContainers, "a missing heartbeat is treated as stale")
+	assert.Equal(t, 1, result.Reconciled)
+}
+
+func TestReconciler_WarmPoolHeartbeatRefreshDoesNotResurrectDroppedContainer(t *testing.T) {
+	// One tracked container (fresh heartbeat) and one the pool no longer tracks
+	// (no heartbeat) despite the owner still being alive.
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{
+			sandboxContainer("warm-tracked", warmLabels("vol-tracked"), 5*time.Hour),
+			sandboxContainer("warm-dropped", warmLabels("vol-dropped"), 5*time.Hour),
+		},
+		heartbeats: map[string]time.Time{"warm-tracked": testNow.Add(-1 * time.Minute)},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	r.Reconcile(context.Background())
+
+	assert.NotContains(t, mgr.destroyedContainers, "warm-tracked", "tracked container is spared")
+	assert.Contains(t, mgr.destroyedContainers, "warm-dropped", "a dropped container must not be kept alive by the owner's heartbeat")
+}
+
+func TestReconciler_WarmPoolHeartbeatLookupFailure_FailsSafe(t *testing.T) {
+	mgr := &fakeResourceManager{
+		containers:        []SandboxContainerInfo{sandboxContainer("warm-peer", warmLabels("vol-peer"), 5*time.Hour)},
+		listHeartbeatsErr: errors.New("daemon error"),
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	result := r.Reconcile(context.Background())
+
+	assert.Empty(t, mgr.destroyedContainers, "when liveness cannot be read, warm-pool containers must be spared")
+	assert.Equal(t, 1, result.Skipped)
+}
+
+func TestReconciler_NonWarmContainerIgnoresHeartbeat(t *testing.T) {
+	// A non-warm ownerless container is not protected by any heartbeat.
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{sandboxContainer("plain", primaryLabels("vol-plain"), 5*time.Hour)},
+		heartbeats: map[string]time.Time{"plain": testNow.Add(-1 * time.Minute)},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	r.Reconcile(context.Background())
+
+	assert.Equal(t, []string{"plain"}, mgr.destroyedContainers)
+}
+
+// --- R2: fail-safe timestamps ---
+
+func TestReconciler_VolumeWithZeroCreatedAt_Spared(t *testing.T) {
+	mgr := &fakeResourceManager{
+		volumes: []SandboxVolumeInfo{
+			{
+				Name:   "vol-unknown-age",
+				Labels: map[string]string{defaultRuntimeLabel: "true", workspaceTypeLabel: "agent_sandbox"},
+				// CreatedAt is the zero time (unparseable) → fail safe.
+			},
+		},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	result := r.Reconcile(context.Background())
+
+	assert.Empty(t, mgr.destroyedVolumes, "unknown creation time must spare the volume")
+	assert.Equal(t, 1, result.Skipped)
+}
+
+func TestReconciler_ContainerWithZeroCreatedAt_Spared(t *testing.T) {
+	c := sandboxContainer("c-unknown", primaryLabels("vol-unknown"), 0)
+	c.CreatedAt = time.Time{}
+
+	mgr := &fakeResourceManager{containers: []SandboxContainerInfo{c}}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	r.Reconcile(context.Background())
+
+	assert.Empty(t, mgr.destroyedContainers)
+}
+
 // --- R2: concurrency guard ---
 
 func TestReconciler_ConcurrentPassesDoNotOverlap(t *testing.T) {
@@ -376,6 +523,17 @@ func TestNewReconciler_GracePeriodFromConfig(t *testing.T) {
 	cfg := &config.Config{Sandbox: config.SandboxConfig{ReconcileGraceMin: 42}}
 	r := newReconciler(nil, nil, testLogger(), cfg)
 	assert.Equal(t, 42*time.Minute, r.grace, "grace period must come from WORKSPACE_RECONCILE_GRACE_MIN")
+}
+
+func TestNewReconciler_HeartbeatTTLFromConfig(t *testing.T) {
+	cfg := &config.Config{Sandbox: config.SandboxConfig{OwnerHeartbeatMin: 4}}
+	r := newReconciler(nil, nil, testLogger(), cfg)
+	assert.Equal(t, 12*time.Minute, r.heartbeatTTL, "heartbeat TTL must be 3 × WORKSPACE_OWNER_HEARTBEAT_MIN")
+}
+
+func TestNewReconciler_DefaultHeartbeatTTL(t *testing.T) {
+	r := NewReconciler(nil, nil, time.Minute, testLogger())
+	assert.Equal(t, 6*time.Minute, r.heartbeatTTL)
 }
 
 func TestReconciler_NoResourcesAvailable(t *testing.T) {

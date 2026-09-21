@@ -3,10 +3,12 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -616,6 +618,63 @@ func TestWarmPool_SteadyState_RemainsBounded(t *testing.T) {
 	assert.Equal(t, 2, poolSize, "steady-state pool size must equal the configured target")
 
 	_ = wp.Stop(t.Context())
+}
+
+// --- Heartbeat leases (peer liveness) ---
+
+// heartbeatProvider records heartbeat calls per container.
+type heartbeatProvider struct {
+	mockProvider
+	mu         sync.Mutex
+	beatCounts map[string]int
+}
+
+func (h *heartbeatProvider) BeatContainerHeartbeat(_ context.Context, containerID string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.beatCounts == nil {
+		h.beatCounts = map[string]int{}
+	}
+	h.beatCounts[containerID]++
+	return nil
+}
+
+func (h *heartbeatProvider) beats(containerID string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.beatCounts[containerID]
+}
+
+func TestWarmPool_BeatContainers_OnlyBeatsTrackedContainers(t *testing.T) {
+	orch := NewOrchestrator(testLogger())
+	hp := &heartbeatProvider{mockProvider: mockProvider{name: "hb", providerType: ProviderGVisor, healthy: true}}
+	orch.RegisterProvider(ProviderGVisor, hp)
+
+	wp := NewWarmPool(orch, testLogger(), WarmPoolConfig{Size: 2})
+	wp.containers = append(wp.containers,
+		&warmContainer{providerID: "tracked-1", providerType: ProviderGVisor, createdAt: time.Now()},
+		&warmContainer{providerID: "tracked-2", providerType: ProviderGVisor, createdAt: time.Now()},
+	)
+
+	wp.beatContainers(t.Context())
+	assert.Equal(t, 1, hp.beats("tracked-1"))
+	assert.Equal(t, 1, hp.beats("tracked-2"))
+
+	// Simulate Acquire dropping a container from the pool: its heartbeat must stop
+	// so reconciliation can eventually reap it.
+	wp.mu.Lock()
+	wp.containers = wp.containers[1:]
+	wp.mu.Unlock()
+
+	wp.beatContainers(t.Context())
+	assert.Equal(t, 1, hp.beats("tracked-1"), "a container the pool no longer tracks must not be beaten again")
+	assert.Equal(t, 2, hp.beats("tracked-2"))
+}
+
+func TestNewWarmPool_HeartbeatIntervalFromConfig(t *testing.T) {
+	cfg := &config.Config{Sandbox: config.SandboxConfig{WarmPoolSize: 2, OwnerHeartbeatMin: 5}}
+	pool := newWarmPool(NewOrchestrator(testLogger()), testLogger(), cfg)
+	assert.Equal(t, 5*time.Minute, pool.heartbeatInterval)
 }
 
 // --- Constants ---

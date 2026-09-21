@@ -57,7 +57,28 @@ func (f *fakeDockerClient) VolumeList(_ context.Context, opts volume.ListOptions
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastVolumeFilters = opts.Filters
-	return volume.ListResponse{Volumes: f.volumes}, nil
+	var out []*volume.Volume
+	for _, v := range f.volumes {
+		if volumeMatchesLabelFilters(v, opts.Filters) {
+			out = append(out, v)
+		}
+	}
+	return volume.ListResponse{Volumes: out}, nil
+}
+
+// volumeMatchesLabelFilters applies Docker "label" filters (key or key=value).
+func volumeMatchesLabelFilters(v *volume.Volume, args filters.Args) bool {
+	for _, expr := range args.Get("label") {
+		key, val, hasVal := strings.Cut(expr, "=")
+		got, ok := v.Labels[key]
+		if !ok {
+			return false
+		}
+		if hasVal && got != val {
+			return false
+		}
+	}
+	return true
 }
 
 func (f *fakeDockerClient) ContainerRemove(_ context.Context, id string, _ container.RemoveOptions) error {
@@ -71,18 +92,30 @@ func (f *fakeDockerClient) VolumeRemove(_ context.Context, name string, _ bool) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removedVolumes = append(f.removedVolumes, name)
-	return f.volumeRemoveErr
+	if f.volumeRemoveErr != nil {
+		return f.volumeRemoveErr
+	}
+	kept := f.volumes[:0]
+	for _, v := range f.volumes {
+		if v.Name != name {
+			kept = append(kept, v)
+		}
+	}
+	f.volumes = kept
+	return nil
 }
 
 func (f *fakeDockerClient) VolumeCreate(_ context.Context, opts volume.CreateOptions) (volume.Volume, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createdVolumeLabels = cloneLabels(opts.Labels)
-	return volume.Volume{
+	v := volume.Volume{
 		Name:      opts.Name,
 		Labels:    opts.Labels,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}, nil
+		CreatedAt: time.Now().Format(time.RFC3339Nano),
+	}
+	f.volumes = append(f.volumes, &v)
+	return v, nil
 }
 
 func (f *fakeDockerClient) VolumeInspect(_ context.Context, name string) (volume.Volume, error) {
@@ -291,5 +324,60 @@ func TestIsPrimaryWorkspaceVolume(t *testing.T) {
 	}
 }
 
-// Compile-time assertions that the provider satisfies the manager interface.
-var _ SandboxResourceManager = (*GVisorProvider)(nil)
+// --- Heartbeat leases ---
+
+func TestGVisorProvider_BeatContainerHeartbeat_CreatesLease(t *testing.T) {
+	fake := &fakeDockerClient{}
+	p := newTestProvider(fake)
+
+	require.NoError(t, p.BeatContainerHeartbeat(context.Background(), "container-abc"))
+
+	hb, err := p.ListContainerHeartbeats(context.Background())
+	require.NoError(t, err)
+	require.Contains(t, hb, "container-abc")
+	assert.WithinDuration(t, time.Now(), hb["container-abc"], 5*time.Second)
+}
+
+func TestGVisorProvider_ListContainerHeartbeats_NewestWinsAndIgnoresWorkspaceVolumes(t *testing.T) {
+	fake := &fakeDockerClient{
+		volumes: []*volume.Volume{
+			{Name: "hb-old", Labels: map[string]string{heartbeatLabel: "c1"}, CreatedAt: time.Now().Add(-time.Hour).Format(time.RFC3339)},
+			{Name: "hb-new", Labels: map[string]string{heartbeatLabel: "c1"}, CreatedAt: time.Now().Format(time.RFC3339Nano)},
+			{Name: "ws-vol", Labels: map[string]string{defaultRuntimeLabel: "true"}, CreatedAt: time.Now().Format(time.RFC3339Nano)},
+		},
+	}
+	p := newTestProvider(fake)
+
+	hb, err := p.ListContainerHeartbeats(context.Background())
+	require.NoError(t, err)
+	require.Len(t, hb, 1, "workspace volumes must not be treated as heartbeats")
+	assert.WithinDuration(t, time.Now(), hb["c1"], 5*time.Second, "newest lease must win")
+}
+
+func TestGVisorProvider_BeatContainerHeartbeat_RemovesOlderLeases(t *testing.T) {
+	fake := &fakeDockerClient{}
+	p := newTestProvider(fake)
+
+	require.NoError(t, p.BeatContainerHeartbeat(context.Background(), "c1"))
+	require.NoError(t, p.BeatContainerHeartbeat(context.Background(), "c1"))
+
+	fake.mu.Lock()
+	var leaseCount int
+	for _, v := range fake.volumes {
+		if v.Labels[heartbeatLabel] == "c1" {
+			leaseCount++
+		}
+	}
+	fake.mu.Unlock()
+
+	assert.Equal(t, 1, leaseCount, "only the newest lease for a container should remain")
+	hb, err := p.ListContainerHeartbeats(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, hb, "c1")
+}
+
+// Compile-time assertions that the provider satisfies the manager interfaces.
+var (
+	_ SandboxResourceManager = (*GVisorProvider)(nil)
+	_ ContainerHeartbeater   = (*GVisorProvider)(nil)
+)

@@ -77,8 +77,10 @@ func (j *CleanupJob) Start(ctx context.Context) {
 		ticker := time.NewTicker(j.config.Interval)
 		defer ticker.Stop()
 
-		// Run an initial cleanup cycle on startup
-		j.runCycle(ctx)
+		// Initial pass on startup: TTL expiry + resource check. Reconciliation is
+		// run exactly once at startup by the module (after providers register), so
+		// it is deliberately NOT repeated here.
+		j.runInitialCycle(ctx)
 
 		for {
 			select {
@@ -120,6 +122,14 @@ func (j *CleanupJob) Stop() {
 func (j *CleanupJob) runCycle(ctx context.Context) {
 	j.cleanupExpired(ctx)
 	j.reconcileOrphans(ctx)
+	j.checkResourceUsage(ctx)
+}
+
+// runInitialCycle is the startup pass. It intentionally omits reconciliation, which
+// is run once at startup (after provider registration) by reconcileAtStartup. This
+// keeps the startup reconciliation single-shot per the spec.
+func (j *CleanupJob) runInitialCycle(ctx context.Context) {
+	j.cleanupExpired(ctx)
 	j.checkResourceUsage(ctx)
 }
 

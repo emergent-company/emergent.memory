@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -19,15 +21,27 @@ import (
 const (
 	// sandboxOwnerLabel identifies the process instance that created a container
 	// or volume. It survives process death (it lives in Docker, not memory), so a
-	// later process can tell which resources it owns versus which are ownerless.
+	// later process can tell which resources it created.
 	sandboxOwnerLabel = "memory.owner"
 	// workspaceVolumeLabel names the workspace volume attached to a container.
 	workspaceVolumeLabel = "workspace.volume"
 	// workspaceTypeLabel records the container type (agent_sandbox / mcp_server).
 	workspaceTypeLabel = "workspace.type"
-	// workspaceLifecycleLabel optionally records ephemeral/persistent.
-	workspaceLifecycleLabel = "workspace.lifecycle"
+	// warmPoolLabel marks pre-booted warm-pool containers.
+	warmPoolLabel = "memory.warm-pool"
+	// heartbeatLabel records a per-container liveness lease. Its value is the
+	// provider container ID; the lease is a dedicated volume whose creation time
+	// is the heartbeat timestamp. Docker labels are immutable, so the lease is
+	// refreshed by creating a new volume rather than mutating the container.
+	heartbeatLabel = "memory.owner.heartbeat"
 )
+
+// hashContainerID returns a short, filesystem-safe token for a container ID,
+// used to name heartbeat lease volumes.
+func hashContainerID(containerID string) string {
+	sum := sha256.Sum256([]byte(containerID))
+	return hex.EncodeToString(sum[:8])
+}
 
 // sandboxOwnerIdentity returns a stable identity for the current process instance.
 // It is derived from host, PID and a per-process start token so that two different
@@ -79,12 +93,100 @@ type SandboxResourceManager interface {
 	ListSandboxContainers(ctx context.Context) ([]SandboxContainerInfo, error)
 	// ListSandboxVolumes returns all volumes labelled memory.workspace=true.
 	ListSandboxVolumes(ctx context.Context) ([]SandboxVolumeInfo, error)
+	// ListContainerHeartbeats returns the newest liveness-lease timestamp per
+	// container ID, from memory.owner.heartbeat leases.
+	ListContainerHeartbeats(ctx context.Context) (map[string]time.Time, error)
 	// DestroySandboxContainer removes a container and (when non-empty) the volume
 	// named by its workspace.volume label. Missing resources are tolerated.
 	DestroySandboxContainer(ctx context.Context, containerID, volumeName string) error
 	// DestroySandboxVolume removes a labelled workspace volume. Missing volumes
 	// are tolerated.
 	DestroySandboxVolume(ctx context.Context, volumeName string) error
+}
+
+// ContainerHeartbeater refreshes the liveness lease for warm-pool containers it
+// owns. Implemented by GVisorProvider; providers that do not implement it are
+// simply not heartbeated (their containers fall back to owner/DB/grace logic).
+type ContainerHeartbeater interface {
+	// BeatContainerHeartbeat records a liveness beat for a container.
+	BeatContainerHeartbeat(ctx context.Context, containerID string) error
+}
+
+// ListContainerHeartbeats returns the newest heartbeat time per container ID by
+// enumerating memory.owner.heartbeat lease volumes. Volumes without the label are
+// ignored defensively (the Docker filter is the primary selector).
+func (p *GVisorProvider) ListContainerHeartbeats(ctx context.Context) (map[string]time.Time, error) {
+	resp, err := p.client.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("label", heartbeatLabel),
+		),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list owner heartbeats: %w", err)
+	}
+
+	out := make(map[string]time.Time)
+	for _, v := range resp.Volumes {
+		if v == nil {
+			continue
+		}
+		containerID := v.Labels[heartbeatLabel]
+		if containerID == "" {
+			continue
+		}
+		ts := parseVolumeCreatedAt(v.CreatedAt)
+		if existing, ok := out[containerID]; !ok || ts.After(existing) {
+			out[containerID] = ts
+		}
+	}
+	return out, nil
+}
+
+// BeatContainerHeartbeat refreshes the liveness lease for a container by creating
+// a fresh heartbeat volume, then removing older leases for the same container.
+// Creation-before-removal means a lease for the container is always present, so a
+// concurrent reconciler never observes a live owner as missing.
+func (p *GVisorProvider) BeatContainerHeartbeat(ctx context.Context, containerID string) error {
+	if containerID == "" {
+		return nil
+	}
+
+	name := fmt.Sprintf("memory-hb-%s-%d", hashContainerID(containerID), time.Now().UnixNano())
+	_, err := p.client.VolumeCreate(ctx, volume.CreateOptions{
+		Name: name,
+		Labels: map[string]string{
+			heartbeatLabel:    containerID,
+			sandboxOwnerLabel: sandboxOwnerIdentity(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to record heartbeat for container %s: %w", containerID, err)
+	}
+
+	p.removeOlderHeartbeats(ctx, containerID, name)
+	return nil
+}
+
+// removeOlderHeartbeats best-effort removes heartbeat leases for containerID other
+// than keep. Failures are non-fatal: the reconciler always uses the newest lease,
+// so a stale lease left behind cannot make a dead owner look alive.
+func (p *GVisorProvider) removeOlderHeartbeats(ctx context.Context, containerID, keep string) {
+	resp, err := p.client.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("label", heartbeatLabel+"="+containerID),
+		),
+	})
+	if err != nil {
+		return
+	}
+	for _, v := range resp.Volumes {
+		if v == nil || v.Name == keep {
+			continue
+		}
+		if err := p.client.VolumeRemove(ctx, v.Name, true); err != nil && !client.IsErrNotFound(err) {
+			p.log.Warn("failed to remove stale heartbeat lease", "volume", v.Name, "error", err)
+		}
+	}
 }
 
 // ListSandboxContainers enumerates containers carrying the sandbox label
@@ -191,8 +293,10 @@ func (p *GVisorProvider) removeWorkspaceVolume(ctx context.Context, volumeName s
 	return nil
 }
 
-// parseVolumeCreatedAt parses the Docker volume CreatedAt string, returning the
-// zero time when it cannot be parsed.
+// parseVolumeCreatedAt parses the Docker volume CreatedAt string. It returns the
+// zero time.Time when the string is empty or unparseable; callers must treat a
+// zero time as "unknown" and fail safe (spare the resource). Note this is distinct
+// from time.Unix(0, 0), which is the 1970 epoch, not the zero time.
 func parseVolumeCreatedAt(s string) time.Time {
 	if s == "" {
 		return time.Time{}

@@ -19,6 +19,14 @@ const (
 	// reconcileTimeout bounds a single reconciliation pass so a slow Docker daemon
 	// cannot wedge the cleanup cycle.
 	reconcileTimeout = 2 * time.Minute
+
+	// defaultOwnerHeartbeatInterval is the default warm-pool heartbeat refresh
+	// interval (WORKSPACE_OWNER_HEARTBEAT_MIN, default 2m).
+	defaultOwnerHeartbeatInterval = 2 * time.Minute
+
+	// ownerHeartbeatTTLMultiplier is how many missed intervals before an owner is
+	// considered dead (3 × WORKSPACE_OWNER_HEARTBEAT_MIN).
+	ownerHeartbeatTTLMultiplier = 3
 )
 
 // ReconcileResult reports the outcome of a reconciliation pass.
@@ -50,6 +58,10 @@ type Reconciler struct {
 	grace        time.Duration
 	owner        string
 
+	// heartbeatTTL is how long a warm-pool container's liveness lease is trusted.
+	// A lease older than this (or missing) means the owner is presumed dead.
+	heartbeatTTL time.Duration
+
 	// resources overrides provider resolution. When nil, the gVisor provider is
 	// resolved from the orchestrator. Tests set it directly.
 	resources SandboxResourceManager
@@ -76,6 +88,7 @@ func NewReconciler(orchestrator *Orchestrator, store WorkspaceRefStore, grace ti
 		log:          log.With("component", "sandbox-reconcile"),
 		grace:        grace,
 		owner:        sandboxOwnerIdentity(),
+		heartbeatTTL: ownerHeartbeatTTLMultiplier * defaultOwnerHeartbeatInterval,
 		now:          time.Now,
 	}
 }
@@ -118,9 +131,22 @@ func (r *Reconciler) Reconcile(ctx context.Context) ReconcileResult {
 
 	now := r.now()
 
+	// The container list is mandatory: it is what builds the protected-volume set
+	// below. If enumeration fails we must abort before the volume sweep, otherwise
+	// we could destroy the workspace volume of a live container.
 	containers, err := mgr.ListSandboxContainers(ctx)
 	if err != nil {
-		r.log.Error("reconciliation: failed to enumerate sandbox containers", "error", err)
+		r.log.Error("reconciliation aborted: failed to enumerate sandbox containers", "error", err)
+		return result
+	}
+
+	// Warm-pool owner liveness leases. A missing/stale lease means the owner is
+	// presumed dead; if the lookup itself fails we fail safe and spare warm-pool
+	// containers rather than risk reaping a live peer's pool.
+	heartbeats, hbErr := mgr.ListContainerHeartbeats(ctx)
+	heartbeatsOK := hbErr == nil
+	if hbErr != nil {
+		r.log.Warn("reconciliation: failed to read owner heartbeats, sparing warm-pool containers", "error", hbErr)
 	}
 
 	// Volumes belonging to containers we keep must never be reaped, even if the
@@ -129,7 +155,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) ReconcileResult {
 
 	for _, c := range containers {
 		volumeName := c.Labels[workspaceVolumeLabel]
-		reason := r.decide(c, refs, now)
+		reason := r.decide(c, refs, heartbeats, heartbeatsOK, now)
 		if reason != "" {
 			result.Skipped++
 			if volumeName != "" {
@@ -219,13 +245,13 @@ func (r *Reconciler) Reconcile(ctx context.Context) ReconcileResult {
 
 // decide returns a non-empty skip reason when a container must be kept, or "" when
 // it is an ownerless orphan eligible for destruction.
-func (r *Reconciler) decide(c SandboxContainerInfo, refs map[string]*AgentSandbox, now time.Time) string {
+func (r *Reconciler) decide(c SandboxContainerInfo, refs map[string]*AgentSandbox, heartbeats map[string]time.Time, heartbeatsOK bool, now time.Time) string {
 	// D2: never touch our own containers (the warm pool is not in the DB).
 	if c.Labels[sandboxOwnerLabel] == r.owner {
 		return "owned"
 	}
 
-	// D2: a DB row that is not stopped/errored means live work.
+	// A DB row that is not stopped/errored means live work.
 	if ws, ok := refs[c.ID]; ok {
 		if ws.Lifecycle == LifecyclePersistent || ws.ContainerType == ContainerTypeMCPServer {
 			return "persistent"
@@ -237,8 +263,19 @@ func (r *Reconciler) decide(c SandboxContainerInfo, refs map[string]*AgentSandbo
 	if c.Labels[workspaceTypeLabel] == string(ContainerTypeMCPServer) {
 		return "persistent"
 	}
-	if c.Labels[workspaceLifecycleLabel] == string(LifecyclePersistent) {
-		return "persistent"
+
+	// Warm-pool containers are never in the DB, so ownership alone cannot tell a
+	// live peer from a dead predecessor. Use the owner's liveness lease: a fresh
+	// heartbeat means the peer is alive and its pool must be spared. A stale or
+	// missing lease means the owner is presumed dead and the container is
+	// reapable (subject to the grace window below).
+	if c.Labels[warmPoolLabel] == "true" {
+		if !heartbeatsOK {
+			return "heartbeat_unknown"
+		}
+		if last, ok := heartbeats[c.ID]; ok && now.Sub(last) < r.heartbeatTTL {
+			return "peer_live"
+		}
 	}
 
 	// D3: a recently created container may belong to a starting peer.
@@ -249,12 +286,12 @@ func (r *Reconciler) decide(c SandboxContainerInfo, refs map[string]*AgentSandbo
 	return ""
 }
 
-// withinGrace reports whether t is more recent than the configured grace window.
-// A zero time is treated as unknown-and-old (eligible), matching Docker always
-// populating creation timestamps for containers.
+// withinGrace reports whether t is inside the configured grace window. A zero time
+// (unknown or unparseable) is treated as inside the window so the resource is
+// spared — the fail-safe direction required by design D3.
 func (r *Reconciler) withinGrace(t, now time.Time) bool {
 	if t.IsZero() {
-		return false
+		return true
 	}
 	return now.Sub(t) < r.grace
 }
