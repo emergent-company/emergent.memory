@@ -502,7 +502,17 @@ func (s *GraphEmbeddingJobsService) ResetDeadLetterJobs(ctx context.Context) (in
 		SET status = 'pending',
 			scheduled_at = now(),
 			updated_at = now()
-		WHERE status = 'dead_letter'`).Exec(ctx)
+		WHERE id IN (
+			SELECT DISTINCT ON (x.object_id) x.id
+			FROM kb.graph_embedding_jobs x
+			WHERE x.status = 'dead_letter'
+			  AND NOT EXISTS (
+				SELECT 1 FROM kb.graph_embedding_jobs a
+				WHERE a.object_id = x.object_id
+				  AND a.status IN ('pending', 'processing')
+			  )
+			ORDER BY x.object_id, x.updated_at DESC
+		)`).Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("reset dead_letter jobs: %w", err)
 	}
@@ -566,16 +576,33 @@ func (s *GraphEmbeddingJobsService) StatsByProject(ctx context.Context, projectI
 
 // RetriggerByProject resets failed and dead_letter jobs for a project to pending.
 // Returns the number of jobs reset.
+//
+// At most one active (pending/processing) job may exist per object — enforced by
+// the partial unique index uidx_graph_embedding_jobs_active. The embedding sweep
+// may already have queued an object while a stale failed row for it remained, so
+// a blind failed->pending UPDATE aborts on that index and rolls the whole
+// statement back. Skip objects that already have an active job, and reset only
+// the most recently updated retryable row per object.
 func (s *GraphEmbeddingJobsService) RetriggerByProject(ctx context.Context, projectID string) (int, error) {
 	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
 		SET status = 'pending',
 			scheduled_at = now(),
 			last_error = NULL,
 			updated_at = now()
-		WHERE status IN ('failed', 'dead_letter')
-		  AND object_id IN (
-			SELECT id FROM kb.graph_objects WHERE project_id = ?
-		  )`, projectID).Exec(ctx)
+		WHERE id IN (
+			SELECT DISTINCT ON (x.object_id) x.id
+			FROM kb.graph_embedding_jobs x
+			WHERE x.status IN ('failed', 'dead_letter')
+			  AND x.object_id IN (
+				SELECT id FROM kb.graph_objects WHERE project_id = ?
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM kb.graph_embedding_jobs a
+				WHERE a.object_id = x.object_id
+				  AND a.status IN ('pending', 'processing')
+			  )
+			ORDER BY x.object_id, x.updated_at DESC
+		)`, projectID).Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("retrigger graph embedding jobs for project: %w", err)
 	}

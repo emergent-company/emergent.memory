@@ -221,6 +221,12 @@ func (w *EmbeddingSweepWorker) sweep(ctx context.Context) {
 
 // sweepObjects finds graph objects with NULL embedding_v2 that don't already
 // have active jobs in the queue, and enqueues them.
+//
+// An object is only enqueued when its project has an embedding model — set
+// either on the project (kb.project_model_config) or on a provider credential
+// (kb.project_provider_configs), the same project → provider fallback the
+// embedding resolver (modelconfig.EmbeddingResolverAdapter) applies when it
+// actually generates the vector.
 func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
 	// Find objects missing embeddings that don't have pending/processing jobs
 	var objectIDs []string
@@ -241,6 +247,12 @@ func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
 		      WHERE pmc.project_id = o.project_id
 		        AND pmc.embedding_model IS NOT NULL
 		        AND pmc.embedding_model != ''
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM kb.project_provider_configs ppc
+		      WHERE ppc.project_id = o.project_id
+		        AND ppc.embedding_model IS NOT NULL
+		        AND ppc.embedding_model != ''
 		    )
 		  )
 		ORDER BY o.created_at ASC
@@ -286,6 +298,9 @@ type relationshipSweepRow struct {
 
 // sweepRelationships finds relationships with NULL embedding and generates
 // embeddings for them directly (no job queue).
+//
+// Mirrors sweepObjects' model-config gate: a relationship is only embedded when
+// its project has an embedding model on the project or a provider credential.
 func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded int, errors int) {
 	var rows []relationshipSweepRow
 	err := w.db.NewRaw(`
@@ -307,6 +322,12 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 		      WHERE pmc.project_id = r.project_id
 		        AND pmc.embedding_model IS NOT NULL
 		        AND pmc.embedding_model != ''
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM kb.project_provider_configs ppc
+		      WHERE ppc.project_id = r.project_id
+		        AND ppc.embedding_model IS NOT NULL
+		        AND ppc.embedding_model != ''
 		    )
 		  )
 		ORDER BY r.created_at ASC

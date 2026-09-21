@@ -27,4 +27,4 @@
 - [x] 5.2 Run `go build ./...` from the server module root and verify it compiles
 - [x] 5.3 Run `task lint` and `go test ./...` from `gateway/` and verify both pass
 - [x] 5.4 Run the server graph-domain tests and verify they pass
-- [ ] 5.5 Restart the dev server and manually verify in the browser: object cards and detail show embedding status, and the embeddings page shows queue counts and worker state
+- [x] 5.5 Restart the dev server and manually verify in the browser: object cards and detail show embedding status, and the embeddings page shows queue counts and worker state

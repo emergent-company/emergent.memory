@@ -128,6 +128,32 @@ func TestGetEmbeddingStatus(t *testing.T) {
 	}
 }
 
+func TestGetEffectiveModelConfig(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/projects/proj/model-config/effective" {
+			t.Errorf("path = %q, want /api/v1/projects/proj/model-config/effective", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"generativeModel":"openai/gpt-x","generativeModelSource":"project","embeddingModel":"openai/embed-x","embeddingModelSource":"provider"}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "tok", "proj")
+	mc, err := m.GetEffectiveModelConfig(context.Background())
+	if err != nil {
+		t.Fatalf("GetEffectiveModelConfig: %v", err)
+	}
+	if mc.EmbeddingModel != "openai/embed-x" || mc.EmbeddingModelSource != "provider" {
+		t.Errorf("embedding = %q/%q, want openai/embed-x/provider", mc.EmbeddingModel, mc.EmbeddingModelSource)
+	}
+	if mc.GenerativeModel != "openai/gpt-x" || mc.GenerativeModelSource != "project" {
+		t.Errorf("generative = %q/%q, want openai/gpt-x/project", mc.GenerativeModel, mc.GenerativeModelSource)
+	}
+}
+
 func TestEmbeddingsRoute(t *testing.T) {
 	newServer := func(f *fakeMemory) (*Server, *echo.Echo) {
 		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
@@ -223,6 +249,65 @@ func TestEmbeddingsRoute(t *testing.T) {
 			t.Errorf("worker error message missing: %s", body)
 		}
 	})
+
+	t.Run("missing embedding model renders the warning", func(t *testing.T) {
+		f := &fakeMemory{
+			embeddingProgress: &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 3}},
+			embeddingStatus:   &EmbeddingStatus{Objects: EmbeddingWorkerStatus{Running: true}},
+			effectiveModel:    &EffectiveModelConfig{EmbeddingModelSource: "none"},
+		}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "No embedding model is configured for this project") {
+			t.Errorf("warning message missing: %s", body)
+		}
+		if !strings.Contains(body, `href="/settings/providers"`) {
+			t.Errorf("warning CTA link missing: %s", body)
+		}
+	})
+
+	t.Run("configured embedding model hides the warning", func(t *testing.T) {
+		f := &fakeMemory{
+			embeddingProgress: &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 3}},
+			embeddingStatus:   &EmbeddingStatus{Objects: EmbeddingWorkerStatus{Running: true}},
+			effectiveModel:    &EffectiveModelConfig{EmbeddingModel: "openai/embed-x", EmbeddingModelSource: "provider"},
+		}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "No embedding model is configured") {
+			t.Errorf("warning shown despite a configured embedding model: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("model-config fetch failure shows no warning and blanks nothing", func(t *testing.T) {
+		f := &fakeMemory{
+			embeddingProgress: &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 3}},
+			embeddingStatus:   &EmbeddingStatus{Objects: EmbeddingWorkerStatus{Running: true}},
+			effectiveModelErr: fmt.Errorf("boom"),
+		}
+		_, e := newServer(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embeddings", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "No embedding model is configured") {
+			t.Errorf("warning shown on unknown model state: %s", body)
+		}
+		if !strings.Contains(body, "Object embedding queue") || !strings.Contains(body, "Workers") {
+			t.Errorf("model-config failure blanked the page: %s", body)
+		}
+	})
 }
 
 func TestRenderEmbeddingsPage(t *testing.T) {
@@ -265,6 +350,25 @@ func TestRenderEmbeddingsPage(t *testing.T) {
 	}))
 	if !strings.Contains(htmlStatusErr, "Object embedding queue") || !strings.Contains(htmlStatusErr, "Workers") {
 		t.Errorf("section-scoped status error should keep the queue section: %s", htmlStatusErr)
+	}
+
+	htmlMissing := renderHTML(t, EmbeddingsPage(embeddingPageData{
+		Progress:              &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 1}},
+		EmbeddingModelMissing: true,
+	}))
+	if !strings.Contains(htmlMissing, "No embedding model is configured for this project") {
+		t.Errorf("missing-model warning not rendered: %s", htmlMissing)
+	}
+	if !strings.Contains(htmlMissing, `href="/settings/providers"`) {
+		t.Errorf("missing-model warning CTA not rendered: %s", htmlMissing)
+	}
+
+	htmlConfigured := renderHTML(t, EmbeddingsPage(embeddingPageData{
+		Progress:       &EmbeddingProgress{Objects: EmbeddingQueueStats{Pending: 1}},
+		EmbeddingModel: "openai/embed-x",
+	}))
+	if strings.Contains(htmlConfigured, "No embedding model is configured") {
+		t.Errorf("warning rendered with a configured embedding model: %s", htmlConfigured)
 	}
 }
 

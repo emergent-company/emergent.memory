@@ -560,6 +560,11 @@
       ".memory-rail-badge{display:inline-flex;align-items:center;gap:.25rem;padding:.1rem .4rem;border-radius:9999px;" +
       "font-size:.625rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;" +
       "border:1px solid transparent;align-self:center}" +
+      /* A two-class selector hides the badge: this sheet is appended to <head>
+         after the compiled Tailwind sheet, so at equal specificity the injected
+         `.memory-rail-badge { display:inline-flex }` beats Tailwind's
+         `.hidden { display:none }`. Keep this rule identical to webui/css/app.css. */
+      ".memory-rail-badge.hidden{display:none}" +
       ".memory-rail-badge[data-bucket='needs_input']{color:var(--color-warning);" +
       "background:color-mix(in oklab,var(--color-warning) 15%,transparent);" +
       "border-color:color-mix(in oklab,var(--color-warning) 40%,transparent)}" +
