@@ -266,6 +266,14 @@ func prefixedGenerativeModelName(provider ProviderType, gen string) string {
 	return string(provider) + "/" + stripModelPrefix(gen)
 }
 
+// prefixedEmbeddingModelName prefixes the routing provider onto an embedding
+// model name, producing the routed "provider/model" form modelconfig resolution
+// expects. Mirror of prefixedGenerativeModelName, kept separate so the two
+// resolution chains stay independently named.
+func prefixedEmbeddingModelName(provider ProviderType, emb string) string {
+	return string(provider) + "/" + stripModelPrefix(emb)
+}
+
 // embeddingProviderOrder lists providers in preference order for embedding
 // resolution. Google AI and Vertex AI come first (native embedding support),
 // then OpenAI (embedding via the OpenAI API). DeepSeek is last — it has no
@@ -320,6 +328,35 @@ func (s *CredentialService) ResolveAnyEmbedding(ctx context.Context) (*ResolvedC
 		return nil, nil
 	}
 	return s.decryptProjectConfig(cfg)
+}
+
+// DefaultEmbeddingModel returns a prefixed "provider/model" name for the given
+// project's first provider credential (Google AI → Vertex AI → OpenAI → DeepSeek)
+// that carries an embedding model, or "" when none does. It mirrors
+// DefaultGenerativeModel for embedding: the project is passed explicitly (not
+// read from the request context) so callers can resolve for a project that may
+// differ from the session's active one.
+//
+// Unlike DefaultGenerativeModel it never decrypts credentials — EmbeddingModel
+// is stored in plaintext on the provider config — so it is a cheap, safe way for
+// modelconfig.ResolveEmbeddingModel to report the same provider-credential
+// fallback the EmbeddingResolverAdapter applies when no project_model_config is
+// set. Keeping this consistent with ResolveAnyEmbedding's embeddingProviderOrder
+// ensures the reported model matches what an actual embedding call would use.
+func (s *CredentialService) DefaultEmbeddingModel(ctx context.Context, projectID string) (string, error) {
+	if projectID == "" {
+		return "", nil
+	}
+	for _, p := range embeddingProviderOrder {
+		cfg, err := s.repo.GetProjectProviderConfig(ctx, projectID, p)
+		if err != nil || cfg == nil {
+			continue
+		}
+		if cfg.EmbeddingModel != "" {
+			return prefixedEmbeddingModelName(p, cfg.EmbeddingModel), nil
+		}
+	}
+	return "", nil
 }
 
 // UpsertOrgConfig is deprecated. Org-level provider config is no longer supported.

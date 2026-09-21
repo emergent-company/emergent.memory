@@ -62,6 +62,18 @@ type ProjectModelConfig struct {
 	UpdatedAt       string `json:"updatedAt,omitempty"`
 }
 
+// EffectiveModelConfig is a project's resolved model configuration (GET
+// /api/v1/projects/{projectId}/model-config/effective): the model actually in
+// effect plus where it came from ("project", "provider", or "none"). An empty
+// EmbeddingModel with EmbeddingModelSource "none" means no embedding model is
+// configured for the project.
+type EffectiveModelConfig struct {
+	GenerativeModel       string `json:"generativeModel"`
+	GenerativeModelSource string `json:"generativeModelSource"`
+	EmbeddingModel        string `json:"embeddingModel"`
+	EmbeddingModelSource  string `json:"embeddingModelSource"`
+}
+
 // ProviderSupportedModel mirrors memory's ProviderSupportedModel: one cached
 // catalog entry of a model a provider supports.
 type ProviderSupportedModel struct {
@@ -237,6 +249,19 @@ func (m *MemoryClient) TestProjectModel(ctx context.Context, provider, model, mo
 func (m *MemoryClient) GetProjectModelConfig(ctx context.Context) (*ProjectModelConfig, error) {
 	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/model-config"
 	var out ProjectModelConfig
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetEffectiveModelConfig returns the project's resolved model configuration
+// (GET /api/v1/projects/{projectId}/model-config/effective): the generative and
+// embedding models in effect after project → provider fallback, each with its
+// source.
+func (m *MemoryClient) GetEffectiveModelConfig(ctx context.Context) (*EffectiveModelConfig, error) {
+	path := "/api/v1/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/model-config/effective"
+	var out EffectiveModelConfig
 	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}

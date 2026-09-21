@@ -18,6 +18,9 @@ import (
 templ EmbeddingsPage(data embeddingPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@embeddingsHeader(data.ProgressErr == nil && data.StatusErr == nil)
+		if data.EmbeddingModelMissing {
+			@embeddingsModelWarning()
+		}
 		if data.ProgressErr != nil {
 			@pageError("Failed to load embedding statistics", data.ProgressErr)
 		} else if data.Empty {
@@ -44,6 +47,32 @@ templ embeddingsHeader(ok bool) {
 			})
 		}
 	}
+}
+
+// embeddingsModelWarning is shown when the active project has no embedding
+// model configured. In that state the embedding sweep silently enqueues
+// nothing, so objects and relationships never get vectors. It links to the
+// project's provider settings, which hold the default models (including the
+// embedding model), so the message names the real destination.
+templ embeddingsModelWarning() {
+	<div class="mb-6" data-testid="embeddings-model-warning">
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertWarning,
+			Style:   ui.AlertStyleOutline,
+			Icon:    "lucide--alert-triangle",
+			Message: "No embedding model is configured for this project. Object and relationship embeddings will not be generated, so objects and relationships stay without vectors and similar-objects search is incomplete. Set a default embedding model and the pipeline will start.",
+		})
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeLink,
+			Href:       "/settings/providers",
+			Variant:    ui.ButtonOutline,
+			Size:       ui.ButtonSM,
+			Icon:       "lucide--settings",
+			ExtraClass: "mt-3",
+		}) {
+			Configure embedding model
+		}
+	</div>
 }
 
 // embeddingsEmpty is the "no statistics yet" state: the queue counters are all

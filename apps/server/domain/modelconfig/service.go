@@ -20,6 +20,11 @@ type Service struct {
 	// (optional). When set, generative resolution falls back to it when a
 	// project has no explicit model config — mirroring the executor's default.
 	resolver generativeDefaultResolver
+	// embeddingResolver supplies the project's provider-credential embedding
+	// default (optional). When set, embedding resolution falls back to it when a
+	// project has no explicit embedding model — mirroring the fallback the
+	// EmbeddingResolverAdapter applies when generating embeddings.
+	embeddingResolver embeddingDefaultResolver
 }
 
 // modelConfigStore is the persistence seam Service needs. Implemented by
@@ -37,6 +42,13 @@ type generativeDefaultResolver interface {
 	DefaultGenerativeModel(ctx context.Context, projectID string) (string, error)
 }
 
+// embeddingDefaultResolver returns a prefixed "provider/model" name for the
+// project's first provider credential that carries an embedding model, or ""
+// when none does. Implemented by provider.CredentialService.
+type embeddingDefaultResolver interface {
+	DefaultEmbeddingModel(ctx context.Context, projectID string) (string, error)
+}
+
 // NewService creates a new model config Service.
 func NewService(store modelConfigStore, log *slog.Logger) *Service {
 	return &Service{store: store, log: log}
@@ -47,6 +59,14 @@ func NewService(store modelConfigStore, log *slog.Logger) *Service {
 // it, generative resolution stops at the project config (pre-fallback behavior).
 func (s *Service) WithGenerativeDefaultResolver(r generativeDefaultResolver) *Service {
 	s.resolver = r
+	return s
+}
+
+// WithEmbeddingDefaultResolver wires the provider-credential fallback used by
+// ResolveEmbeddingModel when no project embedding model is set. Nil-safe:
+// without it, embedding resolution stops at the project config.
+func (s *Service) WithEmbeddingDefaultResolver(r embeddingDefaultResolver) *Service {
+	s.embeddingResolver = r
 	return s
 }
 
@@ -139,8 +159,14 @@ func (s *Service) ResolveGenerativeModel(ctx context.Context, projectID uuid.UUI
 
 // ResolveEmbeddingModel returns the effective embedding model name for a project.
 //
-// Chain: project config only.
-// Returns ("", ModelSourceNone, nil) when no config is set.
+// Chain: project model config → provider-credential embedding model (when a
+// resolver is wired) → none. The provider-credential fallback mirrors the
+// EmbeddingResolverAdapter (pkg/embeddings) so the reported model matches what
+// an embedding call would actually use — a project configured only via
+// 'memory provider configure-project <provider> --embedding-model <model>' still
+// generates vectors, so it must not be reported as unconfigured.
+// Returns ("", ModelSourceNone, nil) when nothing resolves — callers must treat
+// an empty model name as "not configured".
 func (s *Service) ResolveEmbeddingModel(ctx context.Context, projectID uuid.UUID) (model string, source ModelSource, err error) {
 	projCfg, err := s.store.GetProjectModelConfig(ctx, projectID)
 	if err != nil {
@@ -148,6 +174,11 @@ func (s *Service) ResolveEmbeddingModel(ctx context.Context, projectID uuid.UUID
 	}
 	if projCfg != nil && projCfg.EmbeddingModel != "" {
 		return projCfg.EmbeddingModel, ModelSourceProject, nil
+	}
+	if s.embeddingResolver != nil {
+		if m, rerr := s.embeddingResolver.DefaultEmbeddingModel(ctx, projectID.String()); rerr == nil && m != "" {
+			return m, ModelSourceProvider, nil
+		}
 	}
 	return "", ModelSourceNone, nil
 }

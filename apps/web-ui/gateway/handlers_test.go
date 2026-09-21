@@ -135,6 +135,9 @@ type fakeMemory struct {
 	embeddingStatus   *EmbeddingStatus   // returned by GetEmbeddingStatus
 	embeddingStatErr  error              // GetEmbeddingStatus failure
 
+	effectiveModel    *EffectiveModelConfig // returned by GetEffectiveModelConfig
+	effectiveModelErr error                 // GetEffectiveModelConfig failure
+
 	compiled     *CompiledSchemaTypes
 	blueprintErr error // failure for any blueprint method
 
@@ -1018,6 +1021,13 @@ func (f *fakeMemory) GetEmbeddingStatus(ctx context.Context) (*EmbeddingStatus, 
 		return nil, f.embeddingStatErr
 	}
 	return f.embeddingStatus, nil
+}
+
+func (f *fakeMemory) GetEffectiveModelConfig(ctx context.Context) (*EffectiveModelConfig, error) {
+	if f.effectiveModelErr != nil {
+		return nil, f.effectiveModelErr
+	}
+	return f.effectiveModel, nil
 }
 
 func (f *fakeMemory) ListBranches(ctx context.Context) ([]Branch, error) {
