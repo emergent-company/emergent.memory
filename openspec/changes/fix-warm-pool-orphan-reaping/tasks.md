@@ -55,3 +55,13 @@
 - [x] 7.7 Startup reconciliation runs once (cleanup initial pass no longer reconciles)
 - [x] 7.8 Update `design.md`, `spec.md`, `OPERATIONS.md`/`DEPLOYMENT.md` to match implementation
 - [x] 7.9 Unit tests for all of the above
+
+## 8. Second review follow-ups (lease lifecycle and claim accuracy)
+
+- [x] 8.1 Reconciler removes heartbeat leases whose container is gone (logged, label-scoped, idempotent)
+- [x] 8.2 `DestroySandboxContainer` removes the container's leases on normal teardown
+- [x] 8.3 Zero/unparseable lease timestamp fails safe (spare), matching the grace-period rule
+- [x] 8.4 Exclude lease volumes from the workspace volume sweep (provider filter + defensive reconciler guard)
+- [x] 8.5 Document the handler acquire → DB-write window as lease-bridged (or make it atomic)
+- [x] 8.6 Correct D4/spec/docs: startup spares a just-crashed peer until its lease expires
+- [x] 8.7 Unit tests for all of the above

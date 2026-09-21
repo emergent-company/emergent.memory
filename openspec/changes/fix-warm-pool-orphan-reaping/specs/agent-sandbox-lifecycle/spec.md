@@ -100,15 +100,39 @@ The server SHALL refresh a per-container liveness lease for every warm-pool cont
 - **WHEN** the dropped container's lease is no longer refreshed
 - **THEN** reconciliation SHALL treat it as ownerless and destroy it once past the grace period
 
+#### Scenario: Unparseable lease timestamps fail safe
+- **GIVEN** a warm-pool container whose lease volume has an empty or unparseable creation time
+- **WHEN** reconciliation evaluates the container
+- **THEN** the lease SHALL be treated as unknown and the container SHALL be spared
+
+#### Scenario: Leases of dead containers are reclaimed
+- **GIVEN** a liveness-lease volume exists whose container ID is absent from the container list
+- **WHEN** reconciliation runs
+- **THEN** the lease volume SHALL be destroyed and logged with a reason
+- **AND** a repeated pass SHALL be a no-op for that lease (idempotent)
+
+#### Scenario: Leases of live containers are never removed
+- **GIVEN** a lease volume whose container ID is present in the container list
+- **WHEN** reconciliation runs
+- **THEN** the lease volume SHALL NOT be removed
+- **AND** the workspace volume sweep SHALL NOT treat any lease volume as an orphan
+
 ### Requirement: Reconciliation SHALL run at startup and on the cleanup interval
 
 The server SHALL run reconciliation once after providers are registered at startup and thereafter on the existing cleanup interval. Both SHALL be gated on agent sandboxes being enabled.
 
 #### Scenario: Startup reconciliation reclaims the predecessor's leftovers
 - **GIVEN** agent sandboxes are enabled
-- **AND** orphaned labelled sandbox containers exist from a previous process
+- **AND** orphaned labelled sandbox containers exist from a previous process whose owner lease is stale or absent
 - **WHEN** the server completes startup
 - **THEN** reconciliation SHALL have run without waiting for the cleanup interval
+- **AND** those containers SHALL be reclaimed (subject to the grace period)
+
+#### Scenario: Startup spares a just-crashed peer whose lease is still fresh
+- **GIVEN** a peer process crashed moments ago and its warm-pool lease is still fresh
+- **WHEN** the server runs its startup reconciliation
+- **THEN** the peer's containers SHALL be spared as `peer_live`
+- **AND** they SHALL become reapable on a later cycle once the lease exceeds `3 × WORKSPACE_OWNER_HEARTBEAT_MIN`
 
 #### Scenario: Cleanup cycle reconciles and expires in one tick
 - **GIVEN** the cleanup job is running on its configured interval

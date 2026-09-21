@@ -35,6 +35,7 @@ type fakeResourceManager struct {
 	mu                  sync.Mutex
 	destroyedContainers []string
 	destroyedVolumes    []string
+	destroyedLeases     []string
 }
 
 func (f *fakeResourceManager) ListSandboxContainers(_ context.Context) ([]SandboxContainerInfo, error) {
@@ -54,9 +55,35 @@ func (f *fakeResourceManager) ListSandboxVolumes(_ context.Context) ([]SandboxVo
 	return f.volumes, f.listVolumesErr
 }
 
-func (f *fakeResourceManager) ListContainerHeartbeats(_ context.Context) (map[string]time.Time, error) {
-	return f.heartbeats, f.listHeartbeatsErr
+func (f *fakeResourceManager) ListHeartbeatLeases(_ context.Context) ([]HeartbeatLease, error) {
+	if f.listHeartbeatsErr != nil {
+		return nil, f.listHeartbeatsErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	leases := make([]HeartbeatLease, 0, len(f.heartbeats))
+	for id, ts := range f.heartbeats {
+		leases = append(leases, HeartbeatLease{Volume: heartbeatVolumeName(id), ContainerID: id, CreatedAt: ts})
+	}
+	return leases, nil
 }
+
+func (f *fakeResourceManager) DestroyHeartbeatLease(_ context.Context, volumeName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.destroyedLeases = append(f.destroyedLeases, volumeName)
+	if err := f.destroyErr[volumeName]; err != nil {
+		return err
+	}
+	for id := range f.heartbeats {
+		if heartbeatVolumeName(id) == volumeName {
+			delete(f.heartbeats, id)
+		}
+	}
+	return nil
+}
+
+func heartbeatVolumeName(containerID string) string { return "hb-" + containerID }
 
 func (f *fakeResourceManager) DestroySandboxContainer(_ context.Context, id, volumeName string) error {
 	f.mu.Lock()
@@ -339,7 +366,8 @@ func TestReconciler_WarmPoolFreshHeartbeat_LivePeerSpared(t *testing.T) {
 
 	assert.Empty(t, mgr.destroyedContainers, "a live peer's warm container must be spared by its fresh heartbeat")
 	assert.Empty(t, mgr.destroyedVolumes)
-	assert.Equal(t, 1, result.Skipped)
+	// Skipped counts the spared container and its (present) lease volume.
+	assert.Equal(t, 2, result.Skipped)
 }
 
 func TestReconciler_WarmPoolStaleHeartbeat_Reaped(t *testing.T) {
@@ -412,6 +440,91 @@ func TestReconciler_NonWarmContainerIgnoresHeartbeat(t *testing.T) {
 	r.Reconcile(context.Background())
 
 	assert.Equal(t, []string{"plain"}, mgr.destroyedContainers)
+}
+
+func TestReconciler_WarmPoolZeroLeaseTimestamp_Spared(t *testing.T) {
+	// An unparseable/zero lease timestamp must be treated as unknown, not stale.
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{sandboxContainer("warm-zero", warmLabels("vol-zero"), 5*time.Hour)},
+		heartbeats: map[string]time.Time{"warm-zero": {}},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	result := r.Reconcile(context.Background())
+
+	assert.Empty(t, mgr.destroyedContainers, "a zero lease timestamp must spare the container")
+	// Skipped counts the spared container and its (present) lease volume.
+	assert.Equal(t, 2, result.Skipped)
+}
+
+// --- Lease-volume cleanup ---
+
+func TestReconciler_DeadOwnerLeftoverLeasesRemoved(t *testing.T) {
+	mgr := &fakeResourceManager{
+		// "live" container is present and freshly heartbeated.
+		containers: []SandboxContainerInfo{sandboxContainer("live", warmLabels("vol-live"), 5*time.Hour)},
+		heartbeats: map[string]time.Time{
+			"live": testNow.Add(-1 * time.Minute),
+			// Leases for containers that no longer exist (dead owner leftovers).
+			"gone-1": testNow.Add(-1 * time.Minute),
+			"gone-2": testNow.Add(-30 * time.Minute),
+		},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	r.Reconcile(context.Background())
+
+	assert.ElementsMatch(t, []string{heartbeatVolumeName("gone-1"), heartbeatVolumeName("gone-2")}, mgr.destroyedLeases)
+	assert.NotContains(t, mgr.destroyedLeases, heartbeatVolumeName("live"), "a present container's lease must be kept")
+}
+
+func TestReconciler_LiveContainerLeaseNotRemoved(t *testing.T) {
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{sandboxContainer("live", warmLabels("vol-live"), 5*time.Hour)},
+		heartbeats: map[string]time.Time{"live": testNow.Add(-1 * time.Minute)},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	r.Reconcile(context.Background())
+
+	assert.Empty(t, mgr.destroyedLeases)
+}
+
+func TestReconciler_LeaseCleanupIdempotent(t *testing.T) {
+	mgr := &fakeResourceManager{
+		containers: []SandboxContainerInfo{sandboxContainer("live", warmLabels("vol-live"), 5*time.Hour)},
+		heartbeats: map[string]time.Time{
+			"live":   testNow.Add(-1 * time.Minute),
+			"gone-1": testNow.Add(-1 * time.Minute),
+		},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	r.Reconcile(context.Background())
+	firstPass := len(mgr.destroyedLeases)
+	require.Equal(t, 1, firstPass)
+
+	r.Reconcile(context.Background())
+	assert.Equal(t, firstPass, len(mgr.destroyedLeases), "a repeated pass must not re-remove an already-removed lease")
+}
+
+func TestReconciler_HeartbeatLeaseVolumeExcludedFromVolumeSweep(t *testing.T) {
+	// Defensive: even if a lease volume reaches the volume list, it must not be
+	// treated as an orphan workspace volume.
+	mgr := &fakeResourceManager{
+		volumes: []SandboxVolumeInfo{
+			{
+				Name:      "hb-c1",
+				Labels:    map[string]string{heartbeatLabel: "c1"},
+				CreatedAt: testNow.Add(-time.Hour),
+			},
+		},
+	}
+	r := newTestReconciler(mgr, &fakeRefStore{}, 15*time.Minute)
+
+	r.Reconcile(context.Background())
+
+	assert.Empty(t, mgr.destroyedVolumes, "heartbeat lease volumes must never be destroyed by the workspace volume sweep")
 }
 
 // --- R2: fail-safe timestamps ---

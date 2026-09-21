@@ -376,6 +376,61 @@ func TestGVisorProvider_BeatContainerHeartbeat_RemovesOlderLeases(t *testing.T) 
 	assert.Contains(t, hb, "c1")
 }
 
+func TestGVisorProvider_ListHeartbeatLeases(t *testing.T) {
+	fake := &fakeDockerClient{
+		volumes: []*volume.Volume{
+			{Name: "hb-1", Labels: map[string]string{heartbeatLabel: "c1"}, CreatedAt: time.Now().Format(time.RFC3339Nano)},
+			{Name: "ws", Labels: map[string]string{defaultRuntimeLabel: "true"}, CreatedAt: time.Now().Format(time.RFC3339Nano)},
+		},
+	}
+	p := newTestProvider(fake)
+
+	leases, err := p.ListHeartbeatLeases(context.Background())
+	require.NoError(t, err)
+	require.Len(t, leases, 1)
+	assert.Equal(t, "hb-1", leases[0].Volume)
+	assert.Equal(t, "c1", leases[0].ContainerID)
+}
+
+func TestGVisorProvider_ListSandboxVolumes_ExcludesHeartbeatLeases(t *testing.T) {
+	fake := &fakeDockerClient{
+		volumes: []*volume.Volume{
+			{Name: "memory-workspace-1", Labels: map[string]string{defaultRuntimeLabel: "true"}, CreatedAt: time.Now().Format(time.RFC3339Nano)},
+			{Name: "memory-hb-1", Labels: map[string]string{heartbeatLabel: "c1"}, CreatedAt: time.Now().Format(time.RFC3339Nano)},
+		},
+	}
+	p := newTestProvider(fake)
+
+	vols, err := p.ListSandboxVolumes(context.Background())
+	require.NoError(t, err)
+	require.Len(t, vols, 1)
+	assert.Equal(t, "memory-workspace-1", vols[0].Name, "lease volumes must be excluded by the memory.workspace label filter")
+}
+
+func TestGVisorProvider_DestroySandboxContainer_RemovesHeartbeatLeases(t *testing.T) {
+	fake := &fakeDockerClient{
+		volumes: []*volume.Volume{
+			{Name: "memory-workspace-1", Labels: map[string]string{defaultRuntimeLabel: "true"}, CreatedAt: time.Now().Format(time.RFC3339Nano)},
+			{Name: "memory-hb-1", Labels: map[string]string{heartbeatLabel: "container-1"}, CreatedAt: time.Now().Format(time.RFC3339Nano)},
+		},
+	}
+	p := newTestProvider(fake)
+
+	require.NoError(t, p.DestroySandboxContainer(context.Background(), "container-1", "memory-workspace-1"))
+
+	assert.Contains(t, fake.removedVolumes, "memory-workspace-1")
+	assert.Contains(t, fake.removedVolumes, "memory-hb-1", "normal teardown must remove the container's leases")
+}
+
+func TestGVisorProvider_DestroyHeartbeatLease_Idempotent(t *testing.T) {
+	fake := &fakeDockerClient{volumeRemoveErr: errdefs.NotFound(errors.New("no such volume"))}
+	p := newTestProvider(fake)
+
+	require.NoError(t, p.DestroyHeartbeatLease(context.Background(), "missing"))
+	require.NoError(t, p.DestroyHeartbeatLease(context.Background(), ""))
+	assert.Equal(t, []string{"missing"}, fake.removedVolumes)
+}
+
 // Compile-time assertions that the provider satisfies the manager interfaces.
 var (
 	_ SandboxResourceManager = (*GVisorProvider)(nil)

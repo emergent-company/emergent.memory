@@ -143,10 +143,17 @@ func (r *Reconciler) Reconcile(ctx context.Context) ReconcileResult {
 	// Warm-pool owner liveness leases. A missing/stale lease means the owner is
 	// presumed dead; if the lookup itself fails we fail safe and spare warm-pool
 	// containers rather than risk reaping a live peer's pool.
-	heartbeats, hbErr := mgr.ListContainerHeartbeats(ctx)
+	leases, hbErr := mgr.ListHeartbeatLeases(ctx)
 	heartbeatsOK := hbErr == nil
+	heartbeats := map[string]time.Time{}
 	if hbErr != nil {
 		r.log.Warn("reconciliation: failed to read owner heartbeats, sparing warm-pool containers", "error", hbErr)
+	} else {
+		for _, lease := range leases {
+			if existing, ok := heartbeats[lease.ContainerID]; !ok || lease.CreatedAt.After(existing) {
+				heartbeats[lease.ContainerID] = lease.CreatedAt
+			}
+		}
 	}
 
 	// Volumes belonging to containers we keep must never be reaped, even if the
@@ -191,6 +198,37 @@ func (r *Reconciler) Reconcile(ctx context.Context) ReconcileResult {
 		)
 	}
 
+	// Remove liveness leases whose container no longer exists, so a dead owner's
+	// leftovers do not accumulate. Only heartbeat-lease volumes are touched here,
+	// and only when their container is absent from the container list, so a live
+	// container's lease is never removed.
+	if heartbeatsOK {
+		present := make(map[string]bool, len(containers))
+		for _, c := range containers {
+			present[c.ID] = true
+		}
+		for _, lease := range leases {
+			if lease.ContainerID == "" || lease.Volume == "" {
+				continue
+			}
+			if present[lease.ContainerID] {
+				result.Skipped++
+				r.log.Debug("reconciliation skipped heartbeat lease",
+					"volume", lease.Volume, "container_id", lease.ContainerID, "reason", "container_present")
+				continue
+			}
+			if err := mgr.DestroyHeartbeatLease(ctx, lease.Volume); err != nil {
+				result.Failed++
+				r.log.Error("reconciliation failed to destroy orphan heartbeat lease",
+					"volume", lease.Volume, "container_id", lease.ContainerID, "error", err)
+				continue
+			}
+			result.Reconciled++
+			r.log.Info("reconciliation destroyed orphan heartbeat lease",
+				"volume", lease.Volume, "container_id", lease.ContainerID, "reason", "container_gone")
+		}
+	}
+
 	volumes, err := mgr.ListSandboxVolumes(ctx)
 	if err != nil {
 		r.log.Error("reconciliation: failed to enumerate sandbox volumes", "error", err)
@@ -198,6 +236,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) ReconcileResult {
 
 	for _, v := range volumes {
 		switch {
+		case v.Labels[heartbeatLabel] != "":
+			// Defensive: lease volumes are cleaned up explicitly above and must
+			// never be treated as orphan workspace volumes.
+			result.Skipped++
+			r.log.Debug("reconciliation skipped volume", "volume", v.Name, "reason", "heartbeat_lease")
+			continue
 		case protectedVolumes[v.Name]:
 			result.Skipped++
 			r.log.Debug("reconciliation skipped volume", "volume", v.Name, "reason", "in_use")
@@ -273,8 +317,14 @@ func (r *Reconciler) decide(c SandboxContainerInfo, refs map[string]*AgentSandbo
 		if !heartbeatsOK {
 			return "heartbeat_unknown"
 		}
-		if last, ok := heartbeats[c.ID]; ok && now.Sub(last) < r.heartbeatTTL {
-			return "peer_live"
+		if last, ok := heartbeats[c.ID]; ok {
+			// A zero lease timestamp is unknown, not stale: fail safe and spare.
+			if last.IsZero() {
+				return "heartbeat_unknown"
+			}
+			if now.Sub(last) < r.heartbeatTTL {
+				return "peer_live"
+			}
 		}
 	}
 

@@ -93,15 +93,27 @@ type SandboxResourceManager interface {
 	ListSandboxContainers(ctx context.Context) ([]SandboxContainerInfo, error)
 	// ListSandboxVolumes returns all volumes labelled memory.workspace=true.
 	ListSandboxVolumes(ctx context.Context) ([]SandboxVolumeInfo, error)
-	// ListContainerHeartbeats returns the newest liveness-lease timestamp per
-	// container ID, from memory.owner.heartbeat leases.
-	ListContainerHeartbeats(ctx context.Context) (map[string]time.Time, error)
-	// DestroySandboxContainer removes a container and (when non-empty) the volume
-	// named by its workspace.volume label. Missing resources are tolerated.
+	// ListHeartbeatLeases returns all liveness-lease volumes, one entry per lease
+	// volume (a container may briefly have more than one).
+	ListHeartbeatLeases(ctx context.Context) ([]HeartbeatLease, error)
+	// DestroySandboxContainer removes a container, its workspace volume and its
+	// heartbeat leases. Missing resources are tolerated.
 	DestroySandboxContainer(ctx context.Context, containerID, volumeName string) error
 	// DestroySandboxVolume removes a labelled workspace volume. Missing volumes
 	// are tolerated.
 	DestroySandboxVolume(ctx context.Context, volumeName string) error
+	// DestroyHeartbeatLease removes a single liveness-lease volume. Missing leases
+	// are tolerated (idempotent).
+	DestroyHeartbeatLease(ctx context.Context, volumeName string) error
+}
+
+// HeartbeatLease describes a single liveness-lease volume. Lease volumes are
+// deliberately NOT labelled memory.workspace=true, so the orphan volume sweep and
+// the workspace enumeration never touch them; they are cleaned up explicitly.
+type HeartbeatLease struct {
+	Volume      string    `json:"volume"`
+	ContainerID string    `json:"container_id"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // ContainerHeartbeater refreshes the liveness lease for warm-pool containers it
@@ -112,20 +124,20 @@ type ContainerHeartbeater interface {
 	BeatContainerHeartbeat(ctx context.Context, containerID string) error
 }
 
-// ListContainerHeartbeats returns the newest heartbeat time per container ID by
-// enumerating memory.owner.heartbeat lease volumes. Volumes without the label are
-// ignored defensively (the Docker filter is the primary selector).
-func (p *GVisorProvider) ListContainerHeartbeats(ctx context.Context) (map[string]time.Time, error) {
+// ListHeartbeatLeases enumerates memory.owner.heartbeat lease volumes. Volumes
+// without the label are ignored defensively (the Docker filter is the primary
+// selector), and only volumes carrying the heartbeat label are ever returned.
+func (p *GVisorProvider) ListHeartbeatLeases(ctx context.Context) ([]HeartbeatLease, error) {
 	resp, err := p.client.VolumeList(ctx, volume.ListOptions{
 		Filters: filters.NewArgs(
 			filters.Arg("label", heartbeatLabel),
 		),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list owner heartbeats: %w", err)
+		return nil, fmt.Errorf("failed to list owner heartbeat leases: %w", err)
 	}
 
-	out := make(map[string]time.Time)
+	out := make([]HeartbeatLease, 0, len(resp.Volumes))
 	for _, v := range resp.Volumes {
 		if v == nil {
 			continue
@@ -134,12 +146,43 @@ func (p *GVisorProvider) ListContainerHeartbeats(ctx context.Context) (map[strin
 		if containerID == "" {
 			continue
 		}
-		ts := parseVolumeCreatedAt(v.CreatedAt)
-		if existing, ok := out[containerID]; !ok || ts.After(existing) {
-			out[containerID] = ts
+		out = append(out, HeartbeatLease{
+			Volume:      v.Name,
+			ContainerID: containerID,
+			CreatedAt:   parseVolumeCreatedAt(v.CreatedAt),
+		})
+	}
+	return out, nil
+}
+
+// ListContainerHeartbeats returns the newest heartbeat time per container ID.
+// A lease whose timestamp is unparseable is reported as the zero time; callers
+// must treat a zero time as "unknown" and spare the container (fail safe).
+func (p *GVisorProvider) ListContainerHeartbeats(ctx context.Context) (map[string]time.Time, error) {
+	leases, err := p.ListHeartbeatLeases(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]time.Time)
+	for _, lease := range leases {
+		if existing, ok := out[lease.ContainerID]; !ok || lease.CreatedAt.After(existing) {
+			out[lease.ContainerID] = lease.CreatedAt
 		}
 	}
 	return out, nil
+}
+
+// DestroyHeartbeatLease removes a single liveness-lease volume. Missing leases are
+// tolerated (idempotent).
+func (p *GVisorProvider) DestroyHeartbeatLease(ctx context.Context, volumeName string) error {
+	if volumeName == "" {
+		return nil
+	}
+	if err := p.client.VolumeRemove(ctx, volumeName, true); err != nil && !client.IsErrNotFound(err) {
+		return fmt.Errorf("failed to remove heartbeat lease %s: %w", volumeName, err)
+	}
+	return nil
 }
 
 // BeatContainerHeartbeat refreshes the liveness lease for a container by creating
@@ -268,7 +311,34 @@ func (p *GVisorProvider) DestroySandboxContainer(ctx context.Context, containerI
 		firstErr = err
 	}
 
+	// Normal teardown leaves no liveness leases behind.
+	p.removeHeartbeatLeasesForContainer(ctx, containerID)
+
 	return firstErr
+}
+
+// removeHeartbeatLeasesForContainer best-effort removes every lease volume for a
+// container. Used by normal teardown so a destroyed container does not leak leases.
+func (p *GVisorProvider) removeHeartbeatLeasesForContainer(ctx context.Context, containerID string) {
+	if containerID == "" {
+		return
+	}
+	resp, err := p.client.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("label", heartbeatLabel+"="+containerID),
+		),
+	})
+	if err != nil {
+		return
+	}
+	for _, v := range resp.Volumes {
+		if v == nil {
+			continue
+		}
+		if err := p.client.VolumeRemove(ctx, v.Name, true); err != nil && !client.IsErrNotFound(err) {
+			p.log.Warn("failed to remove heartbeat lease", "volume", v.Name, "error", err)
+		}
+	}
 }
 
 // DestroySandboxVolume removes a labelled workspace volume. Missing volumes are

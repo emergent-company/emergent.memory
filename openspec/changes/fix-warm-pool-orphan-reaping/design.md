@@ -49,7 +49,9 @@ Docker labels already exist (`memory.workspace=true`, `workspace.type`, `workspa
 
 **Rationale**: Between acquiring a warm container and writing its DB reference there is a window where a peer reconciler sees the container as ownerless-and-unreferenced; an hours-old warm container is already past grace and was previously destroyed. One atomic INSERT removes the window. (Defence in depth: the acquired container is also owned by the provisioning process's owner label, so that process's own reconciliation never touches it.)
 
-**Alternatives considered**: Keep the follow-up UPDATE and rely on grace — insufficient: the container is older than the grace window by construction.
+**Handler path (documented, not atomic)**: `handler.go` creates the workspace row synchronously and only then provisions the container, so it cannot use the single-INSERT path. It instead bridges the acquire → DB-write window with the liveness lease: it refreshes the acquired container's lease immediately and then persists `provider_workspace_id` via a follow-up UPDATE. A warm container's lease is at most one heartbeat interval old at acquisition, so it remains fresh (`peer_live`) for up to `3 × WORKSPACE_OWNER_HEARTBEAT_MIN` — far longer than the UPDATE takes — so a peer reconciler spares it throughout. This claim is explicit in the code comments at the acquire and update sites.
+
+**Alternatives considered**: Keep the follow-up UPDATE and rely on grace — insufficient: the container is older than the grace window by construction. Route the handler through `createWorkspaceWithContainer` — not possible without creating a second row; the handler's row pre-exists provisioning.
 
 ### D3: Grace period before destruction, configurable
 
@@ -65,7 +67,7 @@ Docker labels already exist (`memory.workspace=true`, `workspace.type`, `workspa
 
 **Choice**: Run reconciliation once after provider registration at startup, then on the existing `CleanupJob` cycle (`WORKSPACE_CLEANUP_INTERVAL_MIN`, default 60m).
 
-**Rationale**: Startup is when predecessors' orphans are known — cleaning them immediately means a crashed restart self-heals within seconds rather than up to an hour. Reusing the existing ticker avoids a second scheduler. Gated on `Sandbox.IsEnabled()` (`ENABLE_AGENT_SANDBOXES`), consistent with the current `startCleanupJob` guard (`module.go:192`).
+**Rationale**: Startup is when a predecessor's orphans are known. The startup pass immediately reclaims orphans that are *not* protected by a fresh lease — including all pre-fix containers, which carry no lease at all. It does **not** reclaim a peer that crashed moments ago: that peer's lease is still fresh (D7), so the startup pass spares its warm containers and they are reclaimed on a later cleanup cycle, once the lease is older than `3 × WORKSPACE_OWNER_HEARTBEAT_MIN` (i.e. after roughly one cleanup interval, up to ~60 min by default). "Self-heals within seconds" applies only to owners whose lease has already aged out. Reusing the existing ticker avoids a second scheduler. Gated on `Sandbox.IsEnabled()` (`ENABLE_AGENT_SANDBOXES`), consistent with the current `startCleanupJob` guard.
 
 **Alternatives considered**: Interval only — leaves orphans running for a full hour after every deploy, which is exactly the accumulation pattern observed. Separate ticker — duplicate lifecycle to maintain.
 
@@ -93,7 +95,11 @@ Because Docker container/volume labels are immutable after creation, the lease c
 
 **Rationale**: Ownership alone cannot tell a live peer from a dead predecessor (D2). Warm-pool containers are idle for hours, so a fixed grace window cannot protect them. A heartbeat is the minimum mechanism that makes "owner is still alive" observable after process death: predecessors stop beating, so their leases go stale and their containers are reclaimed; a live peer keeps beating, so its pool is spared. Tying refresh to the pool's *tracked* set (not merely to the process) means a container the pool drops is no longer kept alive by the heartbeat.
 
-**Alternatives considered**: DB rows for warm containers (heavier, skews `CountActive`) — still needs liveness. A fixed long TTL — delays the leak fix instead of bounding it. Process-wide (not per-container) heartbeat — would keep a dropped container alive as long as any container is tracked.
+**Lease lifecycle (no leak)**: Lease volumes are not `memory.workspace=true`, so the workspace volume sweep never sees them; they are cleaned up explicitly both on normal teardown (`DestroySandboxContainer` removes the container's leases) and by the reconciler, which removes any lease whose container ID is absent from the current container list. That bounds lease count even when an owner dies mid-cycle and no longer prunes its own old leases. Lease removal is label-scoped to `memory.owner.heartbeat` only and is idempotent.
+
+**Fail-safe lease timestamps**: An unparseable lease timestamp yields the zero time. The reconciler treats a zero lease timestamp as *unknown* and spares the container (`heartbeat_unknown`), never as stale — consistent with the grace-period fail-safe (D3).
+
+**Alternatives considered**: DB rows for warm containers (heavier, skews `CountActive`) — still needs liveness. A fixed long TTL — delays the leak fix instead of bounding it. Process-wide (not per-container) heartbeat — would keep a dropped container alive as long as any container is tracked. Relying on `removeOlderHeartbeats` alone to prune leases — leaks a lease per crash, because a dead owner cannot run its own pruning.
 
 ### D8: Container enumeration is mandatory; failure aborts the pass
 

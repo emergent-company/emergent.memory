@@ -73,6 +73,10 @@ Reconciliation runs once at startup (gated on `ENABLE_AGENT_SANDBOXES`) and then
    than `WORKSPACE_RECONCILE_GRACE_MIN` (default 15 minutes).
 8. Destroys the remainder, container and its `workspace.volume` together, and logs each
    destruction with identifier, labels, age and reason.
+9. Removes liveness-lease volumes whose container ID is absent from the container list,
+   logging each with reason `container_gone`. This is label-scoped to
+   `memory.owner.heartbeat` only (never workspace or `emergent_*` volumes) and is
+   idempotent; leases of live containers are never removed.
 
 ### Verifying after a deploy
 
@@ -133,5 +137,10 @@ labelled `memory.workspace=true` are sandbox workspace volumes.
 - **An active workspace was destroyed** — this should not happen; captures are skipped by
   owner, DB-active, persistent and grace checks. Report with the `sandbox-reconcile` log
   lines (labels + reason) for the affected container.
-- **Orphans not reclaimed immediately** — they may be inside the grace window; they will be
-  reconsidered on the next pass once older than `WORKSPACE_RECONCILE_GRACE_MIN`.
+- **Orphans not reclaimed immediately** — they may be inside the grace window, or a peer
+  that just crashed may have a still-fresh lease (startup spares it). They are reconsidered
+  on a later pass once older than `WORKSPACE_RECONCILE_GRACE_MIN` and their lease exceeds
+  `3 × WORKSPACE_OWNER_HEARTBEAT_MIN`.
+- **Lease volumes left after a crash** — a dead owner can no longer prune its own leases,
+  so the reconciler removes leases whose container is gone (step 9 above). They are visible
+  only via `docker volume ls --filter label=memory.owner.heartbeat`.
