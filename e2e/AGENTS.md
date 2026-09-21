@@ -8,6 +8,35 @@ Tests run inside Docker where the `memory` binary is installed at runtime via `i
 
 ## Run Tests
 
+### Task shortcuts (recommended)
+
+`e2e/Taskfile.yml` wraps the daemon, the browser UI, and the runlog CLI so you
+do not have to remember flags or the right working directory. Run them all with
+`task -d e2e <name>`.
+
+| Task | What it does |
+|---|---|
+| `runlog:start` | Start the daemon + web UI on `:17432` (no Docker) |
+| `runlog:stop` / `runlog:restart` | Stop / restart the daemon |
+| `runlog:status` | Daemon health, `runs.db` path, and recent runs |
+| `runlog:ui` | Print (and try to open) the web UI URL |
+| `runlog:runs` | List recent runs |
+| `runlog:failing` | Failing tests, streak-sorted |
+| `runlog:stats` | Per-test pass rate + average duration |
+| `runlog:tail` | Stream new events as they arrive |
+| `runlog:reap` | Mark stale/orphaned runs as FAIL (`-- --dry-run` to preview) |
+| `runlog:clear` | Delete `runs.db` and per-run logs (destructive) |
+| `runlog:logs:clean` | Remove per-run log directories, keep `runs.db` |
+| `runlog:test` | Run the e2e suite through runlog |
+
+All of them pin the working directory to `e2e/`, so the daemon, the CLI, and the
+test framework all agree on `<e2e>/.runlog/runs.db`. Pass extra flags after `--`,
+e.g. `task -d e2e runlog:runs -- --since 7d`.
+
+`daemon:start` / `daemon:stop` / `daemon:restart` / `runs:clear` / `runs:reap` /
+`logs:clean` remain as aliases. The one behaviour change: `daemon:start` no
+longer pulls in the Docker server — use `test:mcj` or `server:start` for that.
+
 ### Host runner (preferred for local dev — no Docker needed)
 
 ```bash
@@ -50,7 +79,7 @@ MEMORY_TEST_ENV=localhost     go test -v ./...   # against local standalone serv
 | `MEMORY_PROD_TEST_TOKEN` | _(none)_ | Token for production smoke tests |
 | `TEST_RUN` | _(none)_ | Optional `-run` filter for `go test` |
 | `TEST_LOG_DIR` | _(none)_ | Directory for flat log files (run.log, session logs). Set to `/test-logs` in Docker. |
-| `TEST_RUNS_DB` | _(none)_ | Explicit override for `runs.db` path. Default: `<repo_root>/logs/runs.db` |
+| `TEST_RUNS_DB` | _(none)_ | Explicit override for `runs.db` path. Default: `<e2e>/.runlog/runs.db` |
 | `TEST_RUNNER` | _(auto)_ | Runner label stored in runs DB: `host`, `docker`, etc. Auto-detected if unset. |
 
 ### Named env files
