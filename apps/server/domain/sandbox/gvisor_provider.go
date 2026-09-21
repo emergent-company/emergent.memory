@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -37,6 +38,13 @@ type GVisorProvider struct {
 	runtimeName  string // "runsc" or "" (default)
 	networkName  string // Docker network for container isolation
 	defaultImage string // Override for default workspace image
+
+	// beatMu serializes heartbeat lease mutations (create + prune) process-locally.
+	// Without it, two concurrent beats for the same container could each create a
+	// lease and prune the other's, leaving no lease at all. Held for the whole
+	// create+prune sequence in BeatContainerHeartbeat and during teardown's lease
+	// removal in removeHeartbeatLeasesForContainer.
+	beatMu sync.Mutex
 }
 
 // GVisorProviderConfig holds configuration for the gVisor provider.
@@ -153,7 +161,8 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		Name: volumeName,
 		Labels: map[string]string{
 			defaultRuntimeLabel: "true",
-			"workspace.type":    string(req.ContainerType),
+			workspaceTypeLabel:  string(req.ContainerType),
+			sandboxOwnerLabel:   sandboxOwnerIdentity(),
 		},
 	})
 	if err != nil {
@@ -173,9 +182,10 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		Image: image,
 		Cmd:   cmd,
 		Labels: map[string]string{
-			defaultRuntimeLabel: "true",
-			"workspace.type":    string(req.ContainerType),
-			"workspace.volume":  volumeName,
+			defaultRuntimeLabel:  "true",
+			workspaceTypeLabel:   string(req.ContainerType),
+			workspaceVolumeLabel: volumeName,
+			sandboxOwnerLabel:    sandboxOwnerIdentity(),
 		},
 		WorkingDir: workspaceDir,
 	}
@@ -220,8 +230,9 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 			Name: extraVolumeName,
 			Labels: map[string]string{
 				defaultRuntimeLabel: "true",
-				"workspace.type":    string(req.ContainerType),
+				workspaceTypeLabel:  string(req.ContainerType),
 				"workspace.parent":  volumeName,
+				sandboxOwnerLabel:   sandboxOwnerIdentity(),
 			},
 		})
 		if err != nil {
@@ -325,12 +336,16 @@ func (p *GVisorProvider) Destroy(ctx context.Context, providerID string) error {
 		}
 	}
 
-	// Remove associated volume
-	if volumeName != "" {
-		if err := p.client.VolumeRemove(ctx, volumeName, true); err != nil {
-			p.log.Warn("failed to remove workspace volume", "volume", volumeName, "error", err)
-		}
+	// Remove associated volume (shared removal path, also used by reconciliation)
+	if err := p.removeWorkspaceVolume(ctx, volumeName); err != nil {
+		p.log.Warn("failed to remove workspace volume", "volume", volumeName, "error", err)
 	}
+
+	// Normal teardown removes the container's liveness leases so a graceful destroy
+	// does not leak heartbeat volumes until a later reconciliation pass. Only
+	// reached once the container is confirmed removed above; a container that still
+	// exists (real ContainerRemove error) returns earlier and keeps its lease.
+	p.removeHeartbeatLeasesForContainer(ctx, providerID)
 
 	p.log.Info("workspace container destroyed", "container_id", providerID[:min(12, len(providerID))])
 	return nil
@@ -463,8 +478,9 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		Name: volumeName,
 		Labels: map[string]string{
 			defaultRuntimeLabel:       "true",
-			"workspace.type":          string(req.ContainerType),
+			workspaceTypeLabel:        string(req.ContainerType),
 			"workspace.from_snapshot": snapshotID,
+			sandboxOwnerLabel:         sandboxOwnerIdentity(),
 		},
 	})
 	if err != nil {
@@ -533,9 +549,10 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		Cmd:   cmd,
 		Labels: map[string]string{
 			defaultRuntimeLabel:       "true",
-			"workspace.type":          string(req.ContainerType),
-			"workspace.volume":        volumeName,
+			workspaceTypeLabel:        string(req.ContainerType),
+			workspaceVolumeLabel:      volumeName,
 			"workspace.from_snapshot": snapshotID,
+			sandboxOwnerLabel:         sandboxOwnerIdentity(),
 		},
 		WorkingDir: workspaceDir,
 	}

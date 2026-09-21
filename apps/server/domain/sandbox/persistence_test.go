@@ -1,13 +1,42 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// BLOCKING 2a: the container reference must be part of the initial INSERT so a
+// peer reconciler never observes a live container as ownerless-and-unreferenced.
+func TestBuildWorkspaceEntity_PersistsProviderWorkspaceID(t *testing.T) {
+	req := &CreateWorkspaceRequest{
+		ContainerType:       ContainerTypeAgentSandbox,
+		Provider:            string(ProviderGVisor),
+		ProviderWorkspaceID: "memory-ws-1789981075911325025",
+	}
+
+	ws := buildWorkspaceEntity(req, ProviderGVisor, LifecycleEphemeral, DeploymentSelfHosted, nil, 24*time.Hour)
+
+	assert.Equal(t, "memory-ws-1789981075911325025", ws.ProviderWorkspaceID)
+	assert.Equal(t, StatusCreating, ws.Status)
+	assert.Equal(t, LifecycleEphemeral, ws.Lifecycle)
+	require.NotNil(t, ws.ExpiresAt, "ephemeral workspaces still get a TTL")
+}
+
 // --- DTO Tests ---
+
+func TestCreateWorkspaceRequest_ProviderWorkspaceIDNotClientSettable(t *testing.T) {
+	// provider_workspace_id is internal-only (set by auto_provisioner.go in the
+	// atomic-insert path). A client must not be able to protect an unrelated
+	// container from reconciliation by supplying it in the request body.
+	body := []byte(`{"container_type":"agent_sandbox","provider_workspace_id":"attacker-owned"}`)
+	var req CreateWorkspaceRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	assert.Empty(t, req.ProviderWorkspaceID, "provider_workspace_id must not decode from client JSON")
+}
 
 func TestAttachSessionRequest(t *testing.T) {
 	req := AttachSessionRequest{AgentSessionID: "session-abc-123"}

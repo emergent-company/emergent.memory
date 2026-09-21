@@ -96,6 +96,12 @@ type WarmPool struct {
 	// Defaults to resolving via the registered GVisorProvider. Can be overridden in tests.
 	digestResolver func(image string) string
 
+	// heartbeatInterval is how often liveness leases are refreshed for tracked
+	// containers (WORKSPACE_OWNER_HEARTBEAT_MIN, default 2m).
+	heartbeatInterval time.Duration
+	// heartbeatOnce ensures only one heartbeat goroutine runs per pool.
+	heartbeatOnce sync.Once
+
 	// Pool of ready containers
 	containers []*warmContainer
 
@@ -115,11 +121,12 @@ func NewWarmPool(orchestrator *Orchestrator, log *slog.Logger, config WarmPoolCo
 		cap = 0
 	}
 	return &WarmPool{
-		config:       config,
-		orchestrator: orchestrator,
-		log:          log.With("component", "warm-pool"),
-		containers:   make([]*warmContainer, 0, cap),
-		stopCh:       make(chan struct{}),
+		config:            config,
+		orchestrator:      orchestrator,
+		log:               log.With("component", "warm-pool"),
+		heartbeatInterval: defaultOwnerHeartbeatInterval,
+		containers:        make([]*warmContainer, 0, cap),
+		stopCh:            make(chan struct{}),
 	}
 }
 
@@ -135,14 +142,46 @@ func (wp *WarmPool) Start(ctx context.Context) error {
 	totalTarget := wp.config.Size + len(wp.config.ExtraImages)
 	wp.log.Info("initializing warm pool", "target_size", totalTarget, "images", len(allImages))
 
-	// Create containers in parallel across all managed images.
+	// Converge: destroy any pre-existing in-memory containers beyond each image's
+	// target before creating the shortfall. This keeps the pool bounded even if
+	// Start runs more than once or the target size changed (D5).
+	wp.mu.Lock()
+	kept := make([]*warmContainer, 0, len(wp.containers))
+	counts := make(map[string]int, len(allImages))
+	var surplus []*warmContainer
+	for _, wc := range wp.containers {
+		img := wc.image
+		if counts[img] < wp.config.targetCountForImage(img) {
+			counts[img]++
+			kept = append(kept, wc)
+			continue
+		}
+		surplus = append(surplus, wc)
+	}
+	wp.containers = kept
+	wp.mu.Unlock()
+
+	for _, wc := range surplus {
+		wp.log.Warn("destroying surplus warm container beyond target",
+			"provider_id", wc.providerID,
+			"image", wc.image,
+		)
+		wp.destroyContainer(ctx, wc)
+	}
+
+	// Create containers in parallel across all managed images, only for the
+	// shortfall relative to the retained (converged) count.
 	created := make(chan *warmContainer, totalTarget)
 	errors := make(chan error, totalTarget)
 
 	var wg sync.WaitGroup
 	for _, img := range allImages {
-		count := wp.config.targetCountForImage(img)
-		for i := 0; i < count; i++ {
+		need := wp.config.targetCountForImage(img) - counts[img]
+		if need <= 0 {
+			continue
+		}
+		counts[img] += need
+		for i := 0; i < need; i++ {
 			wg.Add(1)
 			imgCopy := img
 			go func() {
@@ -180,7 +219,64 @@ func (wp *WarmPool) Start(ctx context.Context) error {
 		"target", totalTarget,
 	)
 
+	// Start refreshing liveness leases for the containers we track. This is what
+	// lets a peer reconciler distinguish this live pool from a dead predecessor's.
+	wp.heartbeatOnce.Do(func() { go wp.heartbeatLoop() })
+
 	return nil
+}
+
+// heartbeatLoop periodically refreshes liveness leases for tracked warm containers.
+func (wp *WarmPool) heartbeatLoop() {
+	interval := wp.heartbeatInterval
+	if interval <= 0 {
+		interval = defaultOwnerHeartbeatInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	wp.beatContainers(context.Background())
+
+	for {
+		select {
+		case <-ticker.C:
+			wp.beatContainers(context.Background())
+		case <-wp.stopCh:
+			return
+		}
+	}
+}
+
+// beatContainers refreshes the liveness lease of every container currently tracked
+// by the pool. Containers dropped from the pool are intentionally not beaten, so
+// their leases go stale and reconciliation can reap them.
+func (wp *WarmPool) beatContainers(ctx context.Context) {
+	wp.mu.Lock()
+	snapshot := make([]*warmContainer, len(wp.containers))
+	copy(snapshot, wp.containers)
+	wp.mu.Unlock()
+
+	if wp.orchestrator == nil {
+		return
+	}
+
+	for _, wc := range snapshot {
+		provider, err := wp.orchestrator.GetProvider(wc.providerType)
+		if err != nil {
+			continue
+		}
+		beater, ok := provider.(ContainerHeartbeater)
+		if !ok {
+			continue
+		}
+		if err := beater.BeatContainerHeartbeat(ctx, wc.providerID); err != nil {
+			wp.log.Warn("failed to refresh warm container heartbeat",
+				"provider_id", wc.providerID,
+				"error", err,
+			)
+		}
+	}
 }
 
 // Stop shuts down the warm pool and destroys all pre-booted containers.
@@ -272,6 +368,8 @@ func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmCo
 				"current_digest", currentDigest,
 			)
 			wp.containers = append(wp.containers[:i], wp.containers[i+1:]...)
+			// Destroy the discarded stale container so it cannot become a transient
+			// orphan, then replenish with a fresh container (D5).
 			go wp.destroyContainer(context.Background(), wc)
 			// Trigger replenishment so the pool refills with a fresh container.
 			go wp.replenishImage(wc.image)
@@ -525,33 +623,37 @@ func (wp *WarmPool) drainExcess(ctx context.Context, target int) error {
 	return nil
 }
 
-// createWarmContainer provisions a new pre-booted container using the default provider.
-// image specifies the Docker image to use; empty string uses the provider's default.
+// createWarmContainer provisions a new pre-booted container using the gVisor
+// provider. image specifies the Docker image to use; empty string uses the
+// provider's default.
+//
+// The pool is deliberately restricted to the provider that supports label
+// enumeration + liveness leases: the gVisor provider. Firecracker and E2B
+// containers carry no Docker labels and implement neither SandboxResourceManager
+// nor ContainerHeartbeater, so they would leak exactly as before the fix.
 func (wp *WarmPool) createWarmContainer(ctx context.Context, image string) (*warmContainer, error) {
-	// Select the default provider for agent workspaces
-	provider, providerType, err := wp.orchestrator.SelectProvider(
-		ContainerTypeAgentSandbox,
-		DeploymentSelfHosted,
-		"auto",
-	)
+	provider, err := wp.orchestrator.GetProvider(ProviderGVisor)
 	if err != nil {
-		return nil, fmt.Errorf("no provider available for warm pool: %w", err)
+		return nil, fmt.Errorf("gVisor provider unavailable for warm pool: %w", err)
+	}
+	if _, ok := provider.(ContainerHeartbeater); !ok {
+		return nil, fmt.Errorf("provider %T does not implement ContainerHeartbeater", provider)
 	}
 
 	result, err := provider.Create(ctx, &CreateContainerRequest{
 		ContainerType: ContainerTypeAgentSandbox,
 		BaseImage:     image,
 		Labels: map[string]string{
-			"memory.warm-pool": "true",
+			warmPoolLabel: "true",
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create warm container via %s: %w", providerType, err)
+		return nil, fmt.Errorf("failed to create warm container via %s: %w", ProviderGVisor, err)
 	}
 
 	return &warmContainer{
 		providerID:   result.ProviderID,
-		providerType: providerType,
+		providerType: ProviderGVisor,
 		image:        image,
 		imageDigest:  result.ImageDigest,
 		createdAt:    time.Now(),

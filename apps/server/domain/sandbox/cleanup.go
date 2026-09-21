@@ -40,6 +40,18 @@ type CleanupJob struct {
 	doneCh       chan struct{} // closed when the goroutine exits
 	mu           sync.Mutex
 	running      bool
+
+	// reconciler runs label-driven orphan reconciliation alongside TTL expiry.
+	// It is optional so existing construction/tests keep working.
+	reconciler       ReconcilerRunner
+	reconcileEnabled bool
+}
+
+// SetReconciler wires orphan reconciliation into the cleanup cycle. When enabled is
+// false, reconciliation is skipped even if a reconciler is present.
+func (j *CleanupJob) SetReconciler(r ReconcilerRunner, enabled bool) {
+	j.reconciler = r
+	j.reconcileEnabled = enabled
 }
 
 // NewCleanupJob creates a new cleanup job.
@@ -71,8 +83,10 @@ func (j *CleanupJob) Start(ctx context.Context) {
 		ticker := time.NewTicker(j.config.Interval)
 		defer ticker.Stop()
 
-		// Run an initial cleanup cycle on startup
-		j.runCycle(ctx)
+		// Initial pass on startup: TTL expiry + resource check. Reconciliation is
+		// run exactly once at startup by the module (after providers register), so
+		// it is deliberately NOT repeated here.
+		j.runInitialCycle(ctx)
 
 		for {
 			select {
@@ -109,12 +123,37 @@ func (j *CleanupJob) Stop() {
 	<-j.doneCh
 }
 
-// runCycle performs a single cleanup cycle: destroy expired workspaces,
-// reclaim idle persistent MCP servers, and check resource usage.
+// runCycle performs a single cleanup cycle: reconcile ownerless sandbox resources,
+// destroy expired workspaces, reclaim idle persistent MCP servers, and check
+// resource usage.
 func (j *CleanupJob) runCycle(ctx context.Context) {
 	j.cleanupExpired(ctx)
+	j.reconcileOrphans(ctx)
 	j.reclaimIdleMCPServers(ctx)
 	j.checkResourceUsage(ctx)
+}
+
+// runInitialCycle is the startup pass. It intentionally omits reconciliation, which
+// is run once at startup (after provider registration) by reconcileAtStartup. This
+// keeps the startup reconciliation single-shot per the spec.
+func (j *CleanupJob) runInitialCycle(ctx context.Context) {
+	j.cleanupExpired(ctx)
+	j.checkResourceUsage(ctx)
+}
+
+// reconcileOrphans runs one orphan reconciliation pass when enabled. CleanupJob is
+// only started when sandboxes are enabled (module guard), and reconcileEnabled
+// carries the WORKSPACE_RECONCILE_ENABLED toggle.
+func (j *CleanupJob) reconcileOrphans(ctx context.Context) {
+	if j.reconciler == nil || !j.reconcileEnabled {
+		return
+	}
+	result := j.reconciler.Reconcile(ctx)
+	j.log.Debug("cleanup cycle: reconciliation complete",
+		"reconciled", result.Reconciled,
+		"skipped", result.Skipped,
+		"failed", result.Failed,
+	)
 }
 
 // reclaimIdleMCPServers runs the persistent-MCP idle policy if it is enabled.
@@ -353,6 +392,9 @@ func (r *hostedMCPRuntime) DestroyContainer(ctx context.Context, ws *AgentSandbo
 // Persistent MCP servers are automatically excluded because they have NULL expires_at,
 // and ListExpired only returns rows where expires_at IS NOT NULL AND expires_at < NOW().
 func (j *CleanupJob) cleanupExpired(ctx context.Context) {
+	if j.store == nil {
+		return
+	}
 	expired, err := j.store.ListExpired(ctx)
 	if err != nil {
 		j.log.Error("failed to list expired workspaces", "error", err)
@@ -433,6 +475,9 @@ func (j *CleanupJob) destroyWorkspace(ctx context.Context, ws *AgentSandbox) err
 
 // checkResourceUsage monitors aggregate resource usage and logs warnings when thresholds are exceeded.
 func (j *CleanupJob) checkResourceUsage(ctx context.Context) {
+	if j.store == nil {
+		return
+	}
 	activeCount, err := j.store.CountActive(ctx)
 	if err != nil {
 		j.log.Error("failed to count active workspaces for resource monitoring", "error", err)

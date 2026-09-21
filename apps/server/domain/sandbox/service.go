@@ -45,6 +45,37 @@ func NewService(store *Store, orchestrator *Orchestrator, log *slog.Logger) *Ser
 	}
 }
 
+// buildWorkspaceEntity constructs the initial row for a workspace. It is a pure
+// function so the atomic inclusion of ProviderWorkspaceID can be unit-tested.
+func buildWorkspaceEntity(req *CreateWorkspaceRequest, provider ProviderType, lifecycle Lifecycle, deploymentMode DeploymentMode, limits *ResourceLimits, ttl time.Duration) *AgentSandbox {
+	ws := &AgentSandbox{
+		ContainerType:       req.ContainerType,
+		Provider:            provider,
+		ProviderWorkspaceID: req.ProviderWorkspaceID,
+		DeploymentMode:      deploymentMode,
+		Lifecycle:           lifecycle,
+		Status:              StatusCreating,
+		ResourceLimits:      limits,
+		MCPConfig:           req.MCPConfig,
+		Metadata:            map[string]any{},
+	}
+
+	if req.RepositoryURL != "" {
+		ws.RepositoryURL = &req.RepositoryURL
+	}
+	if req.Branch != "" {
+		ws.Branch = &req.Branch
+	}
+
+	// Set TTL for ephemeral workspaces only.
+	if lifecycle == LifecycleEphemeral && ttl > 0 {
+		expiresAt := time.Now().Add(ttl)
+		ws.ExpiresAt = &expiresAt
+	}
+
+	return ws
+}
+
 // Create creates a new workspace record.
 func (s *Service) Create(ctx context.Context, req *CreateWorkspaceRequest) (*WorkspaceResponse, error) {
 	// Validate container type
@@ -81,31 +112,11 @@ func (s *Service) Create(ctx context.Context, req *CreateWorkspaceRequest) (*Wor
 		deploymentMode = DeploymentManaged
 	}
 
-	// Build workspace entity
-	ws := &AgentSandbox{
-		ContainerType:       req.ContainerType,
-		Provider:            provider,
-		ProviderWorkspaceID: "", // Will be set after container creation
-		DeploymentMode:      deploymentMode,
-		Lifecycle:           lifecycle,
-		Status:              StatusCreating,
-		ResourceLimits:      s.applyDefaultLimits(req.ResourceLimits),
-		MCPConfig:           req.MCPConfig,
-		Metadata:            map[string]any{},
-	}
-
-	if req.RepositoryURL != "" {
-		ws.RepositoryURL = &req.RepositoryURL
-	}
-	if req.Branch != "" {
-		ws.Branch = &req.Branch
-	}
-
-	// Set TTL for ephemeral workspaces
-	if lifecycle == LifecycleEphemeral {
-		expiresAt := time.Now().AddDate(0, 0, s.config.DefaultTTLDays)
-		ws.ExpiresAt = &expiresAt
-	}
+	// Build workspace entity. The container reference (when supplied) is part of
+	// the initial INSERT, so a peer reconciler never observes a live container as
+	// ownerless-and-unreferenced during provisioning.
+	ttl := time.Duration(s.config.DefaultTTLDays) * 24 * time.Hour
+	ws := buildWorkspaceEntity(req, provider, lifecycle, deploymentMode, s.applyDefaultLimits(req.ResourceLimits), ttl)
 
 	created, err := s.store.Create(ctx, ws)
 	if err != nil {

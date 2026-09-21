@@ -1483,6 +1483,34 @@ func TestIntegration_DefaultAgentSandboxConfig(t *testing.T) {
 	assert.Empty(t, cfg.SetupCommands)
 }
 
+// BLOCKING 2a: the acquire path must persist the provider workspace ID in the
+// same create call (single INSERT), not via a later follow-up update.
+func TestAutoProvisioner_CreateWorkspaceWithContainer_CarriesProviderID(t *testing.T) {
+	ap := NewAutoProvisioner(nil, nil, nil, nil, nil, testLogger(), nil)
+
+	var captured *CreateWorkspaceRequest
+	ap.createWorkspace = func(_ context.Context, req *CreateWorkspaceRequest) (*WorkspaceResponse, error) {
+		captured = req
+		return &WorkspaceResponse{ID: "ws-1"}, nil
+	}
+
+	resp, err := ap.createWorkspaceWithContainer(t.Context(), ProviderGVisor, "memory-ws-acquired-1", "https://github.com/org/repo", "main", nil)
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	assert.Equal(t, "memory-ws-acquired-1", captured.ProviderWorkspaceID)
+	assert.Equal(t, ContainerTypeAgentSandbox, captured.ContainerType)
+	assert.Equal(t, string(ProviderGVisor), captured.Provider)
+	assert.Equal(t, "https://github.com/org/repo", captured.RepositoryURL)
+	assert.Equal(t, "main", captured.Branch)
+	assert.Equal(t, "ws-1", resp.ID)
+}
+
+func TestAutoProvisioner_CreateWorkspaceWithContainer_NoStore(t *testing.T) {
+	ap := NewAutoProvisioner(nil, nil, nil, nil, nil, testLogger(), nil)
+	_, err := ap.createWorkspaceWithContainer(t.Context(), ProviderGVisor, "c1", "", "", nil)
+	require.Error(t, err, "must not silently proceed without a workspace store")
+}
+
 // Helper: elapsed time tracker for timing assertions
 func measureDuration(fn func()) time.Duration {
 	start := time.Now()

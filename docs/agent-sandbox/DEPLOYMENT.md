@@ -77,6 +77,14 @@ E2B provides managed sandboxes via their cloud API. No local infrastructure requ
 | `WORKSPACE_DEFAULT_DISK`   | `10G`   | Disk limit per sandbox              |
 | `WORKSPACE_WARM_POOL_SIZE` | `0`     | Pre-booted containers (0 = disabled) |
 
+### Orphan Reconciliation
+
+| Variable                        | Default | Description                                                     |
+| ------------------------------- | ------- | --------------------------------------------------------------- |
+| `WORKSPACE_RECONCILE_ENABLED`   | `true`  | Toggle label-driven orphan reconciliation                       |
+| `WORKSPACE_RECONCILE_GRACE_MIN` | `15`    | Minutes an ownerless resource must exist before it is destroyed |
+| `WORKSPACE_OWNER_HEARTBEAT_MIN` | `2`     | Warm-pool owner liveness heartbeat interval; leases older than `3 ×` this are treated as a dead owner |
+
 ### Network Isolation
 
 | Variable                 | Default   | Description                            |
@@ -149,6 +157,34 @@ The warm pool pre-boots containers for faster sandbox creation (~50ms vs ~2-5s):
 | `WORKSPACE_WARM_POOL_SIZE=5` | Production with moderate traffic |
 
 Warm pool containers consume resources even when idle. Size according to your expected concurrent usage.
+
+### Warm Pool Lifecycle & Reconciliation
+
+Warm-pool containers are tracked in process memory and labelled in Docker. Because a
+SIGKILL, OOM, or deploy replacement can skip graceful shutdown, the server reconciles
+labelled sandbox resources by label so orphans from a previous process are reclaimed:
+
+- Every sandbox container and workspace volume carries `memory.workspace=true`,
+  `workspace.type`, `workspace.volume` (containers), and `memory.owner`
+  (host + PID + per-process start token).
+- Each warm-pool process refreshes a per-container liveness lease
+  (`memory.owner.heartbeat`, interval `WORKSPACE_OWNER_HEARTBEAT_MIN`) for the containers
+  it tracks, so a peer can distinguish a live pool from a dead predecessor.
+- On startup, and then on every `WORKSPACE_CLEANUP_INTERVAL_MIN` tick, the server lists
+  containers and volumes labelled `memory.workspace=true` and destroys those that are
+  neither owned by the current process, nor backed by a fresh owner heartbeat, nor
+  referenced by a workspace record that is not stopped/errored — after the grace period
+  (`WORKSPACE_RECONCILE_GRACE_MIN`). If container enumeration fails, the pass aborts
+  without destroying anything.
+- Persistent MCP containers (`lifecycle=persistent` / `container_type=mcp_server`) are
+  excluded explicitly and are never reconciled.
+- The warm pool converges to `WORKSPACE_WARM_POOL_SIZE` per managed image: on start it
+  destroys surplus containers beyond the target and only creates the shortfall.
+- Each destroyed orphan is logged with container/volume identifiers, labels, age and the
+  reason; the pass summary reports `reconciled`, `skipped`, and `failed` counts.
+
+Set `WORKSPACE_RECONCILE_ENABLED=false` to disable the pass (not recommended — orphan
+accumulation resumes). See `OPERATIONS.md` for inspecting and cleaning labelled resources.
 
 ## Health Monitoring
 
