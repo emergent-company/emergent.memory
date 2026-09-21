@@ -20,7 +20,7 @@ The server SHALL support destroying persistent hosted MCP server workspaces whos
 - **AND** a persistent MCP server's `last_used_at` is older than N days
 - **WHEN** the cleanup cycle runs
 - **THEN** the server's container SHALL be destroyed
-- **AND** its row SHALL be deleted only after the container destroy is attempted
+- **AND** its row SHALL be deleted only after the container destroy succeeds, with a failed destroy leaving the row in place for a later retry
 
 #### Scenario: A recently used server is kept
 - **GIVEN** the idle reclamation policy is enabled with a window of N days
@@ -67,7 +67,7 @@ Idle reclamation SHALL run as part of the existing cleanup cycle, gated on agent
 
 ### Requirement: Reclamation decisions SHALL be observable
 
-Each reclamation and each skip SHALL be logged with the server identifier, its idle age, and the reason, and the pass SHALL report counts of reclaimed, skipped, and failed servers.
+Each reclamation and each skip SHALL be logged with the server identifier and its idle age, each skip SHALL additionally record why it was skipped, and the pass SHALL report counts of reclaimed, skipped, and failed servers.
 
 #### Scenario: Reclaimed server is logged with its idle age
 - **GIVEN** an idle persistent MCP server is reclaimed
