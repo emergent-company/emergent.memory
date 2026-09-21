@@ -16,12 +16,12 @@ The app SHALL provide a navigation entry that opens the objects page.
 
 ### Requirement: List objects
 
-The objects page SHALL list the knowledge graph's objects, each showing its name, type, and status.
+The objects page SHALL list the knowledge graph's objects, each showing its name, type, status, and embedding status.
 
 #### Scenario: Objects present
 
 - **WHEN** the objects page loads and objects exist
-- **THEN** the objects are listed, each showing name, type, and status
+- **THEN** the objects are listed, each showing name, type, status, and embedding status
 
 #### Scenario: No objects
 
@@ -53,12 +53,12 @@ The objects page SHALL let the user choose which graph branch to browse.
 
 ### Requirement: View an object's details
 
-Selecting an object SHALL show its properties and relationships.
+Selecting an object SHALL show its properties, relationships, and embedding status.
 
 #### Scenario: Open an object
 
 - **WHEN** the user selects an object in the list
-- **THEN** the object's properties are shown
+- **THEN** the object's properties and embedding status are shown
 
 #### Scenario: Object has relationships
 
