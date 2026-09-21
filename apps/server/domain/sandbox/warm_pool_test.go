@@ -496,6 +496,128 @@ func TestWarmPool_Acquire_NoDigest_Accepted(t *testing.T) {
 	assert.Equal(t, "no-digest-container", result.ProviderID())
 }
 
+// --- Convergence (R5) ---
+
+func TestWarmPool_Start_ConvergesSurplusToTarget(t *testing.T) {
+	orch := NewOrchestrator(testLogger())
+	mock := &mockProvider{name: "converge", providerType: ProviderGVisor, healthy: true}
+	orch.RegisterProvider(ProviderGVisor, mock)
+
+	wp := NewWarmPool(orch, testLogger(), WarmPoolConfig{Size: 2})
+	// Simulate pre-existing containers from a prior run: more than the target.
+	for i := 0; i < 4; i++ {
+		wp.containers = append(wp.containers, &warmContainer{
+			providerID:   fmt.Sprintf("old-%d", i),
+			providerType: ProviderGVisor,
+			createdAt:    time.Now(),
+		})
+	}
+
+	err := wp.Start(t.Context())
+	require.NoError(t, err)
+
+	wp.mu.Lock()
+	poolSize := len(wp.containers)
+	wp.mu.Unlock()
+
+	assert.Equal(t, 2, poolSize, "pool must converge to the configured target")
+	assert.Equal(t, int64(2), mock.destroyCount.Load(), "surplus containers must be destroyed")
+	assert.Equal(t, int64(0), mock.createCount.Load(), "no creation needed when already at target")
+}
+
+func TestWarmPool_Start_ConvergesPerImageTargets(t *testing.T) {
+	orch := NewOrchestrator(testLogger())
+	mock := &mockProvider{name: "converge-per-image", providerType: ProviderGVisor, healthy: true}
+	orch.RegisterProvider(ProviderGVisor, mock)
+
+	wp := NewWarmPool(orch, testLogger(), WarmPoolConfig{
+		Size:        2,
+		TargetImage: "primary:latest",
+		ExtraImages: []string{"extra:latest"},
+	})
+	// Primary target 2, extra target 1.
+	for i := 0; i < 3; i++ {
+		wp.containers = append(wp.containers, &warmContainer{providerID: fmt.Sprintf("p-%d", i), providerType: ProviderGVisor, image: "primary:latest", createdAt: time.Now()})
+	}
+	for i := 0; i < 2; i++ {
+		wp.containers = append(wp.containers, &warmContainer{providerID: fmt.Sprintf("e-%d", i), providerType: ProviderGVisor, image: "extra:latest", createdAt: time.Now()})
+	}
+
+	err := wp.Start(t.Context())
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(2), mock.destroyCount.Load(), "one surplus per image must be destroyed")
+	assert.Equal(t, int64(0), mock.createCount.Load())
+
+	wp.mu.Lock()
+	var primary, extra int
+	for _, wc := range wp.containers {
+		switch wc.image {
+		case "primary:latest":
+			primary++
+		case "extra:latest":
+			extra++
+		}
+	}
+	wp.mu.Unlock()
+	assert.Equal(t, 2, primary, "retained primary count must equal target")
+	assert.Equal(t, 1, extra, "retained extra count must equal target")
+}
+
+func TestWarmPool_StaleDiscard_LeavesNoExtraContainer(t *testing.T) {
+	orch := NewOrchestrator(testLogger())
+	mock := &mockProvider{name: "stale-converge", providerType: ProviderGVisor, healthy: true}
+	orch.RegisterProvider(ProviderGVisor, mock)
+
+	wp := NewWarmPool(orch, testLogger(), WarmPoolConfig{Size: 2, TargetImage: "myimage:latest"})
+	wp.digestResolver = func(string) string { return "sha256:newdigest" }
+
+	// One stale container (discarded on Acquire) and one fresh container (kept).
+	wp.containers = append(wp.containers,
+		&warmContainer{providerID: "stale", providerType: ProviderGVisor, image: "myimage:latest", imageDigest: "sha256:olddigest", createdAt: time.Now()},
+		&warmContainer{providerID: "fresh", providerType: ProviderGVisor, image: "myimage:latest", imageDigest: "sha256:newdigest", createdAt: time.Now()},
+	)
+
+	result := wp.Acquire(ProviderGVisor, "myimage:latest")
+	assert.Nil(t, result, "stale container must be rejected")
+
+	require.Eventually(t, func() bool {
+		wp.mu.Lock()
+		defer wp.mu.Unlock()
+		return len(wp.containers) == 2
+	}, 2*time.Second, 20*time.Millisecond, "pool must replenish back to target without leaving an extra container")
+
+	assert.Equal(t, int64(1), mock.destroyCount.Load(), "the discarded stale container must be destroyed")
+	assert.Equal(t, int64(1), mock.createCount.Load(), "exactly one replacement should be created")
+}
+
+func TestWarmPool_SteadyState_RemainsBounded(t *testing.T) {
+	orch := NewOrchestrator(testLogger())
+	mock := &mockProvider{name: "steady", providerType: ProviderGVisor, healthy: true}
+	orch.RegisterProvider(ProviderGVisor, mock)
+
+	wp := NewWarmPool(orch, testLogger(), WarmPoolConfig{Size: 2})
+
+	require.NoError(t, wp.Start(t.Context()))
+
+	for i := 0; i < 5; i++ {
+		wc := wp.Acquire(ProviderGVisor, "")
+		require.NotNil(t, wc, "iteration %d: expected a warm hit", i)
+		require.Eventually(t, func() bool {
+			wp.mu.Lock()
+			defer wp.mu.Unlock()
+			return len(wp.containers) == 2
+		}, 2*time.Second, 20*time.Millisecond, "iteration %d: pool must replenish to target", i)
+	}
+
+	wp.mu.Lock()
+	poolSize := len(wp.containers)
+	wp.mu.Unlock()
+	assert.Equal(t, 2, poolSize, "steady-state pool size must equal the configured target")
+
+	_ = wp.Stop(t.Context())
+}
+
 // --- Constants ---
 
 func TestWarmPoolConstants(t *testing.T) {

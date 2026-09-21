@@ -22,6 +22,7 @@ var Module = fx.Options(
 	fx.Provide(newServiceFromConfig),
 	fx.Provide(newOrchestrator),
 	fx.Provide(newCleanupJob),
+	fx.Provide(newReconciler),
 	fx.Provide(newSetupExecutor),
 	fx.Provide(newCheckoutService),
 	fx.Provide(newAutoProvisioner),
@@ -127,8 +128,14 @@ func newCleanupJob(store *Store, orchestrator *Orchestrator, log *slog.Logger, c
 	return NewCleanupJob(store, orchestrator, log, cleanupCfg)
 }
 
+// newReconciler creates the label-driven orphan reconciler from configuration.
+func newReconciler(store *Store, orchestrator *Orchestrator, log *slog.Logger, cfg *config.Config) *Reconciler {
+	grace := time.Duration(cfg.Sandbox.ReconcileGraceMin) * time.Minute
+	return NewReconciler(orchestrator, store, grace, log)
+}
+
 // registerProviders registers all available workspace providers with the orchestrator.
-func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, cfg *config.Config, log *slog.Logger) {
+func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, rec *Reconciler, cfg *config.Config, log *slog.Logger) {
 	if !cfg.Sandbox.IsEnabled() {
 		return
 	}
@@ -179,6 +186,11 @@ func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, cfg *config.
 			// Start health monitoring
 			orchestrator.StartHealthMonitoring(ctx)
 
+			// Reclaim predecessors' orphans immediately, without waiting for the
+			// cleanup interval. Runs after providers are registered so the gVisor
+			// provider can enumerate Docker resources. Gated on IsEnabled().
+			reconcileAtStartup(cfg, rec, log)
+
 			return nil
 		},
 		OnStop: func(_ context.Context) error {
@@ -189,10 +201,13 @@ func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, cfg *config.
 }
 
 // startCleanupJob starts the cleanup job if agent sandboxes are enabled.
-func startCleanupJob(lc fx.Lifecycle, job *CleanupJob, cfg *config.Config, log *slog.Logger) {
+func startCleanupJob(lc fx.Lifecycle, job *CleanupJob, rec *Reconciler, cfg *config.Config, log *slog.Logger) {
 	if !cfg.Sandbox.IsEnabled() {
 		return
 	}
+
+	// Reconcile ownerless sandbox resources on every cleanup cycle, alongside TTL expiry.
+	job.SetReconciler(rec, cfg.Sandbox.ReconcileEnabled)
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {

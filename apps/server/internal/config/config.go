@@ -426,6 +426,11 @@ type SandboxConfig struct {
 	DefaultImage string `env:"WORKSPACE_DEFAULT_IMAGE" envDefault:""`
 	// FirecrackerDataDir is the directory containing Firecracker rootfs and kernel files
 	FirecrackerDataDir string `env:"WORKSPACE_FIRECRACKER_DATA_DIR" envDefault:"/var/lib/firecracker"`
+	// ReconcileGraceMin is the grace period, in minutes, before an ownerless
+	// sandbox container or volume may be destroyed by orphan reconciliation.
+	ReconcileGraceMin int `env:"WORKSPACE_RECONCILE_GRACE_MIN" envDefault:"15"`
+	// ReconcileEnabled toggles the label-driven orphan reconciliation pass.
+	ReconcileEnabled bool `env:"WORKSPACE_RECONCILE_ENABLED" envDefault:"true"`
 }
 
 // IsEnabled returns true if agent sandboxes are enabled

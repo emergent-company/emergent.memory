@@ -153,7 +153,8 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		Name: volumeName,
 		Labels: map[string]string{
 			defaultRuntimeLabel: "true",
-			"workspace.type":    string(req.ContainerType),
+			workspaceTypeLabel:  string(req.ContainerType),
+			sandboxOwnerLabel:   sandboxOwnerIdentity(),
 		},
 	})
 	if err != nil {
@@ -173,9 +174,10 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		Image: image,
 		Cmd:   cmd,
 		Labels: map[string]string{
-			defaultRuntimeLabel: "true",
-			"workspace.type":    string(req.ContainerType),
-			"workspace.volume":  volumeName,
+			defaultRuntimeLabel:  "true",
+			workspaceTypeLabel:   string(req.ContainerType),
+			workspaceVolumeLabel: volumeName,
+			sandboxOwnerLabel:    sandboxOwnerIdentity(),
 		},
 		WorkingDir: workspaceDir,
 	}
@@ -220,8 +222,9 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 			Name: extraVolumeName,
 			Labels: map[string]string{
 				defaultRuntimeLabel: "true",
-				"workspace.type":    string(req.ContainerType),
+				workspaceTypeLabel:  string(req.ContainerType),
 				"workspace.parent":  volumeName,
+				sandboxOwnerLabel:   sandboxOwnerIdentity(),
 			},
 		})
 		if err != nil {
@@ -325,11 +328,9 @@ func (p *GVisorProvider) Destroy(ctx context.Context, providerID string) error {
 		}
 	}
 
-	// Remove associated volume
-	if volumeName != "" {
-		if err := p.client.VolumeRemove(ctx, volumeName, true); err != nil {
-			p.log.Warn("failed to remove workspace volume", "volume", volumeName, "error", err)
-		}
+	// Remove associated volume (shared removal path, also used by reconciliation)
+	if err := p.removeWorkspaceVolume(ctx, volumeName); err != nil {
+		p.log.Warn("failed to remove workspace volume", "volume", volumeName, "error", err)
 	}
 
 	p.log.Info("workspace container destroyed", "container_id", providerID[:min(12, len(providerID))])
@@ -463,8 +464,9 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		Name: volumeName,
 		Labels: map[string]string{
 			defaultRuntimeLabel:       "true",
-			"workspace.type":          string(req.ContainerType),
+			workspaceTypeLabel:        string(req.ContainerType),
 			"workspace.from_snapshot": snapshotID,
+			sandboxOwnerLabel:         sandboxOwnerIdentity(),
 		},
 	})
 	if err != nil {
@@ -533,9 +535,10 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 		Cmd:   cmd,
 		Labels: map[string]string{
 			defaultRuntimeLabel:       "true",
-			"workspace.type":          string(req.ContainerType),
-			"workspace.volume":        volumeName,
+			workspaceTypeLabel:        string(req.ContainerType),
+			workspaceVolumeLabel:      volumeName,
 			"workspace.from_snapshot": snapshotID,
+			sandboxOwnerLabel:         sandboxOwnerIdentity(),
 		},
 		WorkingDir: workspaceDir,
 	}

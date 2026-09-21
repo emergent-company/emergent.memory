@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -158,6 +159,30 @@ func TestCleanupJob_MCPExemption(t *testing.T) {
 
 	assert.NotNil(t, activeWs.ExpiresAt)
 	assert.True(t, activeWs.ExpiresAt.After(time.Now()), "should not be expired")
+}
+
+func TestCleanupJob_RunCycleInvokesReconcile(t *testing.T) {
+	// One tick must both expire DB-recorded workspaces and reconcile orphans.
+	// The store is nil here (expiry is a no-op); the spy proves reconcile is driven.
+	spy := &spyReconciler{result: ReconcileResult{Reconciled: 2, Skipped: 1}}
+
+	job := NewCleanupJob(nil, nil, testLogger(), DefaultCleanupConfig())
+	job.SetReconciler(spy, true)
+
+	job.runCycle(context.Background())
+
+	assert.Equal(t, int64(1), spy.calls.Load(), "cycle should run reconciliation once")
+}
+
+func TestCleanupJob_RunCycleSkipsReconcileWhenDisabled(t *testing.T) {
+	spy := &spyReconciler{}
+
+	job := NewCleanupJob(nil, nil, testLogger(), DefaultCleanupConfig())
+	job.SetReconciler(spy, false)
+
+	job.runCycle(context.Background())
+
+	assert.Equal(t, int64(0), spy.calls.Load(), "disabled reconciliation must not run")
 }
 
 func TestCleanupConfig_CustomValues(t *testing.T) {

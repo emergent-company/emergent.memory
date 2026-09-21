@@ -135,14 +135,46 @@ func (wp *WarmPool) Start(ctx context.Context) error {
 	totalTarget := wp.config.Size + len(wp.config.ExtraImages)
 	wp.log.Info("initializing warm pool", "target_size", totalTarget, "images", len(allImages))
 
-	// Create containers in parallel across all managed images.
+	// Converge: destroy any pre-existing in-memory containers beyond each image's
+	// target before creating the shortfall. This keeps the pool bounded even if
+	// Start runs more than once or the target size changed (D5).
+	wp.mu.Lock()
+	kept := make([]*warmContainer, 0, len(wp.containers))
+	counts := make(map[string]int, len(allImages))
+	var surplus []*warmContainer
+	for _, wc := range wp.containers {
+		img := wc.image
+		if counts[img] < wp.config.targetCountForImage(img) {
+			counts[img]++
+			kept = append(kept, wc)
+			continue
+		}
+		surplus = append(surplus, wc)
+	}
+	wp.containers = kept
+	wp.mu.Unlock()
+
+	for _, wc := range surplus {
+		wp.log.Warn("destroying surplus warm container beyond target",
+			"provider_id", wc.providerID,
+			"image", wc.image,
+		)
+		wp.destroyContainer(ctx, wc)
+	}
+
+	// Create containers in parallel across all managed images, only for the
+	// shortfall relative to the retained (converged) count.
 	created := make(chan *warmContainer, totalTarget)
 	errors := make(chan error, totalTarget)
 
 	var wg sync.WaitGroup
 	for _, img := range allImages {
-		count := wp.config.targetCountForImage(img)
-		for i := 0; i < count; i++ {
+		need := wp.config.targetCountForImage(img) - counts[img]
+		if need <= 0 {
+			continue
+		}
+		counts[img] += need
+		for i := 0; i < need; i++ {
 			wg.Add(1)
 			imgCopy := img
 			go func() {
@@ -272,6 +304,8 @@ func (wp *WarmPool) Acquire(providerType ProviderType, imageHint string) *warmCo
 				"current_digest", currentDigest,
 			)
 			wp.containers = append(wp.containers[:i], wp.containers[i+1:]...)
+			// Destroy the discarded stale container so it cannot become a transient
+			// orphan, then replenish with a fresh container (D5).
 			go wp.destroyContainer(context.Background(), wc)
 			// Trigger replenishment so the pool refills with a fresh container.
 			go wp.replenishImage(wc.image)

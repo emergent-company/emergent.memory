@@ -134,6 +134,20 @@ func (s *Store) ListPersistentMCPServers(ctx context.Context) ([]*AgentSandbox, 
 	return workspaces, nil
 }
 
+// ListActive returns all workspaces whose status is neither stopped nor errored.
+// Used by reconciliation to protect containers still referenced by live work.
+func (s *Store) ListActive(ctx context.Context) ([]*AgentSandbox, error) {
+	var workspaces []*AgentSandbox
+	err := s.db.NewSelect().
+		Model(&workspaces).
+		Where("status NOT IN (?)", bun.In([]Status{StatusStopped, StatusError})).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return workspaces, nil
+}
+
 // ListExpired returns ephemeral workspaces whose TTL has passed.
 func (s *Store) ListExpired(ctx context.Context) ([]*AgentSandbox, error) {
 	var workspaces []*AgentSandbox
