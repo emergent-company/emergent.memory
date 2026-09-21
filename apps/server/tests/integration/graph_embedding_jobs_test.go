@@ -382,3 +382,99 @@ func (s *GraphEmbeddingJobsTestSuite) TestGetActiveJobForObject_ReturnsNilForUnk
 	s.NoError(err)
 	s.Nil(activeJob)
 }
+
+// =============================================================================
+// Test: RetriggerByProject
+// =============================================================================
+
+// TestRetriggerByProject_ResetsFailedJobs verifies the happy path: a failed job
+// with no active job for its object is reset to pending.
+func (s *GraphEmbeddingJobsTestSuite) TestRetriggerByProject_ResetsFailedJobs() {
+	objectID := s.createGraphObject()
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	err = s.jobsService.MarkPermanentlyFailed(s.ctx, job.ID, errors.New("no model configured"))
+	s.NoError(err)
+
+	count, err := s.jobsService.RetriggerByProject(s.ctx, s.projectID)
+	s.NoError(err)
+	s.Equal(1, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusPending, updatedJob.Status)
+}
+
+// TestRetriggerByProject_SkipsObjectsWithActiveJobs verifies that when a stale
+// failed row coexists with an already-active (pending) job for the same object,
+// retrigger skips it instead of aborting on the active-job unique index
+// (uidx_graph_embedding_jobs_active). Fails with the pre-fix blind UPDATE.
+func (s *GraphEmbeddingJobsTestSuite) TestRetriggerByProject_SkipsObjectsWithActiveJobs() {
+	objectID := s.createGraphObject()
+
+	// First job -> permanently failed (stale retryable row).
+	job1, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	err = s.jobsService.MarkPermanentlyFailed(s.ctx, job1.ID, errors.New("no model configured"))
+	s.NoError(err)
+
+	// A later sweep enqueued a fresh active job for the same object.
+	_, err = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+
+	// Retrigger must not error and must not reset the stale failed row.
+	count, err := s.jobsService.RetriggerByProject(s.ctx, s.projectID)
+	s.NoError(err)
+	s.Equal(0, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job1.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusFailed, updatedJob.Status)
+}
+
+// =============================================================================
+// Test: ResetDeadLetterJobs
+// =============================================================================
+
+// TestResetDeadLetterJobs_ResetsWhenNoActiveJob verifies the happy path: a
+// dead_letter job with no active job for its object is reset to pending.
+func (s *GraphEmbeddingJobsTestSuite) TestResetDeadLetterJobs_ResetsWhenNoActiveJob() {
+	objectID := s.createGraphObject()
+	job, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	_, err = s.testDB.DB.NewRaw("UPDATE kb.graph_embedding_jobs SET status = 'dead_letter' WHERE id = ?", job.ID).Exec(s.ctx)
+	s.NoError(err)
+
+	count, err := s.jobsService.ResetDeadLetterJobs(s.ctx)
+	s.NoError(err)
+	s.Equal(1, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusPending, updatedJob.Status)
+}
+
+// TestResetDeadLetterJobs_SkipsObjectsWithActiveJobs verifies dead-letter reset
+// skips an object that already has an active job instead of hitting the unique
+// index. Fails with the pre-fix blind UPDATE.
+func (s *GraphEmbeddingJobsTestSuite) TestResetDeadLetterJobs_SkipsObjectsWithActiveJobs() {
+	objectID := s.createGraphObject()
+
+	// First job -> dead_letter (stale terminal row).
+	job1, err := s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+	_, err = s.testDB.DB.NewRaw("UPDATE kb.graph_embedding_jobs SET status = 'dead_letter' WHERE id = ?", job1.ID).Exec(s.ctx)
+	s.NoError(err)
+
+	// A fresh active job was enqueued for the same object.
+	_, err = s.jobsService.Enqueue(s.ctx, extraction.EnqueueOptions{ObjectID: objectID})
+	s.NoError(err)
+
+	count, err := s.jobsService.ResetDeadLetterJobs(s.ctx)
+	s.NoError(err)
+	s.Equal(0, count)
+
+	updatedJob, err := s.jobsService.GetJob(s.ctx, job1.ID)
+	s.NoError(err)
+	s.Equal(extraction.JobStatusDeadLetter, updatedJob.Status)
+}
