@@ -730,6 +730,61 @@ func (s *Server) uiProjectModelConfig(c echo.Context) error {
 	return toastTrigger(c, "success", "Saved")
 }
 
+// defaultModelTestFields maps a default-model test's model_type to the form
+// field carrying the selected prefixed value.
+var defaultModelTestFields = map[string]string{
+	"generative": "generative_model",
+	"embedding":  "embedding_model",
+}
+
+// uiProjectDefaultModelTest runs a live generate/embed call for ONE selected
+// default model (HTMX → POST /settings/providers/model-config/test). The request
+// carries model_type ("generative"|"embedding") plus the matching prefixed
+// select value; the bare model name is the part after the first "/", which
+// memory resolves against the project's configured provider credentials. The
+// stored defaults are not touched — the outcome (or the failure) surfaces as a
+// toast via the HX-Trigger header.
+func (s *Server) uiProjectDefaultModelTest(c echo.Context) error {
+	ctx := c.Request().Context()
+	modelType := strings.TrimSpace(c.FormValue("model_type"))
+	field, ok := defaultModelTestFields[modelType]
+	if !ok {
+		return toastTrigger(c, "error", `Model type must be "generative" or "embedding".`)
+	}
+	selected := strings.TrimSpace(c.FormValue(field))
+	if selected == "" {
+		return toastTrigger(c, "error", "Select a model before testing it.")
+	}
+	provider, model, ok := strings.Cut(selected, "/")
+	if !ok || provider == "" || model == "" {
+		return toastTrigger(c, "error", fmt.Sprintf("%q must be a provider-prefixed model (provider/model).", selected))
+	}
+	res, err := s.memory.TestProjectModel(ctx, provider, model, modelType)
+	if err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	return toastTrigger(c, "success", defaultModelTestMessage(selected, modelType, res))
+}
+
+// defaultModelTestMessage renders the success toast for a passing default-model
+// test. Generative names the model and echoes its reply snippet; embedding names
+// the verified embedding model. Both include the round-trip latency. The
+// selected prefixed value is the fallback name when memory reports none.
+func defaultModelTestMessage(selected, modelType string, res *ProviderTestResult) string {
+	if modelType == "embedding" {
+		name := res.EmbeddingModel
+		if name == "" {
+			name = selected
+		}
+		return fmt.Sprintf("%s OK: embeddings verified via %s in %dms", selected, name, res.LatencyMs)
+	}
+	name := res.Model
+	if name == "" {
+		name = selected
+	}
+	return fmt.Sprintf("%s OK: %s replied %q in %dms", selected, name, res.Reply, res.LatencyMs)
+}
+
 // overrideRatesFromForm parses the override form's input/output prices. Both
 // fields are required, numeric, and non-negative; the text modality prices are
 // what the per-model row exposes (image/video/audio stay 0 — the UI only edits

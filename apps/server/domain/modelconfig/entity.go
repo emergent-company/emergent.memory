@@ -14,7 +14,11 @@
 //
 // Resolution chain (embedding):
 //  1. Project model config (kb.project_model_config)
-//  2. No fallback — if no project config, callers receive ModelSourceNone.
+//  2. Provider-credential embedding model (set via 'memory provider
+//     configure-project <provider> --embedding-model <model>') — the same
+//     fallback the EmbeddingResolverAdapter uses when no project config is set
+//  3. No org fallback — if nothing resolves, callers receive ModelSourceNone
+//     and must surface a "model not configured" error to the user.
 //
 // Model names must always include a provider prefix: "provider/model-name"
 // (e.g. "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash").

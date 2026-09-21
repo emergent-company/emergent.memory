@@ -481,10 +481,36 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		return embModel, "(ok)", nil
 	}
 
+	reply, err = s.generateContentForModel(ctx, provider, cred, model)
+	if err != nil {
+		return "", "", err
+	}
+	return model, reply, nil
+}
+
+// TestGenerateForModel runs the generate test against an explicit model name,
+// bypassing the configured-model resolution in TestGenerate. It preserves the
+// same embedding-model auto-detection: an embedding model is exercised through
+// the embed endpoint rather than generateContent. Returns the LLM's reply text.
+func (s *ModelCatalogService) TestGenerateForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (reply string, err error) {
+	if s.modelIsEmbedding(ctx, provider, model) {
+		_, embErr := s.embedContentForModel(ctx, provider, cred, model)
+		if embErr != nil {
+			return "", fmt.Errorf("embedding model test failed: %w", embErr)
+		}
+		return "(ok)", nil
+	}
+	return s.generateContentForModel(ctx, provider, cred, model)
+}
+
+// generateContentForModel runs the raw generate call against an explicit model
+// name. OpenAI-compatible and DeepSeek use a direct HTTP call; Google/Vertex use
+// the genai client. Returns the LLM's reply text.
+func (s *ModelCatalogService) generateContentForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (reply string, err error) {
 	// OpenAI-compatible and DeepSeek: use direct HTTP call instead of genai client.
 	if provider == ProviderOpenAI || provider == ProviderDeepSeek {
 		if cred.BaseURL == "" {
-			return "", "", fmt.Errorf("openai-compatible provider requires base_url")
+			return "", fmt.Errorf("openai-compatible provider requires base_url")
 		}
 		reqBody := map[string]interface{}{
 			"model": model,
@@ -495,13 +521,13 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		}
 		bodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
-			return "", "", fmt.Errorf("failed to marshal request: %w", err)
+			return "", fmt.Errorf("failed to marshal request: %w", err)
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 			strings.TrimSuffix(cred.BaseURL, "/")+"/chat/completions",
 			bytes.NewReader(bodyBytes))
 		if err != nil {
-			return "", "", fmt.Errorf("failed to create request: %w", err)
+			return "", fmt.Errorf("failed to create request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		if cred.APIKey != "" {
@@ -510,12 +536,12 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		httpClient := &http.Client{Timeout: 30 * time.Second}
 		resp, err := httpClient.Do(httpReq)
 		if err != nil {
-			return "", "", fmt.Errorf("openai-compatible generate call failed: %w", err)
+			return "", fmt.Errorf("openai-compatible generate call failed: %w", err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			body, _ := io.ReadAll(resp.Body)
-			return "", "", fmt.Errorf("openai-compatible generate call returned %d: %s", resp.StatusCode, string(body))
+			return "", fmt.Errorf("openai-compatible generate call returned %d: %s", resp.StatusCode, string(body))
 		}
 		var result struct {
 			Choices []struct {
@@ -526,10 +552,10 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 			} `json:"choices"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return "", "", fmt.Errorf("failed to decode openai-compatible response: %w", err)
+			return "", fmt.Errorf("failed to decode openai-compatible response: %w", err)
 		}
 		if len(result.Choices) == 0 {
-			return "", "", fmt.Errorf("openai-compatible response had no choices")
+			return "", fmt.Errorf("openai-compatible response had no choices")
 		}
 		reply := result.Choices[0].Message.Content
 		if reply == "" {
@@ -538,26 +564,25 @@ func (s *ModelCatalogService) TestGenerate(ctx context.Context, provider Provide
 		if reply == "" {
 			reply = "(ok)" // model responded with no text content but no error
 		}
-		return model, reply, nil
+		return reply, nil
 	}
 
 	clientCfg, err := buildClientConfig(provider, cred)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	client, err := genai.NewClient(ctx, clientCfg)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create genai client: %w", err)
+		return "", fmt.Errorf("failed to create genai client: %w", err)
 	}
 
 	resp, err := client.Models.GenerateContent(ctx, model, genai.Text("Say hello in one sentence."), nil)
 	if err != nil {
-		return "", "", fmt.Errorf("generate call failed: %w", err)
+		return "", fmt.Errorf("generate call failed: %w", err)
 	}
 
-	reply = resp.Text()
-	return model, reply, nil
+	return resp.Text(), nil
 }
 
 // TestEmbed sends a single embed call to verify embedding credentials and model
@@ -575,6 +600,13 @@ func (s *ModelCatalogService) TestEmbed(ctx context.Context, provider ProviderTy
 		}
 		model = models[0].ModelName
 	}
+	return s.embedContentForModel(ctx, provider, cred, model)
+}
+
+// TestEmbedForModel runs the embed test against an explicit model name,
+// bypassing the configured-model resolution in TestEmbed. It delegates to the
+// same per-model embed path used by TestEmbed. Returns the verified model name.
+func (s *ModelCatalogService) TestEmbedForModel(ctx context.Context, provider ProviderType, cred *ResolvedCredential, model string) (string, error) {
 	return s.embedContentForModel(ctx, provider, cred, model)
 }
 
@@ -627,18 +659,18 @@ func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider
 
 	case ProviderOpenAI:
 		// OpenAI-compatible providers (including LiteLLM proxies): use the
-		// OpenAI-compatible embeddings client to verify the configured
-		// embedding model works end-to-end.
+		// OpenAI-compatible embeddings client to verify the target embedding
+		// model works end-to-end.
 		if cred.BaseURL == "" {
 			return "", fmt.Errorf("embedding model test failed: openai-compatible provider requires base_url")
 		}
-		if cred.EmbeddingModel == "" {
+		if model == "" {
 			return "", fmt.Errorf("embedding model test failed: openai-compatible provider requires an embedding model")
 		}
 		client, clientErr := openai.NewClient(openai.Config{
 			APIKey:  cred.APIKey,
 			BaseURL: cred.BaseURL,
-			Model:   cred.EmbeddingModel,
+			Model:   model,
 		})
 		if clientErr != nil {
 			return "", fmt.Errorf("embedding model test failed: %w", clientErr)
@@ -650,7 +682,7 @@ func (s *ModelCatalogService) embedContentForModel(ctx context.Context, provider
 		if len(vec) == 0 {
 			return "", fmt.Errorf("embedding model test failed: empty vector returned")
 		}
-		return cred.EmbeddingModel, nil
+		return model, nil
 
 	case ProviderDeepSeek:
 		// DeepSeek has no embedding API.
