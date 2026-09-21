@@ -602,13 +602,26 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return fail("invalid request body")
 	}
-	if req.Model != "" && req.ModelType != "" &&
+	if req.ModelType != "" &&
 		req.ModelType != string(ModelTypeGenerative) &&
 		req.ModelType != string(ModelTypeEmbedding) {
 		return fail("invalid modelType: must be \"generative\" or \"embedding\"")
 	}
 
-	ctx := auth.ContextWithProjectID(c.Request().Context(), projectID)
+	// Enforce project ownership before resolving credentials: the caller must
+	// own the project whose provider credentials drive this outbound test call.
+	// Project tokens don't carry an OrgID, so resolve the project's org first
+	// (mirrors SaveProjectConfig / GetProjectUsageSummary).
+	ctx := c.Request().Context()
+	if auth.OrgIDFromContext(ctx) == "" {
+		if orgID, orgErr := h.creds.repo.GetOrgIDForProject(ctx, projectID); orgErr == nil && orgID != "" {
+			ctx = auth.ContextWithOrgID(ctx, orgID)
+		}
+	}
+	if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
+		return err
+	}
+	ctx = auth.ContextWithProjectID(ctx, projectID)
 
 	cred, err := h.creds.Resolve(ctx, p)
 	if err != nil {
@@ -704,6 +717,17 @@ func (h *Handler) TestProvider(c echo.Context) error {
 
 	ctx := c.Request().Context()
 	if projectID := c.QueryParam("projectId"); projectID != "" {
+		// Enforce project ownership before resolving credentials (mirrors
+		// TestProjectProvider). Project tokens don't carry an OrgID, so resolve
+		// the project's org first.
+		if auth.OrgIDFromContext(ctx) == "" {
+			if orgID, orgErr := h.creds.repo.GetOrgIDForProject(ctx, projectID); orgErr == nil && orgID != "" {
+				ctx = auth.ContextWithOrgID(ctx, orgID)
+			}
+		}
+		if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
+			return err
+		}
 		ctx = auth.ContextWithProjectID(ctx, projectID)
 	}
 	if orgID := c.QueryParam("orgId"); orgID != "" && auth.OrgIDFromContext(ctx) == "" {
