@@ -41,234 +41,6 @@
                 }
             }
         },
-        "/acp/v1/agents/{name}/runs/{runId}/events": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns all persisted ACP SSE events for an agent run: run lifecycle events (run.created, run.in-progress, run.completed, run.failed), trajectory events (tool calls with full input/output, thought chunks), and message parts. Useful for reconstructing what the agent did step-by-step or replaying a run. This endpoint also serves as the resource-server URL referenced in session history.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "acp"
-                ],
-                "summary": "Get run event log",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "ACP slug name of the agent",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "UUID of the agent run",
-                        "name": "runId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_agents.ACPSSEEvent"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/acp/v1/sessions": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns a list of all ACP sessions for the project, ordered by creation time descending.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "acp"
-                ],
-                "summary": "List ACP sessions",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain_agents.ACPSessionObject"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/acp/v1/sessions/{sessionId}": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Returns an ACP session descriptor. The `history` field contains an ordered list of URL references (one per run) pointing to GET /acp/v1/agents/:name/runs/:runId/events. Clients fetch each URL to reconstruct full message history for that run. MP acts as both ACP server and resource server — history URLs resolve back to this server.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "acp"
-                ],
-                "summary": "Get ACP session",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "ACP session ID",
-                        "name": "sessionId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain_agents.ACPSessionObject"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/acp/v1/sessions/{sessionId}/archive": {
-            "patch": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "ACP Sessions"
-                ],
-                "summary": "Archive a session",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Session ID",
-                        "name": "sessionId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain_agents.ACPSessionObject"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
-        "/acp/v1/sessions/{sessionId}/unarchive": {
-            "patch": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "ACP Sessions"
-                ],
-                "summary": "Unarchive a session",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Session ID",
-                        "name": "sessionId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain_agents.ACPSessionObject"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
         "/api/admin/agent-definitions/{id}/sandbox-config": {
             "get": {
                 "security": [
@@ -18201,6 +17973,92 @@
                 }
             }
         },
+        "/api/v1/organizations/{orgId}/backups/import": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Accepts a backup ZIP archive (multipart/form-data field `file`, max 1 GiB) from another deployment, validates its manifest and checksums, stores it, and registers a `ready` backup flagged `imported`. Imported backups support clone restore only.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "backups"
+                ],
+                "summary": "Import backup archive",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Backup archive (ZIP)",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Retention days (1-365, default 30)",
+                        "name": "retentionDays",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Backup registered (status: ready, imported: true)",
+                        "schema": {
+                            "$ref": "#/definitions/domain_backups.Backup"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid archive",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a member of the target organization",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "413": {
+                        "description": "Archive too large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "415": {
+                        "description": "Not a ZIP archive",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/organizations/{orgId}/backups/{backupId}": {
             "get": {
                 "security": [
@@ -20983,98 +20841,6 @@
                 }
             }
         },
-        "domain_agents.ACPSSEEvent": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "data": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_agents.ACPSessionObject": {
-            "type": "object",
-            "properties": {
-                "agent_name": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "history": {
-                    "description": "History contains runs with their full inlined event log.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_agents.ACPSessionRun"
-                    }
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_archived": {
-                    "description": "IsArchived indicates the session is archived and excluded from default list results.",
-                    "type": "boolean"
-                },
-                "last_run_status": {
-                    "description": "LastRunStatus is the ACP status of the most recent run in this session, if any.",
-                    "type": "string"
-                },
-                "message_count": {
-                    "description": "MessageCount is the number of user messages in this session.",
-                    "type": "integer"
-                },
-                "run_count": {
-                    "description": "RunCount is the number of runs (user turns) in this session.",
-                    "type": "integer"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "total_cost_usd": {
-                    "description": "TotalCostUSD is the estimated total cost in USD across all runs.",
-                    "type": "number"
-                },
-                "total_tokens": {
-                    "description": "TotalTokens is the total number of input+output tokens consumed across all runs.",
-                    "type": "integer"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "domain_agents.ACPSessionRun": {
-            "type": "object",
-            "properties": {
-                "completed_at": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "events": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/domain_agents.ACPSSEEvent"
-                    }
-                },
-                "run_id": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "trigger_message": {
-                    "type": "string"
-                }
-            }
-        },
         "domain_agents.APIResponse-any": {
             "type": "object",
             "properties": {
@@ -21494,6 +21260,13 @@
                 },
                 "systemPrompt": {
                     "type": "string"
+                },
+                "toolGroups": {
+                    "description": "ToolGroups is the computed capability-group catalog (server-owned\ntaxonomy) rendered by the gateway. Read-only; groups with no member tools\nat all are omitted — a fully-disabled group still renders (with\nenabled=false) so it can be re-enabled.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.ToolGroupDTO"
+                    }
                 },
                 "toolPolicies": {
                     "type": "object",
@@ -21947,14 +21720,14 @@
                 "internal"
             ],
             "x-enum-comments": {
-                "VisibilityExternal": "Discoverable via ACP and admin UI",
-                "VisibilityInternal": "Only visible to other agents",
-                "VisibilityProject": "Visible in admin UI, not via ACP"
+                "VisibilityExternal": "Advertised in the project's A2A agent card and shown in the admin UI",
+                "VisibilityInternal": "Hidden from lists; callable only by other agents, never via A2A",
+                "VisibilityProject": "Shown in the admin UI, not advertised in the A2A agent card"
             },
             "x-enum-descriptions": [
-                "Discoverable via ACP and admin UI",
-                "Visible in admin UI, not via ACP",
-                "Only visible to other agents"
+                "Advertised in the project's A2A agent card and shown in the admin UI",
+                "Shown in the admin UI, not advertised in the A2A agent card",
+                "Hidden from lists; callable only by other agents, never via A2A"
             ],
             "x-enum-varnames": [
                 "VisibilityExternal",
@@ -22296,6 +22069,32 @@
                 "SessionStatusError"
             ]
         },
+        "domain_agents.ToolGroupDTO": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "policy": {
+                    "type": "string"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "domain_agents.ToolPolicy": {
             "type": "object",
             "properties": {
@@ -22407,6 +22206,10 @@
                 "name": {
                     "type": "string"
                 },
+                "ownedByCaller": {
+                    "description": "OwnedByCaller is true when the listed token belongs to the authenticated\ncaller. It is set by the list endpoints (not ToDTO) and omitted otherwise.",
+                    "type": "boolean"
+                },
                 "projectId": {
                     "type": "string"
                 },
@@ -22498,6 +22301,10 @@
                 "name": {
                     "type": "string"
                 },
+                "ownedByCaller": {
+                    "description": "OwnedByCaller is true when the listed token belongs to the authenticated\ncaller. It is set by the list endpoints (not ToDTO) and omitted otherwise.",
+                    "type": "boolean"
+                },
                 "projectId": {
                     "type": "string"
                 },
@@ -22535,6 +22342,10 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "ownedByCaller": {
+                    "description": "OwnedByCaller is true when the listed token belongs to the authenticated\ncaller. It is set by the list endpoints (not ToDTO) and omitted otherwise.",
+                    "type": "boolean"
                 },
                 "projectId": {
                     "type": "string"
@@ -22652,6 +22463,10 @@
                 },
                 "id": {
                     "type": "string"
+                },
+                "imported": {
+                    "description": "Imported marks a backup registered from an archive produced by another\ndeployment. Its ProjectID is the foreign source project (no local\nkb.projects row); imported backups support clone restore only.",
+                    "type": "boolean"
                 },
                 "includes": {
                     "type": "object",
@@ -25264,6 +25079,14 @@
                 "deleted_at": {
                     "type": "string"
                 },
+                "embedding_status": {
+                    "description": "EmbeddingStatus is a computed column (not stored) derived from the\nembedding_v2 vector and the latest kb.graph_embedding_jobs row. Values:\nembedded | pending | processing | failed | dead_letter | missing.",
+                    "type": "string"
+                },
+                "embedding_updated_at": {
+                    "description": "Embedding fields",
+                    "type": "string"
+                },
                 "external_id": {
                     "type": "string"
                 },
@@ -25391,6 +25214,13 @@
                     "type": "string"
                 },
                 "deleted_at": {
+                    "type": "string"
+                },
+                "embedding_status": {
+                    "description": "Embedding status (computed): embedded | pending | processing | failed | dead_letter | missing",
+                    "type": "string"
+                },
+                "embedding_updated_at": {
                     "type": "string"
                 },
                 "external_id": {
@@ -27109,6 +26939,10 @@
                     "type": "string"
                 },
                 "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "outputSchema": {
                     "type": "object",
                     "additionalProperties": {}
                 },
@@ -30655,6 +30489,7 @@
             "type": "object",
             "properties": {
                 "max_objects": {
+                    "description": "MaxObjects caps the number of objects restored by a single rollback\n(0 = unlimited). It bounds processing, not the scan; the scan itself is\nbounded separately by OnlyWithMigrationArchive and the configurable\nMigrationScanMaxObjects safety cap.",
                     "type": "integer"
                 },
                 "restore_type_registry": {

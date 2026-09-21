@@ -243,72 +243,6 @@ definitions:
           type: string
         type: array
     type: object
-  domain_agents.ACPSSEEvent:
-    properties:
-      created_at:
-        type: string
-      data:
-        additionalProperties: {}
-        type: object
-      type:
-        type: string
-    type: object
-  domain_agents.ACPSessionObject:
-    properties:
-      agent_name:
-        type: string
-      created_at:
-        type: string
-      history:
-        description: History contains runs with their full inlined event log.
-        items:
-          $ref: '#/definitions/domain_agents.ACPSessionRun'
-        type: array
-      id:
-        type: string
-      is_archived:
-        description: IsArchived indicates the session is archived and excluded from
-          default list results.
-        type: boolean
-      last_run_status:
-        description: LastRunStatus is the ACP status of the most recent run in this
-          session, if any.
-        type: string
-      message_count:
-        description: MessageCount is the number of user messages in this session.
-        type: integer
-      run_count:
-        description: RunCount is the number of runs (user turns) in this session.
-        type: integer
-      title:
-        type: string
-      total_cost_usd:
-        description: TotalCostUSD is the estimated total cost in USD across all runs.
-        type: number
-      total_tokens:
-        description: TotalTokens is the total number of input+output tokens consumed
-          across all runs.
-        type: integer
-      updated_at:
-        type: string
-    type: object
-  domain_agents.ACPSessionRun:
-    properties:
-      completed_at:
-        type: string
-      created_at:
-        type: string
-      events:
-        items:
-          $ref: '#/definitions/domain_agents.ACPSSEEvent'
-        type: array
-      run_id:
-        type: string
-      status:
-        type: string
-      trigger_message:
-        type: string
-    type: object
   domain_agents.APIResponse-any:
     properties:
       data: {}
@@ -589,6 +523,15 @@ definitions:
         type: array
       systemPrompt:
         type: string
+      toolGroups:
+        description: |-
+          ToolGroups is the computed capability-group catalog (server-owned
+          taxonomy) rendered by the gateway. Read-only; groups with no member tools
+          at all are omitted — a fully-disabled group still renders (with
+          enabled=false) so it can be re-enabled.
+        items:
+          $ref: '#/definitions/domain_agents.ToolGroupDTO'
+        type: array
       toolPolicies:
         additionalProperties:
           $ref: '#/definitions/domain_agents.ToolPolicy'
@@ -923,13 +866,15 @@ definitions:
     - internal
     type: string
     x-enum-comments:
-      VisibilityExternal: Discoverable via ACP and admin UI
-      VisibilityInternal: Only visible to other agents
-      VisibilityProject: Visible in admin UI, not via ACP
+      VisibilityExternal: Advertised in the project's A2A agent card and shown in
+        the admin UI
+      VisibilityInternal: Hidden from lists; callable only by other agents, never
+        via A2A
+      VisibilityProject: Shown in the admin UI, not advertised in the A2A agent card
     x-enum-descriptions:
-    - Discoverable via ACP and admin UI
-    - Visible in admin UI, not via ACP
-    - Only visible to other agents
+    - Advertised in the project's A2A agent card and shown in the admin UI
+    - Shown in the admin UI, not advertised in the A2A agent card
+    - Hidden from lists; callable only by other agents, never via A2A
     x-enum-varnames:
     - VisibilityExternal
     - VisibilityProject
@@ -1178,6 +1123,23 @@ definitions:
     - SessionStatusActive
     - SessionStatusCompleted
     - SessionStatusError
+  domain_agents.ToolGroupDTO:
+    properties:
+      description:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      label:
+        type: string
+      policy:
+        type: string
+      tools:
+        items:
+          type: string
+        type: array
+    type: object
   domain_agents.ToolPolicy:
     properties:
       confirm:
@@ -1261,6 +1223,11 @@ definitions:
         type: string
       name:
         type: string
+      ownedByCaller:
+        description: |-
+          OwnedByCaller is true when the listed token belongs to the authenticated
+          caller. It is set by the list endpoints (not ToDTO) and omitted otherwise.
+        type: boolean
       projectId:
         type: string
       scopes:
@@ -1323,6 +1290,11 @@ definitions:
         type: string
       name:
         type: string
+      ownedByCaller:
+        description: |-
+          OwnedByCaller is true when the listed token belongs to the authenticated
+          caller. It is set by the list endpoints (not ToDTO) and omitted otherwise.
+        type: boolean
       projectId:
         type: string
       scopes:
@@ -1348,6 +1320,11 @@ definitions:
         type: string
       name:
         type: string
+      ownedByCaller:
+        description: |-
+          OwnedByCaller is true when the listed token belongs to the authenticated
+          caller. It is set by the list endpoints (not ToDTO) and omitted otherwise.
+        type: boolean
       projectId:
         type: string
       scopes:
@@ -1426,6 +1403,12 @@ definitions:
         type: string
       id:
         type: string
+      imported:
+        description: |-
+          Imported marks a backup registered from an archive produced by another
+          deployment. Its ProjectID is the foreign source project (no local
+          kb.projects row); imported backups support clone restore only.
+        type: boolean
       includes:
         additionalProperties: {}
         type: object
@@ -3221,6 +3204,15 @@ definitions:
         type: string
       deleted_at:
         type: string
+      embedding_status:
+        description: |-
+          EmbeddingStatus is a computed column (not stored) derived from the
+          embedding_v2 vector and the latest kb.graph_embedding_jobs row. Values:
+          embedded | pending | processing | failed | dead_letter | missing.
+        type: string
+      embedding_updated_at:
+        description: Embedding fields
+        type: string
       external_id:
         type: string
       external_parent_id:
@@ -3314,6 +3306,12 @@ definitions:
       delete_reason:
         type: string
       deleted_at:
+        type: string
+      embedding_status:
+        description: 'Embedding status (computed): embedded | pending | processing
+          | failed | dead_letter | missing'
+        type: string
+      embedding_updated_at:
         type: string
       external_id:
         type: string
@@ -4477,6 +4475,9 @@ definitions:
         description: '"project", "org", or "global"'
         type: string
       inputSchema:
+        additionalProperties: {}
+        type: object
+      outputSchema:
         additionalProperties: {}
         type: object
       serverId:
@@ -6887,6 +6888,11 @@ definitions:
   domain_schemas.SchemaMigrationRollbackRequest:
     properties:
       max_objects:
+        description: |-
+          MaxObjects caps the number of objects restored by a single rollback
+          (0 = unlimited). It bounds processing, not the scan; the scan itself is
+          bounded separately by OnlyWithMigrationArchive and the configurable
+          MigrationScanMaxObjects safety cap.
         type: integer
       restore_type_registry:
         type: boolean
@@ -8250,162 +8256,6 @@ paths:
       summary: OAuth Protected Resource Metadata
       tags:
       - mcp
-  /acp/v1/agents/{name}/runs/{runId}/events:
-    get:
-      description: 'Returns all persisted ACP SSE events for an agent run: run lifecycle
-        events (run.created, run.in-progress, run.completed, run.failed), trajectory
-        events (tool calls with full input/output, thought chunks), and message parts.
-        Useful for reconstructing what the agent did step-by-step or replaying a run.
-        This endpoint also serves as the resource-server URL referenced in session
-        history.'
-      parameters:
-      - description: ACP slug name of the agent
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: UUID of the agent run
-        in: path
-        name: runId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/domain_agents.ACPSSEEvent'
-            type: array
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get run event log
-      tags:
-      - acp
-  /acp/v1/sessions:
-    get:
-      description: Returns a list of all ACP sessions for the project, ordered by
-        creation time descending.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/domain_agents.ACPSessionObject'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: List ACP sessions
-      tags:
-      - acp
-  /acp/v1/sessions/{sessionId}:
-    get:
-      description: Returns an ACP session descriptor. The `history` field contains
-        an ordered list of URL references (one per run) pointing to GET /acp/v1/agents/:name/runs/:runId/events.
-        Clients fetch each URL to reconstruct full message history for that run. MP
-        acts as both ACP server and resource server — history URLs resolve back to
-        this server.
-      parameters:
-      - description: ACP session ID
-        in: path
-        name: sessionId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_agents.ACPSessionObject'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Get ACP session
-      tags:
-      - acp
-  /acp/v1/sessions/{sessionId}/archive:
-    patch:
-      parameters:
-      - description: Session ID
-        in: path
-        name: sessionId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_agents.ACPSessionObject'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      summary: Archive a session
-      tags:
-      - ACP Sessions
-  /acp/v1/sessions/{sessionId}/unarchive:
-    patch:
-      parameters:
-      - description: Session ID
-        in: path
-        name: sessionId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain_agents.ACPSessionObject'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      summary: Unarchive a session
-      tags:
-      - ACP Sessions
   /api/admin/agent-definitions/{id}/sandbox-config:
     get:
       consumes:
@@ -20302,6 +20152,65 @@ paths:
       security:
       - bearerAuth: []
       summary: Download backup archive
+      tags:
+      - backups
+  /api/v1/organizations/{orgId}/backups/import:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Accepts a backup ZIP archive (multipart/form-data field `file`,
+        max 1 GiB) from another deployment, validates its manifest and checksums,
+        stores it, and registers a `ready` backup flagged `imported`. Imported backups
+        support clone restore only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Backup archive (ZIP)
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: Retention days (1-365, default 30)
+        in: formData
+        name: retentionDays
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: 'Backup registered (status: ready, imported: true)'
+          schema:
+            $ref: '#/definitions/domain_backups.Backup'
+        "400":
+          description: Invalid archive
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Not a member of the target organization
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "413":
+          description: Archive too large
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "415":
+          description: Not a ZIP archive
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Import backup archive
       tags:
       - backups
   /api/v1/projects/{projectId}/backups:
