@@ -9,9 +9,10 @@ testCommand: "PATH=$PATH:/root/.memory/bin TEST_RUNNER=daemon MEMORY_TEST_SERVER
 # started with an explicit absolute --db pointing at the same file.
 db: ".runlog/runs.db"
 
-# Must match RUNLOG_PORT in e2e/Taskfile.yml. Without this, the daemon falls
-# back to its default port (7430) and `runlog daemon stop|status` (which read
-# this config) cannot see a daemon started on 17432.
+# Must match RUNLOG_PORT in e2e/Taskfile.yml. `runlog daemon start` and
+# `runlog daemon status` read this config; without it they fall back to the
+# library default (7430) and cannot see a daemon started on 17432.
+# (`runlog daemon stop` resolves the daemon via its pidfile, not this port.)
 daemon_port: 17432
 
 categories:

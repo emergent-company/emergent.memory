@@ -7,7 +7,13 @@ vars:
   RUNLOG_PIDFILE: "{{.TASKFILE_DIR}}/.runlog/daemon.pid"
   LOG_DIR: "{{.TASKFILE_DIR}}/logs/tests"
   RUNLOG_BIN:
-    sh: command -v runlog 2>/dev/null || echo /root/go/bin/runlog
+    sh: |
+      if command -v runlog >/dev/null 2>&1; then
+        command -v runlog
+      else
+        gopath="$(go env GOPATH 2>/dev/null || echo "$HOME/go")"
+        echo "$gopath/bin/runlog"
+      fi
 
 tasks:
   default:
@@ -25,7 +31,12 @@ tasks:
     dir: "{{.TASKFILE_DIR}}"
     cmds:
       - |
-        set -u
+        set -eu
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "lsof is required (daemon port detection) but not installed." >&2
+          echo "  install it, e.g. 'apt-get install lsof' or 'brew install lsof'." >&2
+          exit 1
+        fi
         if ! command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
           echo "runlog binary not found." >&2
           echo "  install: go install github.com/emergent-company/runlog/cmd/runlog@latest" >&2
@@ -34,7 +45,9 @@ tasks:
 
         mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
 
-        LISTEN_PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
+        # Match only LISTEN sockets (not ESTABLISHED clients) and take the first
+        # pid so a dual-stack (v4+v6) listener cannot break the comparison below.
+        LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
         if [ -n "$LISTEN_PID" ]; then
           OWN_PID=$(cat "{{.RUNLOG_PIDFILE}}" 2>/dev/null || true)
           if [ "$LISTEN_PID" = "$OWN_PID" ]; then
@@ -53,7 +66,7 @@ tasks:
         fi
 
         echo "starting runlog daemon on port {{.RUNLOG_PORT}}..."
-        {{.RUNLOG_BIN}} --db "{{.RUNLOG_DB}}" daemon start --port {{.RUNLOG_PORT}}
+        {{.RUNLOG_BIN}} --db "{{.RUNLOG_DB}}" daemon start --port {{.RUNLOG_PORT}} || exit 1
         echo "  ui: {{.RUNLOG_URL}}/ui/"
 
   runlog:stop:
@@ -61,22 +74,36 @@ tasks:
     dir: "{{.TASKFILE_DIR}}"
     cmds:
       - |
-        set -u
+        set -eu
         if [ -f "{{.RUNLOG_PIDFILE}}" ] && command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
           {{.RUNLOG_BIN}} daemon stop || true
         fi
 
-        # Fall back to whatever still holds the port — covers daemons whose
+        if ! command -v lsof >/dev/null 2>&1; then
+          rm -f "{{.RUNLOG_PIDFILE}}"
+          echo "runlog daemon stopped (lsof not installed; port fallback skipped)"
+          exit 0
+        fi
+
+        # Fall back to whatever still LISTENs on the port — covers daemons whose
         # pidfile was lost (deleted worktree, killed session, port squatting).
+        # Refuse to kill anything that is not a runlog daemon, so a port collision
+        # with an unrelated service can never be destroyed by `runlog:stop`.
         for _ in 1 2 3 4 5; do
-          PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
+          PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
           [ -z "$PID" ] && break
+          CMD=$(ps -p "$PID" -o args= 2>/dev/null || true)
+          [ -z "$CMD" ] && break
+          case "$CMD" in
+            *runlog*) ;;
+            *) echo "refusing to kill pid $PID (not a runlog daemon): $CMD" >&2; exit 1 ;;
+          esac
           echo "stopping pid $PID holding port {{.RUNLOG_PORT}}"
           kill "$PID" 2>/dev/null || true
           sleep 1
         done
 
-        PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
+        PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
         if [ -n "$PID" ]; then
           echo "pid $PID is still listening on port {{.RUNLOG_PORT}}" >&2
           exit 1
@@ -101,17 +128,21 @@ tasks:
         echo "  db    : {{.RUNLOG_DB}}"
         echo "  ui    : {{.RUNLOG_URL}}/ui/"
 
-        LISTEN_PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
-        if [ -z "$LISTEN_PID" ]; then
-          echo "  daemon: STOPPED (run: task -d e2e runlog:start)"
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "  daemon: UNKNOWN (lsof not installed)"
         else
-          OWN_PID=$(cat "{{.RUNLOG_PIDFILE}}" 2>/dev/null || true)
-          echo "  daemon: RUNNING (pid $LISTEN_PID)"
-          if [ "$LISTEN_PID" != "$OWN_PID" ]; then
-            echo "  WARNING: pidfile says '${OWN_PID:-<missing>}' — this daemon may belong to another checkout"
+          LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+          if [ -z "$LISTEN_PID" ]; then
+            echo "  daemon: STOPPED (run: task -d e2e runlog:start)"
+          else
+            OWN_PID=$(cat "{{.RUNLOG_PIDFILE}}" 2>/dev/null || true)
+            echo "  daemon: RUNNING (pid $LISTEN_PID)"
+            if [ "$LISTEN_PID" != "$OWN_PID" ]; then
+              echo "  WARNING: pidfile says '${OWN_PID:-<missing>}' — this daemon may belong to another checkout"
+            fi
+            curl -s --max-time 3 "{{.RUNLOG_URL}}/status" 2>/dev/null || echo "  (no /status response)"
+            echo ""
           fi
-          curl -s --max-time 3 "{{.RUNLOG_URL}}/status" 2>/dev/null || echo "  (no /status response)"
-          echo ""
         fi
 
         echo ""
@@ -168,15 +199,30 @@ tasks:
       - '{{.RUNLOG_BIN}} reap --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
 
   runlog:clear:
-    desc: "Delete runs.db and all per-run log files (destructive)"
+    desc: "Delete runs.db and all per-run log files (destructive; refuses if daemon running)"
     dir: "{{.TASKFILE_DIR}}"
     cmds:
-      - '{{.RUNLOG_BIN}} clear --db "{{.RUNLOG_DB}}"'
+      - |
+        set -eu
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "lsof is required to guard against clearing a live daemon's db." >&2
+          echo "  install it, e.g. 'apt-get install lsof' or 'brew install lsof'." >&2
+          exit 1
+        fi
+        LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+        if [ -n "$LISTEN_PID" ]; then
+          echo "refusing: runlog daemon is running (pid $LISTEN_PID)" >&2
+          echo "  unlinking runs.db while the daemon holds it open orphans the file." >&2
+          echo "  stop it first: task -d e2e runlog:stop" >&2
+          exit 1
+        fi
+        {{.RUNLOG_BIN}} clear --db "{{.RUNLOG_DB}}"
 
   runlog:logs:clean:
     desc: "Remove all per-run log directories (keeps runs.db)"
+    dir: "{{.TASKFILE_DIR}}"
     cmds:
-      - rm -rf "{{.LOG_DIR}}" tests/integration/logs tests/api/logs tests/cli/logs
+      - rm -rf "{{.LOG_DIR}}" "{{.TASKFILE_DIR}}/tests/integration/logs" "{{.TASKFILE_DIR}}/tests/api/logs" "{{.TASKFILE_DIR}}/tests/cli/logs"
       - echo "logs cleaned"
 
   # ─── mcj-emergent Docker server ────────────────────────────
@@ -309,7 +355,8 @@ tasks:
   # ─── Lint ──────────────────────────────────────────────────
 
   lint:
-    desc: Run lefthook lint group
+    desc: Run lefthook lint group (from repo root)
+    dir: "{{.TASKFILE_DIR}}/.."
     cmds:
       - lefthook run lint
 

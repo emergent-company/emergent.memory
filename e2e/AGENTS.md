@@ -25,13 +25,18 @@ do not have to remember flags or the right working directory. Run them all with
 | `runlog:stats` | Per-test pass rate + average duration |
 | `runlog:tail` | Stream new events as they arrive |
 | `runlog:reap` | Mark stale/orphaned runs as FAIL (`-- --dry-run` to preview) |
-| `runlog:clear` | Delete `runs.db` and per-run logs (destructive) |
+| `runlog:clear` | Delete `runs.db` and per-run logs (destructive; refuses while the daemon is up) |
 | `runlog:logs:clean` | Remove per-run log directories, keep `runs.db` |
 | `runlog:test` | Run the e2e suite through runlog |
 
 All of them pin the working directory to `e2e/`, so the daemon, the CLI, and the
 test framework all agree on `<e2e>/.runlog/runs.db`. Pass extra flags after `--`,
 e.g. `task -d e2e runlog:runs -- --since 7d`.
+
+Requirements: the `runlog` binary (on `PATH` or `$(go env GOPATH)/bin/runlog`)
+and `lsof` (for daemon port detection). `runlog:clear` refuses to run while the
+daemon is listening — stop it first with `runlog:stop` to avoid orphaning the
+`runs.db` inode.
 
 `daemon:start` / `daemon:stop` / `daemon:restart` / `runs:clear` / `runs:reap` /
 `logs:clean` remain as aliases. The one behaviour change: `daemon:start` no
