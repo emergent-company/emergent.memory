@@ -4,8 +4,14 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
 )
 
 // These tests exercise the run-lifetime teardown binding used by Execute,
@@ -94,4 +100,90 @@ func TestRunCleanup_NilSafe(t *testing.T) {
 		c.Cleanup()
 		newRunCleanup(nil).Cleanup()
 	})
+}
+
+// =============================================================================
+// Ephemeral token revocation (teardownWorkspace)
+// =============================================================================
+
+// fakeEphemeralTokenSvc records revocation so tests can assert teardown revoked
+// the per-run ephemeral token, even when no workspace was provisioned.
+type fakeEphemeralTokenSvc struct {
+	revokedTokenIDs []string
+}
+
+func (f *fakeEphemeralTokenSvc) CreateEphemeral(_ context.Context, _, _, _ string, _ time.Duration) (string, string, error) {
+	return "eph-1", "emt_fake", nil
+}
+
+func (f *fakeEphemeralTokenSvc) RevokeEphemeral(_ context.Context, tokenID string) {
+	f.revokedTokenIDs = append(f.revokedTokenIDs, tokenID)
+}
+
+// The ephemeral token is minted BEFORE provisioning, so it must be revoked even
+// when the provisioning result is entirely nil (sandbox disabled/unconfigured).
+// Without this, every sandbox-disabled run leaks a live admin-scoped token.
+func TestTeardownWorkspace_RevokesTokenWhenResultNil(t *testing.T) {
+	svc := &fakeEphemeralTokenSvc{}
+	ae := &AgentExecutor{apiTokenSvc: svc, log: testAgentLogger()}
+
+	ae.teardownWorkspace(context.Background(), nil, "eph-1")
+
+	assert.Equal(t, []string{"eph-1"}, svc.revokedTokenIDs,
+		"ephemeral token must be revoked even when no workspace result exists")
+}
+
+// Same guarantee when the result is present but carries no workspace.
+func TestTeardownWorkspace_RevokesTokenWhenWorkspaceNil(t *testing.T) {
+	svc := &fakeEphemeralTokenSvc{}
+	ae := &AgentExecutor{apiTokenSvc: svc, log: testAgentLogger()}
+
+	ae.teardownWorkspace(context.Background(), &sandbox.ProvisioningResult{Workspace: nil}, "eph-1")
+
+	assert.Equal(t, []string{"eph-1"}, svc.revokedTokenIDs,
+		"ephemeral token must be revoked when provisioning produced no workspace")
+}
+
+// A non-empty token with no token service must not panic.
+func TestTeardownWorkspace_NilTokenServiceIsSafe(t *testing.T) {
+	ae := &AgentExecutor{apiTokenSvc: nil, log: testAgentLogger()}
+
+	assert.NotPanics(t, func() {
+		ae.teardownWorkspace(context.Background(), nil, "eph-1")
+	})
+}
+
+// =============================================================================
+// Real production entry point: Execute wires deferred teardown
+// =============================================================================
+
+// TestExecute_DeferredCleanupRevokesEphemeralTokenOnError exercises the REAL
+// Execute entry point (not a synthetic closure): a run is pre-created, the
+// executor mints an ephemeral token, the LLM model factory fails so runPipeline
+// returns an error, and the deferred cleanup must still revoke the token on the
+// error return path. This fails if `defer cleanup.Cleanup()` is removed from
+// Execute.
+func TestExecute_DeferredCleanupRevokesEphemeralTokenOnError(t *testing.T) {
+	repo := newRootCaptureRepository(t)
+	svc := &fakeEphemeralTokenSvc{}
+	ae := &AgentExecutor{
+		repo:         repo,
+		modelFactory: adk.NewModelFactory(&config.LLMConfig{}, testAgentLogger(), nil, nil, nil),
+		apiTokenSvc:  svc,
+		safeguards:   config.AgentSafeguardsConfig{ExecutionEnabled: true},
+		log:          testAgentLogger(),
+	}
+
+	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
+	result, err := ae.Execute(context.Background(), ExecuteRequest{
+		PreCreatedRun: run,
+		ProjectID:     "proj-1",
+		OrgID:         "org-1",
+		UserMessage:   "hello",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"eph-1"}, svc.revokedTokenIDs,
+		"Execute must revoke the minted ephemeral token on the error return path")
 }

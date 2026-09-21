@@ -42,11 +42,12 @@ Three sandbox reclamation gaps were found while fixing warm-pool orphan accumula
 - `apps/server/domain/agents/share_service.go` (tear down share-link runs; correct the `StreamMessage` path)
 - `apps/server/domain/sandbox/auto_provisioner.go` (correct the inaccurate `TeardownWorkspace` comment)
 - `apps/server/domain/sandbox/cleanup.go` (run the idle reclamation pass alongside expiry and reconciliation)
-- `apps/server/domain/sandbox/service.go` / `store.go` (idle-policy query over `last_used_at` for persistent MCP servers)
-- `apps/server/domain/sandbox/mcp_hosting.go` (idle reclamation entry point reusing the existing `Remove`/`Destroy` path)
+- `apps/server/domain/sandbox/cleanup.go` (idle reclamation pass: candidate listing, `last_used_at`/lifecycle policy evaluation, fresh pre-destroy re-read, bounded per-server destroy)
+- `apps/server/domain/sandbox/store.go` (persistent-MCP candidate query and conditional fresh re-read over `last_used_at`, reusing the existing `Remove`/`Destroy` path)
+- `apps/server/domain/sandbox/module.go` (wire the idle policy into the cleanup cycle)
 - `apps/server/domain/agents/module.go` (`registerOrphanRecovery` also transitions orphaned sandbox rows)
 - `apps/server/internal/config/config.go` (idle reclamation window, default disabled)
-- Tests: `executor_test.go`, `share_service_test.go`, `cleanup_test.go`, `mcp_hosting_test.go`, `store_test.go`, `module_test.go`
+- Tests: `agents/executor_cleanup_test.go`, `agents/share_test.go`, `agents/module_test.go`, `sandbox/cleanup_test.go`, `sandbox/store_query_test.go`, `sandbox/e2e_scenario_test.go`
 
 ### API Changes
 - None required. `GET /api/v1/mcp/hosted` already exposes `LastUsedAt`; no response shape changes.

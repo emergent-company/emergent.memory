@@ -254,9 +254,7 @@ func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, sandboxStore *san
 				log.Warn("failed to mark orphaned agent runs as error on startup",
 					slog.String("error", err.Error()),
 				)
-				return nil // best-effort, don't block startup
-			}
-			if n > 0 {
+			} else if n > 0 {
 				log.Warn("marked orphaned agent runs as error on startup",
 					slog.Int("count", n),
 				)
@@ -268,9 +266,7 @@ func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, sandboxStore *san
 				log.Warn("failed to re-enqueue orphaned queued runs on startup",
 					slog.String("error", err.Error()),
 				)
-				return nil // best-effort
-			}
-			if m > 0 {
+			} else if m > 0 {
 				log.Warn("re-enqueued orphaned queued runs on startup",
 					slog.Int("count", m),
 				)

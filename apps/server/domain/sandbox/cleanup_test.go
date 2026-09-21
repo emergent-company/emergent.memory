@@ -187,11 +187,31 @@ type fakeIdleLister struct {
 	deleteErr error
 	listCalls int
 	deleted   []string
+	// recheck, when set, overrides the fresh re-read result per server ID so
+	// tests can simulate a concurrent touch between the candidate SELECT and
+	// the reclaim. Returning nil simulates a vanished/touched row.
+	recheck    func(id string) *AgentSandbox
+	recheckErr error
 }
 
-func (f *fakeIdleLister) ListIdlePersistentMCPServers(_ context.Context, _ time.Time) ([]*AgentSandbox, error) {
+func (f *fakeIdleLister) ListPersistentMCPServers(_ context.Context) ([]*AgentSandbox, error) {
 	f.listCalls++
 	return f.servers, f.listErr
+}
+
+func (f *fakeIdleLister) GetIdlePersistentMCPServer(_ context.Context, id string, _ time.Time) (*AgentSandbox, error) {
+	if f.recheckErr != nil {
+		return nil, f.recheckErr
+	}
+	if f.recheck != nil {
+		return f.recheck(id), nil
+	}
+	for _, s := range f.servers {
+		if s.ID == id {
+			return s, nil
+		}
+	}
+	return nil, nil
 }
 
 func (f *fakeIdleLister) Delete(_ context.Context, id string) (bool, error) {
@@ -203,13 +223,17 @@ type fakeIdleReclaimer struct {
 	stopped    []string
 	destroyed  []string
 	destroyErr map[string]error
+	onDestroy  func(ctx context.Context, ws *AgentSandbox)
 }
 
 func (f *fakeIdleReclaimer) StopRuntime(workspaceID string) {
 	f.stopped = append(f.stopped, workspaceID)
 }
 
-func (f *fakeIdleReclaimer) DestroyContainer(_ context.Context, ws *AgentSandbox) error {
+func (f *fakeIdleReclaimer) DestroyContainer(ctx context.Context, ws *AgentSandbox) error {
+	if f.onDestroy != nil {
+		f.onDestroy(ctx, ws)
+	}
 	f.destroyed = append(f.destroyed, ws.ID)
 	if f.destroyErr != nil {
 		if err, ok := f.destroyErr[ws.ID]; ok {
@@ -371,6 +395,61 @@ func TestRunIdleReclamation_LogsReclaimAndSkipDecisions(t *testing.T) {
 	assert.Contains(t, out, "ws-creating")
 	assert.Contains(t, out, "used within idle window", "skip log must include the reason")
 	assert.Contains(t, out, "in-flight lifecycle state")
+}
+
+// A call that starts after the candidate SELECT but before reclamation touches
+// last_used_at; the fresh re-read must detect it and skip the server, never
+// destroying the container or deleting the row.
+func TestRunIdleReclamation_TouchedBetweenSelectAndDestroy(t *testing.T) {
+	ws := idleMCPServer("ws-touched", 10, StatusReady)
+	lister := &fakeIdleLister{
+		servers: []*AgentSandbox{ws},
+		recheck: func(string) *AgentSandbox { return nil },
+	}
+	rt := &fakeIdleReclaimer{}
+
+	res := runIdleReclamation(context.Background(), lister, rt, 7, testLogger())
+
+	assert.Equal(t, 0, res.Reclaimed)
+	assert.Equal(t, 1, res.Skipped)
+	assert.Empty(t, rt.destroyed, "container must not be destroyed when the row was touched after selection")
+	assert.Empty(t, lister.deleted, "row must not be deleted when the row was touched after selection")
+	assert.Empty(t, rt.stopped, "runtime must not be stopped for a server skipped by the fresh re-check")
+}
+
+// A failed fresh re-read is counted as failed and does not destroy the server.
+func TestRunIdleReclamation_RecheckFailureCountsAsFailed(t *testing.T) {
+	lister := &fakeIdleLister{
+		servers:    []*AgentSandbox{idleMCPServer("ws-1", 10, StatusReady)},
+		recheckErr: assert.AnError,
+	}
+	rt := &fakeIdleReclaimer{}
+
+	res := runIdleReclamation(context.Background(), lister, rt, 7, testLogger())
+
+	assert.Equal(t, 0, res.Reclaimed)
+	assert.Equal(t, 1, res.Failed)
+	assert.Empty(t, rt.destroyed)
+	assert.Empty(t, lister.deleted)
+}
+
+// The per-server destroy is bounded by a deadline so a blocked provider cannot
+// hang the cleanup goroutine (and thus Stop()/graceful shutdown).
+func TestRunIdleReclamation_DestroyBoundedByTimeout(t *testing.T) {
+	lister := &fakeIdleLister{servers: []*AgentSandbox{idleMCPServer("ws-1", 10, StatusReady)}}
+	var (
+		deadline time.Time
+		hasDL    bool
+	)
+	rt := &fakeIdleReclaimer{onDestroy: func(ctx context.Context, _ *AgentSandbox) {
+		deadline, hasDL = ctx.Deadline()
+	}}
+
+	res := runIdleReclamation(context.Background(), lister, rt, 7, testLogger())
+
+	assert.Equal(t, 1, res.Reclaimed)
+	require.True(t, hasDL, "destroy must receive a bounded context with a deadline")
+	assert.WithinDuration(t, time.Now().Add(idleReclaimTimeout), deadline, 5*time.Second)
 }
 
 func TestIdleEligible(t *testing.T) {

@@ -148,7 +148,16 @@ type idleReclaimResult struct {
 
 // idleServerLister is the persistence surface the idle pass needs.
 type idleServerLister interface {
-	ListIdlePersistentMCPServers(ctx context.Context, idleBefore time.Time) ([]*AgentSandbox, error)
+	// ListPersistentMCPServers returns the idle-reclamation candidate set: all
+	// persistent MCP server rows, narrowed only by container type and lifecycle.
+	// The idle window and in-flight status policy are applied by the caller so
+	// each skip decision is observable.
+	ListPersistentMCPServers(ctx context.Context) ([]*AgentSandbox, error)
+	// GetIdlePersistentMCPServer re-reads a candidate row and returns it only
+	// if it is still eligible (present, not in-flight, still idle). It returns
+	// (nil, nil) when the row vanished, was touched inside the window, or
+	// entered an in-flight state.
+	GetIdlePersistentMCPServer(ctx context.Context, id string, idleBefore time.Time) (*AgentSandbox, error)
 	Delete(ctx context.Context, id string) (bool, error)
 }
 
@@ -164,8 +173,9 @@ type idleServerReclaimer interface {
 }
 
 // idleEligible reports whether a persistent MCP server row is eligible for
-// idle reclamation at the given cutoff. It mirrors the ListIdlePersistentMCPServers
-// query so tests can exercise the policy directly.
+// idle reclamation at the given cutoff. The candidate query narrows by
+// container type and lifecycle, so this applies the idle window and in-flight
+// status policy; it is also exercised directly by tests.
 func idleEligible(ws *AgentSandbox, idleBefore time.Time) bool {
 	if ws == nil {
 		return false
@@ -194,11 +204,17 @@ func idleSkipReason(ws *AgentSandbox, idleBefore time.Time) string {
 	return "not eligible"
 }
 
+// idleReclaimTimeout bounds each per-server destroy/delete during idle
+// reclamation so a blocked provider cannot hang the cleanup goroutine (and thus
+// Stop()/graceful shutdown).
+const idleReclaimTimeout = 30 * time.Second
+
 // runIdleReclamation destroys persistent MCP servers idle beyond the configured
 // window. It reuses the existing provider Destroy + row deletion path (the same
 // path as explicit removal), never deletes a row before a successful container
-// destroy, and continues past individual failures. A window of <= 0 disables
-// the pass entirely.
+// destroy, and continues past individual failures. The idle window and in-flight
+// status policy are applied here (not in the candidate query) so each skip is
+// observable with its reason. A window of <= 0 disables the pass entirely.
 func runIdleReclamation(ctx context.Context, lister idleServerLister, rt idleServerReclaimer, idleTTLDays int, log *slog.Logger) idleReclaimResult {
 	res := idleReclaimResult{}
 	if idleTTLDays <= 0 || lister == nil || rt == nil {
@@ -206,47 +222,83 @@ func runIdleReclamation(ctx context.Context, lister idleServerLister, rt idleSer
 	}
 
 	idleBefore := time.Now().AddDate(0, 0, -idleTTLDays)
-	idle, err := lister.ListIdlePersistentMCPServers(ctx, idleBefore)
+	candidates, err := lister.ListPersistentMCPServers(ctx)
 	if err != nil {
-		log.Error("failed to list idle persistent MCP servers", "error", err)
+		log.Error("failed to list persistent MCP servers for idle reclamation", "error", err)
 		return res
 	}
 
-	for _, ws := range idle {
+	for _, ws := range candidates {
 		if ws == nil {
 			continue
 		}
+		idleAge := time.Since(ws.LastUsedAt)
+
 		if !idleEligible(ws, idleBefore) {
-			// Defensive: the query already filters these out, but a skip must
-			// still be observable with its reason.
 			log.Info("skipping persistent MCP server for idle reclamation",
 				"sandbox_id", ws.ID,
-				"idle_age", time.Since(ws.LastUsedAt).String(),
+				"idle_age", idleAge.String(),
 				"reason", idleSkipReason(ws, idleBefore),
 			)
 			res.Skipped++
 			continue
 		}
-		idleAge := time.Since(ws.LastUsedAt)
 
-		// Stop the in-process monitor/bridge before destroying the container so
-		// it cannot auto-restart the server behind the cleanup pass's back.
-		rt.StopRuntime(ws.ID)
-
-		if err := rt.DestroyContainer(ctx, ws); err != nil {
-			log.Warn("failed to destroy idle persistent MCP server; row kept for retry",
+		// Re-validate against fresh store state immediately before reclaiming:
+		// a call that started after the candidate SELECT may have touched
+		// last_used_at, or the row may have vanished / entered an in-flight
+		// state. Skip rather than killing an in-flight call.
+		fresh, err := lister.GetIdlePersistentMCPServer(ctx, ws.ID, idleBefore)
+		if err != nil {
+			log.Warn("failed to re-read idle persistent MCP server before reclamation; skipping",
 				"sandbox_id", ws.ID,
-				"provider_workspace_id", ws.ProviderWorkspaceID,
 				"idle_age", idleAge.String(),
 				"error", err,
 			)
 			res.Failed++
 			continue
 		}
-
-		if _, err := lister.Delete(ctx, ws.ID); err != nil {
-			log.Warn("failed to delete idle persistent MCP server row after destroy",
+		if fresh == nil {
+			log.Info("skipping persistent MCP server for idle reclamation",
 				"sandbox_id", ws.ID,
+				"idle_age", idleAge.String(),
+				"reason", "touched or changed state since selection",
+			)
+			res.Skipped++
+			continue
+		}
+
+		// Stop the in-process monitor/bridge before destroying the container so
+		// it cannot auto-restart the server behind the cleanup pass's back.
+		rt.StopRuntime(fresh.ID)
+
+		if fresh.ProviderWorkspaceID == "" {
+			log.Warn("idle persistent MCP server has no provider container; deleting row without destroy",
+				"sandbox_id", fresh.ID,
+				"idle_age", idleAge.String(),
+			)
+		} else {
+			destroyCtx, cancel := context.WithTimeout(ctx, idleReclaimTimeout)
+			err = rt.DestroyContainer(destroyCtx, fresh)
+			cancel()
+			if err != nil {
+				log.Warn("failed to destroy idle persistent MCP server; row kept for retry",
+					"sandbox_id", fresh.ID,
+					"provider_workspace_id", fresh.ProviderWorkspaceID,
+					"idle_age", idleAge.String(),
+					"error", err,
+				)
+				res.Failed++
+				continue
+			}
+		}
+
+		delCtx, cancel := context.WithTimeout(ctx, idleReclaimTimeout)
+		_, err = lister.Delete(delCtx, fresh.ID)
+		cancel()
+		if err != nil {
+			log.Warn("failed to delete idle persistent MCP server row after destroy",
+				"sandbox_id", fresh.ID,
 				"idle_age", idleAge.String(),
 				"error", err,
 			)
@@ -255,7 +307,7 @@ func runIdleReclamation(ctx context.Context, lister idleServerLister, rt idleSer
 		}
 
 		log.Info("reclaimed idle persistent MCP server",
-			"sandbox_id", ws.ID,
+			"sandbox_id", fresh.ID,
 			"idle_days", int(idleAge.Hours()/24),
 		)
 		res.Reclaimed++

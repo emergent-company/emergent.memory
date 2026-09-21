@@ -40,8 +40,14 @@ idle MCP reclamation cycle complete  reclaimed=2 skipped=5 failed=1
 ```
 
 - `reclaimed` — container destroyed and row deleted.
-- `skipped` — not eligible (in-flight `creating`/`stopping`, or used within the window).
-- `failed` — destroy or row deletion failed; the row is kept for the next pass.
+- `skipped` — not eligible: in-flight `creating`/`stopping`, used within the
+  window, or touched (a call landed between the candidate scan and reclamation)
+  so reclamation was abandoned.
+- `failed` — destroy, row deletion, or the pre-reclaim re-read failed; the row
+  is kept for the next pass.
+
+Each per-server destroy and row delete is bounded by a 30-second timeout, so a
+hung provider cannot stall the cleanup cycle.
 
 Per-server log lines identify the server and its idle age, for example:
 

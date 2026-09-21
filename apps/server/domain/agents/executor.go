@@ -166,6 +166,15 @@ type ModelLimitsLookup interface {
 	GetModelInputLimit(ctx context.Context, modelName string) (int, error)
 }
 
+// ephemeralTokenSvc is the narrow surface of the API-token service used by the
+// executor to mint and revoke per-run ephemeral sandbox tokens. It is satisfied
+// by *apitoken.Service but declared as an interface so teardown revocation can
+// be asserted with a fake in tests.
+type ephemeralTokenSvc interface {
+	CreateEphemeral(ctx context.Context, projectID, orgID, userID string, ttl time.Duration) (tokenID, rawToken string, err error)
+	RevokeEphemeral(ctx context.Context, tokenID string)
+}
+
 // BudgetExceededError is returned by Execute when a project's monthly spending
 // limit has been reached and BUDGET_ENFORCEMENT_ENABLED=true.
 type BudgetExceededError struct {
@@ -360,7 +369,7 @@ type AgentExecutor struct {
 	wsEnabled      bool                     // cached feature flag
 	sessionService session.Service
 	modelLimits    ModelLimitsLookup // nil if provider module is not registered
-	apiTokenSvc    *apitoken.Service // nil if not configured; used for ephemeral sandbox tokens
+	apiTokenSvc    ephemeralTokenSvc // nil if not configured; used for ephemeral sandbox tokens
 	usageService   *provider.UsageService
 	eventsSvc      *events.Service // nil if events module not registered; used by ask_user SSE notification
 	safeguards     config.AgentSafeguardsConfig
@@ -1464,20 +1473,23 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 // teardownWorkspace destroys the provisioned workspace after the agent run completes.
 // Called via defer so it runs regardless of how the run exits.
 func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.ProvisioningResult, tokenID string) {
-	if result == nil || result.Workspace == nil || ae.provisioner == nil {
-		return
-	}
-
 	// Use a detached context for teardown since the run context may be cancelled
 	teardownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ae.provisioner.TeardownWorkspace(teardownCtx, result.Workspace)
-
-	// Revoke the ephemeral token if one was minted for this run
+	// Revoke the ephemeral token unconditionally. The token is minted BEFORE
+	// provisioning, so it must be revoked even when provisioning produced no
+	// workspace (e.g. sandbox disabled/unconfigured returns (nil, nil)) — otherwise
+	// every sandbox-disabled run leaks a live admin-scoped token.
 	if tokenID != "" && ae.apiTokenSvc != nil {
 		ae.apiTokenSvc.RevokeEphemeral(teardownCtx, tokenID)
 	}
+
+	if result == nil || result.Workspace == nil || ae.provisioner == nil {
+		return
+	}
+
+	ae.provisioner.TeardownWorkspace(teardownCtx, result.Workspace)
 }
 
 // resolveRootRunID determines the orchestration root for a run. It prefers the

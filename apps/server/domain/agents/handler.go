@@ -742,6 +742,13 @@ func (h *Handler) TriggerAgent(c echo.Context) error {
 					slog.String("run_id", run.ID),
 					slog.Any("panic", r),
 				)
+				ctx := context.Background()
+				if repoErr := h.repo.FailRunWithSteps(ctx, run.ID, fmt.Sprintf("panic: %v", r), run.StepCount); repoErr != nil {
+					h.executor.log.Error("failed to mark run as error after panic",
+						slog.String("run_id", run.ID),
+						slog.String("error", repoErr.Error()),
+					)
+				}
 			}
 		}()
 		bgCtx := context.Background()

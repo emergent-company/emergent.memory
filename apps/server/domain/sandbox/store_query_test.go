@@ -92,20 +92,41 @@ func newCaptureStore(t *testing.T) (*Store, *storeCaptureDriver) {
 	return NewStore(bun.NewDB(sqldb, pgdialect.New())), storeCaptureGlobal
 }
 
-func TestStore_ListIdlePersistentMCPServers_QueryGuards(t *testing.T) {
+// The candidate query for idle reclamation narrows only by container type and
+// lifecycle; it must NOT pre-filter the in-flight status or the idle window, so
+// the reclaim pass can apply that policy and emit real skip reasons.
+func TestStore_ListPersistentMCPServers_QueryGuards(t *testing.T) {
 	store, drv := newCaptureStore(t)
 
-	_, err := store.ListIdlePersistentMCPServers(context.Background(), time.Now().AddDate(0, 0, -7))
+	_, err := store.ListPersistentMCPServers(context.Background())
 	require.NoError(t, err)
 
 	q := drv.last()
 	require.NotEmpty(t, q)
 	assert.Contains(t, q, "mcp_server", "must filter to MCP servers")
 	assert.Contains(t, q, "persistent", "must filter to the persistent lifecycle")
-	assert.Contains(t, q, "creating")
-	assert.Contains(t, q, "stopping")
-	assert.Contains(t, q, "COALESCE(last_used_at, created_at)", "idle age uses last_used_at falling back to creation time")
 	assert.Contains(t, q, "agent_sandboxes", "must read the sandbox table")
+	assert.NotContains(t, q, "creating", "candidate query must not pre-filter in-flight status")
+	assert.NotContains(t, q, "stopping", "candidate query must not pre-filter in-flight status")
+	assert.NotContains(t, q, "COALESCE(last_used_at, created_at)", "candidate query must not pre-filter the idle window")
+}
+
+// The fresh re-read before reclamation re-checks the id, narrowing, in-flight
+// status, and idle window atomically.
+func TestStore_GetIdlePersistentMCPServer_QueryGuards(t *testing.T) {
+	store, drv := newCaptureStore(t)
+
+	_, err := store.GetIdlePersistentMCPServer(context.Background(), "ws-1", time.Now().AddDate(0, 0, -7))
+	require.NoError(t, err)
+
+	q := drv.last()
+	require.NotEmpty(t, q)
+	assert.Contains(t, q, "id = ", "must re-read by id")
+	assert.Contains(t, q, "mcp_server", "must filter to MCP servers")
+	assert.Contains(t, q, "persistent", "must filter to the persistent lifecycle")
+	assert.Contains(t, q, "creating", "must exclude in-flight creating state")
+	assert.Contains(t, q, "stopping", "must exclude in-flight stopping state")
+	assert.Contains(t, q, "COALESCE(last_used_at, created_at)", "must re-check the idle window")
 }
 
 func TestStore_ListOrphanedSandboxes_QueryGuards(t *testing.T) {
