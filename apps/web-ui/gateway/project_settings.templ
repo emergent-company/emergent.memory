@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"strings"
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
@@ -804,14 +805,47 @@ templ defaultModelsPanel(d providerPanelData) {
 }
 
 // defaultModelSelect renders one grouped model dropdown for the default-model
-// form. Options are provider-prefixed ("provider/model").
+// form plus its Test action. Options are provider-prefixed ("provider/model").
 templ defaultModelSelect(name, label, current string, models []Model) {
 	@settingsField("", label, "Provider-prefixed model name (configured provider), e.g. openai/deepseek-v4-pro.", "", nil) {
-		<select name={ name } class="select w-full">
-			<option value="" selected?={ current == "" }>None — no default</option>
-			@components.SelectOptionGroups(modelOptionGroupsFor(models, current))
-		</select>
+		<div class="flex items-center gap-2">
+			<select id={ name } name={ name } class="select w-full min-w-0">
+				<option value="" selected?={ current == "" }>None — no default</option>
+				@components.SelectOptionGroups(modelOptionGroupsFor(models, current))
+			</select>
+			@defaultModelTestButton(name)
+		</div>
 	}
+}
+
+// defaultModelTestButton is the quiet secondary action beside one default-model
+// dropdown. It tests the dropdown's currently selected model with a live
+// generate/embed call, WITHOUT disturbing the form's save-on-change flow:
+//
+//   - type="button" so it never submits the auto-save form;
+//   - hx-vals carries the model_type ("generative"/"embedding", derived from the
+//     select's name), hx-include pulls only that one select, and hx-swap="none"
+//     leaves the dropdowns untouched;
+//   - hx-disable="this" disables the button during the request (these calls hit
+//     a real provider and can take several seconds) while the nested
+//     htmx-indicator spinner — shown by htmx's injected indicator CSS whenever
+//     the button carries htmx-request — makes the wait unmistakable.
+templ defaultModelTestButton(selectName string) {
+	{{ modelType := strings.TrimSuffix(selectName, "_model") }}
+	<button
+		type="button"
+		class="btn btn-ghost btn-outline btn-sm shrink-0 gap-1.5"
+		hx-post="/settings/providers/model-config/test"
+		hx-vals={ `{"model_type":"` + modelType + `"}` }
+		hx-include={ "#" + selectName }
+		hx-swap="none"
+		hx-disable="this"
+		data-testid={ "default-model-test-" + modelType }
+	>
+		<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+		@ui.IconSpan("lucide--zap", "size-3.5")
+		Test
+	</button>
 }
 
 // providerModelSelect renders a provider-grouped model dropdown for the
