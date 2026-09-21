@@ -1,0 +1,24 @@
+# Minimal .dockerignore — only exclude what's absolutely necessary.
+#
+# The web-ui image is built with context `apps/web-ui` (see
+# scripts/deploy-adhoc-dev.sh in emergent.memory.infra), NOT the repo root, so
+# Docker reads THIS file, not ../.dockerignore.
+#
+# Excluding node_modules is load-bearing. Local dev symlinks
+# `gateway/node_modules` -> a checked-out go-daisy clone (see .gitignore). The
+# Dockerfile's `RUN npm ci` creates /src/node_modules as a real directory, and
+# the subsequent `COPY gateway/ ./` would otherwise copy that symlink onto it,
+# failing the build with:
+#   "cannot replace to directory .../src/node_modules with file"
+.git
+.DS_Store
+node_modules
+**/node_modules
+.env
+.env.*
+!.env.example
+*.log
+__pycache__
+*.pyc
+dist
+build
