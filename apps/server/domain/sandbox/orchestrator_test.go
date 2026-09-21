@@ -87,6 +87,14 @@ func (m *mockProvider) Capabilities() *ProviderCapabilities {
 	}
 }
 
+// BeatContainerHeartbeat makes mockProvider satisfy ContainerHeartbeater so it can
+// stand in for the gVisor provider in warm-pool tests (createWarmContainer type-
+// asserts the interface). Tests that need to count beats use heartbeatProvider,
+// which overrides this.
+func (m *mockProvider) BeatContainerHeartbeat(_ context.Context, _ string) error {
+	return nil
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }

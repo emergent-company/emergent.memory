@@ -42,6 +42,9 @@ type AutoProvisioner struct {
 	warmPool      *WarmPool
 	imageResolver ImageResolver // optional — if nil, falls back to ResolveProviderType()
 	log           *slog.Logger
+
+	// createWorkspace persists the initial workspace row. Overridable in tests.
+	createWorkspace func(ctx context.Context, req *CreateWorkspaceRequest) (*WorkspaceResponse, error)
 }
 
 // NewAutoProvisioner creates a new auto-provisioning service.
@@ -55,7 +58,7 @@ func NewAutoProvisioner(
 	log *slog.Logger,
 	imageResolver ImageResolver,
 ) *AutoProvisioner {
-	return &AutoProvisioner{
+	ap := &AutoProvisioner{
 		service:       service,
 		orchestrator:  orchestrator,
 		checkoutSvc:   checkoutSvc,
@@ -64,6 +67,28 @@ func NewAutoProvisioner(
 		imageResolver: imageResolver,
 		log:           log.With("component", "workspace-auto-provisioner"),
 	}
+	if service != nil {
+		ap.createWorkspace = service.Create
+	}
+	return ap
+}
+
+// createWorkspaceWithContainer persists the workspace row with the container
+// reference set in the same INSERT. This closes the acquire → DB-write window in
+// which a peer reconciler could otherwise see the container as ownerless and
+// unreferenced.
+func (ap *AutoProvisioner) createWorkspaceWithContainer(ctx context.Context, providerType ProviderType, containerProviderID, repoURL, branch string, limits *ResourceLimits) (*WorkspaceResponse, error) {
+	if ap.createWorkspace == nil {
+		return nil, fmt.Errorf("workspace store not configured")
+	}
+	return ap.createWorkspace(ctx, &CreateWorkspaceRequest{
+		ContainerType:       ContainerTypeAgentSandbox,
+		Provider:            string(providerType),
+		ProviderWorkspaceID: containerProviderID,
+		RepositoryURL:       repoURL,
+		Branch:              branch,
+		ResourceLimits:      limits,
+	})
 }
 
 // WaitForImageReady checks whether the sandbox image required by the config is ready.
@@ -406,15 +431,10 @@ func (ap *AutoProvisioner) attemptProvision(
 		"provider_id", containerProviderID,
 	)
 
-	// Create workspace record in DB
+	// Create workspace record in DB, with the container reference persisted in the
+	// same INSERT so the container is never observable as ownerless-and-unreferenced.
 	ap.log.Info("creating workspace database record")
-	ws, err := ap.service.Create(ctx, &CreateWorkspaceRequest{
-		ContainerType:  ContainerTypeAgentSandbox,
-		Provider:       string(providerType),
-		RepositoryURL:  repoURL,
-		Branch:         branch,
-		ResourceLimits: cfg.ResourceLimits,
-	})
+	ws, err := ap.createWorkspaceWithContainer(ctx, providerType, containerProviderID, repoURL, branch, cfg.ResourceLimits)
 	if err != nil {
 		ap.log.Error("failed to create workspace record, cleaning up container",
 			"provider_id", containerProviderID,
@@ -438,15 +458,13 @@ func (ap *AutoProvisioner) attemptProvision(
 		wsEntity.ImageDigest = createResult.ImageDigest
 	}
 
-	// Update provider workspace ID
-	ap.log.Info("updating provider workspace ID",
-		"workspace_id", ws.ID,
-		"provider_id", containerProviderID,
-	)
-	wsEntity.ProviderWorkspaceID = containerProviderID
-	_, err = ap.service.store.Update(ctx, wsEntity, "provider_workspace_id", "base_image", "image_digest")
-	if err != nil {
-		ap.log.Warn("failed to update provider_workspace_id", "workspace_id", ws.ID, "error", err)
+	// provider_workspace_id was persisted in the INSERT above; only cold-create
+	// metadata (base image / digest) still needs a follow-up update.
+	if createResult != nil && ap.service != nil && ap.service.store != nil {
+		_, err = ap.service.store.Update(ctx, wsEntity, "base_image", "image_digest")
+		if err != nil {
+			ap.log.Warn("failed to update container metadata", "workspace_id", ws.ID, "error", err)
+		}
 	}
 
 	// Clone repository if needed

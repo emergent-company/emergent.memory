@@ -54,6 +54,17 @@ func (h *Handler) provisionContainer(ctx context.Context, ws *WorkspaceResponse,
 			"provider_id", providerID,
 			"provider", ws.Provider,
 		)
+		// This handler path already has a DB row and persists provider_workspace_id
+		// via a follow-up Update, so it cannot use the atomic-INSERT path of
+		// auto_provisioner. Instead it relies on the liveness lease to bridge the
+		// acquire -> DB-write window: refresh the lease now so a peer reconciler
+		// keeps seeing a live owner until the reference is persisted (design D2a).
+		if beater, ok := provider.(ContainerHeartbeater); ok {
+			if beatErr := beater.BeatContainerHeartbeat(ctx, providerID); beatErr != nil {
+				h.log.Warn("failed to refresh acquired container heartbeat",
+					"workspace_id", ws.ID, "provider_id", providerID, "error", beatErr)
+			}
+		}
 	} else {
 		// Cold start — create container from scratch
 		h.log.Info("creating container (cold start)", "workspace_id", ws.ID, "provider", ws.Provider)
@@ -90,6 +101,9 @@ func (h *Handler) provisionContainer(ctx context.Context, ws *WorkspaceResponse,
 		return
 	}
 
+	// Persisted via a follow-up Update (the row pre-existed this handler). The
+	// acquire -> DB-write window is bridged by the container's liveness lease,
+	// refreshed immediately after acquisition above; see design D2a.
 	wsEntity.ProviderWorkspaceID = providerID
 	_, err = h.svc.store.Update(ctx, wsEntity, "provider_workspace_id")
 	if err != nil {

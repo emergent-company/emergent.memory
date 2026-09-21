@@ -134,6 +134,20 @@ func (s *Store) ListPersistentMCPServers(ctx context.Context) ([]*AgentSandbox, 
 	return workspaces, nil
 }
 
+// ListActive returns all workspaces whose status is neither stopped nor errored.
+// Used by reconciliation to protect containers still referenced by live work.
+func (s *Store) ListActive(ctx context.Context) ([]*AgentSandbox, error) {
+	var workspaces []*AgentSandbox
+	err := s.db.NewSelect().
+		Model(&workspaces).
+		Where("status NOT IN (?)", bun.In([]Status{StatusStopped, StatusError})).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return workspaces, nil
+}
+
 // GetIdlePersistentMCPServer re-reads a persistent MCP server row and returns
 // it only if it is still eligible for idle reclamation: present, a persistent
 // MCP server, not in an in-flight lifecycle state (creating/stopping), and not
@@ -179,8 +193,7 @@ func (s *Store) ListOrphanedSandboxes(ctx context.Context, liveRunStatuses []str
 		Where("status NOT IN (?)", bun.In([]Status{StatusStopped, StatusError})).
 		Where("agent_session_id IS NOT NULL").
 		Where("agent_session_id IN (SELECT id FROM kb.agent_runs WHERE status NOT IN (?))", bun.In(liveRunStatuses)).
-		Order("created_at ASC").
-		Scan(ctx)
+		Order("created_at ASC").Scan(ctx)
 	if err != nil {
 		return nil, err
 	}
