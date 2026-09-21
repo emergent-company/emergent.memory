@@ -806,6 +806,14 @@ div:has(> #_layout-topbar) {
   white-space: nowrap;
   border: 1px solid transparent;
 }
+/* A two-class selector is required to hide the badge: the injected copy of
+   this sheet (chat-components.js) is appended to <head> after the compiled
+   Tailwind sheet, so at equal specificity its `.memory-rail-badge { display:
+   inline-flex }` beats Tailwind's `.hidden { display: none }`. Keep this rule
+   identical to the injected copy. */
+.memory-rail-badge.hidden {
+  display: none;
+}
 .memory-rail-badge[data-bucket="needs_input"] {
   color: var(--color-warning);
   background: color-mix(in oklab, var(--color-warning) 15%, transparent);
