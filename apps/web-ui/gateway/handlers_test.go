@@ -44,6 +44,13 @@ func (f *fakeMemory) catalogCallCount(method string) int {
 	return f.catalogCalls[method]
 }
 
+// modelTestCall records one TestProjectModel invocation.
+type modelTestCall struct {
+	Provider  string
+	Model     string
+	ModelType string
+}
+
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
 	agents  []AgentDefinitionSummary
@@ -261,6 +268,8 @@ type fakeMemory struct {
 	lastProviderConfig     string              // provider name of the last upsert
 	deletedProviderConfigs []string            // provider names passed to DeleteProjectProviderConfig
 	providerTestResult     *ProviderTestResult // returned by TestProjectProvider
+	modelTestResult        *ProviderTestResult // returned by TestProjectModel
+	modelTestCalls         []modelTestCall     // every TestProjectModel call, in order
 	modelConfig            *ProjectModelConfig // returned by GetProjectModelConfig
 	lastModelConfig        *ProjectModelConfig // last UpsertProjectModelConfig
 
@@ -1558,6 +1567,17 @@ func (f *fakeMemory) TestProjectProvider(ctx context.Context, provider string) (
 		return f.providerTestResult, nil
 	}
 	return &ProviderTestResult{Provider: provider, Model: "deepseek-v4-pro", Reply: "hello", LatencyMs: 42}, nil
+}
+
+func (f *fakeMemory) TestProjectModel(ctx context.Context, provider, model, modelType string) (*ProviderTestResult, error) {
+	f.modelTestCalls = append(f.modelTestCalls, modelTestCall{Provider: provider, Model: model, ModelType: modelType})
+	if f.providerErr != nil {
+		return nil, f.providerErr
+	}
+	if f.modelTestResult != nil {
+		return f.modelTestResult, nil
+	}
+	return &ProviderTestResult{Provider: provider, Model: model, Reply: "hello", LatencyMs: 42}, nil
 }
 
 func (f *fakeMemory) GetProjectModelConfig(ctx context.Context) (*ProjectModelConfig, error) {

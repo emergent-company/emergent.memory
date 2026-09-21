@@ -467,18 +467,34 @@ func (s *ChunkEmbeddingJobsService) StatsByProject(ctx context.Context, projectI
 
 // RetriggerByProject resets failed jobs for a project's chunks to pending.
 // Returns the number of jobs reset.
+//
+// At most one active (pending/processing) job may exist per chunk — enforced by
+// the partial unique index uidx_chunk_embedding_jobs_active. A blind
+// failed->pending UPDATE aborts on that index if a stale failed row coexists
+// with an already-queued active row. Skip chunks that already have an active
+// job, and reset only the most recently updated retryable row per chunk.
 func (s *ChunkEmbeddingJobsService) RetriggerByProject(ctx context.Context, projectID string) (int, error) {
 	result, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
 		SET status = 'pending',
 			scheduled_at = now(),
 			last_error = NULL,
 			updated_at = now()
-		WHERE status = 'failed'
-		  AND chunk_id IN (
-			SELECT c.id FROM kb.chunks c
-			JOIN kb.documents d ON d.id = c.document_id
-			WHERE d.project_id = ?
-		  )`, projectID).Exec(ctx)
+		WHERE id IN (
+			SELECT DISTINCT ON (x.chunk_id) x.id
+			FROM kb.chunk_embedding_jobs x
+			WHERE x.status = 'failed'
+			  AND x.chunk_id IN (
+				SELECT c.id FROM kb.chunks c
+				JOIN kb.documents d ON d.id = c.document_id
+				WHERE d.project_id = ?
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM kb.chunk_embedding_jobs a
+				WHERE a.chunk_id = x.chunk_id
+				  AND a.status IN ('pending', 'processing')
+			  )
+			ORDER BY x.chunk_id, x.updated_at DESC
+		)`, projectID).Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("retrigger chunk embedding jobs for project: %w", err)
 	}
