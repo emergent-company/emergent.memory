@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	ui "github.com/emergent-company/go-daisy/components/ui"
 	"github.com/labstack/echo/v4"
@@ -123,12 +124,20 @@ func embeddingProgressZero(p EmbeddingProgress) bool {
 // Progress/Status carry the successful responses; ProgressErr/StatusErr carry
 // per-section fetch failures. The page renders each section independently so a
 // failure in one section (queue counts vs worker state) does not hide the other.
+//
+// EmbeddingModel/EmbeddingModelMissing carry the effective model config's
+// embedding state. Missing is true only when the config fetch succeeded and
+// returned an empty embedding model: a failed fetch is "unknown" and shows no
+// warning, matching the independent-degradation rule.
 type embeddingPageData struct {
 	Progress    *EmbeddingProgress
 	Status      *EmbeddingStatus
 	ProgressErr error
 	StatusErr   error
 	Empty       bool
+
+	EmbeddingModel        string
+	EmbeddingModelMissing bool
 }
 
 // uiEmbeddings renders the embeddings status/progress page.
@@ -137,18 +146,22 @@ func (s *Server) uiEmbeddings(c echo.Context) error {
 	var (
 		progress *EmbeddingProgress
 		status   *EmbeddingStatus
+		modelCfg *EffectiveModelConfig
 		progErr  error
 		statErr  error
+		modelErr error
 	)
 	var g errgroup.Group
 	g.Go(func() error { progress, progErr = s.memory.GetEmbeddingProgress(ctx); return nil })
 	g.Go(func() error { status, statErr = s.memory.GetEmbeddingStatus(ctx); return nil })
+	g.Go(func() error { modelCfg, modelErr = s.memory.GetEffectiveModelConfig(ctx); return nil })
 	_ = g.Wait()
 
-	// Report both failures to Sentry, but keep rendering: each section degrades
+	// Report failures to Sentry, but keep rendering: each section degrades
 	// independently instead of one failed endpoint blanking the whole page.
 	captureError(progErr)
 	captureError(statErr)
+	captureError(modelErr)
 
 	data := embeddingPageData{
 		Progress:    progress,
@@ -158,6 +171,13 @@ func (s *Server) uiEmbeddings(c echo.Context) error {
 	}
 	if progErr == nil && (progress == nil || embeddingProgressZero(*progress)) {
 		data.Empty = true
+	}
+	// Warn only when we positively know no embedding model is configured. A
+	// failed model-config fetch is "unknown" — show no warning and blank
+	// nothing.
+	if modelErr == nil && modelCfg != nil {
+		data.EmbeddingModel = modelCfg.EmbeddingModel
+		data.EmbeddingModelMissing = strings.TrimSpace(modelCfg.EmbeddingModel) == ""
 	}
 	return s.page(c, pageTitle("Embeddings"), EmbeddingsPage(data))
 }

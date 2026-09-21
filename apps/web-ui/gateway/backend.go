@@ -152,6 +152,7 @@ type MemoryBackend interface {
 	DeleteProjectProviderConfig(ctx context.Context, provider string) error
 	TestProjectProvider(ctx context.Context, provider string) (*ProviderTestResult, error)
 	GetProjectModelConfig(ctx context.Context) (*ProjectModelConfig, error)
+	GetEffectiveModelConfig(ctx context.Context) (*EffectiveModelConfig, error)
 	UpsertProjectModelConfig(ctx context.Context, generativeModel, embeddingModel string) (*ProjectModelConfig, error)
 	ListOrgs(ctx context.Context) ([]Org, error)
 	GetOrg(ctx context.Context, orgID string) (*Org, error)
