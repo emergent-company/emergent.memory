@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -810,4 +811,70 @@ func TestGetSessionTranscriptByID_FiltersMessages(t *testing.T) {
 	assert.Equal(t, "hi there", msgs[1].Content)
 	assert.Equal(t, "assistant", msgs[2].Role)
 	assert.Equal(t, "final answer", msgs[2].Content)
+}
+
+// =============================================================================
+// Share-link teardown (Gap 1)
+// =============================================================================
+
+// A served share link must tear its sandbox down on the success path. The
+// service binds cleanup to the handler lifetime, so a runner result carrying a
+// Cleanup func has it invoked exactly once before StreamMessage returns.
+func TestStreamMessage_InvokesCleanupOnSuccess(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	var cleanups int
+	runner := &shareFakeRunner{result: &ExecuteResult{
+		RunID:   "run-1",
+		Cleanup: func() { cleanups++ },
+	}}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleanups, "share run cleanup must be invoked on success")
+}
+
+// An aborted / failed stream (runner returns an error) must still tear down.
+func TestStreamMessage_InvokesCleanupOnRunError(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	var cleanups int
+	runner := &shareFakeRunner{
+		result: &ExecuteResult{RunID: "run-1", Cleanup: func() { cleanups++ }},
+		err:    errors.New("stream aborted"),
+	}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+
+	require.Error(t, err)
+	assert.Equal(t, 1, cleanups, "share run cleanup must be invoked when the run errors")
+}
+
+// A runner that returns no cleanup (no sandbox provisioned) must not panic.
+func TestStreamMessage_NilCleanupIsSafe(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	def := testDefinition("def-a", "proj-a", "Agent A")
+	repo.defByID["def-a"] = def
+	binding := testBinding(link, def)
+
+	runner := &shareFakeRunner{result: &ExecuteResult{RunID: "run-1"}}
+	svc := NewShareService(repo, nil, runner, nil, "", nil)
+
+	session := &AgentShareSession{ID: "sess-1", ACPSessionID: "acp-1", EndUserRef: "alice"}
+	_, err := svc.StreamMessage(context.Background(), binding, session, "hello", nil)
+	require.NoError(t, err)
 }

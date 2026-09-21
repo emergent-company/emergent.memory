@@ -227,9 +227,11 @@ func (ap *AutoProvisioner) LinkToRun(ctx context.Context, workspace *AgentSandbo
 	return nil
 }
 
-// TeardownWorkspace destroys an ephemeral workspace after an agent run completes.
-// For persistent workspaces, it marks them as stopped but does not destroy them.
-// This is best-effort — errors are logged but not returned to avoid masking run results.
+// TeardownWorkspace destroys a workspace's container after an agent run
+// completes and marks the row stopped. It applies to every lifecycle — there is
+// no persistent-workspace exemption: calling it on a persistent workspace
+// destroys that workspace's container. This is best-effort — errors are logged
+// but not returned so teardown cannot mask the run result.
 func (ap *AutoProvisioner) TeardownWorkspace(ctx context.Context, workspace *AgentSandbox) {
 	if workspace == nil {
 		return

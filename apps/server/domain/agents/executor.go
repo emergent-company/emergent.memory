@@ -307,13 +307,39 @@ type ExecuteResult struct {
 	Duration time.Duration
 
 	// Cleanup tears down the workspace (container + ephemeral token) provisioned
-	// for this run.  It is safe to call multiple times (idempotent via sync.Once).
+	// for this run. Teardown is bound to the run's lifetime by the executor,
+	// which invokes it before returning, so it runs exactly once on every exit
+	// path — normal return, error return, context cancellation, and panic — with
+	// no caller action required.
 	//
-	// The executor always defers Cleanup as a safety net, but callers that want
-	// lower latency (e.g. SSE streams) can call Cleanup *asynchronously* after
-	// they have finished writing the response — the deferred call will then be a
-	// no-op.
+	// The value is still exposed as an explicit handle for callers. Because the
+	// executor has already run it before returning, calling it is an idempotent
+	// no-op (sync.Once) and surfaces no error.
 	Cleanup func()
+}
+
+// runCleanup binds a run's sandbox teardown to the run lifetime. The executor
+// creates exactly one per run and defers Cleanup immediately, so teardown is
+// guaranteed regardless of how the run exits (normal return, error,
+// cancellation, panic). Cleanup is idempotent: the teardown body runs at most
+// once however many times it is invoked.
+type runCleanup struct {
+	once sync.Once
+	fn   func()
+}
+
+// newRunCleanup returns a run-lifetime cleanup bound to fn.
+func newRunCleanup(fn func()) *runCleanup {
+	return &runCleanup{fn: fn}
+}
+
+// Cleanup runs the bound teardown at most once. It is a safe no-op on a nil
+// receiver or when no teardown body was bound.
+func (c *runCleanup) Cleanup() {
+	if c == nil || c.fn == nil {
+		return
+	}
+	c.once.Do(c.fn)
 }
 
 // AgentExecutor is the core execution engine for running agents via ADK.
@@ -554,16 +580,16 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}, nil
 	}
 
-	// Build an idempotent cleanup function so teardown runs exactly once.
-	// Callers are responsible for invoking Cleanup on the returned ExecuteResult.
-	// SSE callers can invoke it asynchronously after flushing the response;
-	// non-SSE callers should defer it or call it synchronously.
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		cleanupOnce.Do(func() {
-			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-		})
-	}
+	// Bind teardown to this run's lifetime. The cleanup is deferred so it runs
+	// exactly once on every exit path — normal return, error return, context
+	// cancellation, and a panic inside runPipeline. ExecuteResult.Cleanup
+	// exposes the same idempotent function; a caller that also invokes it (e.g.
+	// asynchronously after flushing an SSE response) gets a no-op because
+	// teardown has already run.
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
@@ -592,7 +618,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    0,
 			Duration: time.Since(startTime),
-			Cleanup:  cleanup,
+			Cleanup:  cleanup.Cleanup,
 		}, nil
 	}
 
@@ -617,7 +643,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		span.SetStatus(codes.Ok, "")
 	}
 
-	result.Cleanup = cleanup
+	result.Cleanup = cleanup.Cleanup
 	return result, nil
 }
 
@@ -720,13 +746,12 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		}, nil
 	}
 
-	// Build an idempotent cleanup function so teardown runs exactly once.
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		cleanupOnce.Do(func() {
-			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-		})
-	}
+	// Bind teardown to this run's lifetime (see Execute): deferred so it runs
+	// exactly once on every exit path, including a panic in runPipeline.
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
 
 	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
@@ -752,7 +777,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    0,
 			Duration: time.Since(startTime),
-			Cleanup:  cleanup,
+			Cleanup:  cleanup.Cleanup,
 		}, nil
 	}
 
@@ -776,7 +801,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		span.SetStatus(codes.Ok, "")
 	}
 
-	result.Cleanup = cleanup
+	result.Cleanup = cleanup.Cleanup
 	return result, nil
 }
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
@@ -926,13 +951,12 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		}, nil
 	}
 
-	// Build an idempotent cleanup function so teardown runs exactly once.
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		cleanupOnce.Do(func() {
-			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-		})
-	}
+	// Bind teardown to this run's lifetime (see Execute): deferred so it runs
+	// exactly once on every exit path, including a panic in runPipeline.
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
@@ -980,7 +1004,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    priorRun.StepCount,
 			Duration: time.Since(startTime),
-			Cleanup:  cleanup,
+			Cleanup:  cleanup.Cleanup,
 		}, nil
 	}
 
@@ -998,7 +1022,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		_ = ae.repo.FailRun(dbCtx, priorRun.ID, errMsg)
 	}
 
-	result.Cleanup = cleanup
+	result.Cleanup = cleanup.Cleanup
 	return result, nil
 }
 

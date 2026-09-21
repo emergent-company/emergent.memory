@@ -66,6 +66,7 @@ E2B provides managed sandboxes via their cloud API. No local infrastructure requ
 | `WORKSPACE_DEFAULT_TTL_DAYS`     | `30`     | Days before ephemeral sandboxes are cleaned up  |
 | `WORKSPACE_CLEANUP_INTERVAL_MIN` | `60`     | Minutes between cleanup scans                   |
 | `WORKSPACE_ALERT_THRESHOLD_PCT`  | `80`     | Resource usage warning threshold (%)            |
+| `WORKSPACE_PERSISTENT_IDLE_TTL_DAYS` | `0`  | Days of inactivity after which a hosted MCP server is reclaimed (`0` = disabled) |
 
 ### Resource Defaults
 
@@ -185,3 +186,32 @@ curl -H "Authorization: Bearer $TOKEN" \
 1. Verify `ENABLE_AGENT_SANDBOXES=true`
 2. Check server startup logs for "failed to auto-start MCP servers"
 3. Verify MCP server images are accessible
+
+## Teardown Guarantee
+
+Every agent run that provisions a sandbox tears it down exactly once, on every
+exit path: normal completion, error return, context cancellation, and panic.
+Teardown is bound to the run's lifetime by the executor and does not depend on
+the caller invoking any cleanup function. A second teardown for the same run is
+a no-op.
+
+On startup, any sandbox row whose owning run is no longer active (the process
+crashed or was restarted mid-run) is transitioned out of its non-stopped state
+and logged, so its container and volume become eligible for reclamation rather
+than lingering until the 30-day ephemeral TTL. Runs still queued or executing
+are left untouched, and recovery is idempotent across repeated restarts.
+
+## Persistent MCP Idle Reclamation (opt-in)
+
+Persistent hosted MCP servers are not governed by the ephemeral TTL. By default
+they live until an operator explicitly deletes them (`DELETE /api/v1/mcp/hosted/:id`).
+
+Set `WORKSPACE_PERSISTENT_IDLE_TTL_DAYS` to a positive number of days to have
+the cleanup cycle destroy hosted MCP servers whose `last_used_at` is older than
+that window. Servers in `creating`/`stopping` states are never reclaimed, a
+failed container destroy leaves the row in place for retry, and the row is
+deleted only after a successful destroy. `0` (the default) keeps the current
+persistent semantics — nothing is reclaimed by idleness.
+
+`GET /api/v1/mcp/hosted` exposes `last_used_at`, so you can identify idle
+servers before enabling the policy. See [OPERATIONS.md](./OPERATIONS.md).
