@@ -398,6 +398,11 @@ type SandboxConfig struct {
 	CleanupIntervalMin int `env:"WORKSPACE_CLEANUP_INTERVAL_MIN" envDefault:"60"`
 	// AlertThresholdPct is the usage threshold for resource alerts (0-100)
 	AlertThresholdPct int `env:"WORKSPACE_ALERT_THRESHOLD_PCT" envDefault:"80"`
+	// PersistentIdleTTLDays enables idle reclamation of persistent MCP server
+	// workspaces. A server whose last_used_at is older than this many days is
+	// destroyed by the cleanup cycle. 0 (the default) disables the policy and
+	// preserves current persistent semantics — nothing is reclaimed by idleness.
+	PersistentIdleTTLDays int `env:"WORKSPACE_PERSISTENT_IDLE_TTL_DAYS" envDefault:"0"`
 	// WarmPoolSize is the number of pre-booted containers to keep ready (0 = disabled, default: 2)
 	WarmPoolSize int `env:"WORKSPACE_WARM_POOL_SIZE" envDefault:"2"`
 	// WarmPoolTargetImage is the Docker image to pre-boot warm containers with.

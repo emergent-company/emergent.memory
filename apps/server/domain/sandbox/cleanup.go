@@ -13,14 +13,18 @@ type CleanupConfig struct {
 	Interval       time.Duration // How often to scan for expired workspaces (default: 1 hour)
 	MaxConcurrent  int           // Maximum concurrent active workspaces (for resource alerts)
 	AlertThreshold float64       // Usage threshold for resource alerts (default: 0.8 = 80%)
+	// PersistentIdleTTLDays enables idle reclamation of persistent MCP servers.
+	// 0 (the default) disables the policy.
+	PersistentIdleTTLDays int
 }
 
 // DefaultCleanupConfig returns the default cleanup configuration.
 func DefaultCleanupConfig() CleanupConfig {
 	return CleanupConfig{
-		Interval:       1 * time.Hour,
-		MaxConcurrent:  10,
-		AlertThreshold: 0.8,
+		Interval:              1 * time.Hour,
+		MaxConcurrent:         10,
+		AlertThreshold:        0.8,
+		PersistentIdleTTLDays: 0, // disabled by default — preserves persistent semantics
 	}
 }
 
@@ -29,6 +33,7 @@ func DefaultCleanupConfig() CleanupConfig {
 type CleanupJob struct {
 	store        *Store
 	orchestrator *Orchestrator
+	mcpHosting   *MCPHostingService // may be nil; idle reclamation is skipped when nil
 	log          *slog.Logger
 	config       CleanupConfig
 	stopCh       chan struct{}
@@ -50,10 +55,11 @@ func (j *CleanupJob) SetReconciler(r ReconcilerRunner, enabled bool) {
 }
 
 // NewCleanupJob creates a new cleanup job.
-func NewCleanupJob(store *Store, orchestrator *Orchestrator, log *slog.Logger, config CleanupConfig) *CleanupJob {
+func NewCleanupJob(store *Store, orchestrator *Orchestrator, mcpHosting *MCPHostingService, log *slog.Logger, config CleanupConfig) *CleanupJob {
 	return &CleanupJob{
 		store:        store,
 		orchestrator: orchestrator,
+		mcpHosting:   mcpHosting,
 		log:          log.With("component", "workspace-cleanup"),
 		config:       config,
 		stopCh:       make(chan struct{}),
@@ -118,10 +124,12 @@ func (j *CleanupJob) Stop() {
 }
 
 // runCycle performs a single cleanup cycle: reconcile ownerless sandbox resources,
-// destroy expired workspaces, and check resource usage.
+// destroy expired workspaces, reclaim idle persistent MCP servers, and check
+// resource usage.
 func (j *CleanupJob) runCycle(ctx context.Context) {
 	j.cleanupExpired(ctx)
 	j.reconcileOrphans(ctx)
+	j.reclaimIdleMCPServers(ctx)
 	j.checkResourceUsage(ctx)
 }
 
@@ -146,6 +154,238 @@ func (j *CleanupJob) reconcileOrphans(ctx context.Context) {
 		"skipped", result.Skipped,
 		"failed", result.Failed,
 	)
+}
+
+// reclaimIdleMCPServers runs the persistent-MCP idle policy if it is enabled.
+// It is a no-op when the policy is disabled (the default) or the hosting
+// service is unavailable.
+func (j *CleanupJob) reclaimIdleMCPServers(ctx context.Context) {
+	days := j.config.PersistentIdleTTLDays
+	if days <= 0 {
+		return
+	}
+	if j.mcpHosting == nil {
+		j.log.Warn("persistent MCP idle reclamation is enabled but the MCP hosting service is unavailable; skipping")
+		return
+	}
+
+	rt := &hostedMCPRuntime{orchestrator: j.orchestrator, hosting: j.mcpHosting}
+	res := runIdleReclamation(ctx, j.store, rt, days, j.log)
+	j.log.Info("idle MCP reclamation cycle complete",
+		"reclaimed", res.Reclaimed,
+		"skipped", res.Skipped,
+		"failed", res.Failed,
+	)
+}
+
+// idleReclaimResult reports the outcome of one idle reclamation pass.
+type idleReclaimResult struct {
+	Reclaimed int
+	Skipped   int
+	Failed    int
+}
+
+// idleServerLister is the persistence surface the idle pass needs.
+type idleServerLister interface {
+	// ListPersistentMCPServers returns the idle-reclamation candidate set: all
+	// persistent MCP server rows, narrowed only by container type and lifecycle.
+	// The idle window and in-flight status policy are applied by the caller so
+	// each skip decision is observable.
+	ListPersistentMCPServers(ctx context.Context) ([]*AgentSandbox, error)
+	// GetIdlePersistentMCPServer re-reads a candidate row and returns it only
+	// if it is still eligible (present, not in-flight, still idle). It returns
+	// (nil, nil) when the row vanished, was touched inside the window, or
+	// entered an in-flight state.
+	GetIdlePersistentMCPServer(ctx context.Context, id string, idleBefore time.Time) (*AgentSandbox, error)
+	Delete(ctx context.Context, id string) (bool, error)
+}
+
+// idleServerReclaimer is the container surface the idle pass needs.
+type idleServerReclaimer interface {
+	// StopRuntime halts in-process monitoring/bridging for a server so it is
+	// not auto-restarted after its container is reclaimed.
+	StopRuntime(workspaceID string)
+	// DestroyContainer destroys the provider container. It must complete
+	// successfully before the row is deleted, so a failed destroy leaves the
+	// row in place for a later retry rather than orphaning a running container.
+	DestroyContainer(ctx context.Context, ws *AgentSandbox) error
+}
+
+// idleEligible reports whether a persistent MCP server row is eligible for
+// idle reclamation at the given cutoff. The candidate query narrows by
+// container type and lifecycle, so this applies the idle window and in-flight
+// status policy; it is also exercised directly by tests.
+func idleEligible(ws *AgentSandbox, idleBefore time.Time) bool {
+	if ws == nil {
+		return false
+	}
+	if ws.ContainerType != ContainerTypeMCPServer || ws.Lifecycle != LifecyclePersistent {
+		return false
+	}
+	if ws.Status == StatusCreating || ws.Status == StatusStopping {
+		return false
+	}
+	return ws.LastUsedAt.Before(idleBefore)
+}
+
+// idleSkipReason returns the operator-facing reason a persistent MCP server was
+// not reclaimed.
+func idleSkipReason(ws *AgentSandbox, idleBefore time.Time) string {
+	if ws.ContainerType != ContainerTypeMCPServer || ws.Lifecycle != LifecyclePersistent {
+		return "not a persistent MCP server"
+	}
+	if ws.Status == StatusCreating || ws.Status == StatusStopping {
+		return "in-flight lifecycle state"
+	}
+	if !ws.LastUsedAt.Before(idleBefore) {
+		return "used within idle window"
+	}
+	return "not eligible"
+}
+
+// idleReclaimTimeout bounds each per-server destroy/delete during idle
+// reclamation so a blocked provider cannot hang the cleanup goroutine (and thus
+// Stop()/graceful shutdown).
+const idleReclaimTimeout = 30 * time.Second
+
+// runIdleReclamation destroys persistent MCP servers idle beyond the configured
+// window. It reuses the existing provider Destroy + row deletion path (the same
+// path as explicit removal), never deletes a row before a successful container
+// destroy, and continues past individual failures. The idle window and in-flight
+// status policy are applied here (not in the candidate query) so each skip is
+// observable with its reason. A window of <= 0 disables the pass entirely.
+func runIdleReclamation(ctx context.Context, lister idleServerLister, rt idleServerReclaimer, idleTTLDays int, log *slog.Logger) idleReclaimResult {
+	res := idleReclaimResult{}
+	if idleTTLDays <= 0 || lister == nil || rt == nil {
+		return res
+	}
+
+	idleBefore := time.Now().AddDate(0, 0, -idleTTLDays)
+	candidates, err := lister.ListPersistentMCPServers(ctx)
+	if err != nil {
+		log.Error("failed to list persistent MCP servers for idle reclamation", "error", err)
+		return res
+	}
+
+	for _, ws := range candidates {
+		if ws == nil {
+			continue
+		}
+		idleAge := time.Since(ws.LastUsedAt)
+
+		if !idleEligible(ws, idleBefore) {
+			log.Info("skipping persistent MCP server for idle reclamation",
+				"sandbox_id", ws.ID,
+				"idle_age", idleAge.String(),
+				"reason", idleSkipReason(ws, idleBefore),
+			)
+			res.Skipped++
+			continue
+		}
+
+		// Re-validate against fresh store state immediately before reclaiming:
+		// a call that started after the candidate SELECT may have touched
+		// last_used_at, or the row may have vanished / entered an in-flight
+		// state. Skip rather than killing an in-flight call.
+		fresh, err := lister.GetIdlePersistentMCPServer(ctx, ws.ID, idleBefore)
+		if err != nil {
+			log.Warn("failed to re-read idle persistent MCP server before reclamation; skipping",
+				"sandbox_id", ws.ID,
+				"idle_age", idleAge.String(),
+				"error", err,
+			)
+			res.Failed++
+			continue
+		}
+		if fresh == nil {
+			log.Info("skipping persistent MCP server for idle reclamation",
+				"sandbox_id", ws.ID,
+				"idle_age", idleAge.String(),
+				"reason", "touched or changed state since selection",
+			)
+			res.Skipped++
+			continue
+		}
+
+		// Stop the in-process monitor/bridge before destroying the container so
+		// it cannot auto-restart the server behind the cleanup pass's back.
+		rt.StopRuntime(fresh.ID)
+
+		if fresh.ProviderWorkspaceID == "" {
+			log.Warn("idle persistent MCP server has no provider container; deleting row without destroy",
+				"sandbox_id", fresh.ID,
+				"idle_age", idleAge.String(),
+			)
+		} else {
+			destroyCtx, cancel := context.WithTimeout(ctx, idleReclaimTimeout)
+			err = rt.DestroyContainer(destroyCtx, fresh)
+			cancel()
+			if err != nil {
+				log.Warn("failed to destroy idle persistent MCP server; row kept for retry",
+					"sandbox_id", fresh.ID,
+					"provider_workspace_id", fresh.ProviderWorkspaceID,
+					"idle_age", idleAge.String(),
+					"error", err,
+				)
+				res.Failed++
+				continue
+			}
+		}
+
+		delCtx, cancel := context.WithTimeout(ctx, idleReclaimTimeout)
+		_, err = lister.Delete(delCtx, fresh.ID)
+		cancel()
+		if err != nil {
+			log.Warn("failed to delete idle persistent MCP server row after destroy",
+				"sandbox_id", fresh.ID,
+				"idle_age", idleAge.String(),
+				"error", err,
+			)
+			res.Failed++
+			continue
+		}
+
+		log.Info("reclaimed idle persistent MCP server",
+			"sandbox_id", fresh.ID,
+			"idle_days", int(idleAge.Hours()/24),
+		)
+		res.Reclaimed++
+	}
+	return res
+}
+
+// hostedMCPRuntime adapts the orchestrator and MCP hosting service to the idle
+// pass's container surface.
+type hostedMCPRuntime struct {
+	orchestrator *Orchestrator
+	hosting      *MCPHostingService
+}
+
+// StopRuntime halts in-process monitoring for a server if the hosting service
+// is present.
+func (r *hostedMCPRuntime) StopRuntime(workspaceID string) {
+	if r.hosting != nil {
+		r.hosting.stopServer(workspaceID)
+	}
+}
+
+// DestroyContainer destroys the server's provider container via the same
+// provider Destroy path used by explicit removal.
+func (r *hostedMCPRuntime) DestroyContainer(ctx context.Context, ws *AgentSandbox) error {
+	if ws == nil || ws.ProviderWorkspaceID == "" {
+		return nil
+	}
+	if r.orchestrator == nil {
+		return fmt.Errorf("orchestrator unavailable for provider %s", ws.Provider)
+	}
+	provider, err := r.orchestrator.GetProvider(ws.Provider)
+	if err != nil {
+		return fmt.Errorf("provider %s unavailable: %w", ws.Provider, err)
+	}
+	if err := provider.Destroy(ctx, ws.ProviderWorkspaceID); err != nil {
+		return fmt.Errorf("destroy container %s: %w", ws.ProviderWorkspaceID, err)
+	}
+	return nil
 }
 
 // cleanupExpired finds and destroys all expired workspaces.

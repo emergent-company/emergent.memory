@@ -166,6 +166,15 @@ type ModelLimitsLookup interface {
 	GetModelInputLimit(ctx context.Context, modelName string) (int, error)
 }
 
+// ephemeralTokenSvc is the narrow surface of the API-token service used by the
+// executor to mint and revoke per-run ephemeral sandbox tokens. It is satisfied
+// by *apitoken.Service but declared as an interface so teardown revocation can
+// be asserted with a fake in tests.
+type ephemeralTokenSvc interface {
+	CreateEphemeral(ctx context.Context, projectID, orgID, userID string, ttl time.Duration) (tokenID, rawToken string, err error)
+	RevokeEphemeral(ctx context.Context, tokenID string)
+}
+
 // BudgetExceededError is returned by Execute when a project's monthly spending
 // limit has been reached and BUDGET_ENFORCEMENT_ENABLED=true.
 type BudgetExceededError struct {
@@ -307,13 +316,39 @@ type ExecuteResult struct {
 	Duration time.Duration
 
 	// Cleanup tears down the workspace (container + ephemeral token) provisioned
-	// for this run.  It is safe to call multiple times (idempotent via sync.Once).
+	// for this run. Teardown is bound to the run's lifetime by the executor,
+	// which invokes it before returning, so it runs exactly once on every exit
+	// path — normal return, error return, context cancellation, and panic — with
+	// no caller action required.
 	//
-	// The executor always defers Cleanup as a safety net, but callers that want
-	// lower latency (e.g. SSE streams) can call Cleanup *asynchronously* after
-	// they have finished writing the response — the deferred call will then be a
-	// no-op.
+	// The value is still exposed as an explicit handle for callers. Because the
+	// executor has already run it before returning, calling it is an idempotent
+	// no-op (sync.Once) and surfaces no error.
 	Cleanup func()
+}
+
+// runCleanup binds a run's sandbox teardown to the run lifetime. The executor
+// creates exactly one per run and defers Cleanup immediately, so teardown is
+// guaranteed regardless of how the run exits (normal return, error,
+// cancellation, panic). Cleanup is idempotent: the teardown body runs at most
+// once however many times it is invoked.
+type runCleanup struct {
+	once sync.Once
+	fn   func()
+}
+
+// newRunCleanup returns a run-lifetime cleanup bound to fn.
+func newRunCleanup(fn func()) *runCleanup {
+	return &runCleanup{fn: fn}
+}
+
+// Cleanup runs the bound teardown at most once. It is a safe no-op on a nil
+// receiver or when no teardown body was bound.
+func (c *runCleanup) Cleanup() {
+	if c == nil || c.fn == nil {
+		return
+	}
+	c.once.Do(c.fn)
 }
 
 // AgentExecutor is the core execution engine for running agents via ADK.
@@ -334,7 +369,7 @@ type AgentExecutor struct {
 	wsEnabled      bool                     // cached feature flag
 	sessionService session.Service
 	modelLimits    ModelLimitsLookup // nil if provider module is not registered
-	apiTokenSvc    *apitoken.Service // nil if not configured; used for ephemeral sandbox tokens
+	apiTokenSvc    ephemeralTokenSvc // nil if not configured; used for ephemeral sandbox tokens
 	usageService   *provider.UsageService
 	eventsSvc      *events.Service // nil if events module not registered; used by ask_user SSE notification
 	safeguards     config.AgentSafeguardsConfig
@@ -554,16 +589,16 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}, nil
 	}
 
-	// Build an idempotent cleanup function so teardown runs exactly once.
-	// Callers are responsible for invoking Cleanup on the returned ExecuteResult.
-	// SSE callers can invoke it asynchronously after flushing the response;
-	// non-SSE callers should defer it or call it synchronously.
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		cleanupOnce.Do(func() {
-			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-		})
-	}
+	// Bind teardown to this run's lifetime. The cleanup is deferred so it runs
+	// exactly once on every exit path — normal return, error return, context
+	// cancellation, and a panic inside runPipeline. ExecuteResult.Cleanup
+	// exposes the same idempotent function; a caller that also invokes it (e.g.
+	// asynchronously after flushing an SSE response) gets a no-op because
+	// teardown has already run.
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
@@ -592,7 +627,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    0,
 			Duration: time.Since(startTime),
-			Cleanup:  cleanup,
+			Cleanup:  cleanup.Cleanup,
 		}, nil
 	}
 
@@ -617,7 +652,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		span.SetStatus(codes.Ok, "")
 	}
 
-	result.Cleanup = cleanup
+	result.Cleanup = cleanup.Cleanup
 	return result, nil
 }
 
@@ -720,13 +755,12 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		}, nil
 	}
 
-	// Build an idempotent cleanup function so teardown runs exactly once.
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		cleanupOnce.Do(func() {
-			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-		})
-	}
+	// Bind teardown to this run's lifetime (see Execute): deferred so it runs
+	// exactly once on every exit path, including a panic in runPipeline.
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
 
 	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
@@ -752,7 +786,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    0,
 			Duration: time.Since(startTime),
-			Cleanup:  cleanup,
+			Cleanup:  cleanup.Cleanup,
 		}, nil
 	}
 
@@ -776,7 +810,7 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		span.SetStatus(codes.Ok, "")
 	}
 
-	result.Cleanup = cleanup
+	result.Cleanup = cleanup.Cleanup
 	return result, nil
 }
 func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
@@ -926,13 +960,12 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		}, nil
 	}
 
-	// Build an idempotent cleanup function so teardown runs exactly once.
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		cleanupOnce.Do(func() {
-			ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-		})
-	}
+	// Bind teardown to this run's lifetime (see Execute): deferred so it runs
+	// exactly once on every exit path, including a panic in runPipeline.
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
@@ -980,7 +1013,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			Summary:  map[string]any{"error": err.Error()},
 			Steps:    priorRun.StepCount,
 			Duration: time.Since(startTime),
-			Cleanup:  cleanup,
+			Cleanup:  cleanup.Cleanup,
 		}, nil
 	}
 
@@ -998,7 +1031,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		_ = ae.repo.FailRun(dbCtx, priorRun.ID, errMsg)
 	}
 
-	result.Cleanup = cleanup
+	result.Cleanup = cleanup.Cleanup
 	return result, nil
 }
 
@@ -1440,20 +1473,23 @@ func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, r
 // teardownWorkspace destroys the provisioned workspace after the agent run completes.
 // Called via defer so it runs regardless of how the run exits.
 func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.ProvisioningResult, tokenID string) {
-	if result == nil || result.Workspace == nil || ae.provisioner == nil {
-		return
-	}
-
 	// Use a detached context for teardown since the run context may be cancelled
 	teardownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ae.provisioner.TeardownWorkspace(teardownCtx, result.Workspace)
-
-	// Revoke the ephemeral token if one was minted for this run
+	// Revoke the ephemeral token unconditionally. The token is minted BEFORE
+	// provisioning, so it must be revoked even when provisioning produced no
+	// workspace (e.g. sandbox disabled/unconfigured returns (nil, nil)) — otherwise
+	// every sandbox-disabled run leaks a live admin-scoped token.
 	if tokenID != "" && ae.apiTokenSvc != nil {
 		ae.apiTokenSvc.RevokeEphemeral(teardownCtx, tokenID)
 	}
+
+	if result == nil || result.Workspace == nil || ae.provisioner == nil {
+		return
+	}
+
+	ae.provisioner.TeardownWorkspace(teardownCtx, result.Workspace)
 }
 
 // resolveRootRunID determines the orchestration root for a run. It prefers the

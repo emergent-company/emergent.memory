@@ -114,7 +114,7 @@ func newAutoProvisioner(p autoProvisionerParams) *AutoProvisioner {
 }
 
 // newCleanupJob creates a cleanup job with configuration from env vars.
-func newCleanupJob(store *Store, orchestrator *Orchestrator, log *slog.Logger, cfg *config.Config) *CleanupJob {
+func newCleanupJob(store *Store, orchestrator *Orchestrator, mcpHosting *MCPHostingService, log *slog.Logger, cfg *config.Config) *CleanupJob {
 	cleanupCfg := DefaultCleanupConfig()
 	if cfg.Sandbox.MaxConcurrent > 0 {
 		cleanupCfg.MaxConcurrent = cfg.Sandbox.MaxConcurrent
@@ -125,7 +125,9 @@ func newCleanupJob(store *Store, orchestrator *Orchestrator, log *slog.Logger, c
 	if cfg.Sandbox.AlertThresholdPct > 0 && cfg.Sandbox.AlertThresholdPct <= 100 {
 		cleanupCfg.AlertThreshold = float64(cfg.Sandbox.AlertThresholdPct) / 100.0
 	}
-	return NewCleanupJob(store, orchestrator, log, cleanupCfg)
+	// 0 (the default) leaves the idle reclamation policy disabled.
+	cleanupCfg.PersistentIdleTTLDays = cfg.Sandbox.PersistentIdleTTLDays
+	return NewCleanupJob(store, orchestrator, mcpHosting, log, cleanupCfg)
 }
 
 // newReconciler creates the label-driven orphan reconciler from configuration.
