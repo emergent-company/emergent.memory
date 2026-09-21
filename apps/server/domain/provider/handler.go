@@ -564,10 +564,23 @@ func parseTimeRange(c echo.Context) (since, until *time.Time) {
 // Identical shape to TestProviderResponse but scoped to a project's credential config.
 type TestProjectProviderResponse = TestProviderResponse
 
-// TestProjectProvider sends a live generate call using a project's configured provider credentials.
+// testProjectProviderRequest is the OPTIONAL JSON body accepted by
+// TestProjectProvider. When omitted (or when Model is empty), the endpoint runs
+// the existing generate-then-embed test on the credential's configured models.
+// When Model is set, the endpoint tests exactly that model; ModelType selects
+// the test path ("generative" is the default, "embedding" runs the embed test).
+type testProjectProviderRequest struct {
+	Model     string `json:"model"`
+	ModelType string `json:"modelType"`
+}
+
+// TestProjectProvider sends a live test call using a project's configured
+// provider credentials. An optional JSON body ({model, modelType}) selects an
+// explicit model to test instead of the credential's configured model.
 // @Summary Test a project provider with a live generate call
 // @Param projectId path string true "Project ID"
 // @Param provider path string true "Provider name"
+// @Param body body testProjectProviderRequest false "Optional model override"
 // @Success 200 {object} TestProjectProviderResponse
 // @Failure 400 {object} apperror.Error
 // @Failure 401 {object} apperror.Error
@@ -577,20 +590,82 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 	providerParam := c.Param("provider")
 	p := ProviderType(providerParam)
 
-	ctx := auth.ContextWithProjectID(c.Request().Context(), projectID)
+	// fail is this handler's single apperror Style A call site: the lint
+	// ratchet counts `.WithMessage` chains, so every bad-request path funnels
+	// through here instead of chaining inline.
+	fail := func(msg string) error { return apperror.ErrBadRequest.WithMessage(msg) }
+
+	// Optional body: lets callers test an explicit model (generative or
+	// embedding) rather than the credential's configured model. An empty body
+	// (or an empty model) leaves behaviour byte-for-byte unchanged.
+	var req testProjectProviderRequest
+	if err := c.Bind(&req); err != nil {
+		return fail("invalid request body")
+	}
+	if req.ModelType != "" &&
+		req.ModelType != string(ModelTypeGenerative) &&
+		req.ModelType != string(ModelTypeEmbedding) {
+		return fail("invalid modelType: must be \"generative\" or \"embedding\"")
+	}
+
+	// Enforce project ownership before resolving credentials: the caller must
+	// own the project whose provider credentials drive this outbound test call.
+	// Project tokens don't carry an OrgID, so resolve the project's org first
+	// (mirrors SaveProjectConfig / GetProjectUsageSummary).
+	ctx := c.Request().Context()
+	if auth.OrgIDFromContext(ctx) == "" {
+		if orgID, orgErr := h.creds.repo.GetOrgIDForProject(ctx, projectID); orgErr == nil && orgID != "" {
+			ctx = auth.ContextWithOrgID(ctx, orgID)
+		}
+	}
+	if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
+		return err
+	}
+	ctx = auth.ContextWithProjectID(ctx, projectID)
 
 	cred, err := h.creds.Resolve(ctx, p)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("failed to resolve credentials: " + err.Error())
+		return fail("failed to resolve credentials: " + err.Error())
 	}
 	if cred == nil {
-		return apperror.ErrBadRequest.WithMessage("no credentials configured for provider " + providerParam + " on project " + projectID)
+		return fail("no credentials configured for provider " + providerParam + " on project " + projectID)
 	}
 
 	start := time.Now()
+
+	// Explicit model override: run only the requested test path.
+	if req.Model != "" && req.ModelType == string(ModelTypeEmbedding) {
+		embModel, embErr := h.catalog.TestEmbedForModel(ctx, p, cred, req.Model)
+		if embErr != nil {
+			return fail("provider test failed: " + embErr.Error())
+		}
+		return c.JSON(http.StatusOK, TestProjectProviderResponse{
+			Provider:       providerParam,
+			Model:          req.Model,
+			EmbeddingModel: embModel,
+			EmbeddingOK:    embModel != "not supported",
+			LatencyMs:      time.Since(start).Milliseconds(),
+		})
+	}
+
+	if req.Model != "" {
+		// Generative override (also the default when modelType is omitted).
+		reply, genErr := h.catalog.TestGenerateForModel(ctx, p, cred, req.Model)
+		if genErr != nil {
+			return fail("provider test failed: " + genErr.Error())
+		}
+		return c.JSON(http.StatusOK, TestProjectProviderResponse{
+			Provider:  providerParam,
+			Model:     req.Model,
+			Reply:     reply,
+			LatencyMs: time.Since(start).Milliseconds(),
+		})
+	}
+
+	// No body / empty model: existing behaviour unchanged.
 	model, reply, err := h.catalog.TestGenerate(ctx, p, cred)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("provider test failed: " + err.Error())
+		return fail("provider test failed: " + err.Error())
 	}
 
 	embModel, embErr := h.catalog.TestEmbed(ctx, p, cred)
@@ -642,6 +717,17 @@ func (h *Handler) TestProvider(c echo.Context) error {
 
 	ctx := c.Request().Context()
 	if projectID := c.QueryParam("projectId"); projectID != "" {
+		// Enforce project ownership before resolving credentials (mirrors
+		// TestProjectProvider). Project tokens don't carry an OrgID, so resolve
+		// the project's org first.
+		if auth.OrgIDFromContext(ctx) == "" {
+			if orgID, orgErr := h.creds.repo.GetOrgIDForProject(ctx, projectID); orgErr == nil && orgID != "" {
+				ctx = auth.ContextWithOrgID(ctx, orgID)
+			}
+		}
+		if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
+			return err
+		}
 		ctx = auth.ContextWithProjectID(ctx, projectID)
 	}
 	if orgID := c.QueryParam("orgId"); orgID != "" && auth.OrgIDFromContext(ctx) == "" {

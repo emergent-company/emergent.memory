@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -252,6 +253,11 @@ func TestRenderProvidersPanel(t *testing.T) {
 		`name="textInputPrice"`, `name="outputPrice"`, "Remove", `hx-swap="none"`,
 		// default-model selectors (inline save)
 		`hx-post="/settings/providers/model-config"`, `name="generative_model"`, `name="embedding_model"`,
+		// per-dropdown Test action: own POST, model_type in hx-vals, targets only
+		// its own select, swaps nothing, disables itself while busy
+		`hx-post="/settings/providers/model-config/test"`,
+		`data-testid="default-model-test-generative"`, `data-testid="default-model-test-embedding"`,
+		`hx-include="#generative_model"`, `hx-include="#embedding_model"`, `hx-disable="this"`,
 		// provider config list: add link, edit link, test/remove actions
 		`href="/settings/providers/new"`, `href="/settings/providers/openai/edit"`,
 		`hx-post="/settings/providers/openai/test"`, `action="/settings/providers/openai/remove"`,
@@ -573,6 +579,7 @@ func newProvidersSettingsEcho(f *fakeMemory) (*Server, *echo.Echo) {
 	e.POST("/settings/providers/test", s.uiProjectProviderTestConnection)
 	e.POST("/settings/providers/check-url", s.uiProjectProviderCheckBaseURL)
 	e.POST("/settings/providers/model-config", s.uiProjectModelConfig)
+	e.POST("/settings/providers/model-config/test", s.uiProjectDefaultModelTest)
 	e.POST("/settings/providers/:provider/test", s.uiProjectProviderTest)
 	e.POST("/settings/providers/:provider/remove", s.uiProjectProviderRemove)
 	return s, e
@@ -1296,5 +1303,162 @@ func TestSettingsProvidersLoadFailure(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "Failed to load providers") || !strings.Contains(body, "service down") {
 		t.Errorf("panel error missing:\n%s", body)
+	}
+}
+
+// --- default-model Test action ---
+
+// defaultModelTestPost POSTs the default-model test form and returns the
+// recorder.
+func defaultModelTestPost(t *testing.T, e *echo.Echo, form string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/providers/model-config/test", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestDefaultModelTestButtonsRender asserts each default-model dropdown gets its
+// own Test button: the per-dropdown endpoint, the model_type carried in hx-vals,
+// the select it includes, and the busy state hooks.
+func TestDefaultModelTestButtonsRender(t *testing.T) {
+	markup := renderHTML(t, defaultModelsPanel(providersTestData()))
+	decoded := html.UnescapeString(markup)
+	for _, want := range []string{
+		`hx-post="/settings/providers/model-config/test"`,
+		`data-testid="default-model-test-generative"`,
+		`data-testid="default-model-test-embedding"`,
+		`hx-include="#generative_model"`,
+		`hx-include="#embedding_model"`,
+		`hx-swap="none"`,
+		`hx-disable="this"`,
+		`htmx-indicator`,
+	} {
+		if !strings.Contains(decoded, want) {
+			t.Errorf("default-model panel missing %q", want)
+		}
+	}
+	// The model_type each button posts must match its dropdown.
+	for _, want := range []string{
+		`{"model_type":"generative"}`,
+		`{"model_type":"embedding"}`,
+	} {
+		if !strings.Contains(decoded, want) {
+			t.Errorf("default-model Test button missing hx-vals %q, got:\n%s", want, decoded)
+		}
+	}
+}
+
+// TestUIProjectDefaultModelTestGenerative covers the generative happy path: the
+// prefixed select value is split into provider + bare model, the model_type is
+// forwarded, and the toast names the model with its reply snippet + latency.
+func TestUIProjectDefaultModelTestGenerative(t *testing.T) {
+	f := &fakeMemory{
+		modelTestResult: &ProviderTestResult{Provider: "openai", Model: "deepseek-v4-flash", Reply: "hello", LatencyMs: 42},
+	}
+	_, e := newProvidersSettingsEcho(f)
+	rec := defaultModelTestPost(t, e, "model_type=generative&generative_model=openai/deepseek-v4-flash")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	hdr := toastHeader(t, rec)
+	for _, want := range []string{`"kind":"success"`, "openai/deepseek-v4-flash", "deepseek-v4-flash", "hello", "42ms"} {
+		if !strings.Contains(hdr, want) {
+			t.Errorf("generative success toast missing %q, got %q", want, hdr)
+		}
+	}
+	if len(f.modelTestCalls) != 1 {
+		t.Fatalf("want exactly 1 test call, got %+v", f.modelTestCalls)
+	}
+	call := f.modelTestCalls[0]
+	if call.Provider != "openai" || call.Model != "deepseek-v4-flash" || call.ModelType != "generative" {
+		t.Errorf("test call = %+v, want openai/deepseek-v4-flash (generative)", call)
+	}
+}
+
+// TestUIProjectDefaultModelTestEmbedding covers the embedding happy path: the
+// toast names the verified embedding model and no reply snippet is expected.
+func TestUIProjectDefaultModelTestEmbedding(t *testing.T) {
+	f := &fakeMemory{
+		modelTestResult: &ProviderTestResult{Provider: "google", EmbeddingModel: "gemini-embedding-001", EmbeddingOK: true, LatencyMs: 15},
+	}
+	_, e := newProvidersSettingsEcho(f)
+	rec := defaultModelTestPost(t, e, "model_type=embedding&embedding_model=google/gemini-embedding-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	hdr := toastHeader(t, rec)
+	for _, want := range []string{`"kind":"success"`, "google/gemini-embedding-001", "gemini-embedding-001", "15ms"} {
+		if !strings.Contains(hdr, want) {
+			t.Errorf("embedding success toast missing %q, got %q", want, hdr)
+		}
+	}
+	if len(f.modelTestCalls) != 1 || f.modelTestCalls[0].Model != "gemini-embedding-001" || f.modelTestCalls[0].ModelType != "embedding" {
+		t.Errorf("embedding test call = %+v", f.modelTestCalls)
+	}
+}
+
+func TestUIProjectDefaultModelTestEmptySelection(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newProvidersSettingsEcho(f)
+	rec := defaultModelTestPost(t, e, "model_type=generative&generative_model=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	hdr := toastHeader(t, rec)
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "Select a model") {
+		t.Errorf("empty selection must surface an error toast, got %q", hdr)
+	}
+	if len(f.modelTestCalls) != 0 {
+		t.Errorf("empty selection must not call the backend: %+v", f.modelTestCalls)
+	}
+}
+
+func TestUIProjectDefaultModelTestUnprefixedModel(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newProvidersSettingsEcho(f)
+	rec := defaultModelTestPost(t, e, "model_type=embedding&embedding_model=gemini-embedding-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	hdr := toastHeader(t, rec)
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "provider/model") {
+		t.Errorf("unprefixed model must explain the provider/model form, got %q", hdr)
+	}
+	if len(f.modelTestCalls) != 0 {
+		t.Errorf("unprefixed model must not call the backend: %+v", f.modelTestCalls)
+	}
+}
+
+func TestUIProjectDefaultModelTestUnknownType(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newProvidersSettingsEcho(f)
+	rec := defaultModelTestPost(t, e, "model_type=bogus&generative_model=openai/gpt-4o")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	hdr := toastHeader(t, rec)
+	if !strings.Contains(hdr, `"kind":"error"`) {
+		t.Errorf("unknown model_type must surface an error toast, got %q", hdr)
+	}
+	if len(f.modelTestCalls) != 0 {
+		t.Errorf("unknown model_type must not call the backend: %+v", f.modelTestCalls)
+	}
+}
+
+func TestUIProjectDefaultModelTestBackendError(t *testing.T) {
+	f := &fakeMemory{providerErr: fmt.Errorf("memory 503: service down")}
+	_, e := newProvidersSettingsEcho(f)
+	rec := defaultModelTestPost(t, e, "model_type=generative&generative_model=openai/gpt-4o")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	hdr := toastHeader(t, rec)
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "service down") {
+		t.Errorf("backend error must surface in the toast, got %q", hdr)
+	}
+	if len(f.modelTestCalls) != 1 {
+		t.Errorf("backend call must still have been attempted: %+v", f.modelTestCalls)
 	}
 }
