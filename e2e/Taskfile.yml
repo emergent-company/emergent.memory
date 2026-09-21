@@ -3,78 +3,227 @@ version: "3"
 vars:
   RUNLOG_DB: "{{.TASKFILE_DIR}}/.runlog/runs.db"
   RUNLOG_PORT: "17432"
+  RUNLOG_URL: "http://localhost:{{.RUNLOG_PORT}}"
+  RUNLOG_PIDFILE: "{{.TASKFILE_DIR}}/.runlog/daemon.pid"
   LOG_DIR: "{{.TASKFILE_DIR}}/logs/tests"
+  RUNLOG_BIN:
+    sh: |
+      if command -v runlog >/dev/null 2>&1; then
+        command -v runlog
+      else
+        gopath="$(go env GOPATH 2>/dev/null || echo "$HOME/go")"
+        echo "$gopath/bin/runlog"
+      fi
 
 tasks:
   default:
     desc: Show available tasks
     cmd: task --list
 
-  # ─── Daemon ────────────────────────────────────────────────
-
-  daemon:start:
-    desc: Start runlog daemon + Docker server (mcj-emergent)
-    deps: [server:start]
-    cmds:
-      - |
-        if curl -sf http://localhost:{{.RUNLOG_PORT}} > /dev/null 2>&1; then
-          echo "  runlog daemon already running on port {{.RUNLOG_PORT}}"
-        else
-          echo "  starting runlog daemon on port {{.RUNLOG_PORT}}..."
-          mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
-          nohup runlog daemon --db "{{.RUNLOG_DB}}" --port "{{.RUNLOG_PORT}}" \
-            > "{{.LOG_DIR}}/daemon.log" 2>&1 &
-          sleep 2
-          echo "  daemon started (port {{.RUNLOG_PORT}})"
-        fi
-
-  daemon:stop:
-    desc: Stop the runlog daemon
-    cmds:
-      - |
-        PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
-        if [ -n "$PID" ]; then
-          kill "$PID" 2>/dev/null || true
-          echo "daemon stopped (PID $PID)"
-        else
-          echo "no daemon running on port {{.RUNLOG_PORT}}"
-        fi
-
-  daemon:restart:
-    desc: Restart runlog daemon (keeps server running)
-    cmds:
-      - task: daemon:stop
-      - sleep 1
-      - task: daemon:start
-
-  # ─── Runlog (primary entry points) ────────────────────────
+  # ─── runlog daemon + web UI ────────────────────────────────
+  # The daemon serves the runlog web UI on {{.RUNLOG_PORT}} and owns the
+  # runs database at {{.RUNLOG_DB}}. Every task below runs with cwd set to
+  # {{.TASKFILE_DIR}} so runlog resolves `.runlog.yaml` (test categories,
+  # daemon_port, db) from the e2e project directory rather than the caller's.
 
   runlog:start:
-    desc: Start the runlog daemon (TUI browser backend)
+    desc: Start the runlog daemon + web UI (does NOT start the Docker server)
+    dir: "{{.TASKFILE_DIR}}"
     cmds:
       - |
-        if curl -sf http://localhost:{{.RUNLOG_PORT}} > /dev/null 2>&1; then
-          echo "runlog daemon already running on port {{.RUNLOG_PORT}}"
-        else
-          echo "starting runlog daemon on port {{.RUNLOG_PORT}}..."
-          mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
-          PATH="/root/go/bin:$PATH" nohup runlog daemon -port {{.RUNLOG_PORT}} \
-            > "{{.LOG_DIR}}/daemon.log" 2>&1 &
-          sleep 2
-          echo "daemon started (port {{.RUNLOG_PORT}})"
+        set -eu
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "lsof is required (daemon port detection) but not installed." >&2
+          echo "  install it, e.g. 'apt-get install lsof' or 'brew install lsof'." >&2
+          exit 1
+        fi
+        if ! command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
+          echo "runlog binary not found." >&2
+          echo "  install: go install github.com/emergent-company/runlog/cmd/runlog@latest" >&2
+          exit 1
         fi
 
+        mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
+
+        # Match only LISTEN sockets (not ESTABLISHED clients) and take the first
+        # pid so a dual-stack (v4+v6) listener cannot break the comparison below.
+        LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+        if [ -n "$LISTEN_PID" ]; then
+          OWN_PID=$(cat "{{.RUNLOG_PIDFILE}}" 2>/dev/null || true)
+          if [ "$LISTEN_PID" = "$OWN_PID" ]; then
+            echo "runlog daemon already running (pid $LISTEN_PID)"
+            echo "  ui: {{.RUNLOG_URL}}/ui/"
+            exit 0
+          fi
+          # A daemon is listening but it is not the one this project started.
+          # This is the common "orphaned daemon" case: the pidfile is missing or
+          # points elsewhere, so `runlog daemon start` would silently no-op and
+          # writes would land in the wrong runs.db.
+          echo "port {{.RUNLOG_PORT}} is held by pid $LISTEN_PID, which is not this checkout's daemon" >&2
+          echo "  pidfile {{.RUNLOG_PIDFILE}}: ${OWN_PID:-<missing>}" >&2
+          echo "  reclaim the port with: task -d e2e runlog:stop" >&2
+          exit 1
+        fi
+
+        echo "starting runlog daemon on port {{.RUNLOG_PORT}}..."
+        {{.RUNLOG_BIN}} --db "{{.RUNLOG_DB}}" daemon start --port {{.RUNLOG_PORT}} || exit 1
+        echo "  ui: {{.RUNLOG_URL}}/ui/"
+
   runlog:stop:
-    desc: Stop the runlog daemon
+    desc: Stop the runlog daemon (pidfile first, port fallback for orphans)
+    dir: "{{.TASKFILE_DIR}}"
     cmds:
       - |
-        PID=$(lsof -ti:{{.RUNLOG_PORT}} 2>/dev/null || true)
-        if [ -n "$PID" ]; then
-          kill "$PID" 2>/dev/null || true
-          echo "daemon stopped (PID $PID)"
-        else
-          echo "no daemon running on port {{.RUNLOG_PORT}}"
+        set -eu
+        if [ -f "{{.RUNLOG_PIDFILE}}" ] && command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
+          {{.RUNLOG_BIN}} daemon stop || true
         fi
+
+        if ! command -v lsof >/dev/null 2>&1; then
+          rm -f "{{.RUNLOG_PIDFILE}}"
+          echo "runlog daemon stopped (lsof not installed; port fallback skipped)"
+          exit 0
+        fi
+
+        # Fall back to whatever still LISTENs on the port — covers daemons whose
+        # pidfile was lost (deleted worktree, killed session, port squatting).
+        # Refuse to kill anything that is not a runlog daemon, so a port collision
+        # with an unrelated service can never be destroyed by `runlog:stop`.
+        for _ in 1 2 3 4 5; do
+          PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+          [ -z "$PID" ] && break
+          CMD=$(ps -p "$PID" -o args= 2>/dev/null || true)
+          [ -z "$CMD" ] && break
+          case "$CMD" in
+            *runlog*) ;;
+            *) echo "refusing to kill pid $PID (not a runlog daemon): $CMD" >&2; exit 1 ;;
+          esac
+          echo "stopping pid $PID holding port {{.RUNLOG_PORT}}"
+          kill "$PID" 2>/dev/null || true
+          sleep 1
+        done
+
+        PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+        if [ -n "$PID" ]; then
+          echo "pid $PID is still listening on port {{.RUNLOG_PORT}}" >&2
+          exit 1
+        fi
+        rm -f "{{.RUNLOG_PIDFILE}}"
+        echo "runlog daemon stopped"
+
+  runlog:restart:
+    desc: Restart the runlog daemon
+    cmds:
+      - task: runlog:stop
+      - task: runlog:start
+
+  runlog:status:
+    desc: Show runlog daemon health, DB path, and recent runs
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - |
+        set -u
+        echo "=== runlog ==="
+        echo "  binary: {{.RUNLOG_BIN}}"
+        echo "  db    : {{.RUNLOG_DB}}"
+        echo "  ui    : {{.RUNLOG_URL}}/ui/"
+
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "  daemon: UNKNOWN (lsof not installed)"
+        else
+          LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+          if [ -z "$LISTEN_PID" ]; then
+            echo "  daemon: STOPPED (run: task -d e2e runlog:start)"
+          else
+            OWN_PID=$(cat "{{.RUNLOG_PIDFILE}}" 2>/dev/null || true)
+            echo "  daemon: RUNNING (pid $LISTEN_PID)"
+            if [ "$LISTEN_PID" != "$OWN_PID" ]; then
+              echo "  WARNING: pidfile says '${OWN_PID:-<missing>}' — this daemon may belong to another checkout"
+            fi
+            curl -s --max-time 3 "{{.RUNLOG_URL}}/status" 2>/dev/null || echo "  (no /status response)"
+            echo ""
+          fi
+        fi
+
+        echo ""
+        echo "=== recent runs (24h) ==="
+        if [ -f "{{.RUNLOG_DB}}" ] && command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
+          {{.RUNLOG_BIN}} runs --db "{{.RUNLOG_DB}}" --since 24h | head -15
+        else
+          echo "  (no runs.db yet)"
+        fi
+
+  runlog:ui:
+    desc: Open the runlog web UI (starts the daemon if needed)
+    dir: "{{.TASKFILE_DIR}}"
+    deps: [runlog:start]
+    cmds:
+      - |
+        echo "runlog UI: {{.RUNLOG_URL}}/ui/"
+        if command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "{{.RUNLOG_URL}}/ui/" >/dev/null 2>&1 || true
+        elif command -v open >/dev/null 2>&1; then
+          open "{{.RUNLOG_URL}}/ui/" >/dev/null 2>&1 || true
+        fi
+
+  # ─── runlog: inspect the recorded runs ─────────────────────
+
+  runlog:runs:
+    desc: "List recent runs (default 24h; override: task -d e2e runlog:runs -- --since 7d)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} runs --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:failing:
+    desc: "List currently failing tests, streak-sorted"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} failing --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:stats:
+    desc: "Per-test pass rate and average duration (default 24h; override with --since)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} stats --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:tail:
+    desc: "Stream new events as they arrive (Ctrl+C to stop)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} tail --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:reap:
+    desc: "Mark stale/orphaned runs as FAIL (add --dry-run to preview)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} reap --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:clear:
+    desc: "Delete runs.db and all per-run log files (destructive; refuses if daemon running)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - |
+        set -eu
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "lsof is required to guard against clearing a live daemon's db." >&2
+          echo "  install it, e.g. 'apt-get install lsof' or 'brew install lsof'." >&2
+          exit 1
+        fi
+        LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+        if [ -n "$LISTEN_PID" ]; then
+          echo "refusing: runlog daemon is running (pid $LISTEN_PID)" >&2
+          echo "  unlinking runs.db while the daemon holds it open orphans the file." >&2
+          echo "  stop it first: task -d e2e runlog:stop" >&2
+          exit 1
+        fi
+        {{.RUNLOG_BIN}} clear --db "{{.RUNLOG_DB}}"
+
+  runlog:logs:clean:
+    desc: "Remove all per-run log directories (keeps runs.db)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - rm -rf "{{.LOG_DIR}}" "{{.TASKFILE_DIR}}/tests/integration/logs" "{{.TASKFILE_DIR}}/tests/api/logs" "{{.TASKFILE_DIR}}/tests/cli/logs"
+      - echo "logs cleaned"
 
   # ─── mcj-emergent Docker server ────────────────────────────
 
@@ -113,38 +262,45 @@ tasks:
 
   # ─── Tests — local dev server ──────────────────────────────
 
+  runlog:test:
+    desc: "Run the e2e suite through runlog (usage: task -d e2e runlog:test -- [profile] [TestName])"
+    deps: [runlog:start]
+    cmds:
+      - '{{.RUNLOG_BIN}} test {{.CLI_ARGS}}'
+    dir: "{{.TASKFILE_DIR}}"
+
   test:rextract:
     desc: "Run 5-episode Friends re-extraction test against local server (localhost:5300)"
-    deps: [daemon:start]
+    deps: [runlog:start]
     cmds:
       - |
         HOME=$HOME MEMORY_TEST_ENV=localhost \
-          runlog test "" TestReExtractionFriends5Episodes -- -timeout 1200s -v
+          {{.RUNLOG_BIN}} test "" TestReExtractionFriends5Episodes -- -timeout 1200s -v
     dir: "{{.TASKFILE_DIR}}"
 
   test:integration:
     desc: "Run all ported integration tests against local server"
-    deps: [daemon:start]
+    deps: [runlog:start]
     cmds:
       - |
         HOME=$HOME MEMORY_TEST_ENV=localhost \
-          runlog test "" {{.CLI_ARGS}} -- -timeout 1200s -v
+          {{.RUNLOG_BIN}} test "" {{.CLI_ARGS}} -- -timeout 1200s -v
     dir: "{{.TASKFILE_DIR}}"
 
   # ─── Tests — mcj-emergent Docker server ────────────────────
 
   test:mcj:
     desc: "Run all tests against mcj-emergent Docker server"
-    deps: [daemon:start]
+    deps: [server:start, runlog:start]
     cmds:
-      - runlog test mcj-emergent {{.CLI_ARGS}}
+      - '{{.RUNLOG_BIN}} test mcj-emergent {{.CLI_ARGS}}'
     dir: "{{.TASKFILE_DIR}}"
 
   test:mcj:single:
-    desc: "Run a single test against mcj-emergent (usage: task test:mcj:single -- TestName)"
-    deps: [daemon:start]
+    desc: "Run a single test against mcj-emergent (usage: task -d e2e test:mcj:single -- TestName)"
+    deps: [server:start, runlog:start]
     cmds:
-      - runlog test mcj-emergent {{.CLI_ARGS}}
+      - '{{.RUNLOG_BIN}} test mcj-emergent {{.CLI_ARGS}}'
     dir: "{{.TASKFILE_DIR}}"
 
   # ─── Docker CI runner ──────────────────────────────────────
@@ -161,38 +317,56 @@ tasks:
       - ./run_tests.sh --tests-only {{.CLI_ARGS}}
     dir: "{{.TASKFILE_DIR}}"
 
-  # ─── Utilities ────────────────────────────────────────────
+  # ─── Back-compat aliases ───────────────────────────────────
+  # Renamed to the runlog:* family. Kept so existing notes and muscle
+  # memory keep working — note that `daemon:start` no longer pulls in the
+  # Docker server; use test:mcj / server:start for that.
 
-  logs:clean:
-    desc: "Remove all per-run log directories (keeps runs.db)"
+  daemon:start:
+    desc: "Alias for runlog:start"
     cmds:
-      - rm -rf "{{.LOG_DIR}}" tests/integration/logs tests/api/logs tests/cli/logs
-      - echo "logs cleaned"
+      - task: runlog:start
+
+  daemon:stop:
+    desc: "Alias for runlog:stop"
+    cmds:
+      - task: runlog:stop
+
+  daemon:restart:
+    desc: "Alias for runlog:restart"
+    cmds:
+      - task: runlog:restart
 
   runs:clear:
-    desc: "Delete runs.db (all run history)"
+    desc: "Alias for runlog:clear"
     cmds:
-      - runlog clear --db "{{.RUNLOG_DB}}"
-      - echo "runs.db cleared"
+      - task: runlog:clear
 
   runs:reap:
-    desc: "Mark stale runs as FAIL"
+    desc: "Alias for runlog:reap"
     cmds:
-      - runlog reap
-    dir: "{{.TASKFILE_DIR}}"
+      - task: runlog:reap
+
+  logs:clean:
+    desc: "Alias for runlog:logs:clean"
+    cmds:
+      - task: runlog:logs:clean
+
+  # ─── Lint ──────────────────────────────────────────────────
+
+  lint:
+    desc: Run lefthook lint group (from repo root)
+    dir: "{{.TASKFILE_DIR}}/.."
+    cmds:
+      - lefthook run lint
+
+  # ─── Umbrella status ───────────────────────────────────────
 
   status:
-    desc: "Show daemon, server, and recent runs status"
+    desc: "Show runlog daemon, Docker server, local dev server, and recent runs"
     cmds:
+      - task: runlog:status
       - |
-        echo "=== runlog daemon ==="
-        if curl -sf http://localhost:{{.RUNLOG_PORT}} > /dev/null 2>&1; then
-          echo "  daemon: RUNNING (port {{.RUNLOG_PORT}})"
-          echo "  DB: {{.RUNLOG_DB}}"
-        else
-          echo "  daemon: NOT RUNNING"
-        fi
-        echo ""
         echo "=== mcj-emergent Docker server ==="
         if docker compose ps test-emergent-server --format json 2>/dev/null | grep -q '"State":"running"'; then
           echo "  server: RUNNING (http://mcj-emergent:3002)"
@@ -206,7 +380,4 @@ tasks:
         else
           echo "  server: NOT RUNNING"
         fi
-        echo ""
-        echo "=== Recent test runs ==="
-        runlog runs --since 1h | head -10 || echo "  (no recent runs)"
     dir: "{{.TASKFILE_DIR}}"
