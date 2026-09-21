@@ -1750,7 +1750,8 @@
   // applyRailBadges reads the server-rendered data-bucket /
   // data-pending-approvals / data-pending-questions attributes off each rail row
   // and paints (or updates) one badge per row. Idempotent: an existing badge is
-  // reused, so re-running after a re-render never duplicates it.
+  // reused, so re-running after a re-render never duplicates it, and a row whose
+  // state returns to idle has any previously-painted badge cleared.
   function applyRailBadges() {
     var railList = document.getElementById("chat-rail-list");
     if (!railList) return;
@@ -1761,9 +1762,22 @@
       var pa = parseInt(row.getAttribute("data-pending-approvals") || "0", 10) || 0;
       var pq = parseInt(row.getAttribute("data-pending-questions") || "0", 10) || 0;
       var pending = pa + pq;
+
+      // Optimistic waiting indicator: a just-started turn on the active
+      // conversation shows "Running" before the server has flipped the row's
+      // bucket off done/empty. It must not clobber needs_input/failed or a row
+      // with pending work, and it clears on its own once streaming ends.
+      var id = row.getAttribute("data-id") || "";
+      var optimisticRunning =
+        streaming && id === conversationId && conversationId !== "" &&
+        bucket !== "needs_input" && bucket !== "failed" && pending === 0;
+
+      var label = optimisticRunning ? "Running" : bucketLabel(bucket);
+      var show = pending > 0 || label !== "";
+
       var badge = row.querySelector("[data-rail-badge], .memory-rail-badge");
       if (!badge) {
-        if (!bucket && !pending) continue;
+        if (!show) continue; // nothing to show — leave the row plain
         badge = document.createElement("span");
         badge.className = "memory-rail-badge";
         badge.setAttribute("data-rail-badge", "");
@@ -1773,14 +1787,16 @@
         if (row.lastElementChild) row.insertBefore(badge, row.lastElementChild);
         else row.appendChild(badge);
       }
-      if (!bucket && !pending) {
+      if (!show) {
+        // Idle/`done` row (or unknown bucket with no pending): clear any badge
+        // painted by an earlier pass and hide it.
         badge.className = "memory-rail-badge hidden";
         badge.innerHTML = "";
+        badge.title = "";
         continue;
       }
       badge.className = "memory-rail-badge";
-      badge.setAttribute("data-bucket", bucket || "done");
-      var label = bucketLabel(bucket);
+      badge.setAttribute("data-bucket", optimisticRunning ? "running" : (bucket || "done"));
       var html = '<span class="memory-rail-label">' + escapeHTML(label) + "</span>";
       if (pending > 0) html += '<span class="memory-rail-count">' + pending + "</span>";
       badge.innerHTML = html;
@@ -1788,13 +1804,15 @@
     }
   }
 
+  // bucketLabel maps a run bucket to its human rail-badge label. This MUST stay
+  // in lockstep with railBucketLabel in chat_dock.go: `done` (idle) and unknown
+  // buckets have no label, so an idle row reads as a plain row with no badge.
   function bucketLabel(bucket) {
     switch (bucket) {
-      case "needs_input": return "Needs you";
+      case "needs_input": return "Needs input";
       case "failed": return "Failed";
       case "running": return "Running";
-      case "done": return "Done";
-      default: return bucket || "";
+      default: return "";
     }
   }
 

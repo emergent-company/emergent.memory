@@ -30,6 +30,14 @@ Each row in the chat session rail SHALL carry its run bucket as a machine-readab
 - **WHEN** a conversation transitions from `running` to `needs_input`
 - **THEN** the refresh event re-renders the rail and the row shows the needs-input badge without a full page reload
 
+#### Scenario: Done conversation renders a plain row
+- **WHEN** a conversation is idle and its run bucket is `done`
+- **THEN** its rail row renders no status badge (a plain row) and no `Done` label is shown
+
+#### Scenario: Active row shows running while a turn streams
+- **WHEN** a turn is streaming for the active conversation and its server-rendered bucket is still `done` or empty
+- **THEN** the active rail row shows the running indicator until the turn ends, at which point the badge clears
+
 ### Requirement: Surface live turn status while streaming
 While a turn is streaming, the chat header SHALL display the active run's status resolved from the conversation's newest run lifecycle item, and SHALL distinguish `working` from `input-required`. When the active run enters `input-required`, the UI SHALL present a waiting-on-you indication rather than a generic spinner.
 
