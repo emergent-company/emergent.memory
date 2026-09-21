@@ -562,3 +562,62 @@ func TestDefaultGenerativeModelName_DecryptAndBuild(t *testing.T) {
 		})
 	}
 }
+
+// TestPrefixedEmbeddingModelName mirrors TestPrefixedGenerativeModelName for the
+// embedding path: single-slash prefixes are stripped then re-prefixed with the
+// routing provider, and multi-segment Vertex resource paths are kept intact so
+// the EmbeddingResolverAdapter's provider/model split does not corrupt them.
+func TestPrefixedEmbeddingModelName(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider ProviderType
+		emb      string
+		want     string
+	}{
+		{
+			name:     "single-slash prefixed name is stripped then re-prefixed",
+			provider: ProviderGoogleAI,
+			emb:      "google/gemini-embedding-001",
+			want:     "google/gemini-embedding-001",
+		},
+		{
+			name:     "bare name is prefixed",
+			provider: ProviderVertexAI,
+			emb:      "text-embedding-005",
+			want:     "google-vertex/text-embedding-005",
+		},
+		{
+			name:     "multi-segment Vertex path is prefixed intact, not double-cut",
+			provider: ProviderVertexAI,
+			emb:      "publishers/google/models/text-embedding-005",
+			want:     "google-vertex/publishers/google/models/text-embedding-005",
+		},
+		{
+			name:     "foreign single-slash prefix is replaced by routing provider",
+			provider: ProviderOpenAI,
+			emb:      "google/text-embedding-005",
+			want:     "openai/text-embedding-005",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := prefixedEmbeddingModelName(tc.provider, tc.emb); got != tc.want {
+				t.Errorf("prefixedEmbeddingModelName(%q, %q) = %q, want %q", tc.provider, tc.emb, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDefaultEmbeddingModelEmptyProject verifies the no-project early return
+// returns ("", nil) without touching the repository (nil-safe, mirrors
+// DefaultGenerativeModel's guard).
+func TestDefaultEmbeddingModelEmptyProject(t *testing.T) {
+	svc := newTestCredentialService(&config.Config{})
+	model, err := svc.DefaultEmbeddingModel(context.Background(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if model != "" {
+		t.Errorf("DefaultEmbeddingModel(\"\") = %q, want \"\"", model)
+	}
+}
