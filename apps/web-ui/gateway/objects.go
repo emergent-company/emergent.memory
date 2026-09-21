@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"golang.org/x/sync/errgroup"
@@ -67,12 +68,26 @@ func (s *Server) uiObject(c echo.Context) error {
 	if err != nil {
 		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, nil, nil, nil, nil, err, "", flashErr, nil, nil, nil))
 	}
-	labelSuggestions := s.objectLabelSuggestions(ctx)
 
-	compiled, cerr := s.memory.GetCompiledTypes(ctx)
-	if cerr != nil {
-		captureError(cerr)
-	}
+	var (
+		labelSuggestions []string
+		compiled         *CompiledSchemaTypes
+		compiledErr      error
+		edges            []GraphRelationship
+		edgesErr         error
+		similar          []SimilarObject
+		similarErr       error
+	)
+	var g errgroup.Group
+	g.Go(func() error { labelSuggestions = s.objectLabelSuggestions(ctx); return nil })
+	g.Go(func() error { compiled, compiledErr = s.memory.GetCompiledTypes(ctx); return nil })
+	g.Go(func() error { edges, edgesErr = s.memory.GetObjectEdges(ctx, id); return nil })
+	g.Go(func() error { similar, similarErr = s.memory.GetSimilarObjects(ctx, id, 10); return nil })
+	_ = g.Wait()
+	captureError(compiledErr)
+	captureError(edgesErr)
+	captureError(similarErr)
+
 	var relTypes []CompiledType
 	var propDefs []objectPropertyDef
 	var typeUIByType map[string]typeUI
@@ -82,11 +97,7 @@ func (s *Server) uiObject(c echo.Context) error {
 		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 	}
 
-	edges, err := s.memory.GetObjectEdges(ctx, id)
-	captureError(err)
 	related := s.loadRelatedObjects(ctx, obj, edges)
-	similar, err := s.memory.GetSimilarObjects(ctx, id, 10)
-	captureError(err)
 
 	flashMsg := ""
 	if c.QueryParam("updated") != "" {
@@ -693,13 +704,83 @@ func distinctObjectLabels(objects []GraphObject) []string {
 // objectLabelSuggestions returns the project's existing distinct object labels
 // for the create form's label autocomplete — best-effort: an error or an empty
 // graph yields nil (the input then simply has no suggestions).
+const labelSuggestionsTTL = time.Minute
+
+type labelSuggestionsEntry struct {
+	labels    []string
+	expiresAt time.Time
+}
+
 func (s *Server) objectLabelSuggestions(ctx context.Context) []string {
-	objects, err := s.memory.ListGraphObjects(ctx, "", "", nil)
+	// Resolve the cache key the same way MemoryClient.projectIDFor scopes
+	// requests: the session's active project, else the static server project id
+	// (dev/API-key mode has no session context but still targets one project).
+	pid := s.cfg.MemoryProjectID
+	if sc, ok := sessionContextFrom(ctx); ok && sc.ProjectID != "" {
+		pid = sc.ProjectID
+	}
+	if pid == "" {
+		// No project scope at all: nothing to key or cache on.
+		objects, err := s.memory.ListGraphObjects(ctx, "", "", nil)
+		if err != nil {
+			captureError(err)
+			return nil
+		}
+		return distinctObjectLabels(objects)
+	}
+
+	// Fast path: a fresh cached entry skips the list query entirely.
+	s.labelCacheMu.Lock()
+	if e, ok := s.labelCache[pid]; ok && time.Now().Before(e.expiresAt) {
+		s.labelCacheMu.Unlock()
+		return e.labels
+	}
+	// Evict expired entries so a long-lived gateway serving many projects
+	// doesn't retain one labels slice per project forever (the TTL bounds
+	// staleness, not memory).
+	s.deleteExpiredLabelSuggestionsLocked(time.Now())
+	s.labelCacheMu.Unlock()
+
+	// Coalesce concurrent cold/expired misses per project so a burst of requests
+	// triggers exactly one ListGraphObjects instead of a stampede.
+	v, err, _ := s.labelSuggestionsGroup.Do(pid, func() (any, error) {
+		// Another request may have populated the entry while we waited on the
+		// flight — re-check before querying.
+		s.labelCacheMu.Lock()
+		if e, ok := s.labelCache[pid]; ok && time.Now().Before(e.expiresAt) {
+			s.labelCacheMu.Unlock()
+			return e.labels, nil
+		}
+		s.labelCacheMu.Unlock()
+
+		objects, err := s.memory.ListGraphObjects(ctx, "", "", nil)
+		if err != nil {
+			captureError(err)
+			return nil, err
+		}
+		labels := distinctObjectLabels(objects)
+		s.labelCacheMu.Lock()
+		if s.labelCache == nil {
+			s.labelCache = make(map[string]labelSuggestionsEntry)
+		}
+		s.labelCache[pid] = labelSuggestionsEntry{labels: labels, expiresAt: time.Now().Add(labelSuggestionsTTL)}
+		s.labelCacheMu.Unlock()
+		return labels, nil
+	})
 	if err != nil {
-		captureError(err)
 		return nil
 	}
-	return distinctObjectLabels(objects)
+	return v.([]string)
+}
+
+// deleteExpiredLabelSuggestionsLocked removes label-suggestion entries whose TTL
+// has elapsed. Caller must hold labelCacheMu.
+func (s *Server) deleteExpiredLabelSuggestionsLocked(now time.Time) {
+	for pid, e := range s.labelCache {
+		if !now.Before(e.expiresAt) {
+			delete(s.labelCache, pid)
+		}
+	}
 }
 
 // objectEndpointLabel resolves one relationship endpoint id to a display

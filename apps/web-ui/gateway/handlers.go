@@ -40,6 +40,14 @@ type Server struct {
 	// save/remove. Guarded by missingProvidersMu.
 	missingProvidersMu    sync.Mutex
 	missingProvidersCache map[string]providerMissingEntry
+	// Label-autocomplete cache: each project's distinct object labels live
+	// ~labelSuggestionsTTL so object page renders skip the object-list query.
+	// Nil map = cold cache. Guarded by labelCacheMu. labelSuggestionsGroup
+	// coalesces concurrent cold/expired misses per project so a stampede of
+	// object-page renders triggers one ListGraphObjects, not one per request.
+	labelCacheMu          sync.Mutex
+	labelCache            map[string]labelSuggestionsEntry
+	labelSuggestionsGroup singleflight.Group
 	// schemaWritePolicy optionally gates schema mutation routes. Nil means every
 	// gateway-authenticated caller is allowed (memory enforces token scopes on
 	// the mutation endpoints); a deployment or test can inject a stricter policy.
