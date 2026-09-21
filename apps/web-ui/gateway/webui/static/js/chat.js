@@ -1069,6 +1069,13 @@
     refreshActiveTranscript();
     clearHeaderStatus();
     liveRunStatus = "";
+    // A brand-new conversation has no EventSource subscription (one is opened
+    // only in resumeConversation), so no refresh payload fires to repaint its
+    // rail row after the turn. Re-pull the rail so the optimistic "Running"
+    // badge clears once the turn ends — the run's run_end item is now in
+    // history, so the server's re-derived bucket is authoritative. Fire-and-
+    // forget, like the other post-turn refresh calls.
+    if (conversationId) refreshSessionRail();
     // Release the parked queue only after the engine finishes its own teardown
     // (streaming flag, bubble update) — otherwise the fresh turn this starts
     // would be reset by finishStream's remaining lines.
