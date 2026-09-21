@@ -49,3 +49,23 @@ The embeddings status page SHALL show a clear error state when a backend fetch f
 
 - **WHEN** a required backend request fails
 - **THEN** the affected section shows an error message while the rest of the page remains usable
+
+### Requirement: Warn when no embedding model is configured
+
+The embeddings status page SHALL surface a warning when the active project has no embedding model — resolved project-first, then provider-credential fallback — because in that state objects and relationships never get vectors and similar-objects search stays incomplete.
+
+#### Scenario: No embedding model configured
+
+- **WHEN** the embeddings status page loads for a project with no embedding model on the project config or any provider credential
+- **THEN** a warning is shown stating embeddings will not be generated
+- **AND** the warning links to the project provider settings so the user can configure one
+
+#### Scenario: Embedding model configured
+
+- **WHEN** the embeddings status page loads for a project whose embedding model is set on the project config or a provider credential
+- **THEN** no missing-model warning is shown
+
+#### Scenario: Model config fetch fails
+
+- **WHEN** the effective model config fetch fails
+- **THEN** the page renders without the warning (state treated as unknown, never blanks the page)
