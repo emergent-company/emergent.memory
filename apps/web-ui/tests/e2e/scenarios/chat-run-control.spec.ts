@@ -311,9 +311,19 @@ test.describe('chat run-control scenarios', () => {
         .poll(async () => (await row.getAttribute('data-bucket')) ?? '', { timeout: 120_000 })
         .not.toBe('done');
 
+      // While the turn streams, the active row's badge shows the running
+      // indicator (never a "Done" label on a live turn).
+      const badge = row.locator('.memory-rail-badge');
+      await expect(badge).toContainText('Running', { timeout: 30_000 });
+
       await expect
         .poll(async () => (await row.getAttribute('data-bucket')) ?? '', { timeout: 180_000 })
         .toBe('done');
+
+      // Once the run ends the badge clears to a plain row: hidden, with no
+      // lingering "Done" or "Running" label.
+      await expect(badge).toBeHidden();
+      await expect(badge).not.toContainText('Done');
 
       expect(new URL(page.url()).pathname).toBe('/chat');
     } finally {

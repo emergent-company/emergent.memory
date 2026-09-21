@@ -175,9 +175,23 @@
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
-    onStreamStart: clearThinking,
+    onStreamStart: function () {
+      clearThinking();
+      // Repaint immediately so the active row shows "Running" on every turn —
+      // not just turn 1 of a brand-new conversation (whose only repaint came
+      // from the meta→isNew rail refresh). Idempotent; the end/failure paths
+      // below clear it.
+      applyRailBadges();
+    },
     onStreamFinish: finishTurn,
-    onStreamFail: finalizeThinking,
+    onStreamFail: function () {
+      finalizeThinking();
+      // A failed turn must clear the optimistic "Running" badge: the failure
+      // path never runs finishTurn, and a brand-new conversation has no
+      // EventSource to repaint the row, so re-pull the rail to show the
+      // server's authoritative bucket (done/failed) instead of a stuck spinner.
+      if (conversationId) refreshSessionRail();
+    },
     answerQuestion: answerQuestion,
     postDecision: postDecision,
     badgeCtx: badgeCtx,
@@ -1804,10 +1818,14 @@
       }
       badge.className = "memory-rail-badge";
       badge.setAttribute("data-bucket", optimisticRunning ? "running" : (bucket || "done"));
-      var html = '<span class="memory-rail-label">' + escapeHTML(label) + "</span>";
+      // Build the label span only when there is a label (an unknown bucket with
+      // pending work has no label), and never emit a leading separator in the
+      // title for that label-less case.
+      var html = "";
+      if (label !== "") html += '<span class="memory-rail-label">' + escapeHTML(label) + "</span>";
       if (pending > 0) html += '<span class="memory-rail-count">' + pending + "</span>";
       badge.innerHTML = html;
-      badge.title = pending > 0 ? (label + " · " + pending + " pending") : label;
+      badge.title = pending > 0 ? (label !== "" ? label + " · " : "") + pending + " pending" : label;
     }
   }
 
