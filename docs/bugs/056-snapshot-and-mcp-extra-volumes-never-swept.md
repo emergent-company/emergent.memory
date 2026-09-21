@@ -11,7 +11,7 @@
 
 ## Summary
 
-The orphan-reconciliation volume sweep deliberately skips volumes labelled `workspace.from_snapshot` or `workspace.parent`, so a restored-from-snapshot workspace volume and every persistent MCP server's extra mount volume can never be reclaimed once their container is gone.
+The orphan-reconciliation volume sweep deliberately skips volumes labelled `workspace.from_snapshot` or `workspace.parent`. The primary volume of a restored-from-snapshot workspace is still removed by the normal `GVisorProvider.Destroy` path, but because reconciliation skips it, it leaks when the container disappears out of band (crash, `docker rm`, provider eviction). Persistent MCP server extra mount volumes are worse: they are never reclaimed, not even on a clean teardown, because `Destroy` removes only the primary `workspace.volume`.
 
 ---
 

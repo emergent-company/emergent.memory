@@ -5,15 +5,15 @@ Guarantees that every sandbox container and volume created by the server — war
 
 ## Requirements
 
-### Requirement: Every sandbox container and volume SHALL carry a durable ownership label
+### Requirement: Reconciled sandbox containers and primary workspace volumes SHALL carry a durable ownership label
 
-The server SHALL apply a stable owning-process identity label to every sandbox container and volume it creates, in addition to the existing reconciliation labels (`memory.workspace`, `workspace.type`, `workspace.volume`). Container and volume identity SHALL be discoverable from the Docker daemon after the creating process has exited.
+The server SHALL apply a stable owning-process identity label to every sandbox container it creates and to the primary workspace volume of every workspace it creates, in addition to the existing reconciliation labels (`memory.workspace`, `workspace.type`, `workspace.volume`). Container and primary-volume identity SHALL be discoverable from the Docker daemon after the creating process has exited. Snapshot, parent and source volumes are deliberately exempt from the orphan sweep (see the volume-sweep requirement) and SHALL NOT be required to carry the ownership label.
 
 #### Scenario: Created sandbox resources are labelled and discoverable after process exit
 - **GIVEN** agent sandboxes are enabled
-- **WHEN** the server creates a sandbox container and its workspace volume
+- **WHEN** the server creates a sandbox container and its primary workspace volume
 - **THEN** the container SHALL carry `memory.workspace=true`, its workspace type, its volume name, and the owning-process identity label
-- **AND** the volume SHALL carry `memory.workspace=true` and the owning-process identity label
+- **AND** the primary workspace volume SHALL carry `memory.workspace=true` and the owning-process identity label
 - **AND** after the creating process exits, both SHALL remain discoverable by filtering the Docker daemon on those labels
 
 #### Scenario: Enumeration returns only labelled sandbox resources
@@ -50,8 +50,10 @@ The server SHALL run a reconciliation pass that destroys sandbox containers whic
 - **THEN** the container SHALL NOT be destroyed
 - **AND** it SHALL be reconsidered on a later pass once it exceeds the grace period
 
-#### Scenario: Orphan volumes without a container are reclaimed
-- **GIVEN** a labelled sandbox volume exists with no corresponding running container
+#### Scenario: Orphan primary workspace volumes without a container are reclaimed
+- **GIVEN** a labelled primary workspace volume exists with no corresponding running container
+- **AND** it is not a snapshot, parent or source volume
+- **AND** it was created longer ago than the configured grace period
 - **WHEN** reconciliation runs
 - **THEN** the volume SHALL be destroyed
 
