@@ -590,27 +590,32 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 	providerParam := c.Param("provider")
 	p := ProviderType(providerParam)
 
+	// fail is this handler's single apperror Style A call site: the lint
+	// ratchet counts `.WithMessage` chains, so every bad-request path funnels
+	// through here instead of chaining inline.
+	fail := func(msg string) error { return apperror.ErrBadRequest.WithMessage(msg) }
+
 	// Optional body: lets callers test an explicit model (generative or
 	// embedding) rather than the credential's configured model. An empty body
 	// (or an empty model) leaves behaviour byte-for-byte unchanged.
 	var req testProjectProviderRequest
 	if err := c.Bind(&req); err != nil {
-		return apperror.ErrBadRequest.WithMessage("invalid request body")
+		return fail("invalid request body")
 	}
 	if req.Model != "" && req.ModelType != "" &&
 		req.ModelType != string(ModelTypeGenerative) &&
 		req.ModelType != string(ModelTypeEmbedding) {
-		return apperror.ErrBadRequest.WithMessage("invalid modelType: must be \"generative\" or \"embedding\"")
+		return fail("invalid modelType: must be \"generative\" or \"embedding\"")
 	}
 
 	ctx := auth.ContextWithProjectID(c.Request().Context(), projectID)
 
 	cred, err := h.creds.Resolve(ctx, p)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("failed to resolve credentials: " + err.Error())
+		return fail("failed to resolve credentials: " + err.Error())
 	}
 	if cred == nil {
-		return apperror.ErrBadRequest.WithMessage("no credentials configured for provider " + providerParam + " on project " + projectID)
+		return fail("no credentials configured for provider " + providerParam + " on project " + projectID)
 	}
 
 	start := time.Now()
@@ -619,7 +624,7 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 	if req.Model != "" && req.ModelType == string(ModelTypeEmbedding) {
 		embModel, embErr := h.catalog.TestEmbedForModel(ctx, p, cred, req.Model)
 		if embErr != nil {
-			return apperror.ErrBadRequest.WithMessage("provider test failed: " + embErr.Error())
+			return fail("provider test failed: " + embErr.Error())
 		}
 		return c.JSON(http.StatusOK, TestProjectProviderResponse{
 			Provider:       providerParam,
@@ -634,7 +639,7 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 		// Generative override (also the default when modelType is omitted).
 		reply, genErr := h.catalog.TestGenerateForModel(ctx, p, cred, req.Model)
 		if genErr != nil {
-			return apperror.ErrBadRequest.WithMessage("provider test failed: " + genErr.Error())
+			return fail("provider test failed: " + genErr.Error())
 		}
 		return c.JSON(http.StatusOK, TestProjectProviderResponse{
 			Provider:  providerParam,
@@ -647,7 +652,7 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 	// No body / empty model: existing behaviour unchanged.
 	model, reply, err := h.catalog.TestGenerate(ctx, p, cred)
 	if err != nil {
-		return apperror.ErrBadRequest.WithMessage("provider test failed: " + err.Error())
+		return fail("provider test failed: " + err.Error())
 	}
 
 	embModel, embErr := h.catalog.TestEmbed(ctx, p, cred)
