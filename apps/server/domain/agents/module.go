@@ -175,10 +175,78 @@ func provideSessionTitleHandlerForMCP(repo *Repository) mcp.SessionTitleHandler 
 	return repo
 }
 
+// orphanedSandboxStore is the sandbox-store surface needed to recover sandbox
+// rows whose owning run is no longer live.
+type orphanedSandboxStore interface {
+	ListOrphanedSandboxes(ctx context.Context, liveRunStatuses []string) ([]*sandbox.AgentSandbox, error)
+	Update(ctx context.Context, ws *sandbox.AgentSandbox, fields ...string) (*sandbox.AgentSandbox, error)
+}
+
+// liveRunStatuses are the run states that still own their sandbox. A sandbox
+// row linked to a run in any of these states must not be recovered.
+func liveRunStatuses() []string {
+	return []string{
+		string(RunStatusQueued),
+		string(RunStatusRunning),
+		string(RunStatusCancelling),
+	}
+}
+
+// recoverOrphanedSandboxes transitions agent-sandbox rows whose owning run is
+// no longer active out of a non-stopped state, logging each row with its id,
+// provider workspace id, and previous status. It reuses the existing
+// reconciliation contract: it only makes rows eligible for reclamation rather
+// than destroying containers directly.
+//
+// Container and volume reclamation for the transitioned rows is performed by
+// the label-based orphan reconciler owned by fix-warm-pool-orphan-reaping (not
+// present in this change). Recovery is best-effort: a failed update is logged
+// and does not abort the remaining rows, and a row that is already
+// stopped/errored is left untouched (idempotent across repeated startups).
+func recoverOrphanedSandboxes(ctx context.Context, store orphanedSandboxStore, log *slog.Logger) (int, error) {
+	if store == nil {
+		return 0, nil
+	}
+	orphans, err := store.ListOrphanedSandboxes(ctx, liveRunStatuses())
+	if err != nil {
+		return 0, err
+	}
+
+	recovered := 0
+	for _, ws := range orphans {
+		if ws == nil {
+			continue
+		}
+		previous := ws.Status
+		if previous == sandbox.StatusStopped || previous == sandbox.StatusError {
+			// Already terminal; nothing to do (idempotent recovery).
+			continue
+		}
+		ws.Status = sandbox.StatusStopped
+		if _, err := store.Update(ctx, ws, "status"); err != nil {
+			log.Warn("failed to transition orphaned sandbox row out of non-stopped state",
+				slog.String("sandbox_id", ws.ID),
+				slog.String("previous_status", string(previous)),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		log.Warn("recovered orphaned sandbox row on startup",
+			slog.String("sandbox_id", ws.ID),
+			slog.String("provider_workspace_id", ws.ProviderWorkspaceID),
+			slog.String("previous_status", string(previous)),
+			slog.String("reason", "owning run is no longer active after restart"),
+			slog.String("note", "container/volume reclamation is performed by the orphan reconciler (fix-warm-pool-orphan-reaping)"),
+		)
+		recovered++
+	}
+	return recovered, nil
+}
+
 // registerOrphanRecovery marks any agent runs that were left in "running" status
 // (due to an unclean server shutdown) as errored on startup, and re-enqueues
 // any queued runs that lost their job row.
-func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, log *slog.Logger) {
+func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, sandboxStore *sandbox.Store, log *slog.Logger) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			n, err := repo.MarkOrphanedRunsAsError(ctx)
@@ -186,9 +254,7 @@ func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, log *slog.Logger)
 				log.Warn("failed to mark orphaned agent runs as error on startup",
 					slog.String("error", err.Error()),
 				)
-				return nil // best-effort, don't block startup
-			}
-			if n > 0 {
+			} else if n > 0 {
 				log.Warn("marked orphaned agent runs as error on startup",
 					slog.Int("count", n),
 				)
@@ -200,12 +266,22 @@ func registerOrphanRecovery(lc fx.Lifecycle, repo *Repository, log *slog.Logger)
 				log.Warn("failed to re-enqueue orphaned queued runs on startup",
 					slog.String("error", err.Error()),
 				)
-				return nil // best-effort
-			}
-			if m > 0 {
+			} else if m > 0 {
 				log.Warn("re-enqueued orphaned queued runs on startup",
 					slog.Int("count", m),
 				)
+			}
+
+			// Transition sandbox rows whose owning run is no longer active out
+			// of a non-stopped state so they become eligible for container
+			// reclamation. Runs queued by the step above are still live and
+			// their sandboxes are spared.
+			if n, err := recoverOrphanedSandboxes(ctx, sandboxStore, log); err != nil {
+				log.Warn("failed to recover orphaned sandbox rows on startup",
+					slog.String("error", err.Error()),
+				)
+			} else if n > 0 {
+				log.Warn("recovered orphaned sandbox rows on startup", slog.Int("count", n))
 			}
 			return nil
 		},

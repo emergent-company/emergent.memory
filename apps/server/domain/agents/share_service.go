@@ -849,6 +849,14 @@ func (s *ShareService) StreamMessage(ctx context.Context, binding *ShareLinkBind
 	req.PreCreatedRun = preRun
 
 	result, err := s.runner.Execute(ctx, req)
+	// Bind teardown to this handler's lifetime as well. The executor already
+	// tears the sandbox down before returning, so this is a defensive no-op for
+	// the normal path, but it guarantees a share-link run can never leak a
+	// container/volume if an early return or error path skipped the executor's
+	// binding.
+	if result != nil && result.Cleanup != nil {
+		defer result.Cleanup()
+	}
 	if err != nil {
 		return nil, err
 	}

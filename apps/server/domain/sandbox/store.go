@@ -134,6 +134,59 @@ func (s *Store) ListPersistentMCPServers(ctx context.Context) ([]*AgentSandbox, 
 	return workspaces, nil
 }
 
+// GetIdlePersistentMCPServer re-reads a persistent MCP server row and returns
+// it only if it is still eligible for idle reclamation: present, a persistent
+// MCP server, not in an in-flight lifecycle state (creating/stopping), and not
+// used since idleBefore (last_used_at falls back to creation time, so a server
+// never called since creation is judged by its creation time). It returns
+// (nil, nil) when the row vanished, was touched inside the window, or entered
+// an in-flight state — closing the window between the candidate SELECT and the
+// reclaim's StopRuntime/destroy.
+func (s *Store) GetIdlePersistentMCPServer(ctx context.Context, id string, idleBefore time.Time) (*AgentSandbox, error) {
+	ws := new(AgentSandbox)
+	err := s.db.NewSelect().
+		Model(ws).
+		Where("id = ?", id).
+		Where("container_type = ?", ContainerTypeMCPServer).
+		Where("lifecycle = ?", LifecyclePersistent).
+		Where("status NOT IN (?)", bun.In([]Status{StatusCreating, StatusStopping})).
+		Where("COALESCE(last_used_at, created_at) < ?", idleBefore).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return ws, nil
+}
+
+// ListOrphanedSandboxes returns non-stopped agent-sandbox rows whose owning run
+// (agent_session_id) is no longer live — the run's status is not one of
+// liveRunStatuses. Rows with no linked run are not returned: without a run we
+// cannot distinguish an orphan from an unlinked workspace.
+//
+// The caller transitions the returned rows out of their non-stopped state (see
+// agents.recoverOrphanedSandboxes). This store does not destroy containers
+// itself; container and volume reclamation for the transitioned rows is
+// performed by the label-based orphan reconciler owned by
+// fix-warm-pool-orphan-reaping.
+func (s *Store) ListOrphanedSandboxes(ctx context.Context, liveRunStatuses []string) ([]*AgentSandbox, error) {
+	var workspaces []*AgentSandbox
+	err := s.db.NewSelect().
+		Model(&workspaces).
+		Where("container_type = ?", ContainerTypeAgentSandbox).
+		Where("status NOT IN (?)", bun.In([]Status{StatusStopped, StatusError})).
+		Where("agent_session_id IS NOT NULL").
+		Where("agent_session_id IN (SELECT id FROM kb.agent_runs WHERE status NOT IN (?))", bun.In(liveRunStatuses)).
+		Order("created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return workspaces, nil
+}
+
 // ListExpired returns ephemeral workspaces whose TTL has passed.
 func (s *Store) ListExpired(ctx context.Context) ([]*AgentSandbox, error) {
 	var workspaces []*AgentSandbox

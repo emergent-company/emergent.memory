@@ -172,7 +172,7 @@ func TestE2E_Cleanup_DestroyWorkspace_ViaProvider(t *testing.T) {
 
 	// The cleanup job only needs an orchestrator (Store ops will fail without DB,
 	// but we can test the provider interaction part)
-	job := NewCleanupJob(nil, o, testLogger(), DefaultCleanupConfig())
+	job := NewCleanupJob(nil, o, nil, testLogger(), DefaultCleanupConfig())
 
 	ws := &AgentSandbox{
 		ID:                  "ws-expired-1",
