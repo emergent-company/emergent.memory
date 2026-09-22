@@ -1,11 +1,19 @@
 ## ADDED Requirements
 
 ### Requirement: Client SSE event framing
-The A2A SDK client SHALL parse `text/event-stream` bodies using SSE field framing rather than an exact `data: ` prefix match. A `data` field MAY be followed by zero or more spaces or a tab; the client SHALL strip at most one leading space and/or one leading tab from each field value. Consecutive `data` fields belonging to the same event SHALL be concatenated with `\n`, and the event SHALL be dispatched only when a blank line terminates it. Non-`data` fields (`event`, `id`, `retry`) and comment (`:`) lines SHALL be ignored without stalling the stream. A payload of `[DONE]` SHALL terminate the stream, and an event not terminated by a blank line SHALL be discarded.
+The A2A SDK client SHALL parse `text/event-stream` bodies using SSE field framing rather than an exact `data: ` prefix match. A `data` field value SHALL have at most one leading space stripped; a leading tab is payload and SHALL NOT be stripped or treated as a separator. Consecutive `data` fields belonging to the same event SHALL be concatenated with `\n`, and the event SHALL be dispatched only when a blank line terminates it. Lines SHALL be terminated by CR, LF, or CRLF. Non-`data` fields (`event`, `id`, `retry`) and comment (`:`) lines SHALL be ignored without stalling the stream. A payload of `[DONE]` SHALL terminate the stream, and an event not terminated by a blank line SHALL be discarded.
 
-#### Scenario: Space and tab separators are accepted
-- **WHEN** the stream contains `data:{...}`, `data: {...}`, `data:    {...}`, or `data:\t{...}`
-- **THEN** the client dispatches the same decoded event for each form
+#### Scenario: At most one leading space is stripped
+- **WHEN** the stream contains `data:{...}`, `data: {...}`, or `data:  {...}`
+- **THEN** the client strips at most one leading space, so `data:{...}` and `data: {...}` decode to the same value while `data:  {...}` keeps one leading space in the payload
+
+#### Scenario: A leading tab is payload, not a separator
+- **WHEN** the stream contains `data:\t{...}` or `data: \t{...}`
+- **THEN** the client dispatches the event with the leading tab preserved in the field value (only one leading space, if present, is stripped)
+
+#### Scenario: CR, LF, and CRLF framing are all accepted
+- **WHEN** the stream terminates event lines with LF, CRLF, or a lone CR
+- **THEN** the client dispatches the same decoded event for each framing, including when a CRLF or lone-CR boundary straddles a scanner buffer refill
 
 #### Scenario: Multi-line data is concatenated
 - **WHEN** one event's payload is split across consecutive `data:` lines and terminated by a blank line

@@ -6,8 +6,9 @@ Concretely, `data:{}` (no space) or `data:\t{...}` were silently skipped, and a 
 
 ## What Changes
 
-- Parse SSE lines as `field: value` instead of an exact-prefix match, so `data:`, `data: `, `data:   `, and `data:\t...` are all accepted.
-- Strip at most a single leading space (and/or a single tab) from the field value, per the spec, rather than relying on an exact prefix.
+- Parse SSE lines as `field: value` instead of an exact-prefix match, so `data:`, `data: `, `data:   `, and `data:\t...` are all accepted as `data` fields.
+- Strip at most a single leading space from the field value, per the spec; a leading tab is payload and is preserved rather than stripped.
+- Accept CR, LF, and CRLF as line terminators (including a lone CR, which `bufio.ScanLines` did not handle).
 - Buffer consecutive `data:` field values and dispatch the event only when a blank line terminates it, joining payload lines with `\n`.
 - Ignore `event:`, `id:`, `retry:`, and comment (`:`) lines while keeping the stream advancing.
 - Discard an event that is not terminated by a blank line at end of stream.
@@ -17,7 +18,7 @@ Concretely, `data:{}` (no space) or `data:\t{...}` were silently skipped, and a 
 
 ### Modified Capabilities
 
-- `a2a-conformance`: Add client-side SSE event framing requirements covering space/tab field separators, multi-line data concatenation, blank-line dispatch, and ignored non-data fields.
+- `a2a-conformance`: Add client-side SSE event framing requirements covering single-space stripping with tab preservation, CR/LF/CRLF line termination, multi-line data concatenation, blank-line dispatch, and ignored non-data fields.
 
 ## Impact
 
