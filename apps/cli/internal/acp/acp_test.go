@@ -644,3 +644,94 @@ func TestFailedTaskReturnsRefusal(t *testing.T) {
 		t.Errorf("stopReason = %v, want refusal", pr["stopReason"])
 	}
 }
+
+// TestSessionDeleteNotificationViaRun verifies the fire-and-forget notification
+// form of session/delete removes the session and produces no response.
+func TestSessionDeleteNotificationViaRun(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/delete","params":{"sessionId":%q}}`, id) + "\n"
+	out := runLines(t, agent, input)
+	if len(bytes.TrimSpace(out)) != 0 {
+		t.Fatalf("notification produced output: %q", out)
+	}
+	if hasSession(agent, id) {
+		t.Fatalf("session %q not removed via session/delete notification", id)
+	}
+}
+
+// TestDeleteSessionMarksSessionCancelled verifies deleteSession marks the removed
+// session cancelled (not just cancels a registered turn) so a prompt that looked
+// the session up before deletion but registers its cancel function afterwards
+// aborts instead of starting a backend turn on a detached session.
+func TestDeleteSessionMarksSessionCancelled(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	agent.mu.Lock()
+	sess := agent.sessions[id]
+	agent.mu.Unlock()
+
+	agent.deleteSession(id)
+
+	agent.mu.Lock()
+	cancelled := sess.cancelled
+	agent.mu.Unlock()
+	if !cancelled {
+		t.Fatal("deleteSession must mark the removed session cancelled")
+	}
+}
+
+// TestEvictionMarksSessionCancelled verifies LRU eviction marks the victim
+// cancelled, closing the window where a prompt that looked the session up before
+// eviction registers its cancel function afterwards.
+func TestEvictionMarksSessionCancelled(t *testing.T) {
+	agent := noopAgent(t)
+	agent.maxSessions = 1
+
+	agent.mu.Lock()
+	victim := &session{}
+	agent.sessions["stale"] = victim
+	agent.mu.Unlock()
+
+	_ = agent.newSession()
+
+	if hasSession(agent, "stale") {
+		t.Fatal("stale session should have been evicted")
+	}
+	agent.mu.Lock()
+	cancelled := victim.cancelled
+	agent.mu.Unlock()
+	if !cancelled {
+		t.Fatal("evictLocked must mark the evicted session cancelled")
+	}
+}
+
+// TestDeleteConcurrentWithPrompt races session/delete against prompts on the same
+// session to exercise the lookup/registration window under the race detector.
+func TestDeleteConcurrentWithPrompt(t *testing.T) {
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		id := agent.newSession().(SessionNewResponse).SessionID
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = agent.prompt(context.Background(), PromptParams{
+				SessionID: id,
+				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+			}, func(any) error { return nil })
+		}()
+		go func() {
+			defer wg.Done()
+			agent.deleteSession(id)
+		}()
+	}
+	wg.Wait()
+}

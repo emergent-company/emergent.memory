@@ -96,7 +96,10 @@ func (a *Agent) newSession() any {
 // may briefly exceed maxSessions when that many turns run concurrently. Any
 // cancel function on an evicted session is invoked (context cancel funcs are
 // non-blocking and never re-enter the agent, so calling them under the lock is
-// safe) so a dropped turn cannot leak its goroutine.
+// safe) so a dropped turn cannot leak its goroutine. A victim is marked
+// cancelled before removal so a prompt that has already looked it up but not
+// yet registered its cancel function aborts instead of running a turn on a
+// detached session.
 //
 // The caller must hold a.mu.
 func (a *Agent) evictLocked() {
@@ -119,6 +122,10 @@ func (a *Agent) evictLocked() {
 			return
 		}
 		delete(a.sessions, victimID)
+		// Barrier against the prompt lookup/registration window: a prompt that
+		// already holds this session pointer must not admit a turn on a session
+		// that has been dropped.
+		victim.cancelled = true
 		if victim.cancel != nil {
 			victim.cancel()
 		}
@@ -136,6 +143,10 @@ func (a *Agent) deleteSession(sessionID string) {
 		return
 	}
 	delete(a.sessions, sessionID)
+	// Barrier against the prompt lookup/registration window: a prompt that has
+	// already looked this session up but not yet registered its cancel function
+	// must abort rather than run a turn for a deleted session.
+	sess.cancelled = true
 	fn := sess.cancel
 	a.mu.Unlock()
 	// Invoke the cancel function outside the lock, as cancel does.
