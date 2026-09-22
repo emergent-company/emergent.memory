@@ -452,10 +452,11 @@ type SSEStream struct {
 // Next reads the next StreamResponse event from the stream.
 // Returns io.EOF when the stream ends.
 //
-// The line framing follows the Server-Sent Events spec: a `data:` field may be
-// followed by zero or more spaces (or a tab), consecutive `data:` lines are
-// joined with "\n" into one payload, and an event is dispatched only when a
-// blank line terminates it. `event:`, `id:`, `retry:`, and comment (`:`) lines
+// The line framing follows the Server-Sent Events spec: a `data:` field value
+// has at most one leading space stripped (a tab is preserved as payload),
+// consecutive `data:` lines are joined with "\n" into one payload, and an event
+// is dispatched only when a blank line terminates it. CR, LF, and CRLF are all
+// accepted line terminators. `event:`, `id:`, `retry:`, and comment (`:`) lines
 // are not consumed by this client and are ignored while the stream advances.
 func (s *SSEStream) Next() (*StreamResponse, error) {
 	var data []string
@@ -491,14 +492,11 @@ func (s *SSEStream) Next() (*StreamResponse, error) {
 		}
 
 		// Parse "field: value" (the value is optional).
-		field, value, _ := strings.Cut(line, ":")
-		if field != "data" {
+		value, ok := sseDataValue(line)
+		if !ok {
 			// event:, id:, retry:, and unknown fields are not consumed.
 			continue
 		}
-		// The spec strips a single leading space; also accept a single tab.
-		value = strings.TrimPrefix(value, " ")
-		value = strings.TrimPrefix(value, "\t")
 		data = append(data, value)
 	}
 
@@ -643,11 +641,51 @@ func (c *Client) StreamMessage(ctx context.Context, req SendMessageRequest) (*SS
 	}, nil
 }
 
+// sseDataValue returns the value of a `data:` field line. The SSE spec strips
+// at most one leading space from the value; a leading tab is payload and is
+// preserved. The boolean is false for any field other than `data` (event:,
+// id:, retry:, unknown). A bare `data` with no colon yields an empty value.
+func sseDataValue(line string) (string, bool) {
+	field, value, _ := strings.Cut(line, ":")
+	if field != "data" {
+		return "", false
+	}
+	value = strings.TrimPrefix(value, " ")
+	return value, true
+}
+
+// splitSSELines is a bufio.Scanner split function that recognises all three SSE
+// line terminators: CRLF, LF, and a lone CR.
+func splitSSELines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	for i := 0; i < len(data); i++ {
+		switch data[i] {
+		case '\n':
+			return i + 1, data[:i], nil
+		case '\r':
+			if i+1 < len(data) {
+				if data[i+1] == '\n' {
+					return i + 2, data[:i], nil // CRLF
+				}
+				return i + 1, data[:i], nil // lone CR
+			}
+			if atEOF {
+				return i + 1, data[:i], nil
+			}
+			return 0, nil, nil // need one more byte to decide CR vs CRLF
+		}
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
 // newSSEScanner returns a scanner for SSE event lines with an enlarged token
 // buffer so a single artifact chunk larger than the default 64 KiB does not
 // fail the whole stream with bufio.ErrTooLong.
 func newSSEScanner(r io.Reader) *bufio.Scanner {
 	sc := bufio.NewScanner(r)
+	sc.Split(splitSSELines)
 	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
 	return sc
 }
