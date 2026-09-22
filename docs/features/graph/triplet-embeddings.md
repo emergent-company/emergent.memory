@@ -246,18 +246,21 @@ The `embedding` column is nullable:
 
 ### Index
 
+The relationship `embedding` column is served by an **HNSW** index. Migration `00171_graph_relationships_embedding_hnsw.sql` replaced the original IVFFlat index from `00012`:
+
 ```sql
--- Migration: 00012_add_relationship_embedding_index.sql
-CREATE INDEX CONCURRENTLY idx_graph_relationships_embedding_ivfflat
+-- Migration: 00171_graph_relationships_embedding_hnsw.sql
+CREATE INDEX CONCURRENTLY idx_graph_relationships_embedding_hnsw
 ON kb.graph_relationships
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
 ```
 
-- **Type**: IVFFlat (approximate nearest neighbor)
+- **Type**: HNSW (approximate nearest neighbor)
 - **Distance**: Cosine similarity (`vector_cosine_ops`)
-- **Lists**: 100 (optimal for up to ~1M relationships)
+- **Parameters**: `m = 16`, `ef_construction = 64`
 - **Concurrency**: `CONCURRENTLY` avoids table locks during build
+- **No probes/list tuning**: HNSW has no `probes` knob and needs no training step, so it cannot hit the IVFFlat planner cost crossover where a higher `ivfflat.probes` made the planner abandon the index for a full sequential scan on large relationship tables. Query-time recall is controlled by `hnsw.ef_search` (a session GUC, not an application setting).
 
 ## Operations Guide
 
@@ -272,7 +275,7 @@ WITH (lists = 100);
 
 2. **Deploy application** with updated code (enables embedding on new relationships)
 
-3. **Apply migration 00012** (creates IVFFlat index — can run during production):
+3. **Apply migration 00012** (creates the ANN index — can run during production; the original IVFFlat index was later superseded by the HNSW index in migration `00171`):
 
    ```bash
    # This uses CREATE INDEX CONCURRENTLY — no table locks
@@ -348,7 +351,7 @@ SELECT schemaname, indexname, indexdef
 FROM pg_indexes
 WHERE schemaname = 'kb'
   AND tablename = 'graph_relationships'
-  AND indexname = 'idx_graph_relationships_embedding_ivfflat';
+  AND indexname = 'idx_graph_relationships_embedding_hnsw';
 ```
 
 **Verify index is being used** (run after some searches):
@@ -356,7 +359,7 @@ WHERE schemaname = 'kb'
 ```sql
 SELECT idx_scan, idx_tup_read, idx_tup_fetch
 FROM pg_stat_user_indexes
-WHERE indexname = 'idx_graph_relationships_embedding_ivfflat';
+WHERE indexname = 'idx_graph_relationships_embedding_hnsw';
 ```
 
 **Check query plan**:
@@ -370,13 +373,13 @@ WHERE embedding IS NOT NULL
   AND project_id = 'your-project-id'
 ORDER BY embedding <=> '[0.1,0.2,...]'::vector
 LIMIT 10;
--- Expected: "Index Scan using idx_graph_relationships_embedding_ivfflat"
+-- Expected: "Index Scan using idx_graph_relationships_embedding_hnsw"
 ```
 
 **When to rebuild index**:
 
-- After bulk inserts of >100K relationships
-- If index `lists` parameter needs tuning (e.g., `lists = sqrt(row_count)`)
+- HNSW needs no periodic `REINDEX` (unlike IVFFlat, it has no list clustering to degrade), so it is excluded from the scheduled embedding-index reindex task.
+- A rebuild is optional after very large bulk-insert waves if recall degrades; recreate with `WITH (m = 16, ef_construction = 64)`.
 - Drop and recreate: `DROP INDEX CONCURRENTLY ...; CREATE INDEX CONCURRENTLY ...`
 
 ### Rollback

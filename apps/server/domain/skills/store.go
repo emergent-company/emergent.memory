@@ -170,7 +170,10 @@ func (r *Repository) FindForAgent(ctx context.Context, projectID string, orgID s
 
 // FindRelevant performs cosine similarity search against description embeddings.
 // Returns the topK most relevant skills for the given project (global + org + project-scoped).
-// Uses IVFFlat with probes=10 for high recall (~90%+) with low latency.
+// The index on kb.skills.description_embedding is HNSW (idx_skills_embedding_hnsw,
+// migration 00170): HNSW needs no probe tuning, so the ivfflat.probes set below is
+// a harmless no-op. The helper is retained because it also opens the transaction
+// this query runs in; only the SET LOCAL ivfflat.probes statement is now vestigial.
 // Only considers skills with a non-NULL description_embedding.
 func (r *Repository) FindRelevant(ctx context.Context, projectID string, orgID string, vec []float32, topK int) ([]*Skill, error) {
 	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)
@@ -362,8 +365,9 @@ func (r *Repository) Count(ctx context.Context, projectID string, orgID string) 
 	return n, nil
 }
 
-// beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes for improved
-// vector index recall. SET LOCAL scopes the setting to the current transaction only.
+// beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes. SET
+// LOCAL scopes the setting to the current transaction only. The skills embedding
+// index is HNSW (migration 00170), so the setting is a harmless no-op here.
 func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
