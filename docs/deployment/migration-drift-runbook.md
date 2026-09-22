@@ -268,12 +268,25 @@ Local volumes are small, so the steps that are slow on dev are sub-second here.
 
 ```bash
 # repo root — do NOT run against the shared DB without approval
-task migrate:up
-# or, from apps/server
-POSTGRES_PASSWORD=… go run ./cmd/migrate -c up
-# or an explicit DSN
+# (POSTGRES_HOST=localhost makes the loopback target explicit; without it the
+#  command refuses, see the note below)
+POSTGRES_HOST=localhost task migrate:up
+# or, from apps/server — -allow-localhost is required for an implicit localhost
+POSTGRES_PASSWORD=… go run ./cmd/migrate -c up -allow-localhost
+# or an explicit DSN (loopback target is explicit here, so it is allowed)
 DATABASE_URL='postgres://emergent:…@localhost:5432/emergent?sslmode=disable' go run ./cmd/migrate -c up
 ```
+
+> **Target resolution is now fail-closed (issue #754).** `emergent-migrate` prints
+> `target: host=… port=… user=… database=… sslmode=… (host source: …)` before connecting, and
+> a mutating command (`up`, `up-to`, `down`, `mark-applied`) **refuses** when the resolved host
+> is loopback and either a different non-loopback host variable is set
+> (`DB_HOST`/`POSTGRES_HOST`/`MEMORY_PG_HOST`), or no host variable was configured at all so
+> the target is the built-in `localhost:5432` default. Pass `-allow-localhost` to opt in, set
+> `POSTGRES_HOST=localhost` (or `DB_HOST=localhost`) to make the loopback target explicit, or
+> set `DATABASE_URL`. Host/port precedence is `DATABASE_URL` > `DB_HOST`/`DB_PORT` >
+> `POSTGRES_HOST`/`POSTGRES_PORT` > `MEMORY_PG_HOST`/`MEMORY_PG_PORT` > built-in default.
+> Read-only commands (`status`, `version`) are never refused.
 
 The full `00001 → 174` chain was exercised during authoring on a throwaway
 `pgvector/pgvector:pg16` container (**not** dev or `memtest-db`) and completed cleanly,
