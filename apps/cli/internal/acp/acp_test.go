@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/idgen"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 )
 
@@ -739,6 +740,52 @@ func TestFailedTaskReturnsRefusal(t *testing.T) {
 	if pr := msgs[3]["result"].(map[string]any); pr["stopReason"] != "refusal" {
 		t.Errorf("stopReason = %v, want refusal", pr["stopReason"])
 	}
+}
+
+func TestNewID(t *testing.T) {
+	t.Run("random path returns prefixed id", func(t *testing.T) {
+		id := newID("sess")
+		if !strings.HasPrefix(id, "sess-") {
+			t.Fatalf("id = %q, want sess- prefix", id)
+		}
+		if len(id) != len("sess-")+32 {
+			t.Fatalf("id = %q, want 32 hex chars after prefix", id)
+		}
+	})
+
+	t.Run("fallback is unique, not a constant", func(t *testing.T) {
+		orig := idgen.RandRead
+		idgen.RandRead = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+		t.Cleanup(func() { idgen.RandRead = orig })
+
+		first := newID("sess")
+		if first == "sess-16" {
+			t.Fatalf("fallback collapsed to the constant %q", first)
+		}
+		if !strings.HasPrefix(first, "sess-") {
+			t.Fatalf("fallback id = %q, want sess- prefix", first)
+		}
+
+		const n = 100
+		ids := make([]string, n)
+		var wg sync.WaitGroup
+		for i := range ids {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				ids[i] = newID("sess")
+			}(i)
+		}
+		wg.Wait()
+
+		seen := make(map[string]struct{}, n)
+		for _, id := range ids {
+			if _, dup := seen[id]; dup {
+				t.Fatalf("fallback ids are not unique: %q seen twice", id)
+			}
+			seen[id] = struct{}{}
+		}
+	})
 }
 
 // TestSessionDeleteNotificationViaRun verifies the fire-and-forget notification
