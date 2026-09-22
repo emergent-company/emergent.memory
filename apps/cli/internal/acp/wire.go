@@ -105,8 +105,16 @@ type AgentCapabilities struct {
 // SessionCapabilities advertises optional session lifecycle methods. ACP uses an
 // empty object to mean "supported"; a nil field omits the method and signals it
 // is unsupported.
+//
+// `list` is deliberately not advertised. This agent is an ephemeral in-memory
+// bridge with loadSession=false, no session persistence, and an LRU map whose
+// entries may be evicted; it also does not model the absolute per-session `cwd`
+// that ACP's SessionInfo requires. Advertising list would advertise sessions
+// that cannot be loaded and may already be gone, so an attempted session/list
+// is answered with -32601 (see the cli-acp spec).
 type SessionCapabilities struct {
 	Delete *struct{} `json:"delete,omitempty"`
+	Close  *struct{} `json:"close,omitempty"`
 }
 
 // PromptCapabilities advertises prompt input modalities.
@@ -161,6 +169,11 @@ type CancelParams struct {
 
 // DeleteSessionParams is the params of the session/delete method.
 type DeleteSessionParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// CloseSessionParams is the params of the session/close method.
+type CloseSessionParams struct {
 	SessionID string `json:"sessionId"`
 }
 
