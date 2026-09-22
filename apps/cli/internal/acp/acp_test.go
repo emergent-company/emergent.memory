@@ -825,6 +825,50 @@ func TestPromptRefusesNewSessionWhenAllInFlight(t *testing.T) {
 	}
 }
 
+// TestPromptRefusalDoesNotRaceSessionMap verifies the strict-cap refusal path
+// reads the tracked-session count while still holding a.mu: it drives the prompt
+// refusal concurrently with real mutations of the sessions map (the same write
+// newSession and the lazy create perform) and must stay clean under -race. A
+// read of len(a.sessions) after unlocking is a data race with those writes.
+func TestPromptRefusalDoesNotRaceSessionMap(t *testing.T) {
+	agent := noopAgent(t)
+	agent.maxSessions = 1
+
+	agent.mu.Lock()
+	agent.sessions["busy"] = &session{cancels: map[uint64]context.CancelFunc{0: func() {}}}
+	agent.mu.Unlock()
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := agent.prompt(context.Background(), PromptParams{
+				SessionID: "unknown",
+				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+			}, func(any) error { return nil }); err == nil {
+				t.Error("expected prompt refusal while the only session is in-flight")
+				return
+			}
+		}
+	}()
+
+	for i := 0; i < 2000; i++ {
+		agent.mu.Lock()
+		agent.sessions["churn"] = &session{}
+		delete(agent.sessions, "churn")
+		agent.mu.Unlock()
+	}
+	close(stop)
+	wg.Wait()
+}
+
 // TestDeleteSessionCancelsInFlightTurn verifies deleteSession invokes every
 // stored CancelFunc when it removes a session that still has running turns.
 func TestDeleteSessionCancelsInFlightTurn(t *testing.T) {

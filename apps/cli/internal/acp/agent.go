@@ -200,11 +200,13 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 		a.evictLocked()
 		// Strict cap: if every tracked session is in-flight, refuse to grow the
 		// map rather than exceed the bound. The idle case was already pruned by
-		// evictLocked above.
-		if a.maxSessions > 0 && len(a.sessions) >= a.maxSessions {
+		// evictLocked above. Capture the count while the lock is still held:
+		// reading len(a.sessions) after unlocking would race a concurrent
+		// session/new, delete, or lazy create mutating the map.
+		if n := len(a.sessions); a.maxSessions > 0 && n >= a.maxSessions {
 			a.mu.Unlock()
 			return nil, fmt.Errorf(
-				"session limit reached: %d sessions tracked, every one with an in-flight turn", len(a.sessions))
+				"session limit reached: %d sessions tracked, every one with an in-flight turn", n)
 		}
 		sess = &session{}
 		a.sessions[p.SessionID] = sess
