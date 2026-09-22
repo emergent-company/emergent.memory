@@ -327,7 +327,11 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [lint, build, test-unit, migration-guard, migration-order-guard]
+    # test-db is a required part of the gate: this job is the single required
+    # status check on main (branch protection requires only `ci`), so a failing
+    # DB-backed test must fail `ci` — otherwise running it would not block a
+    # merge (#778, and the same "ran but did not gate" trap as #759).
+    needs: [lint, build, test-unit, test-db, migration-guard, migration-order-guard]
     steps:
       - name: CI gate
         run: echo "CI passed"

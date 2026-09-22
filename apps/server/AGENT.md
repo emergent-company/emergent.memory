@@ -482,8 +482,12 @@ docker run -d --rm -p 54329:5432 -e POSTGRES_USER=postgres \
 cd apps/server
 REQUIRE_DB=1 \
 TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:54329/emergent?sslmode=disable' \
-  go test ./internal/... ./pkg/... ./domain/... -count=1
+  bash -c 'PKGS=$(go list ./internal/... ./pkg/... ./domain/... | grep -v "/domain/sandbox$"); go test -p 1 $PKGS -count=1'
 ```
+
+(`domain/sandbox` is excluded: its E2E tests need a Docker workspace image, not a
+database. `-p 1` serialises the package binaries because `testutil` bootstraps
+its shared template database with a check-then-create.)
 
 The CI job (`.github/workflows/server.yml` → `test-db`) runs this package set
 without `-short` against a `pgvector/pgvector:pg17` service.

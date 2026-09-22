@@ -89,8 +89,13 @@ func Apply(cfg *config.DatabaseConfig) error {
 		return fmt.Errorf("%s: unsupported scheme %q (want postgres://)", URLEnv, u.Scheme)
 	}
 
+	// Default host/port exactly as libpq does when the URL omits them, so an
+	// explicit test DSN can never silently keep the ambient POSTGRES_HOST /
+	// POSTGRES_PORT it was meant to override.
 	if host := u.Hostname(); host != "" {
 		cfg.Host = host
+	} else {
+		cfg.Host = "localhost"
 	}
 	if port := u.Port(); port != "" {
 		p, convErr := strconv.Atoi(port)
@@ -98,6 +103,8 @@ func Apply(cfg *config.DatabaseConfig) error {
 			return fmt.Errorf("%s: invalid port %q: %w", URLEnv, port, convErr)
 		}
 		cfg.Port = p
+	} else {
+		cfg.Port = 5432
 	}
 	if u.User != nil {
 		if user := u.User.Username(); user != "" {

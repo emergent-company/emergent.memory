@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -134,10 +135,16 @@ type DatabaseConfig struct {
 }
 
 // DSN returns the PostgreSQL connection string
+// DSN returns the PostgreSQL connection string.
+//
+// Userinfo is escaped with net/url so a password containing reserved
+// characters ('@', ':', '/', '%', …) round-trips through pgx's URL parser
+// instead of corrupting the DSN. Ordinary credentials are unchanged.
 func (d *DatabaseConfig) DSN() string {
+	userinfo := url.UserPassword(d.User, d.Password).String()
 	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		d.User, d.Password, d.Host, d.Port, d.Database, d.SSLMode,
+		"postgres://%s@%s:%d/%s?sslmode=%s",
+		userinfo, d.Host, d.Port, d.Database, d.SSLMode,
 	)
 }
 

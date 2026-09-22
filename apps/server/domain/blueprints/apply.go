@@ -252,7 +252,18 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpNam
 				// name family = upgrade (adopt it), otherwise skip and do not
 				// overwrite another blueprint's agent.
 				owner, err := s.repo.GetByID(ctx, projectID, *existing.SourceBlueprintID)
-				if err != nil || owner.Name != bpName {
+				switch {
+				case err != nil && isNotFound(err):
+					// The owning blueprint row no longer exists. Treat it as
+					// unowned and do not overwrite.
+					counts.Skipped++
+					continue
+				case err != nil:
+					// Lookup failed for a transient reason: surface it instead
+					// of silently skipping the agent and still recording the
+					// blueprint as applied.
+					return counts, apperror.ErrDatabase.WithInternal(err)
+				case owner.Name != bpName:
 					counts.Skipped++
 					continue
 				}

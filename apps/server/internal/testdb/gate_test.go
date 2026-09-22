@@ -1,6 +1,7 @@
 package testdb
 
 import (
+	"net/url"
 	"os"
 	"testing"
 
@@ -62,6 +63,44 @@ func TestApplyRejectsBadScheme(t *testing.T) {
 	t.Setenv(URLEnv, "mysql://user@localhost:3306/db")
 	if err := Apply(&config.DatabaseConfig{}); err == nil {
 		t.Fatalf("Apply accepted non-postgres scheme")
+	}
+}
+
+// TestApplyDefaultsOmittedHostAndPort pins that an explicit test DSN which
+// omits host/port does not silently keep the ambient POSTGRES_HOST/POSTGRES_PORT
+// it is meant to override (libpq defaults apply instead).
+func TestApplyDefaultsOmittedHostAndPort(t *testing.T) {
+	t.Setenv(URLEnv, "postgres://testuser:pw@/testdb")
+	cfg := config.DatabaseConfig{Host: "ambient-host", Port: 9999, User: "ambient", Database: "ambientdb"}
+	if err := Apply(&cfg); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if cfg.Host != "localhost" || cfg.Port != 5432 {
+		t.Fatalf("Apply left ambient host/port: host=%q port=%d", cfg.Host, cfg.Port)
+	}
+	if cfg.Database != "testdb" {
+		t.Fatalf("Apply did not take the URL database: %q", cfg.Database)
+	}
+}
+
+// TestApplyRoundTripsEscapedCredentials pins that percent-encoded credentials in
+// the DSN are decoded, and that re-building the DSN re-escapes them.
+func TestApplyRoundTripsEscapedCredentials(t *testing.T) {
+	t.Setenv(URLEnv, "postgres://us%20er:p%40ss%3Aw%2Frd@127.0.0.1:54329/testdb")
+	cfg := config.DatabaseConfig{}
+	if err := Apply(&cfg); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if cfg.User != "us er" || cfg.Password != "p@ss:w/rd" {
+		t.Fatalf("credentials not decoded: user=%q pass=%q", cfg.User, cfg.Password)
+	}
+	u, err := url.Parse(cfg.DSN())
+	if err != nil {
+		t.Fatalf("re-parse DSN %q: %v", cfg.DSN(), err)
+	}
+	pw, _ := u.User.Password()
+	if u.User.Username() != "us er" || pw != "p@ss:w/rd" {
+		t.Fatalf("DSN did not round-trip credentials: %q", cfg.DSN())
 	}
 }
 
