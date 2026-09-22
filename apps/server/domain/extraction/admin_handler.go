@@ -406,8 +406,11 @@ func (h *AdminHandler) GetStatistics(c echo.Context) error {
 	}
 
 	response := ExtractionJobStatisticsDTO{
-		TotalJobs:     int(stats.TotalJobs),
-		JobsByStatus:  jobsByStatus,
+		TotalJobs:    int(stats.TotalJobs),
+		JobsByStatus: jobsByStatus,
+		// Stale-sweep reaps are kept out of JobsByStatus["failed"] and surfaced
+		// separately so historical cleanup is not read as a current failure.
+		StaleFailed:   int(stats.JobsByStatus["staleFailed"]),
 		SuccessRate:   stats.SuccessRate,
 		JobsThisWeek:  int(stats.JobsThisWeek),
 		JobsThisMonth: int(stats.JobsThisMonth),

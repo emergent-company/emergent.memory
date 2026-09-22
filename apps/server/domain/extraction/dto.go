@@ -98,13 +98,18 @@ type ExtractionJobListDTO struct {
 
 // ExtractionJobStatisticsDTO contains aggregated statistics
 type ExtractionJobStatisticsDTO struct {
-	TotalJobs               int                            `json:"total_jobs"`
-	JobsByStatus            map[ExtractionJobStatusDTO]int `json:"jobs_by_status"`
-	SuccessRate             float64                        `json:"success_rate"`
-	AverageProcessingTimeMs *int64                         `json:"average_processing_time_ms,omitempty"`
-	MostExtractedTypes      []TypeCountDTO                 `json:"most_extracted_types"`
-	JobsThisWeek            int                            `json:"jobs_this_week"`
-	JobsThisMonth           int                            `json:"jobs_this_month"`
+	TotalJobs    int                            `json:"total_jobs"`
+	JobsByStatus map[ExtractionJobStatusDTO]int `json:"jobs_by_status"`
+	// StaleFailed is the count of rows terminal-failed by the stale-job sweep
+	// (jobs.StaleJobMessage). It is kept out of JobsByStatus["failed"] so that
+	// historical cleanup is not presented as a current failure, and reported
+	// here as a separate, clearly-labelled value.
+	StaleFailed             int            `json:"stale_failed"`
+	SuccessRate             float64        `json:"success_rate"`
+	AverageProcessingTimeMs *int64         `json:"average_processing_time_ms,omitempty"`
+	MostExtractedTypes      []TypeCountDTO `json:"most_extracted_types"`
+	JobsThisWeek            int            `json:"jobs_this_week"`
+	JobsThisMonth           int            `json:"jobs_this_month"`
 }
 
 // TypeCountDTO represents a type and its count
