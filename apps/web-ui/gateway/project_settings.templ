@@ -822,7 +822,10 @@ templ defaultModelSelect(name, label, current string, models []Model) {
 // dropdown. It tests the dropdown's currently selected model with a live
 // generate/embed call, WITHOUT disturbing the form's save-on-change flow:
 //
-//   - type="button" so it never submits the auto-save form;
+//   - type="button" so it never submits the auto-save form; hx-trigger="click"
+//     pins the trigger to a click — the page-wide htmx implicitInheritance
+//     would otherwise inherit the parent form's hx-trigger="change", which a
+//     <button> never fires, leaving the action dead;
 //   - hx-vals carries the model_type ("generative"/"embedding", derived from the
 //     select's name), hx-include pulls only that one select, and hx-swap="none"
 //     leaves the dropdowns untouched;
@@ -836,13 +839,14 @@ templ defaultModelTestButton(selectName string) {
 		type="button"
 		class="btn btn-ghost btn-outline btn-sm shrink-0 gap-1.5"
 		hx-post="/settings/providers/model-config/test"
+		hx-trigger="click"
 		hx-vals={ `{"model_type":"` + modelType + `"}` }
 		hx-include={ "#" + selectName }
 		hx-swap="none"
 		hx-disable="this"
 		data-testid={ "default-model-test-" + modelType }
 	>
-		<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+		<span class="htmx-indicator default-model-test-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
 		@ui.IconSpan("lucide--zap", "size-3.5")
 		Test
 	</button>

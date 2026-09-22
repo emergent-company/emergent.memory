@@ -254,10 +254,13 @@ func TestRenderProvidersPanel(t *testing.T) {
 		// default-model selectors (inline save)
 		`hx-post="/settings/providers/model-config"`, `name="generative_model"`, `name="embedding_model"`,
 		// per-dropdown Test action: own POST, model_type in hx-vals, targets only
-		// its own select, swaps nothing, disables itself while busy
+		// its own select, swaps nothing, disables itself while busy; an explicit
+		// click trigger keeps implicitInheritance from swallowing it with the
+		// parent form's "change" trigger
 		`hx-post="/settings/providers/model-config/test"`,
 		`data-testid="default-model-test-generative"`, `data-testid="default-model-test-embedding"`,
 		`hx-include="#generative_model"`, `hx-include="#embedding_model"`, `hx-disable="this"`,
+		`hx-trigger="click"`,
 		// provider config list: add link, edit link, test/remove actions
 		`href="/settings/providers/new"`, `href="/settings/providers/openai/edit"`,
 		`hx-post="/settings/providers/openai/test"`, `action="/settings/providers/openai/remove"`,
@@ -1334,6 +1337,7 @@ func TestDefaultModelTestButtonsRender(t *testing.T) {
 		`hx-swap="none"`,
 		`hx-disable="this"`,
 		`htmx-indicator`,
+		`default-model-test-indicator`,
 	} {
 		if !strings.Contains(decoded, want) {
 			t.Errorf("default-model panel missing %q", want)
