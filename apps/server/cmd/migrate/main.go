@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -16,16 +17,18 @@ import (
 
 func main() {
 	var (
-		command     string
-		version     int64
-		showHelp    bool
-		showVersion bool
+		command        string
+		version        int64
+		showHelp       bool
+		showVersion    bool
+		allowLocalhost bool
 	)
 
 	flag.StringVar(&command, "c", "status", "Command: up, up-to, down, status, version, create")
 	flag.Int64Var(&version, "v", 0, "Target version for up-to command")
 	flag.BoolVar(&showHelp, "h", false, "Show help")
 	flag.BoolVar(&showVersion, "version", false, "Show goose version")
+	flag.BoolVar(&allowLocalhost, "allow-localhost", false, "Allow mutating commands to target a loopback (localhost/127.0.0.1) database")
 	flag.Parse()
 
 	if showHelp {
@@ -38,24 +41,36 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Get database URL from environment
-	dbURL := os.Getenv("DATABASE_URL")
+	// Resolve the migration target from the environment.
+	//
+	// Precedence: DATABASE_URL (full override) > DB_HOST/DB_PORT >
+	// POSTGRES_HOST/POSTGRES_PORT > MEMORY_PG_HOST/MEMORY_PG_PORT > built-in
+	// localhost:5432.
+	target, err := resolveTarget(os.Getenv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Log the resolved target prominently, before any connection is opened, so
+	// the operator can always see where migrations will run. Never logs the
+	// password.
+	fmt.Println(target.LogLine())
+
+	// Fail closed on an ambiguous loopback target (issue #754): a mutating
+	// command must not silently fall through to localhost.
+	decision := decideTarget(target, isMutatingCommand(command), allowLocalhost)
+	if decision.Warn != "" {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", decision.Warn)
+	}
+	if decision.Refuse {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", decision.Reason)
+		os.Exit(1)
+	}
+
+	dbURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	if dbURL == "" {
-		// Build from individual components
-		host := getEnvDefault("DB_HOST", "localhost")
-		port := getEnvDefault("DB_PORT", "5432")
-		user := getEnvDefault("POSTGRES_USER", "emergent")
-		pass := os.Getenv("POSTGRES_PASSWORD")
-		name := getEnvDefault("POSTGRES_DATABASE", "emergent")
-		sslMode := getEnvDefault("DB_SSL_MODE", "disable")
-
-		if pass == "" {
-			fmt.Fprintln(os.Stderr, "Error: POSTGRES_PASSWORD or DATABASE_URL must be set")
-			os.Exit(1)
-		}
-
-		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-			user, pass, host, port, name, sslMode)
+		dbURL = target.DSN()
 	}
 
 	// Connect to database
@@ -190,33 +205,44 @@ Commands:
   -c create NAME  Create a new migration file
   -c mark-applied -v N  Mark migration N as applied without running it
 
+Flags:
+  -allow-localhost  Allow mutating commands to target a loopback database
+
 Environment Variables:
-  DATABASE_URL         Full PostgreSQL connection string
+  DATABASE_URL         Full PostgreSQL connection string (overrides all below)
   -- or --
-  DB_HOST              Database host (default: localhost)
-  DB_PORT              Database port (default: 5432)
-  POSTGRES_USER        Database user (default: emergent)
-  POSTGRES_PASSWORD    Database password (required)
-  POSTGRES_DATABASE    Database name (default: emergent)
-  DB_SSL_MODE          SSL mode (default: disable)
+  DB_HOST              Database host         (alias: POSTGRES_HOST, MEMORY_PG_HOST)
+  DB_PORT              Database port         (alias: POSTGRES_PORT, MEMORY_PG_PORT)
+  POSTGRES_USER        Database user         (alias: MEMORY_PG_USER, default: emergent)
+  POSTGRES_PASSWORD    Database password     (required unless DATABASE_URL is set)
+  POSTGRES_DATABASE    Database name         (alias: POSTGRES_DB, MEMORY_PG_DB, default: emergent)
+  DB_SSL_MODE          SSL mode              (alias: POSTGRES_SSL_MODE, default: disable)
+
+Host/port precedence: DATABASE_URL > DB_HOST/DB_PORT > POSTGRES_HOST/POSTGRES_PORT
+                      > MEMORY_PG_HOST/MEMORY_PG_PORT > built-in localhost:5432.
+
+The resolved target (host, port, database, user) is printed at startup, before
+any migration runs.
+
+Fail-closed: a mutating command (up, up-to, down, mark-applied) REFUSES to run
+when the resolved target is loopback (localhost, 127.0.0.1, ::1, 0.0.0.0) unless
+the target was set explicitly and unambiguously, or -allow-localhost is passed.
+This prevents a missing DB_HOST/POSTGRES_HOST from silently applying migrations
+to a local database.
 
 Examples:
   # Run all migrations
   ./migrate -c up
 
-  # Check migration status
+  # Check migration status (read-only, always allowed)
   ./migrate -c status
 
   # Create a new migration
   ./migrate -c create add_new_table
 
   # Mark baseline as applied (for existing databases)
-  ./migrate -c mark-applied -v 1`)
-}
+  ./migrate -c mark-applied -v 1
 
-func getEnvDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
+  # Deliberately migrate a throwaway local database
+  ./migrate -c up -allow-localhost`)
 }
