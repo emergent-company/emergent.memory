@@ -19,7 +19,6 @@ import (
 
 func TestEmbeddingIndexTargetsQualified(t *testing.T) {
 	want := map[string]string{
-		"IDX_graph_objects_embedding_v2_ivfflat":    `"kb"."IDX_graph_objects_embedding_v2_ivfflat"`,
 		"idx_graph_relationships_embedding_ivfflat": `"kb"."idx_graph_relationships_embedding_ivfflat"`,
 		"idx_chunks_embedding":                      `"kb"."idx_chunks_embedding"`,
 		"idx_skills_embedding_ivfflat":              `"kb"."idx_skills_embedding_ivfflat"`,
