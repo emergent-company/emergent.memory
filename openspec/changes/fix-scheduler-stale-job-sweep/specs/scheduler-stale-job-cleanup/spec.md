@@ -21,7 +21,7 @@ The stale-job cleanup sweep SHALL only terminal-fail jobs that have actually sta
 
 ### Requirement: Stale sweep reaps genuinely stuck in-flight jobs
 
-The stale-job cleanup sweep SHALL continue to terminal-fail jobs that started but have not finished. All swept tables key on their in-flight timestamp: a `processing` or `running` job whose `started_at` is older than the stale threshold SHALL be marked `failed`, with `completed_at` and `updated_at` set to `NOW()` and the table's error column set to `Job marked as stale during cleanup`. `kb.email_jobs` now stamps `started_at` at dequeue (migration 00165), so it uses the same rule as the other four tables. `created_at` remains only a defensive fallback for a swept table that has no `started_at` column (none currently).
+The stale-job cleanup sweep SHALL continue to terminal-fail jobs that started but have not finished. All swept tables key on their in-flight timestamp: a `processing` or `running` job whose `started_at` is older than the stale threshold SHALL be marked `failed`, with `completed_at` and `updated_at` set to `NOW()` and the table's error column set to `Job marked as stale during cleanup`. `kb.email_jobs` now stamps `started_at` at dequeue (migration 00173), so it uses the same rule as the other four tables. `created_at` remains only a defensive fallback for a swept table that has no `started_at` column (none currently).
 
 #### Scenario: Worker died mid-job
 

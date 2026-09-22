@@ -4,7 +4,7 @@
 - [x] 1.2 Reap only `processing`/`running` rows for tables with `started_at` (`started_at IS NOT NULL AND started_at < ?`)
 - [x] 1.3 Retain a defensive `created_at < ?` branch for a swept table with no `started_at` column (none currently); `pending` is excluded in that branch too
 - [x] 1.4 Confirm `pending` never appears in any generated statement
-- [x] 1.5 Add `started_at` to `kb.email_jobs` (migration 00165) and stamp it at dequeue in `email/jobs.go`, so `kb.email_jobs` uses the same stale-start rule as the other four tables
+- [x] 1.5 Add `started_at` to `kb.email_jobs` (migration 00173) and stamp it at dequeue in `email/jobs.go`, so `kb.email_jobs` uses the same stale-start rule as the other four tables
 
 ## 2. Mass-reap visibility
 

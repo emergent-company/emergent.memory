@@ -14,12 +14,12 @@ That makes no distinction between a *stuck* job and a job merely *queued behind 
 
 Partial fix already landed on `main` (commit `6ed32ba4f`) for the four tables that have `started_at`: the `started_at IS NULL AND created_at < ?` disjunct was removed. Two gaps remain:
 
-1. `kb.email_jobs` has **no `started_at`**, so it still sweeps `status IN ('pending', 'processing', 'running') AND created_at < ?` and still terminal-fails never-started pending email jobs. This change gives `kb.email_jobs` a `started_at` column (migration 00165) stamped at dequeue, so it uses the same stale-start rule as the other four tables and no longer terminal-fails pending OR active jobs.
+1. `kb.email_jobs` has **no `started_at`**, so it still sweeps `status IN ('pending', 'processing', 'running') AND created_at < ?` and still terminal-fails never-started pending email jobs. This change gives `kb.email_jobs` a `started_at` column (migration 00173) stamped at dequeue, so it uses the same stale-start rule as the other four tables and no longer terminal-fails pending OR active jobs.
 2. A mass reap is **silent**: there is no metric or log distinguishing a routine handful of genuinely-stuck in-flight jobs from a 97k-row mis-classification.
 
 ## What Changes
 
-- **Never terminal-fail never-started jobs, generically.** The sweep only reaps jobs that actually started: `processing`/`running` with a stale `started_at`. `kb.email_jobs` now gets a `started_at` column stamped at dequeue (migration 00165), so it uses the same stale-start rule as the other four tables; `created_at` remains only a defensive fallback for a swept table that has no `started_at` column (none currently). `pending` rows are never candidates for the failing sweep, for every swept table.
+- **Never terminal-fail never-started jobs, generically.** The sweep only reaps jobs that actually started: `processing`/`running` with a stale `started_at`. `kb.email_jobs` now gets a `started_at` column stamped at dequeue (migration 00173), so it uses the same stale-start rule as the other four tables; `created_at` remains only a defensive fallback for a swept table that has no `started_at` column (none currently). `pending` rows are never candidates for the failing sweep, for every swept table.
 - **Keep current reaping semantics for `processing`/`running` rows** with a stale `started_at` — those genuinely need reaping when a worker died mid-job.
 - **Make mass reaps visible.** Add `StaleJobMassReapThreshold` (env `STALE_JOB_MASS_REAP_THRESHOLD`, default 1000). When a single sweep terminal-fails more than the threshold in one table, emit an `ERROR` log carrying the stable `alert=mass_stale_reap` marker, plus a counter `scheduler_stale_jobs_reaped_total{table}`.
 - **Extract a pure query builder** (`cleanupStaleJobsQuery`) so predicate selection is unit-testable without a live database.
@@ -45,7 +45,7 @@ Chosen option: **exclude** never-started pending jobs rather than re-queue them.
 - `apps/server/domain/scheduler/config.go`: new `StaleJobMassReapThreshold` field / `STALE_JOB_MASS_REAP_THRESHOLD` env var.
 - `apps/server/domain/scheduler/module.go`: wire the configured threshold into the task.
 - `apps/server/domain/scheduler/stale_job_cleanup_test.go`: DB-free predicate and mass-reap tests.
-- `apps/server/migrations/00165_add_email_jobs_started_at.sql`: add `started_at` to `kb.email_jobs`.
+- `apps/server/migrations/00173_add_email_jobs_started_at.sql`: add `started_at` to `kb.email_jobs`.
 - `apps/server/domain/email/jobs.go`: stamp `started_at = now()` on dequeue.
 - `apps/server/domain/DOMAIN_GUIDE.md`: document the corrected sweep behavior.
 
