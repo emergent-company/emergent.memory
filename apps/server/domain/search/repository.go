@@ -13,6 +13,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/mathutil"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
@@ -127,6 +128,37 @@ type TextSearchResponse struct {
 func (r *Repository) LexicalSearch(ctx context.Context, params TextSearchParams) (*TextSearchResponse, error) {
 	limit := mathutil.ClampLimit(params.Limit, 20, 100)
 
+	results, err := r.lexicalSearch(ctx, params.ProjectID, params.Query, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	return &TextSearchResponse{
+		Results:         results,
+		Mode:            TextSearchModeLexical,
+		TotalCandidates: len(results),
+	}, nil
+}
+
+// lexicalSearch runs the chunks lexical query and, when it matches nothing,
+// retries once with numeric terms removed. A hyphenated identifier in the query
+// is rewritten by websearch_to_tsquery into a phrase that cannot match this
+// index, which zeroes the whole AND clause — see ftsquery.Relax.
+func (r *Repository) lexicalSearch(ctx context.Context, projectID uuid.UUID, queryText string, limit int) ([]*TextSearchResult, error) {
+	results, err := r.runChunkLexical(ctx, projectID, queryText, limit)
+	if err != nil || len(results) > 0 {
+		return results, err
+	}
+
+	relaxed, ok := ftsquery.Relax(queryText)
+	if !ok {
+		return results, nil
+	}
+	return r.runChunkLexical(ctx, projectID, relaxed, limit)
+}
+
+// runChunkLexical executes the chunks lexical query for queryText.
+func (r *Repository) runChunkLexical(ctx context.Context, projectID uuid.UUID, queryText string, limit int) ([]*TextSearchResult, error) {
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
 			   ts_rank_cd(c.tsv, websearch_to_tsquery('simple', ?), 32) AS score
@@ -138,7 +170,7 @@ func (r *Repository) LexicalSearch(ctx context.Context, params TextSearchParams)
 		LIMIT ?
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, params.Query, params.Query, params.ProjectID, limit)
+	rows, err := r.db.QueryContext(ctx, query, queryText, queryText, projectID, limit)
 	if err != nil {
 		r.log.Error("lexical search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -169,11 +201,7 @@ func (r *Repository) LexicalSearch(ctx context.Context, params TextSearchParams)
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	return &TextSearchResponse{
-		Results:         results,
-		Mode:            TextSearchModeLexical,
-		TotalCandidates: len(results),
-	}, nil
+	return results, nil
 }
 
 // VectorSearch performs vector similarity search on kb.chunks using embedding column
@@ -272,17 +300,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	}
 
 	// Execute lexical search
-	lexicalQuery := `
-		SELECT c.id, c.document_id, c.chunk_index, c.text,
-			   ts_rank_cd(c.tsv, websearch_to_tsquery('simple', ?), 32) AS score
-		FROM kb.chunks c
-		JOIN kb.documents d ON d.id = c.document_id
-		WHERE c.tsv @@ websearch_to_tsquery('simple', ?)
-		  AND d.project_id = ?
-		ORDER BY score DESC
-		LIMIT ?
-	`
-	lexicalRows, err := r.db.QueryContext(ctx, lexicalQuery, params.Query, params.Query, params.ProjectID, fetchLimit)
+	lexicalHits, err := r.lexicalSearch(ctx, params.ProjectID, params.Query, fetchLimit)
 	if err != nil {
 		r.log.Error("hybrid lexical search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -290,22 +308,16 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 
 	lexicalResults := make(map[uuid.UUID]*hybridCandidate)
 	var lexicalScores []float32
-	for lexicalRows.Next() {
-		var row TextSearchResultRow
-		if err := lexicalRows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.Score); err != nil {
-			lexicalRows.Close()
-			return nil, apperror.ErrDatabase.WithInternal(err)
+	for _, hit := range lexicalHits {
+		lexicalResults[hit.ID] = &hybridCandidate{
+			ID:           hit.ID,
+			DocumentID:   hit.DocumentID,
+			ChunkIndex:   hit.ChunkIndex,
+			Text:         hit.Text,
+			LexicalScore: hit.Score,
 		}
-		lexicalResults[row.ID] = &hybridCandidate{
-			ID:           row.ID,
-			DocumentID:   row.DocumentID,
-			ChunkIndex:   row.ChunkIndex,
-			Text:         row.Text,
-			LexicalScore: row.Score,
-		}
-		lexicalScores = append(lexicalScores, row.Score)
+		lexicalScores = append(lexicalScores, hit.Score)
 	}
-	lexicalRows.Close()
 
 	// Execute vector search with increased IVFFlat probes for better recall
 	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())

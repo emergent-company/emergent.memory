@@ -21,6 +21,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
@@ -1678,6 +1679,28 @@ type FTSSearchResult struct {
 // FTSSearch performs full-text search using PostgreSQL's websearch_to_tsquery.
 // Returns objects sorted by relevance (ts_rank_cd with length normalization).
 func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*FTSSearchResult, error) {
+	results, err := r.ftsSearch(ctx, params, params.Query)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) > 0 {
+		return results, nil
+	}
+
+	// A single unsatisfiable term in the strict query — typically a hyphenated
+	// identifier that websearch_to_tsquery rewrites into a phrase that cannot
+	// match — zeroes the whole AND clause. Retry once without numeric terms
+	// before reporting no results.
+	relaxed, ok := ftsquery.Relax(params.Query)
+	if !ok {
+		return results, nil
+	}
+	return r.ftsSearch(ctx, params, relaxed)
+}
+
+// ftsSearch runs the lexical query for queryText. It is separate from FTSSearch
+// so that the relaxed fallback can reuse it verbatim.
+func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, queryText string) ([]*FTSSearchResult, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
@@ -1691,7 +1714,7 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 		"supersedes_id IS NULL", // HEAD versions only
 		"fts @@ websearch_to_tsquery('simple', ?)",
 	}
-	args := []any{params.ProjectID, params.Query}
+	args := []any{params.ProjectID, queryText}
 
 	// Add common filters
 	filterConds, filterArgs := buildSearchFilters(searchFilters{
@@ -1723,7 +1746,7 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 	`
 
 	// Prepend query param for ts_rank, append limit and offset
-	finalArgs := append([]any{params.Query}, args...)
+	finalArgs := append([]any{queryText}, args...)
 	finalArgs = append(finalArgs, params.Limit, params.Offset)
 
 	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
