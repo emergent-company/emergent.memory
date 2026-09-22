@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1829,36 +1827,6 @@ type VectorSearchResult struct {
 	Distance float32
 }
 
-// configuredIVFFlatProbes returns the ivfflat.probes value read from the
-// SEARCH_IVFFLAT_PROBES env var. Defaults to 10 on unset or parse failure and
-// is clamped to at least 1.
-func configuredIVFFlatProbes() int {
-	probes := 10
-	if v := os.Getenv("SEARCH_IVFFLAT_PROBES"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil {
-			probes = parsed
-		}
-	}
-	if probes < 1 {
-		probes = 1
-	}
-	return probes
-}
-
-// beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes for improved
-// vector index recall. SET LOCAL scopes the setting to the current transaction only.
-func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return tx, apperror.ErrDatabase.WithInternal(err)
-	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL ivfflat.probes = %d", probes)); err != nil {
-		_ = tx.Rollback()
-		return tx, apperror.ErrDatabase.WithInternal(err)
-	}
-	return tx, nil
-}
-
 // VectorSearch performs vector similarity search using pgvector's cosine distance.
 // Returns objects sorted by similarity (ascending distance).
 func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams) ([]*VectorSearchResult, error) {
@@ -1916,15 +1884,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 	finalArgs := append([]any{vectorStr}, args...)
 	finalArgs = append(finalArgs, params.Limit, params.Offset)
 
-	// Begin transaction with increased IVFFlat probes for better recall
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
-	if err != nil {
-		r.log.Error("vector search: failed to set ivfflat probes", logger.Error(err))
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	rows, err := tx.QueryContext(ctx, query, finalArgs...)
+	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
 	if err != nil {
 		r.log.Error("Vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -1944,11 +1904,6 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-
-	// Commit the read-only transaction
-	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -2206,15 +2161,7 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 	finalArgs := append([]any{vectorStr}, args...)
 	finalArgs = append(finalArgs, params.Limit)
 
-	// Begin transaction with increased IVFFlat probes for better recall
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
-	if err != nil {
-		r.log.Error("similar objects search: failed to set ivfflat probes", logger.Error(err))
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	rows, err := tx.QueryContext(ctx, query, finalArgs...)
+	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
 	if err != nil {
 		r.log.Error("similar objects search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -2240,11 +2187,6 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-
-	// Commit the read-only transaction
-	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
