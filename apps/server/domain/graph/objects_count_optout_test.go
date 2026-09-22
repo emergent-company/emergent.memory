@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // TestSearchGraphObjectsResponse_TotalPresence pins the wire semantics of the
@@ -55,7 +57,7 @@ func TestSearchGraphObjectsResponse_TotalPresence(t *testing.T) {
 // counted.
 func TestListSkipTotalIntegration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("integration test requires database")
+		testdb.SkipOrFatal(t, "integration test requires database")
 	}
 	db := openBulkTestDB(t)
 	repo := newBulkTestRepo(t, db)

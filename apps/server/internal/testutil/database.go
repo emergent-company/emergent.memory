@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,7 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 //go:embed schema.sql
@@ -112,6 +114,12 @@ func SetupTestDB(ctx context.Context, suffix string) (*TestDB, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
+	// Prefer an explicit test DSN over ambient POSTGRES_* so a test run cannot
+	// accidentally target a shared / application database.
+	if err := testdb.Apply(&baseCfg.Database); err != nil {
+		return nil, err
+	}
+
 	// Ensure template database exists (only done once per test run)
 	templateOnce.Do(func() {
 		templateErr = ensureTemplateDB(ctx, baseCfg, log)
@@ -172,6 +180,22 @@ func SetupTestDB(ctx context.Context, suffix string) (*TestDB, error) {
 		Name:    testDBName,
 		cleanup: cleanup,
 	}, nil
+}
+
+// SetupTestDBOrFail is SetupTestDB with the repo's standard database-required
+// behaviour: when REQUIRE_DB is set (CI's DB-backed job) a setup failure fails
+// the test instead of skipping it, so database coverage cannot silently
+// vanish. Locally (REQUIRE_DB unset) it skips exactly like the hand-rolled
+// t.Skipf call sites it replaces.
+//
+// Prefer this over SetupTestDB in tests. See internal/testdb for the env vars.
+func SetupTestDBOrFail(t testing.TB, ctx context.Context, suffix string) *TestDB {
+	t.Helper()
+	db, err := SetupTestDB(ctx, suffix)
+	if err != nil {
+		testdb.SkipOrFatal(t, testdb.UnavailableMsg, err)
+	}
+	return db
 }
 
 // loadRepoEnvFiles loads .env and .env.local from the nearest ancestor

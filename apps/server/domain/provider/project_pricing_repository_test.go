@@ -22,10 +22,7 @@ func TestProjectCustomPricingRepository(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "pcustompricing")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "pcustompricing")
 	defer testDB.Close()
 
 	// Create an org + project so the FK from project_custom_pricing to

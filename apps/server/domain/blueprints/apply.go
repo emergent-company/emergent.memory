@@ -95,7 +95,7 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 	}
 
 	// Agents: create-or-update by name (skipped entirely if repo not wired).
-	result.Agents, err = s.applyAgents(ctx, projectID, blueprintID, manifest.Agents)
+	result.Agents, err = s.applyAgents(ctx, projectID, blueprintID, bp.Name, manifest.Agents)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack
 // update. Requires the agents repository to be wired via SetAgentRepo;
 // otherwise the step is skipped with a warning and all entries counted as
 // skipped.
-func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID string, agentManifests []AgentManifest) (ApplyCounts, error) {
+func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpName string, agentManifests []AgentManifest) (ApplyCounts, error) {
 	var counts ApplyCounts
 	if s.agentRepo == nil {
 		if len(agentManifests) > 0 {
@@ -240,13 +240,37 @@ func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID string
 			return counts, apperror.ErrDatabase.WithInternal(err)
 		}
 		if existing != nil {
-			// Owned by a different blueprint — skip, do not overwrite.
-			if existing.SourceBlueprintID != nil && *existing.SourceBlueprintID != blueprintID {
-				counts.Skipped++
-				continue
+			switch {
+			case existing.SourceBlueprintID == nil:
+				// Manual/pre-existing — update in place and leave ownership
+				// untouched (do not claim pre-existing definitions).
+			case *existing.SourceBlueprintID == blueprintID:
+				// Re-apply of the same blueprint version — update in place.
+			default:
+				// Claimed by another blueprint row. A newer version of the SAME
+				// blueprint is a new row with a new id, so compare by name: same
+				// name family = upgrade (adopt it), otherwise skip and do not
+				// overwrite another blueprint's agent.
+				owner, err := s.repo.GetByID(ctx, projectID, *existing.SourceBlueprintID)
+				switch {
+				case err != nil && isNotFound(err):
+					// The owning blueprint row no longer exists. Treat it as
+					// unowned and do not overwrite.
+					counts.Skipped++
+					continue
+				case err != nil:
+					// Lookup failed for a transient reason: surface it instead
+					// of silently skipping the agent and still recording the
+					// blueprint as applied.
+					return counts, apperror.ErrDatabase.WithInternal(err)
+				case owner.Name != bpName:
+					counts.Skipped++
+					continue
+				}
+				// Re-point ownership so unapplying this version still deletes the
+				// agent (Unapply matches on SourceBlueprintID).
+				existing.SourceBlueprintID = &blueprintID
 			}
-			// Manual/pre-existing (nil) or owned by us — update in place, leave
-			// ownership untouched (do not claim pre-existing definitions).
 			applyAgentManifestToExisting(existing, &am)
 			if err := s.agentRepo.UpdateDefinition(ctx, existing); err != nil {
 				return counts, apperror.ErrDatabase.WithInternal(err)

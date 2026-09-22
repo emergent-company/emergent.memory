@@ -19,6 +19,7 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/migrations"
 )
 
@@ -92,7 +93,7 @@ var authDBTestDDL = []string{
 func setupAuthDBTest(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 
 	ctx := context.Background()
@@ -104,24 +105,30 @@ func setupAuthDBTest(t *testing.T) *bun.DB {
 
 	baseCfg, err := config.NewConfig(log)
 	if err != nil {
-		t.Skipf("skipping: load config: %v", err)
+		testdb.SkipOrFatal(t, "skipping: load config: %v", err)
+	}
+
+	// Prefer an explicit test DSN over ambient POSTGRES_* so these tests cannot
+	// accidentally target a shared / application database.
+	if err := testdb.Apply(&baseCfg.Database); err != nil {
+		t.Fatalf("apply %s: %v", testdb.URLEnv, err)
 	}
 
 	adminCfg := baseCfg.Database
 	adminCfg.Database = "postgres"
 	adminPool, err := newAuthTestPool(ctx, adminCfg)
 	if err != nil {
-		t.Skipf("skipping: database unavailable: %v", err)
+		testdb.SkipOrFatal(t, "skipping: database unavailable: %v", err)
 	}
 	if err := adminPool.Ping(ctx); err != nil {
 		adminPool.Close()
-		t.Skipf("skipping: database unavailable: %v", err)
+		testdb.SkipOrFatal(t, "skipping: database unavailable: %v", err)
 	}
 
 	dbName := fmt.Sprintf("auth_scope_test_%d", time.Now().UnixNano())
 	if _, err := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
 		adminPool.Close()
-		t.Skipf("skipping: cannot create throwaway database: %v", err)
+		testdb.SkipOrFatal(t, "skipping: cannot create throwaway database: %v", err)
 	}
 
 	testCfg := baseCfg.Database

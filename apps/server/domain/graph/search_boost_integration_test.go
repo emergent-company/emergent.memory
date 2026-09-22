@@ -13,13 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // TestRecencyBoostFavorsNewObjectsIntegration verifies that with recency_boost=1.0,
 // a newer object ranks above an older equally-relevant object.
 func TestRecencyBoostFavorsNewObjectsIntegration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("integration test requires database")
+		testdb.SkipOrFatal(t, "integration test requires database")
 	}
 
 	db := openBulkTestDB(t)
@@ -104,7 +105,7 @@ func TestRecencyBoostFavorsNewObjectsIntegration(t *testing.T) {
 // produces results consistent with no-boost baseline.
 func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("integration test requires database")
+		testdb.SkipOrFatal(t, "integration test requires database")
 	}
 
 	db := openBulkTestDB(t)
@@ -156,12 +157,21 @@ func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 	assert.Equal(t, baseResp.Total, boostResp.Total,
 		"recency_boost=0 should return same total as no boost")
 
-	// Order should be identical (zero boost adds 0 to every score)
-	for i := range baseResp.Data {
-		if i >= len(boostResp.Data) {
-			break
-		}
-		assert.Equal(t, baseResp.Data[i].Object.ID, boostResp.Data[i].Object.ID,
-			"result order should be identical when recency_boost=0")
+	// Zero boost adds 0 to every score, so the two requests must return the
+	// same set of objects. Positional order is deliberately NOT asserted: the
+	// three seeded objects are equally relevant (identical properties and FTS
+	// rank), and the fused result is sorted by score alone — a sort.Slice over
+	// a slice built from a map iteration — so the relative order of tied
+	// results is unspecified and differs run to run. Asserting order here was
+	// flaky (≈2 in 10) and only ever "passed" by luck.
+	baseIDs := make([]uuid.UUID, 0, len(baseResp.Data))
+	for _, item := range baseResp.Data {
+		baseIDs = append(baseIDs, item.Object.ID)
 	}
+	boostIDs := make([]uuid.UUID, 0, len(boostResp.Data))
+	for _, item := range boostResp.Data {
+		boostIDs = append(boostIDs, item.Object.ID)
+	}
+	assert.ElementsMatch(t, baseIDs, boostIDs,
+		"recency_boost=0 should return the same result set as no boost")
 }

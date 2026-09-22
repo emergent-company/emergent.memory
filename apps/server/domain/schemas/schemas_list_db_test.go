@@ -70,10 +70,7 @@ func TestListPacksPaginationHandler(t *testing.T) {
 		t.Skip("skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "schemascat")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "schemascat")
 	defer testDB.Close()
 	db := testDB.GetDB()
 
@@ -215,10 +212,7 @@ func TestListSchemaPacksRepository(t *testing.T) {
 		t.Skip("skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "schemaslist")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "schemaslist")
 	defer testDB.Close()
 	db := testDB.GetDB()
 

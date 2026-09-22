@@ -32,10 +32,7 @@ func newPricingOverrideHandler(t *testing.T) (*provider.Handler, *testutil.TestD
 	}
 
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "pricingoverride")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "pricingoverride")
 
 	orgA := uuid.New().String()
 	projectA := uuid.New().String()

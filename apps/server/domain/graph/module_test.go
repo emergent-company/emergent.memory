@@ -16,11 +16,12 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 func TestSchemaProviderCaching(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
 
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -202,7 +203,7 @@ func TestSchemaProviderCaching(t *testing.T) {
 
 func TestSchemaProviderMetrics(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
 
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -297,7 +298,7 @@ func TestSchemaProviderMetrics(t *testing.T) {
 // rows to be returned, leaving the type map empty.
 func TestSchemaProviderExcludesRemovedSchemas(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
 
 	dsn := os.Getenv("TEST_DATABASE_URL")

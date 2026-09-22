@@ -23,10 +23,7 @@ func setupEmbeddingStatusTest(t *testing.T) (context.Context, bun.IDB, string, *
 		t.Skip("skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "embedstatus")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "embedstatus")
 	t.Cleanup(testDB.Close)
 
 	db := testDB.GetDB()
@@ -157,7 +154,12 @@ func TestEmbeddingStatus_Repository(t *testing.T) {
 
 	// embedding_updated_at is populated only for the embedded object.
 	assert.NotNil(t, byID[embeddedID].EmbeddingUpdatedAt, "embedded object must carry embedding_updated_at")
-	assert.Equal(t, embeddedAt, *byID[embeddedID].EmbeddingUpdatedAt)
+	// Compare instants, not time.Time struct equality: the driver may hand back
+	// the timestamp in a different location than the UTC value inserted here,
+	// and reflect.DeepEqual (used by assert.Equal) would then fail even though
+	// the instant is identical.
+	assert.True(t, embeddedAt.Equal(*byID[embeddedID].EmbeddingUpdatedAt),
+		"embedded object embedding_updated_at = %v, want %v", byID[embeddedID].EmbeddingUpdatedAt, embeddedAt)
 	assert.Nil(t, byID[missingID].EmbeddingUpdatedAt, "non-embedded object must not carry embedding_updated_at")
 
 	// --- GetByID path ---

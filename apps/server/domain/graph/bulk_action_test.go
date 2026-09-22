@@ -17,6 +17,7 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // =============================================================================
@@ -134,7 +135,7 @@ func TestBulkActionServiceLimitValidation(t *testing.T) {
 func openBulkTestDB(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("integration test requires database")
+		testdb.SkipOrFatal(t, "integration test requires database")
 	}
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -145,7 +146,7 @@ func openBulkTestDB(t *testing.T) *bun.DB {
 	// Ping to detect missing DB early
 	if err := db.PingContext(context.Background()); err != nil {
 		db.Close()
-		t.Skipf("database unavailable (%v), skipping integration test", err)
+		testdb.SkipOrFatal(t, "database unavailable (%v), skipping integration test", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db

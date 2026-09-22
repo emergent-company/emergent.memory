@@ -20,6 +20,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/journal"
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // This test lives in the external `graph_test` package so it can import both
@@ -30,7 +31,7 @@ import (
 func openAuditTestDB(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("integration test requires database")
+		testdb.SkipOrFatal(t, "integration test requires database")
 	}
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -40,7 +41,7 @@ func openAuditTestDB(t *testing.T) *bun.DB {
 	db := bun.NewDB(sqldb, pgdialect.New())
 	if err := db.PingContext(context.Background()); err != nil {
 		db.Close()
-		t.Skipf("database unavailable (%v), skipping integration test", err)
+		testdb.SkipOrFatal(t, "database unavailable (%v), skipping integration test", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db

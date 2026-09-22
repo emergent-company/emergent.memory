@@ -21,6 +21,8 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
+
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // loadEnvFiles loads .env / .env.local from the repo root (walking up from CWD),
@@ -43,7 +45,7 @@ func loadEnvFiles() {
 func connectTestDB(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("Skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
 	loadEnvFiles()
 
@@ -78,7 +80,7 @@ func connectTestDB(t *testing.T) *bun.DB {
 	defer cancel()
 	if err := sqldb.PingContext(ctx); err != nil {
 		_ = sqldb.Close()
-		t.Skipf("database unavailable (%v), skipping integration test", err)
+		testdb.SkipOrFatal(t, "database unavailable (%v), skipping integration test", err)
 	}
 	db := bun.NewDB(sqldb, pgdialect.New())
 	t.Cleanup(func() { _ = db.Close() })
