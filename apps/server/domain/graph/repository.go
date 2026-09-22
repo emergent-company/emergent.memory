@@ -2154,7 +2154,7 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 			(embedding_v2 <=> ?::vector) AS distance
 		FROM kb.graph_objects
 		` + whereClause + `
-		ORDER BY distance ASC
+		ORDER BY distance ASC, id ASC
 		LIMIT ?
 	`
 
