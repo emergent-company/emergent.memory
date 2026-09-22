@@ -29,22 +29,45 @@ The CLI SHALL answer the ACP `initialize` method with `protocolVersion: 1`, an h
 
 ### Requirement: Session and prompt bridge
 
-The CLI SHALL answer `session/new` with a fresh `sessionId`, and `session/prompt` by running one Memory agent turn via A2A `message:send` using the selected skill id, emitting a `session/update` `agent_message_chunk` notification with the reply text, and returning `stopReason` `"end_turn"`.
+The CLI SHALL answer `session/new` with a fresh `sessionId`, and `session/prompt` by running one Memory agent turn via A2A `message:stream` using the selected skill id, and returning `stopReason` `"end_turn"` when the turn completes.
 
 #### Scenario: Prompt forwards to the selected agent
 
 - **WHEN** the client sends `session/prompt` with text content
-- **THEN** the CLI sends an A2A message carrying `metadata.skillId` equal to the selected skill id and the prompt text as a single text part
-
-#### Scenario: Reply is streamed back
-
-- **WHEN** the Memory agent turn completes with reply text
-- **THEN** the CLI emits a `session/update` notification whose update is `agent_message_chunk` with the reply text, followed by a `session/prompt` response with `stopReason` `"end_turn"`
+- **THEN** the CLI sends an A2A `message:stream` request carrying `metadata.skillId` equal to the selected skill id and the prompt text as a single text part
 
 #### Scenario: Empty prompt
 
 - **WHEN** the client sends `session/prompt` with no text content
 - **THEN** the CLI returns `stopReason` `"end_turn"` without making a backend call
+
+### Requirement: Streaming output
+
+The CLI SHALL stream the agent's reply as incremental `session/update` `agent_message_chunk` notifications as A2A emits text deltas, deduplicating the repeated full text carried by artifact/message/task events.
+
+#### Scenario: Reply is streamed incrementally
+
+- **WHEN** the Memory agent turn streams text deltas
+- **THEN** the CLI emits one `agent_message_chunk` notification per new text suffix, followed by a `session/prompt` response with `stopReason` `"end_turn"`
+
+#### Scenario: Duplicate full text is not re-emitted
+
+- **WHEN** A2A re-emits the full accumulated text (terminal message, last-chunk artifact, or final task snapshot)
+- **THEN** the CLI does not emit a duplicate `agent_message_chunk` for already-streamed text
+
+### Requirement: Human-in-the-loop resume
+
+The CLI SHALL surface a paused turn's question when A2A reports `TASK_STATE_INPUT_REQUIRED`, remember the task id, and resume it on the next prompt in the same session by sending the A2A message with that `taskId`.
+
+#### Scenario: Pause surfaces the question
+
+- **WHEN** an A2A turn pauses at `TASK_STATE_INPUT_REQUIRED`
+- **THEN** the CLI emits an `agent_message_chunk` with the question text and returns `stopReason` `"end_turn"`, recording the task id
+
+#### Scenario: Next prompt resumes the paused task
+
+- **WHEN** a later `session/prompt` arrives on the same session after a pause
+- **THEN** the CLI sends an A2A `message:stream` request carrying `message.taskId` equal to the paused task id (without `metadata.skillId`)
 
 ### Requirement: Multi-turn threading
 

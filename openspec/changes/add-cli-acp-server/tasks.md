@@ -9,9 +9,20 @@
 
 - [x] 2.1 Add `apps/cli/internal/cmd/acp.go` — `memory acp` command (group `ai`), `--agent` flag + `MEMORY_AGENT` env, reusing `getA2AClient` for config/auth, running `acp.Run` on os.Stdin/out/err. Verify: `go build ./...` compiles and `memory acp --help` lists the command.
 
-## 3. Build, lint, and verification
+## 3. Streaming (A2A message:stream SSE)
 
-- [x] 3.1 `go build ./...` (apps/cli) compiles. Verify: clean.
-- [x] 3.2 `gofmt` + `go vet ./internal/acp/... ./internal/cmd/...` clean. Verify: clean.
-- [x] 3.3 `golangci-lint run ./internal/acp/...` reports 0 issues. Verify: clean.
-- [x] 3.4 `go test ./internal/acp/...` passes. Verify: pass.
+- [x] 3.1 Switch `Agent.prompt` from sync `SendMessage` to `StreamMessage` (SSE) and add `consumeStream` to drain events. Verify: `go build ./...` compiles.
+- [x] 3.2 Add `textEmitter` to emit incremental `agent_message_chunk` deltas, deduplicating the repeated full text carried by artifact/message/task events. Verify: `go test ./internal/acp/...` passes.
+- [x] 3.3 Capture `contextId` from stream events for multi-turn threading. Verify: `go test ./internal/acp/...` passes.
+
+## 4. Human-in-the-loop resume
+
+- [x] 4.1 Track a per-session `pendingTaskID`; on `TASK_STATE_INPUT_REQUIRED` emit the question and record the task id. Verify: `go build ./...` compiles.
+- [x] 4.2 On the next prompt in the session, resume by sending `message.taskId` (without `metadata.skillId`). Verify: `go test ./internal/acp/...` passes.
+
+## 5. Build, lint, and verification
+
+- [x] 5.1 `go build ./...` (apps/cli) compiles. Verify: clean.
+- [x] 5.2 `gofmt` + `go vet ./internal/acp/... ./internal/cmd/...` clean. Verify: clean.
+- [x] 5.3 `golangci-lint run ./internal/acp/...` reports 0 issues. Verify: clean.
+- [x] 5.4 `go test ./internal/acp/...` passes (streaming chunks + HITL resume covered). Verify: pass.

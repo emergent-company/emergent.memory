@@ -6,7 +6,8 @@ Memory retired its in-house ACP interface in favour of A2A v1.0 (#643). Agent or
 
 - Add a `memory acp` command that runs the CLI as an ACP v1 agent over stdio (newline-delimited JSON-RPC 2.0).
 - Implement the baseline ACP methods — `initialize`, `session/new`, `session/prompt`, and the `session/cancel` notification — and emit `session/update` to stream agent replies.
-- Bridge each prompt to the Memory A2A surface (`POST /message:send`), selecting the agent by skill id via `--agent` / `MEMORY_AGENT`, and thread multi-turn conversation via the A2A `contextId`.
+- Bridge each prompt to the Memory A2A `message:stream` (SSE) surface, selecting the agent by skill id via `--agent` / `MEMORY_AGENT`, streaming incremental `agent_message_chunk` deltas.
+- Thread multi-turn conversation via the A2A `contextId`, and resume human-in-the-loop (`TASK_STATE_INPUT_REQUIRED`) turns by threading the A2A `taskId` on the next prompt.
 
 ## Capabilities
 

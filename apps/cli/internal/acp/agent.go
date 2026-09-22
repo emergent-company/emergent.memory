@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 
@@ -13,7 +14,8 @@ import (
 
 // Agent bridges ACP method calls to the Memory A2A surface. Each ACP session
 // maps to a Memory agent (skill) turn; consecutive prompts in the same session
-// thread conversation via the A2A contextId.
+// thread conversation via the A2A contextId, and a paused (human-in-the-loop)
+// task is resumed by threading its taskId on the next prompt.
 type Agent struct {
 	client  *a2a.Client
 	skill   string // Memory agent skill id (RFC1123 slug)
@@ -25,8 +27,9 @@ type Agent struct {
 
 // session is the per-session state tracked by the agent.
 type session struct {
-	contextID string
-	cancel    context.CancelFunc
+	contextID     string
+	pendingTaskID string // set when the last turn paused for HITL input
+	cancel        context.CancelFunc
 }
 
 // NewAgent creates an ACP agent that fronts the given A2A client and targets
@@ -70,13 +73,25 @@ func (a *Agent) newSession() any {
 	return SessionNewResponse{SessionID: id}
 }
 
-// prompt answers the ACP session/prompt method by running one Memory agent
-// turn. It emits a session/update agent_message_chunk notification carrying the
-// reply text via send, then returns stopReason "end_turn" (or "cancelled").
+// prompt answers the ACP session/prompt method by running one Memory agent turn
+// over A2A message:stream. It streams reply text via session/update
+// agent_message_chunk notifications and returns stopReason "end_turn" (or
+// "cancelled" when a session/cancel notification interrupted the turn).
 func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error) (any, error) {
 	text := extractText(p.Prompt)
+
+	a.mu.Lock()
+	sess := a.sessions[p.SessionID]
+	if sess == nil {
+		sess = &session{}
+		a.sessions[p.SessionID] = sess
+	}
+	resumeTaskID := sess.pendingTaskID
+	contextID := sess.contextID
+	a.mu.Unlock()
+
 	if text == "" {
-		// Nothing to run; end the turn without a backend call.
+		// Nothing to run and no paused task to resume.
 		return PromptResponse{StopReason: StopReasonEndTurn}, nil
 	}
 
@@ -86,13 +101,11 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	defer cancel()
 
 	a.mu.Lock()
-	sess := a.sessions[p.SessionID]
-	if sess == nil {
-		sess = &session{}
-		a.sessions[p.SessionID] = sess
-	}
 	sess.cancel = cancel
-	contextID := sess.contextID
+	if resumeTaskID != "" {
+		// Consumed now; a subsequent pause re-sets it via consumeStream.
+		sess.pendingTaskID = ""
+	}
 	a.mu.Unlock()
 
 	req := a2a.SendMessageRequest{
@@ -100,55 +113,117 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 			MessageID: newID("msg"),
 			Role:      a2a.RoleUser,
 			Parts:     []a2a.Part{a2a.TextPart(text)},
-			Metadata:  map[string]any{a2a.SkillIDMetadataKey: a.skill},
 		},
 	}
-	if contextID != "" {
-		req.Message.ContextID = contextID
+	if resumeTaskID != "" {
+		// Resume the paused task; the server infers the agent and context.
+		req.Message.TaskID = resumeTaskID
+	} else {
+		req.Message.Metadata = map[string]any{a2a.SkillIDMetadataKey: a.skill}
+		if contextID != "" {
+			req.Message.ContextID = contextID
+		}
 	}
 
-	resp, err := a.client.SendMessage(promptCtx, req)
+	stream, err := a.client.StreamMessage(promptCtx, req)
 	if err != nil {
 		if promptCtx.Err() != nil {
 			return PromptResponse{StopReason: StopReasonCancelled}, nil
 		}
 		return nil, fmt.Errorf("memory: %w", err)
 	}
+	defer func() { _ = stream.Close() }()
 
-	reply, newContextID, state := a.replyFromResponse(resp)
+	emitter := &textEmitter{sid: p.SessionID, send: send}
+	newContextID, newPendingTaskID, stopReason, err := a.consumeStream(promptCtx, stream, emitter)
+	if err != nil {
+		return nil, err
+	}
 
+	a.mu.Lock()
 	if newContextID != "" {
-		a.mu.Lock()
 		sess.contextID = newContextID
-		a.mu.Unlock()
+	}
+	if newPendingTaskID != "" {
+		sess.pendingTaskID = newPendingTaskID
+	}
+	a.mu.Unlock()
+
+	return PromptResponse{StopReason: stopReason}, nil
+}
+
+// consumeStream drains an A2A SSE stream, emitting agent_message_chunk deltas
+// for streamed text and terminal question/error messages. It returns the
+// accumulated contextId, any pending HITL task id, the stop reason, and an error
+// (only for transport failures).
+func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitter *textEmitter) (string, string, string, error) {
+	var contextID, pendingTaskID string
+
+	for {
+		ev, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return contextID, "", StopReasonCancelled, nil
+			}
+			return contextID, "", StopReasonEndTurn, fmt.Errorf("memory: stream: %w", err)
+		}
+
+		switch {
+		case ev.ArtifactUpdate != nil:
+			if ev.ArtifactUpdate.ContextID != "" {
+				contextID = ev.ArtifactUpdate.ContextID
+			}
+			if err := emitter.emit(artifactText(ev.ArtifactUpdate.Artifact)); err != nil {
+				return contextID, "", StopReasonEndTurn, err
+			}
+
+		case ev.Message != nil:
+			if ev.Message.ContextID != "" {
+				contextID = ev.Message.ContextID
+			}
+			if err := emitter.emit(messageText(ev.Message)); err != nil {
+				return contextID, "", StopReasonEndTurn, err
+			}
+
+		case ev.StatusUpdate != nil:
+			su := ev.StatusUpdate
+			if su.ContextID != "" {
+				contextID = su.ContextID
+			}
+			switch su.Status.State {
+			case a2a.TaskStateInputRequired:
+				// HITL pause: record the task id for a later resume and surface
+				// the question. The server closes the stream after this event.
+				pendingTaskID = su.TaskID
+				if q := messageText(su.Status.Message); q != "" {
+					if err := emitter.emit(q); err != nil {
+						return contextID, "", StopReasonEndTurn, err
+					}
+				}
+			case a2a.TaskStateFailed:
+				if msg := messageText(su.Status.Message); msg != "" {
+					if err := emitter.emit(msg); err != nil {
+						return contextID, "", StopReasonEndTurn, err
+					}
+				}
+			}
+
+		case ev.Task != nil:
+			// Initial SUBMITTED snapshot or terminal COMPLETED snapshot. Its text
+			// is already emitted via artifact/message events; capture context id.
+			if ev.Task.ContextID != "" {
+				contextID = ev.Task.ContextID
+			}
+		}
 	}
 
-	switch state {
-	case a2a.TaskStateFailed:
-		if reply == "" {
-			reply = "agent task failed"
-		}
-		if err := send(sessionUpdate(p.SessionID, reply)); err != nil {
-			return nil, err
-		}
-		return PromptResponse{StopReason: StopReasonEndTurn}, nil
-	case a2a.TaskStateInputRequired:
-		// Human-in-the-loop is not resolvable over a stateless stdio turn; surface
-		// the agent's question as the reply and end the turn.
-		if reply != "" {
-			if err := send(sessionUpdate(p.SessionID, reply)); err != nil {
-				return nil, err
-			}
-		}
-		return PromptResponse{StopReason: StopReasonEndTurn}, nil
-	default:
-		if reply != "" {
-			if err := send(sessionUpdate(p.SessionID, reply)); err != nil {
-				return nil, err
-			}
-		}
-		return PromptResponse{StopReason: StopReasonEndTurn}, nil
+	if ctx.Err() != nil {
+		return contextID, "", StopReasonCancelled, nil
 	}
+	return contextID, pendingTaskID, StopReasonEndTurn, nil
 }
 
 // cancel handles the session/cancel notification by cancelling any in-flight
@@ -162,24 +237,34 @@ func (a *Agent) cancel(params CancelParams) {
 	}
 }
 
-// replyFromResponse extracts the reply text, the new context id, and the
-// terminal task state from an A2A SendMessageResponse.
-func (a *Agent) replyFromResponse(resp *a2a.SendMessageResponse) (text, contextID string, state a2a.TaskState) {
-	if resp.Task != nil {
-		contextID = resp.Task.ContextID
-		state = resp.Task.Status.State
-		if state == a2a.TaskStateInputRequired || state == a2a.TaskStateFailed {
-			text = messageText(resp.Task.Status.Message)
-		} else {
-			text = taskText(resp.Task)
-		}
-		return text, contextID, state
+// textEmitter dedupes and emits incremental text deltas. A2A stream events carry
+// the full growing text (and the terminal message/task repeat the final text),
+// so it emits only the suffix not yet sent, falling back to the full text when a
+// non-monotonic value arrives.
+type textEmitter struct {
+	sid     string
+	send    func(any) error
+	emitted string
+}
+
+func (e *textEmitter) emit(text string) error {
+	if text == "" {
+		return nil
 	}
-	if resp.Message != nil {
-		contextID = resp.Message.ContextID
-		text = messageText(resp.Message)
+	switch {
+	case e.emitted == "":
+		e.emitted = text
+		return e.send(sessionUpdate(e.sid, text))
+	case text == e.emitted:
+		return nil
+	case strings.HasPrefix(text, e.emitted):
+		chunk := text[len(e.emitted):]
+		e.emitted = text
+		return e.send(sessionUpdate(e.sid, chunk))
+	default:
+		e.emitted = text
+		return e.send(sessionUpdate(e.sid, text))
 	}
-	return text, contextID, state
 }
 
 // sessionUpdate builds a session/update agent_message_chunk notification.
@@ -231,14 +316,12 @@ func messageText(m *a2a.Message) string {
 	return sb.String()
 }
 
-// taskText joins the text parts of a task's artifacts.
-func taskText(t *a2a.Task) string {
+// artifactText joins the text parts of an A2A artifact.
+func artifactText(art a2a.Artifact) string {
 	var sb strings.Builder
-	for _, art := range t.Artifacts {
-		for _, p := range art.Parts {
-			if p.Text != nil {
-				sb.WriteString(*p.Text)
-			}
+	for _, p := range art.Parts {
+		if p.Text != nil {
+			sb.WriteString(*p.Text)
 		}
 	}
 	return sb.String()
