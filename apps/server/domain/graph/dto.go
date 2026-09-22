@@ -203,10 +203,16 @@ type PropertyFilter struct {
 
 // SearchGraphObjectsResponse is the paginated search response.
 // Standard paginated response: items, next_cursor, total
+//
+// Total is a pointer so that the exact count can be skipped entirely when the
+// caller passes include_total=false (issue #733). When skipped, the field is
+// omitted from the JSON rather than emitted as a misleading 0; the default
+// (include_total unset) always computes and returns the exact total, so the
+// wire shape is unchanged for existing clients.
 type SearchGraphObjectsResponse struct {
 	Items      []*GraphObjectResponse `json:"items"`
 	NextCursor *string                `json:"next_cursor,omitempty"`
-	Total      int                    `json:"total"`
+	Total      *int                   `json:"total,omitempty"`
 }
 
 // CreateGraphRelationshipRequest is the request body for creating a relationship.

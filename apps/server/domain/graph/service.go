@@ -498,18 +498,26 @@ func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObje
 		params.Limit = maxLimit
 	}
 
-	// Run count and list queries in parallel.
+	// Run count and list queries in parallel — unless the caller opted out of
+	// the exact total (params.SkipTotal), in which case the count is never
+	// issued: it is the endpoint's latency floor on projects that dominate a
+	// large kb.graph_objects table (see #733).
 	var (
-		total   int
+		total   *int
 		objects []*GraphObject
 	)
 	{
 		eg, egCtx := errgroup.WithContext(ctx)
-		eg.Go(func() error {
-			var err error
-			total, err = s.repo.Count(egCtx, params)
-			return err
-		})
+		if !params.SkipTotal {
+			eg.Go(func() error {
+				t, err := s.repo.Count(egCtx, params)
+				if err != nil {
+					return err
+				}
+				total = &t
+				return nil
+			})
+		}
 		eg.Go(func() error {
 			var err error
 			objects, err = s.repo.List(egCtx, params)
