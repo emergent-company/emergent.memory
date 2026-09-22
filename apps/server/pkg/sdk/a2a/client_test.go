@@ -235,10 +235,38 @@ func TestStreamMessage(t *testing.T) {
 // newSSEStream builds an SSEStream over an in-memory body so the parser can be
 // exercised without an HTTP server.
 func newSSEStream(body string) *SSEStream {
+	return newSSEStreamReader(strings.NewReader(body))
+}
+
+// newSSEStreamReader builds an SSEStream over an arbitrary reader so tests can
+// control chunk boundaries and exercise scanner buffer refills.
+func newSSEStreamReader(r io.Reader) *SSEStream {
 	return &SSEStream{
-		resp:    &http.Response{Body: io.NopCloser(strings.NewReader(body))},
-		scanner: newSSEScanner(strings.NewReader(body)),
+		resp:    &http.Response{Body: io.NopCloser(strings.NewReader(""))},
+		scanner: newSSEScanner(r),
 	}
+}
+
+// chunkedReader yields its chunks verbatim, one Read per chunk, so a caller can
+// place a CR at the very end of a read and the LF at the start of the next.
+type chunkedReader struct {
+	chunks []string
+	i      int
+	off    int
+}
+
+func (r *chunkedReader) Read(p []byte) (int, error) {
+	for r.i < len(r.chunks) {
+		if r.off >= len(r.chunks[r.i]) {
+			r.i++
+			r.off = 0
+			continue
+		}
+		n := copy(p, r.chunks[r.i][r.off:])
+		r.off += n
+		return n, nil
+	}
+	return 0, io.EOF
 }
 
 // collectEvents drains a stream, returning every dispatched event. An io.EOF
@@ -394,6 +422,20 @@ func TestSSEStreamNextParsing(t *testing.T) {
 			body: "data:\r\rdata: " + statusUpdateJSON + "\r\r",
 			want: wantStatus,
 		},
+		{
+			// A bare `data:` line terminated by CRLF, then a blank CRLF line,
+			// then a real event: the empty payload is skipped, not decoded.
+			name: "empty payload with CRLF framing skipped",
+			body: "data:\r\n\r\ndata: " + statusUpdateJSON + "\r\n\r\n",
+			want: wantStatus,
+		},
+		{
+			// A lone CR terminates the data line, but no blank line follows
+			// before EOF, so the event is incomplete and discarded.
+			name: "CR immediately before EOF discards unterminated event",
+			body: "data: " + statusUpdateJSON + "\r",
+			want: nil,
+		},
 	}
 
 	for _, tc := range tests {
@@ -412,11 +454,84 @@ func TestSSEStreamDoneSentinel(t *testing.T) {
 }
 
 func TestSSEStreamDoneSentinelLoneCR(t *testing.T) {
-	// [DONE] terminates the stream under lone-CR framing; any payload after it
-	// is not dispatched.
-	s := newSSEStream("data: [DONE]\r\rdata: " + statusUpdateJSON + "\r\r")
-	_, err := s.Next()
+	// Under lone-CR framing the event before [DONE] must still dispatch (this
+	// makes the case discriminating: a splitter that ignored lone CR would read
+	// one unterminated line and emit nothing), then [DONE] ends the stream and
+	// no payload after it is dispatched.
+	s := newSSEStream("data: " + statusUpdateJSON + "\r\r" +
+		"data: [DONE]\r\r" +
+		"data: " + statusUpdateJSON + "\r\r")
+
+	ev, err := s.Next()
+	require.NoError(t, err)
+	require.NotNil(t, ev.StatusUpdate)
+	require.Equal(t, "t1", ev.StatusUpdate.TaskID)
+	require.Equal(t, TaskStateWorking, ev.StatusUpdate.Status.State)
+
+	_, err = s.Next()
 	require.ErrorIs(t, err, io.EOF)
+}
+
+// TestSplitSSELines pins the split contract directly, including the pending-CR
+// path where a trailing CR needs one more byte to decide CR vs CRLF.
+func TestSplitSSELines(t *testing.T) {
+	tests := []struct {
+		name        string
+		data        string
+		atEOF       bool
+		wantAdvance int
+		wantToken   string
+	}{
+		{name: "LF terminates", data: "a\nb", atEOF: false, wantAdvance: 2, wantToken: "a"},
+		{name: "CRLF terminates", data: "a\r\nb", atEOF: false, wantAdvance: 3, wantToken: "a"},
+		{name: "lone CR terminates", data: "a\rb", atEOF: false, wantAdvance: 2, wantToken: "a"},
+		{name: "trailing CR pending more data", data: "a\r", atEOF: false, wantAdvance: 0, wantToken: ""},
+		{name: "trailing CR at EOF terminates", data: "a\r", atEOF: true, wantAdvance: 2, wantToken: "a"},
+		{name: "unterminated mid-buffer waits", data: "abc", atEOF: false, wantAdvance: 0, wantToken: ""},
+		{name: "unterminated at EOF is a token", data: "abc", atEOF: true, wantAdvance: 3, wantToken: "abc"},
+		{name: "empty at EOF yields nothing", data: "", atEOF: true, wantAdvance: 0, wantToken: ""},
+		{name: "blank line is an empty token", data: "\n", atEOF: false, wantAdvance: 1, wantToken: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			advance, token, err := splitSSELines([]byte(tc.data), tc.atEOF)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAdvance, advance)
+			assert.Equal(t, tc.wantToken, string(token))
+		})
+	}
+}
+
+// TestSSEStreamChunkBoundaryRefill drives the production scanner through a
+// reader that splits the stream at hostile boundaries: the CR of a CRLF ends
+// one read and the LF begins the next, and a lone CR that terminates a line is
+// the last byte of its chunk.
+func TestSSEStreamChunkBoundaryRefill(t *testing.T) {
+	wantStatus := []StreamResponse{{StatusUpdate: &TaskStatusUpdateEvent{
+		TaskID:    "t1",
+		ContextID: "c1",
+		Status:    TaskStatus{State: TaskStateWorking},
+	}}}
+
+	t.Run("CRLF split across reads", func(t *testing.T) {
+		r := &chunkedReader{chunks: []string{"data: " + statusUpdateJSON + "\r", "\n", "\r\n"}}
+		assert.Equal(t, wantStatus, collectEvents(t, newSSEStreamReader(r)))
+	})
+
+	t.Run("lone CR is last byte of its chunk", func(t *testing.T) {
+		r := &chunkedReader{chunks: []string{"data: " + statusUpdateJSON, "\r", "\r"}}
+		assert.Equal(t, wantStatus, collectEvents(t, newSSEStreamReader(r)))
+	})
+
+	t.Run("one byte per read", func(t *testing.T) {
+		var chunks []string
+		for _, b := range []byte("data: " + statusUpdateJSON + "\r\n\r\n") {
+			chunks = append(chunks, string(b))
+		}
+		r := &chunkedReader{chunks: chunks}
+		assert.Equal(t, wantStatus, collectEvents(t, newSSEStreamReader(r)))
+	})
 }
 
 func TestGetTask(t *testing.T) {
