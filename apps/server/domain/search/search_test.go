@@ -1097,41 +1097,6 @@ func TestHasScope(t *testing.T) {
 	}
 }
 
-func TestConfiguredRelationshipIVFFlatProbes(t *testing.T) {
-	tests := []struct {
-		name string
-		val  string
-		want int
-	}{
-		{name: "default when unset", val: "", want: 5},
-		{name: "explicit lower value", val: "3", want: 3},
-		{name: "explicit higher value is honoured", val: "10", want: 10},
-		{name: "1 is the minimum valid value", val: "1", want: 1},
-		{name: "non-numeric falls back to default", val: "abc", want: 5},
-		{name: "zero falls back to default", val: "0", want: 5},
-		{name: "negative falls back to default", val: "-3", want: 5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("SEARCH_RELATIONSHIP_IVFFLAT_PROBES", tt.val)
-			assert.Equal(t, tt.want, configuredRelationshipIVFFlatProbes())
-		})
-	}
-}
-
-// TestRelationshipProbesBelowGlobalDefault guards the relationship ANN leg against
-// being raised back to the global default. pgvector costs the ivfflat index roughly
-// linearly in probes, and at the global default (10) the index estimate exceeds the
-// planner's optimistic parallel-seq-scan estimate for kb.graph_relationships, so the
-// index is abandoned and the search degrades from ~250ms to minutes.
-func TestRelationshipProbesBelowGlobalDefault(t *testing.T) {
-	t.Setenv("SEARCH_RELATIONSHIP_IVFFLAT_PROBES", "")
-	t.Setenv("SEARCH_IVFFLAT_PROBES", "")
-	assert.Less(t, configuredRelationshipIVFFlatProbes(), configuredIVFFlatProbes(),
-		"relationship ivfflat.probes must stay below the global default or the planner drops the index")
-}
-
 func TestBuildRelationshipSearchQuery(t *testing.T) {
 	projectID := uuid.New()
 	ns := "team-a"

@@ -21,23 +21,24 @@ type embeddingIndexTarget struct {
 }
 
 // embeddingIndexTargets lists every ivfflat embedding index rebuilt on a
-// schedule. HNSW indexes are excluded: they need no periodic REINDEX. The
-// graph_objects ivfflat index was dropped in migration 00164 (issue #707) and
-// the chunks and skills ivfflat indexes in migration 00170 (issue #670); all
-// three are now HNSW and therefore no longer reindexed here.
+// schedule. HNSW indexes are excluded: they need no periodic REINDEX. Every
+// former ivfflat embedding index has now been migrated to HNSW — graph_objects
+// in migration 00164 (issue #707), chunks and skills in migration 00170
+// (issue #670), and graph_relationships in migration 00171 (issue #697) — so
+// there is nothing left for this task to rebuild and the list is intentionally
+// empty.
 //
 // A target whose index no longer exists must be removed from this list: a
 // scheduled REINDEX INDEX against a dropped index fails and is surfaced as an
 // aggregate task error every night.
 //
-// Migration 00170's Down restores the chunks and skills ivfflat indexes. Rolling
-// that migration back must therefore also revert this list (or redeploy the prior
-// binary); if those indexes are restored while this list stays shrunken, the
-// nightly task silently stops reindexing them. Migration rollback and this code
-// change are expected to ship together.
-var embeddingIndexTargets = []embeddingIndexTarget{
-	{schema: "kb", name: "idx_graph_relationships_embedding_ivfflat"},
-}
+// The Down migrations restore those ivfflat indexes (00170 for chunks/skills,
+// 00171 for graph_relationships). Rolling either of them back must therefore
+// also restore this list (or redeploy the prior binary); if an ivfflat index is
+// restored while this list stays empty, the nightly task silently stops
+// reindexing it. Migration rollback and the corresponding code change are
+// expected to ship together.
+var embeddingIndexTargets = []embeddingIndexTarget{}
 
 // EmbeddingIndexReindexTask rebuilds the ivfflat embedding indexes on a
 // schedule. ivfflat clustering degrades as embeddings are backfilled
@@ -45,16 +46,21 @@ var embeddingIndexTargets = []embeddingIndexTarget{
 // than expected (issue #664). REINDEX INDEX CONCURRENTLY rebuilds without
 // blocking writes; any index left INVALID by an interrupted concurrent build is
 // recovered first with a plain REINDEX.
+//
+// targets defaults to the package-level embeddingIndexTargets and is a field so
+// tests can exercise the reindex/recovery machinery without a live PostgreSQL.
 type EmbeddingIndexReindexTask struct {
-	db  *bun.DB
-	log *slog.Logger
+	db      *bun.DB
+	log     *slog.Logger
+	targets []embeddingIndexTarget
 }
 
 // NewEmbeddingIndexReindexTask creates a new embedding index reindex task.
 func NewEmbeddingIndexReindexTask(db *bun.DB, log *slog.Logger) *EmbeddingIndexReindexTask {
 	return &EmbeddingIndexReindexTask{
-		db:  db,
-		log: log.With(logger.Scope("scheduler.embedding_index_reindex")),
+		db:      db,
+		log:     log.With(logger.Scope("scheduler.embedding_index_reindex")),
+		targets: embeddingIndexTargets,
 	}
 }
 
@@ -65,7 +71,7 @@ func (t *EmbeddingIndexReindexTask) Run(ctx context.Context) error {
 	start := time.Now()
 	var errs []error
 
-	for _, target := range embeddingIndexTargets {
+	for _, target := range t.targets {
 		targetStart := time.Now()
 
 		// Recover an index left INVALID by a previously interrupted concurrent

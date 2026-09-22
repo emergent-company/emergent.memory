@@ -74,32 +74,6 @@ func configuredIVFFlatProbes() int {
 	return probes
 }
 
-// configuredRelationshipIVFFlatProbes returns the ivfflat.probes value to use for
-// relationship vector searches, read from the SEARCH_RELATIONSHIP_IVFFLAT_PROBES
-// env var. Defaults to 5 and is clamped to >= 1.
-//
-// It is deliberately lower than configuredIVFFlatProbes (10). pgvector's ivfflat
-// cost estimate scales roughly linearly with ivfflat.probes, while the competing
-// parallel-seq-scan estimate prices a scan of kb.graph_relationships as if the
-// TOASTed 768-dim vectors were free to read. On a project with ~82k embedded
-// relationships the two estimates cross over between probes=5 and probes=10:
-//
-//	probes=5  -> Index Scan, estimated cost ~5.2k  -> ~250 ms
-//	probes=10 -> Parallel Seq Scan + Sort, ~9.9k   -> tens of seconds to minutes
-//
-// so probes=10 makes the planner abandon the index entirely. Raising this value
-// back to 10 will reintroduce that regression; prefer a smaller lists/probes
-// pairing or an HNSW index over forcing planner settings.
-func configuredRelationshipIVFFlatProbes() int {
-	probes := 5
-	if v := os.Getenv("SEARCH_RELATIONSHIP_IVFFLAT_PROBES"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
-			probes = n
-		}
-	}
-	return probes
-}
-
 // TextSearchMode defines the type of text search
 type TextSearchMode string
 
@@ -489,9 +463,15 @@ type RelationshipSearchResponse struct {
 // SearchRelationships performs vector similarity search on relationship embeddings.
 // Finds semantically similar relationships using triplet text embeddings (e.g., "Elon Musk founded Tesla").
 // Filters out relationships without embeddings (WHERE embedding IS NOT NULL).
-// Uses the ivfflat index for efficient approximate nearest neighbor search, provided
-// ivfflat.probes stays low enough for the planner to keep choosing it (see
-// configuredRelationshipIVFFlatProbes).
+//
+// kb.graph_relationships.embedding is served by an HNSW index (migration 00171,
+// m=16 / ef_construction=64). Unlike the previous ivfflat index, HNSW has no
+// `probes` knob and needs no training/list step, so this path deliberately does
+// NOT set `ivfflat.probes`: the setting would be a no-op for the index and the
+// former SEARCH_RELATIONSHIP_IVFFLAT_PROBES stopgap has been removed. This also
+// removes the planner cost-model cliff where a higher probes value made the
+// planner abandon the ivfflat index for an optimistic parallel sequential scan
+// (tens of seconds to minutes on ~82k embedded relationships).
 //
 // The project filter is primarily applied to kb.graph_relationships.project_id (the
 // row that owns the embedding): the r-side predicate keeps scoping attached to the
@@ -513,22 +493,11 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 	limit := mathutil.ClampLimit(params.Limit, 50, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
-	// Relationship-specific IVFFlat probe count. This must stay low enough for the
-	// planner to keep choosing the ivfflat index scan: at probes=10 on a large
-	// relationship index the index estimate exceeds the (optimistic) parallel
-	// seq-scan estimate and the leg degrades from ~250ms to minutes.
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredRelationshipIVFFlatProbes())
-	if err != nil {
-		r.log.Error("relationship search: failed to set ivfflat probes", logger.Error(err))
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	// Joins with graph_objects to construct triplet text: "{source.name} {type} {target.name}"
 	query, queryArgs := buildRelationshipSearchQuery(vectorStr, params.ProjectID, params.Namespace, limit)
 
-	rows, err := tx.QueryContext(ctx, query, queryArgs...)
+	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		r.log.Error("relationship vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -601,11 +570,6 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-
-	// Commit the read-only transaction
-	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
