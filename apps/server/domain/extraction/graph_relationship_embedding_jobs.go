@@ -10,6 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -235,14 +236,17 @@ func (s *GraphRelationshipEmbeddingJobsService) RecoverOrphanedProcessingJobs(ct
 
 // GraphRelationshipEmbeddingQueueStats contains queue statistics for relationship jobs.
 type GraphRelationshipEmbeddingQueueStats struct {
-	Pending    int64 `json:"pending"`
-	Processing int64 `json:"processing"`
-	Completed  int64 `json:"completed"`
-	Failed     int64 `json:"failed"`
-	DeadLetter int64 `json:"deadLetter"`
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Completed   int64 `json:"completed"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
+	DeadLetter  int64 `json:"deadLetter"`
 }
 
 // Stats returns queue statistics for relationship embedding jobs.
+// As with object jobs, failed excludes stale-sweep reaps; those are surfaced as
+// staleFailed so a healthy queue does not look permanently broken.
 func (s *GraphRelationshipEmbeddingJobsService) Stats(ctx context.Context) (*GraphRelationshipEmbeddingQueueStats, error) {
 	stats := &GraphRelationshipEmbeddingQueueStats{}
 	err := s.db.NewRaw(`
@@ -250,10 +254,15 @@ func (s *GraphRelationshipEmbeddingJobsService) Stats(ctx context.Context) (*Gra
 			COUNT(*) FILTER (WHERE status = 'pending') as pending,
 			COUNT(*) FILTER (WHERE status = 'processing') as processing,
 			COUNT(*) FILTER (WHERE status = 'completed') as completed,
-			COUNT(*) FILTER (WHERE status = 'failed') as failed,
+			COUNT(*) FILTER (WHERE status = 'failed' AND COALESCE(last_error, '') <> ?) as failed,
+			COUNT(*) FILTER (WHERE status = 'failed' AND last_error = ?) as stale_failed,
 			COUNT(*) FILTER (WHERE status = 'dead_letter') as dead_letter
-		FROM kb.graph_relationship_embedding_jobs`).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.DeadLetter)
-	return stats, err
+		FROM kb.graph_relationship_embedding_jobs`, jobs.StaleJobMessage, jobs.StaleJobMessage).
+		Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.StaleFailed, &stats.DeadLetter)
+	if err != nil {
+		return nil, fmt.Errorf("get relationship stats: %w", err)
+	}
+	return stats, nil
 }
 
 // ResetSchedule sets scheduled_at = now() for all pending relationship embedding jobs

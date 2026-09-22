@@ -10,6 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -422,7 +423,10 @@ func (s *ChunkEmbeddingJobsService) GetActiveJobForChunk(ctx context.Context, ch
 	return job, nil
 }
 
-// Stats returns queue statistics
+// Stats returns queue statistics.
+// failed excludes stale-sweep reaps (last_error = jobs.StaleJobMessage); those
+// are reported separately as staleFailed so historical cleanup is not presented
+// as current breakage.
 func (s *ChunkEmbeddingJobsService) Stats(ctx context.Context) (*ChunkEmbeddingQueueStats, error) {
 	stats := &ChunkEmbeddingQueueStats{}
 
@@ -430,8 +434,10 @@ func (s *ChunkEmbeddingJobsService) Stats(ctx context.Context) (*ChunkEmbeddingQ
 		COUNT(*) FILTER (WHERE status = 'pending') as pending,
 		COUNT(*) FILTER (WHERE status = 'processing') as processing,
 		COUNT(*) FILTER (WHERE status = 'completed') as completed,
-		COUNT(*) FILTER (WHERE status = 'failed') as failed
-	FROM kb.chunk_embedding_jobs`).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed)
+		COUNT(*) FILTER (WHERE status = 'failed' AND COALESCE(last_error, '') <> ?) as failed,
+		COUNT(*) FILTER (WHERE status = 'failed' AND last_error = ?) as stale_failed
+	FROM kb.chunk_embedding_jobs`, jobs.StaleJobMessage, jobs.StaleJobMessage).
+		Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.StaleFailed)
 	if err != nil {
 		return nil, fmt.Errorf("get stats: %w", err)
 	}
@@ -441,24 +447,28 @@ func (s *ChunkEmbeddingJobsService) Stats(ctx context.Context) (*ChunkEmbeddingQ
 
 // ChunkEmbeddingQueueStats contains queue statistics
 type ChunkEmbeddingQueueStats struct {
-	Pending    int64 `json:"pending"`
-	Processing int64 `json:"processing"`
-	Completed  int64 `json:"completed"`
-	Failed     int64 `json:"failed"`
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Completed   int64 `json:"completed"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
 }
 
 // StatsByProject returns queue statistics filtered to a single project.
+// failed excludes stale-sweep reaps; see Stats.
 func (s *ChunkEmbeddingJobsService) StatsByProject(ctx context.Context, projectID string) (*ChunkEmbeddingQueueStats, error) {
 	stats := &ChunkEmbeddingQueueStats{}
 	err := s.db.NewRaw(`SELECT
 		COUNT(*) FILTER (WHERE j.status = 'pending') as pending,
 		COUNT(*) FILTER (WHERE j.status = 'processing') as processing,
 		COUNT(*) FILTER (WHERE j.status = 'completed') as completed,
-		COUNT(*) FILTER (WHERE j.status = 'failed') as failed
+		COUNT(*) FILTER (WHERE j.status = 'failed' AND COALESCE(j.last_error, '') <> ?) as failed,
+		COUNT(*) FILTER (WHERE j.status = 'failed' AND j.last_error = ?) as stale_failed
 	FROM kb.chunk_embedding_jobs j
 	JOIN kb.chunks c ON c.id = j.chunk_id
 	JOIN kb.documents d ON d.id = c.document_id
-	WHERE d.project_id = ?`, projectID).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed)
+	WHERE d.project_id = ?`, jobs.StaleJobMessage, jobs.StaleJobMessage, projectID).
+		Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.StaleFailed)
 	if err != nil {
 		return nil, fmt.Errorf("get project chunk stats: %w", err)
 	}
