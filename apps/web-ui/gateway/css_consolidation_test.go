@@ -20,7 +20,7 @@ func renderPageShell(t *testing.T, content templ.Component) string {
 		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		nil, nil,
 		content,
-		"", "", 0, 0, 0,
+		"", "", 0, 0, 0, "",
 	))
 }
 

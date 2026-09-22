@@ -69,6 +69,20 @@ func TestLoadConfigAuthEnv(t *testing.T) {
 	}
 }
 
+// TestLoadConfigFeedbackOverlay asserts the overlay URL defaults to empty
+// (disabled) and is read from the environment when set.
+func TestLoadConfigFeedbackOverlay(t *testing.T) {
+	t.Setenv("FEEDBACK_OVERLAY_URL", "")
+	if got := LoadConfig().FeedbackOverlayURL; got != "" {
+		t.Errorf("FeedbackOverlayURL = %q, want empty default", got)
+	}
+
+	t.Setenv("FEEDBACK_OVERLAY_URL", "https://feedback.emergent-company.ai")
+	if got := LoadConfig().FeedbackOverlayURL; got != "https://feedback.emergent-company.ai" {
+		t.Errorf("FeedbackOverlayURL = %q, want env value", got)
+	}
+}
+
 // TestConfigValidate covers the fail-closed auth posture check: session mode
 // requires a full Zitadel + cookie config, while dev is an explicit opt-in.
 func TestConfigValidate(t *testing.T) {

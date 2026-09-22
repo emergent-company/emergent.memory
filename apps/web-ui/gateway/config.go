@@ -106,6 +106,12 @@ type Config struct {
 	SentryReplaySessionSampleRate float64
 	SentryReplayOnErrorSampleRate float64
 
+	// FeedbackOverlayURL is the base URL of the feedback-overlay service
+	// (serves the client bundle at /feedback-overlay.js and the API). Empty
+	// disables the overlay entirely. Point it at the deployed overlay only in
+	// environments where element-level feedback is wanted.
+	FeedbackOverlayURL string
+
 	// GitHub webhook ingress (see webhook_github.go). GitHubWebhookSecret is
 	// the HMAC-SHA256 key used to verify X-Hub-Signature-256; empty disables
 	// the endpoint (503). GitHubReviewAgentID is the Memory runtime agent id
@@ -178,6 +184,8 @@ func LoadConfig() Config {
 		SentryTracesSampleRate:        floatOr("SENTRY_TRACES_SAMPLE_RATE", tracesRate),
 		SentryReplaySessionSampleRate: floatOr("SENTRY_REPLAY_SESSION_SAMPLE_RATE", replayRate),
 		SentryReplayOnErrorSampleRate: floatOr("SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE", 1.0),
+
+		FeedbackOverlayURL: os.Getenv("FEEDBACK_OVERLAY_URL"),
 
 		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		GitHubReviewAgentID: os.Getenv("GITHUB_REVIEW_AGENT_ID"),
