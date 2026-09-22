@@ -465,11 +465,14 @@ type RelationshipSearchResponse struct {
 // ivfflat.probes stays low enough for the planner to keep choosing it (see
 // configuredRelationshipIVFFlatProbes).
 //
-// The project filter is applied to kb.graph_relationships.project_id (the row that
-// owns the embedding) rather than to the joined src object. Both are equivalent —
-// relationship rows always carry the same project_id as their endpoints — but the
-// r-side predicate keeps scoping attached to the table being scanned instead of
-// depending on the join, and is evaluated without touching the joined row.
+// The project filter is primarily applied to kb.graph_relationships.project_id (the
+// row that owns the embedding): the r-side predicate keeps scoping attached to the
+// table being scanned instead of depending on the join, and is evaluated without
+// touching the joined row. The src/dst predicates below are retained as
+// defense-in-depth — kb.graph_relationships does not enforce at the database that its
+// endpoints share its project_id (that invariant is application-enforced), so a
+// malformed or legacy cross-project row would otherwise surface another project's
+// object metadata through the joins.
 func (r *Repository) SearchRelationships(ctx context.Context, params RelationshipSearchParams) (*RelationshipSearchResponse, error) {
 	if len(params.Vector) == 0 {
 		return nil, apperror.ErrBadRequest.WithMessage("vector required for relationship search")
@@ -513,10 +516,12 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 		JOIN kb.graph_objects dst ON dst.id = r.dst_id
 		WHERE r.embedding IS NOT NULL
 		  AND r.deleted_at IS NULL
-		  AND r.project_id = ?`
+		  AND r.project_id = ?
+		  AND src.project_id = ?
+		  AND dst.project_id = ?`
 
 	var queryArgs []any
-	queryArgs = append(queryArgs, vectorStr, params.ProjectID)
+	queryArgs = append(queryArgs, vectorStr, params.ProjectID, params.ProjectID, params.ProjectID)
 
 	if params.Namespace != nil {
 		// NOTE: namespace lives on the joined object, not on the relationship, so
