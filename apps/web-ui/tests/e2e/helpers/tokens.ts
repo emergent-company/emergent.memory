@@ -76,6 +76,24 @@ export function liveTokenRowsNamed(page: Page, name: string): Locator {
 }
 
 /**
+ * Assert a token row carries exactly one composed AREA badge for `area` (the
+ * row shows one badge per area the token holds scopes in, not one per scope)
+ * and that its tooltip lists the exact granted scopes in that area. Anchored by
+ * `data-testid="token-scope-area"` (see gateway/api_tokens.templ).
+ */
+export async function expectScopeAreaBadge(
+  row: Locator,
+  area: string,
+  scopes: string[],
+): Promise<void> {
+  const badge = row
+    .getByTestId('token-scope-area')
+    .filter({ hasText: new RegExp(`^${area}$`) });
+  await expect(badge, `row must carry a ${area} area badge`).toHaveCount(1);
+  await expect(badge).toHaveAttribute('title', scopes.join(', '));
+}
+
+/**
  * Read the one-time plaintext from the reveal panel shown after a create or
  * regenerate POST. Asserts the panel is visible and the value has the `emt_`
  * shape, then returns it. The value is never persisted anywhere else.
