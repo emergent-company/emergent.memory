@@ -13,14 +13,23 @@ import (
 )
 
 // renderPageShell renders the full app shell (head included) with minimal
-// data so tests can assert on the <head> output.
+// data so tests can assert on the <head> output. The feedback overlay URL is
+// empty, so the optional overlay <script> is not emitted.
 func renderPageShell(t *testing.T, content templ.Component) string {
+	t.Helper()
+	return renderPageShellWithOverlay(t, "", content)
+}
+
+// renderPageShellWithOverlay renders the full app shell (head included) with
+// the feedback overlay URL set to overlayURL so tests can assert on both the
+// disabled (empty URL) and enabled (non-empty URL) overlay branches.
+func renderPageShellWithOverlay(t *testing.T, overlayURL string, content templ.Component) string {
 	t.Helper()
 	return renderHTML(t, appShell(
 		"Agents", nil, false, nil, "", nil, "", nil, nil, nil, nil, false,
 		nil, nil,
 		content,
-		"", "", 0, 0, 0, "",
+		"", "", 0, 0, 0, overlayURL,
 	))
 }
 
@@ -38,6 +47,38 @@ func TestPageHeadOmitsMonolithicGoDaisyCSS(t *testing.T) {
 	}
 	if !strings.Contains(html, "/assets/css/app.css") {
 		t.Error("page head missing the gateway's own /assets/css/app.css stylesheet")
+	}
+}
+
+// TestPageHeadFeedbackOverlayScript guards the optional element-level feedback
+// overlay: the shell emits its <script> only when a feedback overlay URL is
+// configured, and wires the script's data attributes to that URL.
+func TestPageHeadFeedbackOverlayScript(t *testing.T) {
+	body := templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+		_, err := w.Write([]byte("<p>hi</p>"))
+		return err
+	})
+
+	disabled := renderPageShellWithOverlay(t, "", body)
+	if strings.Contains(disabled, "feedback-overlay.js") {
+		t.Error("page head emits feedback-overlay.js when no overlay URL is configured")
+	}
+	if strings.Contains(disabled, `data-label="feedback"`) {
+		t.Error(`page head emits data-label="feedback" when no overlay URL is configured`)
+	}
+
+	const overlayURL = "https://feedback.emergent-company.ai"
+	enabled := renderPageShellWithOverlay(t, overlayURL, body)
+	for _, want := range []string{
+		`src="https://feedback.emergent-company.ai/feedback-overlay.js"`,
+		`data-api="https://feedback.emergent-company.ai"`,
+		`data-repo="emergent-company/emergent.memory"`,
+		`data-label="feedback"`,
+		"async",
+	} {
+		if !strings.Contains(enabled, want) {
+			t.Errorf("page head missing expected feedback overlay attribute %q", want)
+		}
 	}
 }
 
