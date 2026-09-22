@@ -36,3 +36,15 @@
 - [x] 6.1 Document idempotent reclaim SQL with before/after `pg_total_relation_size`
 - [x] 6.2 Document VACUUM/REINDEX trade-off and lock/impact expectations
 - [x] 6.3 Present for approval; do not run against dev and do not ship as a migration
+
+## 7. Remaining consumer consistency (follow-up to #763)
+
+- [x] 7.1 `email.JobsService.Stats`: `failed` excludes stale-sweep rows; add `StaleFailed`
+- [x] 7.2 `DocumentParsingJobsService.Stats`: same split; add `StaleFailed`
+- [x] 7.3 `ObjectExtractionJobsService.Stats` (+ `GetStatistics` `JobsByStatus`): same split; add `StaleFailed`
+- [x] 7.4 `superadmin` embedding/extraction/document-parsing stats: narrow `failed`, add stale fields; `withErrors` intentionally unchanged and commented
+- [x] 7.5 `pkg/sdk/health.JobQueueMetrics` and `pkg/sdk/superadmin` stats: add the additive stale field
+- [x] 7.6 CLI `memory embeddings progress`: show stale-failed and include it in the total
+- [x] 7.7 CLI `memory auth status` (`jobQueueMetrics`): surface stale-failed
+- [x] 7.8 Regenerate `apps/server/docs/swagger`
+- [x] 7.9 Spec wording no longer claims the web-ui gateway is the only consumer

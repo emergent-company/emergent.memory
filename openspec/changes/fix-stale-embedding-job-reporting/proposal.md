@@ -60,6 +60,19 @@ tables (issue #705). The sweep itself was fixed, but two problems remain:
   `graph_relationship_embedding_jobs.go`, `chunk_embedding_jobs.go`,
   `embedding_control_handler.go`: stale/genuine failure split.
 - `apps/server/domain/health/metrics_handler.go`: `stale_failed` counter across all five tables.
+- `apps/server/domain/email/jobs.go`,
+  `apps/server/domain/extraction/document_parsing_jobs.go`,
+  `apps/server/domain/extraction/object_extraction_jobs.go`,
+  `apps/server/domain/superadmin/{repository,dto}.go`: apply the same
+  failed/stale split to the remaining server aggregates. `withErrors`-style
+  ledger counts are intentionally left counting rows that carry error text
+  (including stale rows) and are documented in code.
+- `apps/cli/internal/cmd/embeddings.go`, `apps/cli/internal/cmd/auth.go`: surface
+  stale-failed in `memory embeddings progress` (counted in the total so the
+  percentage reconciles) and in `memory auth status`.
+- `apps/server/pkg/sdk/health/client.go`, `apps/server/pkg/sdk/superadmin/client.go`:
+  add the additive stale-failure field to the SDK response types.
+- `apps/server/docs/swagger/{docs.go,swagger.json,swagger.yaml}`: regenerated.
 - `apps/web-ui/gateway/embeddings.go`, `embeddings.templ`, `embeddings_test.go`: consume and render `staleFailed`.
 
 ### API Changes

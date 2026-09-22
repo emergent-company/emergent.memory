@@ -20,9 +20,13 @@ Rationale:
   Rows reaped by a sweep bug never needed attention; counting them is what makes
   a fully-embedded project (107,233/107,233 objects) look broken.
 - **Least surprising / backwards compatible.** Existing field names are
-  preserved; the new field is additive. The only known consumer, the web-ui
-  gateway, is updated in the same PR. Endpoint versioning (`/api/v2/...`) was
-  rejected as disproportionate for an additive field.
+  preserved; the new field is additive. Every consumer that renders or aggregates
+  per-queue job status is updated to honour the split — the web-ui gateway, the
+  `/api/metrics/jobs` CLI display (`memory auth status`), `memory embeddings
+  progress`, the `pkg/sdk/health` and `pkg/sdk/superadmin` clients, and the server
+  aggregates (`email`, `document_parsing_jobs`, `object_extraction_jobs`,
+  `superadmin`). Endpoint versioning (`/api/v2/...`) was rejected as
+  disproportionate for an additive field.
 - **Single definition.** A row is a stale-sweep failure iff
   `status = 'failed' AND <errorColumn> = jobs.StaleJobMessage`. Genuine failure is
   the complement (`COALESCE(<errorColumn>, '') <> marker`), so a failed row with a
