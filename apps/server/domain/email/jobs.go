@@ -118,7 +118,8 @@ func (s *JobsService) Dequeue(ctx context.Context, batchSize int) ([]*EmailJob, 
 	)
 	UPDATE kb.email_jobs j 
 	SET status='processing', 
-		attempts=attempts+1
+		attempts=attempts+1,
+		started_at=now()
 	FROM cte WHERE j.id = cte.id
 	RETURNING j.*`, batchSize).Scan(ctx, &jobs)
 	if err != nil {

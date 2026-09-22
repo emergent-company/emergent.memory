@@ -246,7 +246,7 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 		{table: "kb.chunk_embedding_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "last_error"},
 		{table: "kb.graph_embedding_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "last_error"},
 		{table: "kb.object_extraction_jobs", hasStartedAt: true, hasCompletedAt: true, errorColumn: "error_message"},
-		{table: "kb.email_jobs", hasStartedAt: false, hasCompletedAt: false, errorColumn: "last_error"},
+		{table: "kb.email_jobs", hasStartedAt: true, hasCompletedAt: false, errorColumn: "last_error"},
 	}
 
 	for _, cfg := range tables {
@@ -298,37 +298,32 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 // jobs in cfg.table, plus its bind args. It is pure so the predicate selection
 // can be unit-tested without a live database.
 //
-// Only jobs that actually started are reaped:
-//   - tables with started_at: rows in processing/running whose started_at is
-//     older than the cutoff;
-//   - tables without started_at (email_jobs): rows in processing/running whose
-//     created_at is older than the cutoff.
-//
-// 'pending' rows are deliberately never terminal-failed: a never-started job is
-// queued behind a backlog, not stale, and failing it drops work. This applies to
-// every swept table, including kb.email_jobs.
+// Only jobs that actually started are reaped: rows in processing/running whose
+// in-flight timestamp (started_at when the table has one, else created_at) is
+// older than the cutoff. 'pending' rows are deliberately never terminal-failed:
+// a never-started job is queued behind a backlog, not stale, and failing it
+// drops work. This applies to every swept table.
 func cleanupStaleJobsQuery(cfg jobTableConfig, cutoff time.Time) (string, []any) {
-	if cfg.hasStartedAt && cfg.hasCompletedAt {
-		query := `
-			UPDATE ` + cfg.table + `
-			SET status = 'failed',
-				` + cfg.errorColumn + ` = '` + staleJobMessage + `',
-				completed_at = NOW(),
-				updated_at = NOW()
-		WHERE status IN ('processing', 'running')
-		AND started_at IS NOT NULL
-		AND started_at < ?
-		`
-		return query, []any{cutoff}
+	startedAt := "created_at"
+	notNull := ""
+	if cfg.hasStartedAt {
+		startedAt = "started_at"
+		notNull = "\n\t\t\tAND started_at IS NOT NULL"
+	}
+
+	bookkeeping := ""
+	if cfg.hasCompletedAt {
+		bookkeeping = `
+			completed_at = NOW(),
+			updated_at = NOW()`
 	}
 
 	query := `
 		UPDATE ` + cfg.table + `
 		SET status = 'failed',
-			` + cfg.errorColumn + ` = '` + staleJobMessage + `'
-		WHERE status IN ('processing', 'running')
-		AND created_at < ?
-	`
+			` + cfg.errorColumn + ` = '` + staleJobMessage + `'` + bookkeeping + `
+		WHERE status IN ('processing', 'running')` + notNull + `
+		AND ` + startedAt + ` < ?`
 	return query, []any{cutoff}
 }
 

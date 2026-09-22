@@ -2,8 +2,9 @@
 
 - [x] 1.1 Extract `cleanupStaleJobsQuery(cfg, cutoff)` returning the UPDATE statement + bind args, with no database dependency
 - [x] 1.2 Reap only `processing`/`running` rows for tables with `started_at` (`started_at IS NOT NULL AND started_at < ?`)
-- [x] 1.3 Reap only `processing`/`running` rows for tables without `started_at` (`created_at < ?`) — `kb.email_jobs` no longer sweeps `pending`
+- [x] 1.3 Retain a defensive `created_at < ?` branch for a swept table with no `started_at` column (none currently); `pending` is excluded in that branch too
 - [x] 1.4 Confirm `pending` never appears in any generated statement
+- [x] 1.5 Add `started_at` to `kb.email_jobs` (migration 00165) and stamp it at dequeue in `email/jobs.go`, so `kb.email_jobs` uses the same stale-start rule as the other four tables
 
 ## 2. Mass-reap visibility
 
@@ -20,6 +21,7 @@
 - [x] 3.3 Unit test `cleanupTable` generated SQL via a DB-free fake driver
 - [x] 3.4 Unit test mass-reap alert fires above the threshold and not below it
 - [x] 3.5 Unit test `SetMassReapThreshold` clamping and per-table stale-minute override
+- [x] 3.6 Unit test that the in-process `scheduler_stale_jobs_reaped_total` counter records reaped tables after a mass-reap run
 
 ## 4. Docs & spec
 
@@ -30,4 +32,4 @@
 
 - [x] 5.1 `go build ./...` in `apps/server`
 - [x] 5.2 `go test ./domain/scheduler/...`
-- [x] 5.3 `golangci-lint run ./...` in `apps/server`
+- [x] 5.3 `golangci-lint run ./domain/scheduler/...` (scoped). Note: full-repo `golangci-lint run ./...` reports pre-existing issues unrelated to this change.

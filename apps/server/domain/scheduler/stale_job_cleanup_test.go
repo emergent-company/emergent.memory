@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
@@ -145,9 +146,32 @@ func TestCleanupStaleJobsQuery_StartedAtTables(t *testing.T) {
 	}
 }
 
-func TestCleanupStaleJobsQuery_EmailJobsExcludesPending(t *testing.T) {
+func TestCleanupStaleJobsQuery_EmailJobsUsesStartedAt(t *testing.T) {
 	cfg := jobTableConfig{
 		table:          "kb.email_jobs",
+		hasStartedAt:   true,
+		hasCompletedAt: false,
+		errorColumn:    "last_error",
+	}
+	cutoff := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	query, args := cleanupStaleJobsQuery(cfg, cutoff)
+
+	assert.Contains(t, query, "status IN ('processing', 'running')")
+	assert.Contains(t, query, "started_at IS NOT NULL")
+	assert.Contains(t, query, "started_at < ?")
+	assert.NotContains(t, query, "created_at <")
+	assert.NotContains(t, query, "'pending'", "email_jobs pending rows must not be terminal-failed")
+	// email_jobs has no completed_at/updated_at columns.
+	assert.NotContains(t, query, "completed_at")
+	assert.Contains(t, query, "last_error = '"+staleJobMessage+"'")
+
+	require.Len(t, args, 1)
+	assert.Equal(t, cutoff, args[0])
+}
+
+func TestCleanupStaleJobsQuery_NoStartedAtFallback(t *testing.T) {
+	cfg := jobTableConfig{
+		table:          "kb.hypothetical_jobs",
 		hasStartedAt:   false,
 		hasCompletedAt: false,
 		errorColumn:    "last_error",
@@ -155,17 +179,11 @@ func TestCleanupStaleJobsQuery_EmailJobsExcludesPending(t *testing.T) {
 	cutoff := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	query, args := cleanupStaleJobsQuery(cfg, cutoff)
 
-	// email_jobs has no started_at, so it falls back to created_at — but pending
-	// rows (never attempted) must still be excluded, exactly like the started_at
-	// tables. This is the table the original sweep still mass-failed.
 	assert.Contains(t, query, "status IN ('processing', 'running')")
 	assert.Contains(t, query, "created_at < ?")
-	assert.NotContains(t, query, "'pending'", "email_jobs pending rows must not be terminal-failed")
-	assert.NotContains(t, query, "started_at")
+	assert.NotContains(t, query, "'pending'")
 	assert.NotContains(t, query, "completed_at")
-
 	require.Len(t, args, 1)
-	assert.Equal(t, cutoff, args[0])
 }
 
 func TestJobTableConfig_EffectiveStaleMinutes(t *testing.T) {
@@ -204,13 +222,13 @@ func TestStaleJobCleanupTable_SkipsPendingJobs(t *testing.T) {
 	assert.Len(t, state.argCnts, 1)
 }
 
-func TestStaleJobCleanupTable_EmailJobsExcludesPending(t *testing.T) {
+func TestStaleJobCleanupTable_EmailJobsUsesStartedAt(t *testing.T) {
 	state := &staleCleanupFakeDB{}
 	task := newStaleJobCleanupTask(t, state)
 
 	cfg := jobTableConfig{
 		table:          "kb.email_jobs",
-		hasStartedAt:   false,
+		hasStartedAt:   true,
 		hasCompletedAt: false,
 		errorColumn:    "last_error",
 	}
@@ -221,7 +239,8 @@ func TestStaleJobCleanupTable_EmailJobsExcludesPending(t *testing.T) {
 	q := state.queries[0]
 
 	assert.Contains(t, q, "status IN ('processing', 'running')")
-	assert.Contains(t, q, "created_at <")
+	assert.Contains(t, q, "started_at <")
+	assert.NotContains(t, q, "created_at <")
 	assert.NotContains(t, q, "'pending'")
 	assert.Len(t, state.argCnts, 1)
 }
@@ -262,6 +281,25 @@ func TestStaleJobCleanupTask_MassReapAlert(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, `"alert":"`+staleJobMassReapAlert+`"`, "a sweep reaping > threshold must emit the mass-reap alert")
 	assert.Contains(t, out, `"level":"ERROR"`)
+
+	// The in-process counter records reaped tables: the fake driver returns
+	// `rows` for every table, so each of the 5 swept tables increments by 2000.
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	found := false
+	for _, mf := range mfs {
+		if mf.GetName() != "scheduler_stale_jobs_reaped_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == "table" && lp.GetValue() != "" && m.GetCounter().GetValue() >= 2000 {
+					found = true
+				}
+			}
+		}
+	}
+	assert.True(t, found, "counter scheduler_stale_jobs_reaped_total must record reaped tables")
 }
 
 func TestStaleJobCleanupTask_NoMassReapAlertBelowThreshold(t *testing.T) {
