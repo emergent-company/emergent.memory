@@ -11,21 +11,24 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/emergent-company/emergent.memory/internal/migrate"
 	"github.com/emergent-company/emergent.memory/migrations"
 )
 
 func main() {
 	var (
-		command     string
-		version     int64
-		showHelp    bool
-		showVersion bool
+		command      string
+		version      int64
+		showHelp     bool
+		showVersion  bool
+		allowMissing bool
 	)
 
-	flag.StringVar(&command, "c", "status", "Command: up, up-to, down, status, version, create")
+	flag.StringVar(&command, "c", "status", "Command: up, up-to, down, status, version, create, verify")
 	flag.Int64Var(&version, "v", 0, "Target version for up-to command")
 	flag.BoolVar(&showHelp, "h", false, "Show help")
 	flag.BoolVar(&showVersion, "version", false, "Show goose version")
+	flag.BoolVar(&allowMissing, "allow-missing", false, "Allow out-of-order (missing) migrations during up/up-to")
 	flag.Parse()
 
 	if showHelp {
@@ -87,8 +90,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error ensuring version table: %v\n", err)
 			os.Exit(1)
 		}
-		if err := goose.UpContext(ctx, db, "."); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running migrations: %v\n", err)
+		var opts []goose.OptionsFunc
+		if allowMissing {
+			opts = append(opts, goose.WithAllowMissing())
+		}
+		if err := goose.UpContext(ctx, db, ".", opts...); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running migrations: %v\n", migrate.DiagnoseError(err))
 			os.Exit(1)
 		}
 		fmt.Println("Migrations completed successfully")
@@ -98,8 +105,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error: -v flag required for up-to command")
 			os.Exit(1)
 		}
-		if err := goose.UpToContext(ctx, db, ".", version); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running migrations: %v\n", err)
+		var opts []goose.OptionsFunc
+		if allowMissing {
+			opts = append(opts, goose.WithAllowMissing())
+		}
+		if err := goose.UpToContext(ctx, db, ".", version, opts...); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running migrations: %v\n", migrate.DiagnoseError(err))
 			os.Exit(1)
 		}
 		fmt.Printf("Migrated to version %d\n", version)
@@ -170,6 +181,23 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Marked migration %d as applied\n", version)
+		fmt.Fprintln(os.Stderr, migrate.MarkAppliedBypassNotice(version))
+
+	case "verify":
+		invalid, err := migrate.FindInvalidIndexes(ctx, db)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error verifying post-conditions: %v\n", err)
+			os.Exit(1)
+		}
+		if len(invalid) == 0 {
+			fmt.Println("OK: no invalid indexes")
+			os.Exit(0)
+		}
+		for _, ii := range invalid {
+			fmt.Fprintf(os.Stderr, "INVALID INDEX: %s.%s -> %s\n", ii.Schema, ii.Table, ii.Index)
+		}
+		fmt.Fprintln(os.Stderr, "Remediation: REINDEX INDEX CONCURRENTLY <index>, or re-run the owning forward migration.")
+		os.Exit(1)
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
@@ -189,6 +217,10 @@ Commands:
   -c version      Show current database version
   -c create NAME  Create a new migration file
   -c mark-applied -v N  Mark migration N as applied without running it
+  -c verify       Verify post-conditions (detect invalid indexes left by killed concurrent DDL)
+
+Flags:
+  -allow-missing   Allow out-of-order (missing) migrations during up/up-to
 
 Environment Variables:
   DATABASE_URL         Full PostgreSQL connection string
