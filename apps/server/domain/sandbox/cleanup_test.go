@@ -345,6 +345,27 @@ func TestRunIdleReclamation_InFlightLifecycleStateNeverReclaimed(t *testing.T) {
 	assert.Empty(t, rt.destroyed)
 }
 
+// Terminal-but-present rows (stopped/error) are deliberately reclaimable once
+// idle: StartAll auto-starts every persistent row regardless of status, so a
+// stopped row is not a durable "keep but do not run" state (issue #699 item 6).
+// Cover the full reclaim path — runtime stop, destroy and row deletion.
+func TestRunIdleReclamation_TerminalStatesReclaimed(t *testing.T) {
+	lister := &fakeIdleLister{servers: []*AgentSandbox{
+		idleMCPServer("ws-stopped", 10, StatusStopped),
+		idleMCPServer("ws-error", 10, StatusError),
+	}}
+	rt := &fakeIdleReclaimer{}
+
+	res := runIdleReclamation(context.Background(), lister, rt, 7, testLogger())
+
+	assert.Equal(t, 2, res.Reclaimed)
+	assert.Equal(t, 0, res.Skipped)
+	assert.Equal(t, []string{"ws-stopped", "ws-error"}, rt.stopped,
+		"runtime monitoring must be stopped before destroy")
+	assert.Equal(t, []string{"ws-stopped", "ws-error"}, rt.destroyed)
+	assert.Equal(t, []string{"ws-stopped", "ws-error"}, lister.deleted)
+}
+
 // A never-used server has last_used_at equal to its creation time, so a server
 // created beyond the window is eligible.
 func TestRunIdleReclamation_NeverUsedJudgedByCreationTime(t *testing.T) {
@@ -502,6 +523,8 @@ func TestIdleEligible(t *testing.T) {
 		{"recent", idleMCPServer("b", 1, StatusReady), false},
 		{"creating", idleMCPServer("c", 10, StatusCreating), false},
 		{"stopping", idleMCPServer("d", 10, StatusStopping), false},
+		{"stopped", idleMCPServer("e", 10, StatusStopped), true},
+		{"error", idleMCPServer("f", 10, StatusError), true},
 		{"not mcp", &AgentSandbox{ContainerType: ContainerTypeAgentSandbox, Lifecycle: LifecyclePersistent, LastUsedAt: cutoff.AddDate(0, 0, -1)}, false},
 		{"not persistent", &AgentSandbox{ContainerType: ContainerTypeMCPServer, Lifecycle: LifecycleEphemeral, LastUsedAt: cutoff.AddDate(0, 0, -1)}, false},
 	}

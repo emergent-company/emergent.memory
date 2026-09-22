@@ -96,9 +96,17 @@ type InitializeResponse struct {
 // explicitly (no omitempty) so the client sees an honest false rather than an
 // absent (and therefore ambiguous) value.
 type AgentCapabilities struct {
-	LoadSession        bool               `json:"loadSession"`
-	PromptCapabilities PromptCapabilities `json:"promptCapabilities"`
-	MCPCapabilities    MCPCapabilities    `json:"mcpCapabilities"`
+	LoadSession         bool                `json:"loadSession"`
+	PromptCapabilities  PromptCapabilities  `json:"promptCapabilities"`
+	MCPCapabilities     MCPCapabilities     `json:"mcpCapabilities"`
+	SessionCapabilities SessionCapabilities `json:"sessionCapabilities"`
+}
+
+// SessionCapabilities advertises optional session lifecycle methods. ACP uses an
+// empty object to mean "supported"; a nil field omits the method and signals it
+// is unsupported.
+type SessionCapabilities struct {
+	Delete *struct{} `json:"delete,omitempty"`
 }
 
 // PromptCapabilities advertises prompt input modalities.
@@ -148,6 +156,11 @@ type PromptResponse struct {
 
 // CancelParams is the params of the session/cancel notification.
 type CancelParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// DeleteSessionParams is the params of the session/delete method.
+type DeleteSessionParams struct {
 	SessionID string `json:"sessionId"`
 }
 
