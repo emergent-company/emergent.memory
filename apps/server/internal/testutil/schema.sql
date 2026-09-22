@@ -1743,7 +1743,8 @@ CREATE TABLE kb.graph_relationships (
     embedding public.vector(768),
     embedding_updated_at timestamp with time zone,
     label text,
-    delete_reason text
+    delete_reason text,
+    namespace text
 );
 
 ALTER TABLE ONLY kb.graph_relationships FORCE ROW LEVEL SECURITY;
@@ -4090,6 +4091,13 @@ CREATE INDEX "IDX_9a8a82462cab47c73d25f49261" ON kb.notifications USING btree (u
 --
 
 CREATE INDEX "IDX_a0dadc1ffc4ee153226f786e99" ON kb.graph_relationships USING btree (project_id);
+
+
+--
+-- Name: idx_graph_relationships_namespace; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_graph_relationships_namespace ON kb.graph_relationships USING btree (project_id, namespace) WHERE (namespace IS NOT NULL);
 
 
 --
