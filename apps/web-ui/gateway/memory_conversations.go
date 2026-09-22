@@ -134,7 +134,7 @@ func (m *MemoryClient) ListMemories(ctx context.Context) ([]Memory, error) {
 	var out struct {
 		Items []GraphObject `json:"items"`
 	}
-	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/search?limit=100", nil, m.documentHeaders(ctx), &out); err != nil {
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/search?limit=100&include_total=false", nil, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
 	mems := make([]Memory, 0, len(out.Items))

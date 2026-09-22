@@ -3382,6 +3382,8 @@ definitions:
         type: string
       label:
         type: string
+      namespace:
+        type: string
       project_id:
         type: string
       properties:
@@ -5432,6 +5434,13 @@ definitions:
         type: integer
       totalVideo:
         type: integer
+    type: object
+  domain_provider.testProjectProviderRequest:
+    properties:
+      model:
+        type: string
+      modelType:
+        type: string
     type: object
   domain_sandbox.AttachSessionRequest:
     properties:
@@ -12157,6 +12166,12 @@ paths:
         in: query
         name: fields
         type: string
+      - description: 'Set to false to skip the exact total count and omit the ''total''
+          field (default: true). The count is the latency floor for very large projects;
+          cursor-only callers should opt out.'
+        in: query
+        name: include_total
+        type: boolean
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -21390,6 +21405,11 @@ paths:
         name: provider
         required: true
         type: string
+      - description: Optional model override
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/domain_provider.testProjectProviderRequest'
       responses:
         "200":
           description: OK

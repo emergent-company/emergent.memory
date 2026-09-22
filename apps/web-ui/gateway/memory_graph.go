@@ -100,6 +100,9 @@ func (m *MemoryClient) GetGraphObject(ctx context.Context, objectID string) (*Gr
 func (m *MemoryClient) ListGraphObjects(ctx context.Context, branchID, typeFilter string, ids []string) ([]GraphObject, error) {
 	q := url.Values{}
 	q.Set("limit", "100")
+	// The total is never read here (only Items is), and the exact COUNT(*) is
+	// the endpoint's latency floor on large projects — skip it (#733).
+	q.Set("include_total", "false")
 	if typeFilter != "" {
 		q.Set("type", typeFilter)
 	}

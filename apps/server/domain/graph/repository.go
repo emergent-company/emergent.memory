@@ -163,6 +163,14 @@ type ListParams struct {
 	Namespace       *string            // Filter by namespace
 	PropertyOrder   *PropertyOrderSpec // optional property-based ordering
 
+	// SkipTotal tells the list service not to run the exact COUNT(*) that
+	// populates SearchGraphObjectsResponse.Total. The zero value (false) keeps
+	// the default behaviour: an exact total is always computed. Callers that
+	// only need a page (keyset/cursor pagination, list views that ignore the
+	// total) can set it to avoid the count, which is the latency floor for a
+	// project that dominates a large kb.graph_objects table (issue #733).
+	SkipTotal bool
+
 	// IncludeMigrationArchive selects the migration_archive column in List
 	// results. It is opt-in because List also backs the public graph list/search
 	// API, and the archive JSON must not leak into those responses. Only callers

@@ -224,6 +224,11 @@ type ListObjectsOptions struct {
 	IDs             []string
 	ExtractionJobID string
 	PropertyFilters []PropertyFilter // JSONB property filters (JSON-encoded in query param)
+	// SkipTotal sends include_total=false: the server then skips the exact
+	// COUNT(*) and omits the response's `total` field (SearchObjectsResponse.Total
+	// stays 0). Use it for cursor-only iteration or list views that ignore the
+	// total — the count is the endpoint's latency floor on very large projects.
+	SkipTotal bool
 }
 
 // CountObjectsOptions holds query parameters for counting objects.
@@ -466,7 +471,9 @@ type ListRelationshipsOptions struct {
 type SearchObjectsResponse struct {
 	Items      []*GraphObject `json:"items"`
 	NextCursor *string        `json:"next_cursor,omitempty"`
-	Total      int            `json:"total"`
+	// Total is the exact number of matching objects. It is 0 when the request
+	// set ListObjectsOptions.SkipTotal (the field is omitted by the server).
+	Total int `json:"total"`
 }
 
 // CountResponse is the response for count endpoints.
@@ -1206,6 +1213,9 @@ func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*Se
 				return nil, fmt.Errorf("marshaling property filters: %w", err)
 			}
 			q.Set("property_filters", string(pfJSON))
+		}
+		if opts.SkipTotal {
+			q.Set("include_total", "false")
 		}
 	}
 	u.RawQuery = q.Encode()
