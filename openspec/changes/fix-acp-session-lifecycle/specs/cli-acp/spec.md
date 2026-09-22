@@ -43,4 +43,4 @@ The CLI SHALL clear a session's cancel function once its prompt turn completes, 
 #### Scenario: A dropped session does not admit a late turn
 
 - **WHEN** a prompt has looked up a session but has not yet registered its cancel function, and the session is concurrently evicted or deleted
-- **THEN** the session is marked cancelled before removal and the prompt aborts without making a backend call
+- **THEN** the session is marked as dropped before removal and every prompt that has already looked it up aborts without making a backend call

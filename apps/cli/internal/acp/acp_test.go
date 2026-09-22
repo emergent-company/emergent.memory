@@ -755,11 +755,11 @@ func TestSessionDeleteNotificationViaRun(t *testing.T) {
 	}
 }
 
-// TestDeleteSessionMarksSessionCancelled verifies deleteSession marks the removed
-// session cancelled (not just cancels a registered turn) so a prompt that looked
+// TestDeleteSessionMarksSessionDropped verifies deleteSession marks the removed
+// session dropped (not just cancels a registered turn) so a prompt that looked
 // the session up before deletion but registers its cancel function afterwards
 // aborts instead of starting a backend turn on a detached session.
-func TestDeleteSessionMarksSessionCancelled(t *testing.T) {
+func TestDeleteSessionMarksSessionDropped(t *testing.T) {
 	agent := noopAgent(t)
 	id := agent.newSession().(SessionNewResponse).SessionID
 
@@ -770,17 +770,17 @@ func TestDeleteSessionMarksSessionCancelled(t *testing.T) {
 	agent.deleteSession(id)
 
 	agent.mu.Lock()
-	cancelled := sess.cancelled
+	dropped := sess.dropped
 	agent.mu.Unlock()
-	if !cancelled {
-		t.Fatal("deleteSession must mark the removed session cancelled")
+	if !dropped {
+		t.Fatal("deleteSession must mark the removed session dropped")
 	}
 }
 
-// TestEvictionMarksSessionCancelled verifies LRU eviction marks the victim
-// cancelled, closing the window where a prompt that looked the session up before
+// TestEvictionMarksSessionDropped verifies LRU eviction marks the victim
+// dropped, closing the window where a prompt that looked the session up before
 // eviction registers its cancel function afterwards.
-func TestEvictionMarksSessionCancelled(t *testing.T) {
+func TestEvictionMarksSessionDropped(t *testing.T) {
 	agent := noopAgent(t)
 	agent.maxSessions = 1
 
@@ -795,37 +795,109 @@ func TestEvictionMarksSessionCancelled(t *testing.T) {
 		t.Fatal("stale session should have been evicted")
 	}
 	agent.mu.Lock()
-	cancelled := victim.cancelled
+	dropped := victim.dropped
 	agent.mu.Unlock()
-	if !cancelled {
-		t.Fatal("evictLocked must mark the evicted session cancelled")
+	if !dropped {
+		t.Fatal("evictLocked must mark the evicted session dropped")
 	}
 }
 
-// TestDeleteConcurrentWithPrompt races session/delete against prompts on the same
-// session to exercise the lookup/registration window under the race detector.
-func TestDeleteConcurrentWithPrompt(t *testing.T) {
-	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
-		writeSSEEvents(w, []a2a.StreamResponse{
-			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
-		})
-	})
+// TestDroppedSessionLateTurnAborts deterministically exercises the window
+// between a prompt's session lookup and its turn registration: two prompts look
+// the session up, it is then deleted, and both must abort (cancelled) without
+// ever touching the backend.
+func TestDroppedSessionLateTurnAborts(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	released := make(chan struct{})
+	lookedUp := make(chan struct{}, 2)
+	agent.mu.Lock()
+	agent.testHookAfterLookup = func() {
+		lookedUp <- struct{}{}
+		<-released
+	}
+	agent.mu.Unlock()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		id := agent.newSession().(SessionNewResponse).SessionID
-		wg.Add(2)
-		go func() {
+	reasons := make([]string, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
 			defer wg.Done()
-			_, _ = agent.prompt(context.Background(), PromptParams{
+			res, err := agent.prompt(context.Background(), PromptParams{
 				SessionID: id,
 				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
 			}, func(any) error { return nil })
-		}()
-		go func() {
-			defer wg.Done()
-			agent.deleteSession(id)
-		}()
+			if err != nil {
+				t.Errorf("prompt %d returned error: %v", i, err)
+				return
+			}
+			reasons[i] = res.(PromptResponse).StopReason
+		}(i)
 	}
+
+	for i := 0; i < 2; i++ {
+		<-lookedUp
+	}
+	agent.deleteSession(id)
+	close(released)
 	wg.Wait()
+
+	for i, got := range reasons {
+		if got != StopReasonCancelled {
+			t.Errorf("prompt %d stopReason = %q, want cancelled", i, got)
+		}
+	}
+}
+
+// TestEvictedSessionLateTurnAborts mirrors the delete case for LRU eviction: a
+// prompt that looked the session up before eviction must abort, not run.
+func TestEvictedSessionLateTurnAborts(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	released := make(chan struct{})
+	lookedUp := make(chan struct{}, 2)
+	agent.mu.Lock()
+	agent.testHookAfterLookup = func() {
+		lookedUp <- struct{}{}
+		<-released
+	}
+	agent.mu.Unlock()
+
+	var wg sync.WaitGroup
+	reasons := make([]string, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, err := agent.prompt(context.Background(), PromptParams{
+				SessionID: id,
+				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+			}, func(any) error { return nil })
+			if err != nil {
+				t.Errorf("prompt %d returned error: %v", i, err)
+				return
+			}
+			reasons[i] = res.(PromptResponse).StopReason
+		}(i)
+	}
+
+	for i := 0; i < 2; i++ {
+		<-lookedUp
+	}
+	// Force eviction of the idle session both prompts looked up.
+	agent.mu.Lock()
+	agent.maxSessions = 1
+	agent.mu.Unlock()
+	_ = agent.newSession()
+	close(released)
+	wg.Wait()
+
+	for i, got := range reasons {
+		if got != StopReasonCancelled {
+			t.Errorf("prompt %d stopReason = %q, want cancelled", i, got)
+		}
+	}
 }

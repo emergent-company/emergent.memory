@@ -31,6 +31,11 @@ type Agent struct {
 	sessions    map[string]*session
 	seq         uint64 // monotonic tick updated on each session use, for LRU
 	maxSessions int    // bounded session map size; <= 0 disables eviction
+
+	// testHookAfterLookup, when non-nil, runs after the session lookup and
+	// before the turn registration critical section. Test-only seam for
+	// deterministically exercising the lookup/registration race.
+	testHookAfterLookup func()
 }
 
 // session is the per-session state tracked by the agent.
@@ -42,6 +47,7 @@ type session struct {
 	turn          uint64 // generation of the turn that owns cancel
 	inFlight      int    // number of prompt turns currently running
 	lastUsed      uint64 // agent.seq value at the last use, for LRU eviction
+	dropped       bool   // set once the session is deleted/evicted; never cleared
 }
 
 // NewAgent creates an ACP agent that fronts the given A2A client and targets
@@ -93,12 +99,12 @@ func (a *Agent) newSession() any {
 
 // evictLocked drops least-recently-used idle sessions until the map has room for
 // one more entry. Sessions with an in-flight turn are never evicted, so the map
-// may briefly exceed maxSessions when that many turns run concurrently. Any
-// cancel function on an evicted session is invoked (context cancel funcs are
-// non-blocking and never re-enter the agent, so calling them under the lock is
-// safe) so a dropped turn cannot leak its goroutine. A victim is marked
-// cancelled before removal so a prompt that has already looked it up but not
-// yet registered its cancel function aborts instead of running a turn on a
+// may exceed maxSessions by up to the number of concurrently in-flight turns.
+// Any cancel function on an evicted session is invoked (context cancel funcs
+// are non-blocking and never re-enter the agent, so calling them under the lock
+// is safe) so a dropped turn cannot leak its goroutine. A victim is marked
+// dropped before removal so a prompt that has already looked it up but not yet
+// registered its cancel function aborts instead of running a turn on a
 // detached session.
 //
 // The caller must hold a.mu.
@@ -122,10 +128,9 @@ func (a *Agent) evictLocked() {
 			return
 		}
 		delete(a.sessions, victimID)
-		// Barrier against the prompt lookup/registration window: a prompt that
-		// already holds this session pointer must not admit a turn on a session
-		// that has been dropped.
-		victim.cancelled = true
+		// Sticky barrier against the prompt lookup/registration window: a
+		// prompt that already holds this pointer must never admit a turn.
+		victim.dropped = true
 		if victim.cancel != nil {
 			victim.cancel()
 		}
@@ -143,10 +148,9 @@ func (a *Agent) deleteSession(sessionID string) {
 		return
 	}
 	delete(a.sessions, sessionID)
-	// Barrier against the prompt lookup/registration window: a prompt that has
-	// already looked this session up but not yet registered its cancel function
-	// must abort rather than run a turn for a deleted session.
-	sess.cancelled = true
+	// Sticky barrier against the prompt lookup/registration window: a prompt
+	// that has already looked this session up must not run a turn for it.
+	sess.dropped = true
 	fn := sess.cancel
 	a.mu.Unlock()
 	// Invoke the cancel function outside the lock, as cancel does.
@@ -173,7 +177,12 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	sess.lastUsed = a.seq
 	resumeTaskID := sess.pendingTaskID
 	contextID := sess.contextID
+	hook := a.testHookAfterLookup
 	a.mu.Unlock()
+
+	if hook != nil {
+		hook()
+	}
 
 	if text == "" {
 		// Nothing to run and no paused task to resume.
@@ -190,6 +199,7 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	turn := sess.turn
 	sess.cancel = cancel
 	sess.inFlight++
+	dropped := sess.dropped
 	cancelled := sess.cancelled
 	sess.cancelled = false // clear for this turn; a mid-turn cancel re-sets it
 	if resumeTaskID != "" {
@@ -209,6 +219,13 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 		}
 		a.mu.Unlock()
 	}()
+
+	if dropped {
+		// The session was deleted or evicted after this prompt looked it up but
+		// before it registered its turn; do not run a turn on a detached session.
+		cancel()
+		return PromptResponse{StopReason: StopReasonCancelled}, nil
+	}
 
 	if cancelled {
 		// A session/cancel arrived before this turn registered its cancel
