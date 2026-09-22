@@ -129,3 +129,29 @@ func TestListSkipTotalIntegration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, emptySkipped.Total)
 }
+
+// TestSkipTotalFromQuery pins the query-parameter contract of the opt-out:
+// only the literal "false" skips the count. Everything else — absent, "true",
+// "0", "FALSE", "False", or a whitespace-padded value — keeps the default
+// exact total, so the wire shape stays unchanged for existing clients.
+func TestSkipTotalFromQuery(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{in: "", want: false},
+		{in: "true", want: false},
+		{in: "1", want: false},
+		{in: "0", want: false},
+		{in: "FALSE", want: false},
+		{in: "False", want: false},
+		{in: " false", want: false},
+		{in: "false ", want: false},
+		{in: "false", want: true},
+	}
+	for _, tt := range tests {
+		t.Run("include_total="+tt.in, func(t *testing.T) {
+			assert.Equal(t, tt.want, skipTotalFromQuery(tt.in))
+		})
+	}
+}

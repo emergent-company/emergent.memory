@@ -92,6 +92,15 @@ func getUserID(c echo.Context) (*uuid.UUID, error) {
 	return &id, nil
 }
 
+// skipTotalFromQuery reports whether the request opted out of the exact total
+// count behind `GET /api/graph/objects/search` (issue #733). Only the literal
+// "false" opts out; any other value — absent, "true", "0", "FALSE", or
+// whitespace — keeps the default exact total, so the wire shape is unchanged
+// for existing clients.
+func skipTotalFromQuery(v string) bool {
+	return v == "false"
+}
+
 // ListObjects returns graph objects matching query parameters.
 // @Summary      List graph objects
 // @Description  Search and filter graph objects with pagination, type/label filtering, and relationship queries
@@ -148,10 +157,8 @@ func (h *Handler) ListObjects(c echo.Context) error {
 	// `total`. This is an explicit opt-out for callers that only need a page
 	// (keyset/cursor pagination, list views that ignore the total); the count is
 	// the endpoint's latency floor on projects that dominate a large
-	// kb.graph_objects table (issue #733). Anything other than the literal
-	// "false" keeps the exact-total default, so the wire shape is unchanged for
-	// existing clients.
-	params.SkipTotal = c.QueryParam("include_total") == "false"
+	// kb.graph_objects table (issue #733).
+	params.SkipTotal = skipTotalFromQuery(c.QueryParam("include_total"))
 
 	// Support both "type" (single) and "types" (array/comma-separated)
 	if singleType := c.QueryParam("type"); singleType != "" {
