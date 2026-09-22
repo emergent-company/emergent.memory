@@ -1,9 +1,12 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
 // apiTokenRenderFixture returns the token payloads used by the render tests:
@@ -38,14 +41,20 @@ func accountTokenRenderFixture() []APIToken {
 }
 
 // TestRenderAPITokensPage asserts the project list renders the token TABLE
-// (name/prefix/scopes/created/last used/actions + revoked state), the count
-// badge, the "New token" action — and never any plaintext or inline form.
+// (name/prefix/area scopes/created/last used/actions + revoked state), the
+// count badge, the "New token" action — and never any plaintext or inline form.
 func TestRenderAPITokensPage(t *testing.T) {
 	data := apiTokensPageData{Tokens: apiTokenRenderFixture()}
 	html := renderHTML(t, APITokensPage(data))
 	for _, want := range []string{
 		"API Tokens", "CI deploy", "old token", "emt_cideployx", "emt_oldtoken",
-		"data:read", "data:write", "schema:read", "Revoked", "2 tokens",
+		// one composed AREA badge per area, with the granted scopes in the title
+		// and the same detail exposed as an accessible name (role=img + aria-label)
+		`data-testid="token-scope-area"`, ">Data<", ">Schemas<",
+		`title="data:read, data:write"`, `title="schema:read"`,
+		`role="img"`,
+		`aria-label="Data: data:read, data:write"`, `aria-label="Schemas: schema:read"`,
+		"Revoked", "2 tokens",
 		"New token", `href="/settings/tokens/new"`,
 		// table chrome
 		`<table class="table table-sm">`, "<th>Name</th>", "<th>Prefix</th>",
@@ -58,6 +67,11 @@ func TestRenderAPITokensPage(t *testing.T) {
 			t.Errorf("APITokensPage missing %q", want)
 		}
 	}
+	// a token with a write scope in an area gets the info tone; a read-only
+	// area stays neutral
+	if !strings.Contains(html, "badge-info") || !strings.Contains(html, "badge-neutral") {
+		t.Errorf("area badges should carry area-level intent tones, html=%q", html)
+	}
 	// the create form no longer lives on the list page
 	if strings.Contains(html, `action="/settings/tokens/new"`) || strings.Contains(html, `name="name"`) {
 		t.Error("list page must not embed the create form (it moved to /settings/tokens/new)")
@@ -69,6 +83,101 @@ func TestRenderAPITokensPage(t *testing.T) {
 	// no plaintext anywhere, no plaintext panel by default
 	if strings.Contains(html, "api-token-secret") || strings.Contains(html, "shown only once") {
 		t.Error("plaintext panel must not render on the plain list page")
+	}
+}
+
+// TestRenderAPITokensPageUnknownScopeShowsOther asserts an unmapped scope is
+// surfaced in the fallback Other area badge rather than silently dropped.
+func TestRenderAPITokensPageUnknownScopeShowsOther(t *testing.T) {
+	tokens := []APIToken{{
+		ID: "t1", Name: "legacy", TokenPrefix: "emt_legacy",
+		Scopes: []string{"mystery:scope", "data:read"}, CreatedAt: "2026-09-01T10:00:00Z",
+	}}
+	html := renderHTML(t, APITokensPage(apiTokensPageData{Tokens: tokens}))
+	for _, want := range []string{`data-testid="token-scope-area"`, ">Other<", `title="mystery:scope"`, ">Data<"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("unknown scope render missing %q", want)
+		}
+	}
+}
+
+// TestAPITokenScopeAreaMapping pins every known scope to its area and asserts
+// an unmapped scope falls back to Other.
+func TestAPITokenScopeAreaMapping(t *testing.T) {
+	cases := map[string]string{
+		"schema:read": apiTokenAreaSchemas, "schema:write": apiTokenAreaSchemas, "schema:migrate": apiTokenAreaSchemas,
+		"data:read": apiTokenAreaData, "data:write": apiTokenAreaData,
+		"documents:read": apiTokenAreaDocuments, "documents:write": apiTokenAreaDocuments,
+		"graph:read": apiTokenAreaGraph, "graph:write": apiTokenAreaGraph, "search": apiTokenAreaGraph,
+		"branches:read": apiTokenAreaBranches, "branches:write": apiTokenAreaBranches,
+		"agents:read": apiTokenAreaAgents, "agents:write": apiTokenAreaAgents, "chat:use": apiTokenAreaAgents,
+		"projects:read": apiTokenAreaProjects, "projects:write": apiTokenAreaProjects,
+		"journal:read": apiTokenAreaJournal, "journal:write": apiTokenAreaJournal,
+		"skills:read": apiTokenAreaSkills, "skills:write": apiTokenAreaSkills,
+		"admin": apiTokenAreaAdmin, "admin:all": apiTokenAreaAdmin,
+		"mystery:scope": apiTokenAreaOther,
+	}
+	for scope, want := range cases {
+		if got := apiTokenScopeArea(scope); got != want {
+			t.Errorf("apiTokenScopeArea(%q) = %q, want %q", scope, got, want)
+		}
+	}
+}
+
+// TestAPITokenAreaBadges asserts scopes compose into one badge per area in
+// canonical order, with area-level intent and exact scopes kept for the title.
+func TestAPITokenAreaBadges(t *testing.T) {
+	got := apiTokenAreaBadges([]string{"search", "data:read", "mystery:scope", "graph:read", "admin"})
+	want := []apiTokenAreaBadge{
+		{Area: apiTokenAreaData, Scopes: []string{"data:read"}, Intent: ui.BadgeNeutral},
+		{Area: apiTokenAreaGraph, Scopes: []string{"search", "graph:read"}, Intent: ui.BadgeInfo},
+		{Area: apiTokenAreaAdmin, Scopes: []string{"admin"}, Intent: ui.BadgeWarning},
+		{Area: apiTokenAreaOther, Scopes: []string{"mystery:scope"}, Intent: ui.BadgeNeutral},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("apiTokenAreaBadges = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i].Area != want[i].Area {
+			t.Errorf("badge[%d].Area = %q, want %q", i, got[i].Area, want[i].Area)
+		}
+		if got[i].Intent != want[i].Intent {
+			t.Errorf("badge[%d].Intent = %q, want %q", i, got[i].Intent, want[i].Intent)
+		}
+		if !slices.Equal(got[i].Scopes, want[i].Scopes) {
+			t.Errorf("badge[%d].Scopes = %v, want %v", i, got[i].Scopes, want[i].Scopes)
+		}
+	}
+	// read-only and mutating areas resolve to the right tone
+	if apiTokenScopeAreaIntent(apiTokenAreaGraph, []string{"graph:read"}) != ui.BadgeNeutral {
+		t.Error("read-only area should be neutral")
+	}
+	if apiTokenScopeAreaIntent(apiTokenAreaData, []string{"data:read", "data:write"}) != ui.BadgeInfo {
+		t.Error("area holding a write scope should be info")
+	}
+	if apiTokenScopeAreaIntent(apiTokenAreaAdmin, nil) != ui.BadgeWarning {
+		t.Error("admin area should warn")
+	}
+}
+
+// TestAPITokenScopeMutates pins which scopes change state. apiTokenScopeMutates
+// special-cases admin/admin:all, schema:migrate, chat:use and search (none carry
+// the :write suffix), so those are asserted explicitly to catch a dropped case.
+func TestAPITokenScopeMutates(t *testing.T) {
+	for _, scope := range []string{"admin", "admin:all", "schema:migrate", "chat:use", "search"} {
+		if !apiTokenScopeMutates(scope) {
+			t.Errorf("apiTokenScopeMutates(%q) = false, want true (special-cased)", scope)
+		}
+	}
+	for _, scope := range []string{"schema:read", "data:read", "documents:read", "graph:read", "branches:read", "agents:read", "projects:read", "journal:read", "skills:read"} {
+		if apiTokenScopeMutates(scope) {
+			t.Errorf("apiTokenScopeMutates(%q) = true, want false (read-only)", scope)
+		}
+	}
+	for _, scope := range apiTokenScopes {
+		if strings.HasSuffix(scope, ":write") && !apiTokenScopeMutates(scope) {
+			t.Errorf("apiTokenScopeMutates(%q) = false, want true (:write)", scope)
+		}
 	}
 }
 
@@ -102,7 +211,10 @@ func TestRenderAccountTokensPage(t *testing.T) {
 	data := apiTokensPageData{Tokens: accountTokenRenderFixture()}
 	html := renderHTML(t, AccountTokensPage(data))
 	for _, want := range []string{
-		"API tokens", "personal script", "emt_personalx", "search", "journal:read",
+		"API tokens", "personal script", "emt_personalx",
+		// search belongs to the Graph area, journal:read to the Journal area
+		`data-testid="token-scope-area"`, ">Graph<", ">Journal<",
+		`title="search"`, `title="journal:read"`,
 		"1 token",
 		"New token", `href="/profile/tokens/new"`,
 		`action="/profile/tokens/a1/revoke"`,
@@ -140,9 +252,9 @@ func TestRenderAPITokenCreatePage(t *testing.T) {
 	for _, want := range []string{
 		"New token", `action="/settings/tokens/new"`, `name="name"`,
 		"Create token", `href="/settings/tokens"`, "Cancel",
-		// picker scopes
+		// picker scopes grouped by area
 		`name="scopes"`, `value="data:read"`, `value="schema:write"`, `value="chat:use"`,
-		`value="admin"`, "Coarse-grained", "Fine-grained",
+		`value="admin"`, "Schemas", "Data", "Graph", "Agents", "Admin",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("create page missing %q", want)
@@ -240,12 +352,13 @@ func TestRenderAccountTokenEditPage(t *testing.T) {
 	}
 }
 
-// TestRenderScopePickerOmitsAdminAll asserts the picker offers every group and
-// the admin scope but never admin:all (server-gated).
+// TestRenderScopePickerOmitsAdminAll asserts the picker offers every area group
+// and the admin scope but never admin:all (server-gated).
 func TestRenderScopePickerOmitsAdminAll(t *testing.T) {
 	html := renderHTML(t, apiTokenScopePickerContent([]string{"data:read", "admin"}))
 	for _, want := range []string{
-		"Coarse-grained", "Fine-grained", "Admin",
+		"Schemas", "Data", "Documents", "Graph", "Branches",
+		"Agents", "Projects", "Journal", "Skills", "Admin",
 		`name="scopes"`, `value="schema:read"`, `value="schema:write"`,
 		`value="data:read"`, `value="data:write"`, `value="agents:read"`,
 		`value="chat:use"`, `value="graph:read"`, `value="schema:migrate"`,
@@ -258,9 +371,49 @@ func TestRenderScopePickerOmitsAdminAll(t *testing.T) {
 	if strings.Contains(html, `value="admin:all"`) {
 		t.Error("admin:all must never be offered in the scope picker")
 	}
+	if strings.Contains(html, "Coarse-grained") || strings.Contains(html, "Fine-grained") {
+		t.Error("the picker must no longer bucket scopes as coarse/fine-grained")
+	}
 	// preselected scopes render checked
 	if !strings.Contains(html, `value="data:read" class="checkbox checkbox-sm mt-0.5" checked`) {
 		t.Error("a granted scope should render checked")
+	}
+}
+
+// TestScopePickerGroupsCoverTaxonomy asserts the area picker groups follow the
+// canonical order and offer every token scope exactly once except admin:all
+// (server-gated).
+func TestScopePickerGroupsCoverTaxonomy(t *testing.T) {
+	if len(scopePickerGroups) != len(apiTokenAreas) {
+		t.Fatalf("picker groups = %d, want %d (one per area)", len(scopePickerGroups), len(apiTokenAreas))
+	}
+	seen := map[string]int{}
+	for i, g := range scopePickerGroups {
+		if g.Label != apiTokenAreas[i] {
+			t.Errorf("group[%d].Label = %q, want %q (canonical order)", i, g.Label, apiTokenAreas[i])
+		}
+		if g.Hint == "" {
+			t.Errorf("group[%d] (%s) needs a hint", i, g.Label)
+		}
+		for _, opt := range g.Options {
+			seen[opt.Value]++
+			if want := apiTokenScopeArea(opt.Value); want != g.Label {
+				t.Errorf("option %q sits in group %q, want %q", opt.Value, g.Label, want)
+			}
+		}
+	}
+	for _, scope := range apiTokenScopes {
+		if scope == "admin:all" {
+			continue
+		}
+		if seen[scope] != 1 {
+			t.Errorf("scope %q offered %d times in the picker, want exactly 1", scope, seen[scope])
+		}
+	}
+	for scope := range seen {
+		if !validAPITokenScope(scope) {
+			t.Errorf("picker offers unknown scope %q", scope)
+		}
 	}
 }
 

@@ -73,58 +73,188 @@ type apiTokenScopeOption struct {
 	Label string
 }
 
-// apiTokenScopeGroup is one labelled bucket of the scope picker (coarse /
-// fine-grained / admin). admin:all is intentionally NOT offered: only org
-// admins can hold it, and the 403 is surfaced if Memory rejects it.
+// apiTokenScopeGroup is one labelled bucket of the scope picker. Buckets are
+// AREAS of the product (Schemas, Graph, …), so a scope is found by what it acts
+// on rather than by how coarse it is. admin:all is intentionally NOT offered:
+// only org admins can hold it, and the 403 is surfaced if Memory rejects it.
 type apiTokenScopeGroup struct {
 	Label   string
 	Hint    string
 	Options []apiTokenScopeOption
 }
 
-// scopePickerGroups orders the coarse/fine/admin buckets (excluding admin:all)
-// for the create and edit-scope forms.
+// Scope areas: the human-facing buckets shared by the token-table badges and
+// the picker groups. Other is the fallback for scopes the gateway does not
+// recognise, so an unknown scope is still surfaced rather than hidden.
+const (
+	apiTokenAreaSchemas   = "Schemas"
+	apiTokenAreaData      = "Data"
+	apiTokenAreaDocuments = "Documents"
+	apiTokenAreaGraph     = "Graph"
+	apiTokenAreaBranches  = "Branches"
+	apiTokenAreaAgents    = "Agents"
+	apiTokenAreaProjects  = "Projects"
+	apiTokenAreaJournal   = "Journal"
+	apiTokenAreaSkills    = "Skills"
+	apiTokenAreaAdmin     = "Admin"
+	apiTokenAreaOther     = "Other"
+)
+
+// apiTokenAreas is the canonical taxonomy order, used by both the token-table
+// badges and the picker groups.
+var apiTokenAreas = []string{
+	apiTokenAreaSchemas, apiTokenAreaData, apiTokenAreaDocuments,
+	apiTokenAreaGraph, apiTokenAreaBranches, apiTokenAreaAgents,
+	apiTokenAreaProjects, apiTokenAreaJournal, apiTokenAreaSkills,
+	apiTokenAreaAdmin,
+}
+
+// apiTokenScopeAreas is the single source of truth mapping every known token
+// scope to its area. admin:all shares the Admin area with admin even though the
+// picker omits it.
+var apiTokenScopeAreas = map[string]string{
+	"schema:read": apiTokenAreaSchemas, "schema:write": apiTokenAreaSchemas, "schema:migrate": apiTokenAreaSchemas,
+	"data:read": apiTokenAreaData, "data:write": apiTokenAreaData,
+	"documents:read": apiTokenAreaDocuments, "documents:write": apiTokenAreaDocuments,
+	"graph:read": apiTokenAreaGraph, "graph:write": apiTokenAreaGraph, "search": apiTokenAreaGraph,
+	"branches:read": apiTokenAreaBranches, "branches:write": apiTokenAreaBranches,
+	"agents:read": apiTokenAreaAgents, "agents:write": apiTokenAreaAgents, "chat:use": apiTokenAreaAgents,
+	"projects:read": apiTokenAreaProjects, "projects:write": apiTokenAreaProjects,
+	"journal:read": apiTokenAreaJournal, "journal:write": apiTokenAreaJournal,
+	"skills:read": apiTokenAreaSkills, "skills:write": apiTokenAreaSkills,
+	"admin": apiTokenAreaAdmin, "admin:all": apiTokenAreaAdmin,
+}
+
+// apiTokenScopeArea returns the human area a scope belongs to, falling back to
+// Other so an unrecognised scope stays visible.
+func apiTokenScopeArea(scope string) string {
+	if area, ok := apiTokenScopeAreas[scope]; ok {
+		return area
+	}
+	return apiTokenAreaOther
+}
+
+// apiTokenScopeMutates reports whether a scope can change state — a write, a
+// migration, or an execution like chat/search — rather than only read it.
+func apiTokenScopeMutates(scope string) bool {
+	switch scope {
+	case "admin", "admin:all", "schema:migrate", "chat:use", "search":
+		return true
+	}
+	return strings.HasSuffix(scope, ":write")
+}
+
+// apiTokenScopeAreaIntent derives an area badge's colour from the scopes the
+// token holds in it: Admin always warns; any mutating scope makes the area
+// BadgeInfo; an area held with read-only scopes stays BadgeNeutral.
+func apiTokenScopeAreaIntent(area string, scopes []string) ui.BadgeIntent {
+	if area == apiTokenAreaAdmin {
+		return ui.BadgeWarning
+	}
+	for _, s := range scopes {
+		if apiTokenScopeMutates(s) {
+			return ui.BadgeInfo
+		}
+	}
+	return ui.BadgeNeutral
+}
+
+// apiTokenAreaBadge is one composed area badge in the token table: the area's
+// human name, the exact granted scopes that fall in it (the tooltip detail),
+// and the intent derived from those scopes.
+type apiTokenAreaBadge struct {
+	Area   string
+	Scopes []string
+	Intent ui.BadgeIntent
+}
+
+// apiTokenAreaBadges groups a token's scopes into one badge per area, in
+// canonical taxonomy order with the Other bucket last. Every granted scope
+// lands in exactly one badge, so nothing is silently hidden.
+func apiTokenAreaBadges(scopes []string) []apiTokenAreaBadge {
+	grouped := make(map[string][]string, len(apiTokenAreas)+1)
+	for _, s := range scopes {
+		area := apiTokenScopeArea(s)
+		grouped[area] = append(grouped[area], s)
+	}
+	out := make([]apiTokenAreaBadge, 0, len(grouped))
+	for _, area := range apiTokenAreas {
+		if held, ok := grouped[area]; ok {
+			out = append(out, apiTokenAreaBadge{Area: area, Scopes: held, Intent: apiTokenScopeAreaIntent(area, held)})
+		}
+	}
+	if held, ok := grouped[apiTokenAreaOther]; ok {
+		out = append(out, apiTokenAreaBadge{Area: apiTokenAreaOther, Scopes: held, Intent: apiTokenScopeAreaIntent(apiTokenAreaOther, held)})
+	}
+	return out
+}
+
+// scopePickerGroups orders the area buckets (excluding admin:all) for the
+// create and edit-scope forms. Checkbox values stay the raw scope strings.
 var scopePickerGroups = []apiTokenScopeGroup{
 	{
-		Label: "Coarse-grained", Hint: "Broad access across a whole domain.",
+		Label: apiTokenAreaSchemas, Hint: "Schema definitions and migrations.",
 		Options: []apiTokenScopeOption{
 			{"schema:read", "Read schemas"}, {"schema:write", "Edit schemas"},
-			{"data:read", "Read data"}, {"data:write", "Write data"},
-			{"agents:read", "Read agents"}, {"agents:write", "Create & edit agents"},
-			{"projects:read", "Read projects"}, {"projects:write", "Manage projects"},
-			{"chat:use", "Use chat"},
+			{"schema:migrate", "Run schema migrations"},
 		},
 	},
 	{
-		Label: "Fine-grained", Hint: "Narrow access to one capability.",
+		Label: apiTokenAreaData, Hint: "Stored data records.",
 		Options: []apiTokenScopeOption{
-			{"graph:read", "Read knowledge graph"}, {"graph:write", "Write knowledge graph"},
-			{"schema:migrate", "Run schema migrations"},
-			{"branches:read", "Read branches"}, {"branches:write", "Create & merge branches"},
-			{"search", "Search memory"},
-			{"journal:read", "Read journal"}, {"journal:write", "Write journal"},
-			{"skills:read", "Read skills"}, {"skills:write", "Write skills"},
+			{"data:read", "Read data"}, {"data:write", "Write data"},
+		},
+	},
+	{
+		Label: apiTokenAreaDocuments, Hint: "Documents and their content.",
+		Options: []apiTokenScopeOption{
 			{"documents:read", "Read documents"}, {"documents:write", "Write documents"},
 		},
 	},
 	{
-		Label: "Admin", Hint: "Administrative powers.",
+		Label: apiTokenAreaGraph, Hint: "Knowledge graph objects, relationships, and search.",
+		Options: []apiTokenScopeOption{
+			{"graph:read", "Read knowledge graph"}, {"graph:write", "Write knowledge graph"},
+			{"search", "Search memory"},
+		},
+	},
+	{
+		Label: apiTokenAreaBranches, Hint: "Branches and merges.",
+		Options: []apiTokenScopeOption{
+			{"branches:read", "Read branches"}, {"branches:write", "Create & merge branches"},
+		},
+	},
+	{
+		Label: apiTokenAreaAgents, Hint: "Agents and chat.",
+		Options: []apiTokenScopeOption{
+			{"agents:read", "Read agents"}, {"agents:write", "Create & edit agents"},
+			{"chat:use", "Use chat"},
+		},
+	},
+	{
+		Label: apiTokenAreaProjects, Hint: "Project settings and membership.",
+		Options: []apiTokenScopeOption{
+			{"projects:read", "Read projects"}, {"projects:write", "Manage projects"},
+		},
+	},
+	{
+		Label: apiTokenAreaJournal, Hint: "Journal entries.",
+		Options: []apiTokenScopeOption{
+			{"journal:read", "Read journal"}, {"journal:write", "Write journal"},
+		},
+	},
+	{
+		Label: apiTokenAreaSkills, Hint: "Reusable skills and their content.",
+		Options: []apiTokenScopeOption{
+			{"skills:read", "Read skills"}, {"skills:write", "Write skills"},
+		},
+	},
+	{
+		Label: apiTokenAreaAdmin, Hint: "Administrative powers.",
 		Options: []apiTokenScopeOption{
 			{"admin", "Administer project"},
 		},
 	},
-}
-
-// apiTokenScopeIntent maps a scope to a badge colour for the token list.
-func apiTokenScopeIntent(scope string) ui.BadgeIntent {
-	switch {
-	case scope == "admin" || scope == "admin:all":
-		return ui.BadgeWarning
-	case strings.HasSuffix(scope, ":read"), scope == "search":
-		return ui.BadgeNeutral
-	default:
-		return ui.BadgeInfo
-	}
 }
 
 // apiTokenLastUsedLabel renders a token's last-used time ("never" when the
