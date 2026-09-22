@@ -192,6 +192,11 @@ apps/server/VERSION
 # Local deployment skills (machine-specific)
 .opencode/skills/upgrade-mcj/
 
+# Machine-specific local TLS material (e.g. tailscale certs used for dev UI hosting).
+# Never commit these — a private key in the working tree is one `git add -A` away from leaking.
+*.key
+*.crt
+
 # Build outputs and binaries
 apps/server/bin/
 apps/server/*.out
