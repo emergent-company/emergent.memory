@@ -569,7 +569,23 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}
 	}
 
-	wsResult, wsErr := ae.provisionWorkspace(ctx, run.ID, req)
+	// Bind teardown to this run's lifetime BEFORE provisioning. The cleanup is
+	// deferred so it runs exactly once on every exit path — normal return, error
+	// return, context cancellation, and a panic inside runPipeline. Binding
+	// before provisioning matters because the ephemeral token is minted above:
+	// a provisioning failure returns below and must still revoke that token.
+	// teardownWorkspace is nil-safe on the result. ExecuteResult.Cleanup exposes
+	// the same idempotent function; a caller that also invokes it (e.g.
+	// asynchronously after flushing an SSE response) gets a no-op because
+	// teardown has already run.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
 		// Fatal provisioning failure (e.g. image not ready) — fail the run
 		errMsg := wsErr.Error()
@@ -588,17 +604,6 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			Duration: time.Since(startTime),
 		}, nil
 	}
-
-	// Bind teardown to this run's lifetime. The cleanup is deferred so it runs
-	// exactly once on every exit path — normal return, error return, context
-	// cancellation, and a panic inside runPipeline. ExecuteResult.Cleanup
-	// exposes the same idempotent function; a caller that also invokes it (e.g.
-	// asynchronously after flushing an SSE response) gets a no-op because
-	// teardown has already run.
-	cleanup := newRunCleanup(func() {
-		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-	})
-	defer cleanup.Cleanup()
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
@@ -764,7 +769,18 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		}
 	}
 
-	wsResult, wsErr := ae.provisionWorkspace(ctx, run.ID, req)
+	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
+	// deferred so it runs exactly once on every exit path, including a panic in
+	// runPipeline and a provisioning failure — the latter must still revoke the
+	// ephemeral token minted above.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, 0)
@@ -782,13 +798,6 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			Duration: time.Since(startTime),
 		}, nil
 	}
-
-	// Bind teardown to this run's lifetime (see Execute): deferred so it runs
-	// exactly once on every exit path, including a panic in runPipeline.
-	cleanup := newRunCleanup(func() {
-		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-	})
-	defer cleanup.Cleanup()
 
 	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
@@ -975,7 +984,18 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		}
 	}
 
-	wsResult, wsErr := ae.provisionWorkspace(ctx, newRun.ID, req)
+	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
+	// deferred so it runs exactly once on every exit path, including a panic in
+	// runPipeline and a provisioning failure — the latter must still revoke the
+	// ephemeral token minted above.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, newRun.ID, errMsg, priorRun.StepCount)
@@ -987,13 +1007,6 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			Duration: time.Since(startTime),
 		}, nil
 	}
-
-	// Bind teardown to this run's lifetime (see Execute): deferred so it runs
-	// exactly once on every exit path, including a panic in runPipeline.
-	cleanup := newRunCleanup(func() {
-		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-	})
-	defer cleanup.Cleanup()
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {

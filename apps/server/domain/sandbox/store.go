@@ -166,9 +166,13 @@ func (s *Store) ListActive(ctx context.Context) ([]*AgentSandbox, error) {
 // Only creating/stopping are excluded: stopped and error rows are
 // terminal-but-present and are deliberately reclaimable by the opt-in idle
 // policy (see ListPersistentMCPServers). It returns (nil, nil) when the row
-// vanished, was touched inside the window, or entered an in-flight state —
-// closing the window between the candidate SELECT and the reclaim's
-// StopRuntime/destroy.
+// vanished, was touched inside the window, or entered an in-flight state.
+//
+// This re-read narrows — but does not fully close — the window between the
+// candidate SELECT and the reclaim's StopRuntime/destroy: it bounds the window
+// to the interval between this query and those calls, during which a call
+// starting in MCPHostingService.Call can still be cut off (see the residual
+// TOCTOU note in issue #699 item 5).
 func (s *Store) GetIdlePersistentMCPServer(ctx context.Context, id string, idleBefore time.Time) (*AgentSandbox, error) {
 	ws := new(AgentSandbox)
 	err := s.db.NewSelect().
