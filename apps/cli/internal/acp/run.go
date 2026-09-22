@@ -92,7 +92,12 @@ func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error)
 	case "initialize":
 		return a.initialize(), nil
 	case "session/new":
-		return a.newSession(), nil
+		resp, err := a.newSession()
+		if err != nil {
+			// Strict cap: the map is full and nothing idle could be evicted.
+			return nil, &rpcError{Code: codeInternal, Message: err.Error()}
+		}
+		return resp, nil
 	case "session/prompt":
 		var p PromptParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -116,7 +121,20 @@ func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error)
 		}
 		a.deleteSession(p.SessionID)
 		return struct{}{}, nil
+	case "session/close":
+		var p CloseSessionParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf("session/close: invalid params: %v", err)}
+		}
+		if p.SessionID == "" {
+			return nil, &rpcError{Code: codeInvalidParams, Message: "session/close: missing sessionId"}
+		}
+		a.closeSession(p.SessionID)
+		return struct{}{}, nil
 	default:
+		// session/list is deliberately unimplemented and unadvertised: this agent
+		// is an ephemeral in-memory bridge with loadSession=false, so it cannot
+		// honestly list loadable sessions. It falls through to -32601 here.
 		return nil, &rpcError{Code: codeMethodNotFound, Message: fmt.Sprintf("method not found: %s", req.Method)}
 	}
 }
@@ -145,5 +163,18 @@ func handleNotification(a *Agent, req *request, errLog io.Writer) {
 			return
 		}
 		a.deleteSession(p.SessionID)
+	case "session/close":
+		// ACP defines session/close as a request, but accept the notification
+		// form too so a fire-and-forget client still frees the session.
+		var p CloseSessionParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			_, _ = fmt.Fprintf(errLog, "acp: session/close: invalid params: %v\n", err)
+			return
+		}
+		if p.SessionID == "" {
+			_, _ = fmt.Fprintf(errLog, "acp: session/close: missing sessionId\n")
+			return
+		}
+		a.closeSession(p.SessionID)
 	}
 }
