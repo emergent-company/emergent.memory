@@ -89,15 +89,6 @@ type Config struct {
 	// deletion sweep. Empty string means use the interval.
 	ProjectDeletionSweepSchedule string
 
-	// EmbeddingReindexSchedule is the cron schedule for rebuilding the ivfflat
-	// embedding indexes to restore list clustering (issue #664).
-	// Default: "0 0 2 * * *" (daily at 2am).
-	EmbeddingReindexSchedule string
-
-	// EmbeddingReindexInterval is the fallback interval used when the cron
-	// schedule is unset or invalid. Default: 24h.
-	EmbeddingReindexInterval time.Duration
-
 	// EmbeddingJobRetentionDays is the minimum age (in days) of a terminal
 	// embedding job (completed, failed, dead_letter) before it is purged.
 	// Default: 7.
@@ -142,8 +133,6 @@ func NewConfig() *Config {
 		// with PROJECT_DELETION_GRACE_PERIOD; default 1 minute.
 		ProjectDeletionSweepInterval: getEnvDurationString("PROJECT_DELETION_SWEEP_INTERVAL", time.Minute),
 		ProjectDeletionSweepSchedule: getEnvString("PROJECT_DELETION_SWEEP_SCHEDULE", ""),
-		EmbeddingReindexSchedule:     getEnvString("EMBEDDING_REINDEX_SCHEDULE", "0 0 2 * * *"),
-		EmbeddingReindexInterval:     getEnvDurationString("EMBEDDING_REINDEX_INTERVAL", 24*time.Hour),
 		EmbeddingJobRetentionDays:    getEnvInt("EMBEDDING_JOB_RETENTION_DAYS", 7),
 		EmbeddingJobPurgeSchedule:    getEnvString("EMBEDDING_JOB_PURGE_SCHEDULE", "0 0 5 * * *"),
 		EmbeddingJobPurgeInterval:    getEnvDuration("EMBEDDING_JOB_PURGE_INTERVAL", 24*time.Hour),
