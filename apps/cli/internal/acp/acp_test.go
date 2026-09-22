@@ -50,6 +50,16 @@ func runLines(t *testing.T, agent *Agent, input string) []byte {
 	return out.Bytes()
 }
 
+// runLinesErr is like runLines but also returns the stderr diagnostics.
+func runLinesErr(t *testing.T, agent *Agent, input string) (stdout, stderr []byte) {
+	t.Helper()
+	var out, errBuf bytes.Buffer
+	if err := Run(context.Background(), strings.NewReader(input), &out, &errBuf, agent); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	return out.Bytes(), errBuf.Bytes()
+}
+
 // decodeLines decodes a newline-delimited stream of JSON objects.
 func decodeLines(t *testing.T, data []byte) []map[string]any {
 	t.Helper()
@@ -274,6 +284,90 @@ func assertErrorCode(t *testing.T, m map[string]any, code int) {
 	}
 	if errObj["code"] != float64(code) {
 		t.Errorf("error code = %v, want %d", errObj["code"], code)
+	}
+}
+
+// assertErrorFrame asserts a message is a well-formed JSON-RPC error frame with
+// the given code and id (nil expects a null/absent id).
+func assertErrorFrame(t *testing.T, m map[string]any, code int, wantID any) {
+	t.Helper()
+	if m["jsonrpc"] != jsonrpcVersion {
+		t.Errorf("jsonrpc = %v, want %q", m["jsonrpc"], jsonrpcVersion)
+	}
+	assertErrorCode(t, m, code)
+	if m["id"] != wantID {
+		t.Errorf("id = %v, want %v", m["id"], wantID)
+	}
+}
+
+// TestParseErrorReturnsCode covers a line that is not valid JSON: the client
+// gets a -32700 Parse error frame with a null id, and the failure is still
+// logged to stderr for the operator.
+func TestParseErrorReturnsCode(t *testing.T) {
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	})
+	// Truncated JSON: nothing is parseable, so no id is recoverable.
+	out, errOut := runLinesErr(t, agent, `{"jsonrpc":"2.0","id":7,"method":`+"\n")
+	msgs := decodeLines(t, out)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d: %v", len(msgs), msgs)
+	}
+	assertErrorFrame(t, msgs[0], -32700, nil)
+	if len(bytes.TrimSpace(errOut)) == 0 {
+		t.Error("expected the malformed line to be logged to stderr")
+	}
+}
+
+// TestInvalidRequestErrors covers structurally valid JSON that is not a valid
+// JSON-RPC Request: the client gets a -32600 Invalid Request frame, echoing the
+// request id when one was recoverable.
+func TestInvalidRequestErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		line   string
+		wantID any
+	}{
+		{"missing method", `{"jsonrpc":"2.0","id":8}`, float64(8)},
+		{"empty object", `{}`, nil},
+		{"unsupported version", `{"jsonrpc":"1.0","id":9,"method":"initialize"}`, float64(9)},
+		{"non-string method", `{"jsonrpc":"2.0","id":10,"method":123}`, float64(10)},
+		{"non-object literal", `"not-a-request"`, nil},
+		{"array", `[1,2,3]`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+				t.Errorf("unexpected HTTP request")
+			})
+			out, _ := runLinesErr(t, agent, tc.line+"\n")
+			msgs := decodeLines(t, out)
+			if len(msgs) != 1 {
+				t.Fatalf("expected 1 message, got %d: %v", len(msgs), msgs)
+			}
+			assertErrorFrame(t, msgs[0], -32600, tc.wantID)
+		})
+	}
+}
+
+// TestMalformedLineDoesNotStopLoop verifies a bad line yields an error frame and
+// the loop keeps serving later, well-formed requests.
+func TestMalformedLineDoesNotStopLoop(t *testing.T) {
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request")
+	})
+	input := strings.Join([]string{
+		`{not json`,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`,
+	}, "\n") + "\n"
+	out, _ := runLinesErr(t, agent, input)
+	msgs := decodeLines(t, out)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d: %v", len(msgs), msgs)
+	}
+	assertErrorFrame(t, msgs[0], -32700, nil)
+	if msgs[1]["result"] == nil {
+		t.Errorf("expected initialize result after malformed line, got %v", msgs[1])
 	}
 }
 

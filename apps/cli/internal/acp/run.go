@@ -41,6 +41,17 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, errLog io.Writer, age
 				return err
 			}
 			_, _ = fmt.Fprintf(errLog, "acp: %v\n", err)
+			// A malformed inbound message still gets a JSON-RPC error response so
+			// conformant clients are not left waiting on a reply that never comes.
+			// The id is echoed when it was recoverable, otherwise null.
+			var werr *wireError
+			if errors.As(err, &werr) {
+				_ = s.send(response{
+					JSONRPC: jsonrpcVersion,
+					ID:      werr.ID,
+					Error:   &rpcError{Code: werr.Code, Message: werr.Message},
+				})
+			}
 			continue
 		}
 
