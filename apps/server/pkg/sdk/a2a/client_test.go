@@ -1,7 +1,6 @@
 package a2a
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -238,7 +237,7 @@ func TestStreamMessage(t *testing.T) {
 func newSSEStream(body string) *SSEStream {
 	return &SSEStream{
 		resp:    &http.Response{Body: io.NopCloser(strings.NewReader(body))},
-		scanner: bufio.NewScanner(strings.NewReader(body)),
+		scanner: newSSEScanner(strings.NewReader(body)),
 	}
 }
 
@@ -259,6 +258,36 @@ func collectEvents(t *testing.T, s *SSEStream) []StreamResponse {
 
 // statusUpdateJSON is a single-line StreamResponse payload used across cases.
 const statusUpdateJSON = `{"statusUpdate":{"taskId":"t1","contextId":"c1","status":{"state":"TASK_STATE_WORKING"}}}`
+
+func TestSSEDataValueExtraction(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   string
+		want   string
+		wantOK bool
+	}{
+		{name: "no space after colon", line: "data:X", want: "X", wantOK: true},
+		{name: "single space after colon", line: "data: X", want: "X", wantOK: true},
+		{name: "two spaces after colon", line: "data:  X", want: " X", wantOK: true},
+		{name: "space then tab after colon", line: "data: \tX", want: "\tX", wantOK: true},
+		{name: "tab after colon", line: "data:\tX", want: "\tX", wantOK: true},
+		{name: "space then tab then space", line: "data: \t ", want: "\t ", wantOK: true},
+		{name: "empty value", line: "data:", want: "", wantOK: true},
+		{name: "no colon", line: "data", want: "", wantOK: true},
+		{name: "event field", line: "event: message", want: "", wantOK: false},
+		{name: "id field", line: "id: 42", want: "", wantOK: false},
+		{name: "comment line", line: ": comment", want: "", wantOK: false},
+		{name: "unknown field", line: "foo: bar", want: "", wantOK: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := sseDataValue(tc.line)
+			assert.Equal(t, tc.wantOK, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
 
 func TestSSEStreamNextParsing(t *testing.T) {
 	wantStatus := []StreamResponse{{StatusUpdate: &TaskStatusUpdateEvent{
@@ -339,6 +368,32 @@ func TestSSEStreamNextParsing(t *testing.T) {
 			body: "\n\n\ndata: " + statusUpdateJSON + "\n\n",
 			want: wantStatus,
 		},
+		{
+			name: "lone CR framing",
+			body: "data: " + statusUpdateJSON + "\r\r",
+			want: wantStatus,
+		},
+		{
+			name: "CRLF framing",
+			body: "data: " + statusUpdateJSON + "\r\n\r\n",
+			want: wantStatus,
+		},
+		{
+			name: "mixed terminators",
+			body: "data: " + statusUpdateJSON + "\n\r",
+			want: wantStatus,
+		},
+		{
+			name: "multi-line data with CRLF",
+			body: "data: {\"statusUpdate\":{\"taskId\":\"t1\",\"contextId\":\"c1\",\r\n" +
+				"data: \"status\":{\"state\":\"TASK_STATE_WORKING\"}}}\r\n\r\n",
+			want: wantStatus,
+		},
+		{
+			name: "empty payload with CR framing skipped",
+			body: "data:\r\rdata: " + statusUpdateJSON + "\r\r",
+			want: wantStatus,
+		},
 	}
 
 	for _, tc := range tests {
@@ -352,6 +407,14 @@ func TestSSEStreamNextParsing(t *testing.T) {
 func TestSSEStreamDoneSentinel(t *testing.T) {
 	// [DONE] terminates the stream; any payload after it is not dispatched.
 	s := newSSEStream("data: [DONE]\n\ndata: " + statusUpdateJSON + "\n\n")
+	_, err := s.Next()
+	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestSSEStreamDoneSentinelLoneCR(t *testing.T) {
+	// [DONE] terminates the stream under lone-CR framing; any payload after it
+	// is not dispatched.
+	s := newSSEStream("data: [DONE]\r\rdata: " + statusUpdateJSON + "\r\r")
 	_, err := s.Next()
 	require.ErrorIs(t, err, io.EOF)
 }
