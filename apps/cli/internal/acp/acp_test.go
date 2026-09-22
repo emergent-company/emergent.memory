@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1293,5 +1294,92 @@ func TestCancelMidStreamReturnsCancelled(t *testing.T) {
 	pr2 := promptResp["result"].(map[string]any)
 	if pr2["stopReason"] != StopReasonCancelled {
 		t.Errorf("stopReason = %v, want cancelled", pr2["stopReason"])
+	}
+}
+
+// TestMidTurnCancelDoesNotCancelNextPrompt is the regression test for #780: a
+// session/cancel that lands while turn A is in flight must resolve turn A
+// "cancelled" but must NOT leave session-scoped state behind that spuriously
+// cancels the next prompt. Turn B is issued on the same session afterwards and
+// must reach the backend and return end_turn (previously the sticky flag made it
+// resolve "cancelled" without doing any work).
+func TestMidTurnCancelDoesNotCancelNextPrompt(t *testing.T) {
+	var backendRequests atomic.Int32
+	chunkSent := make(chan struct{})
+
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		// First turn: stream a chunk, then hold the connection open until the
+		// client cancels. Second turn: complete normally.
+		if backendRequests.Add(1) == 1 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fl, _ := w.(http.Flusher)
+			b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+				TaskID:    "task-1",
+				ContextID: "ctx-1",
+				Artifact:  a2a.Artifact{ArtifactID: "artifact-task-1", Parts: []a2a.Part{a2a.TextPart("first")}},
+			}})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+			if fl != nil {
+				fl.Flush()
+			}
+			close(chunkSent)
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+				t.Error("stream not torn down by cancellation")
+			}
+			return
+		}
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-2", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+
+	sessID := mustNewSession(t, agent)
+
+	// Turn A: run it in the background, wait until its stream is provably open
+	// (so the cancel is genuinely mid-turn rather than racing registration),
+	// then cancel it mid-flight.
+	type promptResult struct {
+		reason string
+		err    error
+	}
+	resA := make(chan promptResult, 1)
+	go func() {
+		res, err := agent.prompt(context.Background(), PromptParams{
+			SessionID: sessID,
+			Prompt:    []ContentBlock{{Type: "text", Text: "first"}},
+		}, func(any) error { return nil })
+		if err != nil {
+			resA <- promptResult{err: err}
+			return
+		}
+		resA <- promptResult{reason: res.(PromptResponse).StopReason}
+	}()
+
+	<-chunkSent
+	agent.cancel(CancelParams{SessionID: sessID})
+
+	gotA := <-resA
+	if gotA.err != nil {
+		t.Fatalf("turn A returned error: %v", gotA.err)
+	}
+	if gotA.reason != StopReasonCancelled {
+		t.Fatalf("turn A stopReason = %q, want cancelled", gotA.reason)
+	}
+
+	// Turn B: must run normally, not inherit turn A's cancellation.
+	resB, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: sessID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "second"}},
+	}, func(any) error { return nil })
+	if err != nil {
+		t.Fatalf("turn B returned error: %v", err)
+	}
+	if got := resB.(PromptResponse).StopReason; got != StopReasonEndTurn {
+		t.Errorf("turn B stopReason = %q, want end_turn (mid-turn cancel leaked onto the next prompt)", got)
+	}
+	if n := backendRequests.Load(); n != 2 {
+		t.Errorf("backend requests = %d, want 2 (turn B did not execute)", n)
 	}
 }
