@@ -47,24 +47,30 @@ func main() {
 	// POSTGRES_HOST/POSTGRES_PORT > MEMORY_PG_HOST/MEMORY_PG_PORT > built-in
 	// localhost:5432.
 	target, err := resolveTarget(os.Getenv)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 
 	// Log the resolved target prominently, before any connection is opened, so
 	// the operator can always see where migrations will run. Never logs the
-	// password.
-	fmt.Println(target.LogLine())
+	// password. A DATABASE_URL that cannot be parsed leaves the target empty, in
+	// which case the error below is reported instead of a misleading blank line.
+	if target.Host != "" {
+		fmt.Println(target.LogLine())
+	}
 
 	// Fail closed on an ambiguous loopback target (issue #754): a mutating
-	// command must not silently fall through to localhost.
+	// command must not silently fall through to localhost. This is evaluated
+	// before the resolution error is reported so an operator on the incident
+	// path (no host configured) still sees the refusal and the resolved target
+	// even when credentials are also missing.
 	decision := decideTarget(target, isMutatingCommand(command), allowLocalhost)
 	if decision.Warn != "" {
 		fmt.Fprintf(os.Stderr, "WARNING: %s\n", decision.Warn)
 	}
 	if decision.Refuse {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", decision.Reason)
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 

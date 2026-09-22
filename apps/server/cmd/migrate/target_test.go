@@ -234,6 +234,26 @@ func TestResolveTargetErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("missing password still returns the resolved target", func(t *testing.T) {
+		got, err := resolveTarget(fakeEnv(map[string]string{"DB_HOST": "db"}))
+		if err == nil {
+			t.Fatal("resolveTarget() error = nil, want missing-password error")
+		}
+		if got.Host != "db" || got.hostSource != "DB_HOST/DB_PORT" || !got.explicitHost {
+			t.Errorf("target = %+v, want host/db host source resolved so the caller can log it and fail closed", got)
+		}
+	})
+
+	t.Run("DATABASE_URL without userinfo does not panic", func(t *testing.T) {
+		got, err := resolveTarget(fakeEnv(map[string]string{"DATABASE_URL": "postgres://host:5432/db"}))
+		if err != nil {
+			t.Fatalf("resolveTarget() error = %v", err)
+		}
+		if got.Host != "host" || got.User != "" {
+			t.Errorf("target = %+v, want host=host user=\"\"", got)
+		}
+	})
+
 	t.Run("unparseable DATABASE_URL", func(t *testing.T) {
 		if _, err := resolveTarget(fakeEnv(map[string]string{"DATABASE_URL": "://not-a-url"})); err == nil {
 			t.Fatal("resolveTarget() error = nil, want invalid DATABASE_URL error")
@@ -380,6 +400,32 @@ func TestDSN(t *testing.T) {
 	want := "postgres://migrator:pw@db:6543/memtest?sslmode=require"
 	if got := target.DSN(); got != want {
 		t.Errorf("DSN() = %q, want %q", got, want)
+	}
+}
+
+func TestDSNEncodesHostAndCredentials(t *testing.T) {
+	tests := []struct {
+		name   string
+		target Target
+		want   string
+	}{
+		{
+			name:   "ipv6 loopback host is bracketed",
+			target: Target{Host: "::1", Port: "5432", User: "emergent", Database: "emergent", SSLMode: "disable", Password: "pw"},
+			want:   "postgres://emergent:pw@[::1]:5432/emergent?sslmode=disable",
+		},
+		{
+			name:   "reserved characters in credentials are escaped",
+			target: Target{Host: "db", Port: "5432", User: "user name", Database: "emergent", SSLMode: "disable", Password: "p@ss:/?#"},
+			want:   "postgres://user%20name:p%40ss%3A%2F%3F%23@db:5432/emergent?sslmode=disable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.target.DSN(); got != tt.want {
+				t.Errorf("DSN() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

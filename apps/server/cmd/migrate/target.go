@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -55,10 +56,19 @@ func (t Target) LogLine() string {
 		t.Host, t.Port, t.User, t.Database, t.SSLMode, t.hostSource)
 }
 
-// DSN builds a libpq connection string from the resolved components.
+// DSN builds a libpq connection string from the resolved components. It is
+// assembled with net/url so that IPv6 hosts are bracketed ([::1]:5432) and
+// URI-reserved characters in the user or password are escaped rather than
+// producing a malformed connection string.
 func (t Target) DSN() string {
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		t.User, t.Password, t.Host, t.Port, t.Database, t.SSLMode)
+	u := &url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(t.User, t.Password),
+		Host:     net.JoinHostPort(t.Host, t.Port),
+		Path:     "/" + t.Database,
+		RawQuery: url.Values{"sslmode": {t.SSLMode}}.Encode(),
+	}
+	return u.String()
 }
 
 // targetDecision is the outcome of the fail-closed check on a resolved target.
@@ -122,11 +132,11 @@ func resolveTarget(getenv func(string) string) (Target, error) {
 	}
 
 	pass := getenv("POSTGRES_PASSWORD")
-	if pass == "" {
-		return Target{}, fmt.Errorf("POSTGRES_PASSWORD or DATABASE_URL must be set")
-	}
 
-	return Target{
+	// Build the fully-resolved (except credentials) target even when the
+	// password is missing, so the caller can still print the target line and
+	// apply the fail-closed rule before reporting the credential error.
+	t := Target{
 		Host:         host,
 		Port:         port,
 		User:         user,
@@ -136,7 +146,11 @@ func resolveTarget(getenv func(string) string) (Target, error) {
 		hostSource:   hostSource,
 		explicitHost: hostSource != "built-in default",
 		conflictEnv:  detectConflict(getenv, host),
-	}, nil
+	}
+	if pass == "" {
+		return t, fmt.Errorf("POSTGRES_PASSWORD or DATABASE_URL must be set")
+	}
+	return t, nil
 }
 
 // parseDatabaseURL parses a full connection string into a Target.
@@ -153,7 +167,14 @@ func parseDatabaseURL(raw string) (Target, error) {
 	if port == "" {
 		port = "5432"
 	}
-	pass, _ := u.User.Password()
+	// u.User is nil when the URL carries no userinfo (e.g.
+	// postgres://host:5432/db); treat that as an empty user/password instead of
+	// dereferencing it.
+	var user, pass string
+	if u.User != nil {
+		user = u.User.Username()
+		pass, _ = u.User.Password()
+	}
 	database := strings.TrimPrefix(u.Path, "/")
 	if database == "" {
 		database = "emergent"
@@ -166,7 +187,7 @@ func parseDatabaseURL(raw string) (Target, error) {
 	return Target{
 		Host:         u.Hostname(),
 		Port:         port,
-		User:         u.User.Username(),
+		User:         user,
 		Database:     database,
 		SSLMode:      sslMode,
 		Password:     pass,
