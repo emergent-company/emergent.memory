@@ -1260,6 +1260,17 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   max-height: 48rem;
 }
 
+/* ---------- htmx indicator (in-flight spinners) ---------- */
+/* htmx 4 injects its indicator CSS as `opacity:0; visibility:hidden` so a
+   spinner can fade in, but that keeps the element occupying layout space while
+   idle. Memory has exactly one htmx-indicator — the "Default models" Test
+   button spinner — and its idle footprint (a 15px loading dot) pushed the zap
+   icon away from the "Test" label. Collapse it out of layout when idle and
+   re-inline it only while the request is running. */
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator { display: inline-flex; }
+
 /* ---------- PWA: standalone display-mode hooks ---------- */
 /* Installed launches ("Add to Home Screen" on iOS, installed on Android) run
    in a standalone window with no browser chrome. Future PWA-only styling —
