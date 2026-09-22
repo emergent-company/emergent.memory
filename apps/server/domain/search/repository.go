@@ -35,8 +35,13 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 
 // beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes for improved
 // vector index recall. SET LOCAL scopes the setting to the current transaction only,
-// preventing cross-request interference. With ~100 IVFFlat lists (typical), probes=10
-// scans 10% of the index, improving recall from ~40% to ~90%+ with negligible latency cost.
+// preventing cross-request interference.
+//
+// This is retained for the relationship search leg, whose index on
+// kb.graph_relationships.embedding is still IVFFlat. The chunks index
+// (idx_chunks_embedding_hnsw, migration 00170) and the graph-objects index
+// (00164) are HNSW, so for those queries the SET LOCAL is a harmless no-op: it
+// neither errors nor changes the plan, latency, or recall.
 func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -52,6 +57,13 @@ func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (
 // configuredIVFFlatProbes returns the ivfflat.probes value to use for vector
 // searches, read from the SEARCH_IVFFLAT_PROBES env var. Defaults to 10 and is
 // clamped to >= 1 so an invalid/empty config never disables index scans.
+//
+// After migrations 00164 (graph objects) and 00170 (chunks), both consumers of
+// this value use HNSW indexes, so the setting no longer affects their plan or
+// recall and is effectively vestigial — it is still applied per transaction to
+// avoid a behaviour change and to keep a single knob should an IVFFlat index be
+// reintroduced. Relationship search has its own knob
+// (configuredRelationshipIVFFlatProbes).
 func configuredIVFFlatProbes() int {
 	probes := 10
 	if v := os.Getenv("SEARCH_IVFFLAT_PROBES"); v != "" {
@@ -213,7 +225,10 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	limit := mathutil.ClampLimit(params.Limit, 20, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
-	// Begin transaction with increased IVFFlat probes for better recall
+	// Begin transaction and apply ivfflat.probes for the legacy IVFFlat leg.
+	// The chunks index is HNSW (idx_chunks_embedding_hnsw, migration 00170), so
+	// the SET LOCAL is a no-op for this query; it is kept to avoid a behaviour
+	// change and because the helper is shared with relationship search.
 	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
 	if err != nil {
 		r.log.Error("vector search: failed to set ivfflat probes", logger.Error(err))
@@ -319,7 +334,8 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		lexicalScores = append(lexicalScores, hit.Score)
 	}
 
-	// Execute vector search with increased IVFFlat probes for better recall
+	// Execute vector search. As in VectorSearch, ivfflat.probes is applied only
+	// for the shared helper's benefit and is a no-op for the HNSW chunks index.
 	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
 	if err != nil {
 		r.log.Error("hybrid search: failed to set ivfflat probes", logger.Error(err))
