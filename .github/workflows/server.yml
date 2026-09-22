@@ -143,36 +143,15 @@ jobs:
     name: DB-backed Tests
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
-    services:
-      postgres:
-        # pgvector image: testutil's template DB creates the `vector` extension.
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: emergent
-        # Publish on a non-default host port: persistent self-hosted runners may
-        # already have a Postgres bound to 5432 (e.g. a local dev instance).
-        ports:
-          - 54329:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     env:
       # A missing/unreachable DSN must fail this job, not skip its tests.
       REQUIRE_DB: '1'
-      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:54329/emergent?sslmode=disable
-      POSTGRES_HOST: 127.0.0.1
-      POSTGRES_PORT: '54329'
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: emergent
-      POSTGRES_SSL_MODE: disable
       # Several tests assert on UTC timestamps; pin the runner's zone so they
       # are deterministic regardless of the host's local timezone.
       TZ: UTC
+      # Unique per run so concurrent jobs on the shared self-hosted runner
+      # never fight over the container name.
+      PG_CONTAINER: server-test-db-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -186,18 +165,46 @@ jobs:
           # already keeps GOMODCACHE/GOCACHE on disk.
           cache: false
 
-      - name: Wait for Postgres
+      # Postgres is started explicitly rather than as a workflow `service` so it
+      # can publish on an *ephemeral* host port. A fixed host port (the first
+      # cut used 54329) collides whenever two server.yml runs reach this job on
+      # the same self-hosted runner at once — which happened on the first CI
+      # run, with `Bind for :::54329 failed: port is already allocated`.
+      - name: Start Postgres
         run: |
+          set -euo pipefail
+          docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+          # pgvector image: testutil's template DB creates the `vector` extension.
+          # 127.0.0.1::5432 publishes the container port on a free host port.
+          docker run -d --name "$PG_CONTAINER" \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=emergent \
+            -p 127.0.0.1::5432 \
+            pgvector/pgvector:pg17
+          HOST_PORT=$(docker port "$PG_CONTAINER" 5432/tcp | head -1 | awk -F: '{print $NF}')
+          if [ -z "$HOST_PORT" ]; then
+            echo "::error::could not determine the Postgres host port"
+            docker logs "$PG_CONTAINER" || true
+            exit 1
+          fi
           for i in $(seq 1 60); do
-            if (exec 3<>/dev/tcp/127.0.0.1/54329) 2>/dev/null; then
-              exec 3>&-
-              echo "Postgres is accepting connections on 127.0.0.1:54329"
-              exit 0
+            if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+              break
             fi
             sleep 2
           done
-          echo "::error::Postgres did not become ready on 127.0.0.1:54329"
-          exit 1
+          docker exec "$PG_CONTAINER" pg_isready -U postgres
+          echo "Postgres is accepting connections on 127.0.0.1:${HOST_PORT}"
+          {
+            echo "TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:${HOST_PORT}/emergent?sslmode=disable"
+            echo "POSTGRES_HOST=127.0.0.1"
+            echo "POSTGRES_PORT=${HOST_PORT}"
+            echo "POSTGRES_USER=postgres"
+            echo "POSTGRES_PASSWORD=postgres"
+            echo "POSTGRES_DB=emergent"
+            echo "POSTGRES_SSL_MODE=disable"
+          } >> "$GITHUB_ENV"
 
       - name: Migrate test database
         working-directory: apps/server
@@ -219,6 +226,10 @@ jobs:
           # go_test_template database with a check-then-create, which races if
           # several packages bootstrap the template at once.
           go test -p 1 $PKGS -v -count=1 -timeout 20m
+
+      - name: Stop Postgres
+        if: always()
+        run: docker rm -f "$PG_CONTAINER" || true
 
   docker:
     name: Docker Build
