@@ -44,13 +44,18 @@ func NewA2AHandler(repo *Repository, executor *AgentExecutor, eventsSvc *events.
 // acpProjectID extracts the project ID from the authenticated user context.
 // Shared by the A2A v1.0 surface (message/stream/discovery) — kept under its
 // original name after the ACP HTTP layer was removed.
+//
+// A missing project is a client-side mistake, not a server fault, so it is
+// surfaced as an A2A PROJECT_REQUIRED (HTTP 400) envelope naming the expected
+// selector rather than the generic INVALID_AGENT_RESPONSE.
 func acpProjectID(c echo.Context) (string, error) {
 	user := auth.GetUser(c)
 	if user == nil {
 		return "", apperror.ErrUnauthorized
 	}
 	if user.ProjectID == "" {
-		return "", apperror.NewBadRequest("project context is required (set via API token)")
+		return "", NewA2AError(A2ACodeInvalidArgument, A2AReasonProjectRequired,
+			"project context is required: send the X-Project-ID header, or use a project-scoped API token")
 	}
 	return user.ProjectID, nil
 }
@@ -238,8 +243,9 @@ func (h *A2AHandler) ExtendedAgentCardHandler(c echo.Context) error {
 
 	projectID, err := acpProjectID(c)
 	if err != nil {
-		// 401 (no auth) / 400 (no project) — surfaced via apperror so the Echo
-		// error handler maps them to the correct HTTP status.
+		// 401 (no auth) / 400 PROJECT_REQUIRED (no project selector) — returned
+		// as an A2AError so a2aErrorEnvelopeMiddleware preserves the specific
+		// reason instead of collapsing it into INVALID_AGENT_RESPONSE.
 		return err
 	}
 

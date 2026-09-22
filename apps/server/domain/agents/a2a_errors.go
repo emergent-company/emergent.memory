@@ -33,6 +33,8 @@ const (
 	A2ACodeVersionNotSupported          A2AErrorCode = -32009
 	A2ACodeUnauthenticated              A2AErrorCode = -32010
 	A2ACodePermissionDenied             A2AErrorCode = -32011
+	A2ACodeInvalidArgument              A2AErrorCode = -32012
+	A2ACodeNotFound                     A2AErrorCode = -32013
 )
 
 // A2AErrorReason is the UPPER_SNAKE error reason emitted in the details entry.
@@ -48,11 +50,14 @@ const (
 	A2AReasonMethodNotAllowed             A2AErrorReason = "METHOD_NOT_ALLOWED"
 	A2AReasonUnauthenticated              A2AErrorReason = "UNAUTHENTICATED"
 	A2AReasonPermissionDenied             A2AErrorReason = "PERMISSION_DENIED"
+	A2AReasonInvalidArgument              A2AErrorReason = "INVALID_ARGUMENT"
+	A2AReasonProjectRequired              A2AErrorReason = "PROJECT_REQUIRED"
+	A2AReasonNotFound                     A2AErrorReason = "NOT_FOUND"
 )
 
 // HTTPStatus maps an A2A error code to its HTTP status code.
 // -32001→404, -32002/-32003/-32004/-32009→400, -32006→500,
-// -32005→405, -32010→401, -32011→403.
+// -32005→405, -32010→401, -32011→403, -32012→400, -32013→404.
 func (c A2AErrorCode) HTTPStatus() int {
 	switch c {
 	case A2ACodeTaskNotFound:
@@ -65,6 +70,10 @@ func (c A2AErrorCode) HTTPStatus() int {
 		return http.StatusForbidden
 	case A2ACodeMethodNotAllowed:
 		return http.StatusMethodNotAllowed
+	case A2ACodeNotFound:
+		return http.StatusNotFound
+	case A2ACodeInvalidArgument:
+		return http.StatusBadRequest
 	default:
 		return http.StatusBadRequest
 	}

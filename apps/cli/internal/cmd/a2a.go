@@ -31,7 +31,10 @@ func getA2AClient(cmd *cobra.Command) (*a2a.Client, error) {
 	}
 	// AuthorizationHeader returns "Bearer <token>"; we need just the token.
 	token = strings.TrimPrefix(token, "Bearer ")
-	return a2a.NewClient(baseURL, token), nil
+	// The authenticated A2A endpoints are project-scoped and the server rejects a
+	// request without a project selector (PROJECT_REQUIRED), so thread the
+	// configured project (MEMORY_PROJECT / config) as X-Project-ID.
+	return a2a.NewClient(baseURL, token).WithProject(c.ProjectID()), nil
 }
 
 // ── Root command: memory a2a ─────────────────────────────────────────────────

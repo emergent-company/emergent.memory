@@ -17,7 +17,9 @@ import (
 //
 // Discovery (global card) is unauthenticated; everything else requires a Bearer
 // emt_* project token with the stated scope. Project addressing is
-// credential-scoped (token-bound), never path-scoped.
+// selector-scoped, never path-scoped: the project comes from the X-Project-ID
+// request header (or, for a project-scoped emt_* token, from the token itself).
+// An authenticated request with neither is rejected with PROJECT_REQUIRED.
 func RegisterA2ARoutes(e *echo.Echo, h *A2AHandler, authMiddleware *auth.Middleware) {
 	// --- Discovery (global card: no auth) ---
 	e.GET("/.well-known/agent-card.json", h.GlobalAgentCardHandler)
@@ -330,14 +332,26 @@ func a2aErrorFrom(err error) *A2AError {
 	return a2aErrorFromStatus(http.StatusInternalServerError)
 }
 
-// a2aErrorFromStatus maps an HTTP status to an A2A auth/scope/error envelope.
+// a2aErrorFromStatus maps an HTTP status to an A2A error envelope, keeping
+// client-side mistakes distinguishable from a genuine server fault.
+//
+// INVALID_AGENT_RESPONSE is reserved for its A2A meaning — a 5xx where the
+// server (or the upstream agent runtime) failed — and is never used for a 4xx.
+// 4xx statuses map to their own reasons: 400 INVALID_ARGUMENT, 404 NOT_FOUND,
+// 405 METHOD_NOT_ALLOWED, 401/403 as before.
 func a2aErrorFromStatus(status int) *A2AError {
 	switch status {
 	case http.StatusUnauthorized:
 		return NewA2AError(A2ACodeUnauthenticated, A2AReasonUnauthenticated, "authentication required")
 	case http.StatusForbidden:
 		return NewA2AError(A2ACodePermissionDenied, A2AReasonPermissionDenied, "insufficient permissions")
-	default:
+	case http.StatusNotFound:
+		return NewA2AError(A2ACodeNotFound, A2AReasonNotFound, "resource not found")
+	case http.StatusMethodNotAllowed:
+		return NewA2AError(A2ACodeMethodNotAllowed, A2AReasonMethodNotAllowed, "method not allowed")
+	}
+	if status >= http.StatusInternalServerError {
 		return NewA2AError(A2ACodeInvalidAgentResponse, A2AReasonInvalidAgentResponse, "request failed")
 	}
+	return NewA2AError(A2ACodeInvalidArgument, A2AReasonInvalidArgument, "invalid request")
 }

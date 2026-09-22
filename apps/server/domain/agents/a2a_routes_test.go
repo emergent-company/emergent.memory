@@ -156,9 +156,67 @@ func TestA2AErrorFrom_ConvertsPlatformErrors(t *testing.T) {
 }
 
 func TestA2AErrorFromStatus(t *testing.T) {
-	assert.Equal(t, http.StatusUnauthorized, a2aErrorFromStatus(http.StatusUnauthorized).Code.HTTPStatus())
-	assert.Equal(t, http.StatusForbidden, a2aErrorFromStatus(http.StatusForbidden).Code.HTTPStatus())
-	assert.Equal(t, http.StatusInternalServerError, a2aErrorFromStatus(http.StatusTeapot).Code.HTTPStatus())
+	unauthenticated := a2aErrorFromStatus(http.StatusUnauthorized)
+	assert.Equal(t, http.StatusUnauthorized, unauthenticated.Code.HTTPStatus())
+	assert.Equal(t, A2AReasonUnauthenticated, unauthenticated.Reason)
+
+	denied := a2aErrorFromStatus(http.StatusForbidden)
+	assert.Equal(t, http.StatusForbidden, denied.Code.HTTPStatus())
+	assert.Equal(t, A2AReasonPermissionDenied, denied.Reason)
+
+	// 4xx client mistakes map to their own reasons — never INVALID_AGENT_RESPONSE.
+	badRequest := a2aErrorFromStatus(http.StatusBadRequest)
+	assert.Equal(t, http.StatusBadRequest, badRequest.Code.HTTPStatus())
+	assert.Equal(t, A2AReasonInvalidArgument, badRequest.Reason)
+
+	notFound := a2aErrorFromStatus(http.StatusNotFound)
+	assert.Equal(t, http.StatusNotFound, notFound.Code.HTTPStatus())
+	assert.Equal(t, A2AReasonNotFound, notFound.Reason)
+
+	// A non-standard 4xx is still a client error, not a 5xx.
+	teapot := a2aErrorFromStatus(http.StatusTeapot)
+	assert.Equal(t, http.StatusBadRequest, teapot.Code.HTTPStatus())
+	assert.Equal(t, A2AReasonInvalidArgument, teapot.Reason)
+
+	// A genuine server-side failure stays INVALID_AGENT_RESPONSE.
+	internal := a2aErrorFromStatus(http.StatusInternalServerError)
+	assert.Equal(t, http.StatusInternalServerError, internal.Code.HTTPStatus())
+	assert.Equal(t, A2AReasonInvalidAgentResponse, internal.Reason)
+}
+
+// TestAcpProjectID_MissingProjectReturnsProjectRequired is the #762 regression
+// guard: a missing project selector is a client-side mistake and must surface
+// as 400 INVALID_ARGUMENT / PROJECT_REQUIRED, not a 500 INVALID_AGENT_RESPONSE.
+func TestAcpProjectID_MissingProjectReturnsProjectRequired(t *testing.T) {
+	c, _ := newA2AActionContext("x", &auth.AuthUser{ID: "u"})
+
+	_, err := acpProjectID(c)
+	require.Error(t, err)
+
+	a2aErr := a2aErrorFrom(err)
+	require.NotNil(t, a2aErr)
+	assert.Equal(t, http.StatusBadRequest, a2aErr.Code.HTTPStatus())
+	assert.Equal(t, A2AReasonProjectRequired, a2aErr.Reason)
+	assert.Contains(t, a2aErr.Message, "X-Project-ID")
+}
+
+func TestA2ARoutes_ExtendedCardWithoutProjectReturns400ProjectRequired(t *testing.T) {
+	e, _ := newA2ATestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/extendedAgentCard", nil)
+	req.Header.Set("X-API-Key", a2aTestStandaloneKey)
+	req.Header.Set("X-Org-ID", a2aTestOrgID)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, A2AContentType, rec.Header().Get(echo.HeaderContentType))
+
+	var env A2AErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	require.Len(t, env.Error.Details, 1)
+	assert.Equal(t, "PROJECT_REQUIRED", env.Error.Details[0].Reason)
+	assert.Equal(t, "INVALID_ARGUMENT", env.Error.Status)
+	assert.Equal(t, int(A2ACodeInvalidArgument), env.Error.Code)
 }
 
 func TestA2ARoutes_MessageSendAndStreamAreLiteral(t *testing.T) {
