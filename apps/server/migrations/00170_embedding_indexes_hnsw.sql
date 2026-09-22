@@ -104,15 +104,19 @@ $$;
 -- +goose Down
 -- Restore the IVFFlat indexes (lists = 100, matching 00001/00052) so a rollback
 -- returns the schema to its pre-00170 state. Each index is replaced one at a
--- time and the new index is dropped first for a clean retry of an interrupted
--- CONCURRENTLY build.
+-- time. As in Up, any leftover target-name index (including an INVALID one left
+-- by an interrupted CONCURRENTLY build) is dropped first, so a retry rebuilds
+-- from scratch instead of skipping the build and completing without a usable
+-- index.
 DROP INDEX CONCURRENTLY IF EXISTS kb.idx_chunks_embedding_hnsw;
+DROP INDEX CONCURRENTLY IF EXISTS kb.idx_chunks_embedding;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding
     ON kb.chunks USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
 
 DROP INDEX CONCURRENTLY IF EXISTS kb.idx_skills_embedding_hnsw;
+DROP INDEX CONCURRENTLY IF EXISTS kb.idx_skills_embedding_ivfflat;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_skills_embedding_ivfflat
     ON kb.skills USING ivfflat (description_embedding vector_cosine_ops)

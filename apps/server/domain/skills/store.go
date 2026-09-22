@@ -172,7 +172,8 @@ func (r *Repository) FindForAgent(ctx context.Context, projectID string, orgID s
 // Returns the topK most relevant skills for the given project (global + org + project-scoped).
 // The index on kb.skills.description_embedding is HNSW (idx_skills_embedding_hnsw,
 // migration 00170): HNSW needs no probe tuning, so the ivfflat.probes set below is
-// a harmless no-op kept only because the beginTx helper is shared.
+// a harmless no-op. The helper is retained because it also opens the transaction
+// this query runs in; only the SET LOCAL ivfflat.probes statement is now vestigial.
 // Only considers skills with a non-NULL description_embedding.
 func (r *Repository) FindRelevant(ctx context.Context, projectID string, orgID string, vec []float32, topK int) ([]*Skill, error) {
 	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)

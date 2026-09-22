@@ -29,6 +29,12 @@ type embeddingIndexTarget struct {
 // A target whose index no longer exists must be removed from this list: a
 // scheduled REINDEX INDEX against a dropped index fails and is surfaced as an
 // aggregate task error every night.
+//
+// Migration 00170's Down restores the chunks and skills ivfflat indexes. Rolling
+// that migration back must therefore also revert this list (or redeploy the prior
+// binary); if those indexes are restored while this list stays shrunken, the
+// nightly task silently stops reindexing them. Migration rollback and this code
+// change are expected to ship together.
 var embeddingIndexTargets = []embeddingIndexTarget{
 	{schema: "kb", name: "idx_graph_relationships_embedding_ivfflat"},
 }
