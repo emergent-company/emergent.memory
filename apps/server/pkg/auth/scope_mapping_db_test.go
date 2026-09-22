@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,12 +14,33 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/joho/godotenv"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/migrations"
 )
+
+// loadAuthTestEnvFiles loads .env and .env.local from the nearest ancestor
+// directory containing .env.local, mirroring testutil.SetupTestDB. Without
+// this, config.NewConfig would read only the process environment, so a DB
+// configured solely in the repo dotenv files would be missed and the tests
+// would silently skip (or fall back to the default DSN).
+func loadAuthTestEnvFiles() {
+	wd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	for dir := wd; dir != "/"; dir = filepath.Dir(dir) {
+		envLocal := filepath.Join(dir, ".env.local")
+		if _, statErr := os.Stat(envLocal); statErr == nil {
+			_ = godotenv.Load(filepath.Join(dir, ".env"))
+			_ = godotenv.Overload(envLocal)
+			return
+		}
+	}
+}
 
 // This file holds the database-backed half of the #749 coverage: the SQL
 // user-id binding in dbProjectRole and the 00165 idempotency/org-scoping
@@ -74,6 +97,10 @@ func setupAuthDBTest(t *testing.T) *bun.DB {
 
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Honor repo dotenv configuration like testutil.SetupTestDB so a local/
+	// integration database does not depend on the caller re-exporting env.
+	loadAuthTestEnvFiles()
 
 	baseCfg, err := config.NewConfig(log)
 	if err != nil {
