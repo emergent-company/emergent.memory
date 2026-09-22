@@ -7,7 +7,7 @@
 ### Requirement: Vector index probe count is configurable
 The `ivfflat.probes` value applied in chunk search transactions SHALL be configurable via environment (`SEARCH_IVFFLAT_PROBES`), defaulting to 10, and MUST be applied per-query transaction.
 
-Graph-object vector search (`kb.graph_objects.embedding_v2`) uses the HNSW index created by migration `00164`, and relationship vector search (`kb.graph_relationships.embedding`) uses the HNSW index created by migration `00171`. Neither is tuned by `ivfflat.probes`, and relationship search no longer applies `SET LOCAL ivfflat.probes` at all. HNSW requires neither probe tuning nor a training step.
+Chunk vector search (`kb.chunks.embedding`) uses the HNSW index created by migration `00170`, graph-object vector search (`kb.graph_objects.embedding_v2`) uses the HNSW index created by migration `00164`, and relationship vector search (`kb.graph_relationships.embedding`) uses the HNSW index created by migration `00171`. None is tuned by `ivfflat.probes`, and relationship search no longer applies `SET LOCAL ivfflat.probes` at all. HNSW requires neither probe tuning nor a training step.
 
 #### Scenario: Probe count driven by environment
 - **WHEN** the server starts with `SEARCH_IVFFLAT_PROBES=40`
@@ -20,6 +20,10 @@ Graph-object vector search (`kb.graph_objects.embedding_v2`) uses the HNSW index
 #### Scenario: Graph-object search is not governed by the probe knob
 - **WHEN** a graph-object vector search runs
 - **THEN** it MUST use the HNSW index on `kb.graph_objects.embedding_v2`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES`
+
+#### Scenario: Chunk search is not governed by the probe knob
+- **WHEN** a chunk vector or hybrid search runs
+- **THEN** it MUST use the HNSW index on `kb.chunks.embedding`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES`
 
 #### Scenario: Relationship search is not governed by the probe knob
 - **WHEN** a relationship vector search runs
