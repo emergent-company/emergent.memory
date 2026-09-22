@@ -6,15 +6,21 @@ Exposes retrieval/search performance knobs as environment configuration: `ivffla
 ## Requirements
 
 ### Requirement: Vector index probe count is configurable
-The `ivfflat.probes` value used in chunk and graph-object search transactions SHALL be configurable via environment (`SEARCH_IVFFLAT_PROBES`), defaulting to 10. Relationship vector search uses a separate knob (see Relationship vector search probe count is configurable). The configured value MUST be applied per-query transaction.
+The `ivfflat.probes` value applied in chunk search transactions SHALL be configurable via environment (`SEARCH_IVFFLAT_PROBES`), defaulting to 10, and MUST be applied per-query transaction. Relationship vector search uses a separate knob (see Relationship vector search probe count is configurable).
+
+Graph-object vector search (`kb.graph_objects.embedding_v2`) uses the HNSW index created by migration `00164` and is therefore not tuned by `ivfflat.probes`: its transaction still applies the configured value, but that setting does not affect the query's plan, latency, or recall. HNSW requires neither probe tuning nor a training step.
 
 #### Scenario: Probe count driven by environment
 - **WHEN** the server starts with `SEARCH_IVFFLAT_PROBES=40`
-- **THEN** chunk and graph-object search queries MUST execute with `SET LOCAL ivfflat.probes = 40`
+- **THEN** chunk search queries MUST execute with `SET LOCAL ivfflat.probes = 40`
 
 #### Scenario: Omitted setting preserves default
 - **WHEN** `SEARCH_IVFFLAT_PROBES` is unset
-- **THEN** chunk and graph-object search queries MUST use the default of 10
+- **THEN** chunk search queries MUST use the default of 10
+
+#### Scenario: Graph-object search is not governed by the probe knob
+- **WHEN** a graph-object vector search runs
+- **THEN** it MUST use the HNSW index on `kb.graph_objects.embedding_v2`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES`
 
 ### Requirement: RRF constant and fusion weights are configurable
 The reciprocal-rank-fusion constant (`k`, default 60) and the weighted-fusion weights (graph/text/relationship, default 0.25/0.75/0) SHALL be configurable via environment.
