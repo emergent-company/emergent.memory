@@ -1698,8 +1698,11 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 
 	// A single unsatisfiable term in the strict query — typically a hyphenated
 	// identifier that websearch_to_tsquery rewrites into a phrase that cannot
-	// match — zeroes the whole AND clause. Retry once without numeric terms
-	// before reporting no results.
+	// match — zeroes the whole AND clause. Migration 00174 now makes the common
+	// composite-key/identifier case satisfiable directly (normalised key +
+	// bounded fts), so this is a safety net for tokens the index still cannot
+	// represent rather than the primary recovery path. Retry once without
+	// numeric terms before reporting no results.
 	relaxed, ok := ftsquery.Relax(params.Query)
 	if !ok {
 		return results, nil
@@ -1717,13 +1720,21 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 		params.Limit = r.maxListLimit
 	}
 
-	// Build WHERE conditions
+	// Build WHERE conditions.
+	//
+	// The tsvector is a concatenation of an identifier space built with the
+	// `simple` configuration (raw + separator-normalised key, type) and a prose
+	// space built with `norwegian` (bounded title/name/description, see
+	// migration 00174). Lexemes carry no configuration, so a single `@@` against
+	// one query configuration only sees half the index. Match both: `simple`
+	// keeps identifier components verbatim, `norwegian` applies stemming to
+	// prose terms (`aksjeloven` -> `aksj`).
 	conditions := []string{
 		"project_id = ?",
 		"supersedes_id IS NULL", // HEAD versions only
-		"fts @@ websearch_to_tsquery('simple', ?)",
+		"(fts @@ websearch_to_tsquery('simple', ?) OR fts @@ websearch_to_tsquery('norwegian', ?))",
 	}
-	args := []any{params.ProjectID, queryText}
+	args := []any{params.ProjectID, queryText, queryText}
 
 	// Add common filters
 	filterConds, filterArgs := buildSearchFilters(searchFilters{
@@ -1744,9 +1755,13 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 	// ts_rank_cd rewards documents where query terms appear close together and cover the query well.
 	// Flag 1 (log-length normalization) is gentler than flag 32 (raw length division), preventing
 	// short documents with rare n-grams from dominating over longer documents that match all query terms.
+	// The rank is the better of the two configurations, mirroring the OR in the WHERE clause.
 	query := `
 		SELECT ` + graphObjectColumns + `,
-			ts_rank_cd(fts, websearch_to_tsquery('simple', ?), 1) AS rank
+			GREATEST(
+				ts_rank_cd(fts, websearch_to_tsquery('simple', ?), 1),
+				ts_rank_cd(fts, websearch_to_tsquery('norwegian', ?), 1)
+			) AS rank
 		FROM kb.graph_objects
 		` + whereClause + `
 		ORDER BY rank DESC
@@ -1754,8 +1769,8 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 		OFFSET ?
 	`
 
-	// Prepend query param for ts_rank, append limit and offset
-	finalArgs := append([]any{queryText}, args...)
+	// Prepend the two query params for ts_rank, append limit and offset
+	finalArgs := append([]any{queryText, queryText}, args...)
 	finalArgs = append(finalArgs, params.Limit, params.Offset)
 
 	rows, err := r.db.QueryContext(ctx, query, finalArgs...)
