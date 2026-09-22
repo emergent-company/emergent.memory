@@ -24,7 +24,7 @@ import (
 // can load its own self-contained htmx v4 build (webui/static/js/htmx.min.js)
 // instead of go-daisy's bundled htmx 2.x, with v2-compat config applied right
 // after load. Everything else mirrors PageFull's document structure.
-templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, user *currentUser, accounts []currentUser, content templ.Component, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64) {
+templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, user *currentUser, accounts []currentUser, content templ.Component, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string) {
 	<!DOCTYPE html>
 	<html lang="en" data-theme="dark" class="group/html" data-asset-track="reload">
 		<head>
@@ -170,6 +170,9 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/sidepanel.js")) }></script>
+			if feedbackOverlayURL != "" {
+				<script src={ templ.SafeURL(feedbackOverlayURL + "/feedback-overlay.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
+			}
 		</body>
 	</html>
 }
