@@ -163,6 +163,26 @@ task stop        # stop background server
 | Remote test server | — | `http://localhost:3002` (via SSH tunnel) |
 | Local Go server (direct) | — | `http://localhost:3012` |
 
+### Dev host topology — one machine, several names
+
+There is **one** dev machine. The names below all reach it; there is **no separate legacy
+dev host** — never target one.
+
+| Name / address | Reaches |
+|---|---|
+| `ssh emergent-dev` | hostname `emergent-dev` (the dev box) |
+| `ssh memory-dev` | same machine — operator-provided; this alias is not defined on the orchestrator host |
+| `10.10.10.40` | private IP of the same box |
+| `100.117.62.45` | Tailscale IP of the same box |
+| `46.4.253.156` / `api.dev.emergent-company.ai` | public address fronting the same box |
+| `http://10.10.10.40:3002/health` | dev API (port `3002`) |
+
+Deploys are **not scheduled** — trigger explicitly:
+
+```bash
+gh workflow run deploy-dev.yml --repo emergent-company/emergent.memory.infra --field target=both
+```
+
 ## Before Writing Code — Check These First
 
 | Creating… | Read first… |
