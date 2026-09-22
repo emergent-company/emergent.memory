@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -33,6 +34,7 @@ type JobQueueMetrics struct {
 	Processing  int64  `json:"processing"`
 	Completed   int64  `json:"completed"`
 	Failed      int64  `json:"failed"`
+	StaleFailed int64  `json:"stale_failed"`
 	Total       int64  `json:"total"`
 	LastHour    int64  `json:"last_hour"`
 	Last24Hours int64  `json:"last_24_hours"`
@@ -46,16 +48,24 @@ type AllJobMetrics struct {
 	Timestamp string            `json:"timestamp"`
 }
 
-const selectCounts = `
+// selectCounts builds the per-queue status aggregate for errorColumn (which
+// must be qualified when the caller joins other tables). failed counts only
+// genuine failures: rows terminal-failed by the stale-job sweep carry
+// jobs.StaleJobMessage and are reported separately as stale_failed, so
+// historical cleanup is not presented as current breakage.
+func selectCounts(errorColumn string) string {
+	return `
 	SELECT
 		COUNT(*) FILTER (WHERE status = 'pending') as pending,
 		COUNT(*) FILTER (WHERE status IN ('processing', 'running')) as processing,
 		COUNT(*) FILTER (WHERE status = 'completed') as completed,
-		COUNT(*) FILTER (WHERE status = 'failed') as failed,
+		COUNT(*) FILTER (WHERE status = 'failed' AND COALESCE(` + errorColumn + `, '') <> '` + jobs.StaleJobMessage + `') as failed,
+		COUNT(*) FILTER (WHERE status = 'failed' AND ` + errorColumn + ` = '` + jobs.StaleJobMessage + `') as stale_failed,
 		COUNT(*) as total,
 		COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') as last_hour,
 		COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as last_24_hours
 	FROM `
+}
 
 // JobMetrics returns metrics for all job queues
 // @Summary      Get job queue metrics
@@ -133,15 +143,15 @@ func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, projectID st
 		// No project filter — simple aggregate over the full table
 		switch name {
 		case "document_parsing":
-			query = selectCounts + `kb.document_parsing_jobs`
+			query = selectCounts("error_message") + `kb.document_parsing_jobs`
 		case "chunk_embedding":
-			query = selectCounts + `kb.chunk_embedding_jobs`
+			query = selectCounts("last_error") + `kb.chunk_embedding_jobs`
 		case "graph_embedding":
-			query = selectCounts + `kb.graph_embedding_jobs`
+			query = selectCounts("last_error") + `kb.graph_embedding_jobs`
 		case "object_extraction":
-			query = selectCounts + `kb.object_extraction_jobs`
+			query = selectCounts("error_message") + `kb.object_extraction_jobs`
 		case "email":
-			query = selectCounts + `kb.email_jobs`
+			query = selectCounts("last_error") + `kb.email_jobs`
 		default:
 			return nil, nil
 		}
@@ -150,23 +160,23 @@ func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, projectID st
 		// tables without project_id join through their FK chain.
 		switch name {
 		case "document_parsing":
-			query = selectCounts + `kb.document_parsing_jobs WHERE project_id = ?`
+			query = selectCounts("error_message") + `kb.document_parsing_jobs WHERE project_id = ?`
 			args = append(args, projectID)
 		case "chunk_embedding":
 			// chunk_embedding_jobs → chunks → documents (has project_id)
-			query = selectCounts + `kb.chunk_embedding_jobs cej
+			query = selectCounts("cej.last_error") + `kb.chunk_embedding_jobs cej
 				JOIN kb.chunks c ON c.id = cej.chunk_id
 				JOIN kb.documents d ON d.id = c.document_id
 				WHERE d.project_id = ?`
 			args = append(args, projectID)
 		case "graph_embedding":
 			// graph_embedding_jobs → graph_objects (has project_id)
-			query = selectCounts + `kb.graph_embedding_jobs gej
+			query = selectCounts("gej.last_error") + `kb.graph_embedding_jobs gej
 				JOIN kb.graph_objects go ON go.id = gej.object_id
 				WHERE go.project_id = ?`
 			args = append(args, projectID)
 		case "object_extraction":
-			query = selectCounts + `kb.object_extraction_jobs WHERE project_id = ?`
+			query = selectCounts("error_message") + `kb.object_extraction_jobs WHERE project_id = ?`
 			args = append(args, projectID)
 		default:
 			return nil, nil
@@ -178,6 +188,7 @@ func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, projectID st
 		Processing  int64 `bun:"processing"`
 		Completed   int64 `bun:"completed"`
 		Failed      int64 `bun:"failed"`
+		StaleFailed int64 `bun:"stale_failed"`
 		Total       int64 `bun:"total"`
 		LastHour    int64 `bun:"last_hour"`
 		Last24Hours int64 `bun:"last_24_hours"`
@@ -194,6 +205,7 @@ func (h *MetricsHandler) getQueueMetrics(ctx context.Context, name, projectID st
 		Processing:  metrics.Processing,
 		Completed:   metrics.Completed,
 		Failed:      metrics.Failed,
+		StaleFailed: metrics.StaleFailed,
 		Total:       metrics.Total,
 		LastHour:    metrics.LastHour,
 		Last24Hours: metrics.Last24Hours,

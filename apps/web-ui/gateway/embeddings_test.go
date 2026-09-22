@@ -82,7 +82,7 @@ func TestGetEmbeddingProgress(t *testing.T) {
 			t.Errorf("X-Project-ID = %q, want proj", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"objects":{"pending":1,"processing":2,"completed":3,"failed":4,"deadLetter":5},"relationships":{"pending":6,"processing":7,"completed":8,"failed":9,"deadLetter":10}}`)
+		_, _ = io.WriteString(w, `{"objects":{"pending":1,"processing":2,"completed":3,"failed":4,"staleFailed":11,"deadLetter":5},"relationships":{"pending":6,"processing":7,"completed":8,"failed":9,"staleFailed":12,"deadLetter":10}}`)
 	}))
 	defer srv.Close()
 
@@ -91,10 +91,10 @@ func TestGetEmbeddingProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEmbeddingProgress: %v", err)
 	}
-	if p.Objects.Pending != 1 || p.Objects.Processing != 2 || p.Objects.Completed != 3 || p.Objects.Failed != 4 || p.Objects.DeadLetter != 5 {
+	if p.Objects.Pending != 1 || p.Objects.Processing != 2 || p.Objects.Completed != 3 || p.Objects.Failed != 4 || p.Objects.StaleFailed != 11 || p.Objects.DeadLetter != 5 {
 		t.Errorf("objects = %+v", p.Objects)
 	}
-	if p.Relationships.Pending != 6 || p.Relationships.DeadLetter != 10 {
+	if p.Relationships.Pending != 6 || p.Relationships.StaleFailed != 12 || p.Relationships.DeadLetter != 10 {
 		t.Errorf("relationships = %+v", p.Relationships)
 	}
 }
@@ -312,8 +312,8 @@ func TestEmbeddingsRoute(t *testing.T) {
 
 func TestRenderEmbeddingsPage(t *testing.T) {
 	progress := &EmbeddingProgress{
-		Objects:       EmbeddingQueueStats{Pending: 1, Processing: 2, Completed: 3, Failed: 4, DeadLetter: 5},
-		Relationships: EmbeddingQueueStats{Pending: 6, Processing: 7, Completed: 8, Failed: 9, DeadLetter: 10},
+		Objects:       EmbeddingQueueStats{Pending: 1, Processing: 2, Completed: 3, Failed: 4, StaleFailed: 11, DeadLetter: 5},
+		Relationships: EmbeddingQueueStats{Pending: 6, Processing: 7, Completed: 8, Failed: 9, StaleFailed: 12, DeadLetter: 10},
 	}
 	status := &EmbeddingStatus{
 		Objects:       EmbeddingWorkerStatus{Running: true},
@@ -324,7 +324,7 @@ func TestRenderEmbeddingsPage(t *testing.T) {
 	html := renderHTML(t, EmbeddingsPage(embeddingPageData{Progress: progress, Status: status}))
 	for _, want := range []string{
 		"Object embedding queue", "Relationship embedding queue",
-		"Pending", "Processing", "Completed", "Failed", "Dead letter",
+		"Pending", "Processing", "Completed", "Failed", "Stale failed", "Dead letter",
 		"Objects: running", "Relationships: paused", "Sweep: idle",
 		"Batch size", "Concurrency", "Interval", "Stale after",
 		"Adaptive scaling", "enabled",

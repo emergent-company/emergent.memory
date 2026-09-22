@@ -10,6 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -471,13 +472,18 @@ func (s *GraphEmbeddingJobsService) FindByObjectIDs(ctx context.Context, objectI
 func (s *GraphEmbeddingJobsService) Stats(ctx context.Context) (*GraphEmbeddingQueueStats, error) {
 	stats := &GraphEmbeddingQueueStats{}
 
+	// failed counts only genuine failures: rows terminal-failed by the stale-job
+	// sweep (last_error = jobs.StaleJobMessage) are historical cleanup artifacts,
+	// not current breakage, and are reported separately as staleFailed.
 	err := s.db.NewRaw(`SELECT 
 		COUNT(*) FILTER (WHERE status = 'pending') as pending,
 		COUNT(*) FILTER (WHERE status = 'processing') as processing,
 		COUNT(*) FILTER (WHERE status = 'completed') as completed,
-		COUNT(*) FILTER (WHERE status = 'failed') as failed,
+		COUNT(*) FILTER (WHERE status = 'failed' AND COALESCE(last_error, '') <> ?) as failed,
+		COUNT(*) FILTER (WHERE status = 'failed' AND last_error = ?) as stale_failed,
 		COUNT(*) FILTER (WHERE status = 'dead_letter') as dead_letter
-	FROM kb.graph_embedding_jobs`).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.DeadLetter)
+	FROM kb.graph_embedding_jobs`, jobs.StaleJobMessage, jobs.StaleJobMessage).
+		Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.StaleFailed, &stats.DeadLetter)
 	if err != nil {
 		return nil, fmt.Errorf("get stats: %w", err)
 	}
@@ -487,11 +493,12 @@ func (s *GraphEmbeddingJobsService) Stats(ctx context.Context) (*GraphEmbeddingQ
 
 // GraphEmbeddingQueueStats contains queue statistics
 type GraphEmbeddingQueueStats struct {
-	Pending    int64 `json:"pending"`
-	Processing int64 `json:"processing"`
-	Completed  int64 `json:"completed"`
-	Failed     int64 `json:"failed"`
-	DeadLetter int64 `json:"deadLetter"`
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Completed   int64 `json:"completed"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
+	DeadLetter  int64 `json:"deadLetter"`
 }
 
 // ResetDeadLetterJobs requeues dead_letter jobs for immediate retry.
@@ -557,17 +564,20 @@ func (s *GraphEmbeddingJobsService) ClearPendingJobs(ctx context.Context) (int, 
 }
 
 // StatsByProject returns queue statistics filtered to a single project.
+// failed excludes stale-sweep reaps; see Stats.
 func (s *GraphEmbeddingJobsService) StatsByProject(ctx context.Context, projectID string) (*GraphEmbeddingQueueStats, error) {
 	stats := &GraphEmbeddingQueueStats{}
 	err := s.db.NewRaw(`SELECT
 		COUNT(*) FILTER (WHERE j.status = 'pending') as pending,
 		COUNT(*) FILTER (WHERE j.status = 'processing') as processing,
 		COUNT(*) FILTER (WHERE j.status = 'completed') as completed,
-		COUNT(*) FILTER (WHERE j.status = 'failed') as failed,
+		COUNT(*) FILTER (WHERE j.status = 'failed' AND COALESCE(j.last_error, '') <> ?) as failed,
+		COUNT(*) FILTER (WHERE j.status = 'failed' AND j.last_error = ?) as stale_failed,
 		COUNT(*) FILTER (WHERE j.status = 'dead_letter') as dead_letter
 	FROM kb.graph_embedding_jobs j
 	JOIN kb.graph_objects o ON o.id = j.object_id
-	WHERE o.project_id = ?`, projectID).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.DeadLetter)
+	WHERE o.project_id = ?`, jobs.StaleJobMessage, jobs.StaleJobMessage, projectID).
+		Scan(ctx, &stats.Pending, &stats.Processing, &stats.Completed, &stats.Failed, &stats.StaleFailed, &stats.DeadLetter)
 	if err != nil {
 		return nil, fmt.Errorf("get project stats: %w", err)
 	}

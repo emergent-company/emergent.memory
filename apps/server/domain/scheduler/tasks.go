@@ -8,6 +8,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -133,9 +134,10 @@ func (t *CacheCleanupTask) Run(ctx context.Context) error {
 }
 
 const (
-	// staleJobMessage is stamped on every job terminal-failed by the sweep. Kept
-	// verbatim so existing dashboards/queries that match on it keep working.
-	staleJobMessage = "Job marked as stale during cleanup"
+	// staleJobMessage is stamped on every job terminal-failed by the sweep. The
+	// canonical value lives in internal/jobs so the reporting queries that split
+	// stale-sweep rows out of "failed" use the exact same string.
+	staleJobMessage = jobs.StaleJobMessage
 
 	// staleJobMassReapAlert is the stable log/alert marker emitted when a single
 	// sweep terminal-fails more jobs in one table than massReapThreshold.
