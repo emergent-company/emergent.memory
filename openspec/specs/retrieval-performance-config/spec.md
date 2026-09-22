@@ -6,9 +6,9 @@ Exposes retrieval/search performance knobs as environment configuration: `ivffla
 ## Requirements
 
 ### Requirement: Vector index probe count is configurable
-The `ivfflat.probes` value applied in chunk search transactions SHALL be configurable via environment (`SEARCH_IVFFLAT_PROBES`), defaulting to 10, and MUST be applied per-query transaction. Relationship vector search uses a separate knob (see Relationship vector search probe count is configurable).
+The `ivfflat.probes` value applied in chunk search transactions SHALL be configurable via environment (`SEARCH_IVFFLAT_PROBES`), defaulting to 10, and MUST be applied per-query transaction.
 
-Graph-object vector search (`kb.graph_objects.embedding_v2`) uses the HNSW index created by migration `00164` and is therefore not tuned by `ivfflat.probes`: its transaction still applies the configured value, but that setting does not affect the query's plan, latency, or recall. HNSW requires neither probe tuning nor a training step.
+Chunk vector search (`kb.chunks.embedding`) uses the HNSW index created by migration `00170`, graph-object vector search (`kb.graph_objects.embedding_v2`) uses the HNSW index created by migration `00164`, and relationship vector search (`kb.graph_relationships.embedding`) uses the HNSW index created by migration `00171`. None is tuned by `ivfflat.probes`, and relationship search no longer applies `SET LOCAL ivfflat.probes` at all. HNSW requires neither probe tuning nor a training step.
 
 #### Scenario: Probe count driven by environment
 - **WHEN** the server starts with `SEARCH_IVFFLAT_PROBES=40`
@@ -21,6 +21,14 @@ Graph-object vector search (`kb.graph_objects.embedding_v2`) uses the HNSW index
 #### Scenario: Graph-object search is not governed by the probe knob
 - **WHEN** a graph-object vector search runs
 - **THEN** it MUST use the HNSW index on `kb.graph_objects.embedding_v2`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES`
+
+#### Scenario: Chunk search is not governed by the probe knob
+- **WHEN** a chunk vector or hybrid search runs
+- **THEN** it MUST use the HNSW index on `kb.chunks.embedding`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES`
+
+#### Scenario: Relationship search is not governed by the probe knob
+- **WHEN** a relationship vector search runs
+- **THEN** it MUST use the HNSW index on `kb.graph_relationships.embedding`, and its results MUST NOT depend on `SEARCH_IVFFLAT_PROBES` or any relationship-specific probe setting
 
 ### Requirement: RRF constant and fusion weights are configurable
 The reciprocal-rank-fusion constant (`k`, default 60) and the weighted-fusion weights (graph/text/relationship, default 0.25/0.75/0) SHALL be configurable via environment.
@@ -75,17 +83,39 @@ The unified search default and maximum result limits SHALL be configurable via e
 - **WHEN** `MEMORY_SEARCH_DEFAULT_LIMIT` and a max-limit env override are set above the current ceiling
 - **THEN** search MUST honor the raised maximum up to the configured bound
 
-### Requirement: Relationship vector search probe count is configurable
-The `ivfflat.probes` value used in relationship vector search transactions SHALL be configurable via `SEARCH_RELATIONSHIP_IVFFLAT_PROBES`, defaulting to 5. The default is deliberately lower than the global default (10): at probes=10 the planner abandons the ivfflat index on `kb.graph_relationships` in favor of an optimistic parallel sequential scan, degrading relationship search from ~250ms to minutes. The configured value MUST be applied per-query transaction and MUST be clamped to a minimum of 1 (invalid, zero, or negative values fall back to the default).
+### Requirement: Relationship namespace predicate stays on the embedding table
+Relationship vector search SHALL apply the namespace predicate on `kb.graph_relationships.namespace`, denormalised from the source object, rather than on the joined `kb.graph_objects` row. `namespace` SHALL be populated on every relationship insert and inherited across relationship versions (tombstone, restore, patch, fast-forward, similarity-merge, branch copy) so it mirrors the source object's namespace. The predicate MUST remain absent when namespace is unset (`namespace: "all"` or no namespace requested), preserving the unfiltered path.
 
-#### Scenario: Relationship probe count driven by environment
-- **WHEN** the server starts with `SEARCH_RELATIONSHIP_IVFFLAT_PROBES=3`
-- **THEN** relationship search queries MUST execute with `SET LOCAL ivfflat.probes = 3`
+#### Scenario: Namespace-scoped search filters on the relationship row
+- **WHEN** a relationship vector search runs with an explicit namespace
+- **THEN** the query MUST filter on `kb.graph_relationships.namespace = ?` and MUST NOT filter on the joined `kb.graph_objects.namespace`
 
-#### Scenario: Relationship probe count omitted preserves default
-- **WHEN** `SEARCH_RELATIONSHIP_IVFFLAT_PROBES` is unset
-- **THEN** relationship search queries MUST use the default of 5, regardless of `SEARCH_IVFFLAT_PROBES`
+#### Scenario: Unset namespace leaves the query unfiltered
+- **WHEN** a relationship vector search runs with no namespace (unset or `"all"`)
+- **THEN** the query MUST contain no namespace predicate
 
-#### Scenario: Invalid relationship probe count falls back to default
-- **WHEN** `SEARCH_RELATIONSHIP_IVFFLAT_PROBES` is set to a non-numeric, zero, or negative value
-- **THEN** relationship search queries MUST use the default of 5
+#### Scenario: Namespace survives relationship versioning
+- **WHEN** a version of an existing relationship is created (patch, restore, tombstone, merge, or branch copy)
+- **THEN** the new row MUST carry the previous HEAD's namespace
+
+#### Scenario: Namespace is backfilled for existing relationships
+- **WHEN** migration `00172` is applied to a database with existing relationships
+- **THEN** every relationship with a resolvable source object MUST be backfilled with that object's namespace
+
+### Requirement: Relationship namespace denormalisation is reversible
+The namespace denormalisation migration SHALL be reversible: its Down migration MUST drop the index and the `namespace` column without affecting other relationship data.
+
+#### Scenario: Rolling back the migration
+- **WHEN** migration `00172` is rolled back
+- **THEN** `kb.graph_relationships.namespace` and `idx_graph_relationships_namespace` MUST no longer exist
+
+### Requirement: Embedding ANN indexes use HNSW
+The embedding ANN indexes on `kb.graph_objects.embedding_v2` (migration `00164`), `kb.chunks.embedding` and `kb.skills.description_embedding` (migration `00170`) SHALL be pgvector HNSW indexes using `vector_cosine_ops` with `m = 16` and `ef_construction = 64`. The periodic embedding index reindex task SHALL NOT target HNSW or dropped indexes; it SHALL continue to target only indexes still built with ivfflat.
+
+#### Scenario: HNSW indexes present
+- **WHEN** migrations `00164` and `00170` have applied
+- **THEN** `kb.chunks.embedding` and `kb.skills.description_embedding` are served by HNSW indexes and their ivfflat indexes have been dropped
+
+#### Scenario: Reindex task skips migrated indexes
+- **WHEN** the scheduled embedding index reindex task runs
+- **THEN** it issues `REINDEX` only for indexes still built with ivfflat and never for an HNSW or dropped index
