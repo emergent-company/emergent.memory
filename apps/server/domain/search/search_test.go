@@ -1131,3 +1131,20 @@ func TestRelationshipProbesBelowGlobalDefault(t *testing.T) {
 	assert.Less(t, configuredRelationshipIVFFlatProbes(), configuredIVFFlatProbes(),
 		"relationship ivfflat.probes must stay below the global default or the planner drops the index")
 }
+
+func TestBuildRelationshipSearchQuery(t *testing.T) {
+	projectID := uuid.New()
+	ns := "team-a"
+
+	q, args := buildRelationshipSearchQuery("'[1,2,3]'", projectID, nil, 50)
+	assert.NotContains(t, q, "r.namespace")
+	assert.NotContains(t, q, "src.namespace")
+	assert.Len(t, args, 6)
+
+	q2, args2 := buildRelationshipSearchQuery("'[1,2,3]'", projectID, &ns, 50)
+	assert.Contains(t, q2, "AND r.namespace = ?")
+	assert.NotContains(t, q2, "src.namespace")
+	assert.Len(t, args2, 7)
+	assert.Equal(t, "team-a", args2[4])
+	assert.Equal(t, 50, args2[6])
+}
