@@ -651,9 +651,6 @@ type oidcAuthSource string
 const (
 	authSourceIntrospection oidcAuthSource = "introspection"
 	authSourceUserinfo      oidcAuthSource = "userinfo"
-	// authSourceJWT is reserved for the local JWT verification path. verifyJWT
-	// is not implemented yet, so it is not produced today.
-	authSourceJWT oidcAuthSource = "jwt"
 )
 
 // TokenClaims represents parsed token claims
