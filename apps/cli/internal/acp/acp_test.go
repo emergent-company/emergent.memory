@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/idgen"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
@@ -948,5 +950,119 @@ func TestEvictedSessionLateTurnAborts(t *testing.T) {
 		if got != StopReasonCancelled {
 			t.Errorf("prompt %d stopReason = %q, want cancelled", i, got)
 		}
+	}
+}
+
+// TestStreamErrorMidStreamPropagatesAsRPCError verifies that a transport failure
+// mid-stream (an undecodable SSE payload) surfaces as a JSON-RPC error for the
+// prompt rather than a spurious end_turn, while chunks emitted before the
+// failure are still delivered incrementally.
+func TestStreamErrorMidStreamPropagatesAsRPCError(t *testing.T) {
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+
+		b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+			TaskID:    "task-1",
+			ContextID: "ctx-1",
+			Artifact:  a2a.Artifact{ArtifactID: "artifact-task-1", Parts: []a2a.Part{a2a.TextPart("partial")}},
+		}})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		if fl != nil {
+			fl.Flush()
+		}
+		// A subsequent event that is not valid JSON must fail the stream.
+		_, _ = fmt.Fprint(w, "data: {not-json}\n\n")
+		if fl != nil {
+			fl.Flush()
+		}
+	})
+
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}`,
+	}, "\n") + "\n"
+
+	msgs := decodeLines(t, runLines(t, agent, input))
+
+	// init, session/new, chunk("partial"), prompt error.
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %d: %v", len(msgs), msgs)
+	}
+	if got := chunkText(t, msgs[2]); got != "partial" {
+		t.Errorf("pre-failure chunk = %q, want partial", got)
+	}
+	if _, hasResult := msgs[3]["result"]; hasResult {
+		t.Errorf("prompt returned a result %v, want an error", msgs[3]["result"])
+	}
+	assertErrorCode(t, msgs[3], codeInternal)
+}
+
+// TestCancelMidStreamReturnsCancelled verifies that a session/cancel arriving
+// while the A2A stream is still open tears the in-flight stream down and
+// resolves the prompt with stopReason "cancelled" (not end_turn).
+func TestCancelMidStreamReturnsCancelled(t *testing.T) {
+	chunkSent := make(chan struct{})
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+
+		b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+			TaskID:    "task-1",
+			ContextID: "ctx-1",
+			Artifact:  a2a.Artifact{ArtifactID: "artifact-task-1", Parts: []a2a.Part{a2a.TextPart("partial")}},
+		}})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		if fl != nil {
+			fl.Flush()
+		}
+		close(chunkSent)
+
+		// Hold the stream open until the client cancels (or the test times out).
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+			t.Error("stream not torn down by cancellation")
+		}
+	})
+
+	sessID := agent.newSession().(SessionNewResponse).SessionID
+
+	// Feed the prompt, wait until the stream is provably open, then cancel, so
+	// the cancellation is genuinely mid-stream rather than racing registration.
+	promptLine := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":%q,"prompt":[{"type":"text","text":"hi"}]}}`, sessID)
+	cancelLine := fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":%q}}`, sessID)
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = fmt.Fprintln(pw, promptLine)
+		<-chunkSent
+		_, _ = fmt.Fprintln(pw, cancelLine)
+		_ = pw.Close()
+	}()
+
+	var out, errBuf bytes.Buffer
+	if err := Run(context.Background(), pr, &out, &errBuf, agent); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	msgs := decodeLines(t, out.Bytes())
+
+	var promptResp map[string]any
+	for _, m := range msgs {
+		if m["id"] == float64(3) {
+			promptResp = m
+		}
+	}
+	if promptResp == nil {
+		t.Fatalf("no prompt response found in %v", msgs)
+	}
+	if _, hasErr := promptResp["error"]; hasErr {
+		t.Fatalf("prompt returned an error, want cancelled: %v", promptResp["error"])
+	}
+	pr2 := promptResp["result"].(map[string]any)
+	if pr2["stopReason"] != StopReasonCancelled {
+		t.Errorf("stopReason = %v, want cancelled", pr2["stopReason"])
 	}
 }
