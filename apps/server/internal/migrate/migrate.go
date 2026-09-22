@@ -46,7 +46,7 @@ func (m *Migrator) Up(ctx context.Context) error {
 	sqlDB := m.db.DB
 
 	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+		return DiagnoseError(fmt.Errorf("failed to run migrations: %w", err))
 	}
 
 	m.logger.Info("migrations completed successfully")
@@ -66,7 +66,7 @@ func (m *Migrator) UpTo(ctx context.Context, version int64) error {
 	sqlDB := m.db.DB
 
 	if err := goose.UpToContext(ctx, sqlDB, ".", version); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+		return DiagnoseError(fmt.Errorf("failed to run migrations: %w", err))
 	}
 
 	m.logger.Info("migrations completed successfully", zap.Int64("version", version))
@@ -161,6 +161,8 @@ func (m *Migrator) MarkApplied(ctx context.Context, version int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to mark migration as applied: %w", err)
 	}
+
+	m.logger.Warn(MarkAppliedBypassNotice(version))
 
 	return nil
 }

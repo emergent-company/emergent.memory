@@ -200,10 +200,34 @@ jobs:
           fi
           echo "OK: only new migration files added."
 
+  migration-order-guard:
+    name: Migration Order Guard
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/server/go.sum
+          cache: false
+
+      - name: Guard migration order
+        working-directory: apps/server
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}" --depth=1
+          go run ./cmd/migration-order-guard -base "origin/${{ github.base_ref }}"
+
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [lint, build, test-unit, migration-guard]
+    needs: [lint, build, test-unit, migration-guard, migration-order-guard]
     steps:
       - name: CI gate
         run: echo "CI passed"
