@@ -48,8 +48,10 @@
 --     hand; the statement is idempotent (WHERE fts IS DISTINCT FROM ...).
 --
 -- ROLLBACK
---   Down restores the exact 00016 trigger function and expression, backfills
---   with it, and rebuilds the index. The helper function is dropped last.
+--   Down restores the exact 00032 trigger function and expression (including
+--   the source-field guard that skips recomputation when key/type/properties are
+--   unchanged), backfills with it, and rebuilds the index. The helper function
+--   is dropped last.
 
 -- Immutable tsvector builder shared by the trigger and the backfill so the two
 -- can never drift. Bound: each prose field is capped at 4000 chars, which is at
@@ -87,12 +89,22 @@ CREATE OR REPLACE FUNCTION kb.graph_object_fts(
 $$;
 -- +goose StatementEnd
 
--- Trigger body delegates to the shared builder.
+-- Trigger body delegates to the shared builder, but keeps the migration 00032
+-- source-field guard: on UPDATE, skip the recompute when key/type/properties are
+-- unchanged, so status/label/embedding updates don't reparse the JSON and rebuild
+-- the tsvector. On INSERT (TG_OP = 'INSERT') OLD is undefined — always compute.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION kb.update_graph_objects_fts() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' AND
+       NEW.key IS NOT DISTINCT FROM OLD.key AND
+       NEW.type IS NOT DISTINCT FROM OLD.type AND
+       NEW.properties IS NOT DISTINCT FROM OLD.properties THEN
+        RETURN NEW;
+    END IF;
+
     NEW.fts := kb.graph_object_fts(NEW.key, NEW.type, NEW.properties);
     RETURN NEW;
 END;
@@ -115,12 +127,20 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_graph_objects_fts
     ON kb.graph_objects USING gin (fts);
 
 -- +goose Down
--- Restore the migration 00016 definition verbatim, re-backfill, rebuild.
+-- Restore the migration 00032 definition verbatim (including the source-field
+-- guard), re-backfill, rebuild.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION kb.update_graph_objects_fts() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' AND
+       NEW.key IS NOT DISTINCT FROM OLD.key AND
+       NEW.type IS NOT DISTINCT FROM OLD.type AND
+       NEW.properties IS NOT DISTINCT FROM OLD.properties THEN
+        RETURN NEW;
+    END IF;
+
     NEW.fts :=
         setweight(to_tsvector('simple', coalesce(NEW.key, '')), 'A') ||
         setweight(to_tsvector('simple', coalesce(NEW.type, '')), 'B') ||

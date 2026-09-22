@@ -86,6 +86,28 @@ func TestFTSIdentifierIndexMakesCompositeKeySearchable(t *testing.T) {
 	}
 }
 
+// TestFTSIdentifierIndexExcludesNonWhitelistedProperties guards the bounded
+// whitelist: a distinctive value stored under a property that is not
+// title/name/description must not be lexically searchable. A regression that
+// indexes the whole properties blob again would fail this assertion, while the
+// positive control confirms the object was indexed at all.
+func TestFTSIdentifierIndexExcludesNonWhitelistedProperties(t *testing.T) {
+	ctx, db, projectID, _ := setupFTSRelaxTest(t)
+	applyFTSIdentifierMigration(t, ctx, db)
+
+	insertKeyedObject(t, ctx, db, projectID, "Document", "plain/2020-01-01-1",
+		`{"custom_field":"zzquuxzorpmarker","title":"Ordinary title"}`)
+
+	// Positive control: the whitelisted title is searchable, so the object really
+	// is indexed and the negative assertion below is not vacuous.
+	assert.Equal(t, 1, countStrictMatchesDual(t, ctx, db, projectID, "Ordinary title"),
+		"whitelisted title should be searchable")
+
+	// Negative assertion: the non-whitelisted property must not leak into fts.
+	assert.Zero(t, countStrictMatchesDual(t, ctx, db, projectID, "zzquuxzorpmarker"),
+		"a non-whitelisted property value must not be lexically searchable")
+}
+
 // TestFTSIdentifierIndexBoundsPositions guards the second defect: large objects
 // must not exhaust the tsvector position budget. The migration indexes a bounded
 // whitelist, so MAXENTRYPOS (16383) must never appear in the built vector.

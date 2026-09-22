@@ -2,7 +2,7 @@
 
 - [x] 1.1 Add `apps/server/migrations/00174_graph_objects_fts_identifiers.sql`: immutable helper `kb.graph_object_fts(key, type, properties)` indexing raw + separator-normalised + signed-normalised key (weight A), type (B), bounded `title`/`name`/`description` under `norwegian` (C). Verify: goose applies it on a scratch database.
 - [x] 1.2 Redefine `kb.update_graph_objects_fts()` to delegate to the helper, backfill existing rows (`WHERE fts IS DISTINCT FROM ...`, idempotent), drop and rebuild `kb.idx_graph_objects_fts` CONCURRENTLY under `-- +goose NO TRANSACTION`. Verify: `goose up` completes; `pg_indexes` shows the index; the table has no NULL/old-shape vectors.
-- [x] 1.3 Write the Down migration restoring the exact 00016 function and expression, re-backfilling, rebuilding the index, and dropping the helper. Verify: `goose down` restores the old function and drops the helper.
+- [x] 1.3 Write the Down migration restoring the exact 00032 function and expression (including the source-field guard), re-backfilling, rebuilding the index, and dropping the helper. Verify: `goose down` restores the old function and drops the helper.
 - [x] 1.4 Document lock impact and rollback in the migration header. Verify: header present.
 
 ## 2. Query side — dual-configuration match and rank

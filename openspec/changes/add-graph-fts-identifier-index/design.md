@@ -66,7 +66,9 @@ matches both.
 `-- +goose NO TRANSACTION` (required for `CREATE INDEX CONCURRENTLY`). The GIN index is
 dropped before the backfill (so the rewrite does not maintain GIN entries row by row) and
 rebuilt CONCURRENTLY after. The helper `kb.graph_object_fts` is immutable and shared by the
-trigger and the backfill so they cannot drift. The backfill's
+trigger and the backfill so they cannot drift. The trigger keeps the migration 00032
+source-field guard (skip recomputation on UPDATE when key/type/properties are unchanged), so
+status/label/embedding updates do not reparse the JSON or rebuild the vector. The backfill's
 `WHERE fts IS DISTINCT FROM ...` makes re-runs idempotent.
 
 **Lock impact:** replacing functions takes no table lock; the CONCURRENT index DDL takes only
@@ -74,9 +76,9 @@ trigger and the backfill so they cannot drift. The backfill's
 block reads or unrelated writes. For a much larger table the `UPDATE` can be re-run in
 `ctid` batches by hand.
 
-**Rollback:** Down restores the exact 00016 function and expression, re-backfills, rebuilds
-the index CONCURRENTLY, and drops the helper last. Verified forward and backward with goose
-on a scratch database.
+**Rollback:** Down restores the exact 00032 function and expression (including the
+source-field guard), re-backfills, rebuilds the index CONCURRENTLY, and drops the helper
+last. Verified forward and backward with goose on a scratch database.
 
 ### D6 — Keep the #704 fallback
 
