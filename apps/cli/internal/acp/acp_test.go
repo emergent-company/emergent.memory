@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/idgen"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 )
 
@@ -444,13 +445,16 @@ func TestNewID(t *testing.T) {
 	})
 
 	t.Run("fallback is unique, not a constant", func(t *testing.T) {
-		orig := randRead
-		randRead = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
-		t.Cleanup(func() { randRead = orig })
+		orig := idgen.RandRead
+		idgen.RandRead = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+		t.Cleanup(func() { idgen.RandRead = orig })
 
 		first := newID("sess")
 		if first == "sess-16" {
 			t.Fatalf("fallback collapsed to the constant %q", first)
+		}
+		if !strings.HasPrefix(first, "sess-") {
+			t.Fatalf("fallback id = %q, want sess- prefix", first)
 		}
 		time.Sleep(time.Millisecond)
 		second := newID("sess")
