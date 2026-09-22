@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -144,12 +145,17 @@ func reextractionJobIDs(toolCalls []*AgentRunToolCall) []string {
 
 // aggregateExtractionJobs merges the persisted results of completed extraction
 // jobs into an aggregation and reports whether any job is still in flight
-// (pending) or failed/dead-lettered.
+// (pending), genuinely failed/dead-lettered, or was terminal-failed by the
+// stale-job sweep.
 //
 // ObjectsMerged is computed at job completion but NOT persisted on the job row,
 // so update counts cannot be recovered from extraction jobs — only
 // tool-call-derived aggregation provides objects_updated.
-func aggregateExtractionJobs(jobs []*mcp.ExtractionJobInfo) (agg rememberStatusAggregation, pending bool, failures []string) {
+//
+// Jobs reaped by the stale sweep are returned as staleReaped rather than added
+// to failures: they are historical cleanup artifacts, not current failures the
+// caller can act on (mirrors the sibling stale_failed split, #763/#772).
+func aggregateExtractionJobs(jobInfos []*mcp.ExtractionJobInfo) (agg rememberStatusAggregation, pending bool, failures []string, staleReaped int) {
 	agg = rememberStatusAggregation{
 		CreatedObjectIDs:       []string{},
 		CreatedRelationshipIDs: []string{},
@@ -157,7 +163,7 @@ func aggregateExtractionJobs(jobs []*mcp.ExtractionJobInfo) (agg rememberStatusA
 		DeletedRelationshipIDs: []string{},
 		DiscoveredTypes:        []string{},
 	}
-	for _, job := range jobs {
+	for _, job := range jobInfos {
 		if job == nil {
 			continue
 		}
@@ -179,12 +185,22 @@ func aggregateExtractionJobs(jobs []*mcp.ExtractionJobInfo) (agg rememberStatusA
 				addType(&agg.DiscoveredTypes, t)
 			}
 		case jobStatusFailed:
+			if isStaleReaped(job.ErrorMessage) {
+				// Terminal-failed by the stale-job sweep, not by a worker:
+				// report the reap separately instead of as a current failure.
+				staleReaped++
+				continue
+			}
 			failures = append(failures, fmt.Sprintf("job %s failed: %s", job.ID, extractionJobErr(job)))
 		case jobStatusDeadLetter:
+			if isStaleReaped(job.ErrorMessage) {
+				staleReaped++
+				continue
+			}
 			failures = append(failures, fmt.Sprintf("job %s dead-lettered: %s", job.ID, extractionJobErr(job)))
 		}
 	}
-	return agg, pending, failures
+	return agg, pending, failures, staleReaped
 }
 
 // extractionJobErr returns the job's error message or a placeholder.
@@ -193,6 +209,16 @@ func extractionJobErr(job *mcp.ExtractionJobInfo) string {
 		return *job.ErrorMessage
 	}
 	return "no error message"
+}
+
+// isStaleReaped reports whether a job row was terminal-failed by the stale-job
+// sweep rather than by a genuine worker failure. The sweep
+// (domain/scheduler.StaleJobCleanupTask) stamps status='failed' plus the
+// canonical jobs.StaleJobMessage error text; sourcing the marker from
+// internal/jobs keeps this consumer classifying rows identically to the sweep
+// and to every other reporting surface (#763/#772).
+func isStaleReaped(errMsg *string) bool {
+	return errMsg != nil && *errMsg == jobs.StaleJobMessage
 }
 
 // embeddingStatusSummary summarizes embedding-generation readiness for the
@@ -204,21 +230,29 @@ type embeddingStatusSummary struct {
 	// Pending is the number of created objects whose embedding job is not yet
 	// completed (pending or processing).
 	Pending int
-	// Failed is the number of created objects whose embedding job failed or
-	// dead-lettered.
+	// Failed is the number of created objects whose embedding job genuinely
+	// failed or dead-lettered.
 	Failed int
+	// Stale is the number of created objects whose embedding job was
+	// terminal-failed by the stale-job sweep (jobs.StaleJobMessage). Kept out of
+	// Failed so historical cleanup is not reported as a current failure.
+	Stale int
 }
 
 // aggregateEmbeddingStatus classifies per-object embedding-job statuses into
-// pending/failed counts. Embedding readiness is NOT part of the remember-status
-// "completed" gate: graph mutation (what "remember succeeded" means) is done
-// once the extraction jobs finish, and embeddings are a separate, independently
-// retryable concern (searchability). Failing the whole status on embeddings
-// would conflate "did remember persist the memory" with "is it recallable yet"
-// — instead embeddings_ready is exposed as a separate signal callers can poll
-// if they want full recall-readiness. Permanently failed embeddings are
-// surfaced via embeddings_failed and a summary note, without failing the
-// overall status.
+// pending/failed/stale counts. Embedding readiness is NOT part of the
+// remember-status "completed" gate: graph mutation (what "remember succeeded"
+// means) is done once the extraction jobs finish, and embeddings are a separate,
+// independently retryable concern (searchability). Failing the whole status on
+// embeddings would conflate "did remember persist the memory" with "is it
+// recallable yet" — instead embeddings_ready is exposed as a separate signal
+// callers can poll if they want full recall-readiness. Permanently failed
+// embeddings are surfaced via embeddings_failed and a summary note, without
+// failing the overall status.
+//
+// Rows carrying the stale-sweep marker are counted in Stale, not Failed, so a
+// reaped job is not presented as a current embedding failure (same split as the
+// sibling embedding-status surfaces, #763/#772).
 func aggregateEmbeddingStatus(infos []mcp.EmbeddingJobInfo) embeddingStatusSummary {
 	var s embeddingStatusSummary
 	for _, info := range infos {
@@ -226,6 +260,10 @@ func aggregateEmbeddingStatus(infos []mcp.EmbeddingJobInfo) embeddingStatusSumma
 		case jobStatusPending, jobStatusProcessing:
 			s.Pending++
 		case jobStatusFailed, jobStatusDeadLetter:
+			if isStaleReaped(info.LastError) {
+				s.Stale++
+				continue
+			}
 			s.Failed++
 		}
 	}
@@ -286,6 +324,8 @@ func (a *rememberStatusAggregation) merge(other rememberStatusAggregation) {
 //     as a failed remember even when the agent itself succeeded, because the
 //     graph mutations the caller asked for never happened; the job errors are
 //     surfaced in the error field alongside whatever partial counts succeeded.
+//     Stale-sweep reaps are excluded from jobFailures by aggregateExtractionJobs
+//     and reported separately as stale_jobs, so they never force "failed".
 //   - "completed": the agent run is terminal and all queued extraction jobs are
 //     terminal (completed/failed/dead-lettered handled above; no jobs → done).
 func overallRememberStatus(runStatus AgentRunStatus, agentErr string, jobsPending bool, jobFailures []string) (status, errMsg string) {
@@ -659,7 +699,7 @@ func (h *MCPToolHandler) buildRememberStatus(ctx context.Context, projectID, run
 			}
 		}
 	}
-	jobAgg, jobsPending, jobFailures := aggregateExtractionJobs(jobs)
+	jobAgg, jobsPending, jobFailures, jobsStaleReaped := aggregateExtractionJobs(jobs)
 	agg.merge(jobAgg)
 
 	// Track embedding generation for the created objects — a third async stage.
@@ -696,11 +736,16 @@ func (h *MCPToolHandler) buildRememberStatus(ctx context.Context, projectID, run
 		result[k] = v
 	}
 	result["status"] = status
+	// stale_jobs counts extraction jobs reaped by the stale-job sweep: terminal
+	// but not a current failure. Always present so callers get a stable shape;
+	// mirrors the sibling stale_failed counter (#763/#772).
+	result["stale_jobs"] = jobsStaleReaped
 
 	summary := agg.Summary
 	if embTracked {
 		result["embeddings_pending"] = embSummary.Pending
 		result["embeddings_failed"] = embSummary.Failed
+		result["embeddings_stale"] = embSummary.Stale
 		result["embeddings_ready"] = embSummary.Pending == 0
 		summary += embeddingSummaryNote(embSummary.Pending, embSummary.Failed, len(createdIDs))
 	}

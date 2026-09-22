@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 )
 
 // tc builds an AgentRunToolCall with completed status.
@@ -492,7 +493,7 @@ func TestAggregateExtractionJobs_Completed(t *testing.T) {
 		ej("job-2", "completed", 0, 0, nil, nil),
 	}
 
-	agg, pending, failures := aggregateExtractionJobs(jobs)
+	agg, pending, failures, _ := aggregateExtractionJobs(jobs)
 
 	if pending {
 		t.Error("pending = true, want false")
@@ -524,7 +525,7 @@ func TestAggregateExtractionJobs_PendingAndFailed(t *testing.T) {
 		ej("job-cancelled", "cancelled", 0, 0, nil, nil),
 	}
 
-	agg, pending, failures := aggregateExtractionJobs(jobs)
+	agg, pending, failures, _ := aggregateExtractionJobs(jobs)
 
 	if !pending {
 		t.Error("pending = false, want true (pending + processing jobs)")
@@ -540,6 +541,69 @@ func TestAggregateExtractionJobs_PendingAndFailed(t *testing.T) {
 	}
 	if agg.ObjectsCreated != 0 {
 		t.Errorf("ObjectsCreated = %d, want 0 (no completed jobs)", agg.ObjectsCreated)
+	}
+}
+
+// TestAggregateExtractionJobs_StaleReapedNotFailure asserts a job terminal-failed
+// by the stale-job sweep (error text == jobs.StaleJobMessage) is NOT counted as a
+// current failure; it is surfaced via the stale count instead (#776).
+func TestAggregateExtractionJobs_StaleReapedNotFailure(t *testing.T) {
+	stale := jobs.StaleJobMessage
+	realErr := "llm timeout"
+	jobInfos := []*mcp.ExtractionJobInfo{
+		{ID: "job-stale", Status: "failed", ErrorMessage: &stale},
+		{ID: "job-stale-dl", Status: "dead_letter", ErrorMessage: &stale},
+		{ID: "job-real", Status: "failed", ErrorMessage: &realErr},
+	}
+
+	agg, pending, failures, staleReaped := aggregateExtractionJobs(jobInfos)
+
+	if staleReaped != 2 {
+		t.Errorf("staleReaped = %d, want 2", staleReaped)
+	}
+	if pending {
+		t.Error("pending = true, want false")
+	}
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want exactly the genuine failure", failures)
+	}
+	if !strings.Contains(failures[0], "job-real") || !strings.Contains(failures[0], "llm timeout") {
+		t.Errorf("failures[0] = %q, want the genuine failure only", failures[0])
+	}
+	for _, f := range failures {
+		if strings.Contains(f, "job-stale") || strings.Contains(f, jobs.StaleJobMessage) {
+			t.Errorf("stale-reaped job leaked into failures: %q", f)
+		}
+	}
+	if agg.ObjectsCreated != 0 {
+		t.Errorf("ObjectsCreated = %d, want 0", agg.ObjectsCreated)
+	}
+}
+
+// TestRememberStatus_StaleReapedJobNotFailed covers the aggregated outcome: a run
+// whose only failed extraction job was reaped by the stale sweep must report
+// "completed", never "failed", with the reap surfaced separately.
+func TestRememberStatus_StaleReapedJobNotFailed(t *testing.T) {
+	stale := jobs.StaleJobMessage
+	jobAgg, pending, failures, staleReaped := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
+		{ID: "job-stale", Status: "failed", ErrorMessage: &stale},
+	})
+
+	if len(failures) != 0 {
+		t.Fatalf("failures = %v, want none for a stale reap", failures)
+	}
+	if staleReaped != 1 {
+		t.Errorf("staleReaped = %d, want 1", staleReaped)
+	}
+	status, statusErr := overallRememberStatus(RunStatusSuccess, "", pending, failures)
+	if status != "completed" {
+		t.Errorf("status = %q, want completed (stale reap is not a current failure)", status)
+	}
+	if statusErr != "" {
+		t.Errorf("statusErr = %q, want empty", statusErr)
+	}
+	if jobAgg.ObjectsCreated != 0 {
+		t.Errorf("ObjectsCreated = %d, want 0", jobAgg.ObjectsCreated)
 	}
 }
 
@@ -587,7 +651,7 @@ func TestRememberStatus_ReextractionPending(t *testing.T) {
 	}
 
 	agg := aggregateRememberStatus(toolCalls) // queue-reextraction not in allowlist → zero
-	jobAgg, pending, failures := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{ej("job-1", "pending", 0, 0, nil, nil)})
+	jobAgg, pending, failures, _ := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{ej("job-1", "pending", 0, 0, nil, nil)})
 	agg.merge(jobAgg)
 
 	if !pending {
@@ -609,7 +673,7 @@ func TestRememberStatus_ReextractionCompleted(t *testing.T) {
 		tc("queue-reextraction", map[string]any{"document_id": "d-1"}, map[string]any{"job_id": "job-1"}),
 	}
 	agg := aggregateRememberStatus(toolCalls)
-	jobAgg, pending, failures := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
+	jobAgg, pending, failures, _ := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
 		ej("job-1", "completed", 2, 1, []string{"Person"}, []string{"obj-a", "obj-b"}),
 	})
 	agg.merge(jobAgg)
@@ -643,7 +707,7 @@ func TestRememberStatus_ReextractionFailed(t *testing.T) {
 	}
 	agg := aggregateRememberStatus(toolCalls)
 	errMsg := "schema mismatch"
-	jobAgg, pending, failures := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
+	jobAgg, pending, failures, _ := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
 		{ID: "job-1", Status: "failed", ErrorMessage: &errMsg},
 	})
 	agg.merge(jobAgg)
@@ -676,7 +740,7 @@ func TestRememberStatus_MixedDirectAndReextraction(t *testing.T) {
 		t.Fatalf("direct tool-call ObjectsCreated = %d, want 1", agg.ObjectsCreated)
 	}
 
-	jobAgg, pending, failures := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
+	jobAgg, pending, failures, _ := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
 		ej("job-1", "completed", 2, 3, []string{"Person", "Task"}, []string{"obj-a", "obj-b"}),
 	})
 	agg.merge(jobAgg)
@@ -706,7 +770,7 @@ func TestRememberStatus_MissingJobTreatedPending(t *testing.T) {
 	// ExecuteRememberStatus synthesizes a pending job for unresolvable IDs; this
 	// verifies the resulting aggregation/status behaves like a pending job.
 	agg := rememberStatusAggregation{}
-	jobAgg, pending, failures := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
+	jobAgg, pending, failures, _ := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
 		{ID: "job-missing", Status: "pending"},
 	})
 	agg.merge(jobAgg)
@@ -766,6 +830,26 @@ func TestAggregateEmbeddingStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("stale-sweep reap excluded from failed", func(t *testing.T) {
+		stale := jobs.StaleJobMessage
+		realErr := "connection reset"
+		s := aggregateEmbeddingStatus([]mcp.EmbeddingJobInfo{
+			ei("a", "completed"),
+			{ObjectID: "b", Status: "failed", LastError: &stale},
+			{ObjectID: "c", Status: "failed", LastError: &realErr},
+			{ObjectID: "d", Status: "dead_letter", LastError: &stale},
+		})
+		if s.Failed != 1 {
+			t.Errorf("Failed = %d, want 1 (stale reaps excluded)", s.Failed)
+		}
+		if s.Stale != 2 {
+			t.Errorf("Stale = %d, want 2", s.Stale)
+		}
+		if s.Pending != 0 {
+			t.Errorf("Pending = %d, want 0", s.Pending)
+		}
+	})
+
 	t.Run("empty input", func(t *testing.T) {
 		s := aggregateEmbeddingStatus(nil)
 		if s.Pending != 0 || s.Failed != 0 {
@@ -802,7 +886,7 @@ func TestRememberStatus_EmbeddingsReadiness(t *testing.T) {
 		tc("queue-reextraction", map[string]any{"document_id": "d-1"}, map[string]any{"job_id": "job-1"}),
 	}
 	agg := aggregateRememberStatus(toolCalls)
-	jobAgg, jobsPending, jobFailures := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
+	jobAgg, jobsPending, jobFailures, _ := aggregateExtractionJobs([]*mcp.ExtractionJobInfo{
 		ej("job-1", "completed", 2, 1, []string{"Person"}, []string{"obj-a", "obj-b"}),
 	})
 	agg.merge(jobAgg)

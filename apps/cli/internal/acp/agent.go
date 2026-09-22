@@ -48,11 +48,19 @@ type session struct {
 	// turn generation. Tracking per turn (rather than a single slot) keeps every
 	// concurrent turn cancellable: a cancel notification cancels them all and
 	// each turn removes only its own entry when it ends, so none is orphaned.
-	cancels   map[uint64]context.CancelFunc
-	cancelled bool   // set by session/cancel; cleared when the next turn starts
-	turn      uint64 // monotonic turn generation; keys cancels
-	lastUsed  uint64 // agent.seq value at the last use, for LRU eviction
-	dropped   bool   // set once the session is deleted/closed/evicted; never cleared
+	cancels map[uint64]context.CancelFunc
+	// cancelledThrough is the highest turn generation for which a session/cancel
+	// has been requested. A turn whose generation is <= cancelledThrough
+	// resolves "cancelled" at registration instead of starting a backend turn.
+	// The watermark is monotonic and generation-scoped: every new turn gets a
+	// strictly greater generation, so a cancel can only ever affect turns that
+	// already existed when it arrived and can never leak onto a later turn (the
+	// sticky-flag bug fixed in #780). It needs no explicit reset — a later
+	// generation simply exceeds it.
+	cancelledThrough uint64
+	turn             uint64 // monotonic turn generation; keys cancels
+	lastUsed         uint64 // agent.seq value at the last use, for LRU eviction
+	dropped          bool   // set once the session is deleted/closed/evicted; never cleared
 }
 
 // inFlight reports the number of prompt turns currently running for the session.
@@ -240,8 +248,7 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	}
 	sess.cancels[turn] = cancel
 	dropped := sess.dropped
-	cancelled := sess.cancelled
-	sess.cancelled = false // clear for this turn; a mid-turn cancel re-sets it
+	cancelled := turn <= sess.cancelledThrough
 	if resumeTaskID != "" {
 		// Consumed now; a subsequent pause re-sets it via consumeStream.
 		sess.pendingTaskID = ""
@@ -404,18 +411,31 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 
 // cancel handles the session/cancel notification by cancelling every in-flight
 // prompt for the session. The cancel functions are copied under the lock so they
-// are never read concurrently with the writes in prompt, and a cancelled flag is
-// recorded so a cancel arriving before the next turn registers still takes
-// effect.
+// are never read concurrently with the writes in prompt. It also advances the
+// cancelledThrough watermark so a turn that has looked the session up but not yet
+// registered its cancel function still observes the cancel; the cancel functions
+// are invoked outside the lock.
 func (a *Agent) cancel(params CancelParams) {
 	a.mu.Lock()
 	sess := a.sessions[params.SessionID]
 	var fns []context.CancelFunc
 	if sess != nil {
-		sess.cancelled = true
 		fns = make([]context.CancelFunc, 0, len(sess.cancels))
 		for _, fn := range sess.cancels {
 			fns = append(fns, fn)
+		}
+		// Record the cancel against the turn generation. With a turn in flight it
+		// applies up to the newest registered generation; with none in flight it
+		// applies to the next turn to register (a cancel racing a prompt's
+		// lookup/registration window). The watermark only ever moves forward, so
+		// a turn after the cancelled one always has a greater generation and is
+		// never spuriously cancelled.
+		target := sess.turn
+		if len(sess.cancels) == 0 {
+			target = sess.turn + 1
+		}
+		if target > sess.cancelledThrough {
+			sess.cancelledThrough = target
 		}
 	}
 	a.mu.Unlock()
