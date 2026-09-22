@@ -19,9 +19,8 @@ import (
 
 func TestEmbeddingIndexTargetsQualified(t *testing.T) {
 	want := map[string]string{
-		"idx_graph_relationships_embedding_ivfflat": `"kb"."idx_graph_relationships_embedding_ivfflat"`,
-		"idx_chunks_embedding":                      `"kb"."idx_chunks_embedding"`,
-		"idx_skills_embedding_ivfflat":              `"kb"."idx_skills_embedding_ivfflat"`,
+		"idx_chunks_embedding":         `"kb"."idx_chunks_embedding"`,
+		"idx_skills_embedding_ivfflat": `"kb"."idx_skills_embedding_ivfflat"`,
 	}
 	if len(embeddingIndexTargets) != len(want) {
 		t.Fatalf("expected %d targets, got %d", len(want), len(embeddingIndexTargets))
