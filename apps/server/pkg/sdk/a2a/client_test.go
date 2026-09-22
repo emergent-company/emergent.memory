@@ -81,6 +81,60 @@ func TestExtendedAgentCard(t *testing.T) {
 	assert.Equal(t, "my-agent", got.Skills[0].ID)
 }
 
+// TestExtendedAgentCardSendsProjectHeader is the #761 regression guard: the
+// authenticated extended card is project-scoped and the server rejects a
+// request with no project selector, so the client must send X-Project-ID.
+func TestExtendedAgentCardSendsProjectHeader(t *testing.T) {
+	card := AgentCard{Name: "Memory", Version: "1.0.0"}
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) (int, any) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/extendedAgentCard", r.URL.Path)
+		assert.Equal(t, "proj-123", r.Header.Get(ProjectIDHeader))
+		return http.StatusOK, card
+	})
+
+	client := NewClientWithProject(srv.URL, "emt_token", "proj-123")
+	got, err := client.ExtendedAgentCard(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "Memory", got.Name)
+}
+
+// TestProjectHeaderOmittedWhenUnset pins the pre-existing behaviour: a client
+// with no configured project sends no selector (the unauthenticated global card
+// path must keep working).
+func TestProjectHeaderOmittedWhenUnset(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) (int, any) {
+		assert.Empty(t, r.Header.Get(ProjectIDHeader))
+		return http.StatusOK, AgentCard{Name: "Memory"}
+	})
+
+	_, err := NewClient(srv.URL, "emt_token").ExtendedAgentCard(context.Background())
+	require.NoError(t, err)
+}
+
+// TestExtendedAgentCardProjectRequiredError covers the project-scoped failure
+// path: the server now answers a missing selector with a specific 400
+// INVALID_ARGUMENT / PROJECT_REQUIRED envelope, not a 500
+// INVALID_AGENT_RESPONSE. The client must surface that reason distinctly.
+func TestExtendedAgentCardProjectRequiredError(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) (int, any) {
+		return http.StatusBadRequest, `{"error":{"code":-32012,"status":"INVALID_ARGUMENT","message":"project context is required: send the X-Project-ID header, or use a project-scoped API token","details":[{"@type":"type.googleapis.com/lf.a2a.v1.Error","reason":"PROJECT_REQUIRED","domain":"a2a-protocol.org"}]}}`
+	})
+
+	_, err := NewClient(srv.URL, "emt_token").ExtendedAgentCard(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, "PROJECT_REQUIRED", Reason(err))
+	assert.False(t, IsNotFound(err))
+
+	var apiErr *Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, -32012, apiErr.Code)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.Equal(t, "INVALID_ARGUMENT", apiErr.Status)
+	assert.Equal(t, A2AErrorDomain, apiErr.Domain)
+}
+
 func TestSendMessage(t *testing.T) {
 	task := sampleTask()
 	var gotReq SendMessageRequest
@@ -88,11 +142,12 @@ func TestSendMessage(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/message:send", r.URL.Path)
 		assert.Equal(t, A2AContentType, r.Header.Get("Content-Type"))
+		assert.Equal(t, "proj-123", r.Header.Get(ProjectIDHeader))
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotReq))
 		return http.StatusOK, SendMessageResponse{Task: &task}
 	})
 
-	client := NewClient(srv.URL, "emt_token")
+	client := NewClientWithProject(srv.URL, "emt_token", "proj-123")
 	resp, err := client.SendMessage(context.Background(), SendMessageRequest{
 		Message: Message{
 			MessageID: "m-1",
@@ -136,6 +191,7 @@ func TestStreamMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/message:stream", r.URL.Path)
+		assert.Equal(t, "proj-123", r.Header.Get(ProjectIDHeader))
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -150,7 +206,7 @@ func TestStreamMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "emt_token")
+	client := NewClientWithProject(srv.URL, "emt_token", "proj-123")
 	stream, err := client.StreamMessage(context.Background(), SendMessageRequest{
 		Message: Message{MessageID: "m-1", Role: RoleUser, Parts: []Part{TextPart("hi")}},
 	})

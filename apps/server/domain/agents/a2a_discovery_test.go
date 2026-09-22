@@ -170,9 +170,13 @@ func TestExtendedAgentCardHandler_NoProject_Returns400(t *testing.T) {
 
 	err := h.ExtendedAgentCardHandler(c)
 	require.Error(t, err)
-	var appErr *apperror.Error
-	require.ErrorAs(t, err, &appErr)
-	assert.Equal(t, http.StatusBadRequest, appErr.HTTPStatus)
+
+	// A missing project selector is a distinct 400 PROJECT_REQUIRED, not the
+	// generic INVALID_AGENT_RESPONSE (see #762).
+	var a2aErr *A2AError
+	require.ErrorAs(t, err, &a2aErr)
+	assert.Equal(t, http.StatusBadRequest, a2aErr.Code.HTTPStatus())
+	assert.Equal(t, A2AReasonProjectRequired, a2aErr.Reason)
 }
 
 func TestGlobalAgentCardHandler_ContentType(t *testing.T) {
