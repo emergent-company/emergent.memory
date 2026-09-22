@@ -21,10 +21,10 @@ type embeddingIndexTarget struct {
 }
 
 // embeddingIndexTargets lists every ivfflat embedding index rebuilt on a
-// schedule. Index names are case-sensitive: the baseline migration created
-// "IDX_graph_objects_embedding_v2_ivfflat" with mixed case.
+// schedule. HNSW indexes are excluded: they need no periodic REINDEX. The
+// graph_objects ivfflat index was dropped in migration 00164 in favor of an
+// HNSW index and is therefore no longer reindexed here.
 var embeddingIndexTargets = []embeddingIndexTarget{
-	{schema: "kb", name: "IDX_graph_objects_embedding_v2_ivfflat"},
 	{schema: "kb", name: "idx_graph_relationships_embedding_ivfflat"},
 	{schema: "kb", name: "idx_chunks_embedding"},
 	{schema: "kb", name: "idx_skills_embedding_ivfflat"},
