@@ -1,6 +1,6 @@
 ---
 name: operator
-description: Operate a fleet of Paseo sessions as an orchestrator — open tasks, claim issues, spin up worktree lanes, monitor, nudge stalled agents, get independent review, merge through the gate, and reconcile state across concurrent managers. Use when you are the orchestrator managing other sessions, or when defining how a manager agent should coordinate parallel work without stomping on other managers.
+description: Operate a fleet of Paseo sessions as an orchestrator — open tasks, claim issues, spin up worktree lanes, monitor, nudge stalled agents, get independent review, merge through the gate, reconcile state across concurrent managers, and file process-improvement feedback as issues. Use when you are the orchestrator managing other sessions, or when defining how a manager agent should coordinate parallel work without stomping on other managers.
 license: MIT
 metadata:
   author: opencode
@@ -174,3 +174,38 @@ file false positives.
   blocker chains explicitly).
 - Reuse still-valid evidence; do not re-read files an explorer already mapped —
   read only exact lines before editing.
+
+---
+
+## 8. Process-improvement feedback loop
+
+The operator is not only a dispatcher — it is the **observer of its own process**.
+After lanes finish, reflect on how the work went and feed friction back so the
+instructions and process improve over time.
+
+- **Analyze the lanes you spun off.** Ask per task: did a lane misunderstand the
+  brief? Did monitoring require manual nudges that a clearer instruction would have
+  avoided? Did a naming/state convention fail? Was a guardrail missing?
+- **Distinguish process findings from code findings.** A bug in the memory code is
+  a code issue. A weakness in how agents are instructed, named, monitored, or
+  reconciled is a **process** issue.
+- **File process findings as GitHub issues** with a dedicated label to mark them as
+  dev-process, not product code:
+
+  ```bash
+  gh issue create --repo emergent-company/emergent.memory \
+    --label "process" \
+    --title "<concise summary>" \
+    --body "<what went wrong, which lane/step, why it matters, suggested fix>"
+  ```
+
+- Use the `process` label (distinct from `area: <domain>` code labels) so process
+  improvements are triaged separately from the memory product itself.
+- **Search first** for an existing process issue, then **show the drafted title +
+  body and get user confirmation** before creating — same rule as any issue.
+- Feed confirmed improvements back into this skill (or the relevant AGENTS.md /
+  instruction file) so the loop closes; do not just log the finding.
+
+Suggested improvements typically target: the operator skill itself, per-app
+`AGENTS.md`, lane brief templates, naming conventions, or the GitHub label
+conventions used to route work.
