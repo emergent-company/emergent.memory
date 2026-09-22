@@ -5,6 +5,8 @@ import (
 	"database/sql"
 
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 )
 
 // Repository provides data access for superadmin operations
@@ -375,20 +377,24 @@ func (r *Repository) GetEmbeddingJobStats(ctx context.Context) (EmbeddingJobStat
 
 	// Graph stats
 	var graphStats struct {
-		Total      int `bun:"total"`
-		Pending    int `bun:"pending"`
-		Completed  int `bun:"completed"`
-		Failed     int `bun:"failed"`
-		DeadLetter int `bun:"dead_letter"`
-		WithErrors int `bun:"with_errors"`
+		Total       int `bun:"total"`
+		Pending     int `bun:"pending"`
+		Completed   int `bun:"completed"`
+		Failed      int `bun:"failed"`
+		StaleFailed int `bun:"stale_failed"`
+		DeadLetter  int `bun:"dead_letter"`
+		WithErrors  int `bun:"with_errors"`
 	}
 	err := r.db.NewSelect().
 		TableExpr("kb.graph_embedding_jobs").
 		ColumnExpr("COUNT(*) AS total").
 		ColumnExpr("SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending").
 		ColumnExpr("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed").
-		ColumnExpr("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'failed' AND COALESCE(last_error, '') <> '"+jobs.StaleJobMessage+"' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'failed' AND last_error = '"+jobs.StaleJobMessage+"' THEN 1 ELSE 0 END) AS stale_failed").
 		ColumnExpr("SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END) AS dead_letter").
+		// with_errors is an admin ledger view of "rows carrying error text",
+		// including stale-sweep rows; it is intentionally not narrowed.
 		ColumnExpr("SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS with_errors").
 		Scan(ctx, &graphStats)
 	if err != nil {
@@ -399,23 +405,28 @@ func (r *Repository) GetEmbeddingJobStats(ctx context.Context) (EmbeddingJobStat
 	stats.GraphPending = graphStats.Pending
 	stats.GraphCompleted = graphStats.Completed
 	stats.GraphFailed = graphStats.Failed
+	stats.GraphStaleFailed = graphStats.StaleFailed
 	stats.GraphDeadLetter = graphStats.DeadLetter
 	stats.GraphWithErrors = graphStats.WithErrors
 
 	// Chunk stats
 	var chunkStats struct {
-		Total      int `bun:"total"`
-		Pending    int `bun:"pending"`
-		Completed  int `bun:"completed"`
-		Failed     int `bun:"failed"`
-		WithErrors int `bun:"with_errors"`
+		Total       int `bun:"total"`
+		Pending     int `bun:"pending"`
+		Completed   int `bun:"completed"`
+		Failed      int `bun:"failed"`
+		StaleFailed int `bun:"stale_failed"`
+		WithErrors  int `bun:"with_errors"`
 	}
 	err = r.db.NewSelect().
 		TableExpr("kb.chunk_embedding_jobs").
 		ColumnExpr("COUNT(*) AS total").
 		ColumnExpr("SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending").
 		ColumnExpr("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed").
-		ColumnExpr("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'failed' AND COALESCE(last_error, '') <> '"+jobs.StaleJobMessage+"' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'failed' AND last_error = '"+jobs.StaleJobMessage+"' THEN 1 ELSE 0 END) AS stale_failed").
+		// with_errors is an admin ledger view of "rows carrying error text",
+		// including stale-sweep rows; it is intentionally not narrowed.
 		ColumnExpr("SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS with_errors").
 		Scan(ctx, &chunkStats)
 	if err != nil {
@@ -426,6 +437,7 @@ func (r *Repository) GetEmbeddingJobStats(ctx context.Context) (EmbeddingJobStat
 	stats.ChunkPending = chunkStats.Pending
 	stats.ChunkCompleted = chunkStats.Completed
 	stats.ChunkFailed = chunkStats.Failed
+	stats.ChunkStaleFailed = chunkStats.StaleFailed
 	stats.ChunkWithErrors = chunkStats.WithErrors
 
 	return stats, nil
@@ -597,6 +609,7 @@ func (r *Repository) GetExtractionJobStats(ctx context.Context) (ExtractionJobSt
 		Processing                int `bun:"processing"`
 		Completed                 int `bun:"completed"`
 		Failed                    int `bun:"failed"`
+		StaleFailed               int `bun:"stale_failed"`
 		Cancelled                 int `bun:"cancelled"`
 		WithErrors                int `bun:"with_errors"`
 		TotalObjectsCreated       int `bun:"total_objects_created"`
@@ -608,8 +621,11 @@ func (r *Repository) GetExtractionJobStats(ctx context.Context) (ExtractionJobSt
 		ColumnExpr("SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued").
 		ColumnExpr("SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing").
 		ColumnExpr("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed").
-		ColumnExpr("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'failed' AND COALESCE(error_message, '') <> '"+jobs.StaleJobMessage+"' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'failed' AND error_message = '"+jobs.StaleJobMessage+"' THEN 1 ELSE 0 END) AS stale_failed").
 		ColumnExpr("SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled").
+		// with_errors is an admin ledger view of "rows carrying error text",
+		// including stale-sweep rows; it is intentionally not narrowed.
 		ColumnExpr("SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) AS with_errors").
 		ColumnExpr("COALESCE(SUM(objects_created), 0) AS total_objects_created").
 		ColumnExpr("COALESCE(SUM(relationships_created), 0) AS total_relationships_created").
@@ -623,6 +639,7 @@ func (r *Repository) GetExtractionJobStats(ctx context.Context) (ExtractionJobSt
 	stats.Processing = raw.Processing
 	stats.Completed = raw.Completed
 	stats.Failed = raw.Failed
+	stats.StaleFailed = raw.StaleFailed
 	stats.Cancelled = raw.Cancelled
 	stats.WithErrors = raw.WithErrors
 	stats.TotalObjectsCreated = raw.TotalObjectsCreated
@@ -745,6 +762,7 @@ func (r *Repository) GetDocumentParsingJobStats(ctx context.Context) (DocumentPa
 		Processing         int   `bun:"processing"`
 		Completed          int   `bun:"completed"`
 		Failed             int   `bun:"failed"`
+		StaleFailed        int   `bun:"stale_failed"`
 		RetryPending       int   `bun:"retry_pending"`
 		WithErrors         int   `bun:"with_errors"`
 		TotalFileSizeBytes int64 `bun:"total_file_size_bytes"`
@@ -755,8 +773,11 @@ func (r *Repository) GetDocumentParsingJobStats(ctx context.Context) (DocumentPa
 		ColumnExpr("SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending").
 		ColumnExpr("SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing").
 		ColumnExpr("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed").
-		ColumnExpr("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'failed' AND COALESCE(error_message, '') <> '"+jobs.StaleJobMessage+"' THEN 1 ELSE 0 END) AS failed").
+		ColumnExpr("SUM(CASE WHEN status = 'failed' AND error_message = '"+jobs.StaleJobMessage+"' THEN 1 ELSE 0 END) AS stale_failed").
 		ColumnExpr("SUM(CASE WHEN status = 'retry_pending' THEN 1 ELSE 0 END) AS retry_pending").
+		// with_errors is an admin ledger view of "rows carrying error text",
+		// including stale-sweep rows; it is intentionally not narrowed.
 		ColumnExpr("SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) AS with_errors").
 		ColumnExpr("COALESCE(SUM(file_size_bytes), 0) AS total_file_size_bytes").
 		Scan(ctx, &raw)
@@ -769,6 +790,7 @@ func (r *Repository) GetDocumentParsingJobStats(ctx context.Context) (DocumentPa
 	stats.Processing = raw.Processing
 	stats.Completed = raw.Completed
 	stats.Failed = raw.Failed
+	stats.StaleFailed = raw.StaleFailed
 	stats.RetryPending = raw.RetryPending
 	stats.WithErrors = raw.WithErrors
 	stats.TotalFileSizeBytes = raw.TotalFileSizeBytes

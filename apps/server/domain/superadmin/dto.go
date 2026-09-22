@@ -162,17 +162,19 @@ type EmbeddingJobDTO struct {
 
 // EmbeddingJobStatsDTO contains stats for embedding jobs
 type EmbeddingJobStatsDTO struct {
-	GraphTotal      int `json:"graphTotal"`
-	GraphPending    int `json:"graphPending"`
-	GraphCompleted  int `json:"graphCompleted"`
-	GraphFailed     int `json:"graphFailed"`
-	GraphDeadLetter int `json:"graphDeadLetter"`
-	GraphWithErrors int `json:"graphWithErrors"`
-	ChunkTotal      int `json:"chunkTotal"`
-	ChunkPending    int `json:"chunkPending"`
-	ChunkCompleted  int `json:"chunkCompleted"`
-	ChunkFailed     int `json:"chunkFailed"`
-	ChunkWithErrors int `json:"chunkWithErrors"`
+	GraphTotal       int `json:"graphTotal"`
+	GraphPending     int `json:"graphPending"`
+	GraphCompleted   int `json:"graphCompleted"`
+	GraphFailed      int `json:"graphFailed"`
+	GraphStaleFailed int `json:"graphStaleFailed"`
+	GraphDeadLetter  int `json:"graphDeadLetter"`
+	GraphWithErrors  int `json:"graphWithErrors"`
+	ChunkTotal       int `json:"chunkTotal"`
+	ChunkPending     int `json:"chunkPending"`
+	ChunkCompleted   int `json:"chunkCompleted"`
+	ChunkFailed      int `json:"chunkFailed"`
+	ChunkStaleFailed int `json:"chunkStaleFailed"`
+	ChunkWithErrors  int `json:"chunkWithErrors"`
 }
 
 // ListEmbeddingJobsResponse is the response for GET /api/superadmin/embedding-jobs
@@ -241,6 +243,7 @@ type ExtractionJobStatsDTO struct {
 	Processing                int `json:"processing"`
 	Completed                 int `json:"completed"`
 	Failed                    int `json:"failed"`
+	StaleFailed               int `json:"staleFailed"`
 	Cancelled                 int `json:"cancelled"`
 	WithErrors                int `json:"withErrors"`
 	TotalObjectsCreated       int `json:"totalObjectsCreated"`
@@ -300,6 +303,7 @@ type DocumentParsingJobStatsDTO struct {
 	Processing         int   `json:"processing"`
 	Completed          int   `json:"completed"`
 	Failed             int   `json:"failed"`
+	StaleFailed        int   `json:"staleFailed"`
 	RetryPending       int   `json:"retryPending"`
 	WithErrors         int   `json:"withErrors"`
 	TotalFileSizeBytes int64 `json:"totalFileSizeBytes"`

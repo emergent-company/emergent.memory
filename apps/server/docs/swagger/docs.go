@@ -24119,6 +24119,9 @@ const docTemplate = `{
                 },
                 "processing": {
                     "type": "integer"
+                },
+                "staleFailed": {
+                    "type": "integer"
                 }
             }
         },
@@ -24138,6 +24141,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "processing": {
+                    "type": "integer"
+                },
+                "staleFailed": {
                     "type": "integer"
                 }
             }
@@ -26070,6 +26076,9 @@ const docTemplate = `{
                 },
                 "queue": {
                     "type": "string"
+                },
+                "stale_failed": {
+                    "type": "integer"
                 },
                 "total": {
                     "type": "integer"
@@ -31504,6 +31513,9 @@ const docTemplate = `{
                 "retryPending": {
                     "type": "integer"
                 },
+                "staleFailed": {
+                    "type": "integer"
+                },
                 "total": {
                     "type": "integer"
                 },
@@ -31592,6 +31604,9 @@ const docTemplate = `{
                 "chunkPending": {
                     "type": "integer"
                 },
+                "chunkStaleFailed": {
+                    "type": "integer"
+                },
                 "chunkTotal": {
                     "type": "integer"
                 },
@@ -31608,6 +31623,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "graphPending": {
+                    "type": "integer"
+                },
+                "graphStaleFailed": {
                     "type": "integer"
                 },
                 "graphTotal": {
@@ -31702,6 +31720,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "queued": {
+                    "type": "integer"
+                },
+                "staleFailed": {
                     "type": "integer"
                 },
                 "total": {

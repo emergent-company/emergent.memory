@@ -10,6 +10,7 @@ import (
 	"github.com/lib/pq"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -461,12 +462,13 @@ func (s *ObjectExtractionJobsService) FindByDocument(ctx context.Context, docume
 
 // ObjectExtractionStats contains statistics about object extraction jobs
 type ObjectExtractionStats struct {
-	Pending    int64 `json:"pending"`
-	Processing int64 `json:"processing"`
-	Completed  int64 `json:"completed"`
-	Failed     int64 `json:"failed"`
-	Cancelled  int64 `json:"cancelled"`
-	Total      int64 `json:"total"`
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Completed   int64 `json:"completed"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
+	Cancelled   int64 `json:"cancelled"`
+	Total       int64 `json:"total"`
 }
 
 // Stats returns statistics about object extraction jobs
@@ -508,6 +510,23 @@ func (s *ObjectExtractionJobsService) Stats(ctx context.Context, projectID *stri
 			stats.Cancelled = r.Count
 		}
 	}
+
+	// Count rows terminal-failed by the stale-job sweep separately so genuine
+	// failures and historical cleanup are not conflated.
+	var staleCount int64
+	staleQuery := s.db.NewSelect().
+		Model((*ObjectExtractionJob)(nil)).
+		ColumnExpr("COUNT(*)").
+		Where("status = ?", JobStatusFailed).
+		Where("error_message = ?", jobs.StaleJobMessage)
+	if projectID != nil {
+		staleQuery = staleQuery.Where("project_id = ?", *projectID)
+	}
+	if err := staleQuery.Scan(ctx, &staleCount); err != nil {
+		return nil, fmt.Errorf("get stale stats: %w", err)
+	}
+	stats.StaleFailed = staleCount
+	stats.Failed -= staleCount
 
 	return stats, nil
 }
@@ -796,6 +815,7 @@ func (s *ObjectExtractionJobsService) GetStatistics(ctx context.Context, project
 	stats.JobsByStatus["processing"] = basicStats.Processing
 	stats.JobsByStatus["completed"] = basicStats.Completed
 	stats.JobsByStatus["failed"] = basicStats.Failed
+	stats.JobsByStatus["staleFailed"] = basicStats.StaleFailed
 	stats.JobsByStatus["cancelled"] = basicStats.Cancelled
 
 	if avgDurationMs.Valid {

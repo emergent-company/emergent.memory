@@ -24117,6 +24117,9 @@
                 },
                 "processing": {
                     "type": "integer"
+                },
+                "staleFailed": {
+                    "type": "integer"
                 }
             }
         },
@@ -24136,6 +24139,9 @@
                     "type": "integer"
                 },
                 "processing": {
+                    "type": "integer"
+                },
+                "staleFailed": {
                     "type": "integer"
                 }
             }
@@ -26068,6 +26074,9 @@
                 },
                 "queue": {
                     "type": "string"
+                },
+                "stale_failed": {
+                    "type": "integer"
                 },
                 "total": {
                     "type": "integer"
@@ -31502,6 +31511,9 @@
                 "retryPending": {
                     "type": "integer"
                 },
+                "staleFailed": {
+                    "type": "integer"
+                },
                 "total": {
                     "type": "integer"
                 },
@@ -31590,6 +31602,9 @@
                 "chunkPending": {
                     "type": "integer"
                 },
+                "chunkStaleFailed": {
+                    "type": "integer"
+                },
                 "chunkTotal": {
                     "type": "integer"
                 },
@@ -31606,6 +31621,9 @@
                     "type": "integer"
                 },
                 "graphPending": {
+                    "type": "integer"
+                },
+                "graphStaleFailed": {
                     "type": "integer"
                 },
                 "graphTotal": {
@@ -31700,6 +31718,9 @@
                     "type": "integer"
                 },
                 "queued": {
+                    "type": "integer"
+                },
+                "staleFailed": {
                     "type": "integer"
                 },
                 "total": {

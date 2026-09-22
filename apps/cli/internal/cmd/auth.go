@@ -856,12 +856,13 @@ type installedPackResponse struct {
 }
 
 type jobQueueMetrics struct {
-	Queue      string `json:"queue"`
-	Pending    int64  `json:"pending"`
-	Processing int64  `json:"processing"`
-	Completed  int64  `json:"completed"`
-	Failed     int64  `json:"failed"`
-	Total      int64  `json:"total"`
+	Queue       string `json:"queue"`
+	Pending     int64  `json:"pending"`
+	Processing  int64  `json:"processing"`
+	Completed   int64  `json:"completed"`
+	Failed      int64  `json:"failed"`
+	StaleFailed int64  `json:"stale_failed"`
+	Total       int64  `json:"total"`
 }
 
 type taskCountsResponse struct {
@@ -1029,6 +1030,9 @@ func printUsageStats(cfg *config.Config, apiKey string, projectID string) {
 				}
 				if q.Failed > 0 {
 					parts = append(parts, fmt.Sprintf("%d failed", q.Failed))
+				}
+				if q.StaleFailed > 0 {
+					parts = append(parts, fmt.Sprintf("%d stale failed", q.StaleFailed))
 				}
 				if len(parts) == 0 {
 					parts = append(parts, fmt.Sprintf("%d total", q.Total))

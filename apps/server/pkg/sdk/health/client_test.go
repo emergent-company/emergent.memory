@@ -204,6 +204,7 @@ func TestHealthJobMetrics(t *testing.T) {
 				Processing:  2,
 				Completed:   100,
 				Failed:      3,
+				StaleFailed: 7,
 				Total:       110,
 				LastHour:    10,
 				Last24Hours: 50,
@@ -238,6 +239,9 @@ func TestHealthJobMetrics(t *testing.T) {
 	}
 	if result.Queues[0].Pending != 5 {
 		t.Errorf("expected pending 5, got %d", result.Queues[0].Pending)
+	}
+	if result.Queues[0].StaleFailed != 7 {
+		t.Errorf("expected stale_failed 7, got %d", result.Queues[0].StaleFailed)
 	}
 }
 

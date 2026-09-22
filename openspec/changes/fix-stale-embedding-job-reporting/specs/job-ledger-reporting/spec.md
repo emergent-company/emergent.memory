@@ -5,12 +5,18 @@
 Job-queue reporting SHALL distinguish jobs that are genuinely failing from jobs
 that were terminal-failed in bulk by the stale-job sweep. A job is a stale-sweep
 failure when its status is `failed` and its error text is exactly the canonical
-stale-sweep marker; every other `failed` job is a genuine failure. Reporting
-endpoints SHALL count only genuine failures in the `failed` figure and SHALL
-report stale-sweep failures in a separate counter. This split SHALL apply to
-every job table the sweep touches: `kb.graph_embedding_jobs`,
+stale-sweep marker; every other `failed` job is a genuine failure. Every consumer
+that renders or aggregates per-queue job status SHALL count only genuine failures
+in its `failed` figure and SHALL report stale-sweep failures in a separate
+counter (or a separate, clearly-labelled value). This split SHALL apply to every
+job table the sweep touches: `kb.graph_embedding_jobs`,
 `kb.chunk_embedding_jobs`, `kb.document_parsing_jobs`,
 `kb.object_extraction_jobs`, and `kb.email_jobs`.
+
+An admin/ledger view that deliberately lists rows carrying error text (for
+example a `withErrors` count) MAY continue to include stale-sweep rows, provided
+the reason is documented in code, because its meaning is "rows carrying error
+text", not "current failures".
 
 #### Scenario: Stale-sweep failures excluded from failed
 
@@ -33,6 +39,23 @@ every job table the sweep touches: `kb.graph_embedding_jobs`,
 
 - **WHEN** stale-sweep failures exist in any of the five swept job tables
 - **THEN** the aggregate for that table SHALL exclude them from `failed` and report them separately
+
+#### Scenario: Every job-status consumer honours the split
+
+- **WHEN** any consumer of per-queue job status is read — the `/api/metrics/jobs`, `/api/embeddings/progress`, and `/api/projects/:id/embeddings/progress` endpoints, the `pkg/sdk/health` and `pkg/sdk/superadmin` clients, or the CLI displays `memory embeddings progress` and `memory auth status`
+- **THEN** it SHALL report genuine failures and stale-sweep failures as distinct values
+- **AND** it SHALL NOT present stale-sweep rows as current failures
+
+#### Scenario: CLI totals reconcile with the API
+
+- **WHEN** `memory embeddings progress` prints a queue whose only non-completed rows are stale-sweep failures
+- **THEN** the printed stale-failed value SHALL be non-zero AND SHALL be included in the total used for the completion percentage (so the queue does not read as 100% complete)
+
+#### Scenario: Server service and admin aggregates honour the split
+
+- **WHEN** the `email`, `document_parsing_jobs`, or `object_extraction_jobs` service statistics, or the `superadmin` embedding/extraction/document-parsing statistics, are read
+- **THEN** stale-sweep rows SHALL be excluded from `failed` and reported in a separate stale-failed value
+- **AND** any `withErrors`-style count that intentionally lists rows carrying error text SHALL remain unchanged and its intent documented in code
 
 ### Requirement: The stale-sweep marker has a single source of truth
 

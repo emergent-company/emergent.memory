@@ -11,6 +11,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -293,8 +294,9 @@ func (s *JobsService) Stats(ctx context.Context) (*QueueStats, error) {
 		COUNT(*) FILTER (WHERE status = 'pending') as pending,
 		COUNT(*) FILTER (WHERE status = 'processing') as processing,
 		COUNT(*) FILTER (WHERE status = 'sent') as sent,
-		COUNT(*) FILTER (WHERE status = 'failed') as failed
-	FROM kb.email_jobs`).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Sent, &stats.Failed)
+		COUNT(*) FILTER (WHERE status = 'failed' AND COALESCE(last_error, '') <> '`+jobs.StaleJobMessage+`') as failed,
+		COUNT(*) FILTER (WHERE status = 'failed' AND last_error = '`+jobs.StaleJobMessage+`') as stale_failed
+	FROM kb.email_jobs`).Scan(ctx, &stats.Pending, &stats.Processing, &stats.Sent, &stats.Failed, &stats.StaleFailed)
 	if err != nil {
 		return nil, fmt.Errorf("get stats: %w", err)
 	}
@@ -304,10 +306,11 @@ func (s *JobsService) Stats(ctx context.Context) (*QueueStats, error) {
 
 // QueueStats contains queue statistics
 type QueueStats struct {
-	Pending    int64 `json:"pending"`
-	Processing int64 `json:"processing"`
-	Sent       int64 `json:"sent"`
-	Failed     int64 `json:"failed"`
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Sent        int64 `json:"sent"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
 }
 
 // truncateError truncates an error message to 1000 characters.

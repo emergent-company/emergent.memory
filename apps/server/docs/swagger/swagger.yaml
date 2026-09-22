@@ -2519,6 +2519,8 @@ definitions:
         type: integer
       processing:
         type: integer
+      staleFailed:
+        type: integer
     type: object
   domain_extraction.GraphEmbeddingQueueStats:
     properties:
@@ -2531,6 +2533,8 @@ definitions:
       pending:
         type: integer
       processing:
+        type: integer
+      staleFailed:
         type: integer
     type: object
   domain_extraction.ProjectEmbeddingCancelResponse:
@@ -3881,6 +3885,8 @@ definitions:
         type: integer
       queue:
         type: string
+      stale_failed:
+        type: integer
       total:
         type: integer
     type: object
@@ -7566,6 +7572,8 @@ definitions:
         type: integer
       retryPending:
         type: integer
+      staleFailed:
+        type: integer
       total:
         type: integer
       totalFileSizeBytes:
@@ -7624,6 +7632,8 @@ definitions:
         type: integer
       chunkPending:
         type: integer
+      chunkStaleFailed:
+        type: integer
       chunkTotal:
         type: integer
       chunkWithErrors:
@@ -7635,6 +7645,8 @@ definitions:
       graphFailed:
         type: integer
       graphPending:
+        type: integer
+      graphStaleFailed:
         type: integer
       graphTotal:
         type: integer
@@ -7697,6 +7709,8 @@ definitions:
       processing:
         type: integer
       queued:
+        type: integer
+      staleFailed:
         type: integer
       total:
         type: integer
