@@ -3,8 +3,8 @@ package idgen
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 )
 
 func TestHex(t *testing.T) {
@@ -26,20 +26,30 @@ func TestHex(t *testing.T) {
 }
 
 func TestFallbackID(t *testing.T) {
-	orig := RandRead
-	RandRead = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
-	t.Cleanup(func() { RandRead = orig })
+	id := FallbackID("sess")
+	if !strings.HasPrefix(id, "sess-") {
+		t.Fatalf("FallbackID = %q, want sess- prefix", id)
+	}
 
-	first := FallbackID("sess")
-	if first == "sess-16" {
-		t.Fatalf("fallback collapsed to the constant %q", first)
+	// Concurrent fallback calls must all produce distinct ids without relying
+	// on the wall clock advancing between calls.
+	const n = 1000
+	ids := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ids[i] = FallbackID("sess")
+		}(i)
 	}
-	if !strings.HasPrefix(first, "sess-") {
-		t.Fatalf("FallbackID = %q, want sess- prefix", first)
-	}
-	time.Sleep(time.Millisecond)
-	second := FallbackID("sess")
-	if first == second {
-		t.Fatalf("fallback ids are not unique: both %q", first)
+	wg.Wait()
+
+	seen := make(map[string]struct{}, n)
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			t.Fatalf("duplicate fallback id %q", id)
+		}
+		seen[id] = struct{}{}
 	}
 }

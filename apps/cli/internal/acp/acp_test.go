@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/idgen"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
@@ -456,10 +455,25 @@ func TestNewID(t *testing.T) {
 		if !strings.HasPrefix(first, "sess-") {
 			t.Fatalf("fallback id = %q, want sess- prefix", first)
 		}
-		time.Sleep(time.Millisecond)
-		second := newID("sess")
-		if first == second {
-			t.Fatalf("fallback ids are not unique: both %q", first)
+
+		const n = 100
+		ids := make([]string, n)
+		var wg sync.WaitGroup
+		for i := range ids {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				ids[i] = newID("sess")
+			}(i)
+		}
+		wg.Wait()
+
+		seen := make(map[string]struct{}, n)
+		for _, id := range ids {
+			if _, dup := seen[id]; dup {
+				t.Fatalf("fallback ids are not unique: %q seen twice", id)
+			}
+			seen[id] = struct{}{}
 		}
 	})
 }
