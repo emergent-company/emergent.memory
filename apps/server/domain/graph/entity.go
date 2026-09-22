@@ -91,6 +91,7 @@ type GraphRelationship struct {
 
 	ID           uuid.UUID  `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
 	ProjectID    uuid.UUID  `bun:"project_id,type:uuid,notnull" json:"project_id"`
+	Namespace    *string    `bun:"namespace" json:"namespace,omitempty"`
 	BranchID     *uuid.UUID `bun:"branch_id,type:uuid" json:"branch_id,omitempty"`
 	CanonicalID  uuid.UUID  `bun:"canonical_id,type:uuid,notnull" json:"canonical_id"`
 	SupersedesID *uuid.UUID `bun:"supersedes_id,type:uuid" json:"supersedes_id,omitempty"`
