@@ -1,0 +1,48 @@
+# runlog.service — supervise the runlog daemon + web UI.
+#
+# Install (root):
+#   sudo cp e2e/runlog.service /etc/systemd/system/runlog.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now runlog.service
+#
+# Why a unit: runlog's daemon is a detached background process with no
+# supervisor. Started from a shell or an agent session it survives until
+# something sends it SIGTERM — and then nothing brings it back, so the web UI
+# at :17432 simply stops responding. Under systemd it restarts automatically,
+# and `systemctl stop` is the only way to keep it down.
+#
+# The unit and the `runlog:*` tasks in e2e/Taskfile.yml are aware of each other:
+# when this unit is installed and enabled, the tasks delegate to it instead of
+# racing it for the port.
+#
+# NOTE: adjust WorkingDirectory and the --db path if your checkout is not at
+# /root/emergent.memory.
+
+[Unit]
+Description=runlog daemon + web UI (e2e test run browser)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# WorkingDirectory must be the e2e project dir: runlog resolves .runlog.yaml
+# (daemon_port, db, test categories) and the .runlog/ pidfile from it.
+WorkingDirectory=/root/emergent.memory/e2e
+Environment=PATH=/root/go/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/root
+
+# Use the internal --daemon form rather than `runlog daemon start`: the latter
+# re-execs and detaches, so systemd would see the parent exit and treat the unit
+# as failed. --daemon serves in the foreground, which is what Type=simple
+# expects, and still writes .runlog/daemon.pid and removes it on SIGTERM.
+ExecStart=/root/go/bin/runlog --daemon --db /root/emergent.memory/e2e/.runlog/runs.db --port=17432
+
+Restart=always
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=runlog
+
+[Install]
+WantedBy=multi-user.target
