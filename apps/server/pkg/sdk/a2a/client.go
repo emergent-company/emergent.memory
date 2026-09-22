@@ -431,31 +431,62 @@ type SSEStream struct {
 
 // Next reads the next StreamResponse event from the stream.
 // Returns io.EOF when the stream ends.
+//
+// The line framing follows the Server-Sent Events spec: a `data:` field may be
+// followed by zero or more spaces (or a tab), consecutive `data:` lines are
+// joined with "\n" into one payload, and an event is dispatched only when a
+// blank line terminates it. `event:`, `id:`, `retry:`, and comment (`:`) lines
+// are not consumed by this client and are ignored while the stream advances.
 func (s *SSEStream) Next() (*StreamResponse, error) {
+	var data []string
+
 	for s.scanner.Scan() {
 		line := s.scanner.Text()
 
-		// SSE data lines start with "data: ".
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-			if data == "[DONE]" {
+		// A blank line terminates the event: dispatch the buffered payload.
+		if line == "" {
+			if len(data) == 0 {
+				continue // nothing buffered, e.g. leading/standalone blank lines
+			}
+			payload := strings.Join(data, "\n")
+			data = data[:0]
+
+			if payload == "" {
+				continue // e.g. a bare "data:" keep-alive/priming line
+			}
+			if payload == "[DONE]" {
 				return nil, io.EOF
 			}
 
 			var event StreamResponse
-			if err := json.Unmarshal([]byte(data), &event); err != nil {
+			if err := json.Unmarshal([]byte(payload), &event); err != nil {
 				return nil, fmt.Errorf("failed to decode SSE event: %w", err)
 			}
 			return &event, nil
 		}
 
-		// Skip empty lines and comments (: prefixed lines).
+		// Comment line: ignore.
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		// Parse "field: value" (the value is optional).
+		field, value, _ := strings.Cut(line, ":")
+		if field != "data" {
+			// event:, id:, retry:, and unknown fields are not consumed.
+			continue
+		}
+		// The spec strips a single leading space; also accept a single tab.
+		value = strings.TrimPrefix(value, " ")
+		value = strings.TrimPrefix(value, "\t")
+		data = append(data, value)
 	}
 
 	if err := s.scanner.Err(); err != nil {
 		return nil, fmt.Errorf("SSE stream read error: %w", err)
 	}
 
+	// An event not terminated by a blank line is incomplete and discarded.
 	return nil, io.EOF
 }
 
