@@ -5,6 +5,9 @@ on:
     branches: [master, main]
     paths:
       - 'apps/cli/**'
+      # apps/cli/go.mod carries a `replace` to the local SDK module, so CLI
+      # code links SDK source that lives outside apps/cli/**.
+      - 'apps/server/pkg/sdk/**'
       - '.github/workflows/cli.yml'
       - 'deploy/**'
       - 'VERSION'
@@ -14,6 +17,9 @@ on:
     branches: [master, main]
     paths:
       - 'apps/cli/**'
+      # apps/cli/go.mod carries a `replace` to the local SDK module, so CLI
+      # code links SDK source that lives outside apps/cli/**.
+      - 'apps/server/pkg/sdk/**'
       - '.github/workflows/cli.yml'
       - 'deploy/**'
       - 'VERSION'
