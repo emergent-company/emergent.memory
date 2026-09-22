@@ -2,13 +2,12 @@ package acp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/idgen"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 )
 
@@ -473,11 +472,12 @@ func artifactText(art a2a.Artifact) string {
 	return sb.String()
 }
 
-// newID returns a random hex id with the given prefix.
+// newID returns a random hex id with the given prefix. If the entropy source
+// fails it falls back to a nanosecond timestamp, keeping ids unique rather
+// than collapsing every id to the same constant.
 func newID(prefix string) string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%s-%d", prefix, len(b))
+	if h, ok := idgen.Hex(16); ok {
+		return prefix + "-" + h
 	}
-	return prefix + "-" + hex.EncodeToString(b)
+	return idgen.FallbackID(prefix)
 }
