@@ -846,7 +846,7 @@ templ defaultModelTestButton(selectName string) {
 		hx-disable="this"
 		data-testid={ "default-model-test-" + modelType }
 	>
-		<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+		<span class="htmx-indicator default-model-test-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
 		@ui.IconSpan("lucide--zap", "size-3.5")
 		Test
 	</button>

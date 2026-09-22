@@ -1337,6 +1337,7 @@ func TestDefaultModelTestButtonsRender(t *testing.T) {
 		`hx-swap="none"`,
 		`hx-disable="this"`,
 		`htmx-indicator`,
+		`default-model-test-indicator`,
 	} {
 		if !strings.Contains(decoded, want) {
 			t.Errorf("default-model panel missing %q", want)
