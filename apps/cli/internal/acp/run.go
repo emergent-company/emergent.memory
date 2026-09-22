@@ -95,6 +95,16 @@ func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error)
 			return nil, &rpcError{Code: codeInternal, Message: err.Error()}
 		}
 		return result, nil
+	case "session/delete":
+		var p DeleteSessionParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf("session/delete: invalid params: %v", err)}
+		}
+		if p.SessionID == "" {
+			return nil, &rpcError{Code: codeInvalidParams, Message: "session/delete: missing sessionId"}
+		}
+		a.deleteSession(p.SessionID)
+		return struct{}{}, nil
 	default:
 		return nil, &rpcError{Code: codeMethodNotFound, Message: fmt.Sprintf("method not found: %s", req.Method)}
 	}
@@ -111,5 +121,18 @@ func handleNotification(a *Agent, req *request, errLog io.Writer) {
 			return
 		}
 		a.cancel(p)
+	case "session/delete":
+		// ACP defines session/delete as a request, but accept the notification
+		// form too so a fire-and-forget client still frees the session.
+		var p DeleteSessionParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			_, _ = fmt.Fprintf(errLog, "acp: session/delete: invalid params: %v\n", err)
+			return
+		}
+		if p.SessionID == "" {
+			_, _ = fmt.Fprintf(errLog, "acp: session/delete: missing sessionId\n")
+			return
+		}
+		a.deleteSession(p.SessionID)
 	}
 }
