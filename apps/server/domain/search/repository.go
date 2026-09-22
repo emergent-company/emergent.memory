@@ -442,7 +442,7 @@ type RelationshipSearchParams struct {
 	ProjectID uuid.UUID
 	Vector    []float32 // Query embedding for semantic search
 	Limit     int       // Result limit (default: 50, max: 100)
-	Namespace *string   // optional: filter by src object namespace
+	Namespace *string   // optional: filter by relationship namespace (denormalised from the src object)
 }
 
 // RelationshipSearchResult represents a single relationship search result
@@ -485,6 +485,10 @@ type RelationshipSearchResponse struct {
 // endpoints share its project_id (that invariant is application-enforced), so a
 // malformed or legacy cross-project row would otherwise surface another project's
 // object metadata through the joins.
+//
+// Likewise, namespace is denormalised onto kb.graph_relationships (from the src
+// object) so the namespace predicate stays on the table that owns the embedding
+// instead of the joined kb.graph_objects row.
 func (r *Repository) SearchRelationships(ctx context.Context, params RelationshipSearchParams) (*RelationshipSearchResponse, error) {
 	if len(params.Vector) == 0 {
 		return nil, apperror.ErrBadRequest.WithMessage("vector required for relationship search")
@@ -506,49 +510,7 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	// Joins with graph_objects to construct triplet text: "{source.name} {type} {target.name}"
-	baseQuery := `
-		SELECT 
-			r.id,
-			r.src_id,
-			r.dst_id,
-			r.type,
-			r.properties,
-			COALESCE(src.key, src.id::text) || ' ' || 
-				LOWER(REPLACE(r.type, '_', ' ')) || ' ' || 
-				COALESCE(dst.key, dst.id::text) AS triplet_text,
-			(1 - (r.embedding <=> ?::vector)) AS score,
-			COALESCE(src.key, '') AS src_key,
-			COALESCE(src.type, '') AS src_type,
-			src.properties AS src_properties,
-			COALESCE(dst.key, '') AS dst_key,
-			COALESCE(dst.type, '') AS dst_type,
-			dst.properties AS dst_properties
-		FROM kb.graph_relationships r
-		JOIN kb.graph_objects src ON src.id = r.src_id
-		JOIN kb.graph_objects dst ON dst.id = r.dst_id
-		WHERE r.embedding IS NOT NULL
-		  AND r.deleted_at IS NULL
-		  AND r.project_id = ?
-		  AND src.project_id = ?
-		  AND dst.project_id = ?`
-
-	var queryArgs []any
-	queryArgs = append(queryArgs, vectorStr, params.ProjectID, params.ProjectID, params.ProjectID)
-
-	if params.Namespace != nil {
-		// NOTE: namespace lives on the joined object, not on the relationship, so
-		// this predicate still forces the planner to abandon the ivfflat index.
-		// Namespace-scoped relationship search remains a seq scan until namespace
-		// is denormalised onto kb.graph_relationships.
-		baseQuery += "\n\t\t  AND src.namespace = ?"
-		queryArgs = append(queryArgs, *params.Namespace)
-	}
-
-	query := baseQuery + `
-		ORDER BY r.embedding <=> ?::vector
-		LIMIT ?
-	`
-	queryArgs = append(queryArgs, vectorStr, limit)
+	query, queryArgs := buildRelationshipSearchQuery(vectorStr, params.ProjectID, params.Namespace, limit)
 
 	rows, err := tx.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
@@ -635,4 +597,46 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 		Results:         results,
 		TotalCandidates: len(results),
 	}, nil
+}
+
+// buildRelationshipSearchQuery builds the ANN SQL for relationship search.
+// When namespace is non-nil the predicate is applied to
+// kb.graph_relationships.namespace (denormalised from the src object), NOT to the
+// joined kb.graph_objects row: a predicate on a joined relation prevents pgvector
+// from satisfying it with the embedding index and lets the planner fall back to a
+// sequential scan over every embedded relationship.
+func buildRelationshipSearchQuery(vectorStr string, projectID uuid.UUID, namespace *string, limit int) (string, []any) {
+	baseQuery := `
+		SELECT 
+			r.id,
+			r.src_id,
+			r.dst_id,
+			r.type,
+			r.properties,
+			COALESCE(src.key, src.id::text) || ' ' || 
+				LOWER(REPLACE(r.type, '_', ' ')) || ' ' || 
+				COALESCE(dst.key, dst.id::text) AS triplet_text,
+			(1 - (r.embedding <=> ?::vector)) AS score,
+			COALESCE(src.key, '') AS src_key,
+			COALESCE(src.type, '') AS src_type,
+			src.properties AS src_properties,
+			COALESCE(dst.key, '') AS dst_key,
+			COALESCE(dst.type, '') AS dst_type,
+			dst.properties AS dst_properties
+		FROM kb.graph_relationships r
+		JOIN kb.graph_objects src ON src.id = r.src_id
+		JOIN kb.graph_objects dst ON dst.id = r.dst_id
+		WHERE r.embedding IS NOT NULL
+		  AND r.deleted_at IS NULL
+		  AND r.project_id = ?
+		  AND src.project_id = ?
+		  AND dst.project_id = ?`
+	queryArgs := []any{vectorStr, projectID, projectID, projectID}
+	if namespace != nil {
+		baseQuery += "\n\t\t  AND r.namespace = ?"
+		queryArgs = append(queryArgs, *namespace)
+	}
+	query := baseQuery + "\n\t\tORDER BY r.embedding <=> ?::vector\n\t\tLIMIT ?"
+	queryArgs = append(queryArgs, vectorStr, limit)
+	return query, queryArgs
 }
