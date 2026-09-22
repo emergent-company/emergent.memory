@@ -49,8 +49,8 @@ Run this loop per task:
    (`title: "Review+merge #NNN — <summary>"`).
 8. **Merge gate** — merge only when checks green + review approved. **Authors never
    self-merge.**
-9. **Archive + cleanup** — `paseo_archive_workspace`, `git worktree remove/prune`,
-   delete the branch.
+9. **Archive + cleanup** — `paseo_archive_workspace`, then `git worktree remove
+   <path>` and `git worktree prune`, delete the branch.
 10. **Reconcile** — confirm merged SHA, close the issue, report the board.
 11. **File spin-off findings** as GitHub issues (search dupes first, show draft,
     get confirmation).
@@ -84,7 +84,10 @@ Any agent picking up a GitHub issue must mark ownership **in the same action it
 claims the issue**, before any code changes. GitHub issues have no native `status`
 field — "in-progress" is a **label**, and the owner is the **assignee**.
 
-### Claim (atomic, before work)
+### Claim (best-effort, before work)
+
+Assign + label in one command, before any code changes. This is **not a
+compare-and-set lock** — it is a best-effort signal.
 
 ```bash
 gh issue edit <N> --add-assignee @me --add-label "status: in-progress"
@@ -133,8 +136,12 @@ Then the status label is confirmation, not the only lock.
 ## 5. Guardrails (repeat verbatim)
 
 - **Spec + implementation = one PR, one worktree, one branch.** Never split them.
-- **Mandatory pre-PR verify:** `go build ./...` + `gofmt` + `go vet` +
-  `golangci-lint` + `go test` + `openspec validate` (when an OpenSpec change exists).
+- **Mandatory pre-PR verify, scoped to the changed module.** The repo root is a
+  `go.work` workspace — unscoped `go build ./...` targets no single module. Run
+  build/vet/test/lint from the module that changed (e.g. `apps/server`,
+  `apps/web-ui/gateway`, `apps/cli`), `gofmt -l` on changed `.go` files, and
+  `openspec validate` when an OpenSpec change exists. Docs-only / Swift / non-Go
+  lanes skip the Go checks — gate on their own toolchain, not `go test`.
 - **Never self-merge.** The review bot or a reviewer agent merges.
 - **Never touch the shared checkout.** Commit each finished unit immediately;
   stage exact paths; never sweep a parallel session's WIP.
