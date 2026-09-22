@@ -17,4 +17,4 @@
 ## 4. Verification
 
 - [x] 4.1 `go build ./...`, `go test ./...`, and `golangci-lint run ./...` in `apps/server`.
-- [x] 4.2 Recall@10 / recall@30 comparison against a brute-force baseline on a scratch DB seeded with real relationship embeddings (ivfflat `probes=1/5/10` vs HNSW `ef_search=40/100`); record the numbers in the proposal.
+- [x] 4.2 Recall@10 / recall@30 comparison against a brute-force baseline on a scratch DB seeded with two **synthetic** corpora (worst-case isotropic and embedding-like clustered/anisotropic) — real dev-vector recall was NOT measured (`kb.graph_relationships` has zero rows locally; the ~82k-row dataset is reachable only via the read-only MCP query path). ivfflat `probes=1/5/10` vs HNSW `ef_search=40/100`; numbers recorded in the proposal.

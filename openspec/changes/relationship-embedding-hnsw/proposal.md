@@ -37,7 +37,7 @@ No — not for the relationship leg, and not for the graph-object leg. After thi
 - **Scheduler**: `apps/server/domain/scheduler/embedding_index_reindex_task.go` (+ its test) — remove the stale `idx_graph_relationships_embedding_ivfflat` reindex target.
 - **Docs**: `docs/features/graph/triplet-embeddings.md` — index section and operations SQL now reference the HNSW index.
 - **Tests**: `apps/server/domain/search/search_test.go` — remove the now-invalid knob/default/guard tests; `embedding_index_reindex_task_test.go` — drop the removed target.
-- **Deploy order**: apply migration `00171` before rolling the new binary. Between the two, relationship search runs on the still-present ivfflat index with the session default (`probes=1`): a transient recall dip, never the seq-scan cliff.
+- **Deploy order**: apply migration `00171` before rolling the new binary. In that window the old binary still runs `SET LOCAL ivfflat.probes`, but with the ivfflat index gone that setting is a harmless no-op for the new HNSW index, which serves the ANN leg. If the binary is deployed first instead, the old ivfflat index is still present and runs at its session default (`probes=1`, measured ~451 ms) until the migration lands: a transient recall dip, never the seq-scan cliff. Neither order can re-introduce the probes→seq-scan crossover, because after the migration no relationship index is probe-tuned.
 - **Out of scope / overlapping lane**: graph-objects/chunks/skills embedding indexes are handled by a sibling lane (#670); this change touches only `kb.graph_relationships`.
 - No API or response-shape change.
 

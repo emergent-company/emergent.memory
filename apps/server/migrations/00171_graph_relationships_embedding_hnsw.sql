@@ -40,10 +40,14 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_graph_relationships_embedding_hnsw
 DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_relationships_embedding_ivfflat;
 
 -- +goose Down
--- Recreate the previous IVFFlat index and drop HNSW. Same create-before-drop
--- ordering keeps an ANN index available throughout the rollback.
-DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_relationships_embedding_hnsw;
+-- Recreate the previous IVFFlat index and drop HNSW. Build the replacement
+-- first (and drop any leftover ivfflat first, so a retry rebuilds from
+-- scratch) so an ANN index is available throughout the rollback: if the lock-
+-- taking ivfflat build fails, the working HNSW index is left untouched.
+DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_relationships_embedding_ivfflat;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_graph_relationships_embedding_ivfflat
     ON kb.graph_relationships USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
+
+DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_relationships_embedding_hnsw;
