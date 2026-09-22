@@ -44,6 +44,12 @@ const A2AProtocolVersion = "1.0"
 // A2AVersionHeader is the header carrying the negotiated protocol version.
 const A2AVersionHeader = "A2A-Version"
 
+// ProjectIDHeader is the header carrying the project selector. The A2A surface
+// addresses a project by credential/header, not by path: without it, the
+// authenticated extended-card request has no project context and the server
+// rejects it (see PROJECT_REQUIRED).
+const ProjectIDHeader = "X-Project-ID"
+
 // A2AErrorDomain is the canonical A2A error detail domain.
 const A2AErrorDomain = "a2a-protocol.org"
 
@@ -55,9 +61,10 @@ const SkillIDMetadataKey = "skillId"
 
 // Client provides access to the A2A v1.0 API.
 type Client struct {
-	http  *http.Client
-	base  string
-	token string
+	http      *http.Client
+	base      string
+	token     string
+	projectID string
 }
 
 // NewClient creates a new A2A client.
@@ -80,6 +87,19 @@ func NewClientWithHTTP(base, token string, httpClient *http.Client) *Client {
 		base:  strings.TrimRight(base, "/"),
 		token: token,
 	}
+}
+
+// NewClientWithProject creates a new A2A client that sends projectID as the
+// X-Project-ID selector on every request.
+func NewClientWithProject(base, token, projectID string) *Client {
+	return NewClient(base, token).WithProject(projectID)
+}
+
+// WithProject returns the client configured to send projectID as the
+// X-Project-ID selector on every request. An empty projectID clears it.
+func (c *Client) WithProject(projectID string) *Client {
+	c.projectID = projectID
+	return c
 }
 
 // --- Enums ---
@@ -503,6 +523,14 @@ func (c *Client) setAuth(req *http.Request) {
 	}
 }
 
+// setProject applies the project selector header when a project is configured.
+// The authenticated A2A endpoints are project-scoped and require it.
+func (c *Client) setProject(req *http.Request) {
+	if c.projectID != "" {
+		req.Header.Set(ProjectIDHeader, c.projectID)
+	}
+}
+
 // setA2AHeaders applies the A2A content type, accept, and version headers.
 func setA2AHeaders(req *http.Request, body bool) {
 	if body {
@@ -528,6 +556,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, resu
 	}
 
 	c.setAuth(req)
+	c.setProject(req)
 	setA2AHeaders(req, body != nil)
 
 	resp, err := c.http.Do(req)
@@ -589,6 +618,7 @@ func (c *Client) StreamMessage(ctx context.Context, req SendMessageRequest) (*SS
 	}
 
 	c.setAuth(httpReq)
+	c.setProject(httpReq)
 	setA2AHeaders(httpReq, true)
 	httpReq.Header.Set("Accept", "text/event-stream")
 
