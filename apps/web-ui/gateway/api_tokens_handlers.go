@@ -212,7 +212,7 @@ var scopePickerGroups = []apiTokenScopeGroup{
 		},
 	},
 	{
-		Label: apiTokenAreaGraph, Hint: "Knowledge graph objects, links, and search.",
+		Label: apiTokenAreaGraph, Hint: "Knowledge graph objects, relationships, and search.",
 		Options: []apiTokenScopeOption{
 			{"graph:read", "Read knowledge graph"}, {"graph:write", "Write knowledge graph"},
 			{"search", "Search memory"},
@@ -244,7 +244,7 @@ var scopePickerGroups = []apiTokenScopeGroup{
 		},
 	},
 	{
-		Label: apiTokenAreaSkills, Hint: "Skills.",
+		Label: apiTokenAreaSkills, Hint: "Reusable skills and their content.",
 		Options: []apiTokenScopeOption{
 			{"skills:read", "Read skills"}, {"skills:write", "Write skills"},
 		},
