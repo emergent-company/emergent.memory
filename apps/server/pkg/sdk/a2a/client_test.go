@@ -1,11 +1,15 @@
 package a2a
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -171,6 +175,129 @@ func TestStreamMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, ev.Task)
 	assert.Equal(t, TaskStateCompleted, ev.Task.Status.State)
+}
+
+// newSSEStream builds an SSEStream over an in-memory body so the parser can be
+// exercised without an HTTP server.
+func newSSEStream(body string) *SSEStream {
+	return &SSEStream{
+		resp:    &http.Response{Body: io.NopCloser(strings.NewReader(body))},
+		scanner: bufio.NewScanner(strings.NewReader(body)),
+	}
+}
+
+// collectEvents drains a stream, returning every dispatched event. An io.EOF
+// ends iteration; any other error fails the test.
+func collectEvents(t *testing.T, s *SSEStream) []StreamResponse {
+	t.Helper()
+	var events []StreamResponse
+	for {
+		ev, err := s.Next()
+		if errors.Is(err, io.EOF) {
+			return events
+		}
+		require.NoError(t, err)
+		events = append(events, *ev)
+	}
+}
+
+// statusUpdateJSON is a single-line StreamResponse payload used across cases.
+const statusUpdateJSON = `{"statusUpdate":{"taskId":"t1","contextId":"c1","status":{"state":"TASK_STATE_WORKING"}}}`
+
+func TestSSEStreamNextParsing(t *testing.T) {
+	wantStatus := []StreamResponse{{StatusUpdate: &TaskStatusUpdateEvent{
+		TaskID:    "t1",
+		ContextID: "c1",
+		Status:    TaskStatus{State: TaskStateWorking},
+	}}}
+	wantArtifact := []StreamResponse{{ArtifactUpdate: &TaskArtifactUpdateEvent{
+		TaskID:    "t1",
+		ContextID: "c1",
+		Artifact:  Artifact{ArtifactID: "a1", Parts: []Part{TextPart("hel")}},
+	}}}
+
+	tests := []struct {
+		name string
+		body string
+		want []StreamResponse
+	}{
+		{
+			name: "no space after colon",
+			body: "data:" + statusUpdateJSON + "\n\n",
+			want: wantStatus,
+		},
+		{
+			name: "single space after colon",
+			body: "data: " + statusUpdateJSON + "\n\n",
+			want: wantStatus,
+		},
+		{
+			name: "multiple spaces after colon",
+			body: "data:    " + statusUpdateJSON + "\n\n",
+			want: wantStatus,
+		},
+		{
+			name: "tab after colon",
+			body: "data:\t" + statusUpdateJSON + "\n\n",
+			want: wantStatus,
+		},
+		{
+			name: "multi-line data joined with newline",
+			body: "data: {\"statusUpdate\":{\"taskId\":\"t1\",\"contextId\":\"c1\",\n" +
+				"data: \"status\":{\"state\":\"TASK_STATE_WORKING\"}}}\n\n",
+			want: wantStatus,
+		},
+		{
+			name: "multiple events in one chunk",
+			body: "data: " + statusUpdateJSON + "\n\n" +
+				"data: {\"artifactUpdate\":{\"taskId\":\"t1\",\"contextId\":\"c1\",\"artifact\":{\"artifactId\":\"a1\",\"parts\":[{\"text\":\"hel\"}]}}}\n\n",
+			want: append(append([]StreamResponse{}, wantStatus...), wantArtifact...),
+		},
+		{
+			name: "bare data empty payload is skipped",
+			body: "data:\n\ndata: " + statusUpdateJSON + "\n\n",
+			want: wantStatus,
+		},
+		{
+			name: "only bare data empty payload emits nothing",
+			body: "data:\n\n",
+			want: nil,
+		},
+		{
+			name: "comment and metadata fields are ignored",
+			body: ": keep-alive\nevent: message\nid: 42\nretry: 1000\ndata: " + statusUpdateJSON + "\n\n",
+			want: wantStatus,
+		},
+		{
+			name: "unknown field is ignored",
+			body: "foo: bar\ndata: " + statusUpdateJSON + "\n\n",
+			want: wantStatus,
+		},
+		{
+			name: "unterminated event is discarded at EOF",
+			body: "data: " + statusUpdateJSON,
+			want: nil,
+		},
+		{
+			name: "leading blank lines are skipped",
+			body: "\n\n\ndata: " + statusUpdateJSON + "\n\n",
+			want: wantStatus,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := collectEvents(t, newSSEStream(tc.body))
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestSSEStreamDoneSentinel(t *testing.T) {
+	// [DONE] terminates the stream; any payload after it is not dispatched.
+	s := newSSEStream("data: [DONE]\n\ndata: " + statusUpdateJSON + "\n\n")
+	_, err := s.Next()
+	require.ErrorIs(t, err, io.EOF)
 }
 
 func TestGetTask(t *testing.T) {

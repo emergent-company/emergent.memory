@@ -17,24 +17,22 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
+// testTargetIndex is the index name exercised by the fake-driver tests. It is
+// injected into the task so the reindex/recovery machinery can be tested even
+// though the production list is now empty (all ivfflat embedding indexes were
+// migrated to HNSW: graph objects 00164, chunks/skills 00170, graph
+// relationships 00171).
+const testTargetIndex = "idx_graph_relationships_embedding_ivfflat"
+
 func TestEmbeddingIndexTargetsQualified(t *testing.T) {
-	want := map[string]string{
-		"idx_chunks_embedding":         `"kb"."idx_chunks_embedding"`,
-		"idx_skills_embedding_ivfflat": `"kb"."idx_skills_embedding_ivfflat"`,
-	}
-	if len(embeddingIndexTargets) != len(want) {
-		t.Fatalf("expected %d targets, got %d", len(want), len(embeddingIndexTargets))
-	}
-	for _, target := range embeddingIndexTargets {
-		got, ok := want[target.name]
-		if !ok {
-			t.Errorf("unexpected target %s.%s", target.schema, target.name)
-			continue
-		}
-		if q := target.qualified(); q != got {
-			t.Errorf("qualified(%s) = %q, want %q", target.name, q, got)
-		}
-	}
+	// Every ivfflat embedding index has been migrated to HNSW, so the scheduled
+	// reindex list must be empty: a nightly REINDEX against a dropped index would
+	// fail and be surfaced as an aggregate task error every night.
+	assert.Empty(t, embeddingIndexTargets)
+
+	// The qualification machinery still matters for any future target.
+	target := embeddingIndexTarget{schema: "kb", name: testTargetIndex}
+	assert.Equal(t, `"kb"."`+testTargetIndex+`"`, target.qualified())
 }
 
 func TestQuoteIdent(t *testing.T) {
@@ -88,7 +86,11 @@ func newEmbeddingIndexReindexTask(t *testing.T, state *embeddingReindexFakeDB) *
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqldb.Close() })
 
-	return NewEmbeddingIndexReindexTask(bun.NewDB(sqldb, pgdialect.New()), slog.Default())
+	task := NewEmbeddingIndexReindexTask(bun.NewDB(sqldb, pgdialect.New()), slog.Default())
+	// Production targets are empty post-HNSW; inject one so the fake-driver tests
+	// still exercise the validity-check + reindex/recovery paths.
+	task.targets = []embeddingIndexTarget{{schema: "kb", name: testTargetIndex}}
+	return task
 }
 
 type embeddingReindexFakeDriver struct{}
@@ -156,7 +158,7 @@ func (r *singleBoolRows) Next(dest []driver.Value) error {
 }
 
 // validityIndexName extracts the index name from the validity SELECT. bun
-// inlines the string args as literals (e.g. `c.relname = 'idx_chunks_embedding'`);
+// inlines the string args as literals (e.g. `c.relname = '<index>'`);
 // when that is absent we fall back to the last string argument.
 func validityIndexName(query string, args []driver.NamedValue) string {
 	const marker = "c.relname = '"
@@ -177,7 +179,7 @@ func validityIndexName(query string, args []driver.NamedValue) string {
 
 // reindexIndexName extracts the index name from a REINDEX statement, which is
 // always the final quoted identifier (e.g. `REINDEX INDEX CONCURRENTLY
-// "kb"."idx_chunks_embedding"`).
+// "kb"."<index>"`).
 func reindexIndexName(query string) string {
 	q := strings.TrimSpace(query)
 	i := strings.Index(q, `"`)
@@ -207,8 +209,8 @@ func TestEmbeddingIndexReindexTask_Run_ValidIndexes(t *testing.T) {
 	require.NoError(t, task.Run(context.Background()))
 
 	// Every target is validity-checked then concurrently reindexed, no recovery.
-	assert.Equal(t, len(embeddingIndexTargets), len(state.validityChecks))
-	assert.Len(t, state.reindexSQL, len(embeddingIndexTargets))
+	assert.Equal(t, len(task.targets), len(state.validityChecks))
+	assert.Len(t, state.reindexSQL, len(task.targets))
 	for _, q := range state.reindexSQL {
 		assert.Contains(t, q, "REINDEX INDEX CONCURRENTLY", "valid index uses concurrent reindex only")
 		assert.NotContains(t, q, "REINDEX INDEX CONCURRENTLY CONCURRENTLY")
@@ -217,7 +219,7 @@ func TestEmbeddingIndexReindexTask_Run_ValidIndexes(t *testing.T) {
 
 func TestEmbeddingIndexReindexTask_Run_InvalidIndexRecovered(t *testing.T) {
 	state := &embeddingReindexFakeDB{
-		invalid: map[string]bool{"idx_chunks_embedding": true},
+		invalid: map[string]bool{testTargetIndex: true},
 	}
 	task := newEmbeddingIndexReindexTask(t, state)
 
@@ -235,39 +237,39 @@ func TestEmbeddingIndexReindexTask_Run_InvalidIndexRecovered(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, recovery, "exactly one invalid index needs a plain recovery")
-	assert.Equal(t, len(embeddingIndexTargets), concurrent, "every target is concurrently rebuilt")
-	assert.Contains(t, strings.Join(state.reindexSQL, "\n"), `REINDEX INDEX "kb"."idx_chunks_embedding"`)
+	assert.Equal(t, len(task.targets), concurrent, "every target is concurrently rebuilt")
+	assert.Contains(t, strings.Join(state.reindexSQL, "\n"), `REINDEX INDEX "kb"."`+testTargetIndex+`"`)
 }
 
 func TestEmbeddingIndexReindexTask_Run_FailureReturnsAggregateError(t *testing.T) {
 	state := &embeddingReindexFakeDB{
 		invalid:   map[string]bool{},
-		failNames: map[string]bool{"idx_chunks_embedding": true},
+		failNames: map[string]bool{testTargetIndex: true},
 	}
 	task := newEmbeddingIndexReindexTask(t, state)
 
 	err := task.Run(context.Background())
 
 	require.Error(t, err, "per-index failure must surface as an aggregate error")
-	assert.Len(t, state.reindexSQL, len(embeddingIndexTargets),
+	assert.Len(t, state.reindexSQL, len(task.targets),
 		"a poisoned index must not abort the remaining targets")
-	assert.Contains(t, err.Error(), "idx_chunks_embedding")
+	assert.Contains(t, err.Error(), testTargetIndex)
 }
 
 func TestEmbeddingIndexReindexTask_Run_ValidityCheckErrorReturnsAggregateError(t *testing.T) {
 	state := &embeddingReindexFakeDB{
 		invalid:  map[string]bool{},
-		checkErr: map[string]error{"idx_skills_embedding_ivfflat": errors.New("db down")},
+		checkErr: map[string]error{testTargetIndex: errors.New("db down")},
 	}
 	task := newEmbeddingIndexReindexTask(t, state)
 
 	err := task.Run(context.Background())
 
 	require.Error(t, err, "validity-check failure must surface as an aggregate error")
-	assert.Contains(t, err.Error(), "idx_skills_embedding_ivfflat")
-	// The failing target is skipped, but the others still complete.
-	assert.Len(t, state.reindexSQL, len(embeddingIndexTargets)-1)
+	assert.Contains(t, err.Error(), testTargetIndex)
+	// The failing target is skipped and never reindexed.
+	assert.Len(t, state.reindexSQL, len(task.targets)-1)
 	for _, q := range state.reindexSQL {
-		assert.NotContains(t, q, "idx_skills_embedding_ivfflat")
+		assert.NotContains(t, q, testTargetIndex)
 	}
 }

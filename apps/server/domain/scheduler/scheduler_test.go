@@ -613,6 +613,7 @@ func TestNewConfig(t *testing.T) {
 		"CACHE_CLEANUP_INTERVAL",
 		"STALE_JOB_CLEANUP_INTERVAL_MS",
 		"STALE_JOB_MINUTES",
+		"STALE_JOB_MASS_REAP_THRESHOLD",
 	}
 	origVals := make(map[string]string)
 	hadOrig := make(map[string]bool)
@@ -660,6 +661,9 @@ func TestNewConfig(t *testing.T) {
 		if cfg.StaleJobMinutes != 30 {
 			t.Errorf("StaleJobMinutes = %d, want 30", cfg.StaleJobMinutes)
 		}
+		if cfg.StaleJobMassReapThreshold != 1000 {
+			t.Errorf("StaleJobMassReapThreshold = %d, want 1000", cfg.StaleJobMassReapThreshold)
+		}
 	})
 
 	t.Run("custom values from env vars", func(t *testing.T) {
@@ -669,6 +673,7 @@ func TestNewConfig(t *testing.T) {
 		os.Setenv("CACHE_CLEANUP_INTERVAL", "300000")            // 5 minutes
 		os.Setenv("STALE_JOB_CLEANUP_INTERVAL_MS", "600000")     // 10 minutes
 		os.Setenv("STALE_JOB_MINUTES", "60")
+		os.Setenv("STALE_JOB_MASS_REAP_THRESHOLD", "250")
 
 		cfg := NewConfig()
 
@@ -689,6 +694,9 @@ func TestNewConfig(t *testing.T) {
 		}
 		if cfg.StaleJobMinutes != 60 {
 			t.Errorf("StaleJobMinutes = %d, want 60", cfg.StaleJobMinutes)
+		}
+		if cfg.StaleJobMassReapThreshold != 250 {
+			t.Errorf("StaleJobMassReapThreshold = %d, want 250", cfg.StaleJobMassReapThreshold)
 		}
 	})
 }
