@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -42,6 +43,17 @@ func TestArtifactTextTrackerSuffix(t *testing.T) {
 		assert.Equal(t, "", tracker.suffix("a", "Hel"))
 		assert.Equal(t, "", tracker.suffix("a", ""))
 	})
+}
+
+func TestA2AProjectSelector_FlagOverridesConfig(t *testing.T) {
+	prev := viper.Get("project_id")
+	defer viper.Set("project_id", prev)
+
+	viper.Set("project_id", "flag-proj")
+	assert.Equal(t, "flag-proj", a2aProjectSelector("config-proj"))
+
+	viper.Set("project_id", "")
+	assert.Equal(t, "config-proj", a2aProjectSelector("config-proj"))
 }
 
 func TestA2AArtifactText(t *testing.T) {

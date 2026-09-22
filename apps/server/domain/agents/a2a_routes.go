@@ -255,7 +255,20 @@ func a2aStreamingAuthMiddleware(authMiddleware *auth.Middleware, scopes ...strin
 			if capture.status >= 400 && capture.header.Get(echo.HeaderContentType) != A2AContentType {
 				return writeA2AError(c, a2aErrorFromStatus(capture.status))
 			}
-			return next(c)
+
+			// Auth passed: run the handler. A handler error (e.g. a missing
+			// project selector on the SSE paths) must still reach the client as
+			// the A2A envelope: the outer a2aErrorEnvelopeMiddleware skips
+			// streaming paths, and the global error handler does not know
+			// A2AError. Convert it here unless the handler already committed an
+			// SSE body.
+			if err := next(c); err != nil {
+				if c.Response().Committed {
+					return err
+				}
+				return writeA2AError(c, a2aErrorFrom(err))
+			}
+			return nil
 		}
 	}
 }

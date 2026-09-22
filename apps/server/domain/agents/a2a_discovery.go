@@ -53,6 +53,12 @@ func acpProjectID(c echo.Context) (string, error) {
 	if user == nil {
 		return "", apperror.ErrUnauthorized
 	}
+	// A project-scoped API token binds the request to its own project; the
+	// X-Project-ID header must not be able to redirect it to another project.
+	// Mirrors auth.GetProjectID, which also prefers the token-bound project.
+	if user.APITokenProjectID != "" {
+		return user.APITokenProjectID, nil
+	}
 	if user.ProjectID == "" {
 		return "", NewA2AError(A2ACodeInvalidArgument, A2AReasonProjectRequired,
 			"project context is required: send the X-Project-ID header, or use a project-scoped API token")

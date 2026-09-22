@@ -200,6 +200,38 @@ func TestAcpProjectID_MissingProjectReturnsProjectRequired(t *testing.T) {
 	assert.Contains(t, a2aErr.Message, "X-Project-ID")
 }
 
+func TestAcpProjectID_TokenProjectWinsOverHeader(t *testing.T) {
+	c, _ := newA2AActionContext("x", &auth.AuthUser{ID: "u", ProjectID: "proj-from-header", APITokenProjectID: "proj-from-token", APITokenID: "tok"})
+	got, err := acpProjectID(c)
+	require.NoError(t, err)
+	assert.Equal(t, "proj-from-token", got)
+}
+
+func TestAcpProjectID_HeaderUsedForAccountToken(t *testing.T) {
+	c, _ := newA2AActionContext("x", &auth.AuthUser{ID: "u", ProjectID: "proj-from-header"})
+	got, err := acpProjectID(c)
+	require.NoError(t, err)
+	assert.Equal(t, "proj-from-header", got)
+}
+
+func TestA2ARoutes_StreamWithoutProjectReturns400ProjectRequired(t *testing.T) {
+	e, _ := newA2ATestRouter(t)
+	req := httptest.NewRequest(http.MethodPost, "/message:stream", strings.NewReader(`{}`))
+	req.Header.Set("X-API-Key", a2aTestStandaloneKey)
+	req.Header.Set("X-Org-ID", a2aTestOrgID)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, A2AContentType, rec.Header().Get(echo.HeaderContentType))
+
+	var env A2AErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	require.Len(t, env.Error.Details, 1)
+	assert.Equal(t, "PROJECT_REQUIRED", env.Error.Details[0].Reason)
+	assert.Equal(t, int(A2ACodeInvalidArgument), env.Error.Code)
+}
+
 func TestA2ARoutes_ExtendedCardWithoutProjectReturns400ProjectRequired(t *testing.T) {
 	e, _ := newA2ATestRouter(t)
 	req := httptest.NewRequest(http.MethodGet, "/extendedAgentCard", nil)

@@ -14,7 +14,19 @@ import (
 	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
+
+// a2aProjectSelector resolves the project id sent as X-Project-ID on A2A
+// requests. The global --project flag (bound to viper key "project_id")
+// overrides the configured project, matching every other CLI command; an
+// empty flag falls back to the configured project.
+func a2aProjectSelector(configuredProject string) string {
+	if v := viper.GetString("project_id"); v != "" {
+		return v
+	}
+	return configuredProject
+}
 
 // ── A2A client construction ──────────────────────────────────────────────────
 
@@ -31,10 +43,9 @@ func getA2AClient(cmd *cobra.Command) (*a2a.Client, error) {
 	}
 	// AuthorizationHeader returns "Bearer <token>"; we need just the token.
 	token = strings.TrimPrefix(token, "Bearer ")
-	// The authenticated A2A endpoints are project-scoped and the server rejects a
-	// request without a project selector (PROJECT_REQUIRED), so thread the
-	// configured project (MEMORY_PROJECT / config) as X-Project-ID.
-	return a2a.NewClient(baseURL, token).WithProject(c.ProjectID()), nil
+	// The authenticated A2A endpoints are project-scoped; the global --project
+	// flag overrides the configured project so `--project <id>` actually selects.
+	return a2a.NewClient(baseURL, token).WithProject(a2aProjectSelector(c.ProjectID())), nil
 }
 
 // ── Root command: memory a2a ─────────────────────────────────────────────────
