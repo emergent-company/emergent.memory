@@ -1671,6 +1671,7 @@ func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, r
 		DstID:      dstObj.CanonicalID,
 		Properties: req.Properties,
 		Weight:     req.Weight,
+		Namespace:  srcObj.Namespace,
 	}
 	rel.ChangeSummary = computeChangeSummary(nil, req.Properties)
 
@@ -1935,6 +1936,7 @@ func (s *Service) maybeCreateInverse(
 		DstID:      srcObj.CanonicalID, // swapped
 		Properties: properties,
 		Weight:     weight,
+		Namespace:  dstObj.Namespace,
 	}
 	inverseRel.ChangeSummary = computeChangeSummary(nil, properties)
 
@@ -4247,6 +4249,7 @@ func (s *Service) applyMerge(
 				SrcID:       srcID,
 				DstID:       dstID,
 				Properties:  props,
+				Namespace:   src.Namespace,
 			}
 			rel.ContentHash = computeContentHash(rel.Properties, nil, nil, nil)
 			rel.CreatedAt = time.Now()
@@ -4737,6 +4740,7 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 			DstID:      dstObj.CanonicalID,
 			Properties: relReq.Properties,
 			Weight:     relReq.Weight,
+			Namespace:  srcObj.Namespace,
 		}
 
 		// Compute change summary

@@ -1371,6 +1371,7 @@ func (r *Repository) CreateRelationshipVersion(ctx context.Context, tx bun.Tx, p
 	newVersion.SupersedesID = nil // New version is HEAD
 	newVersion.Version = prevHead.Version + 1
 	newVersion.ProjectID = prevHead.ProjectID
+	newVersion.Namespace = prevHead.Namespace // denormalised from the src object; inherited across versions
 	newVersion.BranchID = prevHead.BranchID
 	newVersion.Type = prevHead.Type
 	newVersion.SrcID = prevHead.SrcID
@@ -2757,6 +2758,7 @@ type BranchRelationshipHead struct {
 	Properties  map[string]any
 	SrcID       uuid.UUID
 	DstID       uuid.UUID
+	Namespace   *string
 }
 
 // GetBranchRelationshipHeads returns HEAD versions of all relationships on a branch.
@@ -2766,7 +2768,7 @@ func (r *Repository) GetBranchRelationshipHeads(ctx context.Context, projectID u
 
 	q := r.db.NewSelect().
 		Model(&rels).
-		Column("id", "canonical_id", "content_hash", "type", "properties", "src_id", "dst_id").
+		Column("id", "canonical_id", "content_hash", "type", "properties", "src_id", "dst_id", "namespace").
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL")
@@ -2792,6 +2794,7 @@ func (r *Repository) GetBranchRelationshipHeads(ctx context.Context, projectID u
 			Properties:  rel.Properties,
 			SrcID:       rel.SrcID,
 			DstID:       rel.DstID,
+			Namespace:   rel.Namespace,
 		}
 	}
 
@@ -3050,6 +3053,7 @@ func (r *Repository) BulkCopyRelationshipsToBranch(ctx context.Context, projectI
 			Properties:  rel.Properties,
 			Weight:      rel.Weight,
 			ContentHash: rel.ContentHash,
+			Namespace:   rel.Namespace,
 		}
 		batch = append(batch, newRel)
 		copied++
