@@ -10,6 +10,9 @@ on:
     branches: [master, main]
     paths:
       - 'apps/cli/**'
+      # apps/cli/go.mod carries a `replace` to the local SDK module; rebuild the
+      # dev channel when the linked SDK changes too.
+      - 'apps/server/pkg/sdk/**'
       - '.github/workflows/cli-dev.yml'
       - 'scripts/gen-manifest.sh'
 
