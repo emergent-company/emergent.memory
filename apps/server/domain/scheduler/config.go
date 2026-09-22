@@ -30,6 +30,12 @@ type Config struct {
 	// (audio transcription can take hours). Defaults to 480 (8 hours).
 	DocumentParsingStaleMinutes int
 
+	// StaleJobMassReapThreshold is the per-table reap count above which a single
+	// stale cleanup sweep emits a mass-reap alert. Guards against silently
+	// terminal-failing queued work (issue #705). Defaults to 1000; values <= 0
+	// fall back to the default.
+	StaleJobMassReapThreshold int
+
 	// StaleBackupCleanupInterval is the interval for marking stuck backups as failed
 	StaleBackupCleanupInterval time.Duration
 
@@ -116,6 +122,7 @@ func NewConfig() *Config {
 		StaleJobCleanupInterval:      getEnvDuration("STALE_JOB_CLEANUP_INTERVAL_MS", 10*time.Minute),
 		StaleJobMinutes:              getEnvInt("STALE_JOB_MINUTES", 30),
 		DocumentParsingStaleMinutes:  getEnvInt("DOCUMENT_PARSING_STALE_MINUTES", 480),
+		StaleJobMassReapThreshold:    getEnvInt("STALE_JOB_MASS_REAP_THRESHOLD", 1000),
 		// Cron schedule overrides (empty string means use interval)
 		RevisionCountRefreshSchedule:  getEnvString("REVISION_COUNT_REFRESH_SCHEDULE", ""),
 		TagCleanupSchedule:            getEnvString("TAG_CLEANUP_SCHEDULE", ""),
