@@ -67,6 +67,68 @@ the port. `runlog:status` reports which supervisor is in charge and which
 checkout's expected `runs.db`. With the unit enabled, stop it with `systemctl
 stop runlog` — killing the process directly just triggers a restart.
 
+#### Choosing the checkout
+
+The daemon discovers tests by scanning its working directory **at startup**, so
+`WorkingDirectory` must point at an e2e directory that contains `tests/` and is
+stable. An e2e dir without `tests/` renders an empty UI with no other clue, and
+`runlog:status` now warns when this checkout has no `tests/`.
+
+Prefer a **dedicated, detached checkout** over the shared one — the shared
+checkout is used by other sessions, can sit on any branch, and can be mid-edit:
+
+```bash
+git worktree add --detach /root/emergent.memory-wt/runlog-dashboard origin/main
+# refresh it later:
+git -C /root/emergent.memory-wt/runlog-dashboard fetch origin main
+git -C /root/emergent.memory-wt/runlog-dashboard reset --hard origin/main
+```
+
+Override the unit's paths with a drop-in rather than editing the installed
+unit (`WorkingDirectory=` does not expand env vars):
+
+```bash
+sudo systemctl edit runlog.service
+#   [Service]
+#   WorkingDirectory=/other/checkout/e2e
+#   ExecStart=
+#   ExecStart=/root/go/bin/runlog --daemon --db /other/checkout/e2e/.runlog/runs.db --port=17432
+```
+
+**Restart after any change** to the checkout, its branch, or its config —
+discovery is computed once at startup and cached:
+
+```bash
+sudo systemctl restart runlog
+```
+
+#### Version pin
+
+The daemon must be the same runlog version this module is compiled against
+(`e2e/go.mod`). An older daemon creates `runs.db` with an older schema, so tables
+added later (e.g. `test_definitions`, migration 27 in v0.3.0) never exist; writes
+to them fail silently (`UpsertDefinition`'s error is discarded) and the daemon
+reports no tests. `runlog:status` and `runlog:start` both check this and warn on
+a mismatch.
+
+Note the binary is a host tool and is *not* pinned by the Go toolchain —
+`go install ...@latest` silently gives you whatever is newest, and
+`go install ...@v0.3.0` fails outright because the module has `replace`
+directives. Build it from a tag checkout instead:
+
+```bash
+git clone --branch v0.3.0 --depth 1 https://github.com/emergent-company/runlog /root/runlog
+cd /root/runlog && GOWORK=off go build -o /root/go/bin/runlog ./cmd/runlog
+go version -m /root/go/bin/runlog | grep emergent-company/runlog   # confirm
+```
+
+#### Reading the CLI
+
+`runlog tests` lists only tests that have **already run** — it sources names from
+`test_runs`, while the web UI sources from the full catalog including never-run
+tests. A fresh project therefore shows an empty `runlog tests` table next to a
+populated UI. This is upstream: `emergent-company/runlog#52`.
+
 ### Host runner (preferred for local dev — no Docker needed)
 
 ```bash
@@ -125,7 +187,7 @@ MEMORY_TEST_ENV=localhost     go test -v ./...   # against local standalone serv
 - Direct Go dependencies: `github.com/emergent-company/runlog` (framework) and `github.com/google/uuid`
 - `opencode` binary is installed in the Dockerfile as test infrastructure
 - Go module: `github.com/emergent-company/emergent.memory/e2e`
-- The `runlog` TUI binary has been extracted to [`github.com/emergent-company/runlog`](https://github.com/emergent-company/runlog). Install with `go install github.com/emergent-company/runlog/cmd/runlog@latest`
+- The `runlog` TUI binary has been extracted to [`github.com/emergent-company/runlog`](https://github.com/emergent-company/runlog). Build it at the version this module pins — see [Version pin](#version-pin) under Supervision; `go install ...@latest` is not a safe way to get it.
 
 ## Install Skills
 
