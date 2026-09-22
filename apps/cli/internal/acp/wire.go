@@ -14,6 +14,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -31,6 +32,18 @@ const (
 	StopReasonCancelled = "cancelled"
 	StopReasonRefusal   = "refusal"
 )
+
+// JSON-RPC 2.0 error codes.
+const (
+	codeInvalidParams  = -32602
+	codeMethodNotFound = -32601
+	codeInternal       = -32000
+)
+
+// errReadTerminal marks a non-recoverable read error from stdin (e.g. a line
+// exceeding the scanner buffer). No further messages can be read after it, so
+// the dispatch loop must terminate rather than retry.
+var errReadTerminal = errors.New("acp: terminal read error")
 
 // request is an incoming JSON-RPC request or notification from the client.
 type request struct {
@@ -134,8 +147,12 @@ type stream struct {
 }
 
 func newStream(in io.Reader, out io.Writer) *stream {
+	sc := bufio.NewScanner(in)
+	// ACP prompts can carry large embedded-context blocks; accept lines up to
+	// 16 MiB instead of the default 64 KiB.
+	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
 	return &stream{
-		r:   bufio.NewScanner(in),
+		r:   sc,
 		enc: json.NewEncoder(out),
 	}
 }
@@ -168,7 +185,7 @@ func (s *stream) next() (*request, error) {
 		return &req, nil
 	}
 	if err := s.r.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errReadTerminal, err)
 	}
 	return nil, io.EOF
 }

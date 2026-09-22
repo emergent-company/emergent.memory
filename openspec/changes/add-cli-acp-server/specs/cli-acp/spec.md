@@ -95,3 +95,12 @@ The CLI SHALL return a JSON-RPC error for unknown methods and ignore unknown not
 
 - **WHEN** the client sends a method the CLI does not implement
 - **THEN** the CLI returns a JSON-RPC error response carrying the request id
+
+### Requirement: Failure reporting
+
+The CLI SHALL report a failed or rejected Memory turn as `stopReason` `"refusal"` (and a server-cancelled turn as `"cancelled"`), rather than `"end_turn"`, so ACP clients can distinguish failure from success.
+
+#### Scenario: Failed turn
+
+- **WHEN** the A2A stream reports `TASK_STATE_FAILED` or `TASK_STATE_REJECTED`
+- **THEN** the CLI streams any failure message and returns a `session/prompt` response with `stopReason` `"refusal"`

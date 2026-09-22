@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -19,6 +20,12 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, errLog io.Writer, age
 	s := newStream(in, out)
 	var wg sync.WaitGroup
 
+	// runCtx is cancelled on a terminal read error (not on EOF) so in-flight
+	// prompts are aborted instead of leaking. On EOF, in-flight prompts are
+	// drained normally — EOF signals "no more requests", not cancellation.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	for {
 		req, err := s.next()
 		if err == io.EOF {
@@ -26,6 +33,13 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, errLog io.Writer, age
 			return nil
 		}
 		if err != nil {
+			if errors.Is(err, errReadTerminal) {
+				// Non-recoverable read error (e.g. an over-long line): abort
+				// in-flight work and stop rather than looping on the same error.
+				cancel()
+				wg.Wait()
+				return err
+			}
 			_, _ = fmt.Fprintf(errLog, "acp: %v\n", err)
 			continue
 		}
@@ -40,9 +54,9 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, errLog io.Writer, age
 			wg.Add(1)
 			go func(r *request) {
 				defer wg.Done()
-				result, derr := dispatch(ctx, agent, r, s.send)
-				if derr != nil {
-					_ = s.send(response{JSONRPC: jsonrpcVersion, ID: r.ID, Error: &rpcError{Code: -32000, Message: derr.Error()}})
+				result, rpcErr := dispatch(runCtx, agent, r, s.send)
+				if rpcErr != nil {
+					_ = s.send(response{JSONRPC: jsonrpcVersion, ID: r.ID, Error: rpcErr})
 					return
 				}
 				_ = s.send(response{JSONRPC: jsonrpcVersion, ID: r.ID, Result: result})
@@ -50,17 +64,19 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, errLog io.Writer, age
 			continue
 		}
 
-		result, derr := dispatch(ctx, agent, req, s.send)
-		if derr != nil {
-			_ = s.send(response{JSONRPC: jsonrpcVersion, ID: req.ID, Error: &rpcError{Code: -32000, Message: derr.Error()}})
+		result, rpcErr := dispatch(runCtx, agent, req, s.send)
+		if rpcErr != nil {
+			_ = s.send(response{JSONRPC: jsonrpcVersion, ID: req.ID, Error: rpcErr})
 			continue
 		}
 		_ = s.send(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: result})
 	}
 }
 
-// dispatch routes a request to the agent and returns its result.
-func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error) (any, error) {
+// dispatch routes a request to the agent and returns its result. On failure it
+// returns a JSON-RPC error carrying the appropriate standard code: -32601 for
+// unknown methods, -32602 for invalid params, and -32000 for internal errors.
+func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error) (any, *rpcError) {
 	switch req.Method {
 	case "initialize":
 		return a.initialize(), nil
@@ -69,11 +85,18 @@ func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error)
 	case "session/prompt":
 		var p PromptParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, fmt.Errorf("session/prompt: invalid params: %w", err)
+			return nil, &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf("session/prompt: invalid params: %v", err)}
 		}
-		return a.prompt(ctx, p, send)
+		if p.SessionID == "" {
+			return nil, &rpcError{Code: codeInvalidParams, Message: "session/prompt: missing sessionId"}
+		}
+		result, err := a.prompt(ctx, p, send)
+		if err != nil {
+			return nil, &rpcError{Code: codeInternal, Message: err.Error()}
+		}
+		return result, nil
 	default:
-		return nil, fmt.Errorf("method not found: %s", req.Method)
+		return nil, &rpcError{Code: codeMethodNotFound, Message: fmt.Sprintf("method not found: %s", req.Method)}
 	}
 }
 

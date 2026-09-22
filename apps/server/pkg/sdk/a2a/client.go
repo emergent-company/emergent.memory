@@ -578,8 +578,17 @@ func (c *Client) StreamMessage(ctx context.Context, req SendMessageRequest) (*SS
 
 	return &SSEStream{
 		resp:    resp,
-		scanner: bufio.NewScanner(resp.Body),
+		scanner: newSSEScanner(resp.Body),
 	}, nil
+}
+
+// newSSEScanner returns a scanner for SSE event lines with an enlarged token
+// buffer so a single artifact chunk larger than the default 64 KiB does not
+// fail the whole stream with bufio.ErrTooLong.
+func newSSEScanner(r io.Reader) *bufio.Scanner {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
+	return sc
 }
 
 // GetTask retrieves a single task by ID, optionally requesting the given

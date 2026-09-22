@@ -30,6 +30,7 @@ type session struct {
 	contextID     string
 	pendingTaskID string // set when the last turn paused for HITL input
 	cancel        context.CancelFunc
+	cancelled     bool // set by session/cancel; cleared when the next turn starts
 }
 
 // NewAgent creates an ACP agent that fronts the given A2A client and targets
@@ -102,11 +103,20 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 
 	a.mu.Lock()
 	sess.cancel = cancel
+	cancelled := sess.cancelled
+	sess.cancelled = false // clear for this turn; a mid-turn cancel re-sets it
 	if resumeTaskID != "" {
 		// Consumed now; a subsequent pause re-sets it via consumeStream.
 		sess.pendingTaskID = ""
 	}
 	a.mu.Unlock()
+
+	if cancelled {
+		// A session/cancel arrived before this turn registered its cancel
+		// function; honour it instead of starting an un-cancellable turn.
+		cancel()
+		return PromptResponse{StopReason: StopReasonCancelled}, nil
+	}
 
 	req := a2a.SendMessageRequest{
 		Message: a2a.Message{
@@ -158,6 +168,7 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 // (only for transport failures).
 func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitter *textEmitter) (string, string, string, error) {
 	var contextID, pendingTaskID string
+	stopReason := StopReasonEndTurn
 
 	for {
 		ev, err := stream.Next()
@@ -200,22 +211,34 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 				pendingTaskID = su.TaskID
 				if q := messageText(su.Status.Message); q != "" {
 					if err := emitter.emit(q); err != nil {
-						return contextID, "", StopReasonEndTurn, err
+						return contextID, "", stopReason, err
 					}
 				}
-			case a2a.TaskStateFailed:
+			case a2a.TaskStateFailed, a2a.TaskStateRejected:
+				// A failed/rejected turn is not a clean end_turn; surface the
+				// failure message and report refusal so clients can distinguish.
+				stopReason = StopReasonRefusal
 				if msg := messageText(su.Status.Message); msg != "" {
 					if err := emitter.emit(msg); err != nil {
-						return contextID, "", StopReasonEndTurn, err
+						return contextID, "", stopReason, err
 					}
 				}
+			case a2a.TaskStateCanceled:
+				stopReason = StopReasonCancelled
 			}
 
 		case ev.Task != nil:
-			// Initial SUBMITTED snapshot or terminal COMPLETED snapshot. Its text
-			// is already emitted via artifact/message events; capture context id.
+			// Initial SUBMITTED snapshot or terminal snapshot. Its text is
+			// already emitted via artifact/message events; capture context id
+			// and any terminal failure/cancellation state.
 			if ev.Task.ContextID != "" {
 				contextID = ev.Task.ContextID
+			}
+			switch ev.Task.Status.State {
+			case a2a.TaskStateFailed, a2a.TaskStateRejected:
+				stopReason = StopReasonRefusal
+			case a2a.TaskStateCanceled:
+				stopReason = StopReasonCancelled
 			}
 		}
 	}
@@ -223,17 +246,24 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 	if ctx.Err() != nil {
 		return contextID, "", StopReasonCancelled, nil
 	}
-	return contextID, pendingTaskID, StopReasonEndTurn, nil
+	return contextID, pendingTaskID, stopReason, nil
 }
 
 // cancel handles the session/cancel notification by cancelling any in-flight
-// prompt for the session.
+// prompt for the session. The cancel function is copied under the lock so it is
+// never read concurrently with the write in prompt, and a cancelled flag is
+// recorded so a cancel arriving before the turn registers still takes effect.
 func (a *Agent) cancel(params CancelParams) {
 	a.mu.Lock()
 	sess := a.sessions[params.SessionID]
+	var fn context.CancelFunc
+	if sess != nil {
+		sess.cancelled = true
+		fn = sess.cancel
+	}
 	a.mu.Unlock()
-	if sess != nil && sess.cancel != nil {
-		sess.cancel()
+	if fn != nil {
+		fn()
 	}
 }
 
