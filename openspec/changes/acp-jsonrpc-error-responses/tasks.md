@@ -14,4 +14,4 @@
 
 - [x] 3.1 `go build ./...` (apps/cli) compiles. Verify: clean.
 - [x] 3.2 `go test ./...` (apps/cli) passes. Verify: pass.
-- [x] 3.3 `golangci-lint run ./...` in `apps/cli` reports 0 issues. Verify: clean.
+- [x] 3.3 `golangci-lint run ./internal/acp/...` in `apps/cli` reports 0 issues. Verify: clean. (Full-module `golangci-lint run ./...` still reports 71 pre-existing errcheck/staticcheck findings elsewhere in the CLI, none in this package.)
