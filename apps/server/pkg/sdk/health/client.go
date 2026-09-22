@@ -87,6 +87,7 @@ type JobQueueMetrics struct {
 	Processing  int64  `json:"processing"`
 	Completed   int64  `json:"completed"`
 	Failed      int64  `json:"failed"`
+	StaleFailed int64  `json:"stale_failed"`
 	Total       int64  `json:"total"`
 	LastHour    int64  `json:"last_hour"`
 	Last24Hours int64  `json:"last_24_hours"`

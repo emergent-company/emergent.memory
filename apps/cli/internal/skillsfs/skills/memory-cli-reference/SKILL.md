@@ -2186,14 +2186,16 @@ memory embeddings pause [flags]
 
 ## memory embeddings progress
 
-Show embedding job queue progress (pending, processing, completed, failed)
+Show embedding job queue progress (pending, processing, completed, failed, stale_failed)
 
 ### Synopsis
 
 Show embedding job queue statistics for all queues.
 
-Displays counts of pending, processing, completed, failed, and dead-letter jobs
-for both the graph object and graph relationship embedding queues.
+Displays counts of pending, processing, completed, failed, stale-failed, and
+dead-letter jobs for both the graph object and graph relationship embedding
+queues. "failed" counts genuine failures only; stale-failed jobs are those
+terminal-failed by the stale-job sweep and reported separately.
 
 Examples:
   memory embeddings progress
