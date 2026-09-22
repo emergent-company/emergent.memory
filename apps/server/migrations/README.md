@@ -196,9 +196,15 @@ WHERE n.nspname IN ('kb', 'core')
 ORDER BY n.nspname, c.relname, i.relname;
 ```
 
+This check finds indexes that **exist** in the catalog but are not usable. An object that is
+missing entirely has no `pg_index` row, so it is **not** reported here — that is the case
+`00164` actually hit. When a version is recorded without its object, verify the expected
+objects yourself and repair forward with a new migration; `00175` is the example (its
+`DO`-block guard raises if the HNSW index is missing or invalid, so goose refuses to record
+the version). Migrations `00170`/`00175` show the in-migration `indisvalid` post-condition
+guard convention.
+
 Remediation: `REINDEX INDEX CONCURRENTLY <index>`, or re-run the owning forward migration.
-Migrations `00170`/`00175` show the in-migration `indisvalid` post-condition guard
-convention.
 
 ## Goose Directives
 

@@ -74,7 +74,8 @@ func run() int {
 		return 0
 	}
 
-	fmt.Fprint(os.Stderr, migrationguard.FormatViolationError(violations, baseMax))
+	nextFree := migrationguard.NextFreeVersion(baseMax, added)
+	fmt.Fprint(os.Stderr, migrationguard.FormatViolationError(violations, baseMax, nextFree))
 	return 1
 }
 

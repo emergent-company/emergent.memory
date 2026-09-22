@@ -65,9 +65,14 @@ func TestIndexNames(t *testing.T) {
 	}
 }
 
-// TestFindInvalidIndexes requires a live PostgreSQL database. It is skipped
-// unless TEST_DATABASE_URL is set, since the pure assertions above are the
-// unconditional coverage.
+// TestFindInvalidIndexes requires a live PostgreSQL database (skipped unless
+// TEST_DATABASE_URL is set, because the unit job has no Postgres service). It
+// asserts the detection behaviour against a *controlled* invalid index: a
+// CONCURRENTLY unique build over duplicate values is aborted by PostgreSQL and
+// leaves the index behind with indisvalid = false, exactly the residue the query
+// targets. It also asserts the healthy (no-probe) case reports nothing. The SQL
+// predicate itself lives in the query, so it can only be exercised against a
+// real catalog — a mock driver would just return pre-filtered rows.
 func TestFindInvalidIndexes(t *testing.T) {
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
@@ -79,12 +84,59 @@ func TestFindInvalidIndexes(t *testing.T) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	defer db.Close()
+	ctx := context.Background()
 
-	found, err := FindInvalidIndexes(context.Background(), db)
-	if err != nil {
-		t.Fatalf("FindInvalidIndexes: %v", err)
+	const probeIndex = "idx_find_invalid_indexes_probe"
+	const probeTable = "kb._find_invalid_indexes_probe"
+
+	cleanup := func() {
+		// Plain DROP INDEX: the probe index is intentionally invalid and this is a
+		// throwaway database, so the exclusive lock a non-concurrent drop takes is
+		// acceptable and avoids CONCURRENTLY's restrictions.
+		_, _ = db.ExecContext(ctx, "DROP INDEX IF EXISTS kb."+probeIndex)
+		_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS "+probeTable)
 	}
-	// No assertion on found contents — depends on the target database. But the
-	// call must succeed against a valid schema.
-	t.Logf("found %d invalid index(es)", len(found))
+	cleanup()
+	defer cleanup()
+
+	// Healthy case: no probe index yet, so the probe must not be reported.
+	healthy, err := FindInvalidIndexes(ctx, db)
+	if err != nil {
+		t.Fatalf("FindInvalidIndexes (pre): %v", err)
+	}
+	if containsIndex(healthy, probeIndex) {
+		t.Fatalf("pre-condition: stale probe index %s already present", probeIndex)
+	}
+
+	if _, err := db.ExecContext(ctx, "CREATE TABLE "+probeTable+" (id serial primary key, v int)"); err != nil {
+		t.Fatalf("create probe table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO "+probeTable+" (v) VALUES (1), (1)"); err != nil {
+		t.Fatalf("insert duplicate probe rows: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "CREATE UNIQUE INDEX CONCURRENTLY "+probeIndex+" ON "+probeTable+" (v)"); err == nil {
+		t.Fatal("concurrent unique build over duplicates unexpectedly succeeded; cannot exercise the invalid-index path")
+	}
+
+	// Invalid case: the aborted build must be reported.
+	found, err := FindInvalidIndexes(ctx, db)
+	if err != nil {
+		t.Fatalf("FindInvalidIndexes (post): %v", err)
+	}
+	if !containsIndex(found, probeIndex) {
+		t.Fatalf("invalid index %s not detected; got %#v", probeIndex, found)
+	}
+	if !strings.Contains(invalidIndexesError(found).Error(), probeIndex) {
+		t.Fatalf("diagnostic error does not name %s: %v", probeIndex, invalidIndexesError(found))
+	}
+}
+
+// containsIndex reports whether list contains an index with the given name.
+func containsIndex(list []InvalidIndex, name string) bool {
+	for _, ii := range list {
+		if ii.Index == name {
+			return true
+		}
+	}
+	return false
 }

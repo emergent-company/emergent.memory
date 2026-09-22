@@ -245,8 +245,38 @@ func TestExemptReason(t *testing.T) {
 	}
 }
 
+func TestNextFreeVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseMax int64
+		added   []AddedMigration
+		want    int64
+	}{
+		{name: "no additions", baseMax: 176, want: 177},
+		{name: "low additions only", baseMax: 176, added: []AddedMigration{
+			{Version: 172}, {Version: 175},
+		}, want: 177},
+		{name: "baseMax itself used by an addition", baseMax: 176, added: []AddedMigration{
+			{Version: 176},
+		}, want: 177},
+		{name: "addition already occupies baseMax+1", baseMax: 176, added: []AddedMigration{
+			{Version: 175}, {Version: 177},
+		}, want: 178},
+		{name: "consecutive high additions", baseMax: 176, added: []AddedMigration{
+			{Version: 177}, {Version: 178}, {Version: 179},
+		}, want: 180},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NextFreeVersion(tt.baseMax, tt.added); got != tt.want {
+				t.Fatalf("NextFreeVersion(%d, %#v) = %d, want %d", tt.baseMax, tt.added, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFormatViolationError(t *testing.T) {
-	got := FormatViolationError(nil, 176)
+	got := FormatViolationError(nil, 176, 177)
 	if got != "" {
 		t.Fatalf("FormatViolationError(nil) = %q, want empty", got)
 	}
@@ -254,18 +284,23 @@ func TestFormatViolationError(t *testing.T) {
 	violations := []Violation{
 		{Path: "apps/server/migrations/00175_a.sql", Version: 175, BaseMax: 176},
 	}
-	got = FormatViolationError(violations, 176)
+	got = FormatViolationError(violations, 176, 178)
 
 	for _, want := range []string{
 		"176",
 		"apps/server/migrations/00175_a.sql",
 		"175",
-		"177",
+		"178",
 		"git mv",
 		"out-of-order-migration-allowed",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("FormatViolationError output missing %q:\n%s", want, got)
 		}
+	}
+	// The suggested rename target must be the caller-supplied nextFree, not a
+	// naive baseMax+1 that another added migration already occupies.
+	if strings.Contains(got, "177_<same-name>.sql") {
+		t.Errorf("FormatViolationError suggested a colliding version 177:\n%s", got)
 	}
 }

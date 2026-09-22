@@ -44,9 +44,9 @@ When the migration runner encounters Goose's `missing migrations before current 
 - **WHEN** `emergent-migrate -c up -allow-missing` is run against a database with a missing lower-numbered migration
 - **THEN** Goose MUST be invoked with missing-migration support enabled rather than failing the gap
 
-### Requirement: A version recorded out-of-band is detectable
+### Requirement: Index residue from a recorded-out-of-band version is detectable
 
-Recording a migration version without running it (`mark-applied` or a manual `INSERT INTO goose_db_version`) SHALL emit a loud warning stating that post-conditions are not verified and giving the verification query and remediation. The server migration package SHALL provide a read-only verification that detects indexes which are not both valid and ready in the `kb` and `core` schemas — the residue a killed `CREATE INDEX CONCURRENTLY` leaves, which is how a recorded-but-not-applied version manifests. Historical migrations SHALL NOT be rewritten to add this check; verification is additive and operator-runnable.
+Recording a migration version without running it (`mark-applied` or a manual `INSERT INTO goose_db_version`) SHALL emit a loud warning stating that post-conditions are not verified and giving the verification query and remediation. The server migration package SHALL provide a read-only verification that detects indexes which exist in the catalog but are not both valid and ready in the `kb` and `core` schemas — the residue a killed `CREATE INDEX CONCURRENTLY` leaves. The check covers that residue only: an object that is entirely absent from the catalog has no `pg_index` row to inspect and therefore cannot be found this way; absence is caught instead by the owning migration's apply-time `indisvalid` post-condition guard (as in `00170`/`00175`) or by a forward repair migration. Historical migrations SHALL NOT be rewritten to add this check; verification is additive and operator-runnable.
 
 #### Scenario: mark-applied warns that post-conditions are unchecked
 - **WHEN** `mark-applied` records a version
@@ -55,6 +55,10 @@ Recording a migration version without running it (`mark-applied` or a manual `IN
 #### Scenario: An invalid index is detected by verification
 - **WHEN** verification runs and an index in `kb` or `core` is not both `indisvalid` and `indisready`
 - **THEN** verification MUST report the index and its relation and MUST return an error / non-zero status
+
+#### Scenario: Verification reports only present-but-unusable indexes
+- **WHEN** verification runs against a catalog where an expected index is absent entirely
+- **THEN** the index check MUST report no row for it, because absence cannot be detected from `pg_index` alone; absence is caught by the owning migration's apply-time `indisvalid` guard or by a forward repair migration
 
 #### Scenario: A healthy catalog verifies clean
 - **WHEN** verification runs and every index in `kb` and `core` is valid and ready

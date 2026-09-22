@@ -119,11 +119,28 @@ func FindViolations(added []AddedMigration, baseMax int64) []Violation {
 	return violations
 }
 
+// NextFreeVersion returns the lowest migration version that is free both on the
+// base branch (whose maximum is baseMax) and within the pull request's own
+// additions. It is baseMax+1 unless an added migration already occupies that
+// number or higher, in which case the suggestion is advanced past every added
+// version. This keeps the remediation's "next free version" accurate when a
+// single pull request adds several migrations (e.g. baseMax 176 with added
+// 00175 and 00177 → 178, not 177 which the pull request already uses).
+func NextFreeVersion(baseMax int64, added []AddedMigration) int64 {
+	next := baseMax + 1
+	for _, m := range added {
+		if m.Version >= next {
+			next = m.Version + 1
+		}
+	}
+	return next
+}
+
 // FormatViolationError renders the exact CI failure message. It includes the base
 // maximum version, each offending file path + version, the remediation (renumber
-// above baseMax, next free number baseMax+1, via `git mv`), and the documented
-// escape hatch. It returns "" when violations is empty.
-func FormatViolationError(violations []Violation, baseMax int64) string {
+// above baseMax to nextFree, via `git mv`), and the documented escape hatch. It
+// returns "" when violations is empty.
+func FormatViolationError(violations []Violation, baseMax, nextFree int64) string {
 	if len(violations) == 0 {
 		return ""
 	}
@@ -134,8 +151,8 @@ func FormatViolationError(violations []Violation, baseMax int64) string {
 		fmt.Fprintf(&b, "  - %s (version %d)\n", v.Path, v.Version)
 	}
 	fmt.Fprintf(&b, "\nRemediation: renumber the added migration(s) ABOVE the base maximum.\n")
-	fmt.Fprintf(&b, "The next free version is %d. Rename the file, e.g.:\n", baseMax+1)
-	fmt.Fprintf(&b, "  git mv <offending-file> %d_<same-name>.sql\n", baseMax+1)
+	fmt.Fprintf(&b, "The next free version is %d. Rename the file, e.g.:\n", nextFree)
+	fmt.Fprintf(&b, "  git mv <offending-file> %d_<same-name>.sql\n", nextFree)
 	fmt.Fprintf(&b, "\nIf you are deliberately filling a gap (this is legitimate and safe only\n")
 	fmt.Fprintf(&b, "when the lower version has NOT been applied anywhere), you may exempt the\n")
 	fmt.Fprintf(&b, "file by adding the following line to the added migration:\n")

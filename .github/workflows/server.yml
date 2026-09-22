@@ -203,7 +203,10 @@ jobs:
   migration-order-guard:
     name: Migration Order Guard
     if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, linux, x64, memory]
+    # Hosted runner, like the sibling Migration Immutability job: this is a pure
+    # git check, so it must not require a persistent self-hosted runner where a
+    # PR could otherwise have its (PR-controlled) guard source executed.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -216,12 +219,18 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: apps/server/go.sum
+          # The guard imports only the stdlib + internal/migrationguard, so there
+          # is nothing worth caching; avoid consuming the shared cache budget.
           cache: false
 
       - name: Guard migration order
         working-directory: apps/server
         run: |
-          git fetch --no-tags origin "${{ github.base_ref }}" --depth=1
+          # No --depth=1 here: a shallow graft of the base tip can make
+          # `base...HEAD` fail with "no merge base" when the PR head does not
+          # already contain the base tip. The fetch-depth: 0 checkout already
+          # has full history, so this fetch is cheap and stays complete.
+          git fetch --no-tags origin "${{ github.base_ref }}"
           go run ./cmd/migration-order-guard -base "origin/${{ github.base_ref }}"
 
   ci:
