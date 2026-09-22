@@ -132,12 +132,30 @@ func (t *CacheCleanupTask) Run(ctx context.Context) error {
 	return nil
 }
 
+const (
+	// staleJobMessage is stamped on every job terminal-failed by the sweep. Kept
+	// verbatim so existing dashboards/queries that match on it keep working.
+	staleJobMessage = "Job marked as stale during cleanup"
+
+	// staleJobMassReapAlert is the stable log/alert marker emitted when a single
+	// sweep terminal-fails more jobs in one table than massReapThreshold.
+	staleJobMassReapAlert = "mass_stale_reap"
+
+	// defaultStaleJobMassReapThreshold is the per-table reap count above which a
+	// single sweep emits a mass-reap alert. A bulk enqueue draining a backlog can
+	// legitimately reap a handful of genuinely stuck in-flight jobs; hundreds or
+	// thousands in one sweep is the signal that the sweep is mis-classifying
+	// queued work as stale (issue #705).
+	defaultStaleJobMassReapThreshold = 1000
+)
+
 // StaleJobCleanupTask marks stale jobs as failed across all job queues
 type StaleJobCleanupTask struct {
 	db                          *bun.DB
 	log                         *slog.Logger
 	staleMinutes                int
 	documentParsingStaleMinutes int
+	massReapThreshold           int
 	mu                          sync.RWMutex
 }
 
@@ -156,6 +174,7 @@ func NewStaleJobCleanupTask(db *bun.DB, log *slog.Logger, staleMinutes, document
 		log:                         log.With(logger.Scope("scheduler.stale_job_cleanup")),
 		staleMinutes:                staleMinutes,
 		documentParsingStaleMinutes: documentParsingStaleMinutes,
+		massReapThreshold:           defaultStaleJobMassReapThreshold,
 	}
 }
 
@@ -173,6 +192,24 @@ func (t *StaleJobCleanupTask) GetStaleMinutes() int {
 	return t.staleMinutes
 }
 
+// SetMassReapThreshold sets the per-table reap count above which a single sweep
+// emits a mass-reap alert. Values <= 0 restore the default.
+func (t *StaleJobCleanupTask) SetMassReapThreshold(threshold int) {
+	if threshold <= 0 {
+		threshold = defaultStaleJobMassReapThreshold
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.massReapThreshold = threshold
+}
+
+// GetMassReapThreshold returns the current mass-reap alert threshold.
+func (t *StaleJobCleanupTask) GetMassReapThreshold() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.massReapThreshold
+}
+
 // jobTableConfig holds the configuration for cleaning up a specific job table
 type jobTableConfig struct {
 	table                string
@@ -180,6 +217,14 @@ type jobTableConfig struct {
 	hasCompletedAt       bool
 	errorColumn          string
 	staleMinutesOverride int // when non-zero, overrides the global stale threshold for this table
+}
+
+// effectiveStaleMinutes resolves the stale threshold for this table.
+func (cfg jobTableConfig) effectiveStaleMinutes(global int) int {
+	if cfg.staleMinutesOverride > 0 {
+		return cfg.staleMinutesOverride
+	}
+	return global
 }
 
 // Run executes the stale job cleanup
@@ -190,6 +235,7 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 	t.mu.RLock()
 	staleMinutes := t.staleMinutes
 	documentParsingStaleMinutes := t.documentParsingStaleMinutes
+	massReapThreshold := t.massReapThreshold
 	t.mu.RUnlock()
 
 	totalCleaned := int64(0)
@@ -211,12 +257,34 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 				slog.String("error", err.Error()))
 			continue
 		}
-		if count > 0 {
-			t.log.Info("cleaned up stale jobs",
-				slog.String("table", cfg.table),
-				slog.Int64("count", count))
-			totalCleaned += count
+		if count <= 0 {
+			continue
 		}
+
+		totalCleaned += count
+		staleJobsReapedTotal.WithLabelValues(cfg.table).Add(float64(count))
+		t.log.Info("cleaned up stale jobs",
+			slog.String("table", cfg.table),
+			slog.Int64("count", count))
+
+		// A single sweep reaping an unexpectedly large batch means the sweep is
+		// probably mis-classifying queued work as stale. Make it loud rather than
+		// letting a mass-fail pass as routine cleanup (issue #705).
+		if massReapThreshold > 0 && count > int64(massReapThreshold) {
+			t.log.Error("mass stale-job reap detected",
+				slog.String("alert", staleJobMassReapAlert),
+				slog.String("table", cfg.table),
+				slog.Int64("count", count),
+				slog.Int("threshold", massReapThreshold),
+				slog.Int("stale_minutes", cfg.effectiveStaleMinutes(staleMinutes)))
+		}
+	}
+
+	if massReapThreshold > 0 && totalCleaned > int64(massReapThreshold) {
+		t.log.Error("mass stale-job reap detected across tables",
+			slog.String("alert", staleJobMassReapAlert),
+			slog.Int64("total_cleaned", totalCleaned),
+			slog.Int("threshold", massReapThreshold))
 	}
 
 	t.log.Debug("stale job cleanup completed",
@@ -226,48 +294,50 @@ func (t *StaleJobCleanupTask) Run(ctx context.Context) error {
 	return nil
 }
 
-// cleanupTable cleans up stale jobs in a specific table.
-// globalStaleMinutes is the default threshold; cfg.staleMinutesOverride takes precedence when non-zero.
-func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConfig, globalStaleMinutes int) (int64, error) {
-	effectiveMinutes := globalStaleMinutes
-	if cfg.staleMinutesOverride > 0 {
-		effectiveMinutes = cfg.staleMinutesOverride
-	}
-	cutoff := time.Now().Add(-time.Duration(effectiveMinutes) * time.Minute)
-
-	var (
-		query string
-		args  []any
-	)
-
+// cleanupStaleJobsQuery builds the UPDATE statement that terminal-fails stale
+// jobs in cfg.table, plus its bind args. It is pure so the predicate selection
+// can be unit-tested without a live database.
+//
+// Only jobs that actually started are reaped:
+//   - tables with started_at: rows in processing/running whose started_at is
+//     older than the cutoff;
+//   - tables without started_at (email_jobs): rows in processing/running whose
+//     created_at is older than the cutoff.
+//
+// 'pending' rows are deliberately never terminal-failed: a never-started job is
+// queued behind a backlog, not stale, and failing it drops work. This applies to
+// every swept table, including kb.email_jobs.
+func cleanupStaleJobsQuery(cfg jobTableConfig, cutoff time.Time) (string, []any) {
 	if cfg.hasStartedAt && cfg.hasCompletedAt {
-		// Only mark jobs that actually started (processing/running) and are stuck.
-		// Jobs still 'pending' (started_at IS NULL) are not stale — they are queued
-		// behind a backlog and will be processed when the worker catches up.
-		// Marking them failed caused a re-enqueue loop: the sweep re-queued them,
-		// they sat 'pending' again, and got failed again (97k jobs hit this).
-		query = `
+		query := `
 			UPDATE ` + cfg.table + `
 			SET status = 'failed',
-				` + cfg.errorColumn + ` = 'Job marked as stale during cleanup',
+				` + cfg.errorColumn + ` = '` + staleJobMessage + `',
 				completed_at = NOW(),
 				updated_at = NOW()
 		WHERE status IN ('processing', 'running')
 		AND started_at IS NOT NULL
 		AND started_at < ?
 		`
-		args = []any{cutoff}
-	} else {
-		// Tables without started_at (like email_jobs) - use created_at only
-		query = `
-			UPDATE ` + cfg.table + `
-			SET status = 'failed',
-				` + cfg.errorColumn + ` = 'Job marked as stale during cleanup'
-			WHERE status IN ('pending', 'processing', 'running')
-			AND created_at < ?
-		`
-		args = []any{cutoff}
+		return query, []any{cutoff}
 	}
+
+	query := `
+		UPDATE ` + cfg.table + `
+		SET status = 'failed',
+			` + cfg.errorColumn + ` = '` + staleJobMessage + `'
+		WHERE status IN ('processing', 'running')
+		AND created_at < ?
+	`
+	return query, []any{cutoff}
+}
+
+// cleanupTable cleans up stale jobs in a specific table.
+// globalStaleMinutes is the default threshold; cfg.staleMinutesOverride takes precedence when non-zero.
+func (t *StaleJobCleanupTask) cleanupTable(ctx context.Context, cfg jobTableConfig, globalStaleMinutes int) (int64, error) {
+	cutoff := time.Now().Add(-time.Duration(cfg.effectiveStaleMinutes(globalStaleMinutes)) * time.Minute)
+
+	query, args := cleanupStaleJobsQuery(cfg, cutoff)
 
 	result, err := t.db.ExecContext(ctx, query, args...)
 	if err != nil {

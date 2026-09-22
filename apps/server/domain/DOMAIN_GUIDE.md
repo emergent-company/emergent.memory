@@ -829,7 +829,7 @@ Background cron scheduler using `robfig/cron` with seconds precision. Runs maint
 | `RevisionCountRefreshTask` | every 15 min | Refreshes cached revision counts on graph nodes to avoid expensive COUNT queries at read time |
 | `TagCleanupTask` | every 30 min | Removes orphaned tags (tags with no associated objects) |
 | `CacheCleanupTask` | every 1 hour | Evicts stale entries from in-memory and DB-backed caches |
-| `StaleJobCleanupTask` | every 10 min | Marks jobs that have been in `processing` state beyond their timeout as `failed` (handles worker crashes) |
+| `StaleJobCleanupTask` | every 10 min | Reaps jobs that actually started (`processing`/`running` with a stale `started_at`) after a worker crash. Never terminal-fails never-started `pending` jobs — those are queued, not stale. Emits a `mass_stale_reap` alert log + `scheduler_stale_jobs_reaped_total` metric when one sweep reaps more than `STALE_JOB_MASS_REAP_THRESHOLD` (default 1000) in a table |
 
 All tasks run with a **30-minute hard timeout** via `context.WithTimeout`. If a task exceeds this limit it is cancelled and the error is logged; the next scheduled run will attempt it again.
 

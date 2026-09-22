@@ -39,7 +39,9 @@ type staleTaskParams struct {
 // ProvideStaleJobCleanupTask creates the stale job cleanup task and makes it
 // available for injection by other modules (e.g. embedding control handler).
 func ProvideStaleJobCleanupTask(p staleTaskParams) *StaleJobCleanupTask {
-	return NewStaleJobCleanupTask(p.DB, p.Log, p.Cfg.StaleJobMinutes, p.Cfg.DocumentParsingStaleMinutes)
+	task := NewStaleJobCleanupTask(p.DB, p.Log, p.Cfg.StaleJobMinutes, p.Cfg.DocumentParsingStaleMinutes)
+	task.SetMassReapThreshold(p.Cfg.StaleJobMassReapThreshold)
+	return task
 }
 
 // ProvideEmbeddingJobPurgeTask creates the embedding job purge task.
