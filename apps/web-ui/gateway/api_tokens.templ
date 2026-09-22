@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"strings"
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
@@ -102,10 +103,11 @@ templ apiTokenListState(actionBase string, data apiTokensPageData, emptyTitle, e
 }
 
 // apiTokenTable renders the shared token table: one row per token with name
-// (and a "Revoked" badge when revoked), mono prefix, scope badges, created /
-// last-used times, and — for live tokens only — the regenerate / edit / revoke
-// actions. A surface with no tokens renders its empty state with a "New token"
-// CTA. Never includes plaintext values.
+// (and a "Revoked" badge when revoked), mono prefix, one composed AREA badge
+// per scope area the token holds scopes in, created / last-used times, and —
+// for live tokens only — the regenerate / edit / revoke actions. A surface with
+// no tokens renders its empty state with a "New token" CTA. Never includes
+// plaintext values.
 templ apiTokenTable(tokens []APIToken, actionBase, emptyTitle, emptyDesc string) {
 	if len(tokens) == 0 {
 		@ui.EmptyState(ui.EmptyStateProps{
@@ -144,9 +146,9 @@ templ apiTokenTable(tokens []APIToken, actionBase, emptyTitle, emptyDesc string)
 }
 
 // apiTokenRowContent is one token in the shared table: name + revocation
-// state, prefix, creation/last-use times, scope badges, and — for live tokens
-// — the regenerate / revoke forms and an edit-scopes link. The plaintext is
-// never rendered here.
+// state, prefix, creation/last-use times, one area badge per scope area, and —
+// for live tokens — the regenerate / revoke forms and an edit-scopes link. The
+// plaintext is never rendered here.
 templ apiTokenRowContent(t APIToken, actionBase string) {
 	{{ tokenBase := actionBase + "/" + url.PathEscape(t.ID) }}
 	<tr data-testid="token-row">
@@ -163,8 +165,18 @@ templ apiTokenRowContent(t APIToken, actionBase string) {
 		</td>
 		<td>
 			<div class="flex flex-wrap gap-1.5">
-				for _, s := range t.Scopes {
-					@ui.Badge(ui.BadgeProps{Label: s, Variant: apiTokenScopeIntent(s), Size: ui.BadgeSizeXS})
+				for _, b := range apiTokenAreaBadges(t.Scopes) {
+					@ui.Badge(ui.BadgeProps{
+						Label:   b.Area,
+						Variant: b.Intent,
+						Size:    ui.BadgeSizeXS,
+						Attrs: templ.Attributes{
+							"data-testid": "token-scope-area",
+							"title":       strings.Join(b.Scopes, ", "),
+							"role":        "img",
+							"aria-label":  b.Area + ": " + strings.Join(b.Scopes, ", "),
+						},
+					})
 				}
 			</div>
 		</td>
@@ -385,8 +397,8 @@ templ apiTokenEditBody(actionBase string, t APIToken) {
 	}
 }
 
-// apiTokenScopePickerContent renders the grouped scope checkboxes (coarse /
-// fine-grained / admin) from scopePickerGroups. admin:all is intentionally not
+// apiTokenScopePickerContent renders the grouped scope checkboxes by AREA
+// (Schemas, Data, …) from scopePickerGroups. admin:all is intentionally not
 // offered — only org admins can hold it, and the 403 is surfaced if Memory
 // rejects it. selected carries the currently granted scopes (edit form);
 // nil/empty means nothing is pre-checked (create form).

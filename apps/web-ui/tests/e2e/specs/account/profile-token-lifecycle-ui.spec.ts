@@ -4,6 +4,7 @@ import {
   createTokenViaUi,
   dismissReveal,
   expectNoLiveTokens,
+  expectScopeAreaBadge,
   expectTokenAuthenticated,
   expectTokenRejected,
   liveTokenRowsNamed,
@@ -54,7 +55,7 @@ test('account token: create → edit scopes → regenerate → revoke', async ({
       const created = liveTokenRowsNamed(page, name);
       await expect(created).toHaveCount(1);
       await expect(created.getByText(`${secret.slice(0, 12)}…`)).toBeVisible();
-      await expect(created.getByText('projects:read', { exact: true })).toBeVisible();
+      await expectScopeAreaBadge(created, 'Projects', ['projects:read']);
     });
 
     // 2. EDIT SCOPES — POST /profile/tokens/:id/scopes (PRG back to the list).
@@ -67,8 +68,9 @@ test('account token: create → edit scopes → regenerate → revoke', async ({
 
       const rescoped = liveTokenRowsNamed(page, name);
       await expect(rescoped).toHaveCount(1);
-      await expect(rescoped.getByText('journal:read', { exact: true })).toBeVisible();
-      await expect(rescoped.getByText('projects:read', { exact: true })).toBeVisible();
+      // projects:read stays in Projects; journal:read lands in Journal
+      await expectScopeAreaBadge(rescoped, 'Projects', ['projects:read']);
+      await expectScopeAreaBadge(rescoped, 'Journal', ['journal:read']);
 
       // Persistence: the edit page pre-checks the new set on reload.
       await openScopesEditor(page, name);
@@ -88,7 +90,7 @@ test('account token: create → edit scopes → regenerate → revoke', async ({
       // which inherits the edited scopes.
       await expect(tokenRowsNamed(page, name)).toHaveCount(2);
       await expect(liveTokenRowsNamed(page, name)).toHaveCount(1);
-      await expect(liveTokenRowsNamed(page, name).getByText('journal:read', { exact: true })).toBeVisible();
+      await expectScopeAreaBadge(liveTokenRowsNamed(page, name), 'Journal', ['journal:read']);
       await expect(revokedTokenRowsNamed(page, name)).toHaveCount(1);
 
       // The replacement plaintext is not persisted to the list either.

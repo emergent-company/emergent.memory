@@ -4,6 +4,7 @@ import {
   createTokenViaUi,
   dismissReveal,
   expectNoLiveTokens,
+  expectScopeAreaBadge,
   expectTokenAuthenticated,
   expectTokenRejected,
   liveTokenRowsNamed,
@@ -52,7 +53,7 @@ test('project token: create → edit scopes → regenerate → revoke', async ({
       const created = liveTokenRowsNamed(page, name);
       await expect(created).toHaveCount(1);
       await expect(created.getByText(`${secret.slice(0, 12)}…`)).toBeVisible();
-      await expect(created.getByText('data:read', { exact: true })).toBeVisible();
+      await expectScopeAreaBadge(created, 'Data', ['data:read']);
     });
 
     // 2. EDIT SCOPES — POST /settings/tokens/:id/scopes (PRG back to the list).
@@ -65,8 +66,9 @@ test('project token: create → edit scopes → regenerate → revoke', async ({
 
       const rescoped = liveTokenRowsNamed(page, name);
       await expect(rescoped).toHaveCount(1);
-      await expect(rescoped.getByText('search', { exact: true })).toBeVisible();
-      await expect(rescoped.getByText('data:read', { exact: true })).toBeVisible();
+      // data:read stays in Data; search lands in Graph (one badge per area)
+      await expectScopeAreaBadge(rescoped, 'Data', ['data:read']);
+      await expectScopeAreaBadge(rescoped, 'Graph', ['search']);
 
       // Persistence: the edit page pre-checks the new set on reload.
       await openScopesEditor(page, name);
@@ -86,7 +88,7 @@ test('project token: create → edit scopes → regenerate → revoke', async ({
       // which inherits the edited scopes.
       await expect(tokenRowsNamed(page, name)).toHaveCount(2);
       await expect(liveTokenRowsNamed(page, name)).toHaveCount(1);
-      await expect(liveTokenRowsNamed(page, name).getByText('search', { exact: true })).toBeVisible();
+      await expectScopeAreaBadge(liveTokenRowsNamed(page, name), 'Graph', ['search']);
       await expect(revokedTokenRowsNamed(page, name)).toHaveCount(1);
 
       // The replacement plaintext is not persisted to the list either.
