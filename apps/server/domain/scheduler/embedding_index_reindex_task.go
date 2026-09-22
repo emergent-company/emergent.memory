@@ -22,12 +22,21 @@ type embeddingIndexTarget struct {
 
 // embeddingIndexTargets lists every ivfflat embedding index rebuilt on a
 // schedule. HNSW indexes are excluded: they need no periodic REINDEX. The
-// graph_objects ivfflat index was dropped in migration 00164 in favor of an
-// HNSW index and is therefore no longer reindexed here.
+// graph_objects ivfflat index was dropped in migration 00164 (issue #707) and
+// the chunks and skills ivfflat indexes in migration 00170 (issue #670); all
+// three are now HNSW and therefore no longer reindexed here.
+//
+// A target whose index no longer exists must be removed from this list: a
+// scheduled REINDEX INDEX against a dropped index fails and is surfaced as an
+// aggregate task error every night.
+//
+// Migration 00170's Down restores the chunks and skills ivfflat indexes. Rolling
+// that migration back must therefore also revert this list (or redeploy the prior
+// binary); if those indexes are restored while this list stays shrunken, the
+// nightly task silently stops reindexing them. Migration rollback and this code
+// change are expected to ship together.
 var embeddingIndexTargets = []embeddingIndexTarget{
 	{schema: "kb", name: "idx_graph_relationships_embedding_ivfflat"},
-	{schema: "kb", name: "idx_chunks_embedding"},
-	{schema: "kb", name: "idx_skills_embedding_ivfflat"},
 }
 
 // EmbeddingIndexReindexTask rebuilds the ivfflat embedding indexes on a
