@@ -126,7 +126,8 @@ func TestStore_GetIdlePersistentMCPServer_QueryGuards(t *testing.T) {
 	assert.Contains(t, q, "persistent", "must filter to the persistent lifecycle")
 	assert.Contains(t, q, "creating", "must exclude in-flight creating state")
 	assert.Contains(t, q, "stopping", "must exclude in-flight stopping state")
-	assert.Contains(t, q, "COALESCE(last_used_at, created_at)", "must re-check the idle window")
+	assert.Contains(t, q, "last_used_at", "must re-check the idle window")
+	assert.NotContains(t, q, "COALESCE", "last_used_at is NOT NULL DEFAULT now(); no NULL fallback")
 }
 
 func TestStore_ListOrphanedSandboxes_QueryGuards(t *testing.T) {

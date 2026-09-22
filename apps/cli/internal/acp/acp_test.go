@@ -25,13 +25,15 @@ func streamAgent(t *testing.T, handler http.HandlerFunc) *Agent {
 	return NewAgent(client, "research-agent", "test")
 }
 
-// writeSSEEvents writes the given StreamResponses as SSE data lines.
+// writeSSEEvents writes the given StreamResponses as SSE data lines. Each
+// event is terminated by a blank line, as required by the SSE spec: the SDK
+// client only dispatches an event once it sees the terminating blank line.
 func writeSSEEvents(w http.ResponseWriter, events []a2a.StreamResponse) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	fl, _ := w.(http.Flusher)
 	for _, ev := range events {
 		b, _ := json.Marshal(ev)
-		_, _ = fmt.Fprintf(w, "data: %s\n", b)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
 		if fl != nil {
 			fl.Flush()
 		}
@@ -111,6 +113,13 @@ func TestInitialize(t *testing.T) {
 	caps := result["agentCapabilities"].(map[string]any)
 	if caps["loadSession"] != false {
 		t.Errorf("loadSession = %v, want false", caps["loadSession"])
+	}
+	sessCaps, ok := caps["sessionCapabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("agentCapabilities.sessionCapabilities = %v, want object", caps["sessionCapabilities"])
+	}
+	if _, ok := sessCaps["delete"]; !ok {
+		t.Errorf("sessionCapabilities = %v, want delete advertised", sessCaps)
 	}
 	info := result["agentInfo"].(map[string]any)
 	if info["name"] != "memory" {
@@ -498,6 +507,213 @@ func TestCancelConcurrentWithPrompt(t *testing.T) {
 	wg.Wait()
 }
 
+// sessionCount returns the number of tracked sessions under the agent lock.
+func sessionCount(a *Agent) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.sessions)
+}
+
+// hasSession reports whether the agent tracks the given session id.
+func hasSession(a *Agent, id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.sessions[id]
+	return ok
+}
+
+// noopAgent builds an agent whose backend must never be called.
+func noopAgent(t *testing.T) *Agent {
+	t.Helper()
+	return streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP request: %s %s", r.Method, r.URL.Path)
+	})
+}
+
+func TestSessionDeleteRemovesSession(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+	if !hasSession(agent, id) {
+		t.Fatalf("session %q not created", id)
+	}
+
+	agent.deleteSession(id)
+	if hasSession(agent, id) {
+		t.Fatalf("session %q not removed by deleteSession", id)
+	}
+	if got := sessionCount(agent); got != 0 {
+		t.Fatalf("session count = %d, want 0", got)
+	}
+	// Deleting an unknown session succeeds silently.
+	agent.deleteSession("does-not-exist")
+}
+
+// TestSessionDeleteViaRun exercises the session/delete request through the
+// dispatch table, including the empty-result response.
+func TestSessionDeleteViaRun(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"session/delete","params":{"sessionId":%q}}`, id) + "\n"
+	msgs := decodeLines(t, runLines(t, agent, input))
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d: %v", len(msgs), msgs)
+	}
+	if _, hasErr := msgs[0]["error"]; hasErr {
+		t.Fatalf("unexpected error response: %v", msgs[0])
+	}
+	res, ok := msgs[0]["result"].(map[string]any)
+	if !ok || len(res) != 0 {
+		t.Fatalf("result = %v, want empty object", msgs[0]["result"])
+	}
+	if hasSession(agent, id) {
+		t.Fatalf("session %q not removed via session/delete", id)
+	}
+}
+
+// TestSessionCapEvictsLeastRecentlyUsed verifies the map is bounded: inserting
+// past the cap evicts the least-recently-used session.
+func TestSessionCapEvictsLeastRecentlyUsed(t *testing.T) {
+	agent := noopAgent(t)
+	agent.maxSessions = 3
+
+	var ids []string
+	for i := 0; i < 3; i++ {
+		ids = append(ids, agent.newSession().(SessionNewResponse).SessionID)
+	}
+	// Touch the middle session so ids[1] becomes the most recently used.
+	agent.mu.Lock()
+	agent.seq++
+	agent.sessions[ids[1]].lastUsed = agent.seq
+	agent.mu.Unlock()
+
+	newest := agent.newSession().(SessionNewResponse).SessionID
+
+	if got := sessionCount(agent); got != 3 {
+		t.Fatalf("session count = %d, want 3", got)
+	}
+	if hasSession(agent, ids[0]) {
+		t.Errorf("least-recently-used session %q should have been evicted", ids[0])
+	}
+	for _, id := range []string{ids[1], ids[2], newest} {
+		if !hasSession(agent, id) {
+			t.Errorf("session %q should have been retained", id)
+		}
+	}
+}
+
+// TestEvictionInvokesCancelFunc verifies a dropped session's CancelFunc is
+// invoked so an in-flight turn cannot leak.
+func TestEvictionInvokesCancelFunc(t *testing.T) {
+	agent := noopAgent(t)
+	agent.maxSessions = 1
+
+	called := make(chan struct{}, 1)
+	agent.mu.Lock()
+	agent.sessions["stale"] = &session{
+		cancel:   func() { called <- struct{}{} },
+		lastUsed: 0,
+	}
+	agent.mu.Unlock()
+
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	if hasSession(agent, "stale") {
+		t.Fatal("stale session should have been evicted")
+	}
+	if !hasSession(agent, id) {
+		t.Fatal("new session missing after eviction")
+	}
+	select {
+	case <-called:
+	default:
+		t.Fatal("cancel func on the evicted session was not invoked")
+	}
+}
+
+// TestEvictionSkipsInFlightSession verifies a session with a running turn is
+// never pruned; the map may exceed the cap temporarily instead.
+func TestEvictionSkipsInFlightSession(t *testing.T) {
+	agent := noopAgent(t)
+	agent.maxSessions = 1
+
+	cancelCalled := false
+	agent.mu.Lock()
+	agent.sessions["busy"] = &session{
+		cancel:   func() { cancelCalled = true },
+		inFlight: 1,
+		lastUsed: 0,
+	}
+	agent.mu.Unlock()
+
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	if !hasSession(agent, "busy") {
+		t.Fatal("in-flight session must not be evicted")
+	}
+	if !hasSession(agent, id) {
+		t.Fatal("new session missing")
+	}
+	if cancelCalled {
+		t.Fatal("cancel func of an in-flight session should not be invoked")
+	}
+	if got := sessionCount(agent); got != 2 {
+		t.Fatalf("session count = %d, want 2 (temporary over-cap)", got)
+	}
+}
+
+// TestDeleteSessionCancelsInFlightTurn verifies deleteSession invokes the stored
+// CancelFunc when it removes a session that still has a running turn.
+func TestDeleteSessionCancelsInFlightTurn(t *testing.T) {
+	agent := noopAgent(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	agent.mu.Lock()
+	agent.sessions["S"] = &session{cancel: cancel, inFlight: 1}
+	agent.mu.Unlock()
+
+	agent.deleteSession("S")
+
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("deleteSession did not cancel the in-flight turn")
+	}
+	if hasSession(agent, "S") {
+		t.Fatal("session not removed by deleteSession")
+	}
+}
+
+// TestCompletedTurnClearsCancel verifies an idle session holds no stale
+// CancelFunc once its turn has finished.
+func TestCompletedTurnClearsCancel(t *testing.T) {
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+	sessID := agent.newSession().(SessionNewResponse).SessionID
+
+	if _, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: sessID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+	}, func(any) error { return nil }); err != nil {
+		t.Fatalf("prompt returned error: %v", err)
+	}
+
+	agent.mu.Lock()
+	sess := agent.sessions[sessID]
+	cancelFn := sess.cancel
+	inFlight := sess.inFlight
+	agent.mu.Unlock()
+
+	if cancelFn != nil {
+		t.Error("cancel func should be cleared once the turn completes")
+	}
+	if inFlight != 0 {
+		t.Errorf("inFlight = %d, want 0", inFlight)
+	}
+}
+
 func TestFailedTaskReturnsRefusal(t *testing.T) {
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
 		writeSSEEvents(w, []a2a.StreamResponse{
@@ -522,5 +738,168 @@ func TestFailedTaskReturnsRefusal(t *testing.T) {
 	}
 	if pr := msgs[3]["result"].(map[string]any); pr["stopReason"] != "refusal" {
 		t.Errorf("stopReason = %v, want refusal", pr["stopReason"])
+	}
+}
+
+// TestSessionDeleteNotificationViaRun verifies the fire-and-forget notification
+// form of session/delete removes the session and produces no response.
+func TestSessionDeleteNotificationViaRun(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/delete","params":{"sessionId":%q}}`, id) + "\n"
+	out := runLines(t, agent, input)
+	if len(bytes.TrimSpace(out)) != 0 {
+		t.Fatalf("notification produced output: %q", out)
+	}
+	if hasSession(agent, id) {
+		t.Fatalf("session %q not removed via session/delete notification", id)
+	}
+}
+
+// TestDeleteSessionMarksSessionDropped verifies deleteSession marks the removed
+// session dropped (not just cancels a registered turn) so a prompt that looked
+// the session up before deletion but registers its cancel function afterwards
+// aborts instead of starting a backend turn on a detached session.
+func TestDeleteSessionMarksSessionDropped(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	agent.mu.Lock()
+	sess := agent.sessions[id]
+	agent.mu.Unlock()
+
+	agent.deleteSession(id)
+
+	agent.mu.Lock()
+	dropped := sess.dropped
+	agent.mu.Unlock()
+	if !dropped {
+		t.Fatal("deleteSession must mark the removed session dropped")
+	}
+}
+
+// TestEvictionMarksSessionDropped verifies LRU eviction marks the victim
+// dropped, closing the window where a prompt that looked the session up before
+// eviction registers its cancel function afterwards.
+func TestEvictionMarksSessionDropped(t *testing.T) {
+	agent := noopAgent(t)
+	agent.maxSessions = 1
+
+	agent.mu.Lock()
+	victim := &session{}
+	agent.sessions["stale"] = victim
+	agent.mu.Unlock()
+
+	_ = agent.newSession()
+
+	if hasSession(agent, "stale") {
+		t.Fatal("stale session should have been evicted")
+	}
+	agent.mu.Lock()
+	dropped := victim.dropped
+	agent.mu.Unlock()
+	if !dropped {
+		t.Fatal("evictLocked must mark the evicted session dropped")
+	}
+}
+
+// TestDroppedSessionLateTurnAborts deterministically exercises the window
+// between a prompt's session lookup and its turn registration: two prompts look
+// the session up, it is then deleted, and both must abort (cancelled) without
+// ever touching the backend.
+func TestDroppedSessionLateTurnAborts(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	released := make(chan struct{})
+	lookedUp := make(chan struct{}, 2)
+	agent.mu.Lock()
+	agent.testHookAfterLookup = func() {
+		lookedUp <- struct{}{}
+		<-released
+	}
+	agent.mu.Unlock()
+
+	var wg sync.WaitGroup
+	reasons := make([]string, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, err := agent.prompt(context.Background(), PromptParams{
+				SessionID: id,
+				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+			}, func(any) error { return nil })
+			if err != nil {
+				t.Errorf("prompt %d returned error: %v", i, err)
+				return
+			}
+			reasons[i] = res.(PromptResponse).StopReason
+		}(i)
+	}
+
+	for i := 0; i < 2; i++ {
+		<-lookedUp
+	}
+	agent.deleteSession(id)
+	close(released)
+	wg.Wait()
+
+	for i, got := range reasons {
+		if got != StopReasonCancelled {
+			t.Errorf("prompt %d stopReason = %q, want cancelled", i, got)
+		}
+	}
+}
+
+// TestEvictedSessionLateTurnAborts mirrors the delete case for LRU eviction: a
+// prompt that looked the session up before eviction must abort, not run.
+func TestEvictedSessionLateTurnAborts(t *testing.T) {
+	agent := noopAgent(t)
+	id := agent.newSession().(SessionNewResponse).SessionID
+
+	released := make(chan struct{})
+	lookedUp := make(chan struct{}, 2)
+	agent.mu.Lock()
+	agent.testHookAfterLookup = func() {
+		lookedUp <- struct{}{}
+		<-released
+	}
+	agent.mu.Unlock()
+
+	var wg sync.WaitGroup
+	reasons := make([]string, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, err := agent.prompt(context.Background(), PromptParams{
+				SessionID: id,
+				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+			}, func(any) error { return nil })
+			if err != nil {
+				t.Errorf("prompt %d returned error: %v", i, err)
+				return
+			}
+			reasons[i] = res.(PromptResponse).StopReason
+		}(i)
+	}
+
+	for i := 0; i < 2; i++ {
+		<-lookedUp
+	}
+	// Force eviction of the idle session both prompts looked up.
+	agent.mu.Lock()
+	agent.maxSessions = 1
+	agent.mu.Unlock()
+	_ = agent.newSession()
+	close(released)
+	wg.Wait()
+
+	for i, got := range reasons {
+		if got != StopReasonCancelled {
+			t.Errorf("prompt %d stopReason = %q, want cancelled", i, got)
+		}
 	}
 }

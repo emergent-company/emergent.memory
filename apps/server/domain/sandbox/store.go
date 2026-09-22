@@ -119,7 +119,15 @@ func (s *Store) Delete(ctx context.Context, id string) (bool, error) {
 	return rowsAffected > 0, nil
 }
 
-// ListPersistentMCPServers returns all persistent MCP servers (for auto-start on boot).
+// ListPersistentMCPServers returns all persistent MCP servers regardless of
+// status. It serves two callers with deliberately broad semantics:
+//   - boot-time auto-start (StartAll) starts every persistent row, so a stopped
+//     row is not a durable "keep but do not run" state;
+//   - the opt-in idle-reclamation candidate set, whose status policy (see
+//     runIdleReclamation/idleEligible) excludes only creating/stopping. stopped
+//     and error rows are therefore reclaimable once idle beyond the window: an
+//     abandoned persistent config is deleted rather than left forever. Explicit
+//     deletion and recently-used servers are unaffected.
 func (s *Store) ListPersistentMCPServers(ctx context.Context) ([]*AgentSandbox, error) {
 	var workspaces []*AgentSandbox
 	err := s.db.NewSelect().
@@ -151,11 +159,20 @@ func (s *Store) ListActive(ctx context.Context) ([]*AgentSandbox, error) {
 // GetIdlePersistentMCPServer re-reads a persistent MCP server row and returns
 // it only if it is still eligible for idle reclamation: present, a persistent
 // MCP server, not in an in-flight lifecycle state (creating/stopping), and not
-// used since idleBefore (last_used_at falls back to creation time, so a server
-// never called since creation is judged by its creation time). It returns
-// (nil, nil) when the row vanished, was touched inside the window, or entered
-// an in-flight state — closing the window between the candidate SELECT and the
-// reclaim's StopRuntime/destroy.
+// used since idleBefore. last_used_at is NOT NULL DEFAULT now() (migration
+// 00023), so a server never called since creation carries its insert-time
+// timestamp and is judged by that; no NULL fallback is needed.
+//
+// Only creating/stopping are excluded: stopped and error rows are
+// terminal-but-present and are deliberately reclaimable by the opt-in idle
+// policy (see ListPersistentMCPServers). It returns (nil, nil) when the row
+// vanished, was touched inside the window, or entered an in-flight state.
+//
+// This re-read narrows — but does not fully close — the window between the
+// candidate SELECT and the reclaim's StopRuntime/destroy: it bounds the window
+// to the interval between this query and those calls, during which a call
+// starting in MCPHostingService.Call can still be cut off (see the residual
+// TOCTOU note in issue #699 item 5).
 func (s *Store) GetIdlePersistentMCPServer(ctx context.Context, id string, idleBefore time.Time) (*AgentSandbox, error) {
 	ws := new(AgentSandbox)
 	err := s.db.NewSelect().
@@ -164,7 +181,7 @@ func (s *Store) GetIdlePersistentMCPServer(ctx context.Context, id string, idleB
 		Where("container_type = ?", ContainerTypeMCPServer).
 		Where("lifecycle = ?", LifecyclePersistent).
 		Where("status NOT IN (?)", bun.In([]Status{StatusCreating, StatusStopping})).
-		Where("COALESCE(last_used_at, created_at) < ?", idleBefore).
+		Where("last_used_at < ?", idleBefore).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
