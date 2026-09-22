@@ -42,6 +42,31 @@ daemon is listening — stop it first with `runlog:stop` to avoid orphaning the
 `logs:clean` remain as aliases. The one behaviour change: `daemon:start` no
 longer pulls in the Docker server — use `test:mcj` or `server:start` for that.
 
+### Supervision
+
+The daemon is a detached background process with no supervisor of its own. Start
+it from a shell or an agent session and it stays up only until something sends it
+SIGTERM — after which the UI at `:17432` just stops responding and nothing brings
+it back. A daemon can also outlive the directory it was started from and end up
+bound to a `runs.db` that no longer exists, silently swallowing every run.
+
+`e2e/runlog.service` is the supported fix — install it once so systemd owns the
+lifecycle and restarts the daemon automatically:
+
+```bash
+sudo cp e2e/runlog.service /etc/systemd/system/runlog.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now runlog.service
+sudo systemctl status runlog.service
+```
+
+The `runlog:*` tasks detect the unit and delegate to it (`runlog:start` →
+`systemctl start`, `runlog:stop` → `systemctl stop`) rather than racing it for
+the port. `runlog:status` reports which supervisor is in charge and which
+`runs.db` the unit actually serves, and warns when that differs from the
+checkout's expected `runs.db`. With the unit enabled, stop it with `systemctl
+stop runlog` — killing the process directly just triggers a restart.
+
 ### Host runner (preferred for local dev — no Docker needed)
 
 ```bash

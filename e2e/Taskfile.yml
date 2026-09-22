@@ -14,6 +14,11 @@ vars:
         gopath="$(go env GOPATH 2>/dev/null || echo "$HOME/go")"
         echo "$gopath/bin/runlog"
       fi
+  # Optional systemd unit owning the daemon (see e2e/runlog.service). When it is
+  # installed and enabled it is the supervisor: it owns start/stop and restarts
+  # the daemon after a crash, so the tasks below delegate to it instead of
+  # racing it for the port.
+  RUNLOG_UNIT: "runlog.service"
 
 tasks:
   default:
@@ -45,6 +50,24 @@ tasks:
 
         mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
 
+        # A supervised daemon wins: the systemd unit owns the lifecycle, so
+        # starting or reclaiming the port here would only fight Restart=always.
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+          UNIT_DB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE -- '--db [^ ;]+' | awk '{print $2}')
+          if systemctl is-active {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+            echo "runlog is supervised by systemd ({{.RUNLOG_UNIT}}) and already running"
+          else
+            echo "starting runlog via systemd ({{.RUNLOG_UNIT}})..."
+            systemctl start {{.RUNLOG_UNIT}}
+          fi
+          echo "  ui: {{.RUNLOG_URL}}/ui/"
+          if [ -n "${UNIT_DB:-}" ] && [ "$UNIT_DB" != "{{.RUNLOG_DB}}" ]; then
+            echo "  NOTE: {{.RUNLOG_UNIT}} serves $UNIT_DB" >&2
+            echo "        this checkout expects {{.RUNLOG_DB}}" >&2
+          fi
+          exit 0
+        fi
+
         # Match only LISTEN sockets (not ESTABLISHED clients) and take the first
         # pid so a dual-stack (v4+v6) listener cannot break the comparison below.
         LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
@@ -70,11 +93,25 @@ tasks:
         echo "  ui: {{.RUNLOG_URL}}/ui/"
 
   runlog:stop:
-    desc: Stop the runlog daemon (pidfile first, port fallback for orphans)
+    desc: Stop the runlog daemon (systemd-aware; pidfile first, port fallback for orphans)
     dir: "{{.TASKFILE_DIR}}"
     cmds:
       - |
         set -eu
+        # Under systemd, killing the process is pointless — Restart=always
+        # brings it straight back. Stop the unit instead.
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+          if systemctl is-active {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+            systemctl stop {{.RUNLOG_UNIT}}
+            echo "runlog stopped (systemd unit {{.RUNLOG_UNIT}})"
+          else
+            echo "runlog already stopped (systemd unit {{.RUNLOG_UNIT}})"
+          fi
+          echo "  note: {{.RUNLOG_UNIT}} is enabled, so it starts again on boot;"
+          echo "        'systemctl disable {{.RUNLOG_UNIT}}' to opt out."
+          exit 0
+        fi
+
         if [ -f "{{.RUNLOG_PIDFILE}}" ] && command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
           {{.RUNLOG_BIN}} daemon stop || true
         fi
@@ -128,6 +165,17 @@ tasks:
         echo "  db    : {{.RUNLOG_DB}}"
         echo "  ui    : {{.RUNLOG_URL}}/ui/"
 
+        SUPERVISED=no
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+          SUPERVISED=yes
+          UNIT_DB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE -- '--db [^ ;]+' | awk '{print $2}')
+          echo "  supervisor: systemd {{.RUNLOG_UNIT}} ($(systemctl is-active {{.RUNLOG_UNIT}} 2>/dev/null || true))"
+          echo "  unit db   : ${UNIT_DB:-<unknown>}"
+          if [ -n "${UNIT_DB:-}" ] && [ "$UNIT_DB" != "{{.RUNLOG_DB}}" ]; then
+            echo "  WARNING: {{.RUNLOG_UNIT}} serves $UNIT_DB, not this checkout's {{.RUNLOG_DB}}"
+          fi
+        fi
+
         if ! command -v lsof >/dev/null 2>&1; then
           echo "  daemon: UNKNOWN (lsof not installed)"
         else
@@ -137,7 +185,7 @@ tasks:
           else
             OWN_PID=$(cat "{{.RUNLOG_PIDFILE}}" 2>/dev/null || true)
             echo "  daemon: RUNNING (pid $LISTEN_PID)"
-            if [ "$LISTEN_PID" != "$OWN_PID" ]; then
+            if [ "$SUPERVISED" = no ] && [ "$LISTEN_PID" != "$OWN_PID" ]; then
               echo "  WARNING: pidfile says '${OWN_PID:-<missing>}' — this daemon may belong to another checkout"
             fi
             curl -s --max-time 3 "{{.RUNLOG_URL}}/status" 2>/dev/null || echo "  (no /status response)"
