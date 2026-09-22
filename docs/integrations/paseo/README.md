@@ -15,16 +15,24 @@ This guide was written against Paseo `0.7.2` and Memory CLI `dev`.
 
 - Memory CLI installed at `~/.memory/bin/memory`
   (`PATH="/root/go/bin:$PATH" task cli:install`).
-- A Memory server URL and a project-scoped API token (`emt_…`).
+- A Memory server URL and a project-scoped API token (`emt_…`) carrying the
+  `agents:read` and `agents:write` scopes — the AgentCard lookup needs
+  `agents:read`, and forwarding every prompt needs `agents:write`.
 - A project with at least one **external-visibility agent definition** (below).
 - Paseo `0.7.2`+ with the daemon running.
+
+Run the commands below from the repository root (the `docs/integrations/paseo/`
+source paths are relative to it).
 
 ## 1. Create an external-visibility agent definition
 
 The `--agent` selector is an **AgentSkill id taken from the extended
 AgentCard's `skills[]`**, and that array is sourced only from agent definitions
-with `visibility = 'external'`. A `project`- or `internal`-visibility definition
-never appears in the card, so it cannot be selected.
+with `visibility = 'external'`. Only `external` definitions appear in the card,
+so an `external` definition is the hard prerequisite for a selector you can
+discover. (A `project`-visibility definition whose slug you already know does
+resolve as a server-side fallback, but it is invisible in the card; `internal`
+definitions are never callable over A2A.)
 
 Code path:
 
@@ -77,7 +85,8 @@ Paseo's provider `command` must be a JSON array, and the provider id must match
 `/^[a-z][a-z0-9-]*$/`. Credentials are **not** put in the Paseo config; a wrapper
 sources them from a private 0600 env file.
 
-Install the wrapper and env file (reference copies live in this directory):
+Install the wrapper and env file (reference copies live in this directory;
+run from the repository root):
 
 ```bash
 install -m 0755 docs/integrations/paseo/memory-acp-wrapper.sh ~/.memory/memory-acp-wrapper.sh
@@ -85,7 +94,8 @@ install -m 0644 docs/integrations/paseo/memory-acp.env.example ~/.memory/memory-
 cp ~/.memory/memory-acp.env.example ~/.memory/memory-acp.env
 chmod 600 ~/.memory/memory-acp.env
 # edit ~/.memory/memory-acp.env and fill in MEMORY_SERVER_URL /
-# MEMORY_PROJECT_TOKEN / MEMORY_AGENT
+# MEMORY_PROJECT_TOKEN / MEMORY_AGENT (+ MEMORY_PROJECT_ID / the shim vars
+#   when following the "Known blockers" workaround)
 ```
 
 `~/.memory/memory-acp-wrapper.sh` loads that env file and execs `memory acp`:
@@ -101,17 +111,23 @@ Merge this block into `~/.paseo/config.json` under `agents.providers`
 "memory": {
   "extends": "acp",
   "label": "Memory",
-  "command": ["/bin/sh", "/root/.memory/memory-acp-wrapper.sh"]
+  "command": ["/bin/sh", "<HOME>/.memory/memory-acp-wrapper.sh"]
 }
 ```
+
+> **Replace `<HOME>` with your absolute home directory** — for `root` that is
+> `/root`, so the reference setup uses `/root/.memory/memory-acp-wrapper.sh`.
+> Paseo runs `command` directly (no shell), so `~` and environment variables in
+> the path are **not** expanded; a literal `/root/.memory/...` path only works
+> for the `root` operator.
 
 > **Why `/bin/sh <script>` and not the bare script path?** The Paseo daemon's
 > session-spawn path returns `EACCES` when the configured command is a file under
 > `/root` (it can still *read* such files). `spawn /root/.memory/memory-acp-wrapper.sh
 > EACCES`. Exec'ing `/bin/sh` (a PATH binary) and passing the wrapper as an
-> argument works, and keeps the script at the documented `~/.memory` location.
-> Alternatively install the wrapper outside `/root` (e.g. `/usr/local/bin`) and
-> reference it directly.
+> argument is a workaround for that limitation, and keeps the script at the
+> documented `~/.memory` location. Alternatively install the wrapper outside the
+> home directory (e.g. `/usr/local/bin`) and reference it directly.
 
 ## 4. Apply with `paseo daemon reload` (never restart)
 
@@ -132,6 +148,13 @@ cause is the wrapper failing the `--version` probe (the reference wrapper answer
 it explicitly).
 
 ## 5. End-to-end validation
+
+> **Read "Known blockers" first.** Until the project-selector fix (#761/#762,
+> shipped in PR #764) is on your build, a server that requires `X-Project-ID`
+> rejects the SDK's A2A calls, so the commands below only succeed through the
+> local header-injecting shim (`MEMORY_SERVER_URL` pointed at
+> `http://127.0.0.1:18095`). On a build that includes #764 they work against the
+> server directly.
 
 ```bash
 paseo run --provider memory --title "acp-e2e" -d "Reply with exactly: PONG"
@@ -169,15 +192,24 @@ asks a question mid-run.
    `[-32006] INVALID_AGENT_RESPONSE` (non-streaming). `memory acp` uses the same
    SDK client, so this affects it too.
    Until the fix ships, `docs/integrations/paseo/memory-acp-proxy.py` is a
-   local header-injecting forward proxy that lets the full path be exercised:
+   local header-injecting forward proxy that lets the full path be exercised.
+   `MEMORY_ACP_PROXY_TARGET` is **required** — the proxy refuses to start
+   without it, so credentials are never forwarded to an unintended server:
 
    ```bash
-   MEMORY_PROJECT_ID=<uuid> python3 memory-acp-proxy.py 18095 &
+   # from the repository root
+   MEMORY_ACP_PROXY_TARGET=https://api.dev.emergent-company.ai \
+   MEMORY_PROJECT_ID=<uuid> \
+     python3 docs/integrations/paseo/memory-acp-proxy.py 18095 &
    # point MEMORY_SERVER_URL at http://127.0.0.1:18095 in the env file
+   # (MEMORY_PROJECT_ID / MEMORY_ACP_PROXY_TARGET may also live in that env file,
+   #  which the proxy falls back to reading)
    ```
 
    This is a verification shim, not a production component — remove it and point
-   `MEMORY_SERVER_URL` back at the real server once #761 lands.
+   `MEMORY_SERVER_URL` back at the real server once #761/#764 land (the fix is in
+   PR #764). Paseo's provider config itself needs no change: only the env file's
+   `MEMORY_SERVER_URL`, and later its removal.
 
 2. **Daemon `EACCES` on `/root` command paths.** See step 3; use the
    `["/bin/sh", "<path>"]` form.
@@ -185,14 +217,17 @@ asks a question mid-run.
 ## Operator checklist
 
 1. Install the CLI and confirm `memory acp --help`.
-2. Create/reuse an **external** agent definition; copy its slug.
-3. Fill `~/.memory/memory-acp.env` (600) with server URL, project token, agent
-   slug.
-4. Merge the `memory` provider block into `~/.paseo/config.json`; validate with
+2. Confirm the project token carries `agents:read` + `agents:write`.
+3. Create/reuse an **external** agent definition; copy its slug.
+4. Fill `~/.memory/memory-acp.env` (600) with server URL, project token and agent
+   slug; add `MEMORY_PROJECT_ID` (and, while using the shim,
+   `MEMORY_ACP_PROXY_TARGET`).
+5. Merge the `memory` provider block into `~/.paseo/config.json`; validate with
    `jq . ~/.paseo/config.json`.
-5. `paseo daemon reload` (never restart).
-6. `paseo provider ls` → `memory … available`, `paseo provider diagnostic memory`.
-7. `paseo run --provider memory -d "Reply with exactly: PONG"`; check `paseo logs`.
+6. `paseo daemon reload` (never restart).
+7. `paseo provider ls` → `memory … available`, `paseo provider diagnostic memory`.
+8. `paseo run --provider memory -d "Reply with exactly: PONG"`; check `paseo logs`.
+   Until #764 ships this needs the shim, with `MEMORY_SERVER_URL` pointing at it.
 
 ## References
 
