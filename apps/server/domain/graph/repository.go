@@ -1789,6 +1789,32 @@ func configuredIVFFlatProbes() int {
 	return probes
 }
 
+// configuredGraphIVFFlatProbes returns the ivfflat.probes value to use for
+// vector searches over kb.graph_objects.embedding_v2, read from the
+// SEARCH_GRAPH_IVFFLAT_PROBES env var. Defaults to 5 and is clamped to >= 1.
+//
+// It is deliberately lower than configuredIVFFlatProbes (10). pgvector's ivfflat
+// cost estimate grows with ivfflat.probes, while the competing parallel
+// seq-scan estimate prices a scan of kb.graph_objects as if the TOASTed vectors
+// were free to read. On a fully embedded project (~107k vectors) probes=10
+// scans roughly twice as many index entries for the same top-k:
+//
+//	probes=10 -> Index Scan, ~2.7s
+//	probes=5  -> Index Scan, ~0.38s
+//
+// Unlike kb.graph_relationships, a higher probe count is not enough to make the
+// planner abandon this index outright, so this is a latency/recall trade rather
+// than a correctness fix. Prefer an HNSW index over raising this value back.
+func configuredGraphIVFFlatProbes() int {
+	probes := 5
+	if v := os.Getenv("SEARCH_GRAPH_IVFFLAT_PROBES"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 1 {
+			probes = parsed
+		}
+	}
+	return probes
+}
+
 // beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes for improved
 // vector index recall. SET LOCAL scopes the setting to the current transaction only.
 func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
@@ -1860,8 +1886,8 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 	finalArgs := append([]any{vectorStr}, args...)
 	finalArgs = append(finalArgs, params.Limit, params.Offset)
 
-	// Begin transaction with increased IVFFlat probes for better recall
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
+	// Begin transaction with the graph-object IVFFlat probe count.
+	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredGraphIVFFlatProbes())
 	if err != nil {
 		r.log.Error("vector search: failed to set ivfflat probes", logger.Error(err))
 		return nil, err
@@ -2150,8 +2176,8 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 	finalArgs := append([]any{vectorStr}, args...)
 	finalArgs = append(finalArgs, params.Limit)
 
-	// Begin transaction with increased IVFFlat probes for better recall
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
+	// Begin transaction with the graph-object IVFFlat probe count.
+	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredGraphIVFFlatProbes())
 	if err != nil {
 		r.log.Error("similar objects search: failed to set ivfflat probes", logger.Error(err))
 		return nil, err
