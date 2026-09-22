@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2623,9 +2624,13 @@ func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *Hy
 		})
 	}
 
-	// Sort by fused score descending
+	// Sort by fused score descending; equal scores break by ascending id so the
+	// order is total and reproducible regardless of upstream map iteration order.
 	sort.Slice(fusedResults, func(i, j int) bool {
-		return fusedResults[i].fusedScore > fusedResults[j].fusedScore
+		if fusedResults[i].fusedScore != fusedResults[j].fusedScore {
+			return fusedResults[i].fusedScore > fusedResults[j].fusedScore
+		}
+		return slices.Compare(fusedResults[i].id[:], fusedResults[j].id[:]) < 0
 	})
 
 	// Apply offset and limit
