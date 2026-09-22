@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -106,18 +107,33 @@ func TestRunCleanup_NilSafe(t *testing.T) {
 // Ephemeral token revocation (teardownWorkspace)
 // =============================================================================
 
-// fakeEphemeralTokenSvc records revocation so tests can assert teardown revoked
-// the per-run ephemeral token, even when no workspace was provisioned.
+// fakeEphemeralTokenSvc records mint and revocation so tests can assert the
+// entry point minted exactly the tokens it later revoked, even when no
+// workspace was provisioned.
 type fakeEphemeralTokenSvc struct {
+	mintedTokenIDs  []string
 	revokedTokenIDs []string
 }
 
 func (f *fakeEphemeralTokenSvc) CreateEphemeral(_ context.Context, _, _, _ string, _ time.Duration) (string, string, error) {
+	f.mintedTokenIDs = append(f.mintedTokenIDs, "eph-1")
 	return "eph-1", "emt_fake", nil
 }
 
 func (f *fakeEphemeralTokenSvc) RevokeEphemeral(_ context.Context, tokenID string) {
 	f.revokedTokenIDs = append(f.revokedTokenIDs, tokenID)
+}
+
+// failingImageResolver reports the configured base image as errored, which makes
+// WaitForImageReady fail and forces the fatal pre-provisioning path.
+type failingImageResolver struct{}
+
+func (failingImageResolver) ResolveImage(context.Context, string, string) (*sandbox.ResolvedImage, error) {
+	return nil, fmt.Errorf("image not found")
+}
+
+func (failingImageResolver) GetImageStatus(context.Context, string, string) (string, error) {
+	return "error", nil
 }
 
 // The ephemeral token is minted BEFORE provisioning, so it must be revoked even
@@ -186,4 +202,95 @@ func TestExecute_DeferredCleanupRevokesEphemeralTokenOnError(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"eph-1"}, svc.revokedTokenIDs,
 		"Execute must revoke the minted ephemeral token on the error return path")
+}
+
+// TestExecuteWithRun_MintsAndRevokesEphemeralTokenOnError drives the REAL
+// ExecuteWithRun entry point (the worker-pool / async-A2A path) with no token in
+// the context: it must mint an ephemeral token and revoke it on the error return.
+func TestExecuteWithRun_MintsAndRevokesEphemeralTokenOnError(t *testing.T) {
+	repo := newRootCaptureRepository(t)
+	svc := &fakeEphemeralTokenSvc{}
+	ae := &AgentExecutor{
+		repo:         repo,
+		modelFactory: adk.NewModelFactory(&config.LLMConfig{}, testAgentLogger(), nil, nil, nil),
+		apiTokenSvc:  svc,
+		safeguards:   config.AgentSafeguardsConfig{ExecutionEnabled: true},
+		log:          testAgentLogger(),
+	}
+
+	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
+	result, err := ae.ExecuteWithRun(context.Background(), run, ExecuteRequest{
+		ProjectID:   "proj-1",
+		OrgID:       "org-1",
+		UserMessage: "hello",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, []string{"eph-1"}, svc.mintedTokenIDs,
+		"ExecuteWithRun must mint when no token is present in a background context")
+	assert.Equal(t, []string{"eph-1"}, svc.revokedTokenIDs,
+		"ExecuteWithRun must revoke the minted ephemeral token on the error return path")
+}
+
+// TestExecuteWithRun_ProvisioningFailureRevokesMintedToken is the regression
+// test for the review finding that a provisioning failure returns before the
+// teardown binding was installed: the token is minted before provisioning, so
+// the fatal pre-provisioning path must still revoke it.
+func TestExecuteWithRun_ProvisioningFailureRevokesMintedToken(t *testing.T) {
+	repo := newRootCaptureRepository(t)
+	svc := &fakeEphemeralTokenSvc{}
+	ae := &AgentExecutor{
+		repo:        repo,
+		apiTokenSvc: svc,
+		safeguards:  config.AgentSafeguardsConfig{ExecutionEnabled: true},
+		wsEnabled:   true,
+		provisioner: sandbox.NewAutoProvisioner(nil, nil, nil, nil, nil, testAgentLogger(), failingImageResolver{}),
+		log:         testAgentLogger(),
+	}
+
+	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
+	def := &AgentDefinition{
+		ID:            "def-1",
+		SandboxConfig: map[string]any{"enabled": true, "base_image": "missing-image"},
+	}
+	result, err := ae.ExecuteWithRun(context.Background(), run, ExecuteRequest{
+		AgentDefinition: def,
+		ProjectID:       "proj-1",
+		OrgID:           "org-1",
+		UserMessage:     "hello",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, RunStatusError, result.Status, "provisioning failure must fail the run")
+	require.Equal(t, []string{"eph-1"}, svc.mintedTokenIDs, "token must be minted before provisioning")
+	assert.Equal(t, []string{"eph-1"}, svc.revokedTokenIDs,
+		"a provisioning failure must not leak the minted ephemeral token")
+}
+
+// TestExecuteWithRun_DisableAuthMintDoesNotMint asserts the guard added with the
+// hoist: a DisableAuthMint request never mints (or revokes) an ephemeral token.
+func TestExecuteWithRun_DisableAuthMintDoesNotMint(t *testing.T) {
+	repo := newRootCaptureRepository(t)
+	svc := &fakeEphemeralTokenSvc{}
+	ae := &AgentExecutor{
+		repo:         repo,
+		modelFactory: adk.NewModelFactory(&config.LLMConfig{}, testAgentLogger(), nil, nil, nil),
+		apiTokenSvc:  svc,
+		safeguards:   config.AgentSafeguardsConfig{ExecutionEnabled: true},
+		log:          testAgentLogger(),
+	}
+
+	run := &AgentRun{ID: "run-1", Status: RunStatusRunning}
+	_, err := ae.ExecuteWithRun(context.Background(), run, ExecuteRequest{
+		ProjectID:       "proj-1",
+		OrgID:           "org-1",
+		UserMessage:     "hello",
+		DisableAuthMint: true,
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, svc.mintedTokenIDs, "DisableAuthMint must suppress the ephemeral mint")
+	assert.Empty(t, svc.revokedTokenIDs, "nothing was minted, so nothing may be revoked")
 }
