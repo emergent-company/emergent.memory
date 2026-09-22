@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -158,12 +160,9 @@ func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 		"recency_boost=0 should return same total as no boost")
 
 	// Zero boost adds 0 to every score, so the two requests must return the
-	// same set of objects. Positional order is deliberately NOT asserted: the
-	// three seeded objects are equally relevant (identical properties and FTS
-	// rank), and the fused result is sorted by score alone — a sort.Slice over
-	// a slice built from a map iteration — so the relative order of tied
-	// results is unspecified and differs run to run. Asserting order here was
-	// flaky (≈2 in 10) and only ever "passed" by luck.
+	// same set of objects. The three seeded objects are equally relevant
+	// (identical properties and FTS rank) with no vector input, so all fused
+	// scores are equal and ordering is now deterministic: ascending by id.
 	baseIDs := make([]uuid.UUID, 0, len(baseResp.Data))
 	for _, item := range baseResp.Data {
 		baseIDs = append(baseIDs, item.Object.ID)
@@ -172,6 +171,15 @@ func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 	for _, item := range boostResp.Data {
 		boostIDs = append(boostIDs, item.Object.ID)
 	}
-	assert.ElementsMatch(t, baseIDs, boostIDs,
-		"recency_boost=0 should return the same result set as no boost")
+
+	// Equally-scored results must be ordered ascending by id.
+	sortedIDs := slices.Clone(baseIDs)
+	sort.Slice(sortedIDs, func(i, j int) bool {
+		return slices.Compare(sortedIDs[i][:], sortedIDs[j][:]) < 0
+	})
+	assert.Equal(t, sortedIDs, baseIDs,
+		"equally-scored results must be ordered ascending by id")
+
+	assert.Equal(t, baseIDs, boostIDs,
+		"recency_boost=0 must return identical ordered results")
 }

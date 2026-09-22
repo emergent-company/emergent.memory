@@ -1771,7 +1771,7 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 			) AS rank
 		FROM kb.graph_objects
 		` + whereClause + `
-		ORDER BY rank DESC
+		ORDER BY rank DESC, id ASC
 		LIMIT ?
 		OFFSET ?
 	`
@@ -1875,7 +1875,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 			(embedding_v2 <=> ?::vector) AS distance
 		FROM kb.graph_objects
 		` + whereClause + `
-		ORDER BY distance ASC
+		ORDER BY distance ASC, id ASC
 		LIMIT ?
 		OFFSET ?
 	`
@@ -2154,7 +2154,7 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 			(embedding_v2 <=> ?::vector) AS distance
 		FROM kb.graph_objects
 		` + whereClause + `
-		ORDER BY distance ASC
+		ORDER BY distance ASC, id ASC
 		LIMIT ?
 	`
 
