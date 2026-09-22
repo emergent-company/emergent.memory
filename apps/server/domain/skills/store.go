@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -171,21 +170,13 @@ func (r *Repository) FindForAgent(ctx context.Context, projectID string, orgID s
 // FindRelevant performs cosine similarity search against description embeddings.
 // Returns the topK most relevant skills for the given project (global + org + project-scoped).
 // The index on kb.skills.description_embedding is HNSW (idx_skills_embedding_hnsw,
-// migration 00170): HNSW needs no probe tuning, so the ivfflat.probes set below is
-// a harmless no-op. The helper is retained because it also opens the transaction
-// this query runs in; only the SET LOCAL ivfflat.probes statement is now vestigial.
-// Only considers skills with a non-NULL description_embedding.
+// migration 00170): HNSW needs no probe tuning, so no ivfflat.probes setting is
+// applied. Only considers skills with a non-NULL description_embedding.
 func (r *Repository) FindRelevant(ctx context.Context, projectID string, orgID string, vec []float32, topK int) ([]*Skill, error) {
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, 10)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	vectorStr := pgutils.FormatVector(vec)
 
 	var skills []*Skill
-	q := tx.NewSelect().
+	q := r.db.NewSelect().
 		Model(&skills).
 		Where("s.description_embedding IS NOT NULL")
 
@@ -206,12 +197,6 @@ func (r *Repository) FindRelevant(ctx context.Context, projectID string, orgID s
 
 	if err := q.Scan(ctx); err != nil {
 		return nil, apperror.NewInternal("failed to find relevant skills", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		r.log.Warn("skills vector search: failed to commit tx (results still valid)",
-			logger.Error(err),
-		)
 	}
 
 	return skills, nil
@@ -363,21 +348,6 @@ func (r *Repository) Count(ctx context.Context, projectID string, orgID string) 
 		return 0, apperror.NewInternal("failed to count skills", err)
 	}
 	return n, nil
-}
-
-// beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes. SET
-// LOCAL scopes the setting to the current transaction only. The skills embedding
-// index is HNSW (migration 00170), so the setting is a harmless no-op here.
-func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return tx, apperror.ErrDatabase.WithInternal(err)
-	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL ivfflat.probes = %d", probes)); err != nil {
-		_ = tx.Rollback()
-		return tx, apperror.ErrDatabase.WithInternal(err)
-	}
-	return tx, nil
 }
 
 // wrapDBError wraps a DB error, detecting unique constraint violations.

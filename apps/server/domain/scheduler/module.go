@@ -166,16 +166,6 @@ func RegisterTasks(p TaskParams) error {
 			slog.String("error", err.Error()))
 	}
 
-	// Register embedding index reindex task (daily at 2am by default). Rebuilds
-	// the ivfflat embedding indexes to restore clustering degraded by
-	// incremental backfills (issue #664).
-	embeddingReindexTask := NewEmbeddingIndexReindexTask(p.DB, p.Log)
-	if err := addScheduledTask(p.Scheduler, p.Log, "embedding_index_reindex",
-		p.Cfg.EmbeddingReindexSchedule, p.Cfg.EmbeddingReindexInterval, embeddingReindexTask.Run); err != nil {
-		p.Log.Error("failed to register embedding index reindex task",
-			slog.String("error", err.Error()))
-	}
-
 	// Register embedding job purge task (daily at 5am by default). Deletes old
 	// terminal embedding jobs to prevent unbounded queue table growth.
 	if err := addScheduledTask(p.Scheduler, p.Log, "embedding_job_purge",

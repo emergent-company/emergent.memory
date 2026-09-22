@@ -3,11 +3,8 @@ package search
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
-	"os"
 	"sort"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -31,47 +28,6 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 		db:  db,
 		log: log.With(logger.Scope("search.repo")),
 	}
-}
-
-// beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes for improved
-// vector index recall. SET LOCAL scopes the setting to the current transaction only,
-// preventing cross-request interference.
-//
-// This is retained for the relationship search leg, whose index on
-// kb.graph_relationships.embedding is still IVFFlat. The chunks index
-// (idx_chunks_embedding_hnsw, migration 00170) and the graph-objects index
-// (00164) are HNSW, so for those queries the SET LOCAL is a harmless no-op: it
-// neither errors nor changes the plan, latency, or recall.
-func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return tx, apperror.ErrDatabase.WithInternal(err)
-	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL ivfflat.probes = %d", probes)); err != nil {
-		_ = tx.Rollback()
-		return tx, apperror.ErrDatabase.WithInternal(err)
-	}
-	return tx, nil
-}
-
-// configuredIVFFlatProbes returns the ivfflat.probes value to use for vector
-// searches, read from the SEARCH_IVFFLAT_PROBES env var. Defaults to 10 and is
-// clamped to >= 1 so an invalid/empty config never disables index scans.
-//
-// After migrations 00164 (graph objects) and 00170 (chunks), both consumers of
-// this value use HNSW indexes, so the setting no longer affects their plan or
-// recall and is effectively vestigial — it is still applied per transaction to
-// avoid a behaviour change and to keep a single knob should an IVFFlat index be
-// reintroduced. Relationship search has its own knob
-// (configuredRelationshipIVFFlatProbes).
-func configuredIVFFlatProbes() int {
-	probes := 10
-	if v := os.Getenv("SEARCH_IVFFLAT_PROBES"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
-			probes = n
-		}
-	}
-	return probes
 }
 
 // TextSearchMode defines the type of text search
@@ -199,17 +155,6 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	limit := mathutil.ClampLimit(params.Limit, 20, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
-	// Begin transaction and apply ivfflat.probes for the legacy IVFFlat leg.
-	// The chunks index is HNSW (idx_chunks_embedding_hnsw, migration 00170), so
-	// the SET LOCAL is a no-op for this query; it is kept to avoid a behaviour
-	// change and because the helper is shared with relationship search.
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
-	if err != nil {
-		r.log.Error("vector search: failed to set ivfflat probes", logger.Error(err))
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
@@ -222,7 +167,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 		LIMIT ?
 	`
 
-	rows, err := tx.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
+	rows, err := r.db.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
 	if err != nil {
 		r.log.Error("vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -250,11 +195,6 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-
-	// Commit the read-only transaction
-	if err := tx.Commit(); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -308,14 +248,6 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		lexicalScores = append(lexicalScores, hit.Score)
 	}
 
-	// Execute vector search. As in VectorSearch, ivfflat.probes is applied only
-	// for the shared helper's benefit and is a no-op for the HNSW chunks index.
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
-	if err != nil {
-		r.log.Error("hybrid search: failed to set ivfflat probes", logger.Error(err))
-		return nil, err
-	}
-
 	vectorQuery := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
 			   (1 - (c.embedding <=> ?::vector)) AS score
@@ -326,9 +258,8 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		ORDER BY c.embedding <=> ?::vector
 		LIMIT ?
 	`
-	vectorRows, err := tx.QueryContext(ctx, vectorQuery, vectorStr, params.ProjectID, vectorStr, fetchLimit)
+	vectorRows, err := r.db.QueryContext(ctx, vectorQuery, vectorStr, params.ProjectID, vectorStr, fetchLimit)
 	if err != nil {
-		_ = tx.Rollback()
 		r.log.Error("hybrid vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
@@ -338,7 +269,6 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		var row TextSearchResultRow
 		if err := vectorRows.Scan(&row.ID, &row.DocumentID, &row.ChunkIndex, &row.Text, &row.Score); err != nil {
 			vectorRows.Close()
-			_ = tx.Rollback()
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
 		if existing, ok := lexicalResults[row.ID]; ok {
@@ -355,8 +285,6 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		vectorScores = append(vectorScores, row.Score)
 	}
 	vectorRows.Close()
-	// Commit the read-only vector search transaction
-	_ = tx.Commit()
 
 	// Calculate z-score normalization parameters
 	lexicalMean, lexicalStd := mathutil.CalcMeanStd(lexicalScores)
