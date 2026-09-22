@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 )
@@ -357,11 +358,17 @@ func artifactText(art a2a.Artifact) string {
 	return sb.String()
 }
 
-// newID returns a random hex id with the given prefix.
+// randRead is the entropy source used by newID. It is a variable so tests can
+// force the fallback path.
+var randRead = rand.Read
+
+// newID returns a random hex id with the given prefix. If the entropy source
+// fails it falls back to a nanosecond timestamp, keeping ids unique rather
+// than collapsing every id to the same constant.
 func newID(prefix string) string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%s-%d", prefix, len(b))
+	if _, err := randRead(b); err != nil {
+		return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 	}
 	return prefix + "-" + hex.EncodeToString(b)
 }

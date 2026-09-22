@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 )
@@ -429,4 +430,32 @@ func TestFailedTaskReturnsRefusal(t *testing.T) {
 	if pr := msgs[3]["result"].(map[string]any); pr["stopReason"] != "refusal" {
 		t.Errorf("stopReason = %v, want refusal", pr["stopReason"])
 	}
+}
+
+func TestNewID(t *testing.T) {
+	t.Run("random path returns prefixed id", func(t *testing.T) {
+		id := newID("sess")
+		if !strings.HasPrefix(id, "sess-") {
+			t.Fatalf("id = %q, want sess- prefix", id)
+		}
+		if len(id) != len("sess-")+32 {
+			t.Fatalf("id = %q, want 32 hex chars after prefix", id)
+		}
+	})
+
+	t.Run("fallback is unique, not a constant", func(t *testing.T) {
+		orig := randRead
+		randRead = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+		t.Cleanup(func() { randRead = orig })
+
+		first := newID("sess")
+		if first == "sess-16" {
+			t.Fatalf("fallback collapsed to the constant %q", first)
+		}
+		time.Sleep(time.Millisecond)
+		second := newID("sess")
+		if first == second {
+			t.Fatalf("fallback ids are not unique: both %q", first)
+		}
+	})
 }
