@@ -49,8 +49,11 @@ func TestRenderAPITokensPage(t *testing.T) {
 	for _, want := range []string{
 		"API Tokens", "CI deploy", "old token", "emt_cideployx", "emt_oldtoken",
 		// one composed AREA badge per area, with the granted scopes in the title
+		// and the same detail exposed as an accessible name (role=img + aria-label)
 		`data-testid="token-scope-area"`, ">Data<", ">Schemas<",
 		`title="data:read, data:write"`, `title="schema:read"`,
+		`role="img"`,
+		`aria-label="Data: data:read, data:write"`, `aria-label="Schemas: schema:read"`,
 		"Revoked", "2 tokens",
 		"New token", `href="/settings/tokens/new"`,
 		// table chrome
@@ -154,6 +157,27 @@ func TestAPITokenAreaBadges(t *testing.T) {
 	}
 	if apiTokenScopeAreaIntent(apiTokenAreaAdmin, nil) != ui.BadgeWarning {
 		t.Error("admin area should warn")
+	}
+}
+
+// TestAPITokenScopeMutates pins which scopes change state. apiTokenScopeMutates
+// special-cases admin/admin:all, schema:migrate, chat:use and search (none carry
+// the :write suffix), so those are asserted explicitly to catch a dropped case.
+func TestAPITokenScopeMutates(t *testing.T) {
+	for _, scope := range []string{"admin", "admin:all", "schema:migrate", "chat:use", "search"} {
+		if !apiTokenScopeMutates(scope) {
+			t.Errorf("apiTokenScopeMutates(%q) = false, want true (special-cased)", scope)
+		}
+	}
+	for _, scope := range []string{"schema:read", "data:read", "documents:read", "graph:read", "branches:read", "agents:read", "projects:read", "journal:read", "skills:read"} {
+		if apiTokenScopeMutates(scope) {
+			t.Errorf("apiTokenScopeMutates(%q) = true, want false (read-only)", scope)
+		}
+	}
+	for _, scope := range apiTokenScopes {
+		if strings.HasSuffix(scope, ":write") && !apiTokenScopeMutates(scope) {
+			t.Errorf("apiTokenScopeMutates(%q) = false, want true (:write)", scope)
+		}
 	}
 }
 

@@ -173,6 +173,8 @@ templ apiTokenRowContent(t APIToken, actionBase string) {
 						Attrs: templ.Attributes{
 							"data-testid": "token-scope-area",
 							"title":       strings.Join(b.Scopes, ", "),
+							"role":        "img",
+							"aria-label":  b.Area + ": " + strings.Join(b.Scopes, ", "),
 						},
 					})
 				}
