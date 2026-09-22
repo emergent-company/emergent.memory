@@ -21,7 +21,9 @@
 -- rationale as 00162/00163). Requires pgvector >= 0.5.0 for HNSW support.
 DROP INDEX CONCURRENTLY IF EXISTS kb."IDX_graph_objects_embedding_v2_hnsw";
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS kb."IDX_graph_objects_embedding_v2_hnsw"
+-- The index name must stay unqualified: CREATE INDEX derives the schema from
+-- the (already schema-qualified) table reference and rejects a qualified name.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "IDX_graph_objects_embedding_v2_hnsw"
     ON kb.graph_objects USING hnsw (embedding_v2 vector_cosine_ops)
     WITH (m = 16, ef_construction = 64);
 
@@ -33,6 +35,6 @@ DROP INDEX CONCURRENTLY IF EXISTS kb."IDX_graph_objects_embedding_v2_ivfflat";
 -- +goose Down
 DROP INDEX CONCURRENTLY IF EXISTS kb."IDX_graph_objects_embedding_v2_hnsw";
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS kb."IDX_graph_objects_embedding_v2_ivfflat"
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "IDX_graph_objects_embedding_v2_ivfflat"
     ON kb.graph_objects USING ivfflat (embedding_v2 vector_cosine_ops)
     WITH (lists = 100);
