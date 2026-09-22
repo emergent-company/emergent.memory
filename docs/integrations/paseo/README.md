@@ -66,8 +66,16 @@ Selector for the definition above: `acp-probe-external`.
 
 ## 2. Verify the selector appears in the card
 
-`memory a2a discover` is currently broken (see "Known blockers"); read the card
-directly. The A2A surface is addressed by the `X-Project-ID` header:
+`memory a2a discover` sends `X-Project-ID` (the fix shipped in PR #764), so it
+lists the skills on the extended AgentCard directly:
+
+```bash
+memory a2a discover | jq '.skills[].id'
+# "acp-probe-external"
+```
+
+You can also read the card directly; the A2A surface is addressed by the
+`X-Project-ID` header:
 
 ```bash
 curl -sS \
@@ -94,8 +102,7 @@ install -m 0644 docs/integrations/paseo/memory-acp.env.example ~/.memory/memory-
 cp ~/.memory/memory-acp.env.example ~/.memory/memory-acp.env
 chmod 600 ~/.memory/memory-acp.env
 # edit ~/.memory/memory-acp.env and fill in MEMORY_SERVER_URL /
-# MEMORY_PROJECT_TOKEN / MEMORY_AGENT (+ MEMORY_PROJECT_ID / the shim vars
-#   when following the "Known blockers" workaround)
+# MEMORY_PROJECT_TOKEN / MEMORY_AGENT / MEMORY_PROJECT_ID
 ```
 
 `~/.memory/memory-acp-wrapper.sh` loads that env file and execs `memory acp`:
@@ -149,12 +156,8 @@ it explicitly).
 
 ## 5. End-to-end validation
 
-> **Read "Known blockers" first.** Until the project-selector fix (#761/#762,
-> shipped in PR #764) is on your build, a server that requires `X-Project-ID`
-> rejects the SDK's A2A calls, so the commands below only succeed through the
-> local header-injecting shim (`MEMORY_SERVER_URL` pointed at
-> `http://127.0.0.1:18095`). On a build that includes #764 they work against the
-> server directly.
+> This requires a CLI build including the #764 project-selector fix. It now runs
+> against the server directly (no proxy).
 
 ```bash
 paseo run --provider memory --title "acp-e2e" -d "Reply with exactly: PONG"
@@ -185,33 +188,11 @@ asks a question mid-run.
 
 ## Known blockers
 
-1. **A2A SDK omits the project selector (issues #761 / #762).** The SDK client
-   (`apps/server/pkg/sdk/a2a/client.go`) never sends `X-Project-ID`, so
-   `memory a2a discover` and any A2A call made through the SDK/CLI fail with
-   `project context is required (set via API token)` (streaming) or
-   `[-32006] INVALID_AGENT_RESPONSE` (non-streaming). `memory acp` uses the same
-   SDK client, so this affects it too.
-   Until the fix ships, `docs/integrations/paseo/memory-acp-proxy.py` is a
-   local header-injecting forward proxy that lets the full path be exercised.
-   `MEMORY_ACP_PROXY_TARGET` is **required** — the proxy refuses to start
-   without it, so credentials are never forwarded to an unintended server:
+**Resolved** — the A2A project-selector fix for #761/#762 shipped in PR #764:
+`memory a2a discover` and `memory acp` now send `X-Project-ID`. The former
+`memory-acp-proxy.py` shim has been removed.
 
-   ```bash
-   # from the repository root
-   MEMORY_ACP_PROXY_TARGET=https://api.dev.emergent-company.ai \
-   MEMORY_PROJECT_ID=<uuid> \
-     python3 docs/integrations/paseo/memory-acp-proxy.py 18095 &
-   # point MEMORY_SERVER_URL at http://127.0.0.1:18095 in the env file
-   # (MEMORY_PROJECT_ID / MEMORY_ACP_PROXY_TARGET may also live in that env file,
-   #  which the proxy falls back to reading)
-   ```
-
-   This is a verification shim, not a production component — remove it and point
-   `MEMORY_SERVER_URL` back at the real server once #761/#764 land (the fix is in
-   PR #764). Paseo's provider config itself needs no change: only the env file's
-   `MEMORY_SERVER_URL`, and later its removal.
-
-2. **Daemon `EACCES` on `/root` command paths.** See step 3; use the
+1. **Daemon `EACCES` on `/root` command paths.** See step 3; use the
    `["/bin/sh", "<path>"]` form.
 
 ## Operator checklist
@@ -220,14 +201,12 @@ asks a question mid-run.
 2. Confirm the project token carries `agents:read` + `agents:write`.
 3. Create/reuse an **external** agent definition; copy its slug.
 4. Fill `~/.memory/memory-acp.env` (600) with server URL, project token and agent
-   slug; add `MEMORY_PROJECT_ID` (and, while using the shim,
-   `MEMORY_ACP_PROXY_TARGET`).
+   slug; add `MEMORY_PROJECT_ID`.
 5. Merge the `memory` provider block into `~/.paseo/config.json`; validate with
    `jq . ~/.paseo/config.json`.
 6. `paseo daemon reload` (never restart).
 7. `paseo provider ls` → `memory … available`, `paseo provider diagnostic memory`.
 8. `paseo run --provider memory -d "Reply with exactly: PONG"`; check `paseo logs`.
-   Until #764 ships this needs the shim, with `MEMORY_SERVER_URL` pointing at it.
 
 ## References
 
