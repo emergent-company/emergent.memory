@@ -35,10 +35,24 @@ const (
 
 // JSON-RPC 2.0 error codes.
 const (
+	codeParseError     = -32700
+	codeInvalidRequest = -32600
 	codeInvalidParams  = -32602
 	codeMethodNotFound = -32601
 	codeInternal       = -32000
 )
+
+// wireError is a JSON-RPC error produced while decoding an inbound message. It
+// carries the code and message to return to the client, plus the request id to
+// echo when one was recoverable from the malformed input (nil otherwise, which
+// marshals to id: null as the spec requires).
+type wireError struct {
+	Code    int
+	Message string
+	ID      json.RawMessage
+}
+
+func (e *wireError) Error() string { return e.Message }
 
 // errReadTerminal marks a non-recoverable read error from stdin (e.g. a line
 // exceeding the scanner buffer). No further messages can be read after it, so
@@ -82,9 +96,17 @@ type InitializeResponse struct {
 // explicitly (no omitempty) so the client sees an honest false rather than an
 // absent (and therefore ambiguous) value.
 type AgentCapabilities struct {
-	LoadSession        bool               `json:"loadSession"`
-	PromptCapabilities PromptCapabilities `json:"promptCapabilities"`
-	MCPCapabilities    MCPCapabilities    `json:"mcpCapabilities"`
+	LoadSession         bool                `json:"loadSession"`
+	PromptCapabilities  PromptCapabilities  `json:"promptCapabilities"`
+	MCPCapabilities     MCPCapabilities     `json:"mcpCapabilities"`
+	SessionCapabilities SessionCapabilities `json:"sessionCapabilities"`
+}
+
+// SessionCapabilities advertises optional session lifecycle methods. ACP uses an
+// empty object to mean "supported"; a nil field omits the method and signals it
+// is unsupported.
+type SessionCapabilities struct {
+	Delete *struct{} `json:"delete,omitempty"`
 }
 
 // PromptCapabilities advertises prompt input modalities.
@@ -137,6 +159,11 @@ type CancelParams struct {
 	SessionID string `json:"sessionId"`
 }
 
+// DeleteSessionParams is the params of the session/delete method.
+type DeleteSessionParams struct {
+	SessionID string `json:"sessionId"`
+}
+
 // stream reads newline-delimited JSON-RPC 2.0 messages from in and writes
 // single-line JSON messages to out. Writes are serialized so notifications
 // emitted from concurrently-running prompts never interleave mid-line.
@@ -174,13 +201,36 @@ func (s *stream) next() (*request, error) {
 		}
 		var req request
 		if err := json.Unmarshal(line, &req); err != nil {
-			return nil, fmt.Errorf("invalid JSON-RPC message: %w", err)
+			// Malformed JSON is a Parse error. Valid JSON that is not a
+			// Request object (an array, a string, or a non-string field type)
+			// fails with a type error and is an Invalid Request. req.ID may
+			// still be populated for a type error, so echo it when recoverable.
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) {
+				return nil, &wireError{
+					Code:    codeInvalidRequest,
+					Message: fmt.Sprintf("invalid request: %v", err),
+					ID:      req.ID,
+				}
+			}
+			return nil, &wireError{
+				Code:    codeParseError,
+				Message: fmt.Sprintf("parse error: %v", err),
+			}
 		}
 		if req.JSONRPC != jsonrpcVersion {
-			return nil, fmt.Errorf("unsupported JSON-RPC version %q", req.JSONRPC)
+			return nil, &wireError{
+				Code:    codeInvalidRequest,
+				Message: fmt.Sprintf("invalid request: unsupported JSON-RPC version %q", req.JSONRPC),
+				ID:      req.ID,
+			}
 		}
 		if req.Method == "" {
-			return nil, fmt.Errorf("invalid JSON-RPC message: missing method")
+			return nil, &wireError{
+				Code:    codeInvalidRequest,
+				Message: "invalid request: missing method",
+				ID:      req.ID,
+			}
 		}
 		return &req, nil
 	}

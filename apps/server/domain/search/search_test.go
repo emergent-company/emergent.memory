@@ -1097,37 +1097,19 @@ func TestHasScope(t *testing.T) {
 	}
 }
 
-func TestConfiguredRelationshipIVFFlatProbes(t *testing.T) {
-	tests := []struct {
-		name string
-		val  string
-		want int
-	}{
-		{name: "default when unset", val: "", want: 5},
-		{name: "explicit lower value", val: "3", want: 3},
-		{name: "explicit higher value is honoured", val: "10", want: 10},
-		{name: "1 is the minimum valid value", val: "1", want: 1},
-		{name: "non-numeric falls back to default", val: "abc", want: 5},
-		{name: "zero falls back to default", val: "0", want: 5},
-		{name: "negative falls back to default", val: "-3", want: 5},
-	}
+func TestBuildRelationshipSearchQuery(t *testing.T) {
+	projectID := uuid.New()
+	ns := "team-a"
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("SEARCH_RELATIONSHIP_IVFFLAT_PROBES", tt.val)
-			assert.Equal(t, tt.want, configuredRelationshipIVFFlatProbes())
-		})
-	}
-}
+	q, args := buildRelationshipSearchQuery("'[1,2,3]'", projectID, nil, 50)
+	assert.NotContains(t, q, "r.namespace")
+	assert.NotContains(t, q, "src.namespace")
+	assert.Len(t, args, 6)
 
-// TestRelationshipProbesBelowGlobalDefault guards the relationship ANN leg against
-// being raised back to the global default. pgvector costs the ivfflat index roughly
-// linearly in probes, and at the global default (10) the index estimate exceeds the
-// planner's optimistic parallel-seq-scan estimate for kb.graph_relationships, so the
-// index is abandoned and the search degrades from ~250ms to minutes.
-func TestRelationshipProbesBelowGlobalDefault(t *testing.T) {
-	t.Setenv("SEARCH_RELATIONSHIP_IVFFLAT_PROBES", "")
-	t.Setenv("SEARCH_IVFFLAT_PROBES", "")
-	assert.Less(t, configuredRelationshipIVFFlatProbes(), configuredIVFFlatProbes(),
-		"relationship ivfflat.probes must stay below the global default or the planner drops the index")
+	q2, args2 := buildRelationshipSearchQuery("'[1,2,3]'", projectID, &ns, 50)
+	assert.Contains(t, q2, "AND r.namespace = ?")
+	assert.NotContains(t, q2, "src.namespace")
+	assert.Len(t, args2, 7)
+	assert.Equal(t, "team-a", args2[4])
+	assert.Equal(t, 50, args2[6])
 }

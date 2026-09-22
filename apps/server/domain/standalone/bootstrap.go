@@ -152,6 +152,13 @@ func (s *BootstrapService) createOrganization(ctx context.Context, tx bun.Tx, us
 	return orgID, nil
 }
 
+// bootstrapProjectRole is the canonical kb.project_memberships role written for
+// the bootstrapped standalone project. It must remain one of the canonical
+// project roles — a previous value of 'owner' failed every `project_admin` role
+// check (e.g. embeddings/retrigger) because 'owner' is only valid for
+// kb.organization_memberships. See migration 00165.
+const bootstrapProjectRole = "project_admin"
+
 func (s *BootstrapService) createProject(ctx context.Context, tx bun.Tx, orgID, userID string) (string, error) {
 	var projectID string
 
@@ -168,10 +175,10 @@ func (s *BootstrapService) createProject(ctx context.Context, tx bun.Tx, orgID, 
 
 	memberQuery := `
 		INSERT INTO kb.project_memberships (project_id, user_id, role, created_at)
-		VALUES (?, ?, 'owner', NOW())
+		VALUES (?, ?, ?, NOW())
 	`
 
-	_, err = tx.NewRaw(memberQuery, projectID, userID).Exec(ctx)
+	_, err = tx.NewRaw(memberQuery, projectID, userID, bootstrapProjectRole).Exec(ctx)
 	if err != nil {
 		return "", err
 	}

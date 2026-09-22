@@ -35,8 +35,13 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 
 // beginTxWithIVFFlatProbes starts a transaction and sets ivfflat.probes for improved
 // vector index recall. SET LOCAL scopes the setting to the current transaction only,
-// preventing cross-request interference. With ~100 IVFFlat lists (typical), probes=10
-// scans 10% of the index, improving recall from ~40% to ~90%+ with negligible latency cost.
+// preventing cross-request interference.
+//
+// This is retained for the relationship search leg, whose index on
+// kb.graph_relationships.embedding is still IVFFlat. The chunks index
+// (idx_chunks_embedding_hnsw, migration 00170) and the graph-objects index
+// (00164) are HNSW, so for those queries the SET LOCAL is a harmless no-op: it
+// neither errors nor changes the plan, latency, or recall.
 func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (bun.Tx, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -52,35 +57,16 @@ func (r *Repository) beginTxWithIVFFlatProbes(ctx context.Context, probes int) (
 // configuredIVFFlatProbes returns the ivfflat.probes value to use for vector
 // searches, read from the SEARCH_IVFFLAT_PROBES env var. Defaults to 10 and is
 // clamped to >= 1 so an invalid/empty config never disables index scans.
+//
+// After migrations 00164 (graph objects) and 00170 (chunks), both consumers of
+// this value use HNSW indexes, so the setting no longer affects their plan or
+// recall and is effectively vestigial — it is still applied per transaction to
+// avoid a behaviour change and to keep a single knob should an IVFFlat index be
+// reintroduced. Relationship search has its own knob
+// (configuredRelationshipIVFFlatProbes).
 func configuredIVFFlatProbes() int {
 	probes := 10
 	if v := os.Getenv("SEARCH_IVFFLAT_PROBES"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
-			probes = n
-		}
-	}
-	return probes
-}
-
-// configuredRelationshipIVFFlatProbes returns the ivfflat.probes value to use for
-// relationship vector searches, read from the SEARCH_RELATIONSHIP_IVFFLAT_PROBES
-// env var. Defaults to 5 and is clamped to >= 1.
-//
-// It is deliberately lower than configuredIVFFlatProbes (10). pgvector's ivfflat
-// cost estimate scales roughly linearly with ivfflat.probes, while the competing
-// parallel-seq-scan estimate prices a scan of kb.graph_relationships as if the
-// TOASTed 768-dim vectors were free to read. On a project with ~82k embedded
-// relationships the two estimates cross over between probes=5 and probes=10:
-//
-//	probes=5  -> Index Scan, estimated cost ~5.2k  -> ~250 ms
-//	probes=10 -> Parallel Seq Scan + Sort, ~9.9k   -> tens of seconds to minutes
-//
-// so probes=10 makes the planner abandon the index entirely. Raising this value
-// back to 10 will reintroduce that regression; prefer a smaller lists/probes
-// pairing or an HNSW index over forcing planner settings.
-func configuredRelationshipIVFFlatProbes() int {
-	probes := 5
-	if v := os.Getenv("SEARCH_RELATIONSHIP_IVFFLAT_PROBES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
 			probes = n
 		}
@@ -213,7 +199,10 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	limit := mathutil.ClampLimit(params.Limit, 20, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
-	// Begin transaction with increased IVFFlat probes for better recall
+	// Begin transaction and apply ivfflat.probes for the legacy IVFFlat leg.
+	// The chunks index is HNSW (idx_chunks_embedding_hnsw, migration 00170), so
+	// the SET LOCAL is a no-op for this query; it is kept to avoid a behaviour
+	// change and because the helper is shared with relationship search.
 	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
 	if err != nil {
 		r.log.Error("vector search: failed to set ivfflat probes", logger.Error(err))
@@ -319,7 +308,8 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		lexicalScores = append(lexicalScores, hit.Score)
 	}
 
-	// Execute vector search with increased IVFFlat probes for better recall
+	// Execute vector search. As in VectorSearch, ivfflat.probes is applied only
+	// for the shared helper's benefit and is a no-op for the HNSW chunks index.
 	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
 	if err != nil {
 		r.log.Error("hybrid search: failed to set ivfflat probes", logger.Error(err))
@@ -442,7 +432,7 @@ type RelationshipSearchParams struct {
 	ProjectID uuid.UUID
 	Vector    []float32 // Query embedding for semantic search
 	Limit     int       // Result limit (default: 50, max: 100)
-	Namespace *string   // optional: filter by src object namespace
+	Namespace *string   // optional: filter by relationship namespace (denormalised from the src object)
 }
 
 // RelationshipSearchResult represents a single relationship search result
@@ -473,9 +463,15 @@ type RelationshipSearchResponse struct {
 // SearchRelationships performs vector similarity search on relationship embeddings.
 // Finds semantically similar relationships using triplet text embeddings (e.g., "Elon Musk founded Tesla").
 // Filters out relationships without embeddings (WHERE embedding IS NOT NULL).
-// Uses the ivfflat index for efficient approximate nearest neighbor search, provided
-// ivfflat.probes stays low enough for the planner to keep choosing it (see
-// configuredRelationshipIVFFlatProbes).
+//
+// kb.graph_relationships.embedding is served by an HNSW index (migration 00171,
+// m=16 / ef_construction=64). Unlike the previous ivfflat index, HNSW has no
+// `probes` knob and needs no training/list step, so this path deliberately does
+// NOT set `ivfflat.probes`: the setting would be a no-op for the index and the
+// former SEARCH_RELATIONSHIP_IVFFLAT_PROBES stopgap has been removed. This also
+// removes the planner cost-model cliff where a higher probes value made the
+// planner abandon the ivfflat index for an optimistic parallel sequential scan
+// (tens of seconds to minutes on ~82k embedded relationships).
 //
 // The project filter is primarily applied to kb.graph_relationships.project_id (the
 // row that owns the embedding): the r-side predicate keeps scoping attached to the
@@ -485,6 +481,10 @@ type RelationshipSearchResponse struct {
 // endpoints share its project_id (that invariant is application-enforced), so a
 // malformed or legacy cross-project row would otherwise surface another project's
 // object metadata through the joins.
+//
+// Likewise, namespace is denormalised onto kb.graph_relationships (from the src
+// object) so the namespace predicate stays on the table that owns the embedding
+// instead of the joined kb.graph_objects row.
 func (r *Repository) SearchRelationships(ctx context.Context, params RelationshipSearchParams) (*RelationshipSearchResponse, error) {
 	if len(params.Vector) == 0 {
 		return nil, apperror.ErrBadRequest.WithMessage("vector required for relationship search")
@@ -493,64 +493,11 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 	limit := mathutil.ClampLimit(params.Limit, 50, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
-	// Relationship-specific IVFFlat probe count. This must stay low enough for the
-	// planner to keep choosing the ivfflat index scan: at probes=10 on a large
-	// relationship index the index estimate exceeds the (optimistic) parallel
-	// seq-scan estimate and the leg degrades from ~250ms to minutes.
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredRelationshipIVFFlatProbes())
-	if err != nil {
-		r.log.Error("relationship search: failed to set ivfflat probes", logger.Error(err))
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	// Joins with graph_objects to construct triplet text: "{source.name} {type} {target.name}"
-	baseQuery := `
-		SELECT 
-			r.id,
-			r.src_id,
-			r.dst_id,
-			r.type,
-			r.properties,
-			COALESCE(src.key, src.id::text) || ' ' || 
-				LOWER(REPLACE(r.type, '_', ' ')) || ' ' || 
-				COALESCE(dst.key, dst.id::text) AS triplet_text,
-			(1 - (r.embedding <=> ?::vector)) AS score,
-			COALESCE(src.key, '') AS src_key,
-			COALESCE(src.type, '') AS src_type,
-			src.properties AS src_properties,
-			COALESCE(dst.key, '') AS dst_key,
-			COALESCE(dst.type, '') AS dst_type,
-			dst.properties AS dst_properties
-		FROM kb.graph_relationships r
-		JOIN kb.graph_objects src ON src.id = r.src_id
-		JOIN kb.graph_objects dst ON dst.id = r.dst_id
-		WHERE r.embedding IS NOT NULL
-		  AND r.deleted_at IS NULL
-		  AND r.project_id = ?
-		  AND src.project_id = ?
-		  AND dst.project_id = ?`
+	query, queryArgs := buildRelationshipSearchQuery(vectorStr, params.ProjectID, params.Namespace, limit)
 
-	var queryArgs []any
-	queryArgs = append(queryArgs, vectorStr, params.ProjectID, params.ProjectID, params.ProjectID)
-
-	if params.Namespace != nil {
-		// NOTE: namespace lives on the joined object, not on the relationship, so
-		// this predicate still forces the planner to abandon the ivfflat index.
-		// Namespace-scoped relationship search remains a seq scan until namespace
-		// is denormalised onto kb.graph_relationships.
-		baseQuery += "\n\t\t  AND src.namespace = ?"
-		queryArgs = append(queryArgs, *params.Namespace)
-	}
-
-	query := baseQuery + `
-		ORDER BY r.embedding <=> ?::vector
-		LIMIT ?
-	`
-	queryArgs = append(queryArgs, vectorStr, limit)
-
-	rows, err := tx.QueryContext(ctx, query, queryArgs...)
+	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		r.log.Error("relationship vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -626,13 +573,50 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
-	// Commit the read-only transaction
-	if err := tx.Commit(); err != nil {
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-
 	return &RelationshipSearchResponse{
 		Results:         results,
 		TotalCandidates: len(results),
 	}, nil
+}
+
+// buildRelationshipSearchQuery builds the ANN SQL for relationship search.
+// When namespace is non-nil the predicate is applied to
+// kb.graph_relationships.namespace (denormalised from the src object), NOT to the
+// joined kb.graph_objects row: a predicate on a joined relation prevents pgvector
+// from satisfying it with the embedding index and lets the planner fall back to a
+// sequential scan over every embedded relationship.
+func buildRelationshipSearchQuery(vectorStr string, projectID uuid.UUID, namespace *string, limit int) (string, []any) {
+	baseQuery := `
+		SELECT 
+			r.id,
+			r.src_id,
+			r.dst_id,
+			r.type,
+			r.properties,
+			COALESCE(src.key, src.id::text) || ' ' || 
+				LOWER(REPLACE(r.type, '_', ' ')) || ' ' || 
+				COALESCE(dst.key, dst.id::text) AS triplet_text,
+			(1 - (r.embedding <=> ?::vector)) AS score,
+			COALESCE(src.key, '') AS src_key,
+			COALESCE(src.type, '') AS src_type,
+			src.properties AS src_properties,
+			COALESCE(dst.key, '') AS dst_key,
+			COALESCE(dst.type, '') AS dst_type,
+			dst.properties AS dst_properties
+		FROM kb.graph_relationships r
+		JOIN kb.graph_objects src ON src.id = r.src_id
+		JOIN kb.graph_objects dst ON dst.id = r.dst_id
+		WHERE r.embedding IS NOT NULL
+		  AND r.deleted_at IS NULL
+		  AND r.project_id = ?
+		  AND src.project_id = ?
+		  AND dst.project_id = ?`
+	queryArgs := []any{vectorStr, projectID, projectID, projectID}
+	if namespace != nil {
+		baseQuery += "\n\t\t  AND r.namespace = ?"
+		queryArgs = append(queryArgs, *namespace)
+	}
+	query := baseQuery + "\n\t\tORDER BY r.embedding <=> ?::vector\n\t\tLIMIT ?"
+	queryArgs = append(queryArgs, vectorStr, limit)
+	return query, queryArgs
 }

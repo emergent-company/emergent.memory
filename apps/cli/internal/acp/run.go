@@ -41,6 +41,17 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, errLog io.Writer, age
 				return err
 			}
 			_, _ = fmt.Fprintf(errLog, "acp: %v\n", err)
+			// A malformed inbound message still gets a JSON-RPC error response so
+			// conformant clients are not left waiting on a reply that never comes.
+			// The id is echoed when it was recoverable, otherwise null.
+			var werr *wireError
+			if errors.As(err, &werr) {
+				_ = s.send(response{
+					JSONRPC: jsonrpcVersion,
+					ID:      werr.ID,
+					Error:   &rpcError{Code: werr.Code, Message: werr.Message},
+				})
+			}
 			continue
 		}
 
@@ -95,6 +106,16 @@ func dispatch(ctx context.Context, a *Agent, req *request, send func(any) error)
 			return nil, &rpcError{Code: codeInternal, Message: err.Error()}
 		}
 		return result, nil
+	case "session/delete":
+		var p DeleteSessionParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, &rpcError{Code: codeInvalidParams, Message: fmt.Sprintf("session/delete: invalid params: %v", err)}
+		}
+		if p.SessionID == "" {
+			return nil, &rpcError{Code: codeInvalidParams, Message: "session/delete: missing sessionId"}
+		}
+		a.deleteSession(p.SessionID)
+		return struct{}{}, nil
 	default:
 		return nil, &rpcError{Code: codeMethodNotFound, Message: fmt.Sprintf("method not found: %s", req.Method)}
 	}
@@ -111,5 +132,18 @@ func handleNotification(a *Agent, req *request, errLog io.Writer) {
 			return
 		}
 		a.cancel(p)
+	case "session/delete":
+		// ACP defines session/delete as a request, but accept the notification
+		// form too so a fire-and-forget client still frees the session.
+		var p DeleteSessionParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			_, _ = fmt.Fprintf(errLog, "acp: session/delete: invalid params: %v\n", err)
+			return
+		}
+		if p.SessionID == "" {
+			_, _ = fmt.Fprintf(errLog, "acp: session/delete: missing sessionId\n")
+			return
+		}
+		a.deleteSession(p.SessionID)
 	}
 }

@@ -3,16 +3,14 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/idgen"
 	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 	"github.com/spf13/cobra"
@@ -477,11 +475,10 @@ func a2aPrintJSON(w io.Writer, v any) error {
 
 // newA2AMessageID generates a random message id for A2A messages.
 func newA2AMessageID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("msg-%d", time.Now().UnixNano())
+	if h, ok := idgen.Hex(16); ok {
+		return h
 	}
-	return hex.EncodeToString(b)
+	return idgen.FallbackID("msg")
 }
 
 // ── Registration ─────────────────────────────────────────────────────────────

@@ -569,7 +569,23 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}
 	}
 
-	wsResult, wsErr := ae.provisionWorkspace(ctx, run.ID, req)
+	// Bind teardown to this run's lifetime BEFORE provisioning. The cleanup is
+	// deferred so it runs exactly once on every exit path — normal return, error
+	// return, context cancellation, and a panic inside runPipeline. Binding
+	// before provisioning matters because the ephemeral token is minted above:
+	// a provisioning failure returns below and must still revoke that token.
+	// teardownWorkspace is nil-safe on the result. ExecuteResult.Cleanup exposes
+	// the same idempotent function; a caller that also invokes it (e.g.
+	// asynchronously after flushing an SSE response) gets a no-op because
+	// teardown has already run.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
 		// Fatal provisioning failure (e.g. image not ready) — fail the run
 		errMsg := wsErr.Error()
@@ -588,17 +604,6 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			Duration: time.Since(startTime),
 		}, nil
 	}
-
-	// Bind teardown to this run's lifetime. The cleanup is deferred so it runs
-	// exactly once on every exit path — normal return, error return, context
-	// cancellation, and a panic inside runPipeline. ExecuteResult.Cleanup
-	// exposes the same idempotent function; a caller that also invokes it (e.g.
-	// asynchronously after flushing an SSE response) gets a no-op because
-	// teardown has already run.
-	cleanup := newRunCleanup(func() {
-		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-	})
-	defer cleanup.Cleanup()
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
@@ -724,6 +729,34 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		slog.Int("max_steps", maxSteps),
 	)
 
+	// Inject auth token into context so internal loopback calls (e.g.
+	// search-knowledge → /query) can authenticate. ExecuteWithRun is invoked from
+	// background paths (worker pool, async A2A) where the caller passes no
+	// AuthToken and the context may carry none, so mint a short-lived ephemeral
+	// token here — before provisioning — so the run-lifetime teardown closure in
+	// this function can revoke it via req.EphemeralTokenID. The DisableAuthMint
+	// guard keeps anonymous/share paths from minting owner credentials.
+	{
+		effectiveToken := req.AuthToken
+		if effectiveToken == "" {
+			effectiveToken = auth.RawTokenFromContext(ctx)
+		}
+		if effectiveToken == "" && !req.DisableAuthMint && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+			if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
+				effectiveToken = ephToken
+				req.EphemeralTokenID = ephID
+			} else {
+				ae.log.Warn("failed to mint ephemeral token for background agent run",
+					slog.String("project_id", req.ProjectID),
+					slog.String("error", mintErr.Error()),
+				)
+			}
+		}
+		if effectiveToken != "" {
+			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
+		}
+	}
+
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
@@ -736,7 +769,18 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		}
 	}
 
-	wsResult, wsErr := ae.provisionWorkspace(ctx, run.ID, req)
+	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
+	// deferred so it runs exactly once on every exit path, including a panic in
+	// runPipeline and a provisioning failure — the latter must still revoke the
+	// ephemeral token minted above.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, 0)
@@ -754,13 +798,6 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			Duration: time.Since(startTime),
 		}, nil
 	}
-
-	// Bind teardown to this run's lifetime (see Execute): deferred so it runs
-	// exactly once on every exit path, including a panic in runPipeline.
-	cleanup := newRunCleanup(func() {
-		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-	})
-	defer cleanup.Cleanup()
 
 	if hasSandboxConfig {
 		if err := ae.repo.UpdateSessionStatus(ctx, run.ID, SessionStatusActive); err != nil {
@@ -947,7 +984,18 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		}
 	}
 
-	wsResult, wsErr := ae.provisionWorkspace(ctx, newRun.ID, req)
+	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
+	// deferred so it runs exactly once on every exit path, including a panic in
+	// runPipeline and a provisioning failure — the latter must still revoke the
+	// ephemeral token minted above.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, req)
 	if wsErr != nil {
 		errMsg := wsErr.Error()
 		_ = ae.repo.FailRunWithSteps(dbCtx, newRun.ID, errMsg, priorRun.StepCount)
@@ -959,13 +1007,6 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			Duration: time.Since(startTime),
 		}, nil
 	}
-
-	// Bind teardown to this run's lifetime (see Execute): deferred so it runs
-	// exactly once on every exit path, including a panic in runPipeline.
-	cleanup := newRunCleanup(func() {
-		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
-	})
-	defer cleanup.Cleanup()
 
 	// Workspace provisioning complete (or skipped) — mark session active
 	if hasSandboxConfig {
@@ -1375,16 +1416,16 @@ func (ae *AgentExecutor) maybeWakeParent(ctx context.Context, childRunID string,
 
 	go func() {
 		bgCtx := context.Background()
-		result, err := ae.Resume(bgCtx, parent, ExecuteRequest{
+		// Resume's own deferred teardown always runs before it returns, so the
+		// returned ExecuteResult.Cleanup is already a no-op (sync.Once); no need
+		// to invoke it here.
+		_, err := ae.Resume(bgCtx, parent, ExecuteRequest{
 			Agent:           parentAgent,
 			AgentDefinition: parentDef,
 			ProjectID:       parentProjectID,
 			OrgID:           parentOrgID,
 			UserMessage:     outputMsg,
 		})
-		if result != nil && result.Cleanup != nil {
-			result.Cleanup()
-		}
 		if err != nil {
 			ae.log.Error("maybeWakeParent: parent resume failed",
 				slog.String("parent_run_id", parent.ID),
@@ -1613,25 +1654,14 @@ func (ae *AgentExecutor) runPipeline(
 	// when the executor is called from a trigger, worker pool, or spawned agent
 	// where the caller doesn't set AuthToken but the context carries a token from
 	// the auth middleware or a parent executor call).
+	//
+	// Ephemeral-token minting for runs that have no token at all happens in the
+	// entry points (Execute, ExecuteWithRun, Resume) BEFORE provisioning, so the
+	// minted token id is visible to the run-lifetime teardown closure and can be
+	// revoked. This function only forwards whatever token is already present.
 	effectiveToken := req.AuthToken
 	if effectiveToken == "" {
 		effectiveToken = auth.RawTokenFromContext(ctx)
-	}
-	// For background/scheduled runs there is no HTTP request context, so no token
-	// is stored yet. Mint a short-lived ephemeral token so internal loopback calls
-	// (e.g. search-knowledge → /query) can authenticate. The token is revoked at
-	// teardown via req.EphemeralTokenID.
-	if effectiveToken == "" && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
-		if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
-			effectiveToken = ephToken
-			// Store on req so teardownWorkspace can revoke it.
-			req.EphemeralTokenID = ephID
-		} else {
-			ae.log.Warn("failed to mint ephemeral token for background agent run",
-				slog.String("project_id", req.ProjectID),
-				slog.String("error", mintErr.Error()),
-			)
-		}
 	}
 	if effectiveToken != "" {
 		ctx = auth.ContextWithRawToken(ctx, effectiveToken)

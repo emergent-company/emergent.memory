@@ -7,7 +7,7 @@ Makes hosted MCP server workspaces reclaimable by policy as well as by explicit 
 
 ### Requirement: Persistent MCP servers SHALL be reclaimable by a configurable idle policy
 
-The server SHALL support destroying persistent hosted MCP server workspaces whose `last_used_at` is older than a configured idle window, reusing the existing removal path (provider destroy followed by row deletion). The policy SHALL default to disabled, and while disabled no persistent MCP server SHALL be reclaimed by the policy.
+The server SHALL support destroying persistent hosted MCP server workspaces whose `last_used_at` is older than a configured idle window, reusing the existing removal path (provider destroy followed by row deletion). The policy SHALL default to disabled, and while disabled no persistent MCP server SHALL be reclaimed by the policy. `last_used_at` is `NOT NULL DEFAULT now()`, so a server never called since creation is judged by its insert-time value; no NULL fallback exists. Among non-in-flight rows, eligibility SHALL be determined by `last_used_at` alone: `stopped` and `error` rows SHALL be reclaimable once idle (an abandoned persistent config), while `creating` and `stopping` rows SHALL never be reclaimed.
 
 #### Scenario: Disabled policy reclaims nothing
 - **GIVEN** the idle reclamation policy is disabled
@@ -30,9 +30,17 @@ The server SHALL support destroying persistent hosted MCP server workspaces whos
 
 #### Scenario: A server never called since creation is judged by its creation time
 - **GIVEN** the idle reclamation policy is enabled
-- **AND** a persistent MCP server was created more than the window ago and has never received a call, so `last_used_at` equals its creation time
+- **AND** a persistent MCP server was created more than the window ago and has never received a call, so its `last_used_at` still holds the insert-time default (its creation time)
 - **WHEN** the cleanup cycle runs
 - **THEN** the server SHALL be eligible for reclamation
+
+#### Scenario: Terminal stopped and error rows are reclaimable once idle
+- **GIVEN** the idle reclamation policy is enabled with a window of N days
+- **AND** a persistent MCP server is in a terminal `stopped` or `error` state
+- **AND** its `last_used_at` is older than N days
+- **WHEN** the cleanup cycle runs
+- **THEN** the server SHALL be reclaimed like any other idle persistent server
+- **AND** only the in-flight `creating` and `stopping` states SHALL be excluded
 
 #### Scenario: In-flight lifecycle states are never reclaimed
 - **GIVEN** a persistent MCP server is in a creating or stopping state
