@@ -13,13 +13,16 @@ import (
 // --- embedding status/progress ---
 
 // EmbeddingQueueStats describes the queue counts for a single embedding job
-// queue (GET /api/embeddings/progress).
+// queue (GET /api/embeddings/progress). Failed counts only genuine failures;
+// StaleFailed counts terminal rows left by the stale-job sweep, which are
+// historical cleanup rather than current breakage.
 type EmbeddingQueueStats struct {
-	Pending    int64 `json:"pending"`
-	Processing int64 `json:"processing"`
-	Completed  int64 `json:"completed"`
-	Failed     int64 `json:"failed"`
-	DeadLetter int64 `json:"deadLetter"`
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Completed   int64 `json:"completed"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
+	DeadLetter  int64 `json:"deadLetter"`
 }
 
 // EmbeddingProgress is the response for GET /api/embeddings/progress: per-queue
@@ -97,7 +100,7 @@ func embeddingStatusBadge(status string) (string, ui.BadgeIntent) {
 
 // embeddingStatsZero reports whether a queue has no jobs in any state.
 func embeddingStatsZero(s EmbeddingQueueStats) bool {
-	return s.Pending == 0 && s.Processing == 0 && s.Completed == 0 && s.Failed == 0 && s.DeadLetter == 0
+	return s.Pending == 0 && s.Processing == 0 && s.Completed == 0 && s.Failed == 0 && s.StaleFailed == 0 && s.DeadLetter == 0
 }
 
 // workerStateLabel maps a worker's running/paused flags to a display label and
