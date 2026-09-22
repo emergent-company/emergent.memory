@@ -91,15 +91,35 @@ func GetProjectID(c echo.Context) (string, error) {
 	return user.ProjectID, nil
 }
 
+// tokenIntrospector is the subset of ZitadelService used by token validation.
+// It is an interface so both the introspection and userinfo paths can be faked
+// in unit tests.
+type tokenIntrospector interface {
+	Introspect(ctx context.Context, token string) (*IntrospectionResult, error)
+	GetUserInfo(ctx context.Context, accessToken string) (*UserInfoResult, error)
+}
+
+// userProfileEnsurer is the subset of UserProfileService used by authentication.
+// It is an interface so the token-validation pipeline can be exercised with a
+// fake profile store in unit tests.
+type userProfileEnsurer interface {
+	GetByID(ctx context.Context, id string) (*UserProfile, error)
+	EnsureProfile(ctx context.Context, subjectID string, info *UserProfileInfo) (*UserProfile, bool, error)
+}
+
 // Middleware handles authentication for routes
 type Middleware struct {
 	db               bun.IDB
 	cfg              *config.Config
 	log              *slog.Logger
-	userSvc          *UserProfileService
-	zitadelSvc       *ZitadelService
+	userSvc          userProfileEnsurer
+	zitadelSvc       tokenIntrospector
 	autoProvisionSvc AutoProvisionService
 	debugToken       string
+
+	// roleLookup is a test seam for the project membership role query.
+	// When nil, dbProjectRole is used.
+	roleLookup projectRoleLookup
 }
 
 // MiddlewareParams holds the dependencies for creating the auth middleware.
@@ -504,7 +524,9 @@ func (m *Middleware) authenticate(c echo.Context) (*AuthUser, error) {
 		return nil, apperror.ErrMissingToken
 	}
 
-	return m.validateToken(c.Request().Context(), token)
+	// The declared project (X-Project-ID) is used to derive role-based scopes
+	// for OIDC sessions. It may be empty for account-level requests.
+	return m.validateToken(c.Request().Context(), token, c.Request().Header.Get("X-Project-ID"))
 }
 
 // requestWithXAPIKey returns a shallow copy of r with X-API-Key set to key.
@@ -537,8 +559,10 @@ func (m *Middleware) extractToken(r *http.Request) string {
 	return ""
 }
 
-// validateToken validates the token and returns the authenticated user
-func (m *Middleware) validateToken(ctx context.Context, token string) (*AuthUser, error) {
+// validateToken validates the token and returns the authenticated user.
+// projectID is the request's declared project (X-Project-ID) and is used to
+// derive role-based scopes for OIDC sessions; it may be empty.
+func (m *Middleware) validateToken(ctx context.Context, token, projectID string) (*AuthUser, error) {
 	// 1. Check for API token (emt_ prefix)
 	if strings.HasPrefix(token, "emt_") {
 		return m.validateAPIToken(ctx, token)
@@ -554,16 +578,16 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*AuthUser
 	// 3. Check introspection cache
 	cached, err := m.getCachedIntrospection(ctx, token)
 	if err == nil && cached != nil {
-		return m.ensureUserProfile(ctx, cached)
+		return m.finalizeOIDCUser(ctx, cached, projectID)
 	}
 
 	// 4. Zitadel introspection (if not disabled)
 	if !m.cfg.Zitadel.DisableIntrospection {
 		introspection, err := m.introspectToken(ctx, token)
 		if err == nil && introspection != nil {
-			// Cache the introspection result
+			// Cache raw claims only; derived scopes are re-resolved per request.
 			_ = m.cacheIntrospection(ctx, token, introspection)
-			return m.ensureUserProfile(ctx, introspection)
+			return m.finalizeOIDCUser(ctx, introspection, projectID)
 		}
 		// Log but continue to userinfo fallback
 		if err != nil {
@@ -571,21 +595,22 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*AuthUser
 		}
 	}
 
-	// 5. Userinfo endpoint as fallback (simpler, doesn't require introspection permissions)
+	// 5. Userinfo endpoint as fallback (simpler, doesn't require introspection permissions).
+	// The userinfo response carries no scopes; they are resolved by finalizeOIDCUser.
 	userInfo, err := m.zitadelSvc.GetUserInfo(ctx, token)
 	if err == nil && userInfo != nil && userInfo.Sub != "" {
 		claims := &TokenClaims{
 			Sub:        userInfo.Sub,
 			Email:      userInfo.Email,
-			Scopes:     GetAllScopes(),                // Userinfo doesn't return scopes, grant all for now
 			ExpiresAt:  time.Now().Add(1 * time.Hour), // Default expiry
 			GivenName:  userInfo.GivenName,
 			FamilyName: userInfo.FamilyName,
 			Name:       userInfo.Name,
+			AuthSource: authSourceUserinfo,
 		}
-		// Cache this result
+		// Cache raw identity claims only — never derived scopes.
 		_ = m.cacheIntrospection(ctx, token, claims)
-		return m.ensureUserProfile(ctx, claims)
+		return m.finalizeOIDCUser(ctx, claims, projectID)
 	}
 
 	// 6. Local JWT verification as final fallback
@@ -594,8 +619,42 @@ func (m *Middleware) validateToken(ctx context.Context, token string) (*AuthUser
 		return nil, apperror.ErrInvalidToken.WithInternal(err)
 	}
 
-	return m.ensureUserProfile(ctx, claims)
+	return m.finalizeOIDCUser(ctx, claims, projectID)
 }
+
+// finalizeOIDCUser ensures the user profile exists, then resolves the effective
+// Memory scopes for the session. Resolution happens here (not in the cache) so
+// that cached raw claims are re-derived on every request and role changes take
+// effect immediately.
+func (m *Middleware) finalizeOIDCUser(ctx context.Context, claims *TokenClaims, projectID string) (*AuthUser, error) {
+	user, err := m.ensureUserProfile(ctx, claims)
+	if err != nil {
+		return nil, err
+	}
+
+	// Legacy all-or-nothing grant: only for the userinfo path and only while
+	// introspection is unconfigured (single-user pilot posture). Enabling
+	// introspection disables it.
+	if claims.AuthSource == authSourceUserinfo && m.oidcAllGrantEnabled() {
+		user.Scopes = GetAllScopes()
+		return user, nil
+	}
+
+	user.Scopes = m.resolveOIDCScopes(ctx, user.ID, projectID, claims.Scopes)
+	return user, nil
+}
+
+// oidcAuthSource records which validation path produced a set of claims, so the
+// legacy userinfo all-grant can be applied consistently across cache hits.
+type oidcAuthSource string
+
+const (
+	authSourceIntrospection oidcAuthSource = "introspection"
+	authSourceUserinfo      oidcAuthSource = "userinfo"
+	// authSourceJWT is reserved for the local JWT verification path. verifyJWT
+	// is not implemented yet, so it is not produced today.
+	authSourceJWT oidcAuthSource = "jwt"
+)
 
 // TokenClaims represents parsed token claims
 type TokenClaims struct {
@@ -606,6 +665,9 @@ type TokenClaims struct {
 	GivenName  string    // First name from OIDC claims
 	FamilyName string    // Last name from OIDC claims
 	Name       string    // Display name from OIDC claims
+
+	// AuthSource identifies the validation path that produced these claims.
+	AuthSource oidcAuthSource
 }
 
 // validateAPIToken validates an API token (emt_* prefix)
@@ -808,6 +870,10 @@ func (m *Middleware) ensureUserProfile(ctx context.Context, claims *TokenClaims)
 
 // getCachedIntrospection retrieves cached introspection result
 func (m *Middleware) getCachedIntrospection(ctx context.Context, token string) (*TokenClaims, error) {
+	if m.db == nil {
+		return nil, errors.New("auth: no database available for introspection cache")
+	}
+
 	hash := sha256.Sum256([]byte(token))
 	tokenHash := hex.EncodeToString(hash[:])
 
@@ -827,33 +893,68 @@ func (m *Middleware) getCachedIntrospection(ctx context.Context, token string) (
 		return nil, err
 	}
 
-	// Parse cached data into TokenClaims
-	claims := &TokenClaims{}
-	if sub, ok := result.IntrospectionData["sub"].(string); ok {
+	// Rehydrate raw claims (never derived scopes).
+	return claimsFromCacheData(result.IntrospectionData, result.ExpiresAt), nil
+}
+
+// claimsToCacheData serialises the raw claims persisted in the introspection
+// cache. Derived scopes are never written: callers pass claims whose Scopes hold
+// the raw OIDC scope list (introspection) or nothing (userinfo).
+func claimsToCacheData(claims *TokenClaims) map[string]any {
+	return map[string]any{
+		"sub":         claims.Sub,
+		"email":       claims.Email,
+		"scope":       strings.Join(claims.Scopes, " "),
+		"given_name":  claims.GivenName,
+		"family_name": claims.FamilyName,
+		"name":        claims.Name,
+		"auth_source": string(claims.AuthSource),
+	}
+}
+
+// claimsFromCacheData rehydrates TokenClaims from a cached entry.
+//
+// An entry with no auth_source predates this change. Pre-change, the userinfo
+// path cached the full scope catalogue; replaying that as an "explicit Memory
+// grant" would silently widen access right after a deploy. Legacy entries are
+// therefore treated as identity-only introspection entries with NO scopes, which
+// forces re-resolution (fail closed).
+func claimsFromCacheData(data map[string]any, expiresAt time.Time) *TokenClaims {
+	claims := &TokenClaims{ExpiresAt: expiresAt}
+	if sub, ok := data["sub"].(string); ok {
 		claims.Sub = sub
 	}
-	if email, ok := result.IntrospectionData["email"].(string); ok {
+	if email, ok := data["email"].(string); ok {
 		claims.Email = email
 	}
-	if scope, ok := result.IntrospectionData["scope"].(string); ok {
-		claims.Scopes = strings.Split(scope, " ")
-	}
-	if givenName, ok := result.IntrospectionData["given_name"].(string); ok {
+	if givenName, ok := data["given_name"].(string); ok {
 		claims.GivenName = givenName
 	}
-	if familyName, ok := result.IntrospectionData["family_name"].(string); ok {
+	if familyName, ok := data["family_name"].(string); ok {
 		claims.FamilyName = familyName
 	}
-	if name, ok := result.IntrospectionData["name"].(string); ok {
+	if name, ok := data["name"].(string); ok {
 		claims.Name = name
 	}
-	claims.ExpiresAt = result.ExpiresAt
 
-	return claims, nil
+	src, _ := data["auth_source"].(string)
+	if src == "" {
+		claims.AuthSource = authSourceIntrospection
+		return claims
+	}
+	claims.AuthSource = oidcAuthSource(src)
+	if scope, ok := data["scope"].(string); ok {
+		claims.Scopes = ParseScopes(scope)
+	}
+	return claims
 }
 
 // cacheIntrospection stores introspection result in cache
 func (m *Middleware) cacheIntrospection(ctx context.Context, token string, claims *TokenClaims) error {
+	if m.db == nil {
+		return errors.New("auth: no database available for introspection cache")
+	}
+
 	hash := sha256.Sum256([]byte(token))
 	tokenHash := hex.EncodeToString(hash[:])
 
@@ -866,16 +967,7 @@ func (m *Middleware) cacheIntrospection(ctx context.Context, token string, claim
 
 	expiresAt := time.Now().Add(ttl)
 
-	data := map[string]any{
-		"sub":         claims.Sub,
-		"email":       claims.Email,
-		"scope":       strings.Join(claims.Scopes, " "),
-		"given_name":  claims.GivenName,
-		"family_name": claims.FamilyName,
-		"name":        claims.Name,
-	}
-
-	raw, err := json.Marshal(data)
+	raw, err := json.Marshal(claimsToCacheData(claims))
 	if err != nil {
 		return err
 	}
@@ -919,6 +1011,7 @@ func (m *Middleware) introspectToken(ctx context.Context, token string) (*TokenC
 		GivenName:  result.GivenName,
 		FamilyName: result.FamilyName,
 		Name:       result.Name,
+		AuthSource: authSourceIntrospection,
 	}, nil
 }
 
