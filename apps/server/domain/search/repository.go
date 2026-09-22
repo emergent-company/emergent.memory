@@ -61,6 +61,32 @@ func configuredIVFFlatProbes() int {
 	return probes
 }
 
+// configuredRelationshipIVFFlatProbes returns the ivfflat.probes value to use for
+// relationship vector searches, read from the SEARCH_RELATIONSHIP_IVFFLAT_PROBES
+// env var. Defaults to 5 and is clamped to >= 1.
+//
+// It is deliberately lower than configuredIVFFlatProbes (10). pgvector's ivfflat
+// cost estimate scales roughly linearly with ivfflat.probes, while the competing
+// parallel-seq-scan estimate prices a scan of kb.graph_relationships as if the
+// TOASTed 768-dim vectors were free to read. On a project with ~82k embedded
+// relationships the two estimates cross over between probes=5 and probes=10:
+//
+//	probes=5  -> Index Scan, estimated cost ~5.2k  -> ~250 ms
+//	probes=10 -> Parallel Seq Scan + Sort, ~9.9k   -> tens of seconds to minutes
+//
+// so probes=10 makes the planner abandon the index entirely. Raising this value
+// back to 10 will reintroduce that regression; prefer a smaller lists/probes
+// pairing or an HNSW index over forcing planner settings.
+func configuredRelationshipIVFFlatProbes() int {
+	probes := 5
+	if v := os.Getenv("SEARCH_RELATIONSHIP_IVFFLAT_PROBES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			probes = n
+		}
+	}
+	return probes
+}
+
 // TextSearchMode defines the type of text search
 type TextSearchMode string
 
@@ -435,7 +461,18 @@ type RelationshipSearchResponse struct {
 // SearchRelationships performs vector similarity search on relationship embeddings.
 // Finds semantically similar relationships using triplet text embeddings (e.g., "Elon Musk founded Tesla").
 // Filters out relationships without embeddings (WHERE embedding IS NOT NULL).
-// Uses the ivfflat index for efficient approximate nearest neighbor search.
+// Uses the ivfflat index for efficient approximate nearest neighbor search, provided
+// ivfflat.probes stays low enough for the planner to keep choosing it (see
+// configuredRelationshipIVFFlatProbes).
+//
+// The project filter is primarily applied to kb.graph_relationships.project_id (the
+// row that owns the embedding): the r-side predicate keeps scoping attached to the
+// table being scanned instead of depending on the join, and is evaluated without
+// touching the joined row. The src/dst predicates below are retained as
+// defense-in-depth — kb.graph_relationships does not enforce at the database that its
+// endpoints share its project_id (that invariant is application-enforced), so a
+// malformed or legacy cross-project row would otherwise surface another project's
+// object metadata through the joins.
 func (r *Repository) SearchRelationships(ctx context.Context, params RelationshipSearchParams) (*RelationshipSearchResponse, error) {
 	if len(params.Vector) == 0 {
 		return nil, apperror.ErrBadRequest.WithMessage("vector required for relationship search")
@@ -444,8 +481,11 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 	limit := mathutil.ClampLimit(params.Limit, 50, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
-	// Begin transaction with increased IVFFlat probes for better recall
-	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredIVFFlatProbes())
+	// Relationship-specific IVFFlat probe count. This must stay low enough for the
+	// planner to keep choosing the ivfflat index scan: at probes=10 on a large
+	// relationship index the index estimate exceeds the (optimistic) parallel
+	// seq-scan estimate and the leg degrades from ~250ms to minutes.
+	tx, err := r.beginTxWithIVFFlatProbes(ctx, configuredRelationshipIVFFlatProbes())
 	if err != nil {
 		r.log.Error("relationship search: failed to set ivfflat probes", logger.Error(err))
 		return nil, err
@@ -476,12 +516,18 @@ func (r *Repository) SearchRelationships(ctx context.Context, params Relationshi
 		JOIN kb.graph_objects dst ON dst.id = r.dst_id
 		WHERE r.embedding IS NOT NULL
 		  AND r.deleted_at IS NULL
-		  AND src.project_id = ?`
+		  AND r.project_id = ?
+		  AND src.project_id = ?
+		  AND dst.project_id = ?`
 
 	var queryArgs []any
-	queryArgs = append(queryArgs, vectorStr, params.ProjectID)
+	queryArgs = append(queryArgs, vectorStr, params.ProjectID, params.ProjectID, params.ProjectID)
 
 	if params.Namespace != nil {
+		// NOTE: namespace lives on the joined object, not on the relationship, so
+		// this predicate still forces the planner to abandon the ivfflat index.
+		// Namespace-scoped relationship search remains a seq scan until namespace
+		// is denormalised onto kb.graph_relationships.
 		baseQuery += "\n\t\t  AND src.namespace = ?"
 		queryArgs = append(queryArgs, *params.Namespace)
 	}
