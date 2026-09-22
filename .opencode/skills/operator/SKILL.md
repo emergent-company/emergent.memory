@@ -36,12 +36,17 @@ Run this loop per task:
 
 1. **Open task** — from a user ask, a GitHub issue, or a job-board reminder.
    Decide: lane (needs writes) vs recon-only.
-2. **Claim the issue** (if GitHub-backed) — follow §4 *before* any work.
+2. **Claim the issue** (if GitHub-backed) — assignee + `status: in-progress` via §4
+   **before any work, every time**. Operators demonstrably skip this; do not.
 3. **Create worktree workspace** — `paseo_create_workspace(isolation:"worktree",
-   mode:"branch-off", branchName:"feat|fix|docs/<slug>", baseBranch:"main")`.
+   mode:"branch-off", branchName:"feat|fix|docs/<slug>", baseBranch:"origin/main")`.
+   Always `baseBranch:"origin/main"` — **never** a local ref. The shared checkout's
+   local `main` can be arbitrarily stale or parked on another session's branch.
 4. **Spawn lane agent** — `paseo_create_agent(workspaceId, title, provider/model,
    initialPrompt, labels)` with a structured brief: facts, credential location,
-   exact deliverable, guardrails.
+   exact deliverable, guardrails. Every brief opens with the **STEP 0 base check**:
+   `git fetch origin`, compare to `origin/main`, fast-forward if behind, **report
+   the base SHA** in the final report.
 5. **Monitor** — `paseo_get_agent_status` + `paseo_get_agent_activity`. Do **not**
    poll `list_agents` to "check on" a running agent; wait for the finish notification.
 6. **Nudge-or-requeue** on stall/truncation (§6).
@@ -82,7 +87,9 @@ assume one.
 
 Any agent picking up a GitHub issue must mark ownership **in the same action it
 claims the issue**, before any code changes. GitHub issues have no native `status`
-field — "in-progress" is a **label**, and the owner is the **assignee**.
+field — "in-progress" is a **label**, and the owner is the **assignee**. The
+`status: in-progress`, `status: blocked`, `process`, and `area: <domain>` labels
+are already provisioned repo-wide — use them directly, do not create them.
 
 ### Claim (best-effort, before work)
 
@@ -137,11 +144,10 @@ Then the status label is confirmation, not the only lock.
 
 - **Spec + implementation = one PR, one worktree, one branch.** Never split them.
 - **Mandatory pre-PR verify, scoped to the changed module.** The repo root is a
-  `go.work` workspace — unscoped `go build ./...` targets no single module. Run
-  build/vet/test/lint from the module that changed (e.g. `apps/server`,
-  `apps/web-ui/gateway`, `apps/cli`), `gofmt -l` on changed `.go` files, and
-  `openspec validate` when an OpenSpec change exists. Docs-only / Swift / non-Go
-  lanes skip the Go checks — gate on their own toolchain, not `go test`.
+  `go.work` workspace, so unscoped `go build ./...` targets no single module. Run
+  build/vet/test/lint from the changed module (`apps/server`, `apps/web-ui/gateway`,
+  `apps/cli`), `gofmt -l` on changed `.go` files, `openspec validate` when a change
+  exists. Docs-only / Swift lanes gate on their own toolchain, not `go test`.
 - **Never self-merge.** The review bot or a reviewer agent merges.
 - **Never touch the shared checkout.** Commit each finished unit immediately;
   stage exact paths; never sweep a parallel session's WIP.
@@ -152,6 +158,17 @@ Then the status label is confirmation, not the only lock.
 - **One lane fixes tightly-coupled issues together** (`#761`+`#762` → one PR,
   `Closes both`).
 - **Archive + clean worktree after merge** to keep disk healthy.
+- **Real-environment claims need raw output.** Any lane touching a real env (dev/prod
+  host, container, DB) must paste the **exact command and its raw output** for each
+  step; **a step without pasted raw output counts as not done**. The brief pins the
+  target explicitly ("run against `ssh <host>` / `docker exec <container>`") and
+  forbids silently substituting a local/scratch target. Redact secret-bearing values
+  (tokens, passwords, connection strings) in pasted commands and output — evidence
+  never requires printing a secret (§1).
+- **Migration lanes assert the target first.** Before running any migration, print
+  the resolved host/port/database/user and confirm it is the lane's own
+  scratch/throwaway target; if it resolves to a shared target, **stop**. Prefer an
+  explicit `DATABASE_URL` over inherited env.
 - Ask before mutating the user's project (skill/agent creation) — use `question`.
 
 ---
@@ -161,6 +178,8 @@ Then the status label is confirmation, not the only lock.
 | Symptom | Recovery |
 |---|---|
 | **Turn truncation** (top failure — lane ends with a tiny fragment) | nudge with a compact directive prompt; bound turns ("you have at most 3 more turns"); shrink scope; if persistent, do it in a fresh workspace |
+| **Stale base** — lane's base is behind `origin/main` | if the lane has no own commits, fast-forward to `origin/main`; if it committed on a stale base, merge/rebase onto the fetched `origin/main` (never blind-reset — that discards lane work). Then assert `git rev-list --count HEAD..origin/main` is `0`. Prevented by the STEP 0 base check (§2) in the brief |
+| **Agent dies at birth** — `updateCount: 1`, `finished` almost immediately, zero model turns, no tool calls | the **workspace** is poisoned, not the agent: re-prompting, or new agents created in it, also die. Archive the workspace, create a **fresh** workspace with a **new slug**, then create the agent |
 | **Idle / incomplete lane** | `paseo_get_agent_status` shows `requiresAttention:true, attentionReason:"finished"` → treat as stopped, re-dispatch or new lane |
 | **Disk full blocks workspace creation** | `df -h` → `go clean -cache` / `docker image prune` → retry |
 | **Partial failed worktree** | `git worktree remove --force` + `git worktree prune` + `git branch -D`; retry with a new slug |
@@ -176,6 +195,11 @@ file false positives.
 ## 7. Verification (before reporting done)
 
 - Reconcile **all** writer lanes before final validation.
+- **Independently verify infra claims** — never accept a claim about a real
+  environment on the strength of the lane's summary; run one cheap read-only check
+  (count, catalog query, service status) before reporting success. For any
+  data-mutating lane, "which target did that actually touch?" is mandatory. A report
+  that is confident, complete, and suspiciously smooth with no raw output is the tell.
 - Confirm merged SHA, close issues, archive workspaces.
 - Report the board: what merged, what's still open, what's blocked (call out
   blocker chains explicitly).
@@ -212,7 +236,3 @@ instructions and process improve over time.
   body and get user confirmation** before creating — same rule as any issue.
 - Feed confirmed improvements back into this skill (or the relevant AGENTS.md /
   instruction file) so the loop closes; do not just log the finding.
-
-Suggested improvements typically target: the operator skill itself, per-app
-`AGENTS.md`, lane brief templates, naming conventions, or the GitHub label
-conventions used to route work.
