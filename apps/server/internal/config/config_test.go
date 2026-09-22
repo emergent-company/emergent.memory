@@ -1,6 +1,9 @@
 package config
 
 import (
+	"io"
+	"log/slog"
+	"os"
 	"testing"
 	"time"
 )
@@ -424,5 +427,34 @@ func TestStorageConfig_IsConfigured(t *testing.T) {
 				t.Errorf("IsConfigured() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestZitadelOIDCScopeConfig(t *testing.T) {
+	t.Setenv("ZITADEL_OIDC_DEFAULT_SCOPES", "data:read,search")
+
+	// Ensure the grant-all flag is read from its default, not the ambient env.
+	prev, hadPrev := os.LookupEnv("ZITADEL_USERINFO_GRANT_ALL_SCOPES")
+	if err := os.Unsetenv("ZITADEL_USERINFO_GRANT_ALL_SCOPES"); err != nil {
+		t.Fatalf("unset: %v", err)
+	}
+	t.Cleanup(func() {
+		if hadPrev {
+			_ = os.Setenv("ZITADEL_USERINFO_GRANT_ALL_SCOPES", prev)
+		}
+	})
+
+	cfg, err := NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+
+	if len(cfg.Zitadel.OIDCDefaultScopes) != 2 ||
+		cfg.Zitadel.OIDCDefaultScopes[0] != "data:read" ||
+		cfg.Zitadel.OIDCDefaultScopes[1] != "search" {
+		t.Fatalf("OIDCDefaultScopes = %v, want [data:read search]", cfg.Zitadel.OIDCDefaultScopes)
+	}
+	if !cfg.Zitadel.UserinfoGrantAllScopes {
+		t.Fatal("UserinfoGrantAllScopes default should be true")
 	}
 }
