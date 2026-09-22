@@ -1687,6 +1687,15 @@ func (r *Repository) FTSSearch(ctx context.Context, params FTSSearchParams) ([]*
 		return results, nil
 	}
 
+	// Only relax on the first page. FTSSearch supports offset pagination, so a
+	// later page returning zero rows means the caller has paged past every
+	// strict match, not that the strict query matched nothing. Relaxing here
+	// would refill the page with relaxed-only matches that the strict query
+	// never surfaced on earlier pages.
+	if params.Offset > 0 {
+		return results, nil
+	}
+
 	// A single unsatisfiable term in the strict query — typically a hyphenated
 	// identifier that websearch_to_tsquery rewrites into a phrase that cannot
 	// match — zeroes the whole AND clause. Retry once without numeric terms

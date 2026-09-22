@@ -34,7 +34,17 @@ import (
 // identical to the query it would replace, in which case a retry is pointless.
 // Callers must only use the result after the strict query returned no rows, so
 // precision is never traded away for a query that already worked.
+//
+// ok is also false when the query carries websearch_to_tsquery operator syntax
+// that relaxation would strip or invert (a phrase, a negation, or a boolean
+// OR). Relax drops every non-alphanumeric, so it would silently remove a phrase
+// or OR and would turn a negation into a positive term, surfacing documents the
+// user explicitly excluded. A retry under those conditions is unsafe.
 func Relax(query string) (string, bool) {
+	if hasOperatorSyntax(query) {
+		return "", false
+	}
+
 	var (
 		kept    []string
 		current []rune
@@ -68,6 +78,40 @@ func Relax(query string) (string, bool) {
 		return "", false
 	}
 	return relaxed, true
+}
+
+// hasOperatorSyntax reports whether query carries websearch_to_tsquery operator
+// syntax that Relax would strip or invert: a double quote (phrase syntax), a
+// negation operator ("foo -bar"), or a boolean OR ("or"/"OR", or "|").
+func hasOperatorSyntax(query string) bool {
+	runes := []rune(query)
+	for i, r := range runes {
+		switch r {
+		case '"', '|':
+			return true
+		case '-':
+			// A hyphen is negation only when it begins a whitespace-delimited
+			// token (preceded by start-of-string or whitespace) and is
+			// immediately followed by a letter or digit. Hyphens inside a token
+			// ("state-of-the-art", "1997-06-13-44") are not negation.
+			if i > 0 && !unicode.IsSpace(runes[i-1]) {
+				continue
+			}
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if unicode.IsLetter(next) || unicode.IsDigit(next) {
+					return true
+				}
+			}
+		}
+	}
+
+	for _, tok := range strings.Fields(query) {
+		if strings.EqualFold(tok, "or") {
+			return true
+		}
+	}
+	return false
 }
 
 // collapse trims s and reduces internal whitespace runs to a single space, so a

@@ -34,6 +34,42 @@ func TestRelax(t *testing.T) {
 			wantOK: true,
 		},
 		{
+			name:   "hyphenated identifier is still relaxed",
+			query:  "state-of-the-art",
+			want:   "state of the art",
+			wantOK: true,
+		},
+		{
+			name:   "negation operator declines relaxation",
+			query:  "foo -bar 2024",
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "phrase syntax declines relaxation",
+			query:  `"foo bar" 2024`,
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "or operator declines relaxation",
+			query:  "foo or bar",
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "uppercase OR operator declines relaxation",
+			query:  "foo OR bar",
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "pipe operator declines relaxation",
+			query:  "foo | bar",
+			want:   "",
+			wantOK: false,
+		},
+		{
 			name:   "numbers interleaved between words",
 			query:  "Kapittel 4 paragraf 2",
 			want:   "Kapittel paragraf",

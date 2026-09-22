@@ -130,6 +130,48 @@ func TestFTSSearchUsesStrictQueryWhenItMatches(t *testing.T) {
 	assert.Equal(t, "lov/1997-06-13-44", *results[0].Object.Key)
 }
 
+// TestFTSSearchDoesNotRelaxBeyondFirstPage asserts the relaxed fallback is
+// gated to the first page: when Offset pages past every strict match the query
+// returns zero rows, but the relaxed form is a different (wider) query, so
+// refilling a later page with it would surface matches the strict query never
+// ranked that high.
+func TestFTSSearchDoesNotRelaxBeyondFirstPage(t *testing.T) {
+	ctx, db, projectID, cfg := setupFTSRelaxTest(t)
+	repo := graph.NewRepository(db, slog.Default(), cfg)
+
+	// Two objects that match the relaxed query ("aksjeloven lov") but whose
+	// identifiers defeat the strict query, so relaxation would return more than
+	// one row.
+	insertKeyedObject(t, ctx, db, projectID, "Law", "lov/1997-06-13-44",
+		`{"title":"Lov om aksjeselskaper (aksjeloven)"}`)
+	insertKeyedObject(t, ctx, db, projectID, "Law", "lov/1998-07-14-45",
+		`{"title":"Lov om aksjeselskaper (aksjeloven)"}`)
+
+	const rawQuery = "aksjeloven lov 1997-06-13-44"
+
+	// Guard the premise: the strict query matches nothing, so the only way the
+	// first page returns rows is through the relaxed fallback.
+	if got := countStrictMatches(t, ctx, db, projectID, rawQuery); got != 0 {
+		t.Fatalf("premise changed: strict tsquery matches %d object(s), so this test no longer proves the fallback is gated", got)
+	}
+	first, err := repo.FTSSearch(ctx, graph.FTSSearchParams{
+		ProjectID: projectID,
+		Query:     rawQuery,
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	require.Len(t, first, 2, "premise changed: relaxed fallback should find both objects on the first page")
+
+	second, err := repo.FTSSearch(ctx, graph.FTSSearchParams{
+		ProjectID: projectID,
+		Query:     rawQuery,
+		Limit:     10,
+		Offset:    1,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, second, "relaxed fallback must not refill a page past all strict matches")
+}
+
 // TestFTSSearchRelaxedFallbackRespectsProjectScope asserts the fallback cannot
 // leak objects from another project.
 func TestFTSSearchRelaxedFallbackRespectsProjectScope(t *testing.T) {
