@@ -25,13 +25,15 @@ func streamAgent(t *testing.T, handler http.HandlerFunc) *Agent {
 	return NewAgent(client, "research-agent", "test")
 }
 
-// writeSSEEvents writes the given StreamResponses as SSE data lines.
+// writeSSEEvents writes the given StreamResponses as SSE data lines. Each
+// event is terminated by a blank line, as required by the SSE spec: the SDK
+// client only dispatches an event once it sees the terminating blank line.
 func writeSSEEvents(w http.ResponseWriter, events []a2a.StreamResponse) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	fl, _ := w.(http.Flusher)
 	for _, ev := range events {
 		b, _ := json.Marshal(ev)
-		_, _ = fmt.Fprintf(w, "data: %s\n", b)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
 		if fl != nil {
 			fl.Flush()
 		}
