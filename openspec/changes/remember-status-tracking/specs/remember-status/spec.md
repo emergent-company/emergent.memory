@@ -43,7 +43,13 @@ When a run has produced at least one graph-mutating tool call, `remember-status`
 #### Scenario: Objects created by a queued extraction job
 - **WHEN** a completed run queued one or more `queue-reextraction` extraction jobs that have since completed
 - **THEN** the response SHALL include the jobs' created-object/relationship counts and identifiers merged into the same `objects_created`, `relationships_created`, `created_object_ids`, and `discovered_types` fields
-- **THEN** if any queued extraction job failed or dead-lettered, the response SHALL surface that in the `error` field, and the overall `status` SHALL be `failed` even if the agent run itself completed (the requested graph mutations never happened)
+- **THEN** if any queued extraction job failed or dead-lettered for a reason other than the stale-job sweep, the response SHALL surface that in the `error` field, and the overall `status` SHALL be `failed` even if the agent run itself completed (the requested graph mutations never happened)
+
+#### Scenario: Stale-swept extraction jobs are reported separately, not as failures
+- **WHEN** a queued extraction job's terminal status is `failed` or `dead_letter` and its error text equals the canonical stale-sweep marker (`jobs.StaleJobMessage`, the same value written by `domain/scheduler.StaleJobCleanupTask`)
+- **THEN** the response SHALL NOT include that job in the `error` field or the extraction failure list, and the overall `status` SHALL NOT be forced to `failed` by it
+- **THEN** the response SHALL include a `stale_jobs` integer count of such reaped jobs (always present, `0` when none), so the reap remains visible rather than being dropped
+- **THEN** genuine failures and dead-letters SHALL continue to fail the run as before
 
 #### Scenario: Discovered types are surfaced
 - **WHEN** a completed run created entities or relationships of one or more types
@@ -73,10 +79,15 @@ When a run has produced at least one graph-mutating tool call, `remember-status`
 - **THEN** the response SHALL include `"embeddings_pending": 0` and `"embeddings_ready": true`
 
 #### Scenario: Embedding generation failed
-- **WHEN** one or more of a run's created objects have failed or dead-lettered embedding jobs
+- **WHEN** one or more of a run's created objects have failed or dead-lettered embedding jobs for a reason other than the stale-job sweep
 - **THEN** the response SHALL include `embeddings_failed` equal to the number of affected objects
 - **THEN** the response SHALL include a summary note that recall may miss those objects
 - **THEN** the overall `status` SHALL remain `"completed"` (embedding failures do not fail the memorize operation)
+
+#### Scenario: Stale-swept embedding jobs are reported separately
+- **WHEN** one or more of a run's created objects have embedding jobs whose error text equals the canonical stale-sweep marker (`jobs.StaleJobMessage`)
+- **THEN** the response SHALL count them in an `embeddings_stale` integer rather than in `embeddings_failed`
+- **THEN** the overall `status` SHALL remain `"completed"`
 
 #### Scenario: Embedding tracking unavailable
 - **WHEN** the embedding job finder is not configured
