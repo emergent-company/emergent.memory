@@ -27,16 +27,10 @@ func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 	ctx := context.Background()
 
 	// Two test databases stand in for two independent deployments.
-	srcDB, err := testutil.SetupTestDB(ctx, "clone_src")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	srcDB := testutil.SetupTestDBOrFail(t, ctx, "clone_src")
 	defer srcDB.Close()
 
-	dstDB, err := testutil.SetupTestDB(ctx, "clone_dst")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	dstDB := testutil.SetupTestDBOrFail(t, ctx, "clone_dst")
 	defer dstDB.Close()
 
 	mustExec := func(db *bun.DB, query string, args ...any) {
@@ -212,10 +206,7 @@ func TestCloneRestoreOverwriteInsertsUnchanged(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	db, err := testutil.SetupTestDB(ctx, "clone_overwrite")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	db := testutil.SetupTestDBOrFail(t, ctx, "clone_overwrite")
 	defer db.Close()
 
 	mustExec := func(query string, args ...any) {

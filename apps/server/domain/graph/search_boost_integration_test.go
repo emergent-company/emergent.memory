@@ -13,13 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // TestRecencyBoostFavorsNewObjectsIntegration verifies that with recency_boost=1.0,
 // a newer object ranks above an older equally-relevant object.
 func TestRecencyBoostFavorsNewObjectsIntegration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("integration test requires database")
+		testdb.SkipOrFatal(t, "integration test requires database")
 	}
 
 	db := openBulkTestDB(t)
@@ -104,7 +105,7 @@ func TestRecencyBoostFavorsNewObjectsIntegration(t *testing.T) {
 // produces results consistent with no-boost baseline.
 func TestRecencyBoostZeroProducesBaselineIntegration(t *testing.T) {
 	if testing.Short() {
-		t.Skip("integration test requires database")
+		testdb.SkipOrFatal(t, "integration test requires database")
 	}
 
 	db := openBulkTestDB(t)

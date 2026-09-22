@@ -28,10 +28,7 @@ func TestExportChatConversationsDanglingObjectRef(t *testing.T) {
 		t.Skip("skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "bkupexp")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "bkupexp")
 	t.Cleanup(testDB.Close)
 
 	db := testDB.DB

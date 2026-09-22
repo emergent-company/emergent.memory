@@ -2477,6 +2477,7 @@ CREATE TABLE kb.projects (
     extraction_config jsonb,
     deleted_at timestamp with time zone,
     deleted_by uuid,
+    deletion_scheduled_for timestamp with time zone,
     project_info text,
     budget_usd numeric(10,4) DEFAULT 10.0,
     budget_alert_threshold numeric(3,2) DEFAULT 0.80 NOT NULL,
@@ -5330,6 +5331,12 @@ CREATE INDEX idx_project_settings_project_category ON kb.project_settings USING 
 --
 
 CREATE INDEX idx_projects_deleted_at ON kb.projects USING btree (deleted_at) WHERE (deleted_at IS NULL);
+
+--
+-- Name: idx_projects_deletion_scheduled_for; Type: INDEX; Schema: kb; Owner: -
+--
+
+CREATE INDEX idx_projects_deletion_scheduled_for ON kb.projects USING btree (deletion_scheduled_for) WHERE (deletion_scheduled_for IS NOT NULL);
 
 
 --

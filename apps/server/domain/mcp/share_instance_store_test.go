@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // requireShareInstanceTable skips the test when the dev/test database has not
@@ -48,7 +50,7 @@ func seedShareUserAndToken(t *testing.T, db bun.IDB, projectID, name string) str
 // database. Skipped in -short mode.
 func TestShareInstanceStoreCRUD(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	db := connectTestDB(t)
 	requireShareInstanceTable(t, db)
@@ -116,7 +118,7 @@ func TestShareInstanceStoreCRUD(t *testing.T) {
 // round-trips as unrestricted, distinct from an empty allowlist.
 func TestShareInstanceStoreNullAllowlistRoundTrip(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	db := connectTestDB(t)
 	requireShareInstanceTable(t, db)
@@ -146,7 +148,7 @@ func TestShareInstanceStoreNullAllowlistRoundTrip(t *testing.T) {
 // service layer with the bound token ID excluded from legacy entries.
 func TestListShareInstancesLegacyDB(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	db := connectTestDB(t)
 	requireShareInstanceTable(t, db)
@@ -192,7 +194,7 @@ func requireAgentsTables(t *testing.T, db bun.IDB) {
 // returned, with the FK-linked row first.
 func TestFindAgentRefsByDefinitionIDMarkers(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	db := connectTestDB(t)
 	requireAgentsTables(t, db)

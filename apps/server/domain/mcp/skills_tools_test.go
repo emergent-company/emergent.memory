@@ -22,6 +22,7 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // connectTestDB connects to Postgres for integration tests (same approach as the
@@ -29,7 +30,7 @@ import (
 func connectTestDB(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("Skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
 	if wd, err := os.Getwd(); err == nil {
 		for dir := wd; dir != "/"; dir = filepath.Dir(dir) {
@@ -73,7 +74,7 @@ func connectTestDB(t *testing.T) *bun.DB {
 	defer cancel()
 	if err := sqldb.PingContext(ctx); err != nil {
 		_ = sqldb.Close()
-		t.Skipf("database unavailable (%v), skipping integration test", err)
+		testdb.SkipOrFatal(t, "database unavailable (%v), skipping integration test", err)
 	}
 	db := bun.NewDB(sqldb, pgdialect.New())
 	t.Cleanup(func() { _ = db.Close() })

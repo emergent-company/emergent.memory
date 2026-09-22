@@ -26,10 +26,7 @@ func TestCompiledTypesByProjectUIResolution(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "schemasui")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "schemasui")
 	defer testDB.Close()
 
 	db := testDB.GetDB()

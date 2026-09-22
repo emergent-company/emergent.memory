@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 func TestMarkAppliedBypassNotice(t *testing.T) {
@@ -76,7 +78,7 @@ func TestIndexNames(t *testing.T) {
 func TestFindInvalidIndexes(t *testing.T) {
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping live FindInvalidIndexes test")
+		testdb.SkipOrFatal(t, "TEST_DATABASE_URL not set; skipping live FindInvalidIndexes test")
 	}
 
 	db, err := sql.Open("pgx", dbURL)

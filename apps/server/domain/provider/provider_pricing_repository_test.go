@@ -21,10 +21,7 @@ func TestProviderPricing_ListPricing(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "listpricing")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "listpricing")
 	defer testDB.Close()
 
 	repo := provider.NewRepository(testDB.GetDB(), slog.Default())
