@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
@@ -129,4 +130,12 @@ func TestBootstrapService_DefaultValues(t *testing.T) {
 	assert.Equal(t, "admin@localhost", cfg.Standalone.UserEmail)
 	assert.Equal(t, "Default Organization", cfg.Standalone.OrgName)
 	assert.Equal(t, "Default Project", cfg.Standalone.ProjectName)
+}
+
+// TestBootstrapProjectRoleIsCanonical guards issue #667: the bootstrapped
+// project membership must use a canonical kb.project_memberships role, not the
+// legacy 'owner' string (which is only valid for kb.organization_memberships
+// and failed every project_admin role check).
+func TestBootstrapProjectRoleIsCanonical(t *testing.T) {
+	assert.Equal(t, projects.RoleProjectAdmin, bootstrapProjectRole)
 }
