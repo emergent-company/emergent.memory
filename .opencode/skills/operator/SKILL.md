@@ -162,7 +162,9 @@ Then the status label is confirmation, not the only lock.
   host, container, DB) must paste the **exact command and its raw output** for each
   step; **a step without pasted raw output counts as not done**. The brief pins the
   target explicitly ("run against `ssh <host>` / `docker exec <container>`") and
-  forbids silently substituting a local/scratch target.
+  forbids silently substituting a local/scratch target. Redact secret-bearing values
+  (tokens, passwords, connection strings) in pasted commands and output — evidence
+  never requires printing a secret (§1).
 - **Migration lanes assert the target first.** Before running any migration, print
   the resolved host/port/database/user and confirm it is the lane's own
   scratch/throwaway target; if it resolves to a shared target, **stop**. Prefer an
@@ -176,7 +178,7 @@ Then the status label is confirmation, not the only lock.
 | Symptom | Recovery |
 |---|---|
 | **Turn truncation** (top failure — lane ends with a tiny fragment) | nudge with a compact directive prompt; bound turns ("you have at most 3 more turns"); shrink scope; if persistent, do it in a fresh workspace |
-| **Stale base** — lane's base is behind `origin/main` | fast-forward the worktree to `origin/main`, re-verify, and assert `git rev-list --count HEAD..origin/main` is `0`. Prevented by the STEP 0 base check (§2) in the brief |
+| **Stale base** — lane's base is behind `origin/main` | if the lane has no own commits, fast-forward to `origin/main`; if it committed on a stale base, merge/rebase onto the fetched `origin/main` (never blind-reset — that discards lane work). Then assert `git rev-list --count HEAD..origin/main` is `0`. Prevented by the STEP 0 base check (§2) in the brief |
 | **Agent dies at birth** — `updateCount: 1`, `finished` almost immediately, zero model turns, no tool calls | the **workspace** is poisoned, not the agent: re-prompting, or new agents created in it, also die. Archive the workspace, create a **fresh** workspace with a **new slug**, then create the agent |
 | **Idle / incomplete lane** | `paseo_get_agent_status` shows `requiresAttention:true, attentionReason:"finished"` → treat as stopped, re-dispatch or new lane |
 | **Disk full blocks workspace creation** | `df -h` → `go clean -cache` / `docker image prune` → retry |
