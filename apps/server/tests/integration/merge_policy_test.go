@@ -997,9 +997,10 @@ func (s *MergePolicyTestSuite) TestMergePolicy_RelationshipSimilarity_TypeGate()
 	for _, r := range rows {
 		var m map[string]any
 		require.NoError(s.T(), json.Unmarshal(r.Props, &m))
-		if r.Type == "family" {
+		switch r.Type {
+		case "family":
 			familyProps = m
-		} else if r.Type == "friendship" {
+		case "friendship":
 			friendshipProps = m
 		}
 	}
