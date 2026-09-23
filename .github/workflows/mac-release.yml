@@ -32,8 +32,10 @@ jobs:
       - name: Diff since last tag
         id: c
         shell: bash
+        env:
+          FORCE: ${{ github.event.inputs.force }}
         run: |
-          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+          if [ "${FORCE}" = "true" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -108,8 +110,8 @@ jobs:
       - name: Derive version
         id: version
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            RAW="${{ github.ref_name }}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            RAW="${GITHUB_REF_NAME}"
           else
             # Parseable X.Y.Z fallback for forced workflow_dispatch builds
             # (build-dmg.sh requires a semver it can encode monotonically).
@@ -142,6 +144,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          MARKETING: ${{ steps.version.outputs.marketing }}
         run: |
           # Sparkle CLI tools live in the SwiftPM artifacts dir of DerivedData;
           # the DerivedData hash is not stable, so locate them dynamically.
@@ -163,7 +166,7 @@ jobs:
             -D "$UPDATES_DIR" --skip-existing || true
 
           # Copy the freshly built (and stapled) DMG into the feed directory.
-          DMG="build/Memory-${{ steps.version.outputs.marketing }}.dmg"
+          DMG="build/Memory-${MARKETING}.dmg"
           cp "$DMG" "$UPDATES_DIR/"
 
           # Monotonicity guard: the new CFBundleVersion must be strictly greater
@@ -220,6 +223,6 @@ jobs:
       - name: Publish to release
         shell: bash
         run: |
-          gh release create "${{ github.ref_name }}" --verify-tag \
-            --title "Memory ${{ github.ref_name }}" --generate-notes || true
-          gh release upload "${{ github.ref_name }}" release-assets/* --clobber
+          gh release create "${GITHUB_REF_NAME}" --verify-tag \
+            --title "Memory ${GITHUB_REF_NAME}" --generate-notes || true
+          gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber

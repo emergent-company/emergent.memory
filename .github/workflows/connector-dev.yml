@@ -76,15 +76,17 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           go build -trimpath \
-            -ldflags "-s -w -X main.version=${{ needs.version.outputs.version }}" \
+            -ldflags "-s -w -X main.version=${VERSION}" \
             -o dist/memory-connector ./cmd/memory-connector
       - name: Package archive
         working-directory: apps/connector.linux
         shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          VERSION="${{ needs.version.outputs.version }}"
           NAME="memory-connector_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
           tar -C dist -czf "${NAME}.tar.gz" memory-connector
           sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
@@ -112,10 +114,12 @@ jobs:
           merge-multiple: true
       - name: Generate manifest
         shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           cat release-assets/*.sha256 > release-assets/checksums.txt
           scripts/gen-manifest.sh memory-connector dev release-assets \
-            "${{ github.repository }}" dev "${{ needs.version.outputs.version }}"
+            "${{ github.repository }}" dev "${VERSION}"
       - name: Publish rolling dev release
         shell: bash
         run: |

@@ -28,7 +28,7 @@ jobs:
       - name: Get version info
         id: version
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
           else
             VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
@@ -115,6 +115,8 @@ jobs:
       - name: Alias unchanged image to new version
         if: steps.changed.outputs.changed == 'false' && steps.source.outputs.exists == 'true'
         shell: bash
+        env:
+          COMMIT: ${{ steps.version.outputs.commit }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           MAJOR_MINOR="${VERSION%.*}"
@@ -125,12 +127,14 @@ jobs:
             -t "$IMG:$VERSION" \
             -t "$IMG:$MAJOR_MINOR" \
             -t "$IMG:$MAJOR" \
-            -t "$IMG:sha-${{ steps.version.outputs.commit }}" \
+            -t "$IMG:sha-${COMMIT}" \
             "$IMG:$PREV"
 
       - name: Image digest
         if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
-        run: echo ${{ steps.meta.outputs.digest }}
+        env:
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: echo "${DIGEST}"
 
       - name: Mark release as ready
         if: startsWith(github.ref, 'refs/tags/v')

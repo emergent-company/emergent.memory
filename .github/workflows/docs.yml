@@ -118,10 +118,12 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy versioned docs and update latest alias
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           # Remove 'latest' if it exists as a standalone version (not alias) to avoid conflicts
           mike delete --push latest 2>/dev/null || true
-          mike deploy --push --update-aliases "${{ steps.version.outputs.VERSION }}" latest
+          mike deploy --push --update-aliases "${VERSION}" latest
           mike set-default --push latest
 
       - name: Sync root-level files to gh-pages
