@@ -120,6 +120,12 @@ type Middleware struct {
 	// roleLookup is a test seam for the project membership role query.
 	// When nil, dbProjectRole is used.
 	roleLookup projectRoleLookup
+
+	// superadminLookup, projectOrgLookup and orgAdminLookup are test seams for
+	// the entitlement-tier queries. When nil, the corresponding db* method is used.
+	superadminLookup superadminRoleLookup
+	projectOrgLookup projectOrgLookup
+	orgAdminLookup   orgAdminLookup
 }
 
 // MiddlewareParams holds the dependencies for creating the auth middleware.
@@ -149,6 +155,7 @@ func NewMiddleware(p MiddlewareParams) *Middleware {
 	}
 
 	m.warnIfOIDCAllGrantActive()
+	m.warnIfTokenScopesTrusted()
 
 	return m
 }
@@ -653,7 +660,8 @@ func (m *Middleware) finalizeOIDCUser(ctx context.Context, claims *TokenClaims, 
 		return user, nil
 	}
 
-	user.Scopes = m.resolveOIDCScopes(ctx, user.ID, projectID, claims.Scopes)
+	roles := m.trustedSuperadminRoles(claims.Issuer, claims.Roles)
+	user.Scopes = m.resolveOIDCScopes(ctx, user.ID, projectID, claims.Scopes, roles)
 	return user, nil
 }
 
@@ -668,7 +676,7 @@ const (
 
 // oidcAllGrantWarningText is the operator-facing warning emitted when the legacy
 // userinfo all-grant is active. It names the effect and both remediations.
-const oidcAllGrantWarningText = "OIDC all-scope grant is ACTIVE: ZITADEL_USERINFO_GRANT_ALL_SCOPES is enabled and token introspection is not configured, so every OIDC user authenticated via the userinfo fallback receives the full Memory scope catalogue (GetAllScopes). Remediate by configuring ZITADEL_CLIENT_JWT (or ZITADEL_CLIENT_JWT_PATH) to enable introspection (DISABLE_ZITADEL_INTROSPECTION must not be enabled), or by setting ZITADEL_USERINFO_GRANT_ALL_SCOPES=false."
+const oidcAllGrantWarningText = "OIDC all-scope grant is ACTIVE: MEMORY_USERINFO_GRANT_ALL_SCOPES is enabled and token introspection is not configured, so every OIDC user authenticated via the userinfo fallback receives the full Memory scope catalogue (GetAllScopes). Remediate by configuring ZITADEL_CLIENT_JWT (or ZITADEL_CLIENT_JWT_PATH) to enable introspection (DISABLE_ZITADEL_INTROSPECTION must not be enabled), or by setting MEMORY_USERINFO_GRANT_ALL_SCOPES=false."
 
 // oidcAllGrantWarning returns the startup warning to emit when the legacy
 // userinfo all-grant is active, or "" when it is not (flag disabled, or
@@ -688,10 +696,27 @@ func (m *Middleware) warnIfOIDCAllGrantActive() {
 	}
 	if msg := oidcAllGrantWarning(&m.cfg.Zitadel); msg != "" {
 		m.log.Warn(msg,
-			slog.String("config", "ZITADEL_USERINFO_GRANT_ALL_SCOPES"),
+			slog.String("config", "MEMORY_USERINFO_GRANT_ALL_SCOPES"),
 			slog.Bool("introspection_configured", false),
 		)
 	}
+}
+
+// tokenScopeTrustWarningText is the operator-facing deprecation warning emitted
+// while token-carried Memory scopes are still honoured. It names the flag and
+// the effect of the upcoming default flip.
+const tokenScopeTrustWarningText = "token-scope trust is ENABLED: Memory scope names carried on OIDC tokens are still honoured as grants (MEMORY_OIDC_TRUST_TOKEN_SCOPES defaults to true). In the next release this default flips to false and token-carried Memory scopes will stop being honoured; operators who rely on them should migrate to application-owned scopes now."
+
+// warnIfTokenScopesTrusted emits a startup deprecation warning while
+// MEMORY_OIDC_TRUST_TOKEN_SCOPES is enabled (the Release N default).
+func (m *Middleware) warnIfTokenScopesTrusted() {
+	if m.cfg == nil || !m.cfg.Zitadel.TrustTokenScopes {
+		return
+	}
+	m.log.Warn(tokenScopeTrustWarningText,
+		slog.String("config", "MEMORY_OIDC_TRUST_TOKEN_SCOPES"),
+		slog.Bool("token_scopes_trusted", true),
+	)
 }
 
 // TokenClaims represents parsed token claims
@@ -703,6 +728,14 @@ type TokenClaims struct {
 	GivenName  string    // First name from OIDC claims
 	FamilyName string    // Last name from OIDC claims
 	Name       string    // Display name from OIDC claims
+
+	// Issuer is the token's `iss` claim, used to gate the standing Zitadel role
+	// mapping on an exact issuer match (issue #812 Q6).
+	Issuer string
+
+	// Roles are the Zitadel project roles carried on the token. Used only for the
+	// standing role-derived superadmin grant; never a fine-grained scope source.
+	Roles []ZitadelProjectRole
 
 	// AuthSource identifies the validation path that produced these claims.
 	AuthSource oidcAuthSource
@@ -937,17 +970,26 @@ func (m *Middleware) getCachedIntrospection(ctx context.Context, token string) (
 
 // claimsToCacheData serialises the raw claims persisted in the introspection
 // cache. Derived scopes are never written: callers pass claims whose Scopes hold
-// the raw OIDC scope list (introspection) or nothing (userinfo).
+// the raw OIDC scope list (introspection) or nothing (userinfo). The issuer and
+// roles are raw identity claims (not derived grants), so they are safe to cache;
+// the derived superadmin grant is re-resolved per request.
 func claimsToCacheData(claims *TokenClaims) map[string]any {
-	return map[string]any{
+	data := map[string]any{
 		"sub":         claims.Sub,
 		"email":       claims.Email,
 		"scope":       strings.Join(claims.Scopes, " "),
 		"given_name":  claims.GivenName,
 		"family_name": claims.FamilyName,
 		"name":        claims.Name,
+		"iss":         claims.Issuer,
 		"auth_source": string(claims.AuthSource),
 	}
+	if len(claims.Roles) > 0 {
+		if raw, err := json.Marshal(claims.Roles); err == nil {
+			data["roles"] = string(raw)
+		}
+	}
+	return data
 }
 
 // claimsFromCacheData rehydrates TokenClaims from a cached entry.
@@ -983,6 +1025,12 @@ func claimsFromCacheData(data map[string]any, expiresAt time.Time) *TokenClaims 
 	claims.AuthSource = oidcAuthSource(src)
 	if scope, ok := data["scope"].(string); ok {
 		claims.Scopes = ParseScopes(scope)
+	}
+	if iss, ok := data["iss"].(string); ok {
+		claims.Issuer = iss
+	}
+	if rawRoles, ok := data["roles"].(string); ok && rawRoles != "" {
+		_ = json.Unmarshal([]byte(rawRoles), &claims.Roles)
 	}
 	return claims
 }
@@ -1049,6 +1097,8 @@ func (m *Middleware) introspectToken(ctx context.Context, token string) (*TokenC
 		GivenName:  result.GivenName,
 		FamilyName: result.FamilyName,
 		Name:       result.Name,
+		Issuer:     result.Issuer,
+		Roles:      result.Roles,
 		AuthSource: authSourceIntrospection,
 	}, nil
 }

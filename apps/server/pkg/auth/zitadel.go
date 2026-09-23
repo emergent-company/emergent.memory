@@ -61,8 +61,18 @@ type IntrospectionResult struct {
 	GivenName  string `json:"given_name"`
 	FamilyName string `json:"family_name"`
 
-	// Zitadel-specific claims
-	Claims map[string]any `json:"-"` // All claims for role extraction
+	// Issuer is the token's `iss` claim, used to gate the standing Zitadel role
+	// mapping on an exact issuer match (issue #812 Q6).
+	Issuer string `json:"iss"`
+
+	// Roles are the Zitadel project roles extracted from the raw claims. They are
+	// raw identity claims (not derived grants), so they may be cached; the
+	// derived superadmin grant is re-resolved per request.
+	Roles []ZitadelProjectRole `json:"roles,omitempty"`
+
+	// Claims is the raw claim set (role extraction source). Excluded from the
+	// JSON serialisation so only the extracted Roles survive the cache round trip.
+	Claims map[string]any `json:"-"`
 }
 
 const (
@@ -186,6 +196,8 @@ func (z *ZitadelService) doIntrospect(ctx context.Context, token string) (*Intro
 		Name:       resp.GetName(),
 		GivenName:  resp.GivenName,
 		FamilyName: resp.FamilyName,
+		Issuer:     resp.Issuer,
+		Roles:      extractZitadelProjectRoles(resp.Claims),
 		Claims:     resp.Claims,
 	}
 
@@ -261,8 +273,45 @@ type introspectionResponse struct {
 	GivenName         string `json:"given_name"`
 	FamilyName        string `json:"family_name"`
 
-	// All claims for extension
-	Claims map[string]any `json:"-"`
+	// Claims holds the raw Zitadel project-role claims
+	// (urn:zitadel:iam:org:project:*:roles) extracted from the introspection
+	// body. It is populated by UnmarshalJSON (a plain map field cannot capture
+	// leftover keys — encoding/json only matches a literal "claims" key). The
+	// roles are the sole feed for the standing superadmin mapping.
+	Claims map[string]any
+}
+
+// UnmarshalJSON decodes the standard introspection fields AND captures the
+// Zitadel project-role claims into Claims. encoding/json does not route unknown
+// keys into a bare map field, so without this the role claims
+// (urn:zitadel:iam:org:project:*:roles) would be silently dropped and the
+// role-derived superadmin grant would never fire.
+func (r *introspectionResponse) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	claims := map[string]any{}
+	for key, val := range raw {
+		if !strings.HasPrefix(key, zitadelRoleClaimPrefix) || !strings.HasSuffix(key, zitadelRoleClaimSuffix) {
+			continue
+		}
+		var decoded any
+		if err := json.Unmarshal(val, &decoded); err != nil {
+			return err
+		}
+		claims[key] = decoded
+	}
+
+	// Decode the known fields via a type alias so the standard field decoding
+	// (including the Time type's custom unmarshaler) is reused without recursing
+	// into this method.
+	type plain introspectionResponse
+	if err := json.Unmarshal(data, (*plain)(r)); err != nil {
+		return err
+	}
+	r.Claims = claims
+	return nil
 }
 
 // Implement required interface methods

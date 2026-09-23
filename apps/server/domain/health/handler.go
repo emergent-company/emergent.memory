@@ -190,9 +190,8 @@ func (h *Handler) Health(c echo.Context) error {
 
 // Health component classification. Critical components make the overall status
 // "unhealthy" (HTTP 503); optional components make it "degraded" but keep the
-// HTTP 200. Any check that is in neither list — the informational
-// `oidc_all_grant` configuration warning, for example — never affects the
-// overall status or the HTTP code, whatever its own status is.
+// HTTP 200. Any check that is in neither list never affects the overall status
+// or the HTTP code, whatever its own status is.
 var (
 	criticalComponents = []string{"database", "storage", "auth"}
 	optionalComponents = []string{"kreuzberg", "whisper", "embeddings", "database_backup"}
@@ -357,16 +356,6 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 		emit("database_backup", h.databaseBackupCheck(ctx))
 	}()
 
-	// OIDC all-grant posture (config-only, no live probe). A configuration
-	// warning, not a failing check: reported as "warning" when the legacy
-	// userinfo all-grant is in effect. It is neither a critical nor an optional
-	// component, so it never affects the overall status.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		emit("oidc_all_grant", h.oidcAllGrantCheck())
-	}()
-
 	wg.Wait()
 	return results
 }
@@ -393,21 +382,42 @@ func (h *Handler) databaseBackupCheck(ctx context.Context) Check {
 	}
 }
 
-// oidcAllGrantCheck reports the OIDC all-grant posture as a configuration
-// warning. "warning" means the legacy userinfo all-grant is active; "healthy"
-// means it is not. It is deliberately excluded from the critical/optional
-// component lists so the service is never reported unhealthy because of it.
-func (h *Handler) oidcAllGrantCheck() Check {
+// ScopeAuthorityInfo is the scope-authority posture: which authority is
+// currently minting fine-grained scopes and whether the permissive pilot posture
+// is active. It is served only on an authenticated endpoint (issue #812 Q5) so
+// the all-grant/permissive posture is never visible to anonymous callers.
+type ScopeAuthorityInfo struct {
+	TokenScopesTrusted      bool `json:"token_scopes_trusted"`
+	PermissiveAllGrant      bool `json:"permissive_all_grant"`
+	IntrospectionConfigured bool `json:"introspection_configured"`
+}
+
+// scopeAuthorityInfo derives the scope-authority posture from configuration.
+func (h *Handler) scopeAuthorityInfo() *ScopeAuthorityInfo {
 	if h.cfg == nil {
-		return Check{Status: "healthy", Message: "configuration unavailable"}
+		return &ScopeAuthorityInfo{}
 	}
-	if h.cfg.Zitadel.UserinfoAllGrantActive() {
-		return Check{
-			Status:  "warning",
-			Message: "OIDC all-scope grant active: ZITADEL_USERINFO_GRANT_ALL_SCOPES is enabled and introspection is not configured, so userinfo-authenticated users receive the full scope catalogue. Configure ZITADEL_CLIENT_JWT or ZITADEL_CLIENT_JWT_PATH (with DISABLE_ZITADEL_INTROSPECTION not enabled), or set ZITADEL_USERINFO_GRANT_ALL_SCOPES=false.",
-		}
+	z := h.cfg.Zitadel
+	return &ScopeAuthorityInfo{
+		TokenScopesTrusted:      z.TrustTokenScopes,
+		PermissiveAllGrant:      z.UserinfoAllGrantActive(),
+		IntrospectionConfigured: z.IntrospectionConfigured(),
 	}
-	return Check{Status: "healthy", Message: "all-grant inactive"}
+}
+
+// ScopeAuthority returns the scope-authority posture. It is registered behind
+// RequireAuth so the permissive posture is not exposed anonymously.
+// @Summary      Get scope-authority posture
+// @Description  Returns the scope-authority posture (token-scope trust, permissive userinfo all-grant, introspection status). Authenticated only.
+// @Tags         health
+// @Produce      json
+// @Success      200 {object} map[string]any "scope-authority posture"
+// @Router       /api/health/scope-authority [get]
+// @Security     bearerAuth
+func (h *Handler) ScopeAuthority(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]any{
+		"scope_authority": h.scopeAuthorityInfo(),
+	})
 }
 
 // Healthz returns a simple health check (for k8s liveness probe)
