@@ -3519,13 +3519,14 @@ func (r *Repository) GetBranchRelationshipEmbedding(ctx context.Context, relID u
 }
 
 // FindSimilarRelationshipInBranch finds the nearest relationship in the target branch
-// that has the same (remapped) src and dst endpoints, by cosine distance on the
+// that has the same type and (remapped) src/dst endpoints, by cosine distance on the
 // relationship embedding. Returns nil when no match within maxDistance.
 func (r *Repository) FindSimilarRelationshipInBranch(
 	ctx context.Context,
 	projectID uuid.UUID,
 	branchID *uuid.UUID,
 	srcCanonicalID, dstCanonicalID uuid.UUID,
+	relType string,
 	vector []float32,
 	excludeIDs []uuid.UUID,
 	maxDistance float32,
@@ -3557,7 +3558,7 @@ func (r *Repository) FindSimilarRelationshipInBranch(
 		       change_summary, deleted_at, created_at,
 		       (embedding <=> ?::vector) AS _dist
 		FROM kb.graph_relationships
-		WHERE project_id = ? AND src_id = ? AND dst_id = ? AND %s
+		WHERE project_id = ? AND src_id = ? AND dst_id = ? AND type = ? AND %s
 		  AND supersedes_id IS NULL AND deleted_at IS NULL
 		  AND embedding IS NOT NULL
 		  AND NOT (id = ANY(%s))
@@ -3565,7 +3566,7 @@ func (r *Repository) FindSimilarRelationshipInBranch(
 		ORDER BY _dist ASC, id ASC LIMIT 1`,
 		branchCond, excludeStr)
 
-	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID}
+	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID, relType}
 	args = append(args, branchArg...)
 	args = append(args, vectorStr, maxDistance)
 

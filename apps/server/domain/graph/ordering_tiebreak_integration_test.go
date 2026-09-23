@@ -343,7 +343,7 @@ func TestFindSimilarObjectInBranch_TieDeterminism(t *testing.T) {
 	}
 }
 
-func TestFindSimilarRelationshipInBranch_TieDeterminism(t *testing.T) {
+func TestFindSimilarRelationshipInBranch_TypeGate(t *testing.T) {
 	db := openBulkTestDB(t)
 	repo := newBulkTestRepo(t, db)
 	ctx := context.Background()
@@ -364,19 +364,26 @@ func TestFindSimilarRelationshipInBranch_TieDeterminism(t *testing.T) {
 	// Distinct types per rel: uq_graph_relationships_head_main is unique on
 	// (project_id, type, src_id, dst_id) for HEAD rows, so identical (src, dst)
 	// pairs must differ by type. FindSimilarRelationshipInBranch filters on
-	// (src, dst) only, so type does not affect the nearest-match selection.
+	// (type, src, dst), so a query only ever returns the row whose type matches
+	// the requested type (or nil when no such type exists).
 	for i, id := range ids {
 		insertOrderingRelationship(t, db, projectID, id, src, dst, fmt.Sprintf("links%d", i), createdAt, &emb)
 	}
-	smallest := ascendingSorted(ids)[0]
 
-	for run := 0; run < 5; run++ {
-		rel, dist, err := repo.FindSimilarRelationshipInBranch(ctx, projectID, nil, src, dst, vec768One(), nil, 2.0)
+	// Each type returns exactly its own row (the type gate selects by type).
+	for i, id := range ids {
+		typ := fmt.Sprintf("links%d", i)
+		rel, dist, err := repo.FindSimilarRelationshipInBranch(ctx, projectID, nil, src, dst, typ, vec768One(), nil, 2.0)
 		require.NoError(t, err)
-		require.NotNil(t, rel, "a match must be found")
-		assert.Equal(t, smallest, rel.ID, "run %d: must deterministically pick smallest id", run)
+		require.NotNil(t, rel, "a match must be found for type %s", typ)
+		assert.Equal(t, id, rel.ID, "type gate must return the row of the queried type %s", typ)
 		assert.InDelta(t, 0.0, float64(dist), 1e-6)
 	}
+
+	// A type with no matching row yields nil (no cross-type match).
+	rel, _, err := repo.FindSimilarRelationshipInBranch(ctx, projectID, nil, src, dst, "nonexistent", vec768One(), nil, 2.0)
+	require.NoError(t, err)
+	assert.Nil(t, rel, "a relationship of a different type must not match")
 }
 
 func TestGetMostAccessed_TieDeterminism(t *testing.T) {
