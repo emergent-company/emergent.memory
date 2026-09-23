@@ -23,8 +23,8 @@ import (
 // Returns ErrUnauthorized when no authenticated user is present, ErrForbidden
 // when the caller is not a member of orgID.
 func assertCallerOwnsOrg(ctx context.Context, repo *Repository, orgID string) error {
-	user := auth.UserFromContext(ctx)
-	if user == nil || user.ID == "" {
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
 		return apperror.ErrUnauthorized.WithMessage("organization context required")
 	}
 
