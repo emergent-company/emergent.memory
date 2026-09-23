@@ -52,14 +52,17 @@ func (h *Handler) List(c echo.Context) error {
 // @Param        id path string true "Organization ID (UUID)"
 // @Success      200 {object} Org "Organization details"
 // @Failure      400 {object} apperror.Error "Invalid organization ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
 // @Failure      404 {object} apperror.Error "Organization not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/orgs/{id} [get]
 // @Security     bearerAuth
 func (h *Handler) Get(c echo.Context) error {
+	user := auth.MustGetUser(c)
 	id := c.Param("id")
 
-	org, err := h.svc.GetByID(c.Request().Context(), id)
+	org, err := h.svc.GetByID(c.Request().Context(), id, user.ID)
 	if err != nil {
 		return err
 	}
@@ -107,11 +110,13 @@ func (h *Handler) Create(c echo.Context) error {
 // @Success      200 {object} OrgDTO "Organization updated"
 // @Failure      400 {object} apperror.Error "Invalid request body or name"
 // @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
 // @Failure      404 {object} apperror.Error "Organization not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/orgs/{id} [patch]
 // @Security     bearerAuth
 func (h *Handler) Update(c echo.Context) error {
+	user := auth.MustGetUser(c)
 	id := c.Param("id")
 
 	var req UpdateOrgRequest
@@ -119,7 +124,7 @@ func (h *Handler) Update(c echo.Context) error {
 		return errInvalidBody
 	}
 
-	org, err := h.svc.Update(c.Request().Context(), id, req.Name)
+	org, err := h.svc.Update(c.Request().Context(), id, user.ID, req.Name)
 	if err != nil {
 		return err
 	}
@@ -135,14 +140,17 @@ func (h *Handler) Update(c echo.Context) error {
 // @Param        id path string true "Organization ID (UUID)"
 // @Success      200 {object} map[string]string "Deletion status"
 // @Failure      400 {object} apperror.Error "Invalid organization ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
 // @Failure      404 {object} apperror.Error "Organization not found"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/orgs/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
+	user := auth.MustGetUser(c)
 	id := c.Param("id")
 
-	if err := h.svc.Delete(c.Request().Context(), id); err != nil {
+	if err := h.svc.Delete(c.Request().Context(), id, user.ID); err != nil {
 		return err
 	}
 
@@ -157,13 +165,15 @@ func (h *Handler) Delete(c echo.Context) error {
 // @Param        id path string true "Organization ID (UUID)"
 // @Success      200 {array} OrgMemberDTO "List of members"
 // @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
 // @Failure      500 {object} apperror.Error "Internal server error"
 // @Router       /api/orgs/{id}/members [get]
 // @Security     bearerAuth
 func (h *Handler) ListMembers(c echo.Context) error {
+	user := auth.MustGetUser(c)
 	id := c.Param("id")
 
-	members, err := h.svc.ListMembers(c.Request().Context(), id)
+	members, err := h.svc.ListMembers(c.Request().Context(), id, user.ID)
 	if err != nil {
 		return err
 	}
