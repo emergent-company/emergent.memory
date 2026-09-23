@@ -21,12 +21,13 @@ var (
 )
 
 type Server struct {
-	cfg        Config
-	memory     MemoryBackend
-	supervisor *Supervisor
-	hub        *conversationHub   // live conversation-state push (SSE), nil in bare test servers
-	registry   *accountRegistry   // in-memory multi-account registry (nil in bare test servers)
-	bindings   *voiceBindingStore // per-room voice bindings (nil in bare test servers)
+	cfg         Config
+	memory      MemoryBackend
+	supervisor  *Supervisor
+	hub         *conversationHub   // live conversation-state push (SSE), nil in bare test servers
+	registry    *accountRegistry   // in-memory multi-account registry (nil in bare test servers)
+	bindings    *voiceBindingStore // per-room voice bindings (nil in bare test servers)
+	workerCreds *workerRegistry    // per-worker credentials → agent (nil in bare test servers)
 	// shutdownCh is closed on process shutdown so long-lived SSE streams end
 	// promptly instead of holding http.Server.Shutdown until its deadline.
 	// nil in bare test servers (selecting on it then blocks forever).

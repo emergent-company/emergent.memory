@@ -78,10 +78,6 @@ type Config struct {
 	ShareRateIPBurst    int
 	ShareRateLinkPerMin int
 	ShareRateLinkBurst  int
-	// WorkerInternalKey is the shared secret the gateway injects into bridge
-	// workers so they can fetch their per-room voice binding from the internal
-	// endpoint. Empty = the internal endpoint rejects every request.
-	WorkerInternalKey string
 	// TTSProvider is the TTS strategy: "cartesia" (server-side) | "none"/"client"
 	// (text-only, client-side TTS).
 	TTSProvider string
@@ -168,7 +164,6 @@ func LoadConfig() Config {
 		AuthMode:            envOr("AUTH_MODE", "session"),
 		SessionSecret:       os.Getenv("SESSION_SECRET"),
 		SessionMaxAge:       durationOr("SESSION_MAX_AGE", 30*24*time.Hour),
-		WorkerInternalKey:   os.Getenv("WORKER_INTERNAL_KEY"),
 		ShareCookieSecret:   os.Getenv("SHARE_COOKIE_SECRET"),
 		ShareRefSecret:      os.Getenv("SHARE_REF_SECRET"),
 		SharePublicBaseURL:  os.Getenv("SHARE_PUBLIC_BASE_URL"),
