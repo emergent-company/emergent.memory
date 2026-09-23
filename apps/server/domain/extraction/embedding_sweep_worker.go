@@ -12,6 +12,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings/vertex"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -19,15 +20,33 @@ import (
 type EmbeddingSweepConfig struct {
 	// SweepIntervalSec is the interval between sweeps in seconds (default: 30)
 	SweepIntervalSec int
-	// BatchSize is the number of items to process per sweep (default: 50)
+	// BatchSize is the maximum number of relationships scanned per sweep
+	// (default: 200). It no longer bounds object admission — object admission
+	// is keyed off available queue depth via ObjectQueueTargetDepth.
 	BatchSize int
+	// ObjectQueueTargetDepth is the target number of active (pending|processing)
+	// kb.graph_embedding_jobs. Each sweep admits at most
+	// max(0, ObjectQueueTargetDepth - active) objects. A value <= 0 falls back
+	// to defaultSweepObjectQueueTargetDepth.
+	ObjectQueueTargetDepth int
+	// RelationshipRequestBatchSize is the maximum number of relationships sent
+	// in one multi-object embedding request. 0 uses
+	// defaultEmbeddingRequestBatchSize; a negative value forces the serial
+	// fallback (one request per relationship).
+	RelationshipRequestBatchSize int
 }
+
+// defaultSweepObjectQueueTargetDepth is the fallback for
+// EmbeddingSweepConfig.ObjectQueueTargetDepth when it is <= 0.
+const defaultSweepObjectQueueTargetDepth = 2000
 
 // DefaultEmbeddingSweepConfig returns the default sweep configuration.
 func DefaultEmbeddingSweepConfig() *EmbeddingSweepConfig {
 	return &EmbeddingSweepConfig{
-		SweepIntervalSec: 30,
-		BatchSize:        200,
+		SweepIntervalSec:             30,
+		BatchSize:                    200,
+		ObjectQueueTargetDepth:       defaultSweepObjectQueueTargetDepth,
+		RelationshipRequestBatchSize: 0,
 	}
 }
 
@@ -228,9 +247,31 @@ func (w *EmbeddingSweepWorker) sweep(ctx context.Context) {
 // embedding resolver (modelconfig.EmbeddingResolverAdapter) applies when it
 // actually generates the vector.
 func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
+	target := w.cfg.ObjectQueueTargetDepth
+	if target <= 0 {
+		target = defaultSweepObjectQueueTargetDepth
+	}
+
+	active, err := w.activeGraphEmbeddingJobs(ctx)
+	if err != nil {
+		// Never flood on a failed depth read: if we cannot see how full the
+		// queue is, do not enqueue anything this sweep.
+		w.log.Warn("sweep: failed to read active graph embedding job count",
+			slog.String("error", err.Error()))
+		return 0
+	}
+
+	admission := target - active
+	if admission <= 0 {
+		w.log.Debug("sweep: graph embedding queue at target depth, skipping object admission",
+			slog.Int("active", active),
+			slog.Int("target", target))
+		return 0
+	}
+
 	// Find objects missing embeddings that don't have pending/processing jobs
 	var objectIDs []string
-	err := w.db.NewRaw(`
+	err = w.db.NewRaw(`
 		SELECT o.id::text
 		FROM kb.graph_objects o
 		JOIN kb.projects p ON p.id = o.project_id
@@ -256,7 +297,7 @@ func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
 		    )
 		  )
 		ORDER BY o.created_at ASC
-		LIMIT ?`, w.cfg.BatchSize).Scan(ctx, &objectIDs)
+		LIMIT ?`, admission).Scan(ctx, &objectIDs)
 	if err != nil {
 		w.log.Warn("sweep: failed to query objects with missing embeddings",
 			slog.String("error", err.Error()))
@@ -279,6 +320,18 @@ func (w *EmbeddingSweepWorker) sweepObjects(ctx context.Context) int {
 
 	w.addObjectsEnqueued(int64(enqueued))
 	return enqueued
+}
+
+// activeGraphEmbeddingJobs returns the number of active (pending|processing)
+// graph embedding jobs currently in the queue.
+func (w *EmbeddingSweepWorker) activeGraphEmbeddingJobs(ctx context.Context) (int, error) {
+	var count int
+	err := w.db.NewRaw(`SELECT count(*) FROM kb.graph_embedding_jobs
+		WHERE status IN ('pending', 'processing')`).Scan(ctx, &count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // relationshipSweepRow holds data needed to generate a relationship embedding.
@@ -345,7 +398,171 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 	w.log.Info("sweep: found relationships with missing embeddings",
 		slog.Int("count", len(rows)))
 
+	// Group by project (preserving first-seen group order): embedding
+	// credentials and budgets are resolved per project, so a whole project's
+	// relationships are embedded with one budget pre-flight and one set of
+	// requests.
+	groups := w.groupRelationshipsByProject(rows)
+
+	for _, group := range groups {
+		select {
+		case <-w.stopCh:
+			return embedded, errors
+		case <-ctx.Done():
+			return embedded, errors
+		default:
+		}
+
+		groupProjectID := group[0].ProjectID
+		groupCtx := ctx
+		if groupProjectID != "" {
+			groupCtx = auth.ContextWithProjectID(ctx, groupProjectID)
+		}
+
+		// Budget pre-flight — one check per project group. Fail-open on error
+		// exactly as before; the budget is project-scoped so checking once per
+		// group is equivalent to the old per-row checks.
+		if w.budget != nil && groupProjectID != "" {
+			exceeded, err := w.budget.CheckBudgetExceeded(groupCtx, groupProjectID)
+			if err != nil {
+				w.log.Warn("sweep: budget check failed, proceeding (fail-open)",
+					slog.String("project_id", groupProjectID),
+					slog.String("error", err.Error()))
+			} else if exceeded && w.budgetEnforcementEnabled {
+				w.log.Info("sweep: skipping relationship embeddings, project budget exceeded",
+					slog.String("project_id", groupProjectID),
+					slog.Int("count", len(group)))
+				continue
+			}
+		}
+
+		batchSize := w.cfg.RelationshipRequestBatchSize
+		if batchSize == 0 {
+			batchSize = defaultEmbeddingRequestBatchSize
+		}
+
+		batcher, ok := w.embeds.(batchEmbeddingService)
+		if ok && batchSize > 0 {
+			embedded, errors = w.embedRelationshipGroupBatched(groupCtx, groupProjectID, group, batcher, batchSize, embedded, errors)
+		} else {
+			embedded, errors = w.embedRelationshipGroupSerial(groupCtx, group, embedded, errors)
+		}
+	}
+
+	w.addRelationshipsEmbedded(int64(embedded))
+	w.addRelationshipErrors(int64(errors))
+	return embedded, errors
+}
+
+// groupRelationshipsByProject groups rows by their ProjectID, preserving the
+// first-seen order of the groups.
+func (w *EmbeddingSweepWorker) groupRelationshipsByProject(rows []relationshipSweepRow) [][]relationshipSweepRow {
+	var groups [][]relationshipSweepRow
+	index := make(map[string]int)
 	for _, row := range rows {
+		i, ok := index[row.ProjectID]
+		if !ok {
+			i = len(groups)
+			index[row.ProjectID] = i
+			groups = append(groups, []relationshipSweepRow{row})
+			continue
+		}
+		groups[i] = append(groups[i], row)
+	}
+	return groups
+}
+
+// embedRelationshipGroupBatched embeds a project's relationships using one
+// multi-object request per consecutive sub-batch of batchSize rows. Each row's
+// vector is stored independently; a per-row store failure counts only that row
+// as an error (its embedding stays NULL for a later sweep).
+func (w *EmbeddingSweepWorker) embedRelationshipGroupBatched(
+	ctx context.Context,
+	groupProjectID string,
+	group []relationshipSweepRow,
+	batcher batchEmbeddingService,
+	batchSize int,
+	embedded, errors int,
+) (int, int) {
+	for start := 0; start < len(group); start += batchSize {
+		select {
+		case <-w.stopCh:
+			return embedded, errors
+		case <-ctx.Done():
+			return embedded, errors
+		default:
+		}
+
+		end := start + batchSize
+		if end > len(group) {
+			end = len(group)
+		}
+		subRows := group[start:end]
+
+		texts := make([]string, len(subRows))
+		for i, row := range subRows {
+			srcName := displayNameFromRow(row.SrcProperties, row.SrcKey, row.SrcType)
+			dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstType)
+			texts[i] = buildTripletText(srcName, dstName, row.Type, row.Label, row.RelProperties)
+		}
+
+		result, err := batcher.EmbedDocumentsWithUsage(ctx, texts)
+		if err != nil {
+			errors += len(subRows)
+			w.log.Warn("sweep: failed to embed relationship batch",
+				slog.String("project_id", groupProjectID),
+				slog.Int("count", len(subRows)),
+				slog.String("error", err.Error()))
+			continue
+		}
+		if result == nil || len(result.Embeddings) != len(texts) {
+			errors += len(subRows)
+			w.log.Warn("sweep: relationship batch returned mismatched vectors",
+				slog.String("project_id", groupProjectID),
+				slog.Int("count", len(subRows)))
+			continue
+		}
+
+		// One usage event per sub-batch: the batch API reports aggregate tokens.
+		if w.usage != nil && groupProjectID != "" {
+			orgID := w.orgCache.resolve(ctx, groupProjectID)
+			recordEmbeddingUsage(w.usage, groupProjectID, orgID, &vertex.EmbedResult{
+				Usage:    result.Usage,
+				Model:    result.Model,
+				Provider: result.Provider,
+			})
+		}
+
+		for i, row := range subRows {
+			now := time.Now()
+			_, err := w.db.NewRaw(`UPDATE kb.graph_relationships
+				SET embedding = ?::vector, embedding_updated_at = ?
+				WHERE id = ?`,
+				vectorToString(result.Embeddings[i]), now, row.ID).Exec(ctx)
+			if err != nil {
+				errors++
+				w.log.Warn("sweep: failed to update relationship embedding",
+					slog.String("id", row.ID),
+					slog.String("error", err.Error()))
+				continue
+			}
+			embedded++
+		}
+	}
+	return embedded, errors
+}
+
+// embedRelationshipGroupSerial embeds a project's relationships one request at
+// a time. Used when the embedding service has no multi-object method or when
+// RelationshipRequestBatchSize is negative. The per-row budget skip is handled
+// at the group level (see sweepRelationships), so here each row is embedded,
+// stored, and counted independently.
+func (w *EmbeddingSweepWorker) embedRelationshipGroupSerial(
+	ctx context.Context,
+	group []relationshipSweepRow,
+	embedded, errors int,
+) (int, int) {
+	for _, row := range group {
 		select {
 		case <-w.stopCh:
 			return embedded, errors
@@ -358,23 +575,7 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 		dstName := displayNameFromRow(row.DstProperties, row.DstKey, row.DstType)
 		tripletText := buildTripletText(srcName, dstName, row.Type, row.Label, row.RelProperties)
 
-		// Budget pre-flight check (fail-open: if check fails, proceed)
-		if w.budget != nil && row.ProjectID != "" {
-			exceeded, err := w.budget.CheckBudgetExceeded(ctx, row.ProjectID)
-			if err != nil {
-				w.log.Warn("sweep: budget check failed, proceeding (fail-open)",
-					slog.String("relationship_id", row.ID),
-					slog.String("project_id", row.ProjectID),
-					slog.String("error", err.Error()))
-			} else if exceeded && w.budgetEnforcementEnabled {
-				w.log.Info("sweep: skipping relationship embedding, project budget exceeded",
-					slog.String("relationship_id", row.ID),
-					slog.String("project_id", row.ProjectID))
-				continue
-			}
-		}
-
-		result, err := w.embeds.EmbedQueryWithUsage(auth.ContextWithProjectID(ctx, row.ProjectID), tripletText)
+		result, err := w.embeds.EmbedQueryWithUsage(ctx, tripletText)
 		if err != nil {
 			errors++
 			w.log.Warn("sweep: failed to embed relationship",
@@ -412,9 +613,6 @@ func (w *EmbeddingSweepWorker) sweepRelationships(ctx context.Context) (embedded
 			recordEmbeddingUsage(w.usage, row.ProjectID, orgID, result)
 		}
 	}
-
-	w.addRelationshipsEmbedded(int64(embedded))
-	w.addRelationshipErrors(int64(errors))
 	return embedded, errors
 }
 
