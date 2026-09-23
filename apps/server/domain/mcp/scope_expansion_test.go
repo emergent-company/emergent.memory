@@ -112,8 +112,9 @@ func TestMCPExpansionIsCanonicalProjectedOntoToolScopes(t *testing.T) {
 // TestMCPExpansionPinnedToolVisibleSets pins the exact expanded (tool-visible)
 // set for each umbrella scope so a change to ScopeImplies or the vocabulary that
 // silently widens or narrows the MCP surface must update this test and be
-// re-reviewed. admin:all is asserted via the same union formula as test 1
-// (it is too large to hand-list without risk of an arithmetic slip).
+// re-reviewed. Every expected set is a literal — none is derived from the
+// implementation formula — so a change that removes or adds an admin-visible
+// tool scope cannot update both sides and still pass.
 func TestMCPExpansionPinnedToolVisibleSets(t *testing.T) {
 	pinned := []struct {
 		name  string
@@ -125,6 +126,17 @@ func TestMCPExpansionPinnedToolVisibleSets(t *testing.T) {
 		{"agents:read", []string{"agents:read"}, []string{"agents:read", "skills:read"}},
 		{"agents:write", []string{"agents:write"}, []string{"agents:write", "skills:write"}},
 		{"schema:write", []string{"schema:write"}, []string{"schema:write", "schema:migrate"}},
+		// admin:all tool-visible surface. Note it does not include chat:use /
+		// chat:admin (no MCP tool requires them) or any admin:/org:/account: scope.
+		{"admin:all", []string{"admin:all"}, []string{
+			"admin", "admin:all", "agents:read", "agents:write",
+			"branches:read", "branches:write",
+			"documents:read", "documents:write",
+			"graph:read", "graph:write",
+			"journal:read", "journal:write",
+			"schema:migrate", "schema:read", "schema:write",
+			"search", "skills:read", "skills:write",
+		}},
 	}
 
 	for _, tt := range pinned {
@@ -132,16 +144,6 @@ func TestMCPExpansionPinnedToolVisibleSets(t *testing.T) {
 			assertScopeSetsEqual(t, expandScopesSet(tt.input), toSet(tt.want))
 		})
 	}
-
-	t.Run("admin:all", func(t *testing.T) {
-		want := map[string]bool{"admin:all": true}
-		for s := range auth.ExpandScopes([]string{"admin:all"}) {
-			if mcpToolScopeVocabulary[s] {
-				want[s] = true
-			}
-		}
-		assertScopeSetsEqual(t, expandScopesSet([]string{"admin:all"}), want)
-	})
 }
 
 // TestMCPExpansionNeverReachesExcludedFamilies asserts that no expansion —
@@ -186,11 +188,13 @@ func TestMCPExpansionReconcilesDataWriteToSchemaWrite(t *testing.T) {
 }
 
 // TestMCPToolScopeVocabularyCoversCatalog asserts every scope that can gate a
-// tool in the full catalog is present in mcpToolScopeVocabulary, so the
-// projection in expandScopesSet never drops a scope a tool actually requires.
-// The package-level builders are shared with the catalog, so this test's
-// additional value is covering handler-provided tools (agent/registry) that are
-// not part of dynamicToolBuilders.
+// tool in the package-level catalog (static scope map + dynamicToolBuilders) is
+// present in mcpToolScopeVocabulary, so the projection in expandScopesSet never
+// drops a scope such a tool requires. The Service here has no agent/registry
+// handler wired, so handler-provided tools are not part of this catalog; their
+// scopes are covered by the guard tests in domain/agents and domain/mcpregistry,
+// which assert every RequiredScope they declare is in the vocabulary via
+// mcp.IsToolScope.
 func TestMCPToolScopeVocabularyCoversCatalog(t *testing.T) {
 	tools := (&Service{}).GetToolDefinitions()
 	for _, tool := range tools {

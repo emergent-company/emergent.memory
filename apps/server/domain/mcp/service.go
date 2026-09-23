@@ -1636,6 +1636,16 @@ func ToolScopes() []string {
 	return out
 }
 
+// IsToolScope reports whether s can gate an MCP tool — i.e. it is present in the
+// derived tool-scope vocabulary (see mcpToolScopeVocabulary). Handler packages
+// whose tool definitions are injected at runtime (domain/agents,
+// domain/mcpregistry) use it in tests so a handler-provided tool declaring a
+// scope outside the vocabulary fails the build instead of silently losing
+// umbrella-scope visibility.
+func IsToolScope(s string) bool {
+	return mcpToolScopeVocabulary[s]
+}
+
 // FilterToolsForScopes filters tools based on token scopes.
 // Tools tagged AgentOnly are hidden from all external MCP clients regardless of scopes.
 // Tools with a RequiredScope are only shown when the token's expanded scope set includes that scope.
@@ -1658,11 +1668,17 @@ func FilterToolsForScopes(tools []ToolDefinition, scopes []string) []ToolDefinit
 // mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
 // It is derived from the tool catalog — the central static scope map plus the
 // package-level builders in dynamicToolBuilders (the same list GetToolDefinitions
-// consumes) — so it cannot drift from the tools it guards.
-// TestMCPToolScopeVocabularyCoversCatalog additionally asserts completeness
-// against the full catalog, including handler-provided tools. It is the
-// projection target for umbrella-scope implications: MCP honors an implied scope
-// only when some tool can require it.
+// consumes) — so it cannot drift from the package-level tools it guards.
+//
+// Handler-provided tools (domain/agents, domain/mcpregistry) are injected at
+// runtime and are therefore not part of this derivation. Tests in those packages
+// assert via IsToolScope that every RequiredScope they declare is covered here,
+// so a handler-only scope fails the build rather than silently losing
+// umbrella-scope visibility: it must reuse a scope already in the vocabulary or
+// extend the derivation deliberately.
+//
+// It is the projection target for umbrella-scope implications: MCP honors an
+// implied scope only when some tool can require it.
 var mcpToolScopeVocabulary = func() map[string]bool {
 	vocab := make(map[string]bool, len(toolRequiredScope))
 	for _, s := range toolRequiredScope {

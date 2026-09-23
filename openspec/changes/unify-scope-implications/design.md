@@ -53,7 +53,7 @@ The auth map's keys and values are unchanged; only the Go identifier is exported
 ## Risks / Trade-offs
 
 - **Behaviour change for existing tokens:** `data:read`/`data:write` API tokens can now see and call schema read/write MCP tools. This is intentional, bounded, and called out in the PR body for operators.
-- **Vocabulary completeness:** the vocabulary is derived from the shared `dynamicToolBuilders` list plus the static scope map, so a change to those cannot drift. Handler-provided tools (agent/registry) are outside that list; `TestMCPToolScopeVocabularyCoversCatalog` asserts every tool in `GetToolDefinitions()` — including handler-provided ones — has its `RequiredScope` present in the vocabulary, failing closed-safe (a gap would make a tool unreachable via umbrella, never widen).
+- **Vocabulary completeness:** the vocabulary is derived from the shared `dynamicToolBuilders` list plus the static scope map, so a change to those cannot drift. Handler-provided tools (agent/registry) are injected at runtime and are outside that derivation; `TestMCPToolScopeVocabularyCoversCatalog` covers the package-level catalog it can build, and the guard tests in `domain/agents` and `domain/mcpregistry` assert via `mcp.IsToolScope` that every `RequiredScope` those handlers declare is in the vocabulary. A handler-only scope therefore fails the build rather than silently losing umbrella visibility (a gap makes a tool unreachable via umbrella, never widens).
 - **Related drift surface (not fixed here):** `domain/agents/toolgroups` has a hand-maintained dynamic-scope list in its test. Once a fully catalog-derived vocabulary exists, that test could consume it. Out of scope; a follow-up issue is appropriate.
 
 ## Migration Plan
