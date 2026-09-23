@@ -1,4 +1,4 @@
-package testutil
+package testdb
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
-	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // TestSchemaSQLApplies is a regression guard for the embedded test fixture
@@ -24,7 +23,7 @@ import (
 // unreachable.
 func TestSchemaSQLApplies(t *testing.T) {
 	if testing.Short() {
-		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+		SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 
 	ctx := context.Background()
@@ -36,21 +35,21 @@ func TestSchemaSQLApplies(t *testing.T) {
 
 	baseCfg, err := config.NewConfig(log)
 	if err != nil {
-		testdb.SkipOrFatal(t, "load config: %v", err)
+		SkipOrFatal(t, "load config: %v", err)
 	}
-	if err := testdb.Apply(&baseCfg.Database); err != nil {
-		t.Fatalf("apply %s: %v", testdb.URLEnv, err)
+	if err := Apply(&baseCfg.Database); err != nil {
+		t.Fatalf("apply %s: %v", URLEnv, err)
 	}
 
 	adminCfg := *baseCfg
 	adminCfg.Database.Database = "postgres"
 	adminPool, err := createPool(ctx, &adminCfg)
 	if err != nil {
-		testdb.SkipOrFatal(t, "postgres unavailable: %v", err)
+		SkipOrFatal(t, "postgres unavailable: %v", err)
 	}
 	defer adminPool.Close()
 	if err := adminPool.Ping(ctx); err != nil {
-		testdb.SkipOrFatal(t, "postgres unavailable: %v", err)
+		SkipOrFatal(t, "postgres unavailable: %v", err)
 	}
 
 	dbName := fmt.Sprintf("go_test_schema_check_%d", time.Now().UnixNano())

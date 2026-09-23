@@ -464,6 +464,26 @@ func TestStorageConfig_IsConfigured(t *testing.T) {
 	}
 }
 
+func TestMCPRegistryConfig_BaseURL(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_BASE_URL", "")
+	cfg, err := NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.MCPRegistry.BaseURL != "" {
+		t.Errorf("BaseURL = %q, want empty (default)", cfg.MCPRegistry.BaseURL)
+	}
+
+	t.Setenv("MCP_REGISTRY_BASE_URL", "http://stub:8080")
+	cfg, err = NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.MCPRegistry.BaseURL != "http://stub:8080" {
+		t.Errorf("BaseURL = %q, want %q", cfg.MCPRegistry.BaseURL, "http://stub:8080")
+	}
+}
+
 func TestZitadelOIDCScopeConfig(t *testing.T) {
 	t.Setenv("ZITADEL_OIDC_DEFAULT_SCOPES", "data:read,search")
 
@@ -490,5 +510,32 @@ func TestZitadelOIDCScopeConfig(t *testing.T) {
 	}
 	if !cfg.Zitadel.UserinfoGrantAllScopes {
 		t.Fatal("UserinfoGrantAllScopes default should be true")
+	}
+}
+
+func TestZitadelConfigUserinfoAllGrantActive(t *testing.T) {
+	tests := []struct {
+		name       string
+		flag       bool
+		introspect bool // ClientJWT set
+		disable    bool
+		want       bool
+	}{
+		{name: "flag on, introspection unconfigured", flag: true, want: true},
+		{name: "flag on, introspection configured", flag: true, introspect: true, want: false},
+		{name: "flag off, introspection unconfigured", flag: false, want: false},
+		{name: "flag off, introspection configured", flag: false, introspect: true, want: false},
+		{name: "flag on, credentials present but introspection disabled", flag: true, introspect: true, disable: true, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			z := &ZitadelConfig{UserinfoGrantAllScopes: tt.flag, DisableIntrospection: tt.disable}
+			if tt.introspect {
+				z.ClientJWT = "jwt"
+			}
+			if got := z.UserinfoAllGrantActive(); got != tt.want {
+				t.Errorf("UserinfoAllGrantActive() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

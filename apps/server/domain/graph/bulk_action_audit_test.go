@@ -2,7 +2,6 @@ package graph_test
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,8 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/graph"
@@ -27,24 +24,17 @@ import (
 // `graph` and `journal`. Placing it in package `graph` would create a test-only
 // import cycle (graph → journal → graph via journal/graph_sink.go).
 
-// openAuditTestDB opens the test database, skipping when unavailable.
+// openAuditTestDB opens a throwaway test database owned by this test, so each
+// test runs against a uniquely-named database it drops on cleanup. Skips when
+// unavailable or in short mode; fails when REQUIRE_DB is set.
 func openAuditTestDB(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "integration test requires database")
 	}
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://emergent:emergent@localhost:5436/emergent?sslmode=disable"
-	}
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	db := bun.NewDB(sqldb, pgdialect.New())
-	if err := db.PingContext(context.Background()); err != nil {
-		db.Close()
-		testdb.SkipOrFatal(t, "database unavailable (%v), skipping integration test", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "graph_audit")
+	t.Cleanup(tdb.Close)
+	return tdb.DB
 }
 
 // newAuditTestRepo builds a graph Repository backed by the test DB.

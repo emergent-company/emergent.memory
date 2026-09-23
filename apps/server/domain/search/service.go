@@ -829,7 +829,10 @@ func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textRes
 	}
 
 	sort.Slice(combined, func(i, j int) bool {
-		return combined[i].fusedScore > combined[j].fusedScore
+		if combined[i].fusedScore != combined[j].fusedScore {
+			return combined[i].fusedScore > combined[j].fusedScore
+		}
+		return combined[i].item.ID < combined[j].item.ID
 	})
 
 	if len(combined) > limit {
@@ -1235,7 +1238,10 @@ func reciprocalRankFusion(resultSets []rrfResultSet, k int) []rrfScoredID {
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].score > entries[j].score
+		if entries[i].score != entries[j].score {
+			return entries[i].score > entries[j].score
+		}
+		return entries[i].id < entries[j].id
 	})
 
 	merged := make([]rrfScoredID, len(entries))

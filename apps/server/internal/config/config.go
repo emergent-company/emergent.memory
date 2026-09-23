@@ -81,6 +81,9 @@ type Config struct {
 	// Skills configuration
 	Skills SkillsConfig
 
+	// MCPRegistry configures the official MCP registry client.
+	MCPRegistry MCPRegistryConfig
+
 	// AppURL is the base URL of the application frontend (used for invite links in emails).
 	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
 	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
@@ -206,6 +209,27 @@ type ZitadelConfig struct {
 	// configured, so adding introspection credentials disables the all-grant even
 	// if this flag is left at its default.
 	UserinfoGrantAllScopes bool `env:"ZITADEL_USERINFO_GRANT_ALL_SCOPES" envDefault:"true"`
+}
+
+// IntrospectionConfigured reports whether RFC 7662 introspection is enabled and
+// has client credentials — the same precondition ZitadelService.Introspect uses.
+// DisableIntrospection forces false even when credentials are present.
+func (z *ZitadelConfig) IntrospectionConfigured() bool {
+	if z == nil || z.DisableIntrospection {
+		return false
+	}
+	return z.ClientJWT != "" || z.ClientJWTPath != ""
+}
+
+// UserinfoAllGrantActive reports whether the legacy all-or-nothing userinfo
+// grant is currently in effect: the flag is enabled AND introspection is not
+// configured. Enabling introspection disables the grant even at the default
+// flag value, so an introspection outage cannot re-enable it.
+func (z *ZitadelConfig) UserinfoAllGrantActive() bool {
+	if z == nil {
+		return false
+	}
+	return z.UserinfoGrantAllScopes && !z.IntrospectionConfigured()
 }
 
 // EmbeddingsConfig holds embedding service configuration
@@ -541,6 +565,9 @@ type EmbeddingQueueConfig struct {
 	GraphConcurrency int `env:"GRAPH_EMBEDDING_CONCURRENCY" envDefault:"200"`
 	// GraphBatchSize is the graph embedding batch size. Default: 200.
 	GraphBatchSize int `env:"GRAPH_EMBEDDING_BATCH_SIZE" envDefault:"200"`
+	// GraphRequestBatchSize is the maximum number of graph objects sent in a
+	// single multi-object embedding request. Default: 100.
+	GraphRequestBatchSize int `env:"GRAPH_EMBEDDING_REQUEST_BATCH_SIZE" envDefault:"100"`
 	// ChunkConcurrency is the chunk embedding worker concurrency. Default: 10.
 	ChunkConcurrency int `env:"CHUNK_EMBEDDING_CONCURRENCY" envDefault:"10"`
 	// ChunkBatchSize is the chunk embedding batch size. Default: 10.
@@ -564,6 +591,15 @@ func (s SkillsConfig) MaxContentSize() int {
 		return 1 << 20
 	}
 	return s.MaxContentSizeBytes
+}
+
+// MCPRegistryConfig configures the client for the official MCP registry
+// (registry.modelcontextprotocol.io). It exists so tests can point the
+// server at a local stub instead of the live upstream.
+type MCPRegistryConfig struct {
+	// BaseURL overrides the official MCP registry endpoint. Empty means the
+	// default DefaultRegistryBaseURL (https://registry.modelcontextprotocol.io).
+	BaseURL string `env:"MCP_REGISTRY_BASE_URL" envDefault:""`
 }
 
 // AgentSafeguardsConfig holds configuration for agent queue explosion safeguards.

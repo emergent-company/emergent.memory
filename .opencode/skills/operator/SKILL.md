@@ -54,8 +54,17 @@ Run this loop per task:
    (`title: "Review+merge #NNN — <summary>"`).
 8. **Merge gate** — merge only when checks green + review approved. **Authors never
    self-merge.**
-9. **Archive + cleanup** — `paseo_archive_workspace`, then `git worktree remove
-   <path>` and `git worktree prune`, delete the branch.
+9. **Archive + cleanup** — `paseo_archive_workspace`, then remove **only** clean
+   worktrees whose branch is PR-merged — **never test merge state by ancestry**: this
+   repo **squash-merges**, so a merged branch's commits are never ancestors of `main`
+   (`git rev-list --count origin/main..HEAD` stays `> 0`; `git branch --merged
+   origin/main` omits it), and an ancestry-based cleanup **silently removes nothing**
+   (`removed=0 kept=34`) while looking like a no-op, not a bug. Get the merged set from
+   `gh pr list --repo <owner>/<repo> --state merged --limit 1000 --json headRefName
+   --jq '.[].headRefName' | sort -u` (limit must exceed the repo's merged-PR count — it
+   truncates silently; this repo already has 400+), then `git worktree remove <path>` +
+   `git worktree prune` + delete the branch. Leave dirty / unmerged / detached
+   worktrees alone.
 10. **Reconcile** — confirm merged SHA, close the issue, report the board.
 11. **File spin-off findings** as GitHub issues (search dupes first, show draft,
     get confirmation).
@@ -72,9 +81,6 @@ Run this loop per task:
 | Issue / PR title | conventional prefix: `sdk(a2a): …`, `a2a: …`, `memory acp: …` |
 | Commit | `type(scope): summary`; body ends `Refs #NNN` / `Closes #NNN` |
 | OpenSpec change | kebab verb-phrase: `add-cli-acp-server`, `fix-stale-embedding-job-reporting` |
-
-**Retry slug:** if a worktree dir is partially created, remove it and use a new
-slug (e.g. `memory-acp-e2e2`) to dodge the collision.
 
 **Registry:** GitHub issue/PR numbers are the durable board. In your own memory,
 keep a lane registry of `agentId` / `workspaceId` short forms per task so you can
@@ -157,7 +163,6 @@ Then the status label is confirmation, not the only lock.
   get user confirmation before creating.
 - **One lane fixes tightly-coupled issues together** (`#761`+`#762` → one PR,
   `Closes both`).
-- **Archive + clean worktree after merge** to keep disk healthy.
 - **Real-environment claims need raw output.** Any lane touching a real env (dev/prod
   host, container, DB) must paste the **exact command and its raw output** for each
   step; **a step without pasted raw output counts as not done**. The brief pins the
@@ -181,7 +186,8 @@ Then the status label is confirmation, not the only lock.
 | **Stale base** — lane's base is behind `origin/main` | if the lane has no own commits, fast-forward to `origin/main`; if it committed on a stale base, merge/rebase onto the fetched `origin/main` (never blind-reset — that discards lane work). Then assert `git rev-list --count HEAD..origin/main` is `0`. Prevented by the STEP 0 base check (§2) in the brief |
 | **Agent dies at birth** — `updateCount: 1`, `finished` almost immediately, zero model turns, no tool calls | the **workspace** is poisoned, not the agent: re-prompting, or new agents created in it, also die. Archive the workspace, create a **fresh** workspace with a **new slug**, then create the agent |
 | **Idle / incomplete lane** | `paseo_get_agent_status` shows `requiresAttention:true, attentionReason:"finished"` → treat as stopped, re-dispatch or new lane |
-| **Disk full blocks workspace creation** | `df -h` → `go clean -cache` / `docker image prune` → retry |
+| **Disk full blocks workspace creation** | `df -h` → `go clean -cache` / `docker image prune` → retry. Go-cache reclaim is temporary (refills under lane activity); pruning merged worktrees (§2.9) is the durable win |
+| **Worktree cleanup silently removes nothing** (`removed=0 kept=N`) | ancestry can never match a squash-merged branch — derive merged heads from `gh pr list --state merged --json headRefName` (§2.9); leave dirty / unmerged / detached worktrees |
 | **Partial failed worktree** | `git worktree remove --force` + `git worktree prune` + `git branch -D`; retry with a new slug |
 | **`gh pr create` fails** | push branch first, retry with explicit `--head <branch>` |
 | **Ambiguous decision** | use `question` tool with bounded options |

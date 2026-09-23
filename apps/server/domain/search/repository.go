@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sort"
 
 	"github.com/google/uuid"
@@ -108,7 +109,7 @@ func (r *Repository) runChunkLexical(ctx context.Context, projectID uuid.UUID, q
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.tsv @@ websearch_to_tsquery('simple', ?)
 		  AND d.project_id = ?
-		ORDER BY score DESC
+		ORDER BY score DESC, c.id ASC
 		LIMIT ?
 	`
 
@@ -163,7 +164,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.embedding IS NOT NULL
 		  AND d.project_id = ?
-		ORDER BY c.embedding <=> ?::vector
+		ORDER BY c.embedding <=> ?::vector, c.id ASC
 		LIMIT ?
 	`
 
@@ -255,7 +256,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.embedding IS NOT NULL
 		  AND d.project_id = ?
-		ORDER BY c.embedding <=> ?::vector
+		ORDER BY c.embedding <=> ?::vector, c.id ASC
 		LIMIT ?
 	`
 	vectorRows, err := r.db.QueryContext(ctx, vectorQuery, vectorStr, params.ProjectID, vectorStr, fetchLimit)
@@ -313,7 +314,10 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 
 	// Sort by fused score descending
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].FusedScore > candidates[j].FusedScore
+		if candidates[i].FusedScore != candidates[j].FusedScore {
+			return candidates[i].FusedScore > candidates[j].FusedScore
+		}
+		return slices.Compare(candidates[i].ID[:], candidates[j].ID[:]) < 0
 	})
 
 	// Take top results
@@ -544,7 +548,7 @@ func buildRelationshipSearchQuery(vectorStr string, projectID uuid.UUID, namespa
 		baseQuery += "\n\t\t  AND r.namespace = ?"
 		queryArgs = append(queryArgs, *namespace)
 	}
-	query := baseQuery + "\n\t\tORDER BY r.embedding <=> ?::vector\n\t\tLIMIT ?"
+	query := baseQuery + "\n\t\tORDER BY r.embedding <=> ?::vector, r.id ASC\n\t\tLIMIT ?"
 	queryArgs = append(queryArgs, vectorStr, limit)
 	return query, queryArgs
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -86,7 +87,7 @@ func (r *Repository) GetMostAccessed(ctx context.Context, projectID uuid.UUID, l
 		Where("supersedes_id IS NULL").
 		Where("last_accessed_at IS NOT NULL").
 		Where("deleted_at IS NULL").
-		Order("last_accessed_at DESC").
+		Order("last_accessed_at DESC", "id ASC").
 		Limit(limit).
 		Scan(ctx)
 
@@ -124,7 +125,7 @@ func (r *Repository) GetUnused(ctx context.Context, projectID uuid.UUID, limit i
 				WhereOr("last_accessed_at IS NULL").
 				WhereOr("last_accessed_at < ?", cutoffTime)
 		}).
-		Order("last_accessed_at ASC NULLS FIRST").
+		Order("last_accessed_at ASC NULLS FIRST", "id ASC").
 		Limit(limit).
 		Scan(ctx)
 
@@ -584,6 +585,9 @@ func (r *Repository) GetByID(ctx context.Context, projectID, id uuid.UUID) (*Gra
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
 		Where("deleted_at IS NULL").
+		// HEAD-first with a deterministic id tie-break so the non-HEAD fallback
+		// (objects[0]) is stable when multiple non-HEAD rows match.
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").
 		Scan(ctx)
 
 	if err != nil {
@@ -615,7 +619,7 @@ func (r *Repository) GetByIDIncludeDeleted(ctx context.Context, projectID, id uu
 		ColumnExpr(embeddingStatusExpr+" AS embedding_status").
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
-		OrderExpr("supersedes_id ASC NULLS FIRST"). // HEAD first
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC"). // HEAD first, id tie-break
 		Scan(ctx)
 
 	if err != nil {
@@ -891,7 +895,8 @@ func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.U
 			Where("dst_id = ?", canonicalID).
 			Where("project_id = ?", projectID).
 			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Where("deleted_at IS NULL").
+			OrderExpr("id ASC")
 		if len(typeFilter) > 0 {
 			q = q.Where("type IN (?)", bun.In(typeFilter))
 		}
@@ -911,7 +916,8 @@ func (r *Repository) GetEdges(ctx context.Context, projectID, canonicalID uuid.U
 			Where("src_id = ?", canonicalID).
 			Where("project_id = ?", projectID).
 			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Where("deleted_at IS NULL").
+			OrderExpr("id ASC")
 		if len(typeFilter) > 0 {
 			q = q.Where("type IN (?)", bun.In(typeFilter))
 		}
@@ -960,7 +966,8 @@ func (r *Repository) GetEdgesForObjects(ctx context.Context, projectID uuid.UUID
 			Where("dst_id IN (?)", bun.In(canonicalIDs)).
 			Where("project_id = ?", projectID).
 			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Where("deleted_at IS NULL").
+			OrderExpr("id ASC")
 		if len(typeFilter) > 0 {
 			q = q.Where("type IN (?)", bun.In(typeFilter))
 		}
@@ -989,7 +996,8 @@ func (r *Repository) GetEdgesForObjects(ctx context.Context, projectID uuid.UUID
 			Where("src_id IN (?)", bun.In(canonicalIDs)).
 			Where("project_id = ?", projectID).
 			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Where("deleted_at IS NULL").
+			OrderExpr("id ASC")
 		if len(typeFilter) > 0 {
 			q = q.Where("type IN (?)", bun.In(typeFilter))
 		}
@@ -1281,6 +1289,10 @@ func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid
 		Model(&rels).
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
+		// Mirror GetByID: HEAD-first with a deterministic id tie-break so the
+		// non-HEAD fallback (rels[0]) and the HEAD pick are stable when several
+		// rows match (multi-branch versions share a canonical_id).
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").
 		Scan(ctx)
 
 	if err != nil {
@@ -1610,6 +1622,9 @@ func buildWhereClause(conditions []string) string {
 //     pending/processing/failed/dead_letter pass through; completed/cancelled -> 'missing'
 //  3. no job row -> 'missing'
 //
+// The newest job wins; equal created_at ties are broken by id so the selected
+// status label is deterministic rather than arbitrary.
+//
 // Uses the `go` table alias from the GraphObject bun model. Keep in sync with
 // embeddingStatus() in embedding_status_test.go.
 const embeddingStatusExpr = `CASE
@@ -1624,7 +1639,7 @@ const embeddingStatusExpr = `CASE
 		END
 		FROM kb.graph_embedding_jobs j
 		WHERE j.object_id = go.id
-		ORDER BY j.created_at DESC
+		ORDER BY j.created_at DESC, j.id ASC
 		LIMIT 1
 	), 'missing')
 END`
@@ -1771,7 +1786,7 @@ func (r *Repository) ftsSearch(ctx context.Context, params FTSSearchParams, quer
 			) AS rank
 		FROM kb.graph_objects
 		` + whereClause + `
-		ORDER BY rank DESC
+		ORDER BY rank DESC, id ASC
 		LIMIT ?
 		OFFSET ?
 	`
@@ -1875,7 +1890,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params VectorSearchParams
 			(embedding_v2 <=> ?::vector) AS distance
 		FROM kb.graph_objects
 		` + whereClause + `
-		ORDER BY distance ASC
+		ORDER BY distance ASC, id ASC
 		LIMIT ?
 		OFFSET ?
 	`
@@ -2154,7 +2169,7 @@ func (r *Repository) FindSimilarObjects(ctx context.Context, params SimilarSearc
 			(embedding_v2 <=> ?::vector) AS distance
 		FROM kb.graph_objects
 		` + whereClause + `
-		ORDER BY distance ASC
+		ORDER BY distance ASC, id ASC
 		LIMIT ?
 	`
 
@@ -2337,6 +2352,12 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			q = q.Where("type IN (?)", bun.In(params.RelationshipTypes))
 		}
 
+		// id is the kb.graph_relationships PK → unique → total order. This makes
+		// edge order and MaxEdges truncation deterministic even when the
+		// similarity sort below is skipped (no QueryVector) or the similarity
+		// query fails (graceful degradation to raw BFS order).
+		q = q.OrderExpr("id ASC")
+
 		err := q.Scan(ctx)
 		if err != nil && err != sql.ErrNoRows {
 			return nil, apperror.ErrDatabase.WithInternal(err)
@@ -2371,8 +2392,13 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 					simMap[s.ID] = s.Similarity
 				}
 
-				sort.SliceStable(relationships, func(i, j int) bool {
-					return simMap[relationships[i].ID] > simMap[relationships[j].ID]
+				sort.Slice(relationships, func(i, j int) bool {
+					if simMap[relationships[i].ID] != simMap[relationships[j].ID] {
+						return simMap[relationships[i].ID] > simMap[relationships[j].ID]
+					}
+					// Tie-break on the unique relationship id so equal-similarity
+					// (e.g. all-missing-embedding → 0.0) ordering is deterministic.
+					return slices.Compare(relationships[i].ID[:], relationships[j].ID[:]) < 0
 				})
 			}
 			// If similarity query fails, fall through to standard BFS order (graceful degradation)
@@ -2437,6 +2463,11 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 				nq = nq.Where("labels && ?::text[]", formatTextArray(params.Labels))
 			}
 
+			// canonical_id groups versions; id is the unique PK. Together they give
+			// a deterministic total order so MaxNodes truncation selects the same
+			// neighbours on every run regardless of the scan order.
+			nq = nq.OrderExpr("canonical_id ASC, id ASC")
+
 			err := nq.Scan(ctx)
 			if err != nil && err != sql.ErrNoRows {
 				return nil, apperror.ErrDatabase.WithInternal(err)
@@ -2477,6 +2508,7 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		Where("(id = ? OR canonical_id = ?)", objectID, objectID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
+		OrderExpr("id ASC").
 		Limit(1).
 		Scan(ctx)
 	if err != nil {
@@ -2498,7 +2530,8 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		Where("src_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL")
+		Where("deleted_at IS NULL").
+		OrderExpr("dst_id ASC, id ASC")
 
 	if branchID != nil {
 		outQ = outQ.Where("branch_id = ?", *branchID)
@@ -2520,7 +2553,8 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		Where("dst_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL")
+		Where("deleted_at IS NULL").
+		OrderExpr("src_id ASC, id ASC")
 
 	if branchID != nil {
 		inQ = inQ.Where("branch_id = ?", *branchID)
@@ -2565,6 +2599,7 @@ func (r *Repository) GetNeighborObjects(ctx context.Context, projectID uuid.UUID
 		Where("project_id = ?", projectID).
 		Where("supersedes_id IS NULL").
 		Where("deleted_at IS NULL").
+		OrderExpr("id ASC").
 		Scan(ctx)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -3141,6 +3176,12 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Where("project_id = ?", params.ProjectID).
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL").
+			// Deterministic selection: a capped hard delete must consume the OLDEST
+			// matching rows first (FIFO retention intent), so repeated runs drain the
+			// set deterministically instead of deleting an arbitrary subset. created_at
+			// can tie (bulk inserts share NOW()); id (PK) makes the order total, and it
+			// is applied inside the subselect the LIMIT truncates.
+			OrderExpr("created_at ASC, id ASC").
 			Limit(limit)
 		if len(params.Filter.Types) > 0 {
 			subQ = subQ.Where("type IN (?)", bun.In(params.Filter.Types))
@@ -3393,7 +3434,7 @@ func (r *Repository) FindSimilarObjectInBranch(
 		  AND embedding_v2 IS NOT NULL
 		  AND NOT (canonical_id = ANY(%s))
 		  AND (embedding_v2 <=> ?::vector) <= ?
-		ORDER BY _dist ASC
+		ORDER BY _dist ASC, id ASC
 		LIMIT 1`,
 		graphObjectColumns, branchCond, excludeStr)
 
@@ -3418,6 +3459,14 @@ func (r *Repository) FindSimilarObjectInBranch(
 
 // GetBranchRelationshipEmbedding fetches the embedding for a relationship version.
 // Returns nil when not yet embedded.
+//
+// NOTE: this helper still selects kb.graph_relationships.embedding_v2, a column
+// that does not exist on that table (the vector column is `embedding`, added in
+// migration 00011 and accompanied by embedding_updated_at in 00013). The helper
+// therefore errors, which is why the relationship similarity-merge branch in
+// applyMerge (service.go) stays dormant even though FindSimilarRelationshipInBranch
+// was corrected here. Making that path live is a behaviour change, deliberately
+// left to a dedicated follow-up rather than this ordering-only fix.
 func (r *Repository) GetBranchRelationshipEmbedding(ctx context.Context, relID uuid.UUID) ([]float32, error) {
 	var embStr string
 	err := r.db.NewRaw(`
@@ -3477,15 +3526,15 @@ func (r *Repository) FindSimilarRelationshipInBranch(
 	query := fmt.Sprintf(`
 		SELECT id, project_id, branch_id, canonical_id, supersedes_id, version,
 		       type, src_id, dst_id, label, properties, weight,
-		       change_summary, deleted_at, created_at, updated_at,
-		       (embedding_v2 <=> ?::vector) AS _dist
+		       change_summary, deleted_at, created_at,
+		       (embedding <=> ?::vector) AS _dist
 		FROM kb.graph_relationships
 		WHERE project_id = ? AND src_id = ? AND dst_id = ? AND %s
 		  AND supersedes_id IS NULL AND deleted_at IS NULL
-		  AND embedding_v2 IS NOT NULL
+		  AND embedding IS NOT NULL
 		  AND NOT (id = ANY(%s))
-		  AND (embedding_v2 <=> ?::vector) <= ?
-		ORDER BY _dist ASC LIMIT 1`,
+		  AND (embedding <=> ?::vector) <= ?
+		ORDER BY _dist ASC, id ASC LIMIT 1`,
 		branchCond, excludeStr)
 
 	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID}
