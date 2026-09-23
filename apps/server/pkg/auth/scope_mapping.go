@@ -19,9 +19,38 @@ const (
 	RoleProjectViewer = "project_viewer"
 )
 
-// viewerReadOnlyScopes mirrors projects.ViewerReadOnlyScopes — the only
-// authoritative role → scope mapping that exists in the codebase.
+// viewerReadOnlyScopes mirrors projects.ViewerReadOnlyScopes — the read-only
+// baseline shared by every canonical project role.
 var viewerReadOnlyScopes = []string{"data:read", "schema:read", "agents:read", "projects:read"}
+
+// Canonical role → scope sets (#736, operator decision A: conservative
+// write-inclusive).
+//
+// The sets are nested by construction: project_admin ⊇ project_user ⊇
+// project_viewer, so an admin can always do everything a user can, and a user
+// everything a viewer can. They deliberately exclude admin*/mcp:admin/org:*/
+// project:invite:create/account:* — a project role is not an account or
+// organisation administrator.
+//
+// The write scopes are umbrella scopes (see scopeImplies in middleware.go):
+// schema:write also expands to schema:migrate, agents:write to chat:admin, and
+// data:write to the related writes plus journal:write. That expansion is an
+// accepted, deliberate property (#736 decision A) and is pinned by
+// TestRoleScopeUmbrellaExpansionIsPinned.
+var (
+	// roleUserScopes = viewer + write to knowledge data.
+	roleUserScopes = withScopes(viewerReadOnlyScopes, "data:write")
+	// roleAdminScopes = user + write to agents and schemas.
+	roleAdminScopes = withScopes(roleUserScopes, "agents:write", "schema:write")
+)
+
+// withScopes returns a fresh slice of base followed by extra, so the derived
+// role sets never share a backing array.
+func withScopes(base []string, extra ...string) []string {
+	out := make([]string, 0, len(base)+len(extra))
+	out = append(out, base...)
+	return append(out, extra...)
+}
 
 // memoryScopeVocabulary is the set of scopes the Memory platform understands.
 // Raw OIDC scopes (openid, profile, email, offline_access, ...) are not members
@@ -59,13 +88,16 @@ type projectRoleLookup func(ctx context.Context, projectID, userID string) (stri
 // roleToScopes maps a canonical project membership role to the Memory scopes it
 // grants for the project a request is scoped to.
 //
-// Only project_viewer is mapped: its scope set is defined authoritatively in
-// code (projects.ViewerReadOnlyScopes). project_admin and project_user have no
-// in-code scope set, and inventing one is a security policy decision — see
-// openspec/changes/oidc-scope-mapping/design.md "Decisions Needed". Those roles
-// fall through to the operator-configured default scope set.
+// All three canonical roles are mapped explicitly (#736 decision A): viewer is
+// read-only, user adds data:write, admin adds agents:write + schema:write. Any
+// other role string — a legacy `owner` row, a typo — is unmapped and callers
+// must fail closed (see resolveOIDCScopes).
 func roleToScopes(role string) ([]string, bool) {
 	switch role {
+	case RoleProjectAdmin:
+		return append([]string(nil), roleAdminScopes...), true
+	case RoleProjectUser:
+		return append([]string(nil), roleUserScopes...), true
 	case RoleProjectViewer:
 		return append([]string(nil), viewerReadOnlyScopes...), true
 	default:
@@ -95,12 +127,15 @@ func filterMemoryScopes(scopes []string) []string {
 //
 // Resolution order (first match wins, no union):
 //  1. explicit Memory scopes carried by the token, verbatim;
-//  2. the mapped role for projectID (project_viewer);
-//  3. the operator-configured default scope set;
+//  2. the mapped canonical role for projectID;
+//  3. the operator-configured default scope set — only when the user has no
+//     project membership at all;
 //  4. empty.
 //
-// A project-role lookup error yields an empty set — the default scope set is a
-// grant, not a fallback for failures.
+// A project-role lookup error yields an empty set, and so does a membership
+// whose role is not one of the canonical roles (#736 decision B, strict):
+// the default scope set is a grant for non-members, never a fallback for
+// failures or unrecognised roles.
 func (m *Middleware) resolveOIDCScopes(ctx context.Context, userID, projectID string, rawScopes []string) []string {
 	if explicit := filterMemoryScopes(rawScopes); len(explicit) > 0 {
 		return explicit
@@ -115,7 +150,15 @@ func (m *Middleware) resolveOIDCScopes(ctx context.Context, userID, projectID st
 			)
 			return nil
 		}
-		if scopes, ok := roleToScopes(role); ok {
+		if role != "" {
+			scopes, ok := roleToScopes(role)
+			if !ok {
+				m.log.Warn("unrecognised project role for scope mapping; failing closed",
+					slog.String("project_id", projectID),
+					slog.String("role", role),
+				)
+				return nil
+			}
 			return scopes
 		}
 	}
