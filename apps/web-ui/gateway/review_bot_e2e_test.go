@@ -25,7 +25,7 @@ import (
 //	                         from the App that reviews it (see below)
 //	REVIEW_BOT_REPO          owner/repo the bot is configured to review
 //	MEMORY_URL               Memory base URL the gateway should trigger
-//	MEMORY_TOKEN             Memory bearer token
+//	AGENT_TRIGGER_TOKEN      static Memory bearer token for the webhook trigger
 //	MEMORY_PROJECT_ID        Memory project id
 //	REVIEW_BOT_AGENT_ID      Memory runtime agent id triggered for the PR
 //	REVIEW_BOT_BASE_BRANCH   base branch (default "main")
@@ -42,7 +42,7 @@ func TestReviewBotE2E(t *testing.T) {
 	token := os.Getenv("REVIEW_BOT_AUTHOR_TOKEN")
 	repo := os.Getenv("REVIEW_BOT_REPO")
 	memoryURL := os.Getenv("MEMORY_URL")
-	memoryToken := os.Getenv("MEMORY_TOKEN")
+	agentTriggerToken := os.Getenv("AGENT_TRIGGER_TOKEN")
 	memoryProject := os.Getenv("MEMORY_PROJECT_ID")
 	agentID := os.Getenv("REVIEW_BOT_AGENT_ID")
 	baseBranch := envOr("REVIEW_BOT_BASE_BRANCH", "main")
@@ -60,7 +60,7 @@ func TestReviewBotE2E(t *testing.T) {
 		"REVIEW_BOT_AUTHOR_TOKEN": token,
 		"REVIEW_BOT_REPO":         repo,
 		"MEMORY_URL":              memoryURL,
-		"MEMORY_TOKEN":            memoryToken,
+		"AGENT_TRIGGER_TOKEN":     agentTriggerToken,
 		"MEMORY_PROJECT_ID":       memoryProject,
 		"REVIEW_BOT_AGENT_ID":     agentID,
 	}
@@ -146,7 +146,7 @@ def last(items):
 	// --- 2. Build a real MemoryClient + minimal Server at the webhook route. ---
 
 	const webhookSecret = "review-bot-e2e-local-secret"
-	client := NewMemoryClient(memoryURL, memoryToken, memoryProject)
+	client := NewMemoryClient(memoryURL, memoryProject)
 	s := &Server{
 		cfg: Config{
 			GitHubWebhookSecret: webhookSecret,
@@ -154,6 +154,7 @@ def last(items):
 			GitHubReviewRepos:   repo,
 			MemoryURL:           memoryURL,
 			MemoryProjectID:     memoryProject,
+			AgentTriggerToken:   agentTriggerToken,
 		},
 		memory: client,
 	}

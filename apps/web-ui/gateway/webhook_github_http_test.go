@@ -48,7 +48,7 @@ func startWebhookHTTPTest(t *testing.T, cfg Config) (string, chan recordedTrigge
 	}))
 	t.Cleanup(memSrv.Close)
 
-	client := NewMemoryClient(memSrv.URL, "mem-token", cfg.MemoryProjectID)
+	client := NewMemoryClient(memSrv.URL, cfg.MemoryProjectID)
 	s := &Server{cfg: cfg, memory: client}
 
 	e := echo.New()
@@ -107,6 +107,7 @@ func TestGitHubWebhookHTTPEndToEnd(t *testing.T) {
 	repos := "acme/widgets, other/repo"
 	cfg := Config{
 		MemoryProjectID:     projectID,
+		AgentTriggerToken:   "mem-token",
 		GitHubWebhookSecret: secret,
 		GitHubReviewAgentID: agentID,
 		GitHubReviewRepos:   repos,
@@ -137,8 +138,9 @@ func TestGitHubWebhookHTTPEndToEnd(t *testing.T) {
 		if got.Auth != "Bearer mem-token" {
 			t.Errorf("Authorization = %q, want %q", got.Auth, "Bearer mem-token")
 		}
-		// No session context is attached on the webhook path, so the project is
-		// carried in the URL and X-Project-ID stays empty.
+		// The webhook attaches a session context carrying only the static
+		// AGENT_TRIGGER_TOKEN (no project id), so the project is carried in the
+		// URL and X-Project-ID stays empty.
 		if got.ProjectID != "" {
 			t.Errorf("X-Project-ID = %q, want empty (project is in the URL)", got.ProjectID)
 		}
@@ -188,7 +190,31 @@ func TestGitHubWebhookHTTPEndToEnd(t *testing.T) {
 	})
 }
 
-// TestWebhookGitHubIsPublicAuthPath guards the auth exemption the ingress relies
+// TestGitHubWebhookMissingTriggerTokenRejected guards the fail-fast path: a
+// signed, otherwise-actionable event with no AGENT_TRIGGER_TOKEN configured
+// must be refused synchronously (503, retryable) instead of accepted with a
+// 202 whose async trigger then fails invisibly.
+func TestGitHubWebhookMissingTriggerTokenRejected(t *testing.T) {
+	const (
+		secret  = "topsecret"
+		agentID = "agent-42"
+	)
+	cfg := Config{
+		MemoryProjectID:     "proj-9",
+		GitHubWebhookSecret: secret,
+		GitHubReviewAgentID: agentID,
+		GitHubReviewRepos:   "acme/widgets",
+		// AgentTriggerToken intentionally empty.
+	}
+	baseURL, requests := startWebhookHTTPTest(t, cfg)
+	body := githubPayloadJSON("acme/widgets", "opened", 7)
+
+	if got := sendGitHubWebhook(t, baseURL, secret, "pull_request", body, ""); got != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+	assertNoMemoryRequest(t, requests)
+}
+
 // on: GitHub authenticates by HMAC, not by a session cookie.
 func TestWebhookGitHubIsPublicAuthPath(t *testing.T) {
 	if !publicAuthPath("/webhooks/github") {

@@ -30,7 +30,7 @@ func TestListDocuments(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	docs, cursor, err := m.ListDocuments(context.Background(), "abc123")
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestListDocumentsError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"upstream","message":"down"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, _, err := m.ListDocuments(context.Background(), ""); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -80,7 +80,7 @@ func TestGetDocument(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	doc, err := m.GetDocument(context.Background(), "d1")
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestDeleteDocument(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	if err := m.DeleteDocument(context.Background(), "d1"); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestDeleteDocumentError(t *testing.T) {
 		http.Error(w, `{"error":{"code":"not_found","message":"document d1 not found"}}`, http.StatusNotFound)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DeleteDocument(context.Background(), "d1"); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -146,7 +146,7 @@ func TestListChunks(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	chunks, err := m.ListChunks(context.Background(), "d1")
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestUploadDocument(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	res, err := m.UploadDocument(context.Background(), "hello.txt", strings.NewReader("hello world"))
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestUploadDocumentDuplicate(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	res, err := m.UploadDocument(context.Background(), "hello.txt", strings.NewReader("hello world"))
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +239,7 @@ func TestUploadDocumentError(t *testing.T) {
 		http.Error(w, `{"error":{"code":"validation-failed","message":"file is required"}}`, http.StatusBadRequest)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.UploadDocument(context.Background(), "x.txt", strings.NewReader("x")); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -257,7 +257,7 @@ func TestCreateExtractionJob(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	jobID, err := m.CreateExtractionJob(context.Background(), "d1")
 	if err != nil {
 		t.Fatal(err)

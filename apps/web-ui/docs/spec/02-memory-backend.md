@@ -67,15 +67,16 @@ Confirmed from source (2026-08) — these pin the design:
 
 Memory requires org → project → user scoping (every entity carries `project_id`).
 
-Memory uses one back-end `emt_*` token per deployment (one memory project by default; scopes:
-`agents:read/write`, `chat:use/admin`, `data:read`, `schema:read`, `projects:read`), project
-derived from the token. The gateway default is `AUTH_MODE=session` (public, Zitadel-
-authenticated; `dev` is an explicit local-only escape hatch). In `AUTH_MODE=session`, the
+Memory no longer uses one standing back-end `emt_*` token: interactive calls carry the
+signed-in user's session token (scopes `agents:read/write`, `chat:use`, `data:read`,
+`schema:read`, `projects:read`), voice workers get a short-lived per-room `chat:use` token,
+and the GitHub webhook uses the dedicated `AGENT_TRIGGER_TOKEN`. Project is derived from the
+token. The gateway default is `AUTH_MODE=session` (public, Zitadel-authenticated; `dev` is an
+explicit local-only escape hatch with no Memory credential). In `AUTH_MODE=session`, the
 gateway surfaces memory's org/project tenancy — `ListOrgs`/`ListProjects`/`CreateProject`
 proxy `GET /api/orgs`, `GET/POST /api/projects`, and the web UI shows an org-grouped project
-switcher; session-token requests carry `X-Project-ID`/`X-Org-ID` headers (the `emt_*` path
-stays header-free — the token is already project-bound). Clients never see the memory token
-— the Go app is the sole memory caller.
+switcher; session-token requests carry `X-Project-ID`/`X-Org-ID` headers. Clients never see
+the memory token — the Go app is the sole memory caller.
 
 ## Agent definition (memory's `AgentDefinition`)
 

@@ -41,8 +41,8 @@ func TestMemoryGetAgentRunDecodesSpans(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok123", "proj-1")
-	run, err := m.GetAgentRun(context.Background(), "run-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
+	run, err := m.GetAgentRun(sessCtx("tok123"), "run-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestMemoryGetAgentRunWithoutSpans(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	run, err := m.GetAgentRun(context.Background(), "run-1")
 	if err != nil {
 		t.Fatal(err)

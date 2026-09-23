@@ -534,22 +534,25 @@ func (s *Server) requireSession(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-// requireSessionOrKey gates the /api routes. In dev mode it behaves exactly
-// like requireClientKey (the programmatic path). In session mode it accepts a
-// valid session (refreshed when needed, credentials attached) OR a valid
-// X-API-Key, else 401.
+// requireSessionOrKey gates the /api routes. Session mode requires a valid
+// session (refreshed when needed, credentials attached). The former X-API-Key
+// fallback is gone: a device/admin key cannot mint a Memory credential, so
+// accepting one would only proxy an empty bearer upstream and surface a
+// confusing memory-side 401. Session-less access now fails closed with a 401
+// that names the removal instead.
 func (s *Server) requireSessionOrKey(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if s.cfg.AuthMode != "session" {
 			return s.requireClientKey(next)(c)
 		}
-		if claims, err := s.ensureFreshSession(c); err == nil {
-			s.attachSession(c, claims)
-			return next(c)
+		claims, err := s.ensureFreshSession(c)
+		if err != nil {
+			return c.JSON(http.StatusUnauthorized, map[string]string{
+				"error":   "session_required",
+				"message": "Session-less API-key/device authentication was removed; sign in with your Memory account (scoped per-device credentials: see issue #818)",
+			})
 		}
-		if !s.validAPIKeyValue(c) {
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		}
+		s.attachSession(c, claims)
 		return next(c)
 	}
 }

@@ -39,7 +39,7 @@ func TestListAPITokens(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "static-token", "static-proj")
+	m := NewMemoryClient(srv.URL, "static-proj")
 	tokens, err := m.ListAPITokens(apiTokenSessionCtx())
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestListAPITokensEmpty(t *testing.T) {
 		_, _ = io.WriteString(w, `{"tokens":[],"total":0}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tokens, err := m.ListAPITokens(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestCreateAPIToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	resp, err := m.CreateAPIToken(apiTokenSessionCtx(), "ci", []string{"data:read"})
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestCreateAPITokenValidation400(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"validation_error","message":"scopes must contain at least one scope"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	_, err := m.CreateAPIToken(context.Background(), "ci", nil)
 	if err == nil {
 		t.Fatal("want error, got nil")
@@ -145,7 +145,7 @@ func TestCreateAPITokenDuplicateName409(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"token_name_exists","message":"an API token named \"ci\" already exists"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	_, err := m.CreateAPIToken(context.Background(), "ci", []string{"data:read"})
 	if err == nil || !strings.Contains(err.Error(), "memory 409 token_name_exists") {
 		t.Fatalf("error = %v, want memory 409 token_name_exists", err)
@@ -159,7 +159,7 @@ func TestCreateAPITokenForbidden403(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"viewer-write-scope-denied","message":"project viewers may not create tokens with write scopes"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	_, err := m.CreateAPIToken(context.Background(), "ci", []string{"data:write"})
 	if err == nil || !strings.Contains(err.Error(), "memory 403 viewer-write-scope-denied") {
 		t.Fatalf("error = %v, want memory 403 viewer-write-scope-denied", err)
@@ -174,7 +174,7 @@ func TestGetAPIToken(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"t1","name":"ci","tokenPrefix":"emt_abc","scopes":["data:read"],"createdAt":"2026-09-01T10:00:00Z","isRevoked":false,"token":"emt_get_plaintext"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tok, err := m.GetAPIToken(apiTokenSessionCtx(), "t1")
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestUpdateAPITokenScopes(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"t1","name":"ci","tokenPrefix":"emt_abc","scopes":["data:read","data:write"],"createdAt":"2026-09-01T10:00:00Z","isRevoked":false}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tok, err := m.UpdateAPITokenScopes(apiTokenSessionCtx(), "t1", []string{"data:read", "data:write"})
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestRevokeAPIToken(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.RevokeAPIToken(apiTokenSessionCtx(), "t1"); err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestRegenerateAPIToken(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"t2","name":"ci","tokenPrefix":"emt_new","scopes":["data:read"],"createdAt":"2026-09-03T10:00:00Z","isRevoked":false,"token":"emt_new_plaintext"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	resp, err := m.RegenerateAPIToken(apiTokenSessionCtx(), "t1")
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func TestRegenerateAPITokenAlreadyRevoked409(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"token_already_revoked","message":"cannot regenerate a revoked token"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	_, err := m.RegenerateAPIToken(context.Background(), "t1")
 	if err == nil || !strings.Contains(err.Error(), "memory 409 token_already_revoked") {
 		t.Fatalf("error = %v, want memory 409 token_already_revoked", err)
@@ -273,7 +273,7 @@ func TestAPITokensUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
 	srv.Close()
-	m := NewMemoryClient(url, "tok", "proj")
+	m := NewMemoryClient(url, "proj")
 	if _, err := m.ListAPITokens(context.Background()); err == nil {
 		t.Error("ListAPITokens: want transport error, got nil")
 	}
@@ -311,8 +311,8 @@ func TestListAccountAPITokens(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "static-token", "static-proj")
-	tokens, err := m.ListAccountAPITokens(context.Background())
+	m := NewMemoryClient(srv.URL, "static-proj")
+	tokens, err := m.ListAccountAPITokens(sessCtx("static-token"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestListAccountAPITokensEmpty(t *testing.T) {
 		_, _ = io.WriteString(w, `{"tokens":[],"total":0}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tokens, err := m.ListAccountAPITokens(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -358,7 +358,7 @@ func TestCreateAccountAPIToken(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"a1","name":"acct","tokenPrefix":"emt_acct","scopes":["search"],"createdAt":"2026-09-01T10:00:00Z","isRevoked":false,"token":"emt_acct_plaintext"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	resp, err := m.CreateAccountAPIToken(context.Background(), "acct", []string{"search"})
 	if err != nil {
 		t.Fatal(err)
@@ -388,7 +388,7 @@ func TestCreateAccountAPITokenSessionBearer(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"a1","name":"acct","tokenPrefix":"emt_acct","scopes":["search"],"createdAt":"2026-09-01T10:00:00Z","token":"emt_x"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "static-token", "static-proj")
+	m := NewMemoryClient(srv.URL, "static-proj")
 	if _, err := m.CreateAccountAPIToken(apiTokenSessionCtx(), "acct", []string{"search"}); err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestCreateAccountAPITokenDuplicate409(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"token_name_exists","message":"duplicate"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	_, err := m.CreateAccountAPIToken(context.Background(), "acct", []string{"search"})
 	if err == nil || !strings.Contains(err.Error(), "memory 409 token_name_exists") {
 		t.Fatalf("error = %v", err)
@@ -419,7 +419,7 @@ func TestGetAccountAPIToken(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"a1","name":"acct","tokenPrefix":"emt_a","scopes":["search"],"createdAt":"2026-09-01T10:00:00Z","isRevoked":false,"token":"emt_getacct_plaintext"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tok, err := m.GetAccountAPIToken(context.Background(), "a1")
 	if err != nil {
 		t.Fatal(err)
@@ -442,7 +442,7 @@ func TestUpdateAccountAPITokenScopes(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"a1","name":"acct","tokenPrefix":"emt_a","scopes":["search","graph:read"],"createdAt":"2026-09-01T10:00:00Z"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tok, err := m.UpdateAccountAPITokenScopes(context.Background(), "a1", []string{"search", "graph:read"})
 	if err != nil {
 		t.Fatal(err)
@@ -465,7 +465,7 @@ func TestRevokeAccountAPIToken(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.RevokeAccountAPIToken(context.Background(), "a1"); err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func TestRegenerateAccountAPIToken(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"a2","name":"acct","tokenPrefix":"emt_b","scopes":["search"],"createdAt":"2026-09-03T10:00:00Z","token":"emt_new"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	resp, err := m.RegenerateAccountAPIToken(context.Background(), "a1")
 	if err != nil {
 		t.Fatal(err)
@@ -504,7 +504,7 @@ func TestAccountAPITokensForbidden403(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"admin-all-scope-denied","message":"only org admins may hold admin:all"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	_, err := m.CreateAccountAPIToken(context.Background(), "acct", []string{"admin:all"})
 	if err == nil || !strings.Contains(err.Error(), "memory 403 admin-all-scope-denied") {
 		t.Fatalf("error = %v", err)
@@ -515,7 +515,7 @@ func TestAccountAPITokensUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
 	srv.Close()
-	m := NewMemoryClient(url, "tok", "proj")
+	m := NewMemoryClient(url, "proj")
 	if _, err := m.ListAccountAPITokens(context.Background()); err == nil {
 		t.Error("ListAccountAPITokens: want transport error, got nil")
 	}

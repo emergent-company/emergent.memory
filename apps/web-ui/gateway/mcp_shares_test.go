@@ -74,8 +74,8 @@ func TestMemoryClientListMCPShareInstances(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	m := NewMemoryClient(ts.URL, "tok", "proj-1")
-	shares, err := m.ListMCPShareInstances(t.Context())
+	m := NewMemoryClient(ts.URL, "proj-1")
+	shares, err := m.ListMCPShareInstances(withSessionContext(t.Context(), &sessionContext{Token: "tok", ProjectID: "proj-1"}))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestMemoryClientMCPShareDecodeTolerance(t *testing.T) {
 				_, _ = io.WriteString(w, body)
 			}))
 			defer ts.Close()
-			m := NewMemoryClient(ts.URL, "tok", "proj-1")
+			m := NewMemoryClient(ts.URL, "proj-1")
 			shares, err := m.ListMCPShareInstances(t.Context())
 			if err != nil {
 				t.Fatalf("list: %v", err)
@@ -245,7 +245,7 @@ func TestMemoryClientCreateMCPShareInstance(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	m := NewMemoryClient(ts.URL, "tok", "proj-1")
+	m := NewMemoryClient(ts.URL, "proj-1")
 	created, err := m.CreateMCPShareInstance(t.Context(), &MCPShareInput{
 		Name: "alpha", Description: "d", Tools: []string{"a", "b"},
 	})
@@ -279,7 +279,7 @@ func TestMemoryClientCreateMCPShareNestedInstance(t *testing.T) {
 		_, _ = io.WriteString(w, `{"instance":{"id":"s9","name":"alpha"},"token":"emt_secret","mcpUrl":"https://mem.example/mcp"}`)
 	}))
 	defer ts.Close()
-	m := NewMemoryClient(ts.URL, "tok", "proj-1")
+	m := NewMemoryClient(ts.URL, "proj-1")
 	created, err := m.CreateMCPShareInstance(t.Context(), &MCPShareInput{Name: "alpha", Tools: []string{"a"}})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -305,7 +305,7 @@ func TestMemoryClientMCPSharePaths(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	m := NewMemoryClient(ts.URL, "tok", "proj-1")
+	m := NewMemoryClient(ts.URL, "proj-1")
 	ctx := t.Context()
 	if _, err := m.GetMCPShareInstance(ctx, "s1"); err != nil {
 		t.Fatalf("get: %v", err)
@@ -346,7 +346,7 @@ func TestMemoryClientListMCPShareTools(t *testing.T) {
 		_, _ = io.WriteString(w, `{"success":true,"data":[{"name":"search_memory","description":"d","requiredScope":"memory:read","category":"Memory"}]}`)
 	}))
 	defer ts.Close()
-	m := NewMemoryClient(ts.URL, "tok", "proj-1")
+	m := NewMemoryClient(ts.URL, "proj-1")
 	tools, err := m.ListMCPShareTools(t.Context())
 	if err != nil {
 		t.Fatalf("tools: %v", err)
@@ -363,7 +363,7 @@ func TestMemoryClientListMCPShareInstancesError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"conflict","message":"name taken"}}`)
 	}))
 	defer ts.Close()
-	m := NewMemoryClient(ts.URL, "tok", "proj-1")
+	m := NewMemoryClient(ts.URL, "proj-1")
 	if _, err := m.ListMCPShareInstances(t.Context()); err == nil {
 		t.Fatal("expected an error for a 409 response")
 	}

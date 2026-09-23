@@ -31,7 +31,7 @@ func TestGetProjectUsageSummary(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	until := time.Date(2026, 9, 30, 23, 59, 59, 0, time.UTC)
 	got, err := m.GetProjectUsageSummary(context.Background(), since, until)
@@ -70,7 +70,7 @@ func TestGetProjectUsageSummaryOmitsZeroBounds(t *testing.T) {
 		_, _ = io.WriteString(w, `{"note":"","data":[]}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.GetProjectUsageSummary(context.Background(), time.Time{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestGetProjectUsageTimeSeries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	until := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
 	got, err := m.GetProjectUsageTimeSeries(context.Background(), "day", since, until)
