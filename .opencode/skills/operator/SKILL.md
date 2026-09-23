@@ -60,8 +60,9 @@ Run this loop per task:
    (`git rev-list --count origin/main..HEAD` stays `> 0`; `git branch --merged
    origin/main` omits it), and an ancestry-based cleanup **silently removes nothing**
    (`removed=0 kept=34`) while looking like a no-op, not a bug. Get the merged set from
-   `gh pr list --repo <owner>/<repo> --state merged --limit 300 --json headRefName
-   --jq '.[].headRefName' | sort -u`, then `git worktree remove <path>` +
+   `gh pr list --repo <owner>/<repo> --state merged --limit 1000 --json headRefName
+   --jq '.[].headRefName' | sort -u` (limit must exceed the repo's merged-PR count — it
+   truncates silently; this repo already has 400+), then `git worktree remove <path>` +
    `git worktree prune` + delete the branch. Leave dirty / unmerged / detached
    worktrees alone.
 10. **Reconcile** — confirm merged SHA, close the issue, report the board.
