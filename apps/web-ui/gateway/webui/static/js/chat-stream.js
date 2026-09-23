@@ -235,6 +235,13 @@
 
   function createEngine(ctx) {
 
+    // Set by failStream when a turn ends in failure (an SSE `error` frame or a
+    // transport error). The read loop must respect it: after failStream has
+    // shown the error, a post-EOF finishStream("done") would run the success
+    // finalization, wiping the error and releasing the partial turn as if the
+    // turn had completed.
+    var streamFailed = false;
+
     /* the selected agent's declared appearance, or null (bot fallback) */
     function currentAgentUI() {
       return (ctx.currentAgentUI && ctx.currentAgentUI()) || null;
@@ -856,6 +863,7 @@
 
     async function streamChat(agent, text) {
       ctx.onStreamStart(); // chat: clearThinking; sidepanel: no-op
+      streamFailed = false;
       ctx.aborter = new AbortController();
       var payload = { agentDefinitionId: agent, message: text };
       if (ctx.conversationId) payload.conversationId = ctx.conversationId;
@@ -905,6 +913,11 @@
         failStream("Stream interrupted: " + err.message);
         return;
       }
+      // An `error` frame (e.g. the gateway's interrupted-stream error) already
+      // ran failStream and set the failure state. Do not follow it with the
+      // success finalization: finishStream("done") would updateBubbleText away
+      // the error and refresh the transcript as a completed turn.
+      if (streamFailed) return;
       finishStream("done");
     }
 
@@ -927,6 +940,7 @@
     }
 
     function failStream(message) {
+      streamFailed = true;
       ctx.streaming = false;
       ctx.onStreamFail(); // chat: finalizeThinking; sidepanel: no-op
       updateBubbleText();
