@@ -27,10 +27,7 @@ func newPricingHandler(t *testing.T) (*provider.Handler, *testutil.TestDB) {
 	}
 
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "listpricinghandler")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "listpricinghandler")
 
 	repo := provider.NewRepository(testDB.GetDB(), slog.Default())
 	credSvc := provider.NewCredentialService(repo, provider.NewRegistry(), nil, &config.Config{}, slog.Default())

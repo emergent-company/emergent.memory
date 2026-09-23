@@ -112,6 +112,73 @@ func TestGraphListObjectsWithOptions(t *testing.T) {
 	}
 }
 
+// TestGraphListObjectsSkipTotal pins the SDK wiring for the #733 opt-out:
+// SkipTotal must send include_total=false, and the server's omitted `total`
+// must decode as the documented 0 without error.
+func TestGraphListObjectsSkipTotal(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("GET", "/api/graph/objects/search", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("include_total"); got != "false" {
+			t.Errorf("expected include_total=false, got %q", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// The server omits `total` entirely when include_total=false.
+		testutil.JSONResponse(t, w, map[string]interface{}{
+			"items": []map[string]interface{}{},
+		})
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	result, err := client.Graph.ListObjects(context.Background(), &graph.ListObjectsOptions{
+		SkipTotal: true,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("ListObjects() error = %v", err)
+	}
+
+	if result.Total != 0 {
+		t.Errorf("expected total 0 when the server omits it, got %d", result.Total)
+	}
+}
+
+// TestGraphListObjectsDefaultOmitsIncludeTotal proves the default request does
+// not send include_total, so existing callers keep the exact-total behaviour.
+func TestGraphListObjectsDefaultOmitsIncludeTotal(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("GET", "/api/graph/objects/search", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.URL.Query()["include_total"]; ok {
+			t.Errorf("expected no include_total param by default, got %v", r.URL.Query()["include_total"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		testutil.JSONResponse(t, w, map[string]interface{}{
+			"items": []map[string]interface{}{},
+			"total": 0,
+		})
+	})
+
+	client, _ := sdk.New(sdk.Config{
+		ServerURL: mock.URL,
+		Auth:      sdk.AuthConfig{Mode: "apikey", APIKey: "test_key"},
+	})
+
+	if _, err := client.Graph.ListObjects(context.Background(), &graph.ListObjectsOptions{Limit: 5}); err != nil {
+		t.Fatalf("ListObjects() error = %v", err)
+	}
+}
+
 func TestGraphGetObject(t *testing.T) {
 	mock := testutil.NewMockServer(t)
 	defer mock.Close()

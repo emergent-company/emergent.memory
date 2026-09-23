@@ -31,10 +31,7 @@ func setupRollbackTest(t *testing.T) (context.Context, *schemas.Repository, bun.
 		t.Skip("skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "restorereg")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "restorereg")
 	t.Cleanup(testDB.Close)
 
 	db := testDB.GetDB()

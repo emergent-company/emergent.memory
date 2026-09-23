@@ -209,12 +209,16 @@ func (h *EmbeddingControlHandler) Config(c echo.Context) error {
 }
 
 // EmbeddingQueueStats describes job queue stats for a single queue.
+// Failed counts only genuine failures; StaleFailed counts terminal rows left by
+// the stale-job sweep (jobs.StaleJobMessage), which are historical cleanup
+// artifacts rather than current breakage.
 type EmbeddingQueueStats struct {
-	Pending    int64 `json:"pending"`
-	Processing int64 `json:"processing"`
-	Completed  int64 `json:"completed"`
-	Failed     int64 `json:"failed"`
-	DeadLetter int64 `json:"deadLetter"`
+	Pending     int64 `json:"pending"`
+	Processing  int64 `json:"processing"`
+	Completed   int64 `json:"completed"`
+	Failed      int64 `json:"failed"`
+	StaleFailed int64 `json:"staleFailed"`
+	DeadLetter  int64 `json:"deadLetter"`
 }
 
 // EmbeddingProgressResponse is the response for GET /api/embeddings/progress.
@@ -240,18 +244,20 @@ func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, EmbeddingProgressResponse{
 		Objects: EmbeddingQueueStats{
-			Pending:    objStats.Pending,
-			Processing: objStats.Processing,
-			Completed:  objStats.Completed,
-			Failed:     objStats.Failed,
-			DeadLetter: objStats.DeadLetter,
+			Pending:     objStats.Pending,
+			Processing:  objStats.Processing,
+			Completed:   objStats.Completed,
+			Failed:      objStats.Failed,
+			StaleFailed: objStats.StaleFailed,
+			DeadLetter:  objStats.DeadLetter,
 		},
 		Relationships: EmbeddingQueueStats{
-			Pending:    relStats.Pending,
-			Processing: relStats.Processing,
-			Completed:  relStats.Completed,
-			Failed:     relStats.Failed,
-			DeadLetter: relStats.DeadLetter,
+			Pending:     relStats.Pending,
+			Processing:  relStats.Processing,
+			Completed:   relStats.Completed,
+			Failed:      relStats.Failed,
+			StaleFailed: relStats.StaleFailed,
+			DeadLetter:  relStats.DeadLetter,
 		},
 	})
 }

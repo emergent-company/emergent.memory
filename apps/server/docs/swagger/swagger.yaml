@@ -2519,6 +2519,8 @@ definitions:
         type: integer
       processing:
         type: integer
+      staleFailed:
+        type: integer
     type: object
   domain_extraction.GraphEmbeddingQueueStats:
     properties:
@@ -2531,6 +2533,8 @@ definitions:
       pending:
         type: integer
       processing:
+        type: integer
+      staleFailed:
         type: integer
     type: object
   domain_extraction.ProjectEmbeddingCancelResponse:
@@ -3382,6 +3386,8 @@ definitions:
         type: string
       label:
         type: string
+      namespace:
+        type: string
       project_id:
         type: string
       properties:
@@ -3879,6 +3885,8 @@ definitions:
         type: integer
       queue:
         type: string
+      stale_failed:
+        type: integer
       total:
         type: integer
     type: object
@@ -5432,6 +5440,13 @@ definitions:
         type: integer
       totalVideo:
         type: integer
+    type: object
+  domain_provider.testProjectProviderRequest:
+    properties:
+      model:
+        type: string
+      modelType:
+        type: string
     type: object
   domain_sandbox.AttachSessionRequest:
     properties:
@@ -7557,6 +7572,8 @@ definitions:
         type: integer
       retryPending:
         type: integer
+      staleFailed:
+        type: integer
       total:
         type: integer
       totalFileSizeBytes:
@@ -7615,6 +7632,8 @@ definitions:
         type: integer
       chunkPending:
         type: integer
+      chunkStaleFailed:
+        type: integer
       chunkTotal:
         type: integer
       chunkWithErrors:
@@ -7626,6 +7645,8 @@ definitions:
       graphFailed:
         type: integer
       graphPending:
+        type: integer
+      graphStaleFailed:
         type: integer
       graphTotal:
         type: integer
@@ -7688,6 +7709,8 @@ definitions:
       processing:
         type: integer
       queued:
+        type: integer
+      staleFailed:
         type: integer
       total:
         type: integer
@@ -12157,6 +12180,12 @@ paths:
         in: query
         name: fields
         type: string
+      - description: 'Set to false to skip the exact total count and omit the ''total''
+          field (default: true). The count is the latency floor for very large projects;
+          cursor-only callers should opt out.'
+        in: query
+        name: include_total
+        type: boolean
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -21390,6 +21419,11 @@ paths:
         name: provider
         required: true
         type: string
+      - description: Optional model override
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/domain_provider.testProjectProviderRequest'
       responses:
         "200":
           description: OK

@@ -9,6 +9,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // BaseSuite provides common test infrastructure with automatic fixture setup.
@@ -82,7 +83,12 @@ func (s *BaseSuite) SetupSuite() {
 
 		// Create isolated test database
 		testDB, err := SetupTestDB(s.Ctx, suffix)
-		s.Require().NoError(err, "Failed to setup test database")
+		if err != nil {
+			// Preserve the repo-wide database-required contract (#783): a
+			// missing/unreachable database skips locally but fails the suite
+			// when REQUIRE_DB is set (CI's DB-backed job).
+			testdb.SkipOrFatal(s.T(), testdb.UnavailableMsg, err)
+		}
 		s.TestDB = testDB
 
 		// Create test server with base DB (will be rebuilt per-test with transaction)

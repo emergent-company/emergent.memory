@@ -5421,6 +5421,12 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "boolean",
+                        "description": "Set to false to skip the exact total count and omit the 'total' field (default: true). The count is the latency floor for very large projects; cursor-only callers should opt out.",
+                        "name": "include_total",
+                        "in": "query"
+                    },
+                    {
                         "type": "string",
                         "description": "Project ID",
                         "name": "X-Project-ID",
@@ -19999,6 +20005,14 @@ const docTemplate = `{
                         "name": "provider",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Optional model override",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_provider.testProjectProviderRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -24105,6 +24119,9 @@ const docTemplate = `{
                 },
                 "processing": {
                     "type": "integer"
+                },
+                "staleFailed": {
+                    "type": "integer"
                 }
             }
         },
@@ -24124,6 +24141,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "processing": {
+                    "type": "integer"
+                },
+                "staleFailed": {
                     "type": "integer"
                 }
             }
@@ -25327,6 +25347,9 @@ const docTemplate = `{
                 "label": {
                     "type": "string"
                 },
+                "namespace": {
+                    "type": "string"
+                },
                 "project_id": {
                     "type": "string"
                 },
@@ -26053,6 +26076,9 @@ const docTemplate = `{
                 },
                 "queue": {
                     "type": "string"
+                },
+                "stale_failed": {
+                    "type": "integer"
                 },
                 "total": {
                     "type": "integer"
@@ -28355,6 +28381,17 @@ const docTemplate = `{
                 },
                 "totalVideo": {
                     "type": "integer"
+                }
+            }
+        },
+        "domain_provider.testProjectProviderRequest": {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "type": "string"
+                },
+                "modelType": {
+                    "type": "string"
                 }
             }
         },
@@ -31476,6 +31513,9 @@ const docTemplate = `{
                 "retryPending": {
                     "type": "integer"
                 },
+                "staleFailed": {
+                    "type": "integer"
+                },
                 "total": {
                     "type": "integer"
                 },
@@ -31564,6 +31604,9 @@ const docTemplate = `{
                 "chunkPending": {
                     "type": "integer"
                 },
+                "chunkStaleFailed": {
+                    "type": "integer"
+                },
                 "chunkTotal": {
                     "type": "integer"
                 },
@@ -31580,6 +31623,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "graphPending": {
+                    "type": "integer"
+                },
+                "graphStaleFailed": {
                     "type": "integer"
                 },
                 "graphTotal": {
@@ -31674,6 +31720,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "queued": {
+                    "type": "integer"
+                },
+                "staleFailed": {
                     "type": "integer"
                 },
                 "total": {

@@ -30,10 +30,7 @@ func setupArchiveListTest(t *testing.T) (context.Context, bun.IDB, string, *conf
 		t.Skip("skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "archiveproj")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "archiveproj")
 	t.Cleanup(testDB.Close)
 
 	db := testDB.GetDB()

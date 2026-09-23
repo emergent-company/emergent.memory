@@ -105,6 +105,7 @@ templ queueStatsSection(title string, s EmbeddingQueueStats) {
 			{Label: "Processing", Value: strconv.FormatInt(s.Processing, 10), Icon: "lucide--loader-circle", IconColor: "bg-primary/10 text-primary"},
 			{Label: "Completed", Value: strconv.FormatInt(s.Completed, 10), Icon: "lucide--check", IconColor: "bg-success/10 text-success"},
 			{Label: "Failed", Value: strconv.FormatInt(s.Failed, 10), Icon: "lucide--x", IconColor: "bg-error/10 text-error"},
+			{Label: "Stale failed", Value: strconv.FormatInt(s.StaleFailed, 10), Icon: "lucide--history", IconColor: "bg-base-200/60 text-base-content"},
 			{Label: "Dead letter", Value: strconv.FormatInt(s.DeadLetter, 10), Icon: "lucide--mail-warning", IconColor: "bg-warning/10 text-warning"},
 		}, "")
 	}

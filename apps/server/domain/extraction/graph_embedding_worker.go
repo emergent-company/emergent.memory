@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -28,12 +29,30 @@ type EmbeddingService interface {
 	EmbedQueryWithUsage(ctx context.Context, query string) (*vertex.EmbedResult, error)
 }
 
+// batchEmbeddingService is implemented by embedding services that can embed
+// several documents in one request. *embeddings.Service satisfies it. A worker
+// wired with a single-object-only service falls back to one request per job.
+type batchEmbeddingService interface {
+	EmbedDocumentsWithUsage(ctx context.Context, documents []string) (*vertex.BatchEmbedResult, error)
+}
+
+// defaultEmbeddingRequestBatchSize is the number of objects sent in one
+// multi-object embedding request when
+// GraphEmbeddingConfig.EmbeddingRequestBatchSize is unset. It matches the
+// embedding clients' own per-request split point (vertex.DefaultBatchSize), so
+// a chunk of this size becomes a single HTTP request.
+const defaultEmbeddingRequestBatchSize = 100
+
 // GraphEmbeddingWorker processes graph embedding jobs from the queue.
 // Worker pattern:
-// - Polling-based with configurable interval
-// - Graceful shutdown waiting for current batch
-// - Stale job recovery on startup
-// - Metrics tracking
+//   - Polling-based with configurable interval
+//   - Batch admission is decoupled from per-job completion: the poll loop claims
+//     only as many jobs as there is free in-flight capacity and dispatches them
+//     asynchronously, so a slow request can never gate the whole batch.
+//   - Multi-object embedding requests, grouped per project
+//   - Graceful shutdown draining in-flight jobs
+//   - Stale job recovery on startup
+//   - Metrics tracking
 type GraphEmbeddingWorker struct {
 	jobs      *GraphEmbeddingJobsService
 	embeds    EmbeddingService
@@ -47,6 +66,14 @@ type GraphEmbeddingWorker struct {
 	paused    bool
 	mu        sync.Mutex
 	wg        sync.WaitGroup
+
+	// jobsWg tracks in-flight chunk goroutines so Stop can drain them;
+	// inFlight counts the jobs they hold, bounding batch admission.
+	jobsWg   sync.WaitGroup
+	inFlight atomic.Int64
+	// wakeCh nudges the poll loop when a chunk frees capacity, so the next
+	// tranche is claimed immediately instead of waiting for the next tick.
+	wakeCh chan struct{}
 
 	// Usage tracking & budget enforcement
 	usage                    EmbeddingUsageRecorder
@@ -105,6 +132,7 @@ func (w *GraphEmbeddingWorker) Start(ctx context.Context) error {
 	w.running = true
 	w.stopCh = make(chan struct{})
 	w.stoppedCh = make(chan struct{})
+	w.wakeCh = make(chan struct{}, 1)
 	w.mu.Unlock()
 
 	// Recover stale jobs on startup
@@ -112,7 +140,8 @@ func (w *GraphEmbeddingWorker) Start(ctx context.Context) error {
 
 	w.log.Info("graph embedding worker starting",
 		slog.Duration("poll_interval", w.cfg.WorkerInterval()),
-		slog.Int("batch_size", w.cfg.WorkerBatchSize))
+		slog.Int("batch_size", w.cfg.WorkerBatchSize),
+		slog.Int("request_batch_size", w.requestBatchSize()))
 
 	w.wg.Add(1)
 	go w.run(ctx)
@@ -120,7 +149,8 @@ func (w *GraphEmbeddingWorker) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully stops the worker, waiting for current batch to complete
+// Stop gracefully stops the worker, then drains in-flight jobs so shutdown
+// does not abandon jobs that were already claimed ('processing').
 func (w *GraphEmbeddingWorker) Stop(ctx context.Context) error {
 	w.mu.Lock()
 	if !w.running {
@@ -133,12 +163,27 @@ func (w *GraphEmbeddingWorker) Stop(ctx context.Context) error {
 
 	w.log.Debug("waiting for graph embedding worker to stop...")
 
-	// Wait for worker to stop or context to be cancelled
+	// Wait for the poll loop to stop or context to be cancelled
 	select {
 	case <-w.stoppedCh:
 		w.log.Info("graph embedding worker stopped gracefully")
 	case <-ctx.Done():
 		w.log.Warn("graph embedding worker stop timeout, forcing shutdown")
+		return nil
+	}
+
+	// The poll loop no longer waits for a whole batch, so drain the chunk
+	// goroutines that are still holding claimed jobs.
+	drained := make(chan struct{})
+	go func() {
+		w.jobsWg.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		w.log.Info("graph embedding worker drained in-flight jobs")
+	case <-ctx.Done():
+		w.log.Warn("graph embedding worker drain timeout, forcing shutdown")
 	}
 
 	return nil
@@ -176,11 +221,76 @@ func (w *GraphEmbeddingWorker) run(ctx context.Context) {
 			if err := w.processBatch(ctx); err != nil {
 				w.log.Warn("process batch failed", slog.String("error", err.Error()))
 			}
+		case <-w.wakeCh:
+			// Capacity freed up mid-interval; claim the next tranche now.
+			if err := w.processBatch(ctx); err != nil {
+				w.log.Warn("process batch failed", slog.String("error", err.Error()))
+			}
 		}
 	}
 }
 
-// processBatch processes a batch of graph embedding jobs
+// concurrency returns the effective number of jobs that may be in flight.
+func (w *GraphEmbeddingWorker) concurrency() int {
+	concurrency := w.cfg.WorkerConcurrency
+	if w.scaler != nil {
+		concurrency = w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
+	}
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+	return concurrency
+}
+
+// requestBatchSize returns the effective number of objects per embedding
+// request. A non-positive configuration disables multi-object requests.
+func (w *GraphEmbeddingWorker) requestBatchSize() int {
+	size := w.cfg.EmbeddingRequestBatchSize
+	if size == 0 {
+		return defaultEmbeddingRequestBatchSize
+	}
+	return size
+}
+
+// chunkSize returns how many jobs to group into one work chunk. Chunks are
+// embedded with a single multi-object request only when the embedding service
+// supports it; otherwise each job gets its own chunk so jobs never serialize
+// behind one another.
+func (w *GraphEmbeddingWorker) chunkSize() int {
+	if _, ok := w.embeds.(batchEmbeddingService); !ok {
+		return 1
+	}
+	size := w.requestBatchSize()
+	if size <= 0 {
+		return 1
+	}
+	return size
+}
+
+// chunkJobs splits jobs into consecutive slices of at most size. size <= 0 or
+// size >= len(jobs) yields a single chunk.
+func chunkJobs(jobs []*GraphEmbeddingJob, size int) [][]*GraphEmbeddingJob {
+	if len(jobs) == 0 {
+		return nil
+	}
+	if size <= 0 || size >= len(jobs) {
+		return [][]*GraphEmbeddingJob{jobs}
+	}
+	chunks := make([][]*GraphEmbeddingJob, 0, (len(jobs)+size-1)/size)
+	for i := 0; i < len(jobs); i += size {
+		end := i + size
+		if end > len(jobs) {
+			end = len(jobs)
+		}
+		chunks = append(chunks, jobs[i:end])
+	}
+	return chunks
+}
+
+// processBatch claims jobs for the free in-flight capacity and dispatches them
+// asynchronously. It never waits for the claimed jobs to finish: a slow
+// embedding request holds only its own chunk's slots, so it cannot gate the
+// rest of the queue. The next tranche is claimed as capacity frees up.
 func (w *GraphEmbeddingWorker) processBatch(ctx context.Context) error {
 	// Check if we should stop
 	select {
@@ -199,39 +309,311 @@ func (w *GraphEmbeddingWorker) processBatch(ctx context.Context) error {
 		return nil
 	}
 
-	jobs, err := w.jobs.Dequeue(ctx, w.cfg.WorkerBatchSize)
+	free := int64(w.concurrency()) - w.inFlight.Load()
+	if free <= 0 {
+		return nil
+	}
+
+	claim := w.cfg.WorkerBatchSize
+	if claim <= 0 || int64(claim) > free {
+		claim = int(free)
+	}
+	if claim <= 0 {
+		return nil
+	}
+
+	jobs, err := w.jobs.Dequeue(ctx, claim)
 	if err != nil {
 		return err
 	}
-
 	if len(jobs) == 0 {
 		return nil
 	}
 
-	concurrency := w.cfg.WorkerConcurrency
-	if w.scaler != nil {
-		concurrency = w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
+	// Reserve capacity before spawning so admission never overshoots the
+	// concurrency budget.
+	w.inFlight.Add(int64(len(jobs)))
+
+	for _, chunk := range chunkJobs(jobs, w.chunkSize()) {
+		w.jobsWg.Add(1)
+		go w.processChunk(ctx, chunk)
 	}
-	if concurrency <= 0 {
-		concurrency = 10
+
+	return nil
+}
+
+// processChunk embeds one chunk of jobs and completes/fails each job
+// independently. It must always release the reserved capacity.
+func (w *GraphEmbeddingWorker) processChunk(ctx context.Context, jobs []*GraphEmbeddingJob) {
+	defer w.jobsWg.Done()
+	defer func() {
+		w.inFlight.Add(-int64(len(jobs)))
+		if w.wakeCh != nil {
+			select {
+			case w.wakeCh <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
+	// A single job keeps the original per-job path (also the fallback when the
+	// embedding service has no multi-object method).
+	if len(jobs) == 1 {
+		if err := w.processJob(ctx, jobs[0]); err != nil {
+			w.log.Warn("process job failed",
+				slog.String("job_id", jobs[0].ID),
+				slog.String("error", err.Error()))
+		}
+		return
 	}
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for _, job := range jobs {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(j *GraphEmbeddingJob) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			if err := w.processJob(ctx, j); err != nil {
+
+	objects, err := w.fetchObjects(ctx, jobs)
+	if err != nil {
+		w.log.Warn("failed to fetch objects for embedding chunk",
+			slog.Int("jobs", len(jobs)),
+			slog.String("error", err.Error()))
+		for _, j := range jobs {
+			w.markJobFailed(ctx, j, err)
+		}
+		return
+	}
+
+	// Group by project: embedding credentials and budgets are per project.
+	groups := make(map[string][]*embeddingWorkItem, 4)
+	for _, j := range jobs {
+		obj, ok := objects[j.ObjectID]
+		if !ok {
+			w.dropMissingObjectJob(ctx, j)
+			continue
+		}
+		groups[obj.ProjectID] = append(groups[obj.ProjectID], &embeddingWorkItem{job: j, obj: obj})
+	}
+
+	for projectID, items := range groups {
+		w.processProjectGroup(ctx, projectID, items)
+	}
+}
+
+// embeddingWorkItem pairs a claimed job with the graph object it embeds.
+type embeddingWorkItem struct {
+	job *GraphEmbeddingJob
+	obj *graphObjectRow
+}
+
+// fetchObjects loads every object referenced by jobs in one query.
+func (w *GraphEmbeddingWorker) fetchObjects(ctx context.Context, jobs []*GraphEmbeddingJob) (map[string]*graphObjectRow, error) {
+	ids := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		ids = append(ids, j.ObjectID)
+	}
+
+	var rows []graphObjectRow
+	err := w.db.NewSelect().
+		TableExpr("kb.graph_objects").
+		Column("id", "type", "key", "properties", "project_id").
+		Where("id IN (?)", bun.In(ids)).
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("fetch embedding objects: %w", err)
+	}
+
+	objects := make(map[string]*graphObjectRow, len(rows))
+	for i := range rows {
+		objects[rows[i].ID] = &rows[i]
+	}
+	return objects, nil
+}
+
+// processProjectGroup embeds a project's objects with a single multi-object
+// request and completes each job independently. Errors fail only the jobs in
+// this group; other groups are unaffected.
+func (w *GraphEmbeddingWorker) processProjectGroup(ctx context.Context, projectID string, items []*embeddingWorkItem) {
+	gctx := ctx
+	if projectID != "" {
+		gctx = auth.ContextWithProjectID(ctx, projectID)
+	}
+
+	// Budget pre-flight check — one check per project group.
+	if w.budget != nil && projectID != "" {
+		exceeded, err := w.budget.CheckBudgetExceeded(gctx, projectID)
+		if err != nil {
+			// Fail-open: log warning but proceed so a broken budget query never halts embeddings.
+			w.log.Warn("embedding budget check failed, proceeding",
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()),
+			)
+		} else if exceeded && w.budgetEnforcementEnabled {
+			for _, it := range items {
+				w.log.Warn("graph embedding skipped: project budget exceeded, rescheduling",
+					slog.String("job_id", it.job.ID),
+					slog.String("project_id", projectID),
+				)
+				// Reschedule with a 5-minute delay without incrementing attempt count
+				if _, reschedErr := w.db.NewRaw(`UPDATE kb.graph_embedding_jobs
+					SET status = 'pending',
+						last_error = 'budget_exceeded',
+						scheduled_at = now() + interval '5 minutes',
+						updated_at = now()
+					WHERE id = ?`, it.job.ID).Exec(gctx); reschedErr != nil {
+					w.log.Error("failed to reschedule budget-exceeded job",
+						slog.String("job_id", it.job.ID),
+						slog.String("error", reschedErr.Error()))
+				}
+			}
+			return
+		}
+	}
+
+	texts := make([]string, len(items))
+	for i, it := range items {
+		texts[i] = w.extractText(it.obj)
+	}
+
+	batcher, ok := w.embeds.(batchEmbeddingService)
+	if !ok {
+		// Should not happen (chunkSize() == 1 for single-object services), but
+		// keep the fallback correct rather than embedding the wrong text.
+		for _, it := range items {
+			if err := w.processJob(gctx, it.job); err != nil {
 				w.log.Warn("process job failed",
-					slog.String("job_id", j.ID),
+					slog.String("job_id", it.job.ID),
 					slog.String("error", err.Error()))
 			}
-		}(job)
+		}
+		return
 	}
-	wg.Wait()
 
+	batchCtx, span := tracing.Start(gctx, "extraction.graph_embedding.batch",
+		attribute.String("memory.project.id", projectID),
+		attribute.Int("memory.embedding.batch_size", len(texts)),
+	)
+	defer span.End()
+
+	embeddingStartTime := time.Now()
+	result, err := batcher.EmbedDocumentsWithUsage(batchCtx, texts)
+	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
+
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		for _, it := range items {
+			w.markJobFailed(batchCtx, it.job, fmt.Errorf("generate embedding: %w", err))
+		}
+		return
+	}
+	if result == nil || len(result.Embeddings) != len(texts) {
+		batchErr := fmt.Errorf("embedding batch returned %d vectors for %d documents", embeddingVectorCount(result), len(texts))
+		span.RecordError(batchErr)
+		span.SetStatus(codes.Error, batchErr.Error())
+		for _, it := range items {
+			w.markJobFailed(batchCtx, it.job, batchErr)
+		}
+		return
+	}
+
+	span.SetAttributes(attribute.Int64("memory.embedding.duration_ms", embeddingDurationMs))
+	span.SetStatus(codes.Ok, "")
+
+	// One usage event per project group: the batch API reports aggregate tokens.
+	if w.usage != nil && projectID != "" {
+		orgID := w.orgCache.resolve(batchCtx, projectID)
+		recordEmbeddingUsage(w.usage, projectID, orgID, &vertex.EmbedResult{
+			Usage:    result.Usage,
+			Model:    result.Model,
+			Provider: result.Provider,
+		})
+	}
+
+	for i, it := range items {
+		if err := w.storeEmbedding(batchCtx, it, result.Embeddings[i], embeddingDurationMs); err != nil {
+			w.log.Warn("store embedding failed",
+				slog.String("job_id", it.job.ID),
+				slog.String("error", err.Error()))
+		}
+	}
+}
+
+// embeddingVectorCount is a nil-safe length helper.
+func embeddingVectorCount(result *vertex.BatchEmbedResult) int {
+	if result == nil {
+		return 0
+	}
+	return len(result.Embeddings)
+}
+
+// dropMissingObjectJob removes a job whose object no longer exists, matching
+// the per-job path: the job is deleted rather than retried.
+func (w *GraphEmbeddingWorker) dropMissingObjectJob(ctx context.Context, job *GraphEmbeddingJob) {
+	w.log.Warn("graph embedding job dropped, object not found",
+		slog.String("job_id", job.ID),
+		slog.String("object_id", job.ObjectID))
+	if delErr := w.jobs.DeleteJob(ctx, job.ID); delErr != nil {
+		w.log.Error("failed to delete job for missing object",
+			slog.String("job_id", job.ID),
+			slog.String("error", delErr.Error()))
+	}
+	w.incrementFailure()
+}
+
+// markJobFailed records a failed embedding attempt for one job, distinguishing
+// permanent (bad model/credentials) from transient errors so retry semantics
+// are unchanged.
+func (w *GraphEmbeddingWorker) markJobFailed(ctx context.Context, job *GraphEmbeddingJob, err error) {
+	if isPermanentEmbeddingError(err) {
+		w.log.Warn("graph embedding permanently failed (non-retryable error)",
+			slog.String("job_id", job.ID),
+			slog.String("error", err.Error()))
+		if markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, err); markErr != nil {
+			w.log.Error("failed to mark job as permanently failed",
+				slog.String("job_id", job.ID),
+				slog.String("error", markErr.Error()))
+		}
+	} else {
+		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
+			w.log.Error("failed to mark job as failed",
+				slog.String("job_id", job.ID),
+				slog.String("error", markErr.Error()))
+		}
+	}
+	w.incrementFailure()
+}
+
+// storeEmbedding writes the vector to the graph object and completes the job.
+func (w *GraphEmbeddingWorker) storeEmbedding(ctx context.Context, it *embeddingWorkItem, embedding []float32, embeddingDurationMs int64) error {
+	now := time.Now()
+	_, err := w.db.NewRaw(`UPDATE kb.graph_objects
+		SET embedding_v2 = ?::vector,
+			embedding_updated_at = ?,
+			updated_at = ?
+		WHERE id = ?`,
+		vectorToString(embedding), now, now, it.job.ObjectID).Exec(ctx)
+	if err != nil {
+		if markErr := w.jobs.MarkFailed(ctx, it.job.ID, err); markErr != nil {
+			w.log.Error("failed to mark job as failed",
+				slog.String("job_id", it.job.ID),
+				slog.String("error", markErr.Error()))
+		}
+		w.incrementFailure()
+		w.log.Warn("failed to store graph object embedding",
+			slog.String("job_id", it.job.ID),
+			slog.String("object_id", it.job.ObjectID),
+			slog.String("error", err.Error()))
+		return fmt.Errorf("update embedding: %w", err)
+	}
+
+	if err := w.jobs.MarkCompleted(ctx, it.job.ID); err != nil {
+		w.log.Error("failed to mark job as completed",
+			slog.String("job_id", it.job.ID),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	w.incrementSuccess()
+	w.log.Debug("generated embedding for graph object",
+		slog.String("object_id", it.job.ObjectID),
+		slog.String("object_type", it.obj.Type),
+		slog.Int("embedding_dims", len(embedding)),
+		slog.Int64("embedding_duration_ms", embeddingDurationMs))
 	return nil
 }
 
@@ -244,7 +626,9 @@ type graphObjectRow struct {
 	ProjectID  string                 `bun:"project_id,type:uuid"`
 }
 
-// processJob processes a single graph embedding job
+// processJob processes a single graph embedding job. It is used for single-job
+// chunks and as the fallback when the embedding service has no multi-object
+// method.
 func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddingJob) error {
 	ctx, span := tracing.Start(ctx, "extraction.graph_embedding",
 		attribute.String("memory.job.id", job.ID),
@@ -279,12 +663,7 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		// Database error
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
-			w.log.Error("failed to mark job as failed",
-				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
-		}
-		w.incrementFailure()
+		w.markJobFailed(ctx, job, err)
 		return fmt.Errorf("fetch object: %w", err)
 	}
 
@@ -301,13 +680,14 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 
 	// Inject project ID into context so the credential resolver can look up
 	// per-project LLM provider configuration (e.g. Vertex AI credentials).
+	projCtx := ctx
 	if obj.ProjectID != "" {
-		ctx = auth.ContextWithProjectID(ctx, obj.ProjectID)
+		projCtx = auth.ContextWithProjectID(ctx, obj.ProjectID)
 	}
 
 	// Budget pre-flight check — skip embedding when project has exceeded its monthly budget.
 	if w.budget != nil && obj.ProjectID != "" {
-		exceeded, err := w.budget.CheckBudgetExceeded(ctx, obj.ProjectID)
+		exceeded, err := w.budget.CheckBudgetExceeded(projCtx, obj.ProjectID)
 		if err != nil {
 			// Fail-open: log warning but proceed so a broken budget query never halts embeddings.
 			w.log.Warn("embedding budget check failed, proceeding",
@@ -326,7 +706,7 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 					last_error = 'budget_exceeded',
 					scheduled_at = now() + interval '5 minutes',
 					updated_at = now()
-				WHERE id = ?`, job.ID).Exec(ctx); reschedErr != nil {
+				WHERE id = ?`, job.ID).Exec(projCtx); reschedErr != nil {
 				w.log.Error("failed to reschedule budget-exceeded job",
 					slog.String("job_id", job.ID),
 					slog.String("error", reschedErr.Error()))
@@ -341,31 +721,14 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 
 	// Generate embedding
 	embeddingStartTime := time.Now()
-	result, err := w.embeds.EmbedQueryWithUsage(ctx, text)
+	result, err := w.embeds.EmbedQueryWithUsage(projCtx, text)
 	embeddingDurationMs := time.Since(embeddingStartTime).Milliseconds()
 
 	if err != nil {
 		// Embedding failed — distinguish permanent (bad model/creds) from transient (network, quota)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		if isPermanentEmbeddingError(err) {
-			w.log.Warn("graph embedding permanently failed (non-retryable error)",
-				slog.String("job_id", job.ID),
-				slog.String("object_id", job.ObjectID),
-				slog.String("error", err.Error()))
-			if markErr := w.jobs.MarkPermanentlyFailed(ctx, job.ID, err); markErr != nil {
-				w.log.Error("failed to mark job as permanently failed",
-					slog.String("job_id", job.ID),
-					slog.String("error", markErr.Error()))
-			}
-		} else {
-			if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
-				w.log.Error("failed to mark job as failed",
-					slog.String("job_id", job.ID),
-					slog.String("error", markErr.Error()))
-			}
-		}
-		w.incrementFailure()
+		w.markJobFailed(projCtx, job, err)
 		return fmt.Errorf("generate embedding: %w", err)
 	}
 
@@ -374,47 +737,16 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		err := fmt.Errorf("no embedding returned")
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
-			w.log.Error("failed to mark job as failed",
-				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
-		}
-		w.incrementFailure()
+		w.markJobFailed(projCtx, job, err)
 		return err
 	}
 
 	// Record embedding usage for cost tracking
-	orgID := w.orgCache.resolve(ctx, obj.ProjectID)
+	orgID := w.orgCache.resolve(projCtx, obj.ProjectID)
 	recordEmbeddingUsage(w.usage, obj.ProjectID, orgID, result)
 
-	// Update the graph object with the embedding
-	// Note: embedding_v2 is vector(768), we need to use raw SQL for pgvector
-	now := time.Now()
-	_, err = w.db.NewRaw(`UPDATE kb.graph_objects
-		SET embedding_v2 = ?::vector,
-			embedding_updated_at = ?,
-			updated_at = ?
-		WHERE id = ?`,
-		vectorToString(result.Embedding), now, now, job.ObjectID).Exec(ctx)
-
-	if err != nil {
-		// Update failed
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		if markErr := w.jobs.MarkFailed(ctx, job.ID, err); markErr != nil {
-			w.log.Error("failed to mark job as failed",
-				slog.String("job_id", job.ID),
-				slog.String("error", markErr.Error()))
-		}
-		w.incrementFailure()
-		return fmt.Errorf("update embedding: %w", err)
-	}
-
-	// Mark job as completed
-	if err := w.jobs.MarkCompleted(ctx, job.ID); err != nil {
-		w.log.Error("failed to mark job as completed",
-			slog.String("job_id", job.ID),
-			slog.String("error", err.Error()))
+	// Update the graph object with the embedding and complete the job.
+	if err := w.storeEmbedding(projCtx, &embeddingWorkItem{job: job, obj: obj}, result.Embedding, embeddingDurationMs); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return err
@@ -428,16 +760,6 @@ func (w *GraphEmbeddingWorker) processJob(ctx context.Context, job *GraphEmbeddi
 		attribute.Int64("memory.embedding.duration_ms", embeddingDurationMs),
 		attribute.Int64("memory.total_duration_ms", totalDurationMs),
 	)
-
-	w.log.Debug("generated embedding for graph object",
-		slog.String("object_id", obj.ID),
-		slog.String("object_type", obj.Type),
-		slog.Int("embedding_dims", len(result.Embedding)),
-		slog.Int("text_length", textLength),
-		slog.Int64("embedding_duration_ms", embeddingDurationMs),
-		slog.Int64("total_duration_ms", totalDurationMs))
-
-	w.incrementSuccess()
 	span.SetStatus(codes.Ok, "")
 	return nil
 }

@@ -200,16 +200,18 @@ type EmbeddingJob struct {
 
 // EmbeddingJobStats contains stats for embedding jobs.
 type EmbeddingJobStats struct {
-	GraphTotal      int `json:"graphTotal"`
-	GraphPending    int `json:"graphPending"`
-	GraphCompleted  int `json:"graphCompleted"`
-	GraphFailed     int `json:"graphFailed"`
-	GraphWithErrors int `json:"graphWithErrors"`
-	ChunkTotal      int `json:"chunkTotal"`
-	ChunkPending    int `json:"chunkPending"`
-	ChunkCompleted  int `json:"chunkCompleted"`
-	ChunkFailed     int `json:"chunkFailed"`
-	ChunkWithErrors int `json:"chunkWithErrors"`
+	GraphTotal       int `json:"graphTotal"`
+	GraphPending     int `json:"graphPending"`
+	GraphCompleted   int `json:"graphCompleted"`
+	GraphFailed      int `json:"graphFailed"`
+	GraphStaleFailed int `json:"graphStaleFailed"`
+	GraphWithErrors  int `json:"graphWithErrors"`
+	ChunkTotal       int `json:"chunkTotal"`
+	ChunkPending     int `json:"chunkPending"`
+	ChunkCompleted   int `json:"chunkCompleted"`
+	ChunkFailed      int `json:"chunkFailed"`
+	ChunkStaleFailed int `json:"chunkStaleFailed"`
+	ChunkWithErrors  int `json:"chunkWithErrors"`
 }
 
 // ListEmbeddingJobsResponse is the response for listing embedding jobs.
@@ -281,6 +283,7 @@ type ExtractionJobStats struct {
 	Processing                int `json:"processing"`
 	Completed                 int `json:"completed"`
 	Failed                    int `json:"failed"`
+	StaleFailed               int `json:"staleFailed"`
 	Cancelled                 int `json:"cancelled"`
 	WithErrors                int `json:"withErrors"`
 	TotalObjectsCreated       int `json:"totalObjectsCreated"`
@@ -350,6 +353,7 @@ type DocumentParsingJobStats struct {
 	Processing         int   `json:"processing"`
 	Completed          int   `json:"completed"`
 	Failed             int   `json:"failed"`
+	StaleFailed        int   `json:"staleFailed"`
 	RetryPending       int   `json:"retryPending"`
 	WithErrors         int   `json:"withErrors"`
 	TotalFileSizeBytes int64 `json:"totalFileSizeBytes"`

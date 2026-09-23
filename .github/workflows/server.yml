@@ -129,6 +129,122 @@ jobs:
           flags: server-go-unit
           fail_ci_if_error: false
 
+  # Runs the database-backed tests the unit job skips under -short. Before this
+  # job existed the DB-backed suites never executed in CI (see #778): every
+  # *_db_test.go skipped because no Postgres was provisioned and the harness
+  # treats "database unavailable" as a skip.
+  #
+  # REQUIRE_DB=1 flips that: the harnesses now fail instead of skip when the
+  # database is missing/unreachable (or the run is -short), so this coverage
+  # cannot silently vanish again. TEST_DATABASE_URL is the explicit test DSN —
+  # harnesses prefer it over ambient POSTGRES_*, so they can never touch a
+  # shared/application database.
+  #
+  # Every DB-backed harness is now hermetic (#785): it creates a uniquely-named
+  # throwaway database it drops on cleanup, via internal/testdb's template
+  # mechanism, so tests never mutate a shared database and can run in parallel.
+  # See apps/server/internal/testdb.
+  test-db:
+    name: DB-backed Tests
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+    env:
+      # A missing/unreachable DSN must fail this job, not skip its tests.
+      REQUIRE_DB: '1'
+      # Several tests assert on UTC timestamps; pin the runner's zone so they
+      # are deterministic regardless of the host's local timezone.
+      TZ: UTC
+      # Unique per run so concurrent jobs on the shared self-hosted runner
+      # never fight over the container name.
+      PG_CONTAINER: server-test-db-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/server/go.sum
+          # Same rationale as the other jobs: the persistent self-hosted runner
+          # already keeps GOMODCACHE/GOCACHE on disk.
+          cache: false
+
+      # Postgres is started explicitly rather than as a workflow `service` so it
+      # can publish on an *ephemeral* host port. A fixed host port (the first
+      # cut used 54329) collides whenever two server.yml runs reach this job on
+      # the same self-hosted runner at once — which happened on the first CI
+      # run, with `Bind for :::54329 failed: port is already allocated`.
+      - name: Start Postgres
+        run: |
+          set -euo pipefail
+          docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+          # pgvector image: testutil's template DB creates the `vector` extension.
+          # 127.0.0.1::5432 publishes the container port on a free host port.
+          docker run -d --name "$PG_CONTAINER" \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=emergent \
+            -p 127.0.0.1::5432 \
+            pgvector/pgvector:pg17
+          HOST_PORT=$(docker port "$PG_CONTAINER" 5432/tcp | head -1 | awk -F: '{print $NF}')
+          if [ -z "$HOST_PORT" ]; then
+            echo "::error::could not determine the Postgres host port"
+            docker logs "$PG_CONTAINER" || true
+            exit 1
+          fi
+          for i in $(seq 1 60); do
+            if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec "$PG_CONTAINER" pg_isready -U postgres
+          echo "Postgres is accepting connections on 127.0.0.1:${HOST_PORT}"
+          {
+            echo "TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:${HOST_PORT}/emergent?sslmode=disable"
+            echo "POSTGRES_HOST=127.0.0.1"
+            echo "POSTGRES_PORT=${HOST_PORT}"
+            echo "POSTGRES_USER=postgres"
+            echo "POSTGRES_PASSWORD=postgres"
+            echo "POSTGRES_DB=emergent"
+            echo "POSTGRES_SSL_MODE=disable"
+          } >> "$GITHUB_ENV"
+
+      - name: Migrate test database
+        working-directory: apps/server
+        run: |
+          # Independent smoke test that the migrations apply cleanly to a fresh
+          # database: the DB-backed harnesses no longer need a migrated database
+          # (since #785 each builds a uniquely-named throwaway database from
+          # internal/testdb/schema.sql and drops it). Kept because this is the
+          # only place CI runs the migrate CLI against a real Postgres.
+          #
+          # cmd/migrate gives DATABASE_URL precedence over POSTGRES_* (and a
+          # DATABASE_URL bypasses the -allow-localhost guard), so pin it to the
+          # throwaway test DSN: an inherited DATABASE_URL on the persistent
+          # self-hosted runner must not redirect this migration at a real DB.
+          export DATABASE_URL="$TEST_DATABASE_URL"
+          go run ./cmd/migrate -c up -allow-localhost
+
+      - name: Run DB-backed tests
+        working-directory: apps/server
+        run: |
+          # domain/sandbox's E2E tests need a Docker workspace image and are not
+          # database-backed; they stay -short-gated in the unit job. Everything
+          # else runs WITHOUT -short so the DB-backed suites execute.
+          PKGS=$(go list ./internal/... ./pkg/... ./domain/... | grep -v '/domain/sandbox$')
+          # -p 4 runs package binaries in parallel. The go_test_template
+          # bootstrap is serialized across processes with a Postgres advisory
+          # lock (internal/testdb), and every throwaway database is uniquely
+          # named, so parallel packages no longer race the template create
+          # (#785). Verified locally with the affected packages at -p 4 and -p 8.
+          go test -p 4 $PKGS -v -count=1 -timeout 20m
+
+      - name: Stop Postgres
+        if: always()
+        run: docker rm -f "$PG_CONTAINER" || true
+
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
@@ -200,10 +316,47 @@ jobs:
           fi
           echo "OK: only new migration files added."
 
+  migration-order-guard:
+    name: Migration Order Guard
+    if: github.event_name == 'pull_request'
+    # Hosted runner, like the sibling Migration Immutability job: this is a pure
+    # git check, so it must not require a persistent self-hosted runner where a
+    # PR could otherwise have its (PR-controlled) guard source executed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/server/go.sum
+          # The guard imports only the stdlib + internal/migrationguard, so there
+          # is nothing worth caching; avoid consuming the shared cache budget.
+          cache: false
+
+      - name: Guard migration order
+        working-directory: apps/server
+        run: |
+          # No --depth=1 here: a shallow graft of the base tip can make
+          # `base...HEAD` fail with "no merge base" when the PR head does not
+          # already contain the base tip. The fetch-depth: 0 checkout already
+          # has full history, so this fetch is cheap and stays complete.
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          go run ./cmd/migration-order-guard -base "origin/${{ github.base_ref }}"
+
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [lint, build, test-unit, migration-guard]
+    # test-db is a required part of the gate: this job is the single required
+    # status check on main (branch protection requires only `ci`), so a failing
+    # DB-backed test must fail `ci` — otherwise running it would not block a
+    # merge (#778, and the same "ran but did not gate" trap as #759).
+    needs: [lint, build, test-unit, test-db, migration-guard, migration-order-guard]
     steps:
       - name: CI gate
         run: echo "CI passed"

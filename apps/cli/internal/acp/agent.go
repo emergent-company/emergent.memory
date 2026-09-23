@@ -11,10 +11,13 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/a2a"
 )
 
-// defaultMaxSessions bounds the number of sessions tracked in memory. A
-// long-lived agent fronting many sessions (e.g. an IDE reusing one ACP process)
-// would otherwise grow its session map without bound; once the cap is reached
-// the least-recently-used idle session is evicted.
+// defaultMaxSessions is the strict upper bound on the number of sessions tracked
+// in memory. A long-lived agent fronting many sessions (e.g. an IDE reusing one
+// ACP process) would otherwise grow its session map without bound; once the cap
+// is reached the least-recently-used idle session is evicted. An in-flight
+// session is never evicted; if every session is in-flight, adding another is
+// refused rather than growing the map (see newSession), so the bound holds
+// exactly at this value.
 const defaultMaxSessions = 256
 
 // Agent bridges ACP method calls to the Memory A2A surface. Each ACP session
@@ -41,13 +44,27 @@ type Agent struct {
 type session struct {
 	contextID     string
 	pendingTaskID string // set when the last turn paused for HITL input
-	cancel        context.CancelFunc
-	cancelled     bool   // set by session/cancel; cleared when the next turn starts
-	turn          uint64 // generation of the turn that owns cancel
-	inFlight      int    // number of prompt turns currently running
-	lastUsed      uint64 // agent.seq value at the last use, for LRU eviction
-	dropped       bool   // set once the session is deleted/evicted; never cleared
+	// cancels holds one cancel function per in-flight prompt turn, keyed by the
+	// turn generation. Tracking per turn (rather than a single slot) keeps every
+	// concurrent turn cancellable: a cancel notification cancels them all and
+	// each turn removes only its own entry when it ends, so none is orphaned.
+	cancels map[uint64]context.CancelFunc
+	// cancelledThrough is the highest turn generation for which a session/cancel
+	// has been requested. A turn whose generation is <= cancelledThrough
+	// resolves "cancelled" at registration instead of starting a backend turn.
+	// The watermark is monotonic and generation-scoped: every new turn gets a
+	// strictly greater generation, so a cancel can only ever affect turns that
+	// already existed when it arrived and can never leak onto a later turn (the
+	// sticky-flag bug fixed in #780). It needs no explicit reset — a later
+	// generation simply exceeds it.
+	cancelledThrough uint64
+	turn             uint64 // monotonic turn generation; keys cancels
+	lastUsed         uint64 // agent.seq value at the last use, for LRU eviction
+	dropped          bool   // set once the session is deleted/closed/evicted; never cleared
 }
+
+// inFlight reports the number of prompt turns currently running for the session.
+func (s *session) inFlight() int { return len(s.cancels) }
 
 // NewAgent creates an ACP agent that fronts the given A2A client and targets
 // the Memory agent identified by skill (its RFC1123 slug).
@@ -78,6 +95,7 @@ func (a *Agent) initialize() any {
 			},
 			SessionCapabilities: SessionCapabilities{
 				Delete: &struct{}{},
+				Close:  &struct{}{},
 			},
 		},
 		AgentInfo:   &AgentInfo{Name: "memory", Title: "Memory", Version: a.version},
@@ -86,25 +104,33 @@ func (a *Agent) initialize() any {
 }
 
 // newSession answers the ACP session/new method by allocating a fresh session.
-func (a *Agent) newSession() any {
+// It fails when the map is already at its cap and no idle session can be
+// evicted, so the bound on tracked sessions is strict rather than best-effort.
+func (a *Agent) newSession() (SessionNewResponse, error) {
 	id := newID("sess")
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.evictLocked()
+	if a.maxSessions > 0 && len(a.sessions) >= a.maxSessions {
+		return SessionNewResponse{}, fmt.Errorf(
+			"session limit reached: %d sessions tracked, every one with an in-flight turn", len(a.sessions))
+	}
 	a.seq++
 	a.sessions[id] = &session{lastUsed: a.seq}
-	a.mu.Unlock()
-	return SessionNewResponse{SessionID: id}
+	return SessionNewResponse{SessionID: id}, nil
 }
 
 // evictLocked drops least-recently-used idle sessions until the map has room for
-// one more entry. Sessions with an in-flight turn are never evicted, so the map
-// may exceed maxSessions by up to the number of concurrently in-flight turns.
-// Any cancel function on an evicted session is invoked (context cancel funcs
-// are non-blocking and never re-enter the agent, so calling them under the lock
-// is safe) so a dropped turn cannot leak its goroutine. A victim is marked
-// dropped before removal so a prompt that has already looked it up but not yet
-// registered its cancel function aborts instead of running a turn on a
-// detached session.
+// one more entry. Sessions with an in-flight turn are never evicted. If every
+// session is in-flight nothing is pruned and the caller refuses to add another,
+// which is what keeps the cap strict (see newSession).
+//
+// A victim is chosen only among sessions with no in-flight turn, so by
+// construction it holds no cancel functions to invoke; cancelling on drop is
+// handled by dropSession (delete/close) and by the dropped barrier below, which
+// makes a prompt that is between lookup and registration abort and cancel its own
+// turn. A victim is marked dropped before removal so that prompt aborts instead
+// of running a turn on a detached session.
 //
 // The caller must hold a.mu.
 func (a *Agent) evictLocked() {
@@ -115,7 +141,7 @@ func (a *Agent) evictLocked() {
 		var victimID string
 		var victim *session
 		for id, s := range a.sessions {
-			if s.inFlight > 0 {
+			if s.inFlight() > 0 {
 				continue
 			}
 			if victim == nil || s.lastUsed < victim.lastUsed {
@@ -130,16 +156,13 @@ func (a *Agent) evictLocked() {
 		// Sticky barrier against the prompt lookup/registration window: a
 		// prompt that already holds this pointer must never admit a turn.
 		victim.dropped = true
-		if victim.cancel != nil {
-			victim.cancel()
-		}
 	}
 }
 
-// deleteSession handles the ACP session/delete method by removing the session's
-// state and cancelling any in-flight turn for it. Deleting an unknown session is
-// a no-op so the method succeeds silently, matching ACP delete semantics.
-func (a *Agent) deleteSession(sessionID string) {
+// dropSession removes a session from the map, marks it dropped (so a prompt in
+// the lookup/registration window aborts) and cancels every in-flight turn.
+// Removing an unknown session is a silent no-op, matching ACP semantics.
+func (a *Agent) dropSession(sessionID string) {
 	a.mu.Lock()
 	sess := a.sessions[sessionID]
 	if sess == nil {
@@ -150,13 +173,27 @@ func (a *Agent) deleteSession(sessionID string) {
 	// Sticky barrier against the prompt lookup/registration window: a prompt
 	// that has already looked this session up must not run a turn for it.
 	sess.dropped = true
-	fn := sess.cancel
+	fns := make([]context.CancelFunc, 0, len(sess.cancels))
+	for _, fn := range sess.cancels {
+		fns = append(fns, fn)
+	}
 	a.mu.Unlock()
-	// Invoke the cancel function outside the lock, as cancel does.
-	if fn != nil {
+	// Invoke the cancel functions outside the lock, as cancel does.
+	for _, fn := range fns {
 		fn()
 	}
 }
+
+// deleteSession handles the ACP session/delete method: drop the session's state
+// and cancel every in-flight turn for it.
+func (a *Agent) deleteSession(sessionID string) { a.dropSession(sessionID) }
+
+// closeSession handles the ACP session/close method: cancel ongoing work for the
+// session and free its resources. This agent is in-memory, persists nothing, and
+// advertises loadSession=false, so closing and deleting are equivalent — both
+// drop the tracked session — but close is kept as its own ACP method to match the
+// capability-gated lifecycle.
+func (a *Agent) closeSession(sessionID string) { a.dropSession(sessionID) }
 
 // prompt answers the ACP session/prompt method by running one Memory agent turn
 // over A2A message:stream. It streams reply text via session/update
@@ -169,6 +206,16 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	sess := a.sessions[p.SessionID]
 	if sess == nil {
 		a.evictLocked()
+		// Strict cap: if every tracked session is in-flight, refuse to grow the
+		// map rather than exceed the bound. The idle case was already pruned by
+		// evictLocked above. Capture the count while the lock is still held:
+		// reading len(a.sessions) after unlocking would race a concurrent
+		// session/new, delete, or lazy create mutating the map.
+		if n := len(a.sessions); a.maxSessions > 0 && n >= a.maxSessions {
+			a.mu.Unlock()
+			return nil, fmt.Errorf(
+				"session limit reached: %d sessions tracked, every one with an in-flight turn", n)
+		}
 		sess = &session{}
 		a.sessions[p.SessionID] = sess
 	}
@@ -188,7 +235,7 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 		return PromptResponse{StopReason: StopReasonEndTurn}, nil
 	}
 
-	// Allocate a fresh cancellable context for this turn and record its cancel
+	// Allocate a fresh cancellable context for this turn and register its cancel
 	// function so a session/cancel notification can interrupt a blocking send.
 	promptCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -196,26 +243,24 @@ func (a *Agent) prompt(ctx context.Context, p PromptParams, send func(any) error
 	a.mu.Lock()
 	sess.turn++
 	turn := sess.turn
-	sess.cancel = cancel
-	sess.inFlight++
+	if sess.cancels == nil {
+		sess.cancels = make(map[uint64]context.CancelFunc)
+	}
+	sess.cancels[turn] = cancel
 	dropped := sess.dropped
-	cancelled := sess.cancelled
-	sess.cancelled = false // clear for this turn; a mid-turn cancel re-sets it
+	cancelled := turn <= sess.cancelledThrough
 	if resumeTaskID != "" {
 		// Consumed now; a subsequent pause re-sets it via consumeStream.
 		sess.pendingTaskID = ""
 	}
 	a.mu.Unlock()
 
-	// Mark the turn finished and drop the cancel reference once it ends, so an
-	// idle session carries no stale CancelFunc. A later turn that already
-	// replaced cancel is left untouched (its own generation owns it).
+	// Remove this turn's cancel reference once it ends, so an idle session
+	// carries no stale CancelFunc and per-turn entries never accumulate. Other
+	// turns are left untouched: each owns (and removes) its own entry.
 	defer func() {
 		a.mu.Lock()
-		sess.inFlight--
-		if sess.turn == turn {
-			sess.cancel = nil
-		}
+		delete(sess.cancels, turn)
 		a.mu.Unlock()
 	}()
 
@@ -364,20 +409,37 @@ func (a *Agent) consumeStream(ctx context.Context, stream *a2a.SSEStream, emitte
 	return contextID, pendingTaskID, stopReason, nil
 }
 
-// cancel handles the session/cancel notification by cancelling any in-flight
-// prompt for the session. The cancel function is copied under the lock so it is
-// never read concurrently with the write in prompt, and a cancelled flag is
-// recorded so a cancel arriving before the turn registers still takes effect.
+// cancel handles the session/cancel notification by cancelling every in-flight
+// prompt for the session. The cancel functions are copied under the lock so they
+// are never read concurrently with the writes in prompt. It also advances the
+// cancelledThrough watermark so a turn that has looked the session up but not yet
+// registered its cancel function still observes the cancel; the cancel functions
+// are invoked outside the lock.
 func (a *Agent) cancel(params CancelParams) {
 	a.mu.Lock()
 	sess := a.sessions[params.SessionID]
-	var fn context.CancelFunc
+	var fns []context.CancelFunc
 	if sess != nil {
-		sess.cancelled = true
-		fn = sess.cancel
+		fns = make([]context.CancelFunc, 0, len(sess.cancels))
+		for _, fn := range sess.cancels {
+			fns = append(fns, fn)
+		}
+		// Record the cancel against the turn generation. With a turn in flight it
+		// applies up to the newest registered generation; with none in flight it
+		// applies to the next turn to register (a cancel racing a prompt's
+		// lookup/registration window). The watermark only ever moves forward, so
+		// a turn after the cancelled one always has a greater generation and is
+		// never spuriously cancelled.
+		target := sess.turn
+		if len(sess.cancels) == 0 {
+			target = sess.turn + 1
+		}
+		if target > sess.cancelledThrough {
+			sess.cancelledThrough = target
+		}
 	}
 	a.mu.Unlock()
-	if fn != nil {
+	for _, fn := range fns {
 		fn()
 	}
 }

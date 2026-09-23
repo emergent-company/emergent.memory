@@ -47,6 +47,12 @@ POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c create add_new_table
 
 # Mark a migration as applied (for existing databases)
 POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c mark-applied -v 1
+
+# Apply pending migrations, allowing out-of-order (missing) migrations
+POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c up -allow-missing
+
+# Verify post-conditions (detect indexes left invalid by killed concurrent DDL)
+POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c verify
 ```
 
 ### Environment Variables
@@ -103,6 +109,102 @@ DROP TABLE IF EXISTS kb.user_preferences;
 ```bash
 POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c up
 ```
+
+## Merge Order and Out-of-Order Migrations
+
+Goose orders migrations by the numeric version parsed from `NNNNN_name.sql`. If it finds a
+migration whose version is **lower than a version already recorded** in `goose_db_version`
+it refuses to run and the server crash-loops:
+
+```
+Error running migrations: found 2 missing migrations before current version 172:
+        version 170: 00170_embedding_indexes_hnsw.sql
+        version 171: 00171_graph_relationships_embedding_hnsw.sql
+```
+
+This happens when a higher-numbered migration merges and is applied **before** a
+lower-numbered one (issue #750). Each PR was individually valid; the merge order produced
+the gap.
+
+### CI guard (required check)
+
+The `Migration Order Guard` job fails a PR that **adds** a migration below the base
+branch's maximum version. It compares the PR's added `.sql` files against `origin/main`'s
+highest version. Renames/reformats are covered by the separate `Migration Immutability`
+job, and a PR that adds no migrations always passes.
+
+To run it locally:
+
+```bash
+cd apps/server
+go run ./cmd/migration-order-guard -base origin/main
+```
+
+**Remediation for a violation:** renumber the migration **above** the base maximum. The
+failure message names the next free version.
+
+```bash
+git mv apps/server/migrations/00170_thing.sql \
+       apps/server/migrations/00177_thing.sql
+```
+
+**Escape hatch — deliberately filling a gap.** Adding a migration below the base max is
+sometimes legitimate (the lower version was never applied anywhere and you are filling the
+gap). Mark the added migration with a reason:
+
+```sql
+-- out-of-order-migration-allowed: filling the 00170/00171 gap (issue #750)
+```
+
+The reason is required; a bare directive does not exempt the file.
+
+### Applying a gap to an existing database
+
+If a gap already exists on a running environment, apply the missing migrations
+out-of-order:
+
+```bash
+POSTGRES_PASSWORD=... go run ./cmd/migrate -c up -allow-missing
+```
+
+The runner names the missing files and this remedy in its error output.
+
+## Verifying Out-of-Band Version Records
+
+`mark-applied` (and a manual `INSERT INTO goose_db_version`) records a version **without
+running its migration**, so Goose can never run it later and any objects it should have
+created are unchecked. Migration `00164` is the cautionary example: its version was
+recorded while a `CREATE INDEX CONCURRENTLY` never took effect (issue #734).
+
+`mark-applied` prints a loud warning, and post-conditions can be checked at any time:
+
+```bash
+POSTGRES_PASSWORD=... go run ./cmd/migrate -c verify
+```
+
+`verify` runs the read-only query below and fails if any index in `kb`/`core` is not both
+`indisvalid` and `indisready` — the residue a killed concurrent index build leaves:
+
+```sql
+SELECT n.nspname AS schema, c.relname AS table, i.relname AS index
+FROM pg_index x
+JOIN pg_class c ON c.oid = x.indrelid
+JOIN pg_class i ON i.oid = x.indexrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('kb', 'core')
+  AND NOT (x.indisvalid AND x.indisready)
+ORDER BY n.nspname, c.relname, i.relname;
+```
+
+This check finds indexes that **exist** in the catalog but are not usable. An object that is
+missing entirely has no `pg_index` row, so it is **not** reported here — that is the case
+`00164` actually hit. When a version is recorded without its object, verify the expected
+objects yourself and repair forward with a new migration; `00175` is the example (its
+`DO`-block guard raises if the HNSW index is missing or invalid, so goose refuses to record
+the version). Migrations `00170`/`00175` show the in-migration `indisvalid` post-condition
+guard convention.
+
+Remediation: `REINDEX INDEX CONCURRENTLY <index>`, or re-run the owning forward migration.
 
 ## Goose Directives
 

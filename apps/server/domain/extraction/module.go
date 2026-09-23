@@ -251,6 +251,7 @@ func NewExtractionConfig(cfg *config.Config) *ExtractionConfig {
 	graphCfg := DefaultGraphEmbeddingConfig()
 	graphCfg.WorkerConcurrency = cfg.EmbeddingQueue.GraphConcurrency
 	graphCfg.WorkerBatchSize = cfg.EmbeddingQueue.GraphBatchSize
+	graphCfg.EmbeddingRequestBatchSize = cfg.EmbeddingQueue.GraphRequestBatchSize
 	graphCfg.EnableAdaptiveScaling = cfg.EmbeddingQueue.AdaptiveScaling
 
 	chunkCfg := DefaultChunkEmbeddingConfig()

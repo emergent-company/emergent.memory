@@ -105,19 +105,30 @@ func TestEmbeddingJobPurgeTask_Run(t *testing.T) {
 
 	require.NoError(t, task.Run(context.Background()))
 
-	require.Len(t, state.queries, 3, "one DELETE per embedding job table")
+	require.Len(t, state.queries, 6, "one DELETE per terminal job table")
 
-	wantTables := []string{
-		"kb.graph_embedding_jobs",
-		"kb.graph_relationship_embedding_jobs",
-		"kb.chunk_embedding_jobs",
+	type want struct {
+		table    string
+		statusIn string
+		ageExpr  string
 	}
-	for i, table := range wantTables {
+	wants := []want{
+		{"kb.graph_embedding_jobs", "status IN ('completed', 'failed', 'dead_letter')", "updated_at <"},
+		{"kb.graph_relationship_embedding_jobs", "status IN ('completed', 'failed', 'dead_letter')", "updated_at <"},
+		{"kb.chunk_embedding_jobs", "status IN ('completed', 'failed', 'dead_letter')", "updated_at <"},
+		{"kb.document_parsing_jobs", "status IN ('completed', 'failed')", "updated_at <"},
+		{"kb.object_extraction_jobs", "status IN ('completed', 'failed')", "updated_at <"},
+		{"kb.email_jobs", "status IN ('sent', 'failed', 'dead_letter')", "COALESCE(processed_at, created_at) <"},
+	}
+	for i, w := range wants {
 		q := state.queries[i]
-		assert.Contains(t, q, "DELETE FROM "+table)
-		assert.Contains(t, q, "status IN ('completed', 'failed', 'dead_letter')")
-		assert.Contains(t, q, "updated_at <", "must purge only jobs older than the retention cutoff")
+		assert.Contains(t, q, "DELETE FROM "+w.table)
+		assert.Contains(t, q, w.statusIn, "terminal status predicate for %s", w.table)
+		assert.Contains(t, q, w.ageExpr, "retention age predicate for %s", w.table)
 	}
+	// email_jobs has no updated_at column — must never reference it.
+	emailQ := state.queries[5]
+	assert.NotContains(t, emailQ, "updated_at")
 }
 
 func TestEmbeddingJobPurgeTask_Run_ErrorDoesNotStopOthers(t *testing.T) {
@@ -127,5 +138,5 @@ func TestEmbeddingJobPurgeTask_Run_ErrorDoesNotStopOthers(t *testing.T) {
 	require.NoError(t, task.Run(context.Background()), "best-effort: a failure on a table must not abort the task")
 
 	// Every table is attempted even though the first fails.
-	assert.Len(t, state.queries, 3)
+	assert.Len(t, state.queries, 6)
 }

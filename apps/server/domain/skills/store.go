@@ -192,7 +192,7 @@ func (r *Repository) FindRelevant(ctx context.Context, projectID string, orgID s
 		)
 	}
 
-	q = q.OrderExpr("s.description_embedding <=> ?::vector ASC", vectorStr).
+	q = q.OrderExpr("s.description_embedding <=> ?::vector ASC, s.id ASC", vectorStr).
 		Limit(topK)
 
 	if err := q.Scan(ctx); err != nil {

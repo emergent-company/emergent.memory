@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
@@ -17,7 +18,7 @@ type DeleteReasonSuite struct {
 
 func TestDeleteReasonSuite(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
 	suite.Run(t, new(DeleteReasonSuite))
 }

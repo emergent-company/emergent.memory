@@ -3,6 +3,7 @@ package config
 import (
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -59,6 +60,39 @@ func TestDatabaseConfig_DSN(t *testing.T) {
 				t.Errorf("DSN() = %q, want %q", got, tt.expected)
 			}
 		})
+	}
+}
+
+// TestDatabaseConfig_DSNRoundTripsEscapedCredentials pins that a password (or
+// user) containing URL-reserved characters survives DSN() → url.Parse() intact:
+// the characters must be escaped when building the DSN and decoded on parse,
+// rather than truncating the DSN at the first '@', ':' or '/'.
+func TestDatabaseConfig_DSNRoundTripsEscapedCredentials(t *testing.T) {
+	cfg := DatabaseConfig{
+		Host:     "127.0.0.1",
+		Port:     54329,
+		User:     "test user",
+		Password: "p@ss:w/rd%40",
+		Database: "testdb",
+		SSLMode:  "disable",
+	}
+
+	u, err := url.Parse(cfg.DSN())
+	if err != nil {
+		t.Fatalf("parse DSN %q: %v", cfg.DSN(), err)
+	}
+	if got := u.User.Username(); got != cfg.User {
+		t.Errorf("username = %q, want %q", got, cfg.User)
+	}
+	pw, _ := u.User.Password()
+	if pw != cfg.Password {
+		t.Errorf("password = %q, want %q", pw, cfg.Password)
+	}
+	if u.Hostname() != cfg.Host || u.Port() != "54329" {
+		t.Errorf("host:port = %q:%q, want %q:54329", u.Hostname(), u.Port(), cfg.Host)
+	}
+	if u.Path != "/testdb" {
+		t.Errorf("path = %q, want /testdb", u.Path)
 	}
 }
 
@@ -427,6 +461,26 @@ func TestStorageConfig_IsConfigured(t *testing.T) {
 				t.Errorf("IsConfigured() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMCPRegistryConfig_BaseURL(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_BASE_URL", "")
+	cfg, err := NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.MCPRegistry.BaseURL != "" {
+		t.Errorf("BaseURL = %q, want empty (default)", cfg.MCPRegistry.BaseURL)
+	}
+
+	t.Setenv("MCP_REGISTRY_BASE_URL", "http://stub:8080")
+	cfg, err = NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.MCPRegistry.BaseURL != "http://stub:8080" {
+		t.Errorf("BaseURL = %q, want %q", cfg.MCPRegistry.BaseURL, "http://stub:8080")
 	}
 }
 

@@ -460,6 +460,39 @@ cd apps/server && go run ./cmd/tasks test:unit
 - Prefer `task test:e2e` / `task test:integration` over ad-hoc `go test` invocations.
 - Use `-v` only when you need to see all test names.
 
+### Database-backed tests — `REQUIRE_DB` / `TEST_DATABASE_URL`
+
+Database-backed tests (`*_db_test.go`, `testutil.SetupTestDB`, `testutil.BaseSuite`)
+skip locally when no database is reachable. That is convenient for unit runs but
+means they silently vanish from CI unless a database is required. Two env vars
+govern this (see `internal/testdb`):
+
+- `TEST_DATABASE_URL` — explicit test DSN. When set, harnesses prefer it over the
+  ambient `POSTGRES_*` vars (whose default is the shared `localhost:5432`), so a
+  test run can never touch a shared/application database.
+- `REQUIRE_DB=1` — turns "database unavailable" / short-mode skips into failures.
+  Leave unset locally; CI's `test-db` job sets it so the coverage cannot silently
+  disappear (see issue #778).
+
+Run the DB-backed suites locally against a throwaway server:
+
+```bash
+docker run -d --rm -p 54329:5432 -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=emergent pgvector/pgvector:pg17
+cd apps/server
+REQUIRE_DB=1 \
+TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:54329/emergent?sslmode=disable' \
+  bash -c 'PKGS=$(go list ./internal/... ./pkg/... ./domain/... | grep -v "/domain/sandbox$"); go test -p 4 $PKGS -count=1'
+```
+
+(`domain/sandbox` is excluded: its E2E tests need a Docker workspace image, not a
+database. `-p N` may run package binaries in parallel: each DB-backed harness
+creates its own uniquely-named throwaway database, and the shared template
+bootstrap is serialized across processes with a Postgres advisory lock.)
+
+The CI job (`.github/workflows/server.yml` → `test-db`) runs this package set
+without `-short` against a `pgvector/pgvector:pg17` service.
+
 ### Test Utilities
 
 Located in `internal/testutil/`:

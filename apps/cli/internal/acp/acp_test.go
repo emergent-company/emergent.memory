@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,6 +124,12 @@ func TestInitialize(t *testing.T) {
 	}
 	if _, ok := sessCaps["delete"]; !ok {
 		t.Errorf("sessionCapabilities = %v, want delete advertised", sessCaps)
+	}
+	if _, ok := sessCaps["close"]; !ok {
+		t.Errorf("sessionCapabilities = %v, want close advertised", sessCaps)
+	}
+	if _, ok := sessCaps["list"]; ok {
+		t.Errorf("sessionCapabilities = %v, want list deliberately NOT advertised", sessCaps)
 	}
 	info := result["agentInfo"].(map[string]any)
 	if info["name"] != "memory" {
@@ -466,7 +473,7 @@ func TestCancelBeforePromptReturnsCancelled(t *testing.T) {
 	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected HTTP request")
 	})
-	sessID := agent.newSession().(SessionNewResponse).SessionID
+	sessID := mustNewSession(t, agent)
 	agent.cancel(CancelParams{SessionID: sessID})
 
 	result, err := agent.prompt(context.Background(), PromptParams{
@@ -490,7 +497,7 @@ func TestCancelConcurrentWithPrompt(t *testing.T) {
 			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
 		})
 	})
-	sessID := agent.newSession().(SessionNewResponse).SessionID
+	sessID := mustNewSession(t, agent)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
@@ -508,6 +515,95 @@ func TestCancelConcurrentWithPrompt(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestConcurrentPromptsOnSameSessionEachCancelable proves cancel functions are
+// tracked per in-flight turn rather than in a single slot: two prompts on the same
+// session id both register, a single session/cancel reaches both (none orphaned),
+// and the cancel entries drain to zero afterwards so no CancelFunc leaks.
+func TestConcurrentPromptsOnSameSessionEachCancelable(t *testing.T) {
+	const turns = 2
+	chunks := make(chan struct{}, turns)
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+			TaskID:    "task-1",
+			ContextID: "ctx-1",
+			Artifact:  a2a.Artifact{ArtifactID: "artifact-task-1", Parts: []a2a.Part{a2a.TextPart("x")}},
+		}})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		if fl != nil {
+			fl.Flush()
+		}
+		chunks <- struct{}{}
+
+		// Hold the stream open until the client cancels (or the test times out).
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+			t.Error("stream not torn down by cancellation")
+		}
+	})
+
+	sessID := mustNewSession(t, agent)
+
+	var wg sync.WaitGroup
+	reasons := make([]string, turns)
+	for i := 0; i < turns; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, err := agent.prompt(context.Background(), PromptParams{
+				SessionID: sessID,
+				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+			}, func(any) error { return nil })
+			if err != nil {
+				t.Errorf("prompt %d returned error: %v", i, err)
+				return
+			}
+			reasons[i] = res.(PromptResponse).StopReason
+		}(i)
+	}
+
+	// Both streams are open, which means both turns registered their cancel
+	// function before the chunk was emitted.
+	for i := 0; i < turns; i++ {
+		<-chunks
+	}
+	agent.mu.Lock()
+	registered := agent.sessions[sessID].inFlight()
+	agent.mu.Unlock()
+	if registered != turns {
+		t.Fatalf("in-flight turns = %d, want %d (per-turn cancel tracking)", registered, turns)
+	}
+
+	// A single cancel notification must reach every in-flight turn.
+	agent.cancel(CancelParams{SessionID: sessID})
+	wg.Wait()
+
+	for i, got := range reasons {
+		if got != StopReasonCancelled {
+			t.Errorf("prompt %d stopReason = %q, want cancelled", i, got)
+		}
+	}
+	agent.mu.Lock()
+	remaining := agent.sessions[sessID].inFlight()
+	agent.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("in-flight turns after cancel = %d, want 0 (leaked cancel funcs)", remaining)
+	}
+}
+
+// mustNewSession creates a session and returns its id, failing the test if the
+// cap refused it.
+func mustNewSession(t *testing.T, a *Agent) string {
+	t.Helper()
+	resp, err := a.newSession()
+	if err != nil {
+		t.Fatalf("newSession returned error: %v", err)
+	}
+	return resp.SessionID
 }
 
 // sessionCount returns the number of tracked sessions under the agent lock.
@@ -535,7 +631,7 @@ func noopAgent(t *testing.T) *Agent {
 
 func TestSessionDeleteRemovesSession(t *testing.T) {
 	agent := noopAgent(t)
-	id := agent.newSession().(SessionNewResponse).SessionID
+	id := mustNewSession(t, agent)
 	if !hasSession(agent, id) {
 		t.Fatalf("session %q not created", id)
 	}
@@ -555,7 +651,7 @@ func TestSessionDeleteRemovesSession(t *testing.T) {
 // dispatch table, including the empty-result response.
 func TestSessionDeleteViaRun(t *testing.T) {
 	agent := noopAgent(t)
-	id := agent.newSession().(SessionNewResponse).SessionID
+	id := mustNewSession(t, agent)
 
 	input := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"session/delete","params":{"sessionId":%q}}`, id) + "\n"
 	msgs := decodeLines(t, runLines(t, agent, input))
@@ -574,6 +670,71 @@ func TestSessionDeleteViaRun(t *testing.T) {
 	}
 }
 
+// TestSessionCloseViaRun exercises the session/close request through the dispatch
+// table, including the empty-result response and removal of the session.
+func TestSessionCloseViaRun(t *testing.T) {
+	agent := noopAgent(t)
+	id := mustNewSession(t, agent)
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"session/close","params":{"sessionId":%q}}`, id) + "\n"
+	msgs := decodeLines(t, runLines(t, agent, input))
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d: %v", len(msgs), msgs)
+	}
+	if _, hasErr := msgs[0]["error"]; hasErr {
+		t.Fatalf("unexpected error response: %v", msgs[0])
+	}
+	res, ok := msgs[0]["result"].(map[string]any)
+	if !ok || len(res) != 0 {
+		t.Fatalf("result = %v, want empty object", msgs[0]["result"])
+	}
+	if hasSession(agent, id) {
+		t.Fatalf("session %q not removed via session/close", id)
+	}
+}
+
+// TestSessionCloseNotificationViaRun verifies the fire-and-forget notification
+// form of session/close removes the session and produces no response.
+func TestSessionCloseNotificationViaRun(t *testing.T) {
+	agent := noopAgent(t)
+	id := mustNewSession(t, agent)
+
+	input := fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/close","params":{"sessionId":%q}}`, id) + "\n"
+	out := runLines(t, agent, input)
+	if len(bytes.TrimSpace(out)) != 0 {
+		t.Fatalf("notification produced output: %q", out)
+	}
+	if hasSession(agent, id) {
+		t.Fatalf("session %q not removed via session/close notification", id)
+	}
+}
+
+// TestSessionCloseMissingSessionIDReturnsCode verifies session/close validates
+// its params.
+func TestSessionCloseMissingSessionIDReturnsCode(t *testing.T) {
+	agent := noopAgent(t)
+	out := runLines(t, agent, `{"jsonrpc":"2.0","id":12,"method":"session/close","params":{}}`+"\n")
+	msgs := decodeLines(t, out)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	assertErrorCode(t, msgs[0], codeInvalidParams)
+}
+
+// TestSessionListIsDeclined verifies session/list is deliberately unsupported:
+// it is not advertised on initialize, and an attempted call is answered with
+// -32601 rather than pretending to list ephemeral sessions.
+func TestSessionListIsDeclined(t *testing.T) {
+	agent := noopAgent(t)
+
+	out := runLines(t, agent, `{"jsonrpc":"2.0","id":1,"method":"session/list","params":{}}`+"\n")
+	msgs := decodeLines(t, out)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d: %v", len(msgs), msgs)
+	}
+	assertErrorCode(t, msgs[0], codeMethodNotFound)
+}
+
 // TestSessionCapEvictsLeastRecentlyUsed verifies the map is bounded: inserting
 // past the cap evicts the least-recently-used session.
 func TestSessionCapEvictsLeastRecentlyUsed(t *testing.T) {
@@ -582,7 +743,7 @@ func TestSessionCapEvictsLeastRecentlyUsed(t *testing.T) {
 
 	var ids []string
 	for i := 0; i < 3; i++ {
-		ids = append(ids, agent.newSession().(SessionNewResponse).SessionID)
+		ids = append(ids, mustNewSession(t, agent))
 	}
 	// Touch the middle session so ids[1] becomes the most recently used.
 	agent.mu.Lock()
@@ -590,7 +751,7 @@ func TestSessionCapEvictsLeastRecentlyUsed(t *testing.T) {
 	agent.sessions[ids[1]].lastUsed = agent.seq
 	agent.mu.Unlock()
 
-	newest := agent.newSession().(SessionNewResponse).SessionID
+	newest := mustNewSession(t, agent)
 
 	if got := sessionCount(agent); got != 3 {
 		t.Fatalf("session count = %d, want 3", got)
@@ -605,85 +766,158 @@ func TestSessionCapEvictsLeastRecentlyUsed(t *testing.T) {
 	}
 }
 
-// TestEvictionInvokesCancelFunc verifies a dropped session's CancelFunc is
-// invoked so an in-flight turn cannot leak.
-func TestEvictionInvokesCancelFunc(t *testing.T) {
-	agent := noopAgent(t)
-	agent.maxSessions = 1
-
-	called := make(chan struct{}, 1)
-	agent.mu.Lock()
-	agent.sessions["stale"] = &session{
-		cancel:   func() { called <- struct{}{} },
-		lastUsed: 0,
-	}
-	agent.mu.Unlock()
-
-	id := agent.newSession().(SessionNewResponse).SessionID
-
-	if hasSession(agent, "stale") {
-		t.Fatal("stale session should have been evicted")
-	}
-	if !hasSession(agent, id) {
-		t.Fatal("new session missing after eviction")
-	}
-	select {
-	case <-called:
-	default:
-		t.Fatal("cancel func on the evicted session was not invoked")
-	}
-}
-
-// TestEvictionSkipsInFlightSession verifies a session with a running turn is
-// never pruned; the map may exceed the cap temporarily instead.
-func TestEvictionSkipsInFlightSession(t *testing.T) {
+// TestSessionCapRefusesWhenAllInFlight verifies the cap is strict: when every
+// tracked session has an in-flight turn nothing can be evicted, so a new session
+// is refused rather than growing the map past the cap. The in-flight session must
+// be retained and its cancel function not invoked.
+func TestSessionCapRefusesWhenAllInFlight(t *testing.T) {
 	agent := noopAgent(t)
 	agent.maxSessions = 1
 
 	cancelCalled := false
 	agent.mu.Lock()
 	agent.sessions["busy"] = &session{
-		cancel:   func() { cancelCalled = true },
-		inFlight: 1,
+		cancels:  map[uint64]context.CancelFunc{0: func() { cancelCalled = true }},
 		lastUsed: 0,
 	}
 	agent.mu.Unlock()
 
-	id := agent.newSession().(SessionNewResponse).SessionID
-
+	_, err := agent.newSession()
+	if err == nil {
+		t.Fatal("expected newSession to be refused while every session is in-flight")
+	}
 	if !hasSession(agent, "busy") {
 		t.Fatal("in-flight session must not be evicted")
-	}
-	if !hasSession(agent, id) {
-		t.Fatal("new session missing")
 	}
 	if cancelCalled {
 		t.Fatal("cancel func of an in-flight session should not be invoked")
 	}
-	if got := sessionCount(agent); got != 2 {
-		t.Fatalf("session count = %d, want 2 (temporary over-cap)", got)
+	if got := sessionCount(agent); got != 1 {
+		t.Fatalf("session count = %d, want the cap to hold at 1", got)
 	}
 }
 
-// TestDeleteSessionCancelsInFlightTurn verifies deleteSession invokes the stored
-// CancelFunc when it removes a session that still has a running turn.
+// TestPromptRefusesNewSessionWhenAllInFlight verifies the lazy create inside
+// session/prompt also honours the strict cap: an unknown session id is refused
+// when the map is full of in-flight sessions and no backend turn is attempted.
+func TestPromptRefusesNewSessionWhenAllInFlight(t *testing.T) {
+	agent := noopAgent(t)
+	agent.maxSessions = 1
+
+	agent.mu.Lock()
+	agent.sessions["busy"] = &session{
+		cancels:  map[uint64]context.CancelFunc{0: func() {}},
+		lastUsed: 0,
+	}
+	agent.mu.Unlock()
+
+	_, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: "unknown",
+		Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+	}, func(any) error { return nil })
+	if err == nil {
+		t.Fatal("expected prompt to refuse creating a session past the strict cap")
+	}
+	if hasSession(agent, "unknown") {
+		t.Fatal("refused prompt must not add the session to the map")
+	}
+	if got := sessionCount(agent); got != 1 {
+		t.Fatalf("session count = %d, want the cap to hold at 1", got)
+	}
+}
+
+// TestPromptRefusalDoesNotRaceSessionMap verifies the strict-cap refusal path
+// reads the tracked-session count while still holding a.mu: it drives the prompt
+// refusal concurrently with real mutations of the sessions map (the same write
+// newSession and the lazy create perform) and must stay clean under -race. A
+// read of len(a.sessions) after unlocking is a data race with those writes.
+func TestPromptRefusalDoesNotRaceSessionMap(t *testing.T) {
+	agent := noopAgent(t)
+	agent.maxSessions = 1
+
+	agent.mu.Lock()
+	agent.sessions["busy"] = &session{cancels: map[uint64]context.CancelFunc{0: func() {}}}
+	agent.mu.Unlock()
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := agent.prompt(context.Background(), PromptParams{
+				SessionID: "unknown",
+				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+			}, func(any) error { return nil }); err == nil {
+				t.Error("expected prompt refusal while the only session is in-flight")
+				return
+			}
+		}
+	}()
+
+	for i := 0; i < 2000; i++ {
+		agent.mu.Lock()
+		agent.sessions["churn"] = &session{}
+		delete(agent.sessions, "churn")
+		agent.mu.Unlock()
+	}
+	close(stop)
+	wg.Wait()
+}
+
+// TestDeleteSessionCancelsInFlightTurn verifies deleteSession invokes every
+// stored CancelFunc when it removes a session that still has running turns.
 func TestDeleteSessionCancelsInFlightTurn(t *testing.T) {
 	agent := noopAgent(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(context.Background())
 	agent.mu.Lock()
-	agent.sessions["S"] = &session{cancel: cancel, inFlight: 1}
+	agent.sessions["S"] = &session{cancels: map[uint64]context.CancelFunc{1: cancelA, 2: cancelB}}
 	agent.mu.Unlock()
 
 	agent.deleteSession("S")
 
 	select {
-	case <-ctx.Done():
+	case <-ctxA.Done():
 	default:
-		t.Fatal("deleteSession did not cancel the in-flight turn")
+		t.Fatal("deleteSession did not cancel the first in-flight turn")
+	}
+	select {
+	case <-ctxB.Done():
+	default:
+		t.Fatal("deleteSession did not cancel the second in-flight turn")
 	}
 	if hasSession(agent, "S") {
 		t.Fatal("session not removed by deleteSession")
 	}
+}
+
+// TestCloseSessionCancelsInFlightTurnAndRemoves verifies closeSession cancels all
+// in-flight turns and frees the session, mirroring session/close semantics.
+func TestCloseSessionCancelsInFlightTurnAndRemoves(t *testing.T) {
+	agent := noopAgent(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	agent.mu.Lock()
+	agent.sessions["S"] = &session{cancels: map[uint64]context.CancelFunc{1: cancel}}
+	agent.mu.Unlock()
+
+	agent.closeSession("S")
+
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("closeSession did not cancel the in-flight turn")
+	}
+	if hasSession(agent, "S") {
+		t.Fatal("session not removed by closeSession")
+	}
+	// Closing an unknown session succeeds silently.
+	agent.closeSession("does-not-exist")
 }
 
 // TestCompletedTurnClearsCancel verifies an idle session holds no stale
@@ -694,7 +928,7 @@ func TestCompletedTurnClearsCancel(t *testing.T) {
 			{Task: &a2a.Task{ID: "task-1", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
 		})
 	})
-	sessID := agent.newSession().(SessionNewResponse).SessionID
+	sessID := mustNewSession(t, agent)
 
 	if _, err := agent.prompt(context.Background(), PromptParams{
 		SessionID: sessID,
@@ -705,13 +939,9 @@ func TestCompletedTurnClearsCancel(t *testing.T) {
 
 	agent.mu.Lock()
 	sess := agent.sessions[sessID]
-	cancelFn := sess.cancel
-	inFlight := sess.inFlight
+	inFlight := sess.inFlight()
 	agent.mu.Unlock()
 
-	if cancelFn != nil {
-		t.Error("cancel func should be cleared once the turn completes")
-	}
 	if inFlight != 0 {
 		t.Errorf("inFlight = %d, want 0", inFlight)
 	}
@@ -794,7 +1024,7 @@ func TestNewID(t *testing.T) {
 // form of session/delete removes the session and produces no response.
 func TestSessionDeleteNotificationViaRun(t *testing.T) {
 	agent := noopAgent(t)
-	id := agent.newSession().(SessionNewResponse).SessionID
+	id := mustNewSession(t, agent)
 
 	input := fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/delete","params":{"sessionId":%q}}`, id) + "\n"
 	out := runLines(t, agent, input)
@@ -812,7 +1042,7 @@ func TestSessionDeleteNotificationViaRun(t *testing.T) {
 // aborts instead of starting a backend turn on a detached session.
 func TestDeleteSessionMarksSessionDropped(t *testing.T) {
 	agent := noopAgent(t)
-	id := agent.newSession().(SessionNewResponse).SessionID
+	id := mustNewSession(t, agent)
 
 	agent.mu.Lock()
 	sess := agent.sessions[id]
@@ -840,7 +1070,7 @@ func TestEvictionMarksSessionDropped(t *testing.T) {
 	agent.sessions["stale"] = victim
 	agent.mu.Unlock()
 
-	_ = agent.newSession()
+	_, _ = agent.newSession()
 
 	if hasSession(agent, "stale") {
 		t.Fatal("stale session should have been evicted")
@@ -859,7 +1089,7 @@ func TestEvictionMarksSessionDropped(t *testing.T) {
 // ever touching the backend.
 func TestDroppedSessionLateTurnAborts(t *testing.T) {
 	agent := noopAgent(t)
-	id := agent.newSession().(SessionNewResponse).SessionID
+	id := mustNewSession(t, agent)
 
 	released := make(chan struct{})
 	lookedUp := make(chan struct{}, 2)
@@ -906,7 +1136,7 @@ func TestDroppedSessionLateTurnAborts(t *testing.T) {
 // prompt that looked the session up before eviction must abort, not run.
 func TestEvictedSessionLateTurnAborts(t *testing.T) {
 	agent := noopAgent(t)
-	id := agent.newSession().(SessionNewResponse).SessionID
+	id := mustNewSession(t, agent)
 
 	released := make(chan struct{})
 	lookedUp := make(chan struct{}, 2)
@@ -942,7 +1172,7 @@ func TestEvictedSessionLateTurnAborts(t *testing.T) {
 	agent.mu.Lock()
 	agent.maxSessions = 1
 	agent.mu.Unlock()
-	_ = agent.newSession()
+	_, _ = agent.newSession()
 	close(released)
 	wg.Wait()
 
@@ -1027,7 +1257,7 @@ func TestCancelMidStreamReturnsCancelled(t *testing.T) {
 		}
 	})
 
-	sessID := agent.newSession().(SessionNewResponse).SessionID
+	sessID := mustNewSession(t, agent)
 
 	// Feed the prompt, wait until the stream is provably open, then cancel, so
 	// the cancellation is genuinely mid-stream rather than racing registration.
@@ -1064,5 +1294,192 @@ func TestCancelMidStreamReturnsCancelled(t *testing.T) {
 	pr2 := promptResp["result"].(map[string]any)
 	if pr2["stopReason"] != StopReasonCancelled {
 		t.Errorf("stopReason = %v, want cancelled", pr2["stopReason"])
+	}
+}
+
+// TestMidTurnCancelDoesNotCancelNextPrompt is the regression test for #780: a
+// session/cancel that lands while turn A is in flight must resolve turn A
+// "cancelled" but must NOT leave session-scoped state behind that spuriously
+// cancels the next prompt. Turn B is issued on the same session afterwards and
+// must reach the backend and return end_turn (previously the sticky flag made it
+// resolve "cancelled" without doing any work).
+func TestMidTurnCancelDoesNotCancelNextPrompt(t *testing.T) {
+	var backendRequests atomic.Int32
+	chunkSent := make(chan struct{})
+
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		// First turn: stream a chunk, then hold the connection open until the
+		// client cancels. Second turn: complete normally.
+		if backendRequests.Add(1) == 1 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fl, _ := w.(http.Flusher)
+			b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+				TaskID:    "task-1",
+				ContextID: "ctx-1",
+				Artifact:  a2a.Artifact{ArtifactID: "artifact-task-1", Parts: []a2a.Part{a2a.TextPart("first")}},
+			}})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+			if fl != nil {
+				fl.Flush()
+			}
+			close(chunkSent)
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+				t.Error("stream not torn down by cancellation")
+			}
+			return
+		}
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-2", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+
+	sessID := mustNewSession(t, agent)
+
+	// Turn A: run it in the background, wait until its stream is provably open
+	// (so the cancel is genuinely mid-turn rather than racing registration),
+	// then cancel it mid-flight.
+	type promptResult struct {
+		reason string
+		err    error
+	}
+	resA := make(chan promptResult, 1)
+	go func() {
+		res, err := agent.prompt(context.Background(), PromptParams{
+			SessionID: sessID,
+			Prompt:    []ContentBlock{{Type: "text", Text: "first"}},
+		}, func(any) error { return nil })
+		if err != nil {
+			resA <- promptResult{err: err}
+			return
+		}
+		resA <- promptResult{reason: res.(PromptResponse).StopReason}
+	}()
+
+	<-chunkSent
+	agent.cancel(CancelParams{SessionID: sessID})
+
+	gotA := <-resA
+	if gotA.err != nil {
+		t.Fatalf("turn A returned error: %v", gotA.err)
+	}
+	if gotA.reason != StopReasonCancelled {
+		t.Fatalf("turn A stopReason = %q, want cancelled", gotA.reason)
+	}
+
+	// Turn B: must run normally, not inherit turn A's cancellation.
+	resB, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: sessID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "second"}},
+	}, func(any) error { return nil })
+	if err != nil {
+		t.Fatalf("turn B returned error: %v", err)
+	}
+	if got := resB.(PromptResponse).StopReason; got != StopReasonEndTurn {
+		t.Errorf("turn B stopReason = %q, want end_turn (mid-turn cancel leaked onto the next prompt)", got)
+	}
+	if n := backendRequests.Load(); n != 2 {
+		t.Errorf("backend requests = %d, want 2 (turn B did not execute)", n)
+	}
+}
+
+// TestConcurrentMidTurnCancelDoesNotCancelFollowingPrompt covers the hard case
+// the single-turn regression test does not: two turns are in flight at once
+// (generations N and N+1). A cancel advances the watermark only to the newest
+// in-flight generation (N+1), so both in-flight turns are cancelled while a
+// following turn (generation N+2) is untouched and runs normally. It also pins
+// the "cancel all in-flight" contract from #775 under the watermark design.
+func TestConcurrentMidTurnCancelDoesNotCancelFollowingPrompt(t *testing.T) {
+	var backendRequests atomic.Int32
+	started := make(chan struct{}, 2)
+
+	agent := streamAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		// The first two turns stream a chunk then hold the connection open until
+		// the client cancels. The third turn (the following prompt) completes.
+		if backendRequests.Add(1) <= 2 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fl, _ := w.(http.Flusher)
+			b, _ := json.Marshal(a2a.StreamResponse{ArtifactUpdate: &a2a.TaskArtifactUpdateEvent{
+				TaskID:    "task-1",
+				ContextID: "ctx-1",
+				Artifact:  a2a.Artifact{ArtifactID: "artifact-task-1", Parts: []a2a.Part{a2a.TextPart("x")}},
+			}})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+			if fl != nil {
+				fl.Flush()
+			}
+			started <- struct{}{}
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+				t.Error("stream not torn down by cancellation")
+			}
+			return
+		}
+		writeSSEEvents(w, []a2a.StreamResponse{
+			{Task: &a2a.Task{ID: "task-3", ContextID: "ctx-1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		})
+	})
+
+	sessID := mustNewSession(t, agent)
+
+	type promptResult struct {
+		reason string
+		err    error
+	}
+	const inFlight = 2
+	results := make(chan promptResult, inFlight)
+	for i := 0; i < inFlight; i++ {
+		go func() {
+			res, err := agent.prompt(context.Background(), PromptParams{
+				SessionID: sessID,
+				Prompt:    []ContentBlock{{Type: "text", Text: "hi"}},
+			}, func(any) error { return nil })
+			if err != nil {
+				results <- promptResult{err: err}
+				return
+			}
+			results <- promptResult{reason: res.(PromptResponse).StopReason}
+		}()
+	}
+
+	// Both streams are open, which means both turns registered their cancel
+	// function and are concurrently in flight.
+	for i := 0; i < inFlight; i++ {
+		<-started
+	}
+	agent.mu.Lock()
+	registered := agent.sessions[sessID].inFlight()
+	agent.mu.Unlock()
+	if registered != inFlight {
+		t.Fatalf("in-flight turns = %d, want %d", registered, inFlight)
+	}
+
+	// One cancel must reach every in-flight turn.
+	agent.cancel(CancelParams{SessionID: sessID})
+	for i := 0; i < inFlight; i++ {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("in-flight turn returned error: %v", got.err)
+		}
+		if got.reason != StopReasonCancelled {
+			t.Errorf("in-flight turn stopReason = %q, want cancelled", got.reason)
+		}
+	}
+
+	// The following turn (generation after the newest cancelled one) must run.
+	res, err := agent.prompt(context.Background(), PromptParams{
+		SessionID: sessID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "after"}},
+	}, func(any) error { return nil })
+	if err != nil {
+		t.Fatalf("following prompt returned error: %v", err)
+	}
+	if got := res.(PromptResponse).StopReason; got != StopReasonEndTurn {
+		t.Errorf("following prompt stopReason = %q, want end_turn (concurrent cancel leaked)", got)
+	}
+	if n := backendRequests.Load(); n != inFlight+1 {
+		t.Errorf("backend requests = %d, want %d (following prompt did not execute)", n, inFlight+1)
 	}
 }

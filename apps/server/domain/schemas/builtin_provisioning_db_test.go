@@ -23,10 +23,7 @@ func TestProvisionBuiltinSchemasToAllProjects(t *testing.T) {
 		t.Skip("skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "builtinprov")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "builtinprov")
 	defer testDB.Close()
 	db := testDB.GetDB()
 
@@ -36,7 +33,7 @@ func TestProvisionBuiltinSchemasToAllProjects(t *testing.T) {
 	// graph_schemas.project_id reference kb.projects, which references kb.orgs.
 	orgID := uuid.NewString()
 	projectID := uuid.NewString()
-	_, err = db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "test-org-"+orgID)
+	_, err := db.ExecContext(ctx, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "test-org-"+orgID)
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
 		projectID, orgID, "test-project-"+projectID)

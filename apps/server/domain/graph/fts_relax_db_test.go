@@ -21,10 +21,7 @@ func setupFTSRelaxTest(t *testing.T) (context.Context, bun.IDB, uuid.UUID, *conf
 		t.Skip("skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB, err := testutil.SetupTestDB(ctx, "ftsrelax")
-	if err != nil {
-		t.Skipf("skipping: test database unavailable: %v", err)
-	}
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "ftsrelax")
 	t.Cleanup(testDB.Close)
 
 	db := testDB.GetDB()

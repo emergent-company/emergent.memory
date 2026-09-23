@@ -57,7 +57,7 @@ func TestAdversarialIntrospectionOutageDoesNotReenableAllGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validateToken: %v", err)
 	}
-	if len(user.Scopes) == len(GetAllScopes()) {
+	if scopesEqual(user.Scopes, GetAllScopes()) {
 		t.Fatalf("introspection outage re-enabled the all-grant: %v", user.Scopes)
 	}
 	if len(user.Scopes) != 0 {
@@ -95,8 +95,8 @@ func TestAdversarialShippedDefaultStillAllGrantsUserinfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validateToken: %v", err)
 	}
-	if len(user.Scopes) != len(GetAllScopes()) {
-		t.Fatalf("shipped default did not grant all scopes: got %d want %d", len(user.Scopes), len(GetAllScopes()))
+	if !scopesEqual(user.Scopes, GetAllScopes()) {
+		t.Fatalf("shipped default did not grant the exact full catalogue: got %v want %v", user.Scopes, GetAllScopes())
 	}
 }
 
@@ -152,11 +152,56 @@ func TestAdversarialCachedUserinfoEntryNoAllGrantWhenIntrospectionConfigured(t *
 	if err != nil {
 		t.Fatalf("finalizeOIDCUser: %v", err)
 	}
-	if len(user.Scopes) == len(GetAllScopes()) {
+	if scopesEqual(user.Scopes, GetAllScopes()) {
 		t.Fatalf("cached userinfo entry replayed as all-grant: %v", user.Scopes)
 	}
 	if len(user.Scopes) != 0 {
 		t.Fatalf("scopes = %v, want none", user.Scopes)
+	}
+}
+
+// User-id binding, layer 1 (resolver wiring). The project-role lookup is keyed
+// on BOTH the declared project and the authenticated user's internal id.
+// resolveOIDCScopes must pass the authenticated user's id as the lookup's user
+// argument and must fail closed for a user whose membership does not exist —
+// even when a DIFFERENT user genuinely holds a membership in the same project.
+//
+// This pins the resolver→lookup call site (and is exercised under -short/CI).
+// The SQL column binding (WHERE project_id = ? AND user_id = ?) is pinned
+// separately by TestDBProjectRoleBindsProjectAndUser and
+// TestResolveOIDCScopesWrongUserHasNoMembership, which run only against a real
+// database.
+func TestAdversarialResolveScopesBindsAuthenticatedUser(t *testing.T) {
+	clearZitadelEnv(t)
+
+	const (
+		projectID = "55555555-5555-5555-5555-555555555555"
+		memberID  = "user-membership-holder"
+		otherID   = "user-without-membership"
+	)
+
+	m := newTestMiddleware(t)
+	// Only (projectID, memberID) resolves to a role. Any other (project, user)
+	// pair returns "" — i.e. "not a member". A resolver that dropped or
+	// swapped the user dimension would fail the sanity check below.
+	m.roleLookup = func(ctx context.Context, p, u string) (string, error) {
+		if p == projectID && u == memberID {
+			return RoleProjectViewer, nil
+		}
+		return "", nil
+	}
+
+	// Sanity: the real member resolves to the viewer read-only set, so the
+	// wrong-user assertion below is not vacuous.
+	if got := m.resolveOIDCScopes(context.Background(), memberID, projectID, []string{"openid", "profile"}); !scopesEqual(got, viewerReadOnlyScopes) {
+		t.Fatalf("member scopes = %v, want the viewer read-only set", got)
+	}
+
+	// A different user of the same project has no membership: zero scopes,
+	// not merely a different set.
+	got := m.resolveOIDCScopes(context.Background(), otherID, projectID, []string{"openid", "profile"})
+	if len(got) != 0 {
+		t.Fatalf("wrong-user scopes = %v, want none (membership is user-id bound)", got)
 	}
 }
 

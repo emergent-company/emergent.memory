@@ -1,7 +1,6 @@
 package a2a
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,6 +80,60 @@ func TestExtendedAgentCard(t *testing.T) {
 	assert.Equal(t, "my-agent", got.Skills[0].ID)
 }
 
+// TestExtendedAgentCardSendsProjectHeader is the #761 regression guard: the
+// authenticated extended card is project-scoped and the server rejects a
+// request with no project selector, so the client must send X-Project-ID.
+func TestExtendedAgentCardSendsProjectHeader(t *testing.T) {
+	card := AgentCard{Name: "Memory", Version: "1.0.0"}
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) (int, any) {
+		assert.Equal(t, "GET", r.Method)
+		assert.Equal(t, "/extendedAgentCard", r.URL.Path)
+		assert.Equal(t, "proj-123", r.Header.Get(ProjectIDHeader))
+		return http.StatusOK, card
+	})
+
+	client := NewClientWithProject(srv.URL, "emt_token", "proj-123")
+	got, err := client.ExtendedAgentCard(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "Memory", got.Name)
+}
+
+// TestProjectHeaderOmittedWhenUnset pins the pre-existing behaviour: a client
+// with no configured project sends no selector (the unauthenticated global card
+// path must keep working).
+func TestProjectHeaderOmittedWhenUnset(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) (int, any) {
+		assert.Empty(t, r.Header.Get(ProjectIDHeader))
+		return http.StatusOK, AgentCard{Name: "Memory"}
+	})
+
+	_, err := NewClient(srv.URL, "emt_token").ExtendedAgentCard(context.Background())
+	require.NoError(t, err)
+}
+
+// TestExtendedAgentCardProjectRequiredError covers the project-scoped failure
+// path: the server now answers a missing selector with a specific 400
+// INVALID_ARGUMENT / PROJECT_REQUIRED envelope, not a 500
+// INVALID_AGENT_RESPONSE. The client must surface that reason distinctly.
+func TestExtendedAgentCardProjectRequiredError(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) (int, any) {
+		return http.StatusBadRequest, `{"error":{"code":-32012,"status":"INVALID_ARGUMENT","message":"project context is required: send the X-Project-ID header, or use a project-scoped API token","details":[{"@type":"type.googleapis.com/lf.a2a.v1.Error","reason":"PROJECT_REQUIRED","domain":"a2a-protocol.org"}]}}`
+	})
+
+	_, err := NewClient(srv.URL, "emt_token").ExtendedAgentCard(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, "PROJECT_REQUIRED", Reason(err))
+	assert.False(t, IsNotFound(err))
+
+	var apiErr *Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, -32012, apiErr.Code)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.Equal(t, "INVALID_ARGUMENT", apiErr.Status)
+	assert.Equal(t, A2AErrorDomain, apiErr.Domain)
+}
+
 func TestSendMessage(t *testing.T) {
 	task := sampleTask()
 	var gotReq SendMessageRequest
@@ -88,11 +141,12 @@ func TestSendMessage(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/message:send", r.URL.Path)
 		assert.Equal(t, A2AContentType, r.Header.Get("Content-Type"))
+		assert.Equal(t, "proj-123", r.Header.Get(ProjectIDHeader))
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotReq))
 		return http.StatusOK, SendMessageResponse{Task: &task}
 	})
 
-	client := NewClient(srv.URL, "emt_token")
+	client := NewClientWithProject(srv.URL, "emt_token", "proj-123")
 	resp, err := client.SendMessage(context.Background(), SendMessageRequest{
 		Message: Message{
 			MessageID: "m-1",
@@ -136,6 +190,7 @@ func TestStreamMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/message:stream", r.URL.Path)
+		assert.Equal(t, "proj-123", r.Header.Get(ProjectIDHeader))
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -150,7 +205,7 @@ func TestStreamMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "emt_token")
+	client := NewClientWithProject(srv.URL, "emt_token", "proj-123")
 	stream, err := client.StreamMessage(context.Background(), SendMessageRequest{
 		Message: Message{MessageID: "m-1", Role: RoleUser, Parts: []Part{TextPart("hi")}},
 	})
@@ -180,10 +235,38 @@ func TestStreamMessage(t *testing.T) {
 // newSSEStream builds an SSEStream over an in-memory body so the parser can be
 // exercised without an HTTP server.
 func newSSEStream(body string) *SSEStream {
+	return newSSEStreamReader(strings.NewReader(body))
+}
+
+// newSSEStreamReader builds an SSEStream over an arbitrary reader so tests can
+// control chunk boundaries and exercise scanner buffer refills.
+func newSSEStreamReader(r io.Reader) *SSEStream {
 	return &SSEStream{
-		resp:    &http.Response{Body: io.NopCloser(strings.NewReader(body))},
-		scanner: bufio.NewScanner(strings.NewReader(body)),
+		resp:    &http.Response{Body: io.NopCloser(strings.NewReader(""))},
+		scanner: newSSEScanner(r),
 	}
+}
+
+// chunkedReader yields its chunks verbatim, one Read per chunk, so a caller can
+// place a CR at the very end of a read and the LF at the start of the next.
+type chunkedReader struct {
+	chunks []string
+	i      int
+	off    int
+}
+
+func (r *chunkedReader) Read(p []byte) (int, error) {
+	for r.i < len(r.chunks) {
+		if r.off >= len(r.chunks[r.i]) {
+			r.i++
+			r.off = 0
+			continue
+		}
+		n := copy(p, r.chunks[r.i][r.off:])
+		r.off += n
+		return n, nil
+	}
+	return 0, io.EOF
 }
 
 // collectEvents drains a stream, returning every dispatched event. An io.EOF
@@ -203,6 +286,36 @@ func collectEvents(t *testing.T, s *SSEStream) []StreamResponse {
 
 // statusUpdateJSON is a single-line StreamResponse payload used across cases.
 const statusUpdateJSON = `{"statusUpdate":{"taskId":"t1","contextId":"c1","status":{"state":"TASK_STATE_WORKING"}}}`
+
+func TestSSEDataValueExtraction(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   string
+		want   string
+		wantOK bool
+	}{
+		{name: "no space after colon", line: "data:X", want: "X", wantOK: true},
+		{name: "single space after colon", line: "data: X", want: "X", wantOK: true},
+		{name: "two spaces after colon", line: "data:  X", want: " X", wantOK: true},
+		{name: "space then tab after colon", line: "data: \tX", want: "\tX", wantOK: true},
+		{name: "tab after colon", line: "data:\tX", want: "\tX", wantOK: true},
+		{name: "space then tab then space", line: "data: \t ", want: "\t ", wantOK: true},
+		{name: "empty value", line: "data:", want: "", wantOK: true},
+		{name: "no colon", line: "data", want: "", wantOK: true},
+		{name: "event field", line: "event: message", want: "", wantOK: false},
+		{name: "id field", line: "id: 42", want: "", wantOK: false},
+		{name: "comment line", line: ": comment", want: "", wantOK: false},
+		{name: "unknown field", line: "foo: bar", want: "", wantOK: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := sseDataValue(tc.line)
+			assert.Equal(t, tc.wantOK, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
 
 func TestSSEStreamNextParsing(t *testing.T) {
 	wantStatus := []StreamResponse{{StatusUpdate: &TaskStatusUpdateEvent{
@@ -283,6 +396,46 @@ func TestSSEStreamNextParsing(t *testing.T) {
 			body: "\n\n\ndata: " + statusUpdateJSON + "\n\n",
 			want: wantStatus,
 		},
+		{
+			name: "lone CR framing",
+			body: "data: " + statusUpdateJSON + "\r\r",
+			want: wantStatus,
+		},
+		{
+			name: "CRLF framing",
+			body: "data: " + statusUpdateJSON + "\r\n\r\n",
+			want: wantStatus,
+		},
+		{
+			name: "mixed terminators",
+			body: "data: " + statusUpdateJSON + "\n\r",
+			want: wantStatus,
+		},
+		{
+			name: "multi-line data with CRLF",
+			body: "data: {\"statusUpdate\":{\"taskId\":\"t1\",\"contextId\":\"c1\",\r\n" +
+				"data: \"status\":{\"state\":\"TASK_STATE_WORKING\"}}}\r\n\r\n",
+			want: wantStatus,
+		},
+		{
+			name: "empty payload with CR framing skipped",
+			body: "data:\r\rdata: " + statusUpdateJSON + "\r\r",
+			want: wantStatus,
+		},
+		{
+			// A bare `data:` line terminated by CRLF, then a blank CRLF line,
+			// then a real event: the empty payload is skipped, not decoded.
+			name: "empty payload with CRLF framing skipped",
+			body: "data:\r\n\r\ndata: " + statusUpdateJSON + "\r\n\r\n",
+			want: wantStatus,
+		},
+		{
+			// A lone CR terminates the data line, but no blank line follows
+			// before EOF, so the event is incomplete and discarded.
+			name: "CR immediately before EOF discards unterminated event",
+			body: "data: " + statusUpdateJSON + "\r",
+			want: nil,
+		},
 	}
 
 	for _, tc := range tests {
@@ -298,6 +451,87 @@ func TestSSEStreamDoneSentinel(t *testing.T) {
 	s := newSSEStream("data: [DONE]\n\ndata: " + statusUpdateJSON + "\n\n")
 	_, err := s.Next()
 	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestSSEStreamDoneSentinelLoneCR(t *testing.T) {
+	// Under lone-CR framing the event before [DONE] must still dispatch (this
+	// makes the case discriminating: a splitter that ignored lone CR would read
+	// one unterminated line and emit nothing), then [DONE] ends the stream and
+	// no payload after it is dispatched.
+	s := newSSEStream("data: " + statusUpdateJSON + "\r\r" +
+		"data: [DONE]\r\r" +
+		"data: " + statusUpdateJSON + "\r\r")
+
+	ev, err := s.Next()
+	require.NoError(t, err)
+	require.NotNil(t, ev.StatusUpdate)
+	require.Equal(t, "t1", ev.StatusUpdate.TaskID)
+	require.Equal(t, TaskStateWorking, ev.StatusUpdate.Status.State)
+
+	_, err = s.Next()
+	require.ErrorIs(t, err, io.EOF)
+}
+
+// TestSplitSSELines pins the split contract directly, including the pending-CR
+// path where a trailing CR needs one more byte to decide CR vs CRLF.
+func TestSplitSSELines(t *testing.T) {
+	tests := []struct {
+		name        string
+		data        string
+		atEOF       bool
+		wantAdvance int
+		wantToken   string
+	}{
+		{name: "LF terminates", data: "a\nb", atEOF: false, wantAdvance: 2, wantToken: "a"},
+		{name: "CRLF terminates", data: "a\r\nb", atEOF: false, wantAdvance: 3, wantToken: "a"},
+		{name: "lone CR terminates", data: "a\rb", atEOF: false, wantAdvance: 2, wantToken: "a"},
+		{name: "trailing CR pending more data", data: "a\r", atEOF: false, wantAdvance: 0, wantToken: ""},
+		{name: "trailing CR at EOF terminates", data: "a\r", atEOF: true, wantAdvance: 2, wantToken: "a"},
+		{name: "unterminated mid-buffer waits", data: "abc", atEOF: false, wantAdvance: 0, wantToken: ""},
+		{name: "unterminated at EOF is a token", data: "abc", atEOF: true, wantAdvance: 3, wantToken: "abc"},
+		{name: "empty at EOF yields nothing", data: "", atEOF: true, wantAdvance: 0, wantToken: ""},
+		{name: "blank line is an empty token", data: "\n", atEOF: false, wantAdvance: 1, wantToken: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			advance, token, err := splitSSELines([]byte(tc.data), tc.atEOF)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAdvance, advance)
+			assert.Equal(t, tc.wantToken, string(token))
+		})
+	}
+}
+
+// TestSSEStreamChunkBoundaryRefill drives the production scanner through a
+// reader that splits the stream at hostile boundaries: the CR of a CRLF ends
+// one read and the LF begins the next, and a lone CR that terminates a line is
+// the last byte of its chunk.
+func TestSSEStreamChunkBoundaryRefill(t *testing.T) {
+	wantStatus := []StreamResponse{{StatusUpdate: &TaskStatusUpdateEvent{
+		TaskID:    "t1",
+		ContextID: "c1",
+		Status:    TaskStatus{State: TaskStateWorking},
+	}}}
+
+	t.Run("CRLF split across reads", func(t *testing.T) {
+		r := &chunkedReader{chunks: []string{"data: " + statusUpdateJSON + "\r", "\n", "\r\n"}}
+		assert.Equal(t, wantStatus, collectEvents(t, newSSEStreamReader(r)))
+	})
+
+	t.Run("lone CR is last byte of its chunk", func(t *testing.T) {
+		r := &chunkedReader{chunks: []string{"data: " + statusUpdateJSON, "\r", "\r"}}
+		assert.Equal(t, wantStatus, collectEvents(t, newSSEStreamReader(r)))
+	})
+
+	t.Run("one byte per read", func(t *testing.T) {
+		var chunks []string
+		for _, b := range []byte("data: " + statusUpdateJSON + "\r\n\r\n") {
+			chunks = append(chunks, string(b))
+		}
+		r := &chunkedReader{chunks: chunks}
+		assert.Equal(t, wantStatus, collectEvents(t, newSSEStreamReader(r)))
+	})
 }
 
 func TestGetTask(t *testing.T) {

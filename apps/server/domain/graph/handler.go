@@ -92,6 +92,15 @@ func getUserID(c echo.Context) (*uuid.UUID, error) {
 	return &id, nil
 }
 
+// skipTotalFromQuery reports whether the request opted out of the exact total
+// count behind `GET /api/graph/objects/search` (issue #733). Only the literal
+// "false" opts out; any other value — absent, "true", "0", "FALSE", or
+// whitespace — keeps the default exact total, so the wire shape is unchanged
+// for existing clients.
+func skipTotalFromQuery(v string) bool {
+	return v == "false"
+}
+
 // ListObjects returns graph objects matching query parameters.
 // @Summary      List graph objects
 // @Description  Search and filter graph objects with pagination, type/label filtering, and relationship queries
@@ -113,6 +122,7 @@ func getUserID(c echo.Context) (*uuid.UUID, error) {
 // @Param        branch_id query string false "Branch ID (use 'null' for main branch)"
 // @Param        include_deleted query boolean false "Include soft-deleted objects"
 // @Param        fields query string false "Comma-separated property fields to include in response (projection)"
+// @Param        include_total query boolean false "Set to false to skip the exact total count and omit the 'total' field (default: true). The count is the latency floor for very large projects; cursor-only callers should opt out."
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} map[string]interface{} "Paginated list with cursor"
 // @Failure      400 {object} apperror.Error "Invalid parameters"
@@ -142,6 +152,13 @@ func (h *Handler) ListObjects(c echo.Context) error {
 	if cursor := c.QueryParam("cursor"); cursor != "" {
 		params.Cursor = &cursor
 	}
+
+	// include_total=false skips the exact COUNT(*) behind the response's
+	// `total`. This is an explicit opt-out for callers that only need a page
+	// (keyset/cursor pagination, list views that ignore the total); the count is
+	// the endpoint's latency floor on projects that dominate a large
+	// kb.graph_objects table (issue #733).
+	params.SkipTotal = skipTotalFromQuery(c.QueryParam("include_total"))
 
 	// Support both "type" (single) and "types" (array/comma-separated)
 	if singleType := c.QueryParam("type"); singleType != "" {

@@ -32,17 +32,15 @@ type RegistryClient struct {
 
 // NewRegistryClient creates a new RegistryClient with the default base URL.
 func NewRegistryClient() *RegistryClient {
-	return &RegistryClient{
-		baseURL: DefaultRegistryBaseURL,
-		httpClient: &http.Client{
-			Timeout: defaultRegistryTimeout,
-		},
-	}
+	return NewRegistryClientWithBaseURL(DefaultRegistryBaseURL)
 }
 
 // NewRegistryClientWithBaseURL creates a new RegistryClient with a custom base URL
-// (useful for testing).
+// (useful for testing). An empty baseURL falls back to DefaultRegistryBaseURL.
 func NewRegistryClientWithBaseURL(baseURL string) *RegistryClient {
+	if baseURL == "" {
+		baseURL = DefaultRegistryBaseURL
+	}
 	return &RegistryClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{

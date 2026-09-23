@@ -305,11 +305,13 @@ and the current Config (batch_size, concurrency, interval_ms, stale_minutes).`,
 
 var embeddingsProgressCmd = &cobra.Command{
 	Use:   "progress",
-	Short: "Show embedding job queue progress (pending, processing, completed, failed)",
+	Short: "Show embedding job queue progress (pending, processing, completed, failed, stale_failed)",
 	Long: `Show embedding job queue statistics for all queues.
 
-Displays counts of pending, processing, completed, failed, and dead-letter jobs
-for both the graph object and graph relationship embedding queues.
+Displays counts of pending, processing, completed, failed, stale-failed, and
+dead-letter jobs for both the graph object and graph relationship embedding
+queues. "failed" counts genuine failures only; stale-failed jobs are those
+terminal-failed by the stale-job sweep and reported separately.
 
 Examples:
   memory embeddings progress
@@ -319,35 +321,36 @@ Examples:
 		if err != nil {
 			return err
 		}
-		printEmbeddingProgress(result)
+		printEmbeddingProgress(os.Stdout, result)
 		return nil
 	},
 }
 
-func printEmbeddingProgress(result map[string]any) {
+func printEmbeddingProgress(w io.Writer, result map[string]any) {
 	printQueue := func(name string, q map[string]any) {
 		pending, _ := q["pending"].(float64)
 		processing, _ := q["processing"].(float64)
 		completed, _ := q["completed"].(float64)
 		failed, _ := q["failed"].(float64)
+		staleFailed, _ := q["staleFailed"].(float64)
 		deadLetter, _ := q["deadLetter"].(float64)
-		total := pending + processing + completed + failed + deadLetter
+		total := pending + processing + completed + failed + staleFailed + deadLetter
 		var pct float64
 		if total > 0 {
 			pct = completed / total * 100
 		}
-		fmt.Printf("  %-16s  pending=%-6.0f  processing=%-6.0f  completed=%-6.0f  failed=%-6.0f  dead_letter=%-6.0f  (%.1f%%)\n",
-			name, pending, processing, completed, failed, deadLetter, pct)
+		fmt.Fprintf(w, "  %-16s  pending=%-6.0f  processing=%-6.0f  completed=%-6.0f  failed=%-6.0f  stale_failed=%-6.0f  dead_letter=%-6.0f  (%.1f%%)\n",
+			name, pending, processing, completed, failed, staleFailed, deadLetter, pct)
 	}
 
-	fmt.Println()
-	fmt.Println("Embedding queue progress:")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Embedding queue progress:")
 	for _, name := range []string{"objects", "relationships"} {
 		if q, ok := result[name].(map[string]any); ok {
 			printQueue(name, q)
 		}
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
 // ─── clear subcommand ─────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/internal/jobs"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -492,9 +493,10 @@ func (s *DocumentParsingJobsService) Stats(ctx context.Context) (*DocumentParsin
 		COUNT(*) FILTER (WHERE status = 'processing') as processing,
 		COUNT(*) FILTER (WHERE status = 'retry_pending') as retry_pending,
 		COUNT(*) FILTER (WHERE status = 'completed') as completed,
-		COUNT(*) FILTER (WHERE status = 'failed') as failed
+		COUNT(*) FILTER (WHERE status = 'failed' AND COALESCE(error_message, '') <> '`+jobs.StaleJobMessage+`') as failed,
+		COUNT(*) FILTER (WHERE status = 'failed' AND error_message = '`+jobs.StaleJobMessage+`') as stale_failed
 	FROM kb.document_parsing_jobs`).Scan(ctx,
-		&stats.Pending, &stats.Processing, &stats.RetryPending, &stats.Completed, &stats.Failed)
+		&stats.Pending, &stats.Processing, &stats.RetryPending, &stats.Completed, &stats.Failed, &stats.StaleFailed)
 	if err != nil {
 		return nil, fmt.Errorf("get stats: %w", err)
 	}
@@ -509,6 +511,7 @@ type DocumentParsingQueueStats struct {
 	RetryPending int64 `json:"retryPending"`
 	Completed    int64 `json:"completed"`
 	Failed       int64 `json:"failed"`
+	StaleFailed  int64 `json:"staleFailed"`
 }
 
 // calculateRetryDelay calculates the retry delay using exponential backoff.

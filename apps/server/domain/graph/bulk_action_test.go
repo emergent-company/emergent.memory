@@ -2,7 +2,6 @@ package graph
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,10 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
 // =============================================================================
@@ -134,21 +132,11 @@ func TestBulkActionServiceLimitValidation(t *testing.T) {
 func openBulkTestDB(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("integration test requires database")
+		testdb.SkipOrFatal(t, "integration test requires database")
 	}
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://emergent:emergent@localhost:5436/emergent?sslmode=disable"
-	}
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	db := bun.NewDB(sqldb, pgdialect.New())
-	// Ping to detect missing DB early
-	if err := db.PingContext(context.Background()); err != nil {
-		db.Close()
-		t.Skipf("database unavailable (%v), skipping integration test", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "graph_bulk")
+	t.Cleanup(tdb.Close)
+	return tdb.DB
 }
 
 func newBulkTestRepo(t *testing.T, db *bun.DB) *Repository {
