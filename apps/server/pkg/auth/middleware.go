@@ -319,11 +319,13 @@ func (m *Middleware) RequireProjectScope() echo.MiddlewareFunc {
 	}
 }
 
-// scopeImplies defines umbrella scopes that cover multiple specific scopes.
-// When a user has an umbrella scope, they are granted all the scopes it covers.
-// This allows project API tokens (which use coarse-grained scopes like "data:read")
-// to satisfy fine-grained route requirements (like "documents:read").
-var scopeImplies = map[string][]string{
+// ScopeImplies is the single canonical umbrella-scope implication relation: it
+// maps each umbrella scope (e.g. "data:read") to the fine-grained scopes it
+// covers. When an actor holds an umbrella scope, they effectively hold every
+// scope it implies. This is the ONLY place the relation is defined — package
+// consumers (e.g. domain/mcp) must derive their view from it via ExpandScopes
+// instead of maintaining a parallel implication table.
+var ScopeImplies = map[string][]string{
 	"data:read": {
 		"documents:read",
 		"chunks:read",
@@ -418,11 +420,20 @@ func expandScopes(scopes []string) map[string]bool {
 	result := make(map[string]bool, len(scopes))
 	for _, s := range scopes {
 		result[s] = true
-		for _, implied := range scopeImplies[s] {
+		for _, implied := range ScopeImplies[s] {
 			result[implied] = true
 		}
 	}
 	return result
+}
+
+// ExpandScopes returns the full set of scopes an actor effectively has,
+// including every scope implied by an umbrella scope (see ScopeImplies).
+// ExpandScopes is the single source of truth for umbrella-scope expansion;
+// package consumers (e.g. domain/mcp) MUST derive their view from it instead
+// of maintaining a parallel implication table.
+func ExpandScopes(scopes []string) map[string]bool {
+	return expandScopes(scopes)
 }
 
 // RequireAPITokenScopes returns middleware that requires specific scopes ONLY when the

@@ -33,7 +33,7 @@ var viewerReadOnlyScopes = []string{"data:read", "schema:read", "agents:read", "
 // project:invite:create/account:* — a project role is not an account or
 // organisation administrator.
 //
-// The write scopes are umbrella scopes (see scopeImplies in middleware.go):
+// The write scopes are umbrella scopes (see ScopeImplies in middleware.go):
 // schema:write also expands to schema:migrate, agents:write to chat:admin, and
 // data:write to the related writes plus journal:write. That expansion is an
 // accepted, deliberate property (#736 decision A) and is pinned by
