@@ -49,9 +49,11 @@ type Supervisor struct {
 	interval time.Duration
 	idleTTL  time.Duration
 
-	// workerKey + bindingURL are injected into each worker so it can fetch its
-	// per-room voice binding from the gateway's internal endpoint.
-	workerKey  string
+	// creds + bindingURL are injected into each worker so it can fetch its
+	// per-room voice binding from the gateway's internal endpoint. Each worker
+	// is issued a unique credential (registered in creds) that authenticates it
+	// as the specific worker for its agent — the shared worker key is gone.
+	creds      *workerRegistry
 	bindingURL string
 
 	mu      sync.Mutex
@@ -62,21 +64,22 @@ type Supervisor struct {
 }
 
 type workerState struct {
-	name      string
-	cmd       *exec.Cmd
-	restarts  int
-	startedAt time.Time
-	lastUsed  time.Time
+	name       string
+	credential string
+	cmd        *exec.Cmd
+	restarts   int
+	startedAt  time.Time
+	lastUsed   time.Time
 }
 
-func NewSupervisor(bin string, args []string, workdir string, interval, idleTTL time.Duration, workerKey, bindingURL string) *Supervisor {
+func NewSupervisor(bin string, args []string, workdir string, interval, idleTTL time.Duration, creds *workerRegistry, bindingURL string) *Supervisor {
 	return &Supervisor{
 		bin:        bin,
 		args:       args,
 		workdir:    workdir,
 		interval:   interval,
 		idleTTL:    idleTTL,
-		workerKey:  workerKey,
+		creds:      creds,
 		bindingURL: bindingURL,
 		workers:    map[string]*workerState{},
 		done:       make(chan struct{}),
@@ -111,14 +114,26 @@ func (s *Supervisor) StopWorker(name string) {
 	}
 	log.Printf("supervisor: stopping worker %s (agent disabled)", name)
 	_ = ws.cmd.Process.Kill()
+	s.revokeLocked(ws)
 	delete(s.workers, name)
+}
+
+// revokeLocked revokes the worker's credential (caller holds s.mu).
+func (s *Supervisor) revokeLocked(ws *workerState) {
+	if s.creds != nil && ws.credential != "" {
+		s.creds.revoke(ws.credential)
+	}
 }
 
 func (s *Supervisor) spawnLocked(name string) {
 	cmd := exec.Command(s.bin, s.args...)
+	cred := ""
+	if s.creds != nil {
+		cred = s.creds.issue(name)
+	}
 	cmd.Env = append(workerEnv(),
 		"AGENT_NAME="+name,
-		"WORKER_INTERNAL_KEY="+s.workerKey,
+		"WORKER_INTERNAL_KEY="+cred,
 		"VOICE_BINDING_URL="+s.bindingURL,
 	)
 	if s.workdir != "" {
@@ -127,11 +142,14 @@ func (s *Supervisor) spawnLocked(name string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
+		if s.creds != nil && cred != "" {
+			s.creds.revoke(cred)
+		}
 		log.Printf("supervisor: start worker %s: %v", name, err)
 		return
 	}
 	now := time.Now()
-	ws := &workerState{name: name, cmd: cmd, startedAt: now, lastUsed: now}
+	ws := &workerState{name: name, credential: cred, cmd: cmd, startedAt: now, lastUsed: now}
 	s.workers[name] = ws
 	log.Printf("supervisor: started worker %s (pid %d)", name, cmd.Process.Pid)
 	s.wg.Go(func() { s.monitor(name, ws) })
@@ -150,6 +168,7 @@ func (s *Supervisor) monitor(name string, ws *workerState) {
 	}
 	log.Printf("supervisor: worker %s exited (%v)", name, err)
 	ws.restarts++
+	s.revokeLocked(ws)
 	delete(s.workers, name)
 }
 
@@ -165,6 +184,7 @@ func (s *Supervisor) reapIdle() {
 		if ws.lastUsed.Before(cutoff) {
 			log.Printf("supervisor: reaping idle worker %s (idle > %s)", name, s.idleTTL)
 			_ = ws.cmd.Process.Kill()
+			s.revokeLocked(ws)
 			delete(s.workers, name)
 		}
 	}
@@ -219,6 +239,7 @@ func (s *Supervisor) stopAll() {
 	for name, ws := range s.workers {
 		log.Printf("supervisor: stopping worker %s", name)
 		_ = ws.cmd.Process.Kill()
+		s.revokeLocked(ws)
 	}
 	s.workers = map[string]*workerState{}
 }
