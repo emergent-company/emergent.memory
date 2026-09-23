@@ -470,6 +470,89 @@ func TestEmbeddingStatusExpr_TieDeterminism(t *testing.T) {
 	}
 }
 
+// TestGetByID_MultipleHeadFallbackDeterministic covers the sweep fix shared by
+// GetByID / GetByIDIncludeDeleted / GetRelationshipByID: when several HEAD rows
+// share a canonical_id (one per branch), the HEAD pick and the non-HEAD fallback
+// must both resolve to the smallest id. It is the regression guard for the
+// `supersedes_id ASC NULLS FIRST, id ASC` tie-break; without the `id ASC` the
+// `[0]` fallback is heap-order dependent.
+func TestGetByID_MultipleHeadFallbackDeterministic(t *testing.T) {
+	db := openBulkTestDB(t)
+	repo := newBulkTestRepo(t, db)
+	ctx := context.Background()
+
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+
+	for run := 0; run < 5; run++ {
+		projectID := uuid.New()
+		seedProject(t, db, projectID)
+		t.Cleanup(func() {
+			_, _ = db.ExecContext(ctx, "DELETE FROM kb.graph_relationships WHERE project_id = ?", projectID)
+			_, _ = db.ExecContext(ctx, "DELETE FROM kb.graph_objects WHERE project_id = ?", projectID)
+			_, _ = db.ExecContext(ctx, "DELETE FROM kb.projects WHERE id = ?", projectID)
+		})
+
+		// Three HEAD objects sharing one canonical_id; inserted descending so
+		// heap order differs from id-ascending.
+		canonical := uuid.New()
+		objIDs := descendingUUIDs(3)
+		for _, id := range objIDs {
+			insertHeadObjectWithCanonical(t, db, projectID, id, canonical, "MultiHead", createdAt)
+		}
+		wantObj := ascendingSorted(objIDs)[0]
+
+		got, err := repo.GetByID(ctx, projectID, canonical)
+		require.NoError(t, err)
+		assert.Equal(t, wantObj, got.ID, "run %d: GetByID must pick the smallest-id HEAD", run)
+
+		gotDel, err := repo.GetByIDIncludeDeleted(ctx, projectID, canonical)
+		require.NoError(t, err)
+		assert.Equal(t, wantObj, gotDel.ID, "run %d: GetByIDIncludeDeleted must pick the smallest-id HEAD", run)
+
+		// Three HEAD relationships sharing one canonical_id; distinct (type,
+		// src, dst) satisfies uq_graph_relationships_head_main.
+		relCanonical := uuid.New()
+		relIDs := descendingUUIDs(3)
+		for i, id := range relIDs {
+			insertHeadRelationshipWithCanonical(t, db, projectID, id, relCanonical,
+				uuid.New(), uuid.New(), fmt.Sprintf("mrel%d", i), createdAt)
+		}
+		wantRel := ascendingSorted(relIDs)[0]
+
+		gotRel, err := repo.GetRelationshipByID(ctx, projectID, relCanonical)
+		require.NoError(t, err)
+		assert.Equal(t, wantRel, gotRel.ID, "run %d: GetRelationshipByID must pick the smallest-id HEAD", run)
+	}
+}
+
+// insertHeadObjectWithCanonical inserts a HEAD object whose canonical_id differs
+// from its physical id, so a lookup by canonical_id can match several HEAD rows.
+func insertHeadObjectWithCanonical(t *testing.T, db *bun.DB, projectID, id, canonicalID uuid.UUID, typ string, createdAt time.Time) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.graph_objects
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, status,
+			 properties, labels, content_hash, created_at, updated_at)
+		VALUES (?, ?, NULL, ?, NULL, 1, ?, 'active',
+		        '{}'::jsonb, '{}'::text[], ?, ?, ?)
+	`, id, projectID, canonicalID, typ, []byte("ordering-head-hash"), createdAt, createdAt)
+	require.NoError(t, err)
+}
+
+// insertHeadRelationshipWithCanonical inserts a HEAD relationship whose
+// canonical_id differs from its physical id. Rows sharing a canonical_id must
+// differ in (type, src_id, dst_id) to satisfy uq_graph_relationships_head_main.
+func insertHeadRelationshipWithCanonical(t *testing.T, db *bun.DB, projectID, id, canonicalID, srcID, dstID uuid.UUID, typ string, createdAt time.Time) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO kb.graph_relationships
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, src_id, dst_id,
+			 properties, content_hash, created_at)
+		VALUES (?, ?, NULL, ?, NULL, 1, ?, ?, ?, '{}'::jsonb, ?, ?)
+	`, id, projectID, canonicalID, typ, srcID, dstID, []byte("ordering-head-rel-hash"), createdAt)
+	require.NoError(t, err)
+}
+
 // relIDs extracts relation ids from a relationship slice, preserving order.
 func relIDs(rels []*GraphRelationship) []uuid.UUID {
 	ids := make([]uuid.UUID, len(rels))

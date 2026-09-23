@@ -1289,6 +1289,10 @@ func (r *Repository) GetRelationshipByID(ctx context.Context, projectID, id uuid
 		Model(&rels).
 		Where("(id = ? OR canonical_id = ?)", id, id).
 		Where("project_id = ?", projectID).
+		// Mirror GetByID: HEAD-first with a deterministic id tie-break so the
+		// non-HEAD fallback (rels[0]) and the HEAD pick are stable when several
+		// rows match (multi-branch versions share a canonical_id).
+		OrderExpr("supersedes_id ASC NULLS FIRST, id ASC").
 		Scan(ctx)
 
 	if err != nil {
@@ -3455,6 +3459,14 @@ func (r *Repository) FindSimilarObjectInBranch(
 
 // GetBranchRelationshipEmbedding fetches the embedding for a relationship version.
 // Returns nil when not yet embedded.
+//
+// NOTE: this helper still selects kb.graph_relationships.embedding_v2, a column
+// that does not exist on that table (the vector column is `embedding`, added in
+// migration 00011 and accompanied by embedding_updated_at in 00013). The helper
+// therefore errors, which is why the relationship similarity-merge branch in
+// applyMerge (service.go) stays dormant even though FindSimilarRelationshipInBranch
+// was corrected here. Making that path live is a behaviour change, deliberately
+// left to a dedicated follow-up rather than this ordering-only fix.
 func (r *Repository) GetBranchRelationshipEmbedding(ctx context.Context, relID uuid.UUID) ([]float32, error) {
 	var embStr string
 	err := r.db.NewRaw(`
