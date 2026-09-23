@@ -782,3 +782,234 @@ func (s *MergePolicyTestSuite) TestMergePolicy_NameVariants_SecondRun_FullScenar
 	assert.LessOrEqual(s.T(), mainCharCount, 7,
 		"similarity merge should prevent most name-variant duplicates")
 }
+
+// ---------------------------------------------------------------------------
+// Relationship similarity-merge activation helpers
+// ---------------------------------------------------------------------------
+
+// canonicalIDOf returns the canonical_id of a graph object row by its physical id.
+func (s *MergePolicyTestSuite) canonicalIDOf(objectID uuid.UUID) uuid.UUID {
+	s.T().Helper()
+	var cid uuid.UUID
+	err := s.testDB.DB.NewRaw(
+		`SELECT canonical_id FROM kb.graph_objects WHERE id = ?`, objectID,
+	).Scan(s.ctx, &cid)
+	require.NoError(s.T(), err)
+	return cid
+}
+
+// insertRelationshipRaw inserts a HEAD relationship with full control over its
+// canonical_id, endpoints, branch, label, weight, and embedding. `embedding` may
+// be nil to leave the row un-embedded. `branchID` may be nil for a main-branch
+// relationship. `label` and `weight` may be nil for their column defaults.
+func (s *MergePolicyTestSuite) insertRelationshipRaw(
+	id, canonicalID, srcID, dstID uuid.UUID,
+	branchID *uuid.UUID,
+	typ string,
+	label *string,
+	weight *float32,
+	props map[string]any,
+	embedding []float32,
+) {
+	s.T().Helper()
+	propsJSON, err := json.Marshal(props)
+	require.NoError(s.T(), err)
+	_, err = s.testDB.DB.NewRaw(`
+		INSERT INTO kb.graph_relationships
+			(id, project_id, branch_id, canonical_id, supersedes_id, version, type, src_id, dst_id,
+			 label, weight, properties, content_hash, created_at, embedding, embedding_updated_at)
+		VALUES (?, ?, ?, ?, NULL, 1, ?, ?, ?, ?, ?, ?::jsonb, ?, NOW(), ?::vector, NOW())
+	`, id, s.projectID, branchID, canonicalID, typ, srcID, dstID, label, weight,
+		string(propsJSON), []byte("merge-policy-rel-hash"), formatVec(embedding),
+	).Exec(s.ctx)
+	require.NoError(s.T(), err)
+}
+
+// TestMergePolicy_RelationshipSimilarity_AbsorbsDuplicate proves that the
+// relationship similarity-merge branch in applyMerge (service.go) is now LIVE:
+// a staged relationship whose endpoints get remapped onto existing main objects
+// is ABSORBED into the pre-existing main relationship (a new version with merged
+// properties) instead of falling through to the create path.
+//
+// Activation semantics: GetBranchRelationshipEmbedding reads the real
+// kb.graph_relationships.embedding column (migration 00011). Before that fix the
+// helper selected the non-existent embedding_v2 column and always errored, so the
+// similarity branch was skipped and the create path ran — which hit
+// uq_graph_relationships_head_main (ON CONFLICT DO NOTHING) and inserted nothing,
+// leaving the main relationship's properties untouched. The `notes` key below is
+// therefore the discriminating assertion: it is absent before the fix and present
+// after.
+func (s *MergePolicyTestSuite) TestMergePolicy_RelationshipSimilarity_AbsorbsDuplicate() {
+	// ── Main objects ─────────────────────────────────────────────────────────
+	momMain := s.createObjectOnMain("Character", map[string]any{"name": "Mom (Geller)"})
+	rossMain := s.createObjectOnMain("Character", map[string]any{"name": "Ross Geller"})
+	s.setEmbedding(momMain, makeVector(30, 768))
+	s.setEmbedding(rossMain, makeVector(31, 768))
+
+	momMainCanonical := s.canonicalIDOf(momMain)
+	rossMainCanonical := s.canonicalIDOf(rossMain)
+
+	// ── Pre-existing MAIN relationship (run 1 result) ────────────────────────
+	// Seeded with a non-nil label and non-zero weight so the absorb path must
+	// preserve them on the new HEAD version (regression for PR review).
+	familyLabel := "family"
+	familyWeight := float32(0.85)
+	s.insertRelationshipRaw(
+		uuid.New(), uuid.New(), momMainCanonical, rossMainCanonical,
+		nil, "family", &familyLabel, &familyWeight, map[string]any{"since": "1994"}, makeVector(40, 768),
+	)
+
+	// ── Staging branch: name-variant objects with near embeddings ────────────
+	branchID := s.createStagingBranch("test-rel-similarity")
+	momSrc := s.createObjectOnBranch(&branchID, "Character", map[string]any{"name": "Monica and Ross's mother"})
+	rossSrc := s.createObjectOnBranch(&branchID, "Character", map[string]any{"name": "Ross (Geller)"})
+	s.setEmbedding(momSrc, makeNearVector(makeVector(30, 768)))
+	s.setEmbedding(rossSrc, makeNearVector(makeVector(31, 768)))
+
+	momSrcCanonical := s.canonicalIDOf(momSrc)
+	rossSrcCanonical := s.canonicalIDOf(rossSrc)
+
+	// ── STAGING relationship: extra `notes` key is the enrichment discriminator
+	s.insertRelationshipRaw(
+		uuid.New(), uuid.New(), momSrcCanonical, rossSrcCanonical,
+		&branchID, "family", nil, nil, map[string]any{"since": "1994", "notes": "mother and son"},
+		makeNearVector(makeVector(40, 768)),
+	)
+
+	svc := s.graphSvc()
+	pid, _ := uuid.Parse(s.projectID)
+
+	_, err := svc.MergeBranch(s.ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID:      branchID,
+		Execute:             true,
+		Policy:              "enrich",
+		SimilarityThreshold: 0.90,
+	})
+	require.NoError(s.T(), err)
+
+	// ── Assert absorbed, not duplicated ──────────────────────────────────────
+	// Exactly ONE live HEAD main relationship of type "family" between the two
+	// main canonicals, and it was ENRICHED with the source's `notes` key while
+	// preserving its own label and weight.
+	type relRow struct {
+		ID          uuid.UUID `bun:"id"`
+		CanonicalID uuid.UUID `bun:"canonical_id"`
+		Label       *string   `bun:"label"`
+		Weight      *float32  `bun:"weight"`
+		Props       []byte    `bun:"properties"`
+	}
+	var rows []relRow
+	err = s.testDB.DB.NewRaw(`
+		SELECT id, canonical_id, label, weight, properties
+		FROM kb.graph_relationships
+		WHERE project_id = ? AND type = 'family'
+		  AND src_id = ? AND dst_id = ?
+		  AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL`,
+		s.projectID, momMainCanonical, rossMainCanonical,
+	).Scan(s.ctx, &rows)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), rows, 1, "exactly one live HEAD main relationship must remain (no duplicate created)")
+
+	var props map[string]any
+	require.NoError(s.T(), json.Unmarshal(rows[0].Props, &props))
+	assert.Equal(s.T(), "1994", props["since"], "existing since value preserved")
+	assert.Equal(s.T(), "mother and son", props["notes"],
+		"main relationship must be enriched with the source's notes key (similarity branch active)")
+
+	require.NotNil(s.T(), rows[0].Label, "absorbed relationship must preserve its label")
+	assert.Equal(s.T(), "family", *rows[0].Label, "absorbed relationship label must be unchanged")
+	require.NotNil(s.T(), rows[0].Weight, "absorbed relationship must preserve its weight")
+	assert.InDelta(s.T(), 0.85, float64(*rows[0].Weight), 1e-6, "absorbed relationship weight must be unchanged")
+}
+
+// TestMergePolicy_RelationshipSimilarity_TypeGate proves the relationship probe is
+// constrained by type: a staged relationship whose remapped endpoints match an
+// existing main relationship but whose type differs must be ADDED (a new live HEAD
+// row of the new type), not absorbed into the existing relationship.
+func (s *MergePolicyTestSuite) TestMergePolicy_RelationshipSimilarity_TypeGate() {
+	// ── Main objects ─────────────────────────────────────────────────────────
+	momMain := s.createObjectOnMain("Character", map[string]any{"name": "Mom (Geller)"})
+	rossMain := s.createObjectOnMain("Character", map[string]any{"name": "Ross Geller"})
+	s.setEmbedding(momMain, makeVector(30, 768))
+	s.setEmbedding(rossMain, makeVector(31, 768))
+
+	momMainCanonical := s.canonicalIDOf(momMain)
+	rossMainCanonical := s.canonicalIDOf(rossMain)
+
+	// ── Pre-existing MAIN relationship of type "family" ──────────────────────
+	familyLabel := "family"
+	familyWeight := float32(0.85)
+	s.insertRelationshipRaw(
+		uuid.New(), uuid.New(), momMainCanonical, rossMainCanonical,
+		nil, "family", &familyLabel, &familyWeight, map[string]any{"since": "1994"}, makeVector(40, 768),
+	)
+
+	// ── Staging branch: name-variant objects with near embeddings ────────────
+	branchID := s.createStagingBranch("test-rel-similarity-type-gate")
+	momSrc := s.createObjectOnBranch(&branchID, "Character", map[string]any{"name": "Monica and Ross's mother"})
+	rossSrc := s.createObjectOnBranch(&branchID, "Character", map[string]any{"name": "Ross (Geller)"})
+	s.setEmbedding(momSrc, makeNearVector(makeVector(30, 768)))
+	s.setEmbedding(rossSrc, makeNearVector(makeVector(31, 768)))
+
+	momSrcCanonical := s.canonicalIDOf(momSrc)
+	rossSrcCanonical := s.canonicalIDOf(rossSrc)
+
+	// ── STAGING relationship: SAME remapped endpoints, DIFFERENT type ─────────
+	// Near-identical embedding to the main "family" relationship, but type
+	// "friendship" — the type gate must prevent absorption.
+	s.insertRelationshipRaw(
+		uuid.New(), uuid.New(), momSrcCanonical, rossSrcCanonical,
+		&branchID, "friendship", nil, nil, map[string]any{"since": "1994", "notes": "mother and son"},
+		makeNearVector(makeVector(40, 768)),
+	)
+
+	svc := s.graphSvc()
+	pid, _ := uuid.Parse(s.projectID)
+
+	_, err := svc.MergeBranch(s.ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID:      branchID,
+		Execute:             true,
+		Policy:              "enrich",
+		SimilarityThreshold: 0.90,
+	})
+	require.NoError(s.T(), err)
+
+	// ── Assert added (not absorbed) ──────────────────────────────────────────
+	// The original "family" relationship is unchanged, and a SECOND live HEAD row
+	// of type "friendship" exists between the same two main canonicals.
+	type relRow struct {
+		Type  string `bun:"type"`
+		Props []byte `bun:"properties"`
+	}
+	var rows []relRow
+	err = s.testDB.DB.NewRaw(`
+		SELECT type, properties
+		FROM kb.graph_relationships
+		WHERE project_id = ? AND src_id = ? AND dst_id = ?
+		  AND branch_id IS NULL AND supersedes_id IS NULL AND deleted_at IS NULL
+		ORDER BY type ASC`,
+		s.projectID, momMainCanonical, rossMainCanonical,
+	).Scan(s.ctx, &rows)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), rows, 2, "a second live HEAD relationship of the new type must be added")
+
+	var familyProps, friendshipProps map[string]any
+	for _, r := range rows {
+		var m map[string]any
+		require.NoError(s.T(), json.Unmarshal(r.Props, &m))
+		switch r.Type {
+		case "family":
+			familyProps = m
+		case "friendship":
+			friendshipProps = m
+		}
+	}
+
+	require.NotNil(s.T(), familyProps, "original family relationship must still be present")
+	require.NotNil(s.T(), friendshipProps, "staged friendship relationship must be present as a new row")
+	assert.Equal(s.T(), "1994", familyProps["since"], "family relationship since preserved")
+	assert.NotContains(s.T(), familyProps, "notes",
+		"family relationship must NOT be enriched by the different-type staged relationship")
+	assert.Equal(s.T(), "mother and son", friendshipProps["notes"],
+		"staged friendship relationship must carry its own notes key")
+}
