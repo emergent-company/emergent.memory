@@ -4224,7 +4224,7 @@ func (s *Service) applyMerge(
 				if vecErr == nil && len(vec) > 0 {
 					maxDist := float32(1.0) - settings.SimilarityThreshold
 					similarRel, dist, simErr := s.repo.FindSimilarRelationshipInBranch(
-						ctx, projectID, targetBranchID, srcID, dstID, vec, nil, maxDist)
+						ctx, projectID, targetBranchID, srcID, dstID, src.Type, vec, nil, maxDist)
 					if simErr == nil && similarRel != nil {
 						// Similar rel exists — merge properties into it instead of creating new.
 						mergedRelProps, relChangedKeys := applyPropsPolicy(props, similarRel.Properties, settings.SimilarityAction)
@@ -4233,6 +4233,8 @@ func (s *Service) applyMerge(
 								Properties: mergedRelProps,
 								BranchID:   targetBranchID,
 								ProjectID:  projectID,
+								Label:      similarRel.Label,
+								Weight:     similarRel.Weight,
 								ChangeSummary: map[string]any{
 									"source":           "similarity-merge",
 									"similarity_score": 1.0 - dist,
