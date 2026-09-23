@@ -14,14 +14,25 @@ import (
 // the authenticated caller's organization / project. They are called by
 // CredentialService write methods before any DB mutation.
 
-// assertCallerOwnsOrg verifies that the authenticated org in the context matches
-// the provided orgID. Returns ErrForbidden if the check fails.
-func assertCallerOwnsOrg(ctx context.Context, orgID string) error {
-	callerOrgID := auth.OrgIDFromContext(ctx)
-	if callerOrgID == "" {
+// assertCallerOwnsOrg verifies that the authenticated caller is a member of the
+// target organization. The caller's org is derived from real membership
+// (kb.organization_memberships, keyed on the authenticated user's ID) — never
+// from the :orgId path parameter, so an empty-context request can no longer
+// self-satisfy the check (issue #841).
+//
+// Returns ErrUnauthorized when no authenticated user is present, ErrForbidden
+// when the caller is not a member of orgID.
+func assertCallerOwnsOrg(ctx context.Context, repo *Repository, orgID string) error {
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
 		return apperror.ErrUnauthorized.WithMessage("organization context required")
 	}
-	if callerOrgID != orgID {
+
+	isMember, err := repo.IsUserOrgMember(ctx, orgID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !isMember {
 		return apperror.ErrForbidden.WithMessage("access to organization provider config denied")
 	}
 	return nil

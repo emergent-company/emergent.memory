@@ -790,6 +790,27 @@ func sanitizeGranularity(g string) string {
 	}
 }
 
+// IsUserOrgMember reports whether the given user is a member of the given
+// organization, consulting kb.organization_memberships. It is the authoritative
+// source for org-scoped authorization (issue #841): the caller's org must be
+// derived from real membership, never from a request-controlled path parameter.
+func (r *Repository) IsUserOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
+	exists, err := r.db.NewSelect().
+		TableExpr("kb.organization_memberships").
+		Where("organization_id = ?", orgID).
+		Where("user_id = ?", userID).
+		Exists(ctx)
+
+	if err != nil {
+		r.log.Error("failed to check org membership",
+			logger.Error(err),
+			slog.String("orgID", orgID),
+			slog.String("userID", userID))
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+	return exists, nil
+}
+
 // GetOrgIDForProject looks up the organization ID for a given project.
 func (r *Repository) GetOrgIDForProject(ctx context.Context, projectID string) (string, error) {
 	var orgID string

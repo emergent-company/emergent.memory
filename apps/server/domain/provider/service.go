@@ -410,7 +410,7 @@ func (s *CredentialService) ListProjectConfigs(ctx context.Context, projectID st
 // ListProjectConfigsByOrg returns all project-level provider configs for
 // projects belonging to the given organization (metadata only).
 func (s *CredentialService) ListProjectConfigsByOrg(ctx context.Context, orgID string) ([]ProjectProviderConfigResponse, error) {
-	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
+	if err := assertCallerOwnsOrg(ctx, s.repo, orgID); err != nil {
 		return nil, err
 	}
 	cfgs, err := s.repo.ListProjectProviderConfigsByOrg(ctx, orgID)

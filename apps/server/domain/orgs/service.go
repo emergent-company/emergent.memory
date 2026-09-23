@@ -73,8 +73,13 @@ func (s *Service) List(ctx context.Context, userID string) ([]OrgDTO, error) {
 	return s.repo.List(ctx, userID)
 }
 
-// GetByID returns an organization by ID
-func (s *Service) GetByID(ctx context.Context, id string) (*OrgDTO, error) {
+// GetByID returns an organization by ID. The caller must be a member of the
+// organization; a non-member receives ErrForbidden (fail closed) regardless of
+// whether the org exists, so this cannot act as an org-existence oracle.
+func (s *Service) GetByID(ctx context.Context, id, userID string) (*OrgDTO, error) {
+	if err := s.requireOrgMember(ctx, id, userID); err != nil {
+		return nil, err
+	}
 	org, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -130,9 +135,15 @@ func (s *Service) Create(ctx context.Context, name string, userID string) (*OrgD
 	return &dto, nil
 }
 
-// Update renames an organization and returns the updated DTO. Unknown (or
-// soft-deleted) orgs surface the repository's not-found error unchanged.
-func (s *Service) Update(ctx context.Context, id, name string) (*OrgDTO, error) {
+// Update renames an organization and returns the updated DTO. The caller must
+// be a member of the organization; a non-member receives ErrForbidden before
+// any validation or write. Unknown (or soft-deleted) orgs surface the
+// repository's not-found error unchanged.
+func (s *Service) Update(ctx context.Context, id, userID, name string) (*OrgDTO, error) {
+	if err := s.requireOrgMember(ctx, id, userID); err != nil {
+		return nil, err
+	}
+
 	name, err := normalizeOrgName(name)
 	if err != nil {
 		return nil, err
@@ -151,8 +162,13 @@ func (s *Service) Update(ctx context.Context, id, name string) (*OrgDTO, error) 
 	return &dto, nil
 }
 
-// Delete deletes an organization by ID
-func (s *Service) Delete(ctx context.Context, id string) error {
+// Delete deletes an organization by ID. The caller must be a member of the
+// organization; a non-member receives ErrForbidden before any write.
+func (s *Service) Delete(ctx context.Context, id, userID string) error {
+	if err := s.requireOrgMember(ctx, id, userID); err != nil {
+		return err
+	}
+
 	deleted, err := s.repo.Delete(ctx, id)
 	if err != nil {
 		return err
@@ -165,7 +181,12 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// ListMembers returns all members of an organization
-func (s *Service) ListMembers(ctx context.Context, orgID string) ([]OrgMemberDTO, error) {
+// ListMembers returns all members of an organization. The caller must be a
+// member of the organization; member lists carry user PII (emails, names), so
+// a non-member receives ErrForbidden before any read.
+func (s *Service) ListMembers(ctx context.Context, orgID, userID string) ([]OrgMemberDTO, error) {
+	if err := s.requireOrgMember(ctx, orgID, userID); err != nil {
+		return nil, err
+	}
 	return s.repo.ListMembers(ctx, orgID)
 }
