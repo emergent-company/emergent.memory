@@ -33,7 +33,7 @@ func TestGetAgentMCPEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "fallback")
+	m := NewMemoryClient(srv.URL, "fallback")
 	ep, err := m.GetAgentMCPEndpoint(agentMCPSessionCtx(), "a1")
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestGetAgentMCPEndpointNotFoundIsNil(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	ep, err := m.GetAgentMCPEndpoint(context.Background(), "a1")
 	if err != nil {
 		t.Fatalf("404 must not error: %v", err)
@@ -79,7 +79,7 @@ func TestCreateAgentMCPEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	ep, err := m.CreateAgentMCPEndpoint(context.Background(), "a1")
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestRevokeAgentMCPEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	if err := m.RevokeAgentMCPEndpoint(context.Background(), "ep1"); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestListAgentMCPKeysWrappedAndBare(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			m := NewMemoryClient(srv.URL, "tok", "proj-1")
+			m := NewMemoryClient(srv.URL, "proj-1")
 			keys, err := m.ListAgentMCPKeys(context.Background(), "ep1")
 			if err != nil {
 				t.Fatal(err)
@@ -150,7 +150,7 @@ func TestCreateAgentMCPKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	secret, err := m.CreateAgentMCPKey(context.Background(), "ep1", "phone")
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestRevokeAgentMCPKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	if err := m.RevokeAgentMCPKey(context.Background(), "k1"); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestRotateAgentMCPKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	secret, err := m.RotateAgentMCPKey(context.Background(), "k1")
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestListAgentMCPSessions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	sessions, err := m.ListAgentMCPSessions(context.Background(), "ep1", "active")
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestAgentMCPKeyListNeverCarriesToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	keys, err := m.ListAgentMCPKeys(context.Background(), "ep1")
 	if err != nil {
 		t.Fatal(err)

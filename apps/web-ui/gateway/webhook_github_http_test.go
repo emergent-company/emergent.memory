@@ -48,7 +48,7 @@ func startWebhookHTTPTest(t *testing.T, cfg Config) (string, chan recordedTrigge
 	}))
 	t.Cleanup(memSrv.Close)
 
-	client := NewMemoryClient(memSrv.URL, "mem-token", cfg.MemoryProjectID)
+	client := NewMemoryClient(memSrv.URL, cfg.MemoryProjectID)
 	s := &Server{cfg: cfg, memory: client}
 
 	e := echo.New()
@@ -107,6 +107,7 @@ func TestGitHubWebhookHTTPEndToEnd(t *testing.T) {
 	repos := "acme/widgets, other/repo"
 	cfg := Config{
 		MemoryProjectID:     projectID,
+		AgentTriggerToken:   "mem-token",
 		GitHubWebhookSecret: secret,
 		GitHubReviewAgentID: agentID,
 		GitHubReviewRepos:   repos,
@@ -137,8 +138,9 @@ func TestGitHubWebhookHTTPEndToEnd(t *testing.T) {
 		if got.Auth != "Bearer mem-token" {
 			t.Errorf("Authorization = %q, want %q", got.Auth, "Bearer mem-token")
 		}
-		// No session context is attached on the webhook path, so the project is
-		// carried in the URL and X-Project-ID stays empty.
+		// The webhook attaches a session context carrying only the static
+		// AGENT_TRIGGER_TOKEN (no project id), so the project is carried in the
+		// URL and X-Project-ID stays empty.
 		if got.ProjectID != "" {
 			t.Errorf("X-Project-ID = %q, want empty (project is in the URL)", got.ProjectID)
 		}

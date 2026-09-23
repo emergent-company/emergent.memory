@@ -38,7 +38,7 @@ func TestListRelaySessions(t *testing.T) {
 		ProjectID: "sess-project",
 		OrgID:     "sess-org",
 	})
-	m := NewMemoryClient(srv.URL, "static-token", "static-project")
+	m := NewMemoryClient(srv.URL, "static-project")
 	sessions, err := m.ListRelaySessions(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -64,9 +64,9 @@ func TestListRelaySessions(t *testing.T) {
 	}
 }
 
-// TestListRelaySessionsNoSession asserts the API-key path: the static
-// server-side token applies and no scoping headers are sent (that token is
-// already project-bound) — same semantics as every other MemoryClient method.
+// TestListRelaySessionsNoSession asserts the session-less path: with no session
+// context there is no process-global token to fall back to, so no bearer is
+// sent and no scoping headers are added (the upstream would answer 401).
 func TestListRelaySessionsNoSession(t *testing.T) {
 	var gotAuth, gotProj string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -77,16 +77,16 @@ func TestListRelaySessionsNoSession(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "static-token", "static-project")
+	m := NewMemoryClient(srv.URL, "static-project")
 	sessions, err := m.ListRelaySessions(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotAuth != "Bearer static-token" {
-		t.Errorf("Authorization = %q, want the static token", gotAuth)
+	if gotAuth != "Bearer" {
+		t.Errorf("Authorization = %q, want empty bearer", gotAuth)
 	}
 	if gotProj != "" {
-		t.Errorf("X-Project-ID = %q, want empty on the API-key path", gotProj)
+		t.Errorf("X-Project-ID = %q, want empty with no session", gotProj)
 	}
 	if len(sessions) != 0 {
 		t.Errorf("got %d sessions, want 0 for an empty body", len(sessions))
@@ -101,7 +101,7 @@ func TestListRelaySessionsError500(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.ListRelaySessions(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "memory 500 internal") {
 		t.Fatalf("error = %v, want memory 500 internal", err)
@@ -123,7 +123,7 @@ func TestGetRelaySessionToolsNested(t *testing.T) {
 	defer srv.Close()
 
 	ctx := withSessionContext(context.Background(), &sessionContext{Token: "sess-token", ProjectID: "sess-project", OrgID: "sess-org"})
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tools, err := m.GetRelaySessionTools(ctx, "macbook-ada")
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestGetRelaySessionToolsFlat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tools, err := m.GetRelaySessionTools(context.Background(), "macbook-ada")
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func TestGetRelaySessionToolsShapes(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, tc.body)
 		}))
-		m := NewMemoryClient(srv.URL, "tok", "proj")
+		m := NewMemoryClient(srv.URL, "proj")
 		tools, err := m.GetRelaySessionTools(context.Background(), "macbook-ada")
 		srv.Close()
 		if err != nil {
@@ -214,7 +214,7 @@ func TestGetRelaySessionToolsNotFound404(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.GetRelaySessionTools(context.Background(), "gone"); err == nil ||
 		!strings.Contains(err.Error(), "memory 404 not_found") {
 		t.Fatalf("error = %v, want memory 404 not_found", err)
@@ -229,7 +229,7 @@ func TestGetRelaySessionToolsError500(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.GetRelaySessionTools(context.Background(), "macbook-ada"); err == nil ||
 		!strings.Contains(err.Error(), "memory 500 internal") {
 		t.Fatalf("error = %v, want memory 500 internal", err)
@@ -247,7 +247,7 @@ func TestRelayClientInstanceIDEscaping(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.GetRelaySessionTools(context.Background(), "desk 1/edge"); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestRelayClientUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
 	srv.Close()
-	m := NewMemoryClient(url, "tok", "proj")
+	m := NewMemoryClient(url, "proj")
 	if _, err := m.ListRelaySessions(context.Background()); err == nil {
 		t.Error("ListRelaySessions: want transport error, got nil")
 	}

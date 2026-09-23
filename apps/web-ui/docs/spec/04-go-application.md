@@ -211,7 +211,9 @@ Voice is explicitly **not** in the web UI (D5).
 
 | Var | Purpose |
 |---|---|
-| `MEMORY_URL`, `MEMORY_TOKEN` | memory endpoint + `emt_*` token (server-side secret) |
+| `MEMORY_URL`, `MEMORY_PROJECT_ID` | memory endpoint + default project scope |
+| `AGENT_TRIGGER_TOKEN` | dedicated static `emt_*` token for the session-less GitHub webhook (server-side secret) |
+| `WORKER_IDLE_TTL` | idle timeout before an on-demand bridge worker is reaped (default `10m`) |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | token minting + worker env |
 | `LIVEKIT_PUBLIC_URL` | ws url returned to iOS clients |
 | `PUBLIC_BASE_URL` | externally-reachable base URL (`scheme://host[:port]`) for client setup/config URLs; also pins the cookie `Secure` flag (`http://` disables it); empty = derive from request Host/scheme. Browser requests on a different `Host` are 302'd to this host (canonical-host redirect) so host-only cookies match the pinned `ZITADEL_REDIRECT_URI`. Session mode requires `https://` outside development |

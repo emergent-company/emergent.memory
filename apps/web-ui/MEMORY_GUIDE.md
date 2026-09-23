@@ -2,12 +2,17 @@
 
 ## Connection
 
-Memory connects to Emergent Memory via MCP. Credentials in `.env`:
+Memory connects to Emergent Memory via MCP. Config in `.env`:
 ```
 MEMORY_URL=http://localhost:5300
-MEMORY_TOKEN=emt_<redacted — real value lives in .env, never commit>
 MEMORY_PROJECT_ID=7d018080-16f7-45cc-b498-9233fb0d7ab0
+AGENT_TRIGGER_TOKEN=emt_<redacted — real value lives in .env, never commit>
 ```
+The gateway holds no standing memory token: interactive/API calls authenticate
+with the signed-in user's session (Zitadel) token, and voice bridge workers get
+a short-lived project-scoped token per room from the internal binding endpoint.
+`AGENT_TRIGGER_TOKEN` is the only static memory credential — used solely by the
+session-less GitHub webhook to trigger the review agent.
 
 MCP endpoint: `http://localhost:5300/api/mcp`
 

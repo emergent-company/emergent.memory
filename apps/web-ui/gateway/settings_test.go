@@ -21,8 +21,8 @@ func TestGetCurrentProject(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok123", "proj")
-	p, err := m.GetCurrentProject(context.Background())
+	m := NewMemoryClient(srv.URL, "proj")
+	p, err := m.GetCurrentProject(sessCtx("tok123"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestGetCurrentProjectSessionProject(t *testing.T) {
 	defer srv.Close()
 
 	// A session's active project id wins over the static server project id.
-	m := NewMemoryClient(srv.URL, "static-token", "static-proj")
+	m := NewMemoryClient(srv.URL, "static-proj")
 	ctx := withSessionContext(context.Background(), &sessionContext{Token: "sess-token", ProjectID: "sess-proj"})
 	p, err := m.GetCurrentProject(ctx)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestGetCurrentProjectNoProject(t *testing.T) {
 
 	// No project id resolvable (empty static project, no session) → the
 	// token-bound /api/projects/current fallback returns a null project.
-	m := NewMemoryClient(srv.URL, "tok", "")
+	m := NewMemoryClient(srv.URL, "")
 	p, err := m.GetCurrentProject(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestGetCurrentProjectError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.GetCurrentProject(context.Background()); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -115,7 +115,7 @@ func TestUpdateProject(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	name := "Renamed"
 	info := "notes"
 	off := false
@@ -148,7 +148,7 @@ func TestUpdateProjectForbidden(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	_, err := m.UpdateProject(context.Background(), "p1", &ProjectUpdate{Name: "x"})
 	if err == nil {
 		t.Fatal("want error, got nil")
@@ -172,7 +172,7 @@ func TestListAgentOverrides(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	out, err := m.ListAgentOverrides(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestListAgentOverridesAbsent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	out, err := m.ListAgentOverrides(context.Background())
 	if err != nil {
 		t.Fatalf("absent overrides must not error: %v", err)
@@ -222,7 +222,7 @@ func TestSetAgentOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	prompt := "be terse"
 	steps := 5
 	in := &AgentOverrideInput{SystemPrompt: &prompt, Tools: []string{"web_search", "memory_lookup"}, MaxSteps: &steps}
@@ -249,7 +249,7 @@ func TestSetAgentOverrideEscapesName(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.SetAgentOverride(context.Background(), "memory smith", &AgentOverrideInput{}); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestSetAgentOverrideError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.SetAgentOverride(context.Background(), "memory", &AgentOverrideInput{}); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -279,7 +279,7 @@ func TestDeleteAgentOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	if err := m.DeleteAgentOverride(context.Background(), "memory"); err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestDeleteAgentOverrideAbsent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DeleteAgentOverride(context.Background(), "memory"); err != nil {
 		t.Fatalf("deleting an absent override must not error: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestGetProjectSetting(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	ps, err := m.GetProjectSetting(context.Background(), "remember_config", "agent_name")
 	if err != nil {
 		t.Fatal(err)
@@ -337,7 +337,7 @@ func TestGetProjectSettingSessionProject(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "static-token", "static-proj")
+	m := NewMemoryClient(srv.URL, "static-proj")
 	ctx := withSessionContext(context.Background(), &sessionContext{Token: "sess-token", ProjectID: "sess-proj"})
 	if _, err := m.GetProjectSetting(ctx, "remember_config", "agent_name"); err != nil {
 		t.Fatal(err)
@@ -354,7 +354,7 @@ func TestGetProjectSettingAbsent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	ps, err := m.GetProjectSetting(context.Background(), "entity_create", "similarity_threshold")
 	if err != nil {
 		t.Fatalf("absent setting must not error: %v", err)
@@ -371,7 +371,7 @@ func TestGetProjectSettingError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.GetProjectSetting(context.Background(), "remember_config", "agent_name"); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -388,7 +388,7 @@ func TestSetProjectSetting(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	if err := m.SetProjectSetting(context.Background(), "entity_create", "similarity_threshold", map[string]any{"value": 0.8}); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestSetProjectSettingError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.SetProjectSetting(context.Background(), "remember_config", "agent_name", map[string]any{"name": "memory"}); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -422,7 +422,7 @@ func TestDeleteProjectSetting(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	if err := m.DeleteProjectSetting(context.Background(), "remember_config", "agent_name"); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestDeleteProjectSettingAbsent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DeleteProjectSetting(context.Background(), "remember_config", "agent_name"); err != nil {
 		t.Fatalf("deleting an absent setting must not error: %v", err)
 	}

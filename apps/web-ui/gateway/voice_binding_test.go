@@ -172,11 +172,13 @@ func TestMintTokenSessionModeStoresBinding(t *testing.T) {
 	}
 }
 
-func TestMintTokenKeyModeStoresStaticBinding(t *testing.T) {
+// TestMintTokenWithoutSessionRejected guards that voice now requires a
+// session: the old key/device-mode static-token fallback is gone, so a
+// session-less mint must fail closed rather than hand out a binding.
+func TestMintTokenWithoutSessionRejected(t *testing.T) {
 	f := voiceAgentBackend()
 	cfg := tokenTestConfig()
 	cfg.MemoryProjectID = "static-proj"
-	cfg.MemoryToken = "emt-static"
 	s, e := newBindingTokenEcho(f, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/token",
@@ -185,26 +187,10 @@ func TestMintTokenKeyModeStoresStaticBinding(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	if rec.Code == http.StatusOK {
+		t.Fatalf("session-less mint returned %d, want failure", rec.Code)
 	}
-	var got struct {
-		ParticipantToken string `json:"participant_token"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	room := decodeRoomGrant(t, got.ParticipantToken, "lksecret")
-	b, ok := s.bindings.Consume(room)
-	if !ok {
-		t.Fatal("binding not stored")
-	}
-	if b.ProjectID != "static-proj" || b.Token != "emt-static" {
-		t.Fatalf("binding = %+v, want static project/token", b)
-	}
-	if b.AgentDefinitionID != "a1" {
-		t.Fatalf("agent definition id = %q, want a1", b.AgentDefinitionID)
-	}
+	_ = s
 }
 
 func TestMintTokenSessionModeAgentNotFound(t *testing.T) {
@@ -256,11 +242,11 @@ func TestResolveVoiceAgentPerProject(t *testing.T) {
 	}
 	s := &Server{memory: f, cfg: Config{}}
 
-	idA, langA, okA := s.resolveVoiceAgent(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-a"}), "memory")
+	idA, langA, _, okA := s.resolveVoiceAgent(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-a"}), "memory")
 	if !okA || idA != "a1" || langA != "en" {
 		t.Fatalf("proj-a: id=%q lang=%q ok=%v", idA, langA, okA)
 	}
-	idB, langB, okB := s.resolveVoiceAgent(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-b"}), "memory")
+	idB, langB, _, okB := s.resolveVoiceAgent(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-b"}), "memory")
 	if !okB || idB != "b2" || langB != "pl" {
 		t.Fatalf("proj-b: id=%q lang=%q ok=%v", idB, langB, okB)
 	}

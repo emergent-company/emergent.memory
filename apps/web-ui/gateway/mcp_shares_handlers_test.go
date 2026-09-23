@@ -721,7 +721,7 @@ func TestMCPShareCreateNeverLogsToken(t *testing.T) {
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(prev) })
 
-	s := &Server{cfg: Config{}, memory: NewMemoryClient(ts.URL, "tok", "proj-1")}
+	s := &Server{cfg: Config{}, memory: NewMemoryClient(ts.URL, "proj-1")}
 	e := echo.New()
 	e.POST("/api/mcp-shares", s.createMCPShare)
 	rec := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares", `{"name":"api share","tools":["search_memory"]}`)

@@ -76,8 +76,8 @@ func TestListBackups(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
-	backups, total, err := m.ListBackups(context.Background(), "org-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
+	backups, total, err := m.ListBackups(sessCtx("tok"), "org-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestListBackupsEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	backups, total, err := m.ListBackups(context.Background(), "org-1")
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestListBackupsNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, _, err := m.ListBackups(context.Background(), "org-1"); err == nil {
 		t.Fatal("want error, got nil")
 	} else if !isMemoryNotFound(err) {
@@ -146,7 +146,7 @@ func TestListBackupsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, _, err := m.ListBackups(context.Background(), "org-1"); err == nil {
 		t.Fatal("want error, got nil")
 	} else if isMemoryNotFound(err) {
@@ -170,7 +170,7 @@ func TestCreateBackup(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	b, err := m.CreateBackup(context.Background(), true, true, 14)
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestCreateBackupRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.CreateBackup(context.Background(), false, false, 999); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -211,7 +211,7 @@ func TestGetBackup(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	b, err := m.GetBackup(context.Background(), "org-1", "b1")
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestDownloadBackupReady(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	got, err := m.DownloadBackup(context.Background(), "org-1", "b1")
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +263,7 @@ func TestDownloadBackupNotReady(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if u, err := m.DownloadBackup(context.Background(), "org-1", "b1"); err == nil {
 		t.Fatalf("want error for non-ready download, got url %q", u)
 	}
@@ -278,7 +278,7 @@ func TestDownloadBackupMissing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.DownloadBackup(context.Background(), "org-1", "nope"); err == nil {
 		t.Fatal("want error, got nil")
 	} else if !isMemoryNotFound(err) {
@@ -297,7 +297,7 @@ func TestDeleteBackup(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DeleteBackup(context.Background(), "org-1", "b1"); err != nil {
 		t.Fatal(err)
 	}

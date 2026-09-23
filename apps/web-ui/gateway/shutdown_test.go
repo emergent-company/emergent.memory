@@ -4,16 +4,57 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
 )
 
+// TestSupervisorEnsureWorkerIdempotentAndReap covers the on-demand spawn model:
+// EnsureWorker starts one process per agent regardless of how often it is
+// called, and reapIdle stops a worker idle past its TTL.
+func TestSupervisorEnsureWorkerIdempotentAndReap(t *testing.T) {
+	bin, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("sleep binary not available")
+	}
+	s := NewSupervisor(bin, []string{"60"}, "", time.Hour, 40*time.Millisecond, "k", "u")
+	t.Cleanup(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		go s.Run(ctx)
+		<-s.Done()
+	})
+
+	s.EnsureWorker("agent-a")
+	s.mu.Lock()
+	pid1 := s.workers["agent-a"].cmd.Process.Pid
+	s.mu.Unlock()
+
+	// A second call for a live worker must reuse it, not spawn a duplicate.
+	s.EnsureWorker("agent-a")
+	s.mu.Lock()
+	pid2, count := s.workers["agent-a"].cmd.Process.Pid, len(s.workers)
+	s.mu.Unlock()
+	if pid1 != pid2 || count != 1 {
+		t.Fatalf("EnsureWorker not idempotent: pids %d/%d, workers %d", pid1, pid2, count)
+	}
+
+	time.Sleep(80 * time.Millisecond) // exceed the idle TTL
+	s.reapIdle()
+	s.mu.Lock()
+	_, ok := s.workers["agent-a"]
+	s.mu.Unlock()
+	if ok {
+		t.Fatal("idle worker was not reaped")
+	}
+}
+
 // TestSupervisorRunClosesDone asserts Run returns (and closes Done) promptly
 // after its context is cancelled.
 func TestSupervisorRunClosesDone(t *testing.T) {
-	s := NewSupervisor(&fakeMemory{}, "true", nil, "", time.Hour, "k", "u")
+	s := NewSupervisor("true", nil, "", time.Hour, time.Minute, "k", "u")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	go s.Run(ctx)

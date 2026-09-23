@@ -11,16 +11,20 @@ import (
 
 // Config is loaded from environment. Memory credentials are server-side only.
 type Config struct {
-	Port               string
-	MemoryURL          string
-	MemoryToken        string
-	MemoryProjectID    string
-	ClientAPIKey       string // optional admin key (TOKEN_API_KEY); per-device keys are issued via the QR setup flow
-	BridgeBin          string
-	BridgeArgs         []string
-	BridgeWorkdir      string
+	Port            string
+	MemoryURL       string
+	MemoryProjectID string
+	ClientAPIKey    string // optional admin key (TOKEN_API_KEY); per-device keys are issued via the QR setup flow
+	BridgeBin       string
+	BridgeArgs      []string
+	BridgeWorkdir   string
+	// SupervisorInterval is how often the supervisor reaps idle workers.
 	SupervisorInterval time.Duration
-	BlueprintsDir      string // local bundled blueprint packs (default blueprints/)
+	// WorkerIdleTTL is how long a bridge worker may sit unused before the
+	// supervisor stops it. Workers are spawned on demand (voice token mint)
+	// and reaped after this idle window; zero disables reaping.
+	WorkerIdleTTL time.Duration
+	BlueprintsDir string // local bundled blueprint packs (default blueprints/)
 
 	LiveKitAPIKey     string
 	LiveKitAPISecret  string
@@ -121,6 +125,11 @@ type Config struct {
 	GitHubWebhookSecret string
 	GitHubReviewAgentID string
 	GitHubReviewRepos   string
+	// AgentTriggerToken is a dedicated static Memory bearer token used ONLY by
+	// the session-less GitHub webhook to trigger the review agent
+	// (AGENT_TRIGGER_TOKEN). Every other memory call authenticates with the
+	// request's session token; this is not a general gateway credential.
+	AgentTriggerToken string
 }
 
 func LoadConfig() Config {
@@ -132,13 +141,13 @@ func LoadConfig() Config {
 	return Config{
 		Port:               envOr("MEMORY_PORT", "8095"),
 		MemoryURL:          envOr("MEMORY_URL", "https://memory.emergent-company.ai"),
-		MemoryToken:        os.Getenv("MEMORY_TOKEN"),
 		MemoryProjectID:    os.Getenv("MEMORY_PROJECT_ID"),
 		ClientAPIKey:       os.Getenv("TOKEN_API_KEY"),
 		BridgeBin:          envOr("BRIDGE_BIN", "python"),
 		BridgeArgs:         strings.Fields(envOr("BRIDGE_ARGS", "-m memory_bridge start")),
 		BridgeWorkdir:      os.Getenv("BRIDGE_WORKDIR"),
 		SupervisorInterval: durationOr("SUPERVISOR_INTERVAL", 5*time.Second),
+		WorkerIdleTTL:      durationOr("WORKER_IDLE_TTL", 10*time.Minute),
 		BlueprintsDir:      os.Getenv("BLUEPRINTS_DIR"), // empty = use embedded packs
 
 		LiveKitAPIKey:     os.Getenv("LIVEKIT_API_KEY"),
@@ -190,6 +199,7 @@ func LoadConfig() Config {
 		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		GitHubReviewAgentID: os.Getenv("GITHUB_REVIEW_AGENT_ID"),
 		GitHubReviewRepos:   os.Getenv("GITHUB_REVIEW_REPOS"),
+		AgentTriggerToken:   os.Getenv("AGENT_TRIGGER_TOKEN"),
 	}
 }
 

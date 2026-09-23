@@ -38,15 +38,20 @@ LiveKit speaker ◄── Cartesia TTS (streaming) ◄── SSE text tokens
 
 The bridge must resolve **which memory agent** it drives. The 3-way identity (LiveKit dispatch
 name == agent name == worker `AGENT_NAME`) is not enough — memory's chat API targets an
-**agent definition id**, not a name. The supervisor therefore resolves name→id and injects it:
+**agent definition id**, not a name. The gateway resolves name→id when it mints the per-room
+voice token and stores it in the server-side binding; the worker fetches that binding over the
+internal endpoint (it is never carried in the client-decodable join JWT):
 
 | Env | Set by | Purpose |
 |---|---|---|
 | `AGENT_NAME` | supervisor | LiveKit dispatch name + worker identity |
-| `AGENT_DEFINITION_ID` | supervisor | memory `AgentDefinition` id to chat with |
-| `AGENT_LANGUAGE` | supervisor | canonical ISO 639-1 code; STT + TTS follow it |
-| `MEMORY_URL`, `MEMORY_TOKEN` | supervisor | memory endpoint + scoped token |
-| `MEMORY_PROJECT_ID` | supervisor | memory project scope |
+| `WORKER_INTERNAL_KEY` | supervisor | shared key authenticating the binding fetch |
+| `VOICE_BINDING_URL` | supervisor | internal endpoint serving the per-room binding |
+| `MEMORY_URL` | inherited from the gateway env | memory endpoint |
+
+The binding carries the project/org scope, the memory `AgentDefinition` id, the agent language
+(canonical ISO 639-1 code; STT + TTS follow it), and a short-lived project-scoped memory token.
+The worker holds **no standing memory credential**.
 
 The bridge holds **no agent config** — it reads nothing from memory except the chat stream.
 Model, prompt, tools all live in memory's agent definition.
@@ -95,8 +100,8 @@ Default English; empty means auto/global fallback.
 | Var | Purpose |
 |---|---|
 | `AGENT_NAME` | LiveKit dispatch name + worker identity |
-| `AGENT_DEFINITION_ID`, `MEMORY_PROJECT_ID` | memory binding (see above) |
-| `MEMORY_URL`, `MEMORY_TOKEN` | memory endpoint + scoped token |
+| `WORKER_INTERNAL_KEY`, `VOICE_BINDING_URL` | fetch the per-room binding (project/org, agent definition id, language, scoped token) |
+| `MEMORY_URL` | memory endpoint |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | LiveKit transport |
 | `DEEPGRAM_API_KEY` | STT |
 | `CARTESIA_API_KEY`, `CARTESIA_VOICE` | TTS |

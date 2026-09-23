@@ -303,8 +303,8 @@ func TestCancelAgentRunClient(t *testing.T) {
 		_, _ = io.WriteString(w, `{"success":true,"data":{"message":"Run cancelled successfully"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "static-token", "static-proj")
-	if err := m.CancelAgentRun(context.Background(), "a1", "r1"); err != nil {
+	m := NewMemoryClient(srv.URL, "static-proj")
+	if err := m.CancelAgentRun(sessCtx("static-token"), "a1", "r1"); err != nil {
 		t.Fatalf("CancelAgentRun: %v", err)
 	}
 	if gotPath != "/api/projects/static-proj/agents/a1/runs/r1/cancel" || gotMethod != http.MethodPost {
@@ -322,7 +322,7 @@ func TestCancelAgentRunClientNon2xx(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"run not found"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	err := m.CancelAgentRun(context.Background(), "a1", "r1")
 	if err == nil {
 		t.Fatal("non-2xx cancel must return an error")
@@ -342,7 +342,7 @@ func TestListSessionTodosClient(t *testing.T) {
 		_, _ = io.WriteString(w, `[{"id":"t1","sessionId":"s1","content":"Write tests","status":"in_progress","order":1,"createdAt":"2026-09-01T10:00:00Z","updatedAt":"2026-09-01T10:05:00Z"},{"id":"t2","sessionId":"s1","content":"Ship","status":"pending","order":2,"createdAt":"2026-09-01T10:01:00Z","updatedAt":"2026-09-01T10:01:00Z"}]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	todos, err := m.ListSessionTodos(context.Background(), "s1")
 	if err != nil {
 		t.Fatalf("ListSessionTodos: %v", err)
@@ -367,7 +367,7 @@ func TestListSessionTodosClientEmpty(t *testing.T) {
 		_, _ = io.WriteString(w, `[]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	todos, err := m.ListSessionTodos(context.Background(), "s1")
 	if err != nil {
 		t.Fatalf("ListSessionTodos: %v", err)

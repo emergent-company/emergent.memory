@@ -30,9 +30,9 @@ func main() {
 		log.Printf("sentry init: %v", err)
 	}
 	defer sentry.Flush(2 * time.Second)
-	memory := NewMemoryClient(cfg.MemoryURL, cfg.MemoryToken, cfg.MemoryProjectID)
+	memory := NewMemoryClient(cfg.MemoryURL, cfg.MemoryProjectID)
 	memory.shareRefSecret = cfg.ShareRefSecret
-	sup := NewSupervisor(memory, cfg.BridgeBin, cfg.BridgeArgs, cfg.BridgeWorkdir, cfg.SupervisorInterval, cfg.WorkerInternalKey, "http://127.0.0.1:"+cfg.Port)
+	sup := NewSupervisor(cfg.BridgeBin, cfg.BridgeArgs, cfg.BridgeWorkdir, cfg.SupervisorInterval, cfg.WorkerIdleTTL, cfg.WorkerInternalKey, "http://127.0.0.1:"+cfg.Port)
 	s := &Server{cfg: cfg, memory: memory, supervisor: sup, bindings: newVoiceBindingStore(), shutdownCh: make(chan struct{})}
 	s.hub = newConversationHub(s)
 	s.registry = newAccountRegistry()
