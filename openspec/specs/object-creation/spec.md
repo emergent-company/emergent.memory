@@ -92,7 +92,7 @@ The labels/tags field SHALL render a chip input that adds a label on Enter/comma
 
 ### Requirement: Optional fields
 
-Fields other than type are optional.
+The create form SHALL require only the type field; all other fields (key, status, labels, and schema-defined properties) are optional.
 
 #### Scenario: Minimal object
 - **WHEN** the user creates an object with only a type and no other fields
