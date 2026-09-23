@@ -220,8 +220,8 @@ type ZitadelConfig struct {
 	// Deprecated aliases. These are populated only to implement the one-release
 	// alias window; they are reconciled into the canonical fields in
 	// reconcileScopePolicyAliases and are not read elsewhere. Removed next release.
-	OIDCDefaultScopesAlias       []string `env:"ZITADEL_OIDC_DEFAULT_SCOPES"`
-	UserinfoGrantAllScopesAlias  bool     `env:"ZITADEL_USERINFO_GRANT_ALL_SCOPES"`
+	OIDCDefaultScopesAlias      []string `env:"ZITADEL_OIDC_DEFAULT_SCOPES"`
+	UserinfoGrantAllScopesAlias bool     `env:"ZITADEL_USERINFO_GRANT_ALL_SCOPES"`
 
 	// TrustTokenScopes governs whether Memory scope names carried on a validated
 	// OIDC token are honoured as a grant. Introduced enabled so Release N changes

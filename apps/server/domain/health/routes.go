@@ -15,6 +15,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, m *MetricsHandler, authMiddleware 
 	e.GET("/api/health", h.Health)
 	e.GET("/api/diagnostics", h.Diagnose)
 
+	// The scope-authority posture must not leak to anonymous callers (issue #812
+	// Q5; retroactive #808 removed the oidc_all_grant signal from the anonymous
+	// /health). Serve it on an authenticated surface only.
+	authority := e.Group("/api/health")
+	authority.Use(authMiddleware.RequireAuth())
+	authority.GET("/scope-authority", h.ScopeAuthority)
+
 	// Metrics endpoints require authentication — project tokens see only their project's data.
 	metrics := e.Group("/api/metrics")
 	metrics.Use(authMiddleware.RequireAuth())

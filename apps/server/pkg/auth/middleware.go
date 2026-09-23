@@ -669,7 +669,7 @@ const (
 
 // oidcAllGrantWarningText is the operator-facing warning emitted when the legacy
 // userinfo all-grant is active. It names the effect and both remediations.
-const oidcAllGrantWarningText = "OIDC all-scope grant is ACTIVE: ZITADEL_USERINFO_GRANT_ALL_SCOPES is enabled and token introspection is not configured, so every OIDC user authenticated via the userinfo fallback receives the full Memory scope catalogue (GetAllScopes). Remediate by configuring ZITADEL_CLIENT_JWT (or ZITADEL_CLIENT_JWT_PATH) to enable introspection (DISABLE_ZITADEL_INTROSPECTION must not be enabled), or by setting ZITADEL_USERINFO_GRANT_ALL_SCOPES=false."
+const oidcAllGrantWarningText = "OIDC all-scope grant is ACTIVE: MEMORY_USERINFO_GRANT_ALL_SCOPES is enabled and token introspection is not configured, so every OIDC user authenticated via the userinfo fallback receives the full Memory scope catalogue (GetAllScopes). Remediate by configuring ZITADEL_CLIENT_JWT (or ZITADEL_CLIENT_JWT_PATH) to enable introspection (DISABLE_ZITADEL_INTROSPECTION must not be enabled), or by setting MEMORY_USERINFO_GRANT_ALL_SCOPES=false."
 
 // oidcAllGrantWarning returns the startup warning to emit when the legacy
 // userinfo all-grant is active, or "" when it is not (flag disabled, or
@@ -689,7 +689,7 @@ func (m *Middleware) warnIfOIDCAllGrantActive() {
 	}
 	if msg := oidcAllGrantWarning(&m.cfg.Zitadel); msg != "" {
 		m.log.Warn(msg,
-			slog.String("config", "ZITADEL_USERINFO_GRANT_ALL_SCOPES"),
+			slog.String("config", "MEMORY_USERINFO_GRANT_ALL_SCOPES"),
 			slog.Bool("introspection_configured", false),
 		)
 	}

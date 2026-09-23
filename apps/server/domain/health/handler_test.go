@@ -259,47 +259,61 @@ func TestDatabaseBackupCheck(t *testing.T) {
 	}
 }
 
-func TestOIDCAllGrantCheck(t *testing.T) {
+func TestScopeAuthorityInfo(t *testing.T) {
 	tests := []struct {
-		name       string
-		flag       bool
-		introspect bool
-		wantStatus string
+		name                    string
+		trust                   bool
+		grantAll                bool
+		introspect              bool
+		wantTrust               bool
+		wantPermissive          bool
+		wantIntrospection       bool
 	}{
-		{name: "flag on, introspection unconfigured", flag: true, wantStatus: "warning"},
-		{name: "flag on, introspection configured", flag: true, introspect: true, wantStatus: "healthy"},
-		{name: "flag off, introspection unconfigured", flag: false, wantStatus: "healthy"},
-		{name: "flag off, introspection configured", flag: false, introspect: true, wantStatus: "healthy"},
+		{
+			name:              "default posture: trust on, permissive on, introspection off",
+			trust:             true, grantAll: true,
+			wantTrust: true, wantPermissive: true, wantIntrospection: false,
+		},
+		{
+			name:              "trust off, introspection configured suppresses the permissive grant",
+			trust:             false, grantAll: true, introspect: true,
+			wantTrust: false, wantPermissive: false, wantIntrospection: true,
+		},
+		{
+			name:              "grant flag off",
+			trust:             true, grantAll: false,
+			wantTrust: true, wantPermissive: false, wantIntrospection: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			z := config.ZitadelConfig{UserinfoGrantAllScopes: tt.flag}
+			z := config.ZitadelConfig{
+				TrustTokenScopes:        tt.trust,
+				UserinfoGrantAllScopes:  tt.grantAll,
+			}
 			if tt.introspect {
 				z.ClientJWT = "jwt"
 			}
 			h := &Handler{cfg: &config.Config{Zitadel: z}}
-			got := h.oidcAllGrantCheck()
-			if got.Status != tt.wantStatus {
-				t.Errorf("status = %q, want %q", got.Status, tt.wantStatus)
+			got := h.scopeAuthorityInfo()
+			if got.TokenScopesTrusted != tt.wantTrust {
+				t.Errorf("token_scopes_trusted = %v, want %v", got.TokenScopesTrusted, tt.wantTrust)
 			}
-			if tt.wantStatus == "warning" {
-				if !strings.Contains(got.Message, "ZITADEL_CLIENT_JWT") {
-					t.Errorf("message = %q, want it to contain %q", got.Message, "ZITADEL_CLIENT_JWT")
-				}
-				if !strings.Contains(got.Message, "ZITADEL_USERINFO_GRANT_ALL_SCOPES=false") {
-					t.Errorf("message = %q, want it to contain %q", got.Message, "ZITADEL_USERINFO_GRANT_ALL_SCOPES=false")
-				}
+			if got.PermissiveAllGrant != tt.wantPermissive {
+				t.Errorf("permissive_all_grant = %v, want %v", got.PermissiveAllGrant, tt.wantPermissive)
+			}
+			if got.IntrospectionConfigured != tt.wantIntrospection {
+				t.Errorf("introspection_configured = %v, want %v", got.IntrospectionConfigured, tt.wantIntrospection)
 			}
 		})
 	}
 }
 
-// TestOverallHealthIgnoresOIDCAllGrantWarning pins the promise that the new
-// oidc_all_grant entry never changes system health semantics: it is deliberately
-// absent from the critical/optional component lists, so a "warning" (and even a
-// hypothetical "unhealthy") entry must leave the overall status "healthy" with
-// HTTP 200.
-func TestOverallHealthIgnoresOIDCAllGrantWarning(t *testing.T) {
+// TestOverallHealthIgnoresInformationalEntries pins the promise that any check
+// entry outside the critical/optional component lists never changes system
+// health semantics, so a "warning" (and even a hypothetical "unhealthy") entry
+// must leave the overall status "healthy" with HTTP 200.
+func TestOverallHealthIgnoresInformationalEntries(t *testing.T) {
 	healthy := func() map[string]Check {
 		return map[string]Check{
 			"database":        {Status: "healthy"},
@@ -309,7 +323,7 @@ func TestOverallHealthIgnoresOIDCAllGrantWarning(t *testing.T) {
 			"whisper":         {Status: "healthy"},
 			"embeddings":      {Status: "healthy"},
 			"database_backup": {Status: "healthy"},
-			"oidc_all_grant":  {Status: "warning", Message: "all-grant active"},
+			"informational":   {Status: "warning", Message: "config warning"},
 		}
 	}
 
@@ -322,10 +336,10 @@ func TestOverallHealthIgnoresOIDCAllGrantWarning(t *testing.T) {
 	}
 
 	checks := healthy()
-	checks["oidc_all_grant"] = Check{Status: "unhealthy"}
+	checks["informational"] = Check{Status: "unhealthy"}
 	status, code = overallHealth(checks)
 	if status != "healthy" || code != http.StatusOK {
-		t.Errorf("oidc_all_grant moved the overall status: status = %q, code = %d; want healthy/200", status, code)
+		t.Errorf("informational entry moved the overall status: status = %q, code = %d; want healthy/200", status, code)
 	}
 }
 
@@ -349,10 +363,11 @@ func healthTestPool(t *testing.T) *pgxpool.Pool {
 	return p
 }
 
-// TestRunChecksEmitsOIDCAllGrant proves the registration itself, not just the
-// check body: runChecks must emit the oidc_all_grant key with the warning status
-// on the shipped default posture.
-func TestRunChecksEmitsOIDCAllGrant(t *testing.T) {
+// TestRunChecksDoesNotLeakOIDCAllGrant pins the retroactive #808 fix: the
+// anonymous health checks map must NOT contain an oidc_all_grant entry (the
+// permissive posture must not leak publicly). The scope-authority posture is
+// served only on the authenticated /api/health/scope-authority endpoint.
+func TestRunChecksDoesNotLeakOIDCAllGrant(t *testing.T) {
 	h := &Handler{
 		pool:       healthTestPool(t),
 		db:         fakeRowQuerier{row: fakeRow{scanErr: pgx.ErrNoRows}},
@@ -364,11 +379,7 @@ func TestRunChecksEmitsOIDCAllGrant(t *testing.T) {
 	}
 
 	checks := h.runChecks(context.Background())
-	got, ok := checks["oidc_all_grant"]
-	if !ok {
-		t.Fatalf("runChecks did not emit the oidc_all_grant entry; got keys %v", checks)
-	}
-	if got.Status != "warning" {
-		t.Errorf("oidc_all_grant status = %q, want %q", got.Status, "warning")
+	if _, ok := checks["oidc_all_grant"]; ok {
+		t.Fatalf("runChecks leaked the oidc_all_grant entry on the anonymous health response: %v", checks)
 	}
 }
