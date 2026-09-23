@@ -56,7 +56,7 @@ A skill name SHALL be unique globally, and unique within a project. When a proje
 - **THEN** the create succeeds and the project-scoped `deploy` takes precedence for that project
 
 ### Requirement: REST skill management surface
-The server SHALL expose REST endpoints for skill CRUD at global, org, and project scope. Creating a global skill SHALL require superadmin. Creating project/org skills SHALL require the corresponding scope authorization.
+The server SHALL expose REST endpoints for skill CRUD at global, org, and project scope. Creating, updating, or deleting a global skill SHALL require `superadmin_full`; a `superadmin_readonly` grant, a plain authenticated user, or an absent superadmin module SHALL all be denied (the gate SHALL fail closed). Creating project/org skills SHALL require the corresponding scope authorization.
 
 - `GET|POST /api/skills` and `GET|PATCH|DELETE /api/skills/:id` (global)
 - `GET|POST /api/orgs/:orgId/skills` and `PATCH|DELETE /api/orgs/:orgId/skills/:id` (org)
@@ -69,6 +69,18 @@ The server SHALL expose REST endpoints for skill CRUD at global, org, and projec
 #### Scenario: Global create rejected for non-superadmin
 - **WHEN** a non-superadmin calls `POST /api/skills`
 - **THEN** the create is rejected with an authorization error
+
+#### Scenario: Global update and delete rejected for non-superadmin
+- **WHEN** a non-superadmin calls `PATCH /api/skills/:id` or `DELETE /api/skills/:id`
+- **THEN** the mutation is rejected with an authorization error
+
+#### Scenario: Global mutation rejected for superadmin_readonly
+- **WHEN** a `superadmin_readonly` principal calls `POST /api/skills`, `PATCH /api/skills/:id`, or `DELETE /api/skills/:id`
+- **THEN** the mutation is rejected with an authorization error
+
+#### Scenario: Global mutation fails closed when superadmin module is absent
+- **WHEN** the superadmin module is not loaded and any authenticated principal calls `POST /api/skills`, `PATCH /api/skills/:id`, or `DELETE /api/skills/:id`
+- **THEN** the mutation is denied rather than permitted
 
 #### Scenario: Update is partial
 - **WHEN** `PATCH /api/skills/:id` is called with only `content`

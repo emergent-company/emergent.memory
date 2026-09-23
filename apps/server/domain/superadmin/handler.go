@@ -211,7 +211,7 @@ func (h *Handler) ListUsers(c echo.Context) error {
 // @Router       /api/superadmin/users/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteUser(c echo.Context) error {
-	deletedBy, err := h.requireSuperadminRole(c, "superadmin_full")
+	deletedBy, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull)
 	if err != nil {
 		return err
 	}
@@ -296,7 +296,7 @@ func (h *Handler) ListOrganizations(c echo.Context) error {
 // @Router       /api/superadmin/organizations/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteOrganization(c echo.Context) error {
-	deletedBy, err := h.requireSuperadminRole(c, "superadmin_full")
+	deletedBy, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull)
 	if err != nil {
 		return err
 	}
@@ -384,7 +384,7 @@ func (h *Handler) ListProjects(c echo.Context) error {
 // @Router       /api/superadmin/projects/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteProject(c echo.Context) error {
-	deletedBy, err := h.requireSuperadminRole(c, "superadmin_full")
+	deletedBy, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull)
 	if err != nil {
 		return err
 	}
@@ -475,7 +475,7 @@ func (h *Handler) ListProjectMembers(c echo.Context) error {
 // @Router       /api/superadmin/projects/{id}/members [post]
 // @Security     bearerAuth
 func (h *Handler) AddProjectMember(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -516,7 +516,7 @@ func (h *Handler) AddProjectMember(c echo.Context) error {
 // @Router       /api/superadmin/projects/{id}/members/{userId} [delete]
 // @Security     bearerAuth
 func (h *Handler) RemoveProjectMember(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -710,7 +710,7 @@ func (h *Handler) ListEmbeddingJobs(c echo.Context) error {
 // @Router       /api/superadmin/embedding-jobs/delete [post]
 // @Security     bearerAuth
 func (h *Handler) DeleteEmbeddingJobs(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -754,7 +754,7 @@ func (h *Handler) DeleteEmbeddingJobs(c echo.Context) error {
 // @Router       /api/superadmin/embedding-jobs/cleanup-orphans [post]
 // @Security     bearerAuth
 func (h *Handler) CleanupOrphanEmbeddingJobs(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -781,7 +781,7 @@ func (h *Handler) CleanupOrphanEmbeddingJobs(c echo.Context) error {
 // @Router       /api/superadmin/embedding-jobs/reset-dead-letter [post]
 // @Security     bearerAuth
 func (h *Handler) ResetDeadLetterEmbeddingJobs(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -855,7 +855,7 @@ func (h *Handler) ListExtractionJobs(c echo.Context) error {
 // @Router       /api/superadmin/extraction-jobs/delete [post]
 // @Security     bearerAuth
 func (h *Handler) DeleteExtractionJobs(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -893,7 +893,7 @@ func (h *Handler) DeleteExtractionJobs(c echo.Context) error {
 // @Router       /api/superadmin/extraction-jobs/cancel [post]
 // @Security     bearerAuth
 func (h *Handler) CancelExtractionJobs(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -973,7 +973,7 @@ func (h *Handler) ListDocumentParsingJobs(c echo.Context) error {
 // @Router       /api/superadmin/document-parsing-jobs/delete [post]
 // @Security     bearerAuth
 func (h *Handler) DeleteDocumentParsingJobs(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -1011,7 +1011,7 @@ func (h *Handler) DeleteDocumentParsingJobs(c echo.Context) error {
 // @Router       /api/superadmin/document-parsing-jobs/retry [post]
 // @Security     bearerAuth
 func (h *Handler) RetryDocumentParsingJobs(c echo.Context) error {
-	if _, err := h.requireSuperadminRole(c, "superadmin_full"); err != nil {
+	if _, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull); err != nil {
 		return err
 	}
 
@@ -1049,7 +1049,7 @@ func (h *Handler) RetryDocumentParsingJobs(c echo.Context) error {
 // @Router       /api/superadmin/service-tokens [post]
 // @Security     bearerAuth
 func (h *Handler) CreateServiceToken(c echo.Context) error {
-	grantedBy, err := h.requireSuperadminRole(c, "superadmin_full")
+	grantedBy, err := h.requireSuperadminRole(c, auth.RoleSuperadminFull)
 	if err != nil {
 		return err
 	}
