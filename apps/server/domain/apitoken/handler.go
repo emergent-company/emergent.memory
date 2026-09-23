@@ -2,6 +2,8 @@ package apitoken
 
 import (
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -64,6 +66,66 @@ func (h *Handler) Create(c echo.Context) error {
 	}
 
 	// Sync email while we have it (browser session has email; API token auth does not)
+	if user.Email != "" && h.userProfile != nil {
+		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// deviceTokenLifetime is the default expiry minted on a device credential:
+// 90 days, the design's operator-overridable default. A device re-onboards via
+// a fresh QR rather than outliving a rotated credential indefinitely.
+const deviceTokenLifetime = 90 * 24 * time.Hour
+
+// createDeviceTokenRequest is the body for POST /api/projects/:projectId/device-tokens.
+// Only the human-facing name is accepted — the scope set is hardcoded server-side.
+type createDeviceTokenRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateDeviceToken mints a scoped per-device credential for the project. The
+// scope set is hardcoded (device:api + agents:read + data:read) — the request
+// carries no scopes, so the ceiling cannot be widened by any caller.
+// @Summary      Create device credential
+// @Description  Mints a scoped per-device credential (device:api marker + read-only scopes) for a project. Returns the full token value once.
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body createDeviceTokenRequest true "Device credential request (name only)"
+// @Success      201 {object} CreateApiTokenResponseDTO "Device credential created (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/device-tokens [post]
+// @Security     bearerAuth
+func (h *Handler) CreateDeviceToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req createDeviceTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "device"
+	}
+	if len(name) > 255 {
+		return apperror.ErrBadRequest.WithMessage("name must be at most 255 characters")
+	}
+
+	expiresAt := time.Now().Add(deviceTokenLifetime)
+	result, err := h.svc.CreateDeviceToken(c.Request().Context(), projectID, name, &expiresAt)
+	if err != nil {
+		return err
+	}
+
 	if user.Email != "" && h.userProfile != nil {
 		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
 	}
