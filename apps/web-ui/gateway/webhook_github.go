@@ -107,6 +107,14 @@ func (s *Server) githubWebhook(c echo.Context) error {
 
 	prompt := githubReviewPrompt(&payload)
 	ctxValues := githubReviewContext(&payload)
+	// Refuse before accepting (202) when the dedicated trigger credential is
+	// missing: the trigger runs asynchronously, so a missing token would
+	// otherwise be invisible to GitHub and unretryable. Config.Validate fails
+	// startup for the same reason; this covers a runtime-unset value.
+	if s.cfg.AgentTriggerToken == "" {
+		log.Printf("github webhook: AGENT_TRIGGER_TOKEN unset; refusing %s#%d", repoFullName, payload.pullNumber())
+		return c.String(http.StatusServiceUnavailable, "agent trigger token is not configured")
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()

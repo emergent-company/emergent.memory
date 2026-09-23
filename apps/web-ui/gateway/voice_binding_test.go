@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -187,10 +188,51 @@ func TestMintTokenWithoutSessionRejected(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	if rec.Code == http.StatusOK {
-		t.Fatalf("session-less mint returned %d, want failure", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("session-less mint status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = s
+	if len(s.bindings.entries) != 0 {
+		t.Fatal("session-less mint must not store a binding")
+	}
+}
+
+// TestMintTokenDisabledAgentRejected asserts a disabled agent definition is
+// refused before a binding or worker is created, and any warm worker for it is
+// stopped (the removed background reconcile applied the same gate).
+func TestMintTokenDisabledAgentRejected(t *testing.T) {
+	f := voiceAgentBackend()
+	f.agents[0].Enabled = false
+	s, e := newBindingTokenEcho(f, tokenTestConfig())
+
+	bin, err := exec.LookPath("sleep")
+	if err == nil {
+		sup := NewSupervisor(bin, []string{"60"}, "", 0, 0, "k", "u")
+		sup.EnsureWorker("memory")
+		s.supervisor = sup
+		t.Cleanup(func() { sup.stopAll() })
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/token",
+		strings.NewReader(`{"identity":"u1","agent":"memory"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{Token: "sess", ProjectID: "proj-1"}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("disabled-agent mint status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(s.bindings.entries) != 0 {
+		t.Fatal("disabled-agent mint must not store a binding")
+	}
+	if s.supervisor != nil {
+		s.supervisor.mu.Lock()
+		_, running := s.supervisor.workers["memory"]
+		s.supervisor.mu.Unlock()
+		if running {
+			t.Fatal("existing worker for a disabled agent must be stopped")
+		}
+	}
 }
 
 func TestMintTokenSessionModeAgentNotFound(t *testing.T) {

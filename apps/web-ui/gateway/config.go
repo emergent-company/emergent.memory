@@ -21,8 +21,11 @@ type Config struct {
 	// SupervisorInterval is how often the supervisor reaps idle workers.
 	SupervisorInterval time.Duration
 	// WorkerIdleTTL is how long a bridge worker may sit unused before the
-	// supervisor stops it. Workers are spawned on demand (voice token mint)
-	// and reaped after this idle window; zero disables reaping.
+	// supervisor stops it. Workers are spawned on demand (voice token mint).
+	// Default 0 disables reaping: the gateway has no per-room liveness signal,
+	// so a worker serving a long call looks idle and would be killed mid-call.
+	// Enable only where idle reclaim is required and calls are shorter than the
+	// TTL.
 	WorkerIdleTTL time.Duration
 	BlueprintsDir string // local bundled blueprint packs (default blueprints/)
 
@@ -147,7 +150,7 @@ func LoadConfig() Config {
 		BridgeArgs:         strings.Fields(envOr("BRIDGE_ARGS", "-m memory_bridge start")),
 		BridgeWorkdir:      os.Getenv("BRIDGE_WORKDIR"),
 		SupervisorInterval: durationOr("SUPERVISOR_INTERVAL", 5*time.Second),
-		WorkerIdleTTL:      durationOr("WORKER_IDLE_TTL", 10*time.Minute),
+		WorkerIdleTTL:      durationOr("WORKER_IDLE_TTL", 0),
 		BlueprintsDir:      os.Getenv("BLUEPRINTS_DIR"), // empty = use embedded packs
 
 		LiveKitAPIKey:     os.Getenv("LIVEKIT_API_KEY"),
@@ -301,6 +304,12 @@ func (c Config) Validate() error {
 		// Explicit insecure opt-in; caller logs a warning.
 	default:
 		return fmt.Errorf("unknown AUTH_MODE %q (want \"session\" or \"dev\")", c.AuthMode)
+	}
+	// The GitHub webhook is the one session-less memory caller; without its
+	// dedicated trigger token the trigger fails asynchronously after the 202,
+	// which is invisible to GitHub and unretryable. Fail fast instead.
+	if c.GitHubWebhookSecret != "" && c.AgentTriggerToken == "" {
+		return fmt.Errorf("GITHUB_WEBHOOK_SECRET is set but AGENT_TRIGGER_TOKEN is empty")
 	}
 	return nil
 }

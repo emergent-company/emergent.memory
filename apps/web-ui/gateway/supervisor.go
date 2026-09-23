@@ -5,9 +5,38 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
+
+// gatewayOnlyEnvVars are credentials the gateway holds for its own surfaces
+// that must never reach bridge children. The bridge legitimately needs most of
+// the parent environment (LIVEKIT_*, DEEPGRAM_*, CARTESIA_*, MEMORY_URL, …), so
+// these are explicitly stripped instead of allowlisting the whole child env.
+var gatewayOnlyEnvVars = []string{
+	"AGENT_TRIGGER_TOKEN",   // webhook-only static memory credential
+	"SESSION_SECRET",        // browser session cookie HMAC key
+	"SHARE_COOKIE_SECRET",   // public-share cookie HMAC key
+	"SHARE_REF_SECRET",      // public-share ref secret
+	"TOKEN_API_KEY",         // admin X-API-Key
+	"GITHUB_WEBHOOK_SECRET", // GitHub webhook HMAC secret
+}
+
+// workerEnv returns the parent environment with gateway-only credentials
+// removed, so a bridge child cannot read secrets it has no use for.
+func workerEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if name, _, ok := strings.Cut(kv, "="); ok && slices.Contains(gatewayOnlyEnvVars, name) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
 
 // Supervisor owns the on-demand bridge worker pool. A worker is started by
 // EnsureWorker when an agent is first requested (a voice token is minted) and
@@ -70,9 +99,24 @@ func (s *Supervisor) EnsureWorker(name string) {
 	s.spawnLocked(name)
 }
 
+// StopWorker stops and removes the worker for name, if one is running. It is
+// used to enforce the enabled gate on an agent that was disabled after its
+// worker had already been spawned.
+func (s *Supervisor) StopWorker(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ws, ok := s.workers[name]
+	if !ok {
+		return
+	}
+	log.Printf("supervisor: stopping worker %s (agent disabled)", name)
+	_ = ws.cmd.Process.Kill()
+	delete(s.workers, name)
+}
+
 func (s *Supervisor) spawnLocked(name string) {
 	cmd := exec.Command(s.bin, s.args...)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(workerEnv(),
 		"AGENT_NAME="+name,
 		"WORKER_INTERNAL_KEY="+s.workerKey,
 		"VOICE_BINDING_URL="+s.bindingURL,

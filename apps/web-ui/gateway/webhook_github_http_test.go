@@ -190,7 +190,31 @@ func TestGitHubWebhookHTTPEndToEnd(t *testing.T) {
 	})
 }
 
-// TestWebhookGitHubIsPublicAuthPath guards the auth exemption the ingress relies
+// TestGitHubWebhookMissingTriggerTokenRejected guards the fail-fast path: a
+// signed, otherwise-actionable event with no AGENT_TRIGGER_TOKEN configured
+// must be refused synchronously (503, retryable) instead of accepted with a
+// 202 whose async trigger then fails invisibly.
+func TestGitHubWebhookMissingTriggerTokenRejected(t *testing.T) {
+	const (
+		secret  = "topsecret"
+		agentID = "agent-42"
+	)
+	cfg := Config{
+		MemoryProjectID:     "proj-9",
+		GitHubWebhookSecret: secret,
+		GitHubReviewAgentID: agentID,
+		GitHubReviewRepos:   "acme/widgets",
+		// AgentTriggerToken intentionally empty.
+	}
+	baseURL, requests := startWebhookHTTPTest(t, cfg)
+	body := githubPayloadJSON("acme/widgets", "opened", 7)
+
+	if got := sendGitHubWebhook(t, baseURL, secret, "pull_request", body, ""); got != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+	assertNoMemoryRequest(t, requests)
+}
+
 // on: GitHub authenticates by HMAC, not by a session cookie.
 func TestWebhookGitHubIsPublicAuthPath(t *testing.T) {
 	if !publicAuthPath("/webhooks/github") {

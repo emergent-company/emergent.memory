@@ -33,7 +33,7 @@ func tokenTestConfig() Config {
 // tokenAgentBackend lists "memory" so any memory-prefixed room passes the
 // allow-list (roomAllowed falls back to the agent-name prefix rule).
 func tokenAgentBackend() *fakeMemory {
-	return &fakeMemory{agents: []AgentDefinitionSummary{{ID: "a1", Name: "memory"}}}
+	return &fakeMemory{agents: []AgentDefinitionSummary{{ID: "a1", Name: "memory", Enabled: true}}}
 }
 
 // decodeRoomGrant parses the minted JWT and returns the video-grant room.

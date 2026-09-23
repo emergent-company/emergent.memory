@@ -21,6 +21,15 @@ type tokenRequest struct {
 	ConversationID string `json:"conversation_id"`
 }
 
+// errVoiceSessionRequired reports a voice request with no authenticated
+// session. The removed key/device-mode fallback makes this a first-class auth
+// failure (401), not an upstream error.
+var errVoiceSessionRequired = errors.New("voice requires an authenticated session")
+
+// errVoiceAgentDisabled reports a voice request for an agent whose definition
+// is disabled; no worker may serve it.
+var errVoiceAgentDisabled = errors.New("voice agent is disabled")
+
 // mintToken mints a short-lived room-join JWT for a LiveKit client (iOS app or
 // browser), with agent dispatch baked into the room config. The room is
 // optional: when omitted a fresh per-token room `<agent>-<client>-<8hex>` is
@@ -63,6 +72,15 @@ func (s *Server) mintToken(c echo.Context) error {
 	// the bridge worker can fetch it without any credential in the join JWT.
 	binding, enabled, err := s.voiceBindingFor(c.Request().Context(), agent, room)
 	if err != nil {
+		if errors.Is(err, errVoiceSessionRequired) {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		}
+		if errors.Is(err, errVoiceAgentDisabled) {
+			if s.supervisor != nil {
+				s.supervisor.StopWorker(agent)
+			}
+			return c.JSON(http.StatusForbidden, map[string]string{"error": err.Error()})
+		}
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}
@@ -73,8 +91,7 @@ func (s *Server) mintToken(c echo.Context) error {
 		s.bindings.Set(room, *binding)
 	}
 	// Spawn the agent's bridge worker on demand. Only enabled agents get a warm
-	// worker (the removed background pool applied the same gate); disabled
-	// agents still mint a token but will be rejected by the worker itself.
+	// worker; voiceBindingFor rejects disabled agents before reaching here.
 	if enabled && s.supervisor != nil {
 		s.supervisor.EnsureWorker(agent)
 	}
@@ -172,11 +189,14 @@ func (s *Server) resolveVoiceAgent(ctx context.Context, name string) (defID, lan
 func (s *Server) voiceBindingFor(ctx context.Context, agent, room string) (*voiceBinding, bool, error) {
 	sc, ok := sessionContextFrom(ctx)
 	if !ok || sc.ProjectID == "" {
-		return nil, false, errors.New("voice requires an authenticated session")
+		return nil, false, errVoiceSessionRequired
 	}
 	defID, lang, enabled, ok := s.resolveVoiceAgent(ctx, agent)
 	if !ok {
 		return nil, false, nil
+	}
+	if !enabled {
+		return nil, false, errVoiceAgentDisabled
 	}
 	tok, err := s.memory.CreateAPIToken(ctx, "voice-"+room+"-"+randomHex(4), []string{"chat:use"})
 	if err != nil {
