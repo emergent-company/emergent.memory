@@ -86,11 +86,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
           GOWORK: off
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           COMMIT=$(git rev-parse --short HEAD)
           BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           go build -trimpath \
-            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${{ needs.version.outputs.version }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
             -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }} \
             ./cmd
 
@@ -127,10 +128,12 @@ jobs:
 
       - name: Generate checksums + manifest
         shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           cat release-assets/*.sha256 > release-assets/checksums.txt
           scripts/gen-manifest.sh memory-cli dev release-assets \
-            "${{ github.repository }}" cli-dev "${{ needs.version.outputs.version }}"
+            "${{ github.repository }}" cli-dev "${VERSION}"
 
       - name: Publish rolling dev release
         shell: bash
