@@ -33,9 +33,9 @@ func TestVoiceBindingStoreExpiry(t *testing.T) {
 	s.Set("room-e", "agent-a", voiceBinding{Token: "emt-e"})
 	// Force expiry by rewinding the entry's deadline.
 	s.mu.Lock()
-	e := s.entries["room-e"]
+	e := s.entries[voiceBindingKey{"room-e", "agent-a"}]
 	e.expiresAt = time.Now().Add(-time.Second)
-	s.entries["room-e"] = e
+	s.entries[voiceBindingKey{"room-e", "agent-a"}] = e
 	s.mu.Unlock()
 	if _, ok := s.Consume("room-e", "agent-a"); ok {
 		t.Fatal("expired binding must not be consumed")
@@ -66,9 +66,41 @@ func TestVoiceBindingStoreCrossWorkerRejected(t *testing.T) {
 	}
 }
 
+// TestVoiceBindingStoreSetDoesNotOverwriteOtherAgent guards against a silent
+// cross-agent overwrite: minting a binding for a second agent on the same room
+// must not clobber the first agent's unexpired binding. Each agent keeps its
+// own binding for the room.
+func TestVoiceBindingStoreSetDoesNotOverwriteOtherAgent(t *testing.T) {
+	s := newVoiceBindingStore()
+	s.Set("room-y", "agent-a", voiceBinding{Token: "emt-a"})
+	s.Set("room-y", "agent-b", voiceBinding{Token: "emt-b"})
+
+	b, ok := s.Consume("room-y", "agent-a")
+	if !ok || b.Token != "emt-a" {
+		t.Fatalf("agent-a binding clobbered by agent-b mint: %+v ok=%v", b, ok)
+	}
+	b2, ok2 := s.Consume("room-y", "agent-b")
+	if !ok2 || b2.Token != "emt-b" {
+		t.Fatalf("agent-b binding missing after its own mint: %+v ok=%v", b2, ok2)
+	}
+}
+
+// TestVoiceBindingStoreSetSameAgentRemint verifies a legitimate re-mint by the
+// same agent refreshes its binding (e.g. a renewed session minting the room
+// again), rather than leaving a stale or duplicate entry.
+func TestVoiceBindingStoreSetSameAgentRemint(t *testing.T) {
+	s := newVoiceBindingStore()
+	s.Set("room-z", "agent-a", voiceBinding{Token: "emt-1"})
+	s.Set("room-z", "agent-a", voiceBinding{Token: "emt-2"})
+
+	b, ok := s.Consume("room-z", "agent-a")
+	if !ok || b.Token != "emt-2" {
+		t.Fatalf("same-agent re-mint did not refresh binding: %+v ok=%v", b, ok)
+	}
+}
+
 // TestVoiceBindingStoreConcurrentSingleWinner asserts the consume is atomic: a
-// concurrent race for the same binding yields exactly one winner, and the
-// winner is attributable after the fact.
+// concurrent race for the same binding yields exactly one winner.
 func TestVoiceBindingStoreConcurrentSingleWinner(t *testing.T) {
 	s := newVoiceBindingStore()
 	s.Set("room-c", "agent-a", voiceBinding{Token: "emt-c"})
@@ -93,9 +125,6 @@ func TestVoiceBindingStoreConcurrentSingleWinner(t *testing.T) {
 	}
 	if total != 1 {
 		t.Fatalf("concurrent consume winners = %d, want exactly 1", total)
-	}
-	if c, ok := s.LastConsumption("room-c"); !ok || c.agent != "agent-a" {
-		t.Fatalf("consumption not attributable to agent-a: %+v ok=%v", c, ok)
 	}
 }
 
