@@ -521,15 +521,6 @@ func (m *Middleware) dbOrgAdmin(ctx context.Context, orgID, userID string) (bool
 	return ok, nil
 }
 
-// introspectionConfigured reports whether RFC 7662 introspection is enabled and
-// has client credentials — the same precondition ZitadelService.Introspect uses.
-func (m *Middleware) introspectionConfigured() bool {
-	if m.cfg == nil {
-		return false
-	}
-	return m.cfg.Zitadel.IntrospectionConfigured()
-}
-
 // oidcAllGrantEnabled reports whether the legacy all-or-nothing grant may be
 // applied. It requires the explicit flag AND introspection to be unconfigured,
 // so enabling introspection disables the all-grant and an introspection outage

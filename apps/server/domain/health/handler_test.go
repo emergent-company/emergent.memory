@@ -261,35 +261,35 @@ func TestDatabaseBackupCheck(t *testing.T) {
 
 func TestScopeAuthorityInfo(t *testing.T) {
 	tests := []struct {
-		name                    string
-		trust                   bool
-		grantAll                bool
-		introspect              bool
-		wantTrust               bool
-		wantPermissive          bool
-		wantIntrospection       bool
+		name              string
+		trust             bool
+		grantAll          bool
+		introspect        bool
+		wantTrust         bool
+		wantPermissive    bool
+		wantIntrospection bool
 	}{
 		{
-			name:              "default posture: trust on, permissive on, introspection off",
-			trust:             true, grantAll: true,
+			name:  "default posture: trust on, permissive on, introspection off",
+			trust: true, grantAll: true,
 			wantTrust: true, wantPermissive: true, wantIntrospection: false,
 		},
 		{
-			name:              "trust off, introspection configured suppresses the permissive grant",
-			trust:             false, grantAll: true, introspect: true,
+			name:  "trust off, introspection configured suppresses the permissive grant",
+			trust: false, grantAll: true, introspect: true,
 			wantTrust: false, wantPermissive: false, wantIntrospection: true,
 		},
 		{
-			name:              "grant flag off",
-			trust:             true, grantAll: false,
+			name:  "grant flag off",
+			trust: true, grantAll: false,
 			wantTrust: true, wantPermissive: false, wantIntrospection: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			z := config.ZitadelConfig{
-				TrustTokenScopes:        tt.trust,
-				UserinfoGrantAllScopes:  tt.grantAll,
+				TrustTokenScopes:       tt.trust,
+				UserinfoGrantAllScopes: tt.grantAll,
 			}
 			if tt.introspect {
 				z.ClientJWT = "jwt"
