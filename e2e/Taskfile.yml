@@ -19,6 +19,13 @@ vars:
   # the daemon after a crash, so the tasks below delegate to it instead of
   # racing it for the port.
   RUNLOG_UNIT: "runlog.service"
+  # The runlog version this project's tests are compiled against (e2e/go.mod).
+  # The daemon must be the same version: an older daemon creates runs.db with an
+  # older schema, so tables added later (e.g. test_definitions, migration 27 in
+  # v0.3.0) never exist. Writes to them fail silently — UpsertDefinition's error
+  # is discarded — and the CLI then reports no tests at all.
+  RUNLOG_PINNED_VERSION:
+    sh: grep -E '^[[:space:]]+github.com/emergent-company/runlog[[:space:]]+v' "{{.TASKFILE_DIR}}/go.mod" | awk '{print $2}' | head -1
 
 tasks:
   default:
@@ -44,15 +51,41 @@ tasks:
         fi
         if ! command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
           echo "runlog binary not found." >&2
-          echo "  install: go install github.com/emergent-company/runlog/cmd/runlog@latest" >&2
+          echo "  build it at the pinned version ({{.RUNLOG_PINNED_VERSION}}), not @latest:" >&2
+          echo "    git clone --branch {{.RUNLOG_PINNED_VERSION}} --depth 1 https://github.com/emergent-company/runlog /root/runlog" >&2
+          echo "    cd /root/runlog && GOWORK=off go build -o \$(go env GOPATH)/bin/runlog ./cmd/runlog" >&2
           exit 1
         fi
 
         mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
 
+        # Fail-loud guards for the silent ways the UI ends up empty. When the
+        # systemd unit supervises the daemon it owns the binary and the checkout,
+        # so probe those; otherwise probe this checkout.
+        SUPERVISED=no
+        PROBE_BIN="{{.RUNLOG_BIN}}"
+        PROBE_WD="{{.TASKFILE_DIR}}"
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+          SUPERVISED=yes
+          UB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE 'path=[^ ;]+' | head -1 | cut -d= -f2)
+          if [ -n "$UB" ]; then PROBE_BIN="$UB"; fi
+          UW=$(systemctl show {{.RUNLOG_UNIT}} -p WorkingDirectory --value 2>/dev/null)
+          if [ -n "$UW" ]; then PROBE_WD="$UW"; fi
+        fi
+
+        if [ ! -d "$PROBE_WD/tests" ]; then
+          echo "WARNING: no tests/ directory at $PROBE_WD" >&2
+          echo "         discovery will find 0 tests — is that checkout on the right branch?" >&2
+        fi
+        BINV=$(go version -m "$PROBE_BIN" 2>/dev/null | awk '$1=="mod" && $2=="github.com/emergent-company/runlog" {print $3}' || true)
+        if [ -n "${BINV:-}" ] && [ "$BINV" != "(devel)" ] && [ -n "{{.RUNLOG_PINNED_VERSION}}" ] && [ "$BINV" != "{{.RUNLOG_PINNED_VERSION}}" ]; then
+          echo "WARNING: daemon binary $PROBE_BIN is runlog $BINV but e2e/go.mod pins {{.RUNLOG_PINNED_VERSION}}" >&2
+          echo "         an older daemon creates runs.db without newer tables -> empty catalog" >&2
+        fi
+
         # A supervised daemon wins: the systemd unit owns the lifecycle, so
         # starting or reclaiming the port here would only fight Restart=always.
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+        if [ "$SUPERVISED" = yes ]; then
           UNIT_DB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE -- '--db [^ ;]+' | awk '{print $2}')
           if systemctl is-active {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
             echo "runlog is supervised by systemd ({{.RUNLOG_UNIT}}) and already running"
@@ -165,14 +198,47 @@ tasks:
         echo "  db    : {{.RUNLOG_DB}}"
         echo "  ui    : {{.RUNLOG_URL}}/ui/"
 
+        # When systemd supervises the daemon, the unit — not this shell — owns
+        # the binary, the checkout, and the db path. Probe the unit's values so
+        # the warnings below describe the daemon that is actually serving.
         SUPERVISED=no
+        PROBE_BIN="{{.RUNLOG_BIN}}"
+        PROBE_WD="{{.TASKFILE_DIR}}"
         if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
           SUPERVISED=yes
+          UB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE 'path=[^ ;]+' | head -1 | cut -d= -f2)
+          if [ -n "$UB" ]; then PROBE_BIN="$UB"; fi
+          UW=$(systemctl show {{.RUNLOG_UNIT}} -p WorkingDirectory --value 2>/dev/null)
+          if [ -n "$UW" ]; then PROBE_WD="$UW"; fi
+        fi
+
+        # Discovery scans <e2e>/tests/*/, <e2e>/*_test.go and <e2e>/cmd/runlog/.
+        # If tests/ is absent the catalog comes back empty and the UI simply
+        # shows no tests — with no other clue about why.
+        if [ ! -d "$PROBE_WD/tests" ]; then
+          echo "  WARNING: no tests/ directory at $PROBE_WD — discovery will find 0 tests"
+          echo "           (is that checkout on a branch that still has the runlog suite?)"
+        fi
+
+        # Version skew between the daemon and the tests is silent but fatal:
+        # an older daemon's schema lacks tables the tests write to.
+        echo "  probed : $PROBE_BIN"
+        BINV=$(go version -m "$PROBE_BIN" 2>/dev/null | awk '$1=="mod" && $2=="github.com/emergent-company/runlog" {print $3}' || true)
+        echo "  version: ${BINV:-<unknown>} (e2e/go.mod pins {{.RUNLOG_PINNED_VERSION}})"
+        if [ -n "${BINV:-}" ] && [ "$BINV" != "(devel)" ] && [ -n "{{.RUNLOG_PINNED_VERSION}}" ] && [ "$BINV" != "{{.RUNLOG_PINNED_VERSION}}" ]; then
+          echo "  WARNING: daemon is runlog $BINV but e2e/go.mod pins {{.RUNLOG_PINNED_VERSION}}"
+          echo "           an older daemon creates runs.db without newer tables (e.g. test_definitions)"
+          echo "           -> the catalog looks empty; rebuild runlog at {{.RUNLOG_PINNED_VERSION}}"
+        fi
+
+        if [ "$SUPERVISED" = yes ]; then
           UNIT_DB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE -- '--db [^ ;]+' | awk '{print $2}')
           echo "  supervisor: systemd {{.RUNLOG_UNIT}} ($(systemctl is-active {{.RUNLOG_UNIT}} 2>/dev/null || true))"
+          echo "  unit wd   : $PROBE_WD"
           echo "  unit db   : ${UNIT_DB:-<unknown>}"
           if [ -n "${UNIT_DB:-}" ] && [ "$UNIT_DB" != "{{.RUNLOG_DB}}" ]; then
             echo "  WARNING: {{.RUNLOG_UNIT}} serves $UNIT_DB, not this checkout's {{.RUNLOG_DB}}"
+            echo "           -> runs started from this checkout land in the other db and will not appear in the UI"
           fi
         fi
 

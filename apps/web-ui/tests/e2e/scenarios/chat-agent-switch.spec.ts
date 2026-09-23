@@ -106,7 +106,23 @@ test.describe('Chat agent-switch navigation scenario', () => {
       await page.goto('/chat');
       await expectAppPage(page, /Chat/);
       await page.locator('#chat-agent').selectOption(agentA);
-      await sendChatMessage(page, 'Hello from A.');
+
+      // The first message must "enter" the freshly-created conversation while the
+      // turn is still in flight: the URL flips to ?c=<conversationId> on the
+      // stream's meta event (chat.js onMeta → updateUrl), not only once the reply
+      // settles or on a later resume from the rail. Race the URL flip against the
+      // full turn — asserting only after sendChatMessage settles would also pass
+      // if the URL were updated at stream completion instead of at creation.
+      const urlEntered = page
+        .waitForURL(/\/chat\?c=[^&]+/, { timeout: 60_000 })
+        .then(() => 'entered' as const, () => 'timeout' as const);
+      const turnSettled = sendChatMessage(page, 'Hello from A.').then(() => 'settled' as const);
+      const first = await Promise.race([urlEntered, turnSettled]);
+      await turnSettled; // surface a send failure / let the reply finish before the rail assertions
+      expect(
+        first,
+        'the first message must enter the conversation (URL ?c=<id>) while the turn is in flight',
+      ).toBe('entered');
 
       // A's conversation lands in the session rail and is the active row.
       const rowA = page.locator(`[data-testid="session-row"][data-agent="${agentA}"]`);

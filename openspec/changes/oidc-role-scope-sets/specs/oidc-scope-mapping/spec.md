@@ -1,9 +1,4 @@
-# oidc-scope-mapping Specification
-
-## Purpose
-Defines how Memory derives the effective scope set for OIDC-authenticated requests: explicit Memory scopes carried on the token are authoritative; otherwise scopes are derived from the caller's role in the project declared by `X-Project-ID`; otherwise, for a caller with no project membership, a configurable default scope set applies; otherwise resolution fails closed to an empty set. Derived scopes are re-evaluated per request so role or configuration changes take effect immediately.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Request-scoped role derivation
 When an OIDC session is authenticated and the request declares a project via `X-Project-ID`, the system SHALL derive Memory scopes from the user's `kb.project_memberships` role for that project. The three canonical roles SHALL map to explicit scope sets: `project_viewer` = `data:read`, `schema:read`, `agents:read`, `projects:read`; `project_user` = the viewer set plus `data:write`; `project_admin` = the user set plus `agents:write` and `schema:write`. The sets SHALL satisfy `project_admin ⊇ project_user ⊇ project_viewer`. The system SHALL NOT combine roles across the user's other projects into the effective scope set. The role scope sets SHALL NOT contain `admin`, `admin:read`, `admin:write`, `admin:all`, `mcp:admin`, any `org:*` scope, `project:invite:create`, or any `account:*` scope.
@@ -76,6 +71,8 @@ The system SHALL resolve OIDC scopes in the order: explicit Memory scopes from t
 - **WHEN** the token is validated
 - **THEN** the session receives no Memory scopes
 
+## ADDED Requirements
+
 ### Requirement: Bounded umbrella expansion of role scope sets
 When evaluating authorization the system SHALL expand a role's scope set through the umbrella scope map, so a role-derived write scope also satisfies the fine-grained scopes it implies: `schema:write` additionally grants `schema:migrate`, `agents:write` additionally grants `chat:admin`, and `data:write` additionally grants the related write scopes and `journal:write`. This expansion is deliberate and accepted. The system SHALL pin the exact expanded result for each canonical role with an explicit set-equality test, and the expansion SHALL NOT reach any scope excluded from the role sets (`admin*`, `mcp:admin`, `org:*`, `project:invite:create`, `account:*`).
 
@@ -90,40 +87,3 @@ When evaluating authorization the system SHALL expand a role's scope set through
 #### Scenario: Expanded admin set is pinned and reaches no excluded scope
 - **WHEN** the `project_admin` role scopes are expanded
 - **THEN** the result is exactly the expanded user set plus `agents:write`, `chat:admin`, `skills:write`, and `schema:migrate`, and contains no `admin*`, `mcp:admin`, `org:*`, `project:invite:create`, or `account:*` scope
-
-### Requirement: Explicit Memory scopes are authoritative
-When a validated token carries scopes that are part of the Memory scope vocabulary, the system SHALL use those scopes verbatim and SHALL NOT add role-derived or default scopes. Non-Memory OIDC scopes (such as `openid`, `profile`, `email`, `offline_access`) SHALL NOT be treated as an explicit grant.
-
-#### Scenario: Explicit token scopes win over role derivation
-- **GIVEN** an OIDC user holds `project_viewer` in the declared project
-- **AND** the token carries the Memory scope `data:write`
-- **WHEN** the token is validated
-- **THEN** the session receives `data:write` and is not additionally restricted to the viewer read-only set
-
-#### Scenario: Standard OIDC scopes are not an explicit grant
-- **GIVEN** an introspected token carries `openid profile email offline_access`
-- **AND** the user has no mapped project role and no configured default
-- **WHEN** the token is validated
-- **THEN** the session receives no Memory scopes
-
-### Requirement: Gated all-or-nothing userinfo grant
-The system SHALL grant `GetAllScopes()` to an OIDC user validated via the userinfo endpoint only when the `ZITADEL_USERINFO_GRANT_ALL_SCOPES` flag is enabled AND introspection is not configured. When introspection is configured, or the flag is disabled, the userinfo path SHALL resolve scopes using the standard fail-closed resolution and SHALL NOT substitute the full scope catalogue.
-
-#### Scenario: Pilot all-grant preserved when introspection is unconfigured
-- **GIVEN** `ZITADEL_USERINFO_GRANT_ALL_SCOPES=true` and no introspection client credentials are configured
-- **WHEN** a user is authenticated via the userinfo endpoint
-- **THEN** the session receives the full scope catalogue
-
-#### Scenario: All-grant suppressed once introspection is configured
-- **GIVEN** introspection client credentials are configured
-- **AND** `ZITADEL_USERINFO_GRANT_ALL_SCOPES=true`
-- **WHEN** a user is authenticated via the userinfo fallback
-- **THEN** the session receives scopes from the standard resolution and never the full scope catalogue
-
-### Requirement: Derived scopes are never cached
-The system SHALL cache only raw OIDC claims and SHALL re-derive effective scopes on every request, so that a project-role change or a default-scope-set change takes effect on the next request.
-
-#### Scenario: Demotion takes effect on the next request
-- **GIVEN** an OIDC user's membership is changed from a write-capable state to `project_viewer`
-- **WHEN** the next request is authenticated using a cached introspection entry
-- **THEN** the session receives the viewer read-only scopes and no write scope

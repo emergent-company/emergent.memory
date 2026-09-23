@@ -287,6 +287,23 @@ func runIdleReclamation(ctx context.Context, lister idleServerLister, rt idleSer
 		// a call that started after the candidate SELECT may have touched
 		// last_used_at, or the row may have vanished / entered an in-flight
 		// state. Skip rather than killing an in-flight call.
+		//
+		// Residual TOCTOU window — known, bounded, and accepted (issue #699
+		// item 5). The re-read below proves the row was idle only at that
+		// instant: a Call can still land in the gap between this read and the
+		// StopRuntime/DestroyContainer calls that follow, interrupting a call
+		// that just started. That gap is the microseconds between two adjacent
+		// statements, NOT the multi-second pass-size window #690 closed by
+		// making this re-read conditional. MCPHostingService.Call deliberately
+		// performs no coordination with reclamation — it touches last_used_at
+		// and forwards to the stdio bridge — because serialising every call
+		// against the cleanup pass would cost every caller to defend against a
+		// window this small, and the policy is opt-in and disabled by default.
+		// If this is ever observed in practice, the fix is either a store-level
+		// conditional claim (`UPDATE … WHERE id = ? AND last_used_at < cutoff`,
+		// proceeding only when one row is affected) or a per-server in-flight
+		// guard shared by Call and reclamation. Do not "fix" this by widening
+		// the window or adding unconditional serialisation.
 		fresh, err := lister.GetIdlePersistentMCPServer(ctx, ws.ID, idleBefore)
 		if err != nil {
 			log.Warn("failed to re-read idle persistent MCP server before reclamation; skipping",

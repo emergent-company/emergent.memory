@@ -165,8 +165,13 @@ func (s *Store) ListActive(ctx context.Context) ([]*AgentSandbox, error) {
 //
 // Only creating/stopping are excluded: stopped and error rows are
 // terminal-but-present and are deliberately reclaimable by the opt-in idle
-// policy (see ListPersistentMCPServers). It returns (nil, nil) when the row
-// vanished, was touched inside the window, or entered an in-flight state.
+// policy (see ListPersistentMCPServers). A stopped row is NOT a durable
+// "keep but do not run" state: boot-time auto-start (StartAll) lists and starts
+// every persistent row regardless of status, so a server left stopped and idle
+// past the window is an abandoned config and is reclaimed rather than kept
+// forever. Explicit deletion and recently-used servers are unaffected. It
+// returns (nil, nil) when the row vanished, was touched inside the window, or
+// entered an in-flight state.
 //
 // This re-read narrows — but does not fully close — the window between the
 // candidate SELECT and the reclaim's StopRuntime/destroy: it bounds the window
