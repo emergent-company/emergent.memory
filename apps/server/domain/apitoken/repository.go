@@ -265,13 +265,16 @@ func (r *Repository) GetUserProjectRole(ctx context.Context, projectID, userID s
 }
 
 // CanGrantAdminAll reports whether the user may grant the admin:all scope:
-// either an active superadmin (core.superadmins, revoked_at IS NULL) or an
-// org_admin in at least one organization (kb.organization_memberships).
+// either an active full superadmin (core.superadmins, revoked_at IS NULL and
+// role = 'superadmin_full') or an org_admin in at least one organization
+// (kb.organization_memberships). A superadmin_readonly grant does not qualify,
+// so a read-only principal cannot escalate to full platform administration by
+// minting an admin:all token.
 func (r *Repository) CanGrantAdminAll(ctx context.Context, userID string) (bool, error) {
 	var allowed bool
 	err := r.db.NewRaw(`
 		SELECT
-			EXISTS(SELECT 1 FROM core.superadmins WHERE user_id = ? AND revoked_at IS NULL)
+			EXISTS(SELECT 1 FROM core.superadmins WHERE user_id = ? AND revoked_at IS NULL AND role = 'superadmin_full')
 			OR
 			EXISTS(SELECT 1 FROM kb.organization_memberships WHERE user_id = ? AND role = 'org_admin')
 	`, userID, userID).Scan(ctx, &allowed)
