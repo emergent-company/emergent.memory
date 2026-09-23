@@ -165,7 +165,19 @@ func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(html, `"`+chatContainerClass+`"`) {
+	// Scope the container assertion to the transcript region rather than the
+	// whole page: the composer and model-warning banner legitimately reuse the
+	// very same class, so a page-wide Contains would still pass if the
+	// transcript column lost its own wrapper.
+	_, transcriptRegion, ok := strings.Cut(html, `id="chat-log"`)
+	if !ok {
+		t.Fatal("chat transcript region missing (no chat-log target)")
+	}
+	transcriptRegion, _, ok = strings.Cut(transcriptRegion, `<form id="chat-form"`)
+	if !ok {
+		t.Fatal("could not delimit chat transcript region (no chat-form target)")
+	}
+	if !strings.Contains(transcriptRegion, `class="`+chatContainerClass+`"`) {
 		t.Errorf("chat transcript column must use the wide chat container %q", chatContainerClass)
 	}
 	if strings.Contains(html, "max-w-3xl") {
