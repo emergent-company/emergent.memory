@@ -7,7 +7,7 @@ Defines the `project_viewer` role for project memberships, including read-only s
 ## Requirements
 
 ### Requirement: Viewer role definition
-The system SHALL define a `project_viewer` role for project memberships. The viewer role SHALL be stored in `kb.project_memberships.role` alongside the existing `project_admin` and `project_user` roles. The viewer role SHALL be immutable — a viewer cannot promote themselves. The set of valid `kb.project_memberships.role` values SHALL be exactly `project_admin`, `project_user`, and `project_viewer`; other strings (including `owner`, which is only valid for `kb.organization_memberships`) SHALL NOT be written by any server code path.
+The system SHALL define a `project_viewer` role for project memberships. The viewer role SHALL be stored in `kb.project_memberships.role` alongside the existing `project_admin` and `project_user` roles. The viewer role SHALL be immutable — a viewer cannot promote themselves. The set of valid `kb.project_memberships.role` values SHALL be exactly `project_admin`, `project_user`, and `project_viewer`; other strings SHALL NOT be written by any server code path. The canonical role for `kb.organization_memberships` SHALL be `org_admin`; `owner` SHALL NOT be written to `kb.organization_memberships` by any server code path and existing rows with `role = 'owner'` SHALL be normalised to `org_admin`.
 
 #### Scenario: Viewer role stored in membership
 - **WHEN** a user accepts a viewer invitation
@@ -21,6 +21,15 @@ The system SHALL define a `project_viewer` role for project memberships. The vie
 - **GIVEN** a `kb.project_memberships` row exists with `role = 'owner'`
 - **WHEN** the normalisation migration runs
 - **THEN** the row's role becomes `project_admin`
+
+#### Scenario: Organization membership uses the canonical role
+- **WHEN** any server code path creates an organization membership
+- **THEN** the membership is written with `role = 'org_admin'` and never `owner`
+
+#### Scenario: Legacy owner organization role is normalised
+- **GIVEN** a `kb.organization_memberships` row exists with `role = 'owner'`
+- **WHEN** the organization-role normalisation migration runs
+- **THEN** the row's role becomes `org_admin`
 
 ### Requirement: Read-only scope enforcement for viewers
 When a viewer authenticates with a viewer-scoped API token, the system SHALL restrict them to read-only operations. The token's scopes SHALL be limited to `data:read`, `schema:read`, `agents:read`, and `projects:read`. Any request requiring a write scope SHALL be rejected with HTTP 403. When an OIDC session is bound to a project in which the user holds `project_viewer`, and the token carries no explicit Memory scope, the session SHALL likewise be limited to `data:read`, `schema:read`, `agents:read`, and `projects:read`.
