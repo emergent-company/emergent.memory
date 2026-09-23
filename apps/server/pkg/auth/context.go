@@ -1,6 +1,10 @@
 package auth
 
-import "context"
+import (
+	"context"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+)
 
 // Context keys for storing auth data in standard context.Context.
 // These allow downstream service layers to access auth information
@@ -25,6 +29,19 @@ func UserFromContext(ctx context.Context) *AuthUser {
 		return user
 	}
 	return nil
+}
+
+// RequireUser returns the authenticated user embedded in ctx, or
+// ErrUnauthorized when no user is present or the user ID is empty. It is the
+// error-returning counterpart to MustGetUser for authorization checks that run
+// in the service layer (which receives a context.Context, not an echo.Context).
+// Callers that need a domain-specific message should re-wrap the returned error.
+func RequireUser(ctx context.Context) (*AuthUser, error) {
+	user := UserFromContext(ctx)
+	if user == nil || user.ID == "" {
+		return nil, apperror.ErrUnauthorized
+	}
+	return user, nil
 }
 
 // ContextWithProjectID returns a new context with the project ID embedded.
