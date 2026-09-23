@@ -45,7 +45,7 @@ internal endpoint (it is never carried in the client-decodable join JWT):
 | Env | Set by | Purpose |
 |---|---|---|
 | `AGENT_NAME` | supervisor | LiveKit dispatch name + worker identity |
-| `WORKER_INTERNAL_KEY` | supervisor | shared key authenticating the binding fetch |
+| `WORKER_INTERNAL_KEY` | supervisor | per-worker credential (unique per spawn, bound to the worker's agent) authenticating the binding fetch |
 | `VOICE_BINDING_URL` | supervisor | internal endpoint serving the per-room binding |
 | `MEMORY_URL` | inherited from the gateway env | memory endpoint |
 

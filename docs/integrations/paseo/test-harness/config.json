@@ -1,0 +1,53 @@
+{
+  "$schema": "https://paseo.sh/schemas/paseo.config.v1.json",
+  "version": 1,
+  "daemon": {
+    "listen": "127.0.0.1:6768",
+    "hostnames": [
+      "localhost",
+      ".localhost"
+    ],
+    "mcp": {
+      "injectIntoAgents": false
+    },
+    "browserTools": {
+      "enabled": false
+    },
+    "relay": {
+      "enabled": false
+    }
+  },
+  "agents": {
+    "providers": {
+      "pi": {
+        "enabled": false
+      },
+      "copilot": {
+        "enabled": false
+      },
+      "codex": {
+        "enabled": false
+      },
+      "claude": {
+        "enabled": false
+      },
+      "memory": {
+        "extends": "acp",
+        "label": "Memory",
+        "command": [
+          "/bin/sh",
+          "__PASEO_ACP_TEST_HOME__/memory-acp-test-wrapper.sh"
+        ],
+        "env": {
+          "MEMORY_ACP_ENV_FILE": "__PASEO_ACP_TEST_HOME__/memory-acp.env"
+        },
+        "enabled": true
+      }
+    }
+  },
+  "features": {
+    "webUi": {
+      "enabled": false
+    }
+  }
+}

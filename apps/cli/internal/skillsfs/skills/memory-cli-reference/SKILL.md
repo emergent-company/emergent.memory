@@ -195,6 +195,34 @@ memory a2a tasks list [flags]
       --status string    Filter tasks by state (e.g. TASK_STATE_COMPLETED)
 ```
 
+## memory acp
+
+Run as an ACP (Agent Client Protocol) agent over stdio
+
+### Synopsis
+
+Run as an Agent Client Protocol v1 agent over stdio, bridging ACP clients
+(Paseo, Claude Code, Gemini CLI, and others) to a Memory agent.
+
+Select the Memory agent to front with --agent <skill-id> (the RFC 1123 slug
+shown by 'memory a2a discover') or the MEMORY_AGENT environment variable.
+Connection, auth, and project are read from the standard CLI config
+(MEMORY_SERVER_URL / MEMORY_PROJECT_TOKEN) — set them as env vars so a
+spawning ACP client can inject them.
+
+Only ACP JSON-RPC messages are written to stdout; diagnostics go to stderr.
+
+```
+memory acp [flags]
+```
+
+### Options
+
+```
+      --agent string   Memory agent skill id to front (default: $MEMORY_AGENT)
+  -h, --help           help for acp
+```
+
 ## memory adk-sessions
 
 Manage and inspect ADK sessions

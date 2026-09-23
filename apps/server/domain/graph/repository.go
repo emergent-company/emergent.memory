@@ -228,45 +228,33 @@ func propertyAccessors(path string) (textAccessor, jsonAccessor string, ok bool)
 	return base + "->>'" + last + "'", base + "->'" + last + "'", true
 }
 
-// applyPropertyFilterConditions applies JSONB property filter conditions to a bun.SelectQuery.
-func applyPropertyFilters(q *bun.SelectQuery, filters []PropertyFilter) *bun.SelectQuery {
-	for _, f := range filters {
-		textAccessor, jsonAccessor, ok := propertyAccessors(f.Path)
-		if !ok {
-			continue
-		}
-		switch f.Op {
-		case "eq":
-			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
-		case "neq":
-			q = q.Where("("+textAccessor+" IS NULL OR "+textAccessor+" != ?)", fmt.Sprintf("%v", f.Value))
-		case "gt":
-			q = q.Where("("+textAccessor+")::numeric > ?::numeric", f.Value)
-		case "gte":
-			q = q.Where("("+textAccessor+")::numeric >= ?::numeric", f.Value)
-		case "lt":
-			q = q.Where("("+textAccessor+")::numeric < ?::numeric", f.Value)
-		case "lte":
-			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
-		case "contains":
-			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
-		case "exists":
-			q = q.Where(jsonAccessor + " IS NOT NULL")
-		case "in":
-			if arr, ok := f.Value.([]interface{}); ok {
-				strVals := make([]string, 0, len(arr))
-				for _, v := range arr {
-					strVals = append(strVals, fmt.Sprintf("%v", v))
-				}
-				q = q.Where(textAccessor+" IN (?)", bun.In(strVals))
-			}
-		}
+// bulkFilterPredicate is a single WHERE fragment plus its bind arguments. It is
+// the shared currency for building the bulk-action filter predicate set so the
+// same conditions can be applied to bun Select, Update, and Delete queries.
+type bulkFilterPredicate struct {
+	cond string
+	args []any
+}
+
+// applyPredicates appends each predicate via Where. It is generic over bun's
+// query types (SelectQuery, UpdateQuery, DeleteQuery), all of which expose
+// Where(string, ...any) returning the same concrete query type.
+func applyPredicates[Q interface {
+	Where(query string, args ...any) Q
+}](q Q, preds []bulkFilterPredicate) Q {
+	for _, p := range preds {
+		q = q.Where(p.cond, p.args...)
 	}
 	return q
 }
 
-// applyPropertyFiltersUpdate applies JSONB property filter conditions to a bun.UpdateQuery.
-func applyPropertyFiltersUpdate(q *bun.UpdateQuery, filters []PropertyFilter) *bun.UpdateQuery {
+// propertyFilterPredicates renders the JSONB property-filter WHERE predicates
+// for a []PropertyFilter. This is the single implementation for both the bulk
+// action path and the non-bulk ListParams path (previously two operator-for-
+// operator identical helpers: applyPropertyFilters and applyPropertyFiltersUpdate).
+// Supported operators: eq, neq, gt, gte, lt, lte, contains, exists, in.
+func propertyFilterPredicates(filters []PropertyFilter) []bulkFilterPredicate {
+	preds := make([]bulkFilterPredicate, 0, len(filters))
 	for _, f := range filters {
 		textAccessor, jsonAccessor, ok := propertyAccessors(f.Path)
 		if !ok {
@@ -274,32 +262,32 @@ func applyPropertyFiltersUpdate(q *bun.UpdateQuery, filters []PropertyFilter) *b
 		}
 		switch f.Op {
 		case "eq":
-			q = q.Where(textAccessor+" = ?", fmt.Sprintf("%v", f.Value))
+			preds = append(preds, bulkFilterPredicate{cond: textAccessor + " = ?", args: []any{fmt.Sprintf("%v", f.Value)}})
 		case "neq":
-			q = q.Where("("+textAccessor+" IS NULL OR "+textAccessor+" != ?)", fmt.Sprintf("%v", f.Value))
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + " IS NULL OR " + textAccessor + " != ?)", args: []any{fmt.Sprintf("%v", f.Value)}})
 		case "gt":
-			q = q.Where("("+textAccessor+")::numeric > ?::numeric", f.Value)
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + ")::numeric > ?::numeric", args: []any{f.Value}})
 		case "gte":
-			q = q.Where("("+textAccessor+")::numeric >= ?::numeric", f.Value)
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + ")::numeric >= ?::numeric", args: []any{f.Value}})
 		case "lt":
-			q = q.Where("("+textAccessor+")::numeric < ?::numeric", f.Value)
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + ")::numeric < ?::numeric", args: []any{f.Value}})
 		case "lte":
-			q = q.Where("("+textAccessor+")::numeric <= ?::numeric", f.Value)
+			preds = append(preds, bulkFilterPredicate{cond: "(" + textAccessor + ")::numeric <= ?::numeric", args: []any{f.Value}})
 		case "contains":
-			q = q.Where(textAccessor+" ILIKE ?", "%"+fmt.Sprintf("%v", f.Value)+"%")
+			preds = append(preds, bulkFilterPredicate{cond: textAccessor + " ILIKE ?", args: []any{"%" + fmt.Sprintf("%v", f.Value) + "%"}})
 		case "exists":
-			q = q.Where(jsonAccessor + " IS NOT NULL")
+			preds = append(preds, bulkFilterPredicate{cond: jsonAccessor + " IS NOT NULL"})
 		case "in":
 			if arr, ok := f.Value.([]interface{}); ok {
 				strVals := make([]string, 0, len(arr))
 				for _, v := range arr {
 					strVals = append(strVals, fmt.Sprintf("%v", v))
 				}
-				q = q.Where(textAccessor+" IN (?)", bun.In(strVals))
+				preds = append(preds, bulkFilterPredicate{cond: textAccessor + " IN (?)", args: []any{bun.In(strVals)}})
 			}
 		}
 	}
-	return q
+	return preds
 }
 
 // buildObjectBaseQuery constructs a SELECT query for HEAD graph objects with all
@@ -371,7 +359,7 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 	}
 
 	if len(params.PropertyFilters) > 0 {
-		q = applyPropertyFilters(q, params.PropertyFilters)
+		q = applyPredicates(q, propertyFilterPredicates(params.PropertyFilters))
 	}
 
 	// Filter by related object: only return objects that are dst_id in a relationship
@@ -3092,30 +3080,12 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		resolvedFilters = append(resolvedFilters, pf)
 	}
 
-	// Build a base select to count matched objects.
+	// Build a base select to count matched objects, reusing the single bulk
+	// filter predicate set so the count query agrees with every action path.
 	countQ := r.db.NewSelect().
 		TableExpr("kb.graph_objects").
-		ColumnExpr("COUNT(*) AS cnt").
-		Where("project_id = ?", params.ProjectID).
-		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL")
-
-	if len(params.Filter.Types) > 0 {
-		countQ = countQ.Where("type IN (?)", bun.In(params.Filter.Types))
-	}
-	if len(params.Filter.Labels) > 0 {
-		countQ = countQ.Where("labels && ?::text[]", formatTextArray(params.Filter.Labels))
-	}
-	if params.Filter.CreatedAfter != nil {
-		countQ = countQ.Where("created_at >= ?", params.Filter.CreatedAfter.UTC())
-	}
-	if params.Filter.Namespace != nil {
-		countQ = countQ.Where("namespace = ?", *params.Filter.Namespace)
-	}
-	// Apply property filters to count query.
-	if len(resolvedFilters) > 0 {
-		countQ = applyPropertyFilters(countQ, resolvedFilters)
-	}
+		ColumnExpr("COUNT(*) AS cnt")
+	countQ = applyPredicates(countQ, bulkFilterPredicates(params.ProjectID, params.Filter, resolvedFilters))
 
 	var cntResult struct{ Cnt int }
 	if err := countQ.Scan(ctx, &cntResult); err != nil {
@@ -3141,10 +3111,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("status = ?", params.Value).
-			Set("updated_at = ?", now).
-			Where("project_id = ?", params.ProjectID).
-			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Set("updated_at = ?", now)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3157,10 +3124,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("deleted_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("project_id = ?", params.ProjectID).
-			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Set("updated_at = ?", now)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3173,9 +3137,6 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		subQ := r.db.NewSelect().
 			TableExpr("kb.graph_objects").
 			ColumnExpr("id").
-			Where("project_id = ?", params.ProjectID).
-			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL").
 			// Deterministic selection: a capped hard delete must consume the OLDEST
 			// matching rows first (FIFO retention intent), so repeated runs drain the
 			// set deterministically instead of deleting an arbitrary subset. created_at
@@ -3183,19 +3144,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			// is applied inside the subselect the LIMIT truncates.
 			OrderExpr("created_at ASC, id ASC").
 			Limit(limit)
-		if len(params.Filter.Types) > 0 {
-			subQ = subQ.Where("type IN (?)", bun.In(params.Filter.Types))
-		}
-		if len(params.Filter.Labels) > 0 {
-			subQ = subQ.Where("labels && ?::text[]", formatTextArray(params.Filter.Labels))
-		}
-		if params.Filter.CreatedAfter != nil {
-			subQ = subQ.Where("created_at >= ?", params.Filter.CreatedAfter.UTC())
-		}
-		if params.Filter.Namespace != nil {
-			subQ = subQ.Where("namespace = ?", *params.Filter.Namespace)
-		}
-		subQ = applyPropertyFilters(subQ, resolvedFilters)
+		subQ = applyPredicates(subQ, bulkFilterPredicates(params.ProjectID, params.Filter, resolvedFilters))
 		result, qErr := r.db.NewDelete().
 			TableExpr("kb.graph_objects").
 			Where("id IN (?)", subQ).
@@ -3214,10 +3163,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("properties = properties || ?::jsonb", string(propsJSON)).
-			Set("updated_at = ?", now).
-			Where("project_id = ?", params.ProjectID).
-			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Set("updated_at = ?", now)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3234,10 +3180,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("properties = ?::jsonb", string(propsJSON)).
-			Set("updated_at = ?", now).
-			Where("project_id = ?", params.ProjectID).
-			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Set("updated_at = ?", now)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3250,10 +3193,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("labels = ?::text[]", formatTextArray(params.Labels)).
-			Set("updated_at = ?", now).
-			Where("project_id = ?", params.ProjectID).
-			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Set("updated_at = ?", now)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3266,10 +3206,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("labels = ARRAY(SELECT DISTINCT unnest(labels || ?::text[]))", formatTextArray(params.Labels)).
-			Set("updated_at = ?", now).
-			Where("project_id = ?", params.ProjectID).
-			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Set("updated_at = ?", now)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3282,10 +3219,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 		q := r.db.NewUpdate().
 			TableExpr("kb.graph_objects").
 			Set("labels = ARRAY(SELECT unnest(labels) EXCEPT SELECT unnest(?::text[]))", formatTextArray(params.Labels)).
-			Set("updated_at = ?", now).
-			Where("project_id = ?", params.ProjectID).
-			Where("supersedes_id IS NULL").
-			Where("deleted_at IS NULL")
+			Set("updated_at = ?", now)
 		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
@@ -3301,52 +3235,54 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 	return matched, affected, nil
 }
 
+// bulkFilterPredicates returns the single ordered predicate set that selects the
+// objects a bulk action operates on. It is the ONE source of truth shared by all
+// four expansions — the count query, the hard-delete subselect, the outer UPDATE,
+// and the limit-enforcing inner subselect — so the inner/outer equality (the
+// LIMIT must count exactly the rows the update would accept) is structural rather
+// than coincidental.
+func bulkFilterPredicates(projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter) []bulkFilterPredicate {
+	preds := []bulkFilterPredicate{
+		{cond: "project_id = ?", args: []any{projectID}},
+		{cond: "supersedes_id IS NULL"},
+		{cond: "deleted_at IS NULL"},
+	}
+	if len(filter.Types) > 0 {
+		preds = append(preds, bulkFilterPredicate{cond: "type IN (?)", args: []any{bun.In(filter.Types)}})
+	}
+	if len(filter.Labels) > 0 {
+		preds = append(preds, bulkFilterPredicate{cond: "labels && ?::text[]", args: []any{formatTextArray(filter.Labels)}})
+	}
+	if filter.CreatedAfter != nil {
+		preds = append(preds, bulkFilterPredicate{cond: "created_at >= ?", args: []any{filter.CreatedAfter.UTC()}})
+	}
+	if filter.Namespace != nil {
+		preds = append(preds, bulkFilterPredicate{cond: "namespace = ?", args: []any{*filter.Namespace}})
+	}
+	return append(preds, propertyFilterPredicates(resolvedFilters)...)
+}
+
 // applyBulkFilterToUpdate applies the BulkActionFilter (types, labels, property
 // filters) to a Bun update query and enforces the deterministic cap via
 // `id IN (SELECT id ... ORDER BY created_at ASC, id ASC LIMIT n)`. Callers pass
 // limit already defaulted to 1000 when params.Limit <= 0, so the value here is
 // always a positive cap (Postgres has no UPDATE ... LIMIT).
 func (r *Repository) applyBulkFilterToUpdate(q *bun.UpdateQuery, projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter, limit int) *bun.UpdateQuery {
-	q = applyPropertyFiltersUpdate(q, resolvedFilters)
-	if len(filter.Types) > 0 {
-		q = q.Where("type IN (?)", bun.In(filter.Types))
-	}
-	if len(filter.Labels) > 0 {
-		q = q.Where("labels && ?::text[]", formatTextArray(filter.Labels))
-	}
-	if filter.CreatedAfter != nil {
-		q = q.Where("created_at >= ?", filter.CreatedAfter.UTC())
-	}
-	if filter.Namespace != nil {
-		q = q.Where("namespace = ?", *filter.Namespace)
-	}
+	preds := bulkFilterPredicates(projectID, filter, resolvedFilters)
+	q = applyPredicates(q, preds)
 
 	// Postgres has no UPDATE ... LIMIT, so restrict the target set with a
-	// deterministic subselect. It mirrors the base predicates AND every filter
-	// predicate so the LIMIT is consumed only by rows the update would accept.
-	// Ordering matches the hard-delete convention (#797): created_at ASC, id ASC
-	// (oldest-first FIFO); id (PK) makes the order total and lives INSIDE the
-	// set the LIMIT truncates.
+	// deterministic subselect that reuses the SAME predicate set as the outer
+	// update. Because both share `preds`, the LIMIT can only be consumed by rows
+	// the update would accept. Ordering matches the hard-delete convention
+	// (#797): created_at ASC, id ASC (oldest-first FIFO); id (PK) makes the
+	// order total and lives INSIDE the set the LIMIT truncates.
 	subQ := r.db.NewSelect().
 		TableExpr("kb.graph_objects").
 		ColumnExpr("id").
-		Where("project_id = ?", projectID).
-		Where("supersedes_id IS NULL").
-		Where("deleted_at IS NULL")
-	subQ = applyPropertyFilters(subQ, resolvedFilters)
-	if len(filter.Types) > 0 {
-		subQ = subQ.Where("type IN (?)", bun.In(filter.Types))
-	}
-	if len(filter.Labels) > 0 {
-		subQ = subQ.Where("labels && ?::text[]", formatTextArray(filter.Labels))
-	}
-	if filter.CreatedAfter != nil {
-		subQ = subQ.Where("created_at >= ?", filter.CreatedAfter.UTC())
-	}
-	if filter.Namespace != nil {
-		subQ = subQ.Where("namespace = ?", *filter.Namespace)
-	}
-	subQ = subQ.OrderExpr("created_at ASC, id ASC").Limit(limit)
+		OrderExpr("created_at ASC, id ASC").
+		Limit(limit)
+	subQ = applyPredicates(subQ, preds)
 
 	return q.Where("id IN (?)", subQ)
 }

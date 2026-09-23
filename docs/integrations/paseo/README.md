@@ -11,6 +11,22 @@ ACP v1 to Paseo and forwards every prompt to a Memory agent over A2A.
 
 This guide was written against Paseo `0.7.2` and Memory CLI `dev`.
 
+## Live deployment (current operator state)
+
+The live daemon already fronts the `memory` provider:
+
+- Daemon home: `~/.paseo`, listening on **`0.0.0.0:6767`**.
+- Provider block in `~/.paseo/config.json` → `agents.providers.memory`:
+  `{ "extends": "acp", "label": "Memory", "command": ["/bin/sh", "/root/.memory/memory-acp-wrapper.sh"], "enabled": true }`.
+- Wrapper: `/root/.memory/memory-acp-wrapper.sh` (reference copy:
+  `docs/integrations/paseo/memory-acp-wrapper.sh`). It loads
+  `MEMORY_ACP_ENV_FILE` (default `~/.memory/memory-acp.env`) and execs
+  `memory acp --agent "$MEMORY_AGENT"`.
+
+Treat `~/.paseo` and the live daemon as read-only when testing: never reload or
+restart it. Stand up the isolated test instance in `test-harness/` instead (see
+below).
+
 ## Prerequisites
 
 - Memory CLI installed at `~/.memory/bin/memory`
@@ -178,13 +194,49 @@ Because `session/prompt` is forwarded to A2A `message:stream`, reply text arrive
 as `session/update` `agent_message_chunk` frames before the `end_turn` response —
 i.e. streaming works with no extra configuration.
 
-### Human-in-the-loop (unverified)
+### Human-in-the-loop (verified)
 
 `apps/cli/internal/acp/agent.go` handles a paused A2A task
 (`TASK_STATE_INPUT_REQUIRED`) by recording the task id and resuming it on the
-next prompt. This path has **not** been exercised end-to-end against a live
-agent, because the probe agent never pauses for input. Verify with an agent that
-asks a question mid-run.
+next prompt. This path is now exercised end-to-end by
+`e2e/tests/acp/` (`TestACP_EndToEnd`), which drives an `external` agent that
+calls `ask_user`: the first prompt streams the question and ends the turn with
+`end_turn` (the pause), and the next prompt resumes the task and streams the
+agent's reply. Requires an `external` agent definition with `ask_user` in its
+tool list (e.g. `acp-hitl-probe`).
+
+## 6. Isolated test instance
+
+Never reload or restart the live daemon while developing the provider. The
+`test-harness/` directory stands up a second, non-interfering Paseo daemon with
+its own home dir, its own loopback port (`127.0.0.1:6768`, vs the live
+`0.0.0.0:6767`), browser tools/MCP injection/relay/webUi disabled, and a
+dedicated wrapper + env file. See `test-harness/README.md` for the full recipe:
+
+```bash
+docs/integrations/paseo/test-harness/setup.sh --start    # stand up + start
+paseo daemon status --home /root/paseo-acp-test          # status
+paseo daemon stop   --home /root/paseo-acp-test          # stop
+docs/integrations/paseo/test-harness/teardown.sh --wipe  # stop + delete home
+```
+
+## 7. Automated e2e coverage
+
+`e2e/tests/acp/` drives `memory acp` over stdio against the real server:
+
+- `TestACP_JSONRPC_Protocol` — initialize, `session/new`, `-32700` (malformed
+  line), `-32600` (invalid request), `-32601` (unknown method), clean shutdown.
+  Runs with dummy credentials (no network), so it always runs.
+- `TestACP_EndToEnd` — `initialize` → `session/new` → prompt (streamed
+  `session/update` chunks + `end_turn`) → HITL pause/resume → clean shutdown.
+  Gated on credentials: it SKIPS (never silently passes) unless
+  `MEMORY_ACP_ENV_FILE` (or `MEMORY_SERVER_URL`/`MEMORY_PROJECT_TOKEN`/
+  `MEMORY_AGENT`) are set.
+
+```bash
+cd e2e
+MEMORY_ACP_ENV_FILE=/root/.memory/memory-acp.env go test -v -count=1 -run '^TestACP' ./tests/acp/...
+```
 
 ## Known blockers
 
