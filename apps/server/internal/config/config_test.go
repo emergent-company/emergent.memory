@@ -464,6 +464,26 @@ func TestStorageConfig_IsConfigured(t *testing.T) {
 	}
 }
 
+func TestMCPRegistryConfig_BaseURL(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_BASE_URL", "")
+	cfg, err := NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.MCPRegistry.BaseURL != "" {
+		t.Errorf("BaseURL = %q, want empty (default)", cfg.MCPRegistry.BaseURL)
+	}
+
+	t.Setenv("MCP_REGISTRY_BASE_URL", "http://stub:8080")
+	cfg, err = NewConfig(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.MCPRegistry.BaseURL != "http://stub:8080" {
+		t.Errorf("BaseURL = %q, want %q", cfg.MCPRegistry.BaseURL, "http://stub:8080")
+	}
+}
+
 func TestZitadelOIDCScopeConfig(t *testing.T) {
 	t.Setenv("ZITADEL_OIDC_DEFAULT_SCOPES", "data:read,search")
 

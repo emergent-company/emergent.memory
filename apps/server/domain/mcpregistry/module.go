@@ -25,7 +25,7 @@ import (
 var Module = fx.Module("mcpregistry",
 	fx.Provide(
 		NewRepository,
-		NewRegistryClient,
+		provideRegistryClient,
 		provideService,
 		NewHandler,
 	),
@@ -35,6 +35,15 @@ var Module = fx.Module("mcpregistry",
 		registerMCPRegistryToolHandler,
 	),
 )
+
+// provideRegistryClient builds the RegistryClient, honouring the optional
+// MCP_REGISTRY_BASE_URL override (empty → official registry).
+func provideRegistryClient(cfg *config.Config) *RegistryClient {
+	if cfg == nil {
+		return NewRegistryClient()
+	}
+	return NewRegistryClientWithBaseURL(cfg.MCPRegistry.BaseURL)
+}
 
 // serviceParams bundles dependencies for provideService.
 type serviceParams struct {
