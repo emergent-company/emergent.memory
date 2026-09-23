@@ -42,13 +42,16 @@ type GraphEmbeddingConfig struct {
 	WorkerIntervalMs int
 	// WorkerBatchSize is the number of jobs to dequeue per poll (default: 50)
 	WorkerBatchSize int
-	// WorkerConcurrency is the number of jobs processed concurrently per poll (default: 50)
+	// WorkerConcurrency is the maximum number of jobs in flight at once
+	// (default: 200); the system-health scaler may adapt it when adaptive
+	// scaling is enabled.
 	WorkerConcurrency int
 	// EmbeddingRequestBatchSize is the maximum number of objects sent in a
 	// single multi-object embedding request (default: 100). Requests are
 	// additionally split per project, because embedding credentials and
-	// budgets are resolved per project. Values <= 0 disable multi-object
-	// requests: every object is embedded by its own request.
+	// budgets are resolved per project. A value of 0 uses the default; a
+	// negative value disables multi-object requests, so every object is
+	// embedded by its own request.
 	EmbeddingRequestBatchSize int
 	// EnableAdaptiveScaling enables dynamic concurrency adjustment based on system health
 	EnableAdaptiveScaling bool
