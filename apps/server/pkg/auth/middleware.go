@@ -200,7 +200,6 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 
 			// Extract project context from headers
 			user.ProjectID = c.Request().Header.Get("X-Project-ID")
-			user.OrgID = c.Request().Header.Get("X-Org-ID")
 
 			// If authenticated via API token, normalize the project ID so all handlers
 			// can use user.ProjectID consistently without checking APITokenProjectID.
@@ -208,8 +207,14 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 				user.ProjectID = user.APITokenProjectID
 			}
 
-			// If OrgID is not set via header, resolve it from the project ID.
-			// This handles standalone mode (no API token) and API token auth.
+			// Resolve the request organization from a validated source only
+			// (issue #811, the #764 class). The raw X-Org-ID header is untrusted
+			// input: it must never override the owning organization of the
+			// declared project, and it is not a trusted org source when no
+			// project context exists (org-scoped routes derive the org from the
+			// :orgId path parameter, not from this header).
+			headerOrgID := c.Request().Header.Get("X-Org-ID")
+
 			projectIDForOrg := user.ProjectID
 			if projectIDForOrg == "" {
 				projectIDForOrg = user.APITokenProjectID
@@ -219,16 +224,35 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 			if projectIDForOrg == "" {
 				projectIDForOrg = c.Param("projectId")
 			}
-			if user.OrgID == "" && projectIDForOrg != "" {
-				var orgID string
-				err := m.db.NewSelect().
+
+			var projectOrgID string
+			if projectIDForOrg != "" && m.db != nil {
+				_ = m.db.NewSelect().
 					TableExpr("kb.projects").
 					Column("organization_id").
 					Where("id = ?", projectIDForOrg).
-					Scan(c.Request().Context(), &orgID)
-				if err == nil && orgID != "" {
-					user.OrgID = orgID
+					Scan(c.Request().Context(), &projectOrgID)
+			}
+
+			switch {
+			case projectOrgID != "":
+				// Authoritative: the owning organization of the declared project.
+				user.OrgID = projectOrgID
+				// A header that conflicts with the project's owning org is a
+				// forged/mismatched grant input. Reject it (403) so it can never
+				// widen access — the same convention as RequireProjectScope's
+				// token-bound project mismatch.
+				if headerOrgID != "" && headerOrgID != projectOrgID {
+					return m.authError(c, apperror.NewForbidden("x-org-id header does not match the project's organization"))
 				}
+			case m.db == nil:
+				// Standalone/test posture without a database: there is no trusted
+				// org source, so keep the header (single-tenant dev path).
+				user.OrgID = headerOrgID
+			default:
+				// No project context and a database is available: the header is
+				// not a trusted org source. Fail closed with an empty org.
+				user.OrgID = ""
 			}
 
 			// Store user in Echo context (for handler-layer access via GetUser(c))
