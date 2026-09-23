@@ -163,24 +163,7 @@ func (h *Handler) Health(c echo.Context) error {
 
 	checks := h.runChecks(ctx)
 
-	// Critical components: database, storage, auth — 503 if any are unhealthy
-	// Optional components: kreuzberg, whisper, embeddings, database_backup — 200 even if degraded
-	criticalComponents := []string{"database", "storage", "auth"}
-	optionalComponents := []string{"kreuzberg", "whisper", "embeddings", "database_backup"}
-
-	overallStatus := "healthy"
-
-	for _, name := range optionalComponents {
-		if chk, ok := checks[name]; ok && chk.Status == "unhealthy" {
-			overallStatus = "degraded"
-		}
-	}
-	for _, name := range criticalComponents {
-		if chk, ok := checks[name]; ok && chk.Status == "unhealthy" {
-			overallStatus = "unhealthy"
-			break
-		}
-	}
+	overallStatus, statusCode := overallHealth(checks)
 
 	var tracingInfo *TracingInfo
 	if h.cfg.Otel.Enabled() {
@@ -202,12 +185,42 @@ func (h *Handler) Health(c echo.Context) error {
 		Tracing:   tracingInfo,
 	}
 
-	statusCode := http.StatusOK
-	if overallStatus == "unhealthy" {
-		statusCode = http.StatusServiceUnavailable
+	return c.JSON(statusCode, response)
+}
+
+// Health component classification. Critical components make the overall status
+// "unhealthy" (HTTP 503); optional components make it "degraded" but keep the
+// HTTP 200. Any check that is in neither list — the informational
+// `oidc_all_grant` configuration warning, for example — never affects the
+// overall status or the HTTP code, whatever its own status is.
+var (
+	criticalComponents = []string{"database", "storage", "auth"}
+	optionalComponents = []string{"kreuzberg", "whisper", "embeddings", "database_backup"}
+)
+
+// overallHealth derives the overall status and HTTP status code from the
+// per-component checks. Only critical/optional components can move the status;
+// all other entries are informational.
+func overallHealth(checks map[string]Check) (status string, statusCode int) {
+	status = "healthy"
+
+	for _, name := range optionalComponents {
+		if chk, ok := checks[name]; ok && chk.Status == "unhealthy" {
+			status = "degraded"
+		}
+	}
+	for _, name := range criticalComponents {
+		if chk, ok := checks[name]; ok && chk.Status == "unhealthy" {
+			status = "unhealthy"
+			break
+		}
 	}
 
-	return c.JSON(statusCode, response)
+	statusCode = http.StatusOK
+	if status == "unhealthy" {
+		statusCode = http.StatusServiceUnavailable
+	}
+	return status, statusCode
 }
 
 // runChecks executes all health checks concurrently and returns the results.
@@ -215,7 +228,7 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 	var (
 		mu      sync.Mutex
 		wg      sync.WaitGroup
-		results = make(map[string]Check, 7)
+		results = make(map[string]Check, 8)
 	)
 
 	emit := func(name string, chk Check) {
@@ -344,6 +357,16 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 		emit("database_backup", h.databaseBackupCheck(ctx))
 	}()
 
+	// OIDC all-grant posture (config-only, no live probe). A configuration
+	// warning, not a failing check: reported as "warning" when the legacy
+	// userinfo all-grant is in effect. It is neither a critical nor an optional
+	// component, so it never affects the overall status.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		emit("oidc_all_grant", h.oidcAllGrantCheck())
+	}()
+
 	wg.Wait()
 	return results
 }
@@ -368,6 +391,23 @@ func (h *Handler) databaseBackupCheck(ctx context.Context) Check {
 	default:
 		return classifyDatabaseBackup(status, errMsg, startedAt, time.Now())
 	}
+}
+
+// oidcAllGrantCheck reports the OIDC all-grant posture as a configuration
+// warning. "warning" means the legacy userinfo all-grant is active; "healthy"
+// means it is not. It is deliberately excluded from the critical/optional
+// component lists so the service is never reported unhealthy because of it.
+func (h *Handler) oidcAllGrantCheck() Check {
+	if h.cfg == nil {
+		return Check{Status: "healthy", Message: "configuration unavailable"}
+	}
+	if h.cfg.Zitadel.UserinfoAllGrantActive() {
+		return Check{
+			Status:  "warning",
+			Message: "OIDC all-scope grant active: ZITADEL_USERINFO_GRANT_ALL_SCOPES is enabled and introspection is not configured, so userinfo-authenticated users receive the full scope catalogue. Configure ZITADEL_CLIENT_JWT or ZITADEL_CLIENT_JWT_PATH (with DISABLE_ZITADEL_INTROSPECTION not enabled), or set ZITADEL_USERINFO_GRANT_ALL_SCOPES=false.",
+		}
+	}
+	return Check{Status: "healthy", Message: "all-grant inactive"}
 }
 
 // Healthz returns a simple health check (for k8s liveness probe)

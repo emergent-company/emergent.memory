@@ -512,3 +512,30 @@ func TestZitadelOIDCScopeConfig(t *testing.T) {
 		t.Fatal("UserinfoGrantAllScopes default should be true")
 	}
 }
+
+func TestZitadelConfigUserinfoAllGrantActive(t *testing.T) {
+	tests := []struct {
+		name       string
+		flag       bool
+		introspect bool // ClientJWT set
+		disable    bool
+		want       bool
+	}{
+		{name: "flag on, introspection unconfigured", flag: true, want: true},
+		{name: "flag on, introspection configured", flag: true, introspect: true, want: false},
+		{name: "flag off, introspection unconfigured", flag: false, want: false},
+		{name: "flag off, introspection configured", flag: false, introspect: true, want: false},
+		{name: "flag on, credentials present but introspection disabled", flag: true, introspect: true, disable: true, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			z := &ZitadelConfig{UserinfoGrantAllScopes: tt.flag, DisableIntrospection: tt.disable}
+			if tt.introspect {
+				z.ClientJWT = "jwt"
+			}
+			if got := z.UserinfoAllGrantActive(); got != tt.want {
+				t.Errorf("UserinfoAllGrantActive() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
