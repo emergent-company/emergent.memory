@@ -1337,6 +1337,9 @@ func TestDefaultGraphEmbeddingConfig(t *testing.T) {
 	if cfg.WorkerBatchSize != 200 {
 		t.Errorf("WorkerBatchSize = %d, want 200", cfg.WorkerBatchSize)
 	}
+	if cfg.EmbeddingRequestBatchSize != 100 {
+		t.Errorf("EmbeddingRequestBatchSize = %d, want 100", cfg.EmbeddingRequestBatchSize)
+	}
 	if cfg.EnableAdaptiveScaling != true {
 		t.Errorf("EnableAdaptiveScaling = %v, want true", cfg.EnableAdaptiveScaling)
 	}

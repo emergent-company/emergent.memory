@@ -544,6 +544,9 @@ type EmbeddingQueueConfig struct {
 	GraphConcurrency int `env:"GRAPH_EMBEDDING_CONCURRENCY" envDefault:"200"`
 	// GraphBatchSize is the graph embedding batch size. Default: 200.
 	GraphBatchSize int `env:"GRAPH_EMBEDDING_BATCH_SIZE" envDefault:"200"`
+	// GraphRequestBatchSize is the maximum number of graph objects sent in a
+	// single multi-object embedding request. Default: 100.
+	GraphRequestBatchSize int `env:"GRAPH_EMBEDDING_REQUEST_BATCH_SIZE" envDefault:"100"`
 	// ChunkConcurrency is the chunk embedding worker concurrency. Default: 10.
 	ChunkConcurrency int `env:"CHUNK_EMBEDDING_CONCURRENCY" envDefault:"10"`
 	// ChunkBatchSize is the chunk embedding batch size. Default: 10.
