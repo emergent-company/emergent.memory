@@ -155,7 +155,7 @@ func (s *BootstrapService) createOrganization(ctx context.Context, tx bun.Tx, us
 // bootstrapOrgRole is the canonical kb.organization_memberships role written
 // for the bootstrapped standalone organization. org_admin is the authoritative
 // organization membership role (see domain/orgs/repository.go); 'owner' is not
-// written by any server code path. See migration 00166.
+// written by any server code path. See migration 00178.
 const bootstrapOrgRole = "org_admin"
 
 // bootstrapProjectRole is the canonical kb.project_memberships role written for
