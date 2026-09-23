@@ -58,7 +58,7 @@ func loadAuthTestEnvFiles() {
 // under test: the project/organization membership tables and the
 // core.user_profiles rows their user_id foreign keys reference. It mirrors the
 // column types, the user FK, and the (project_id, user_id) uniqueness of the
-// real schema (see apps/server/internal/testutil/schema.sql) but omits
+// real schema (see apps/server/internal/testdb/schema.sql) but omits
 // unrelated tables and RLS policies.
 var authDBTestDDL = []string{
 	`CREATE SCHEMA IF NOT EXISTS core`,

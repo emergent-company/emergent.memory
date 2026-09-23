@@ -2,83 +2,31 @@ package mcp
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
-	"net/url"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
-// connectTestDB connects to Postgres for integration tests (same approach as the
-// skills domain tests). Skips when unavailable or in short mode.
+// connectTestDB opens a throwaway test database owned by this test, so each
+// test runs against a uniquely-named database it drops on cleanup. Skips when
+// unavailable or in short mode; fails when REQUIRE_DB is set.
 func connectTestDB(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
-	if wd, err := os.Getwd(); err == nil {
-		for dir := wd; dir != "/"; dir = filepath.Dir(dir) {
-			envLocal := filepath.Join(dir, ".env.local")
-			if _, statErr := os.Stat(envLocal); statErr == nil {
-				_ = godotenv.Load(filepath.Join(dir, ".env"))
-				_ = godotenv.Overload(envLocal)
-				break
-			}
-		}
-	}
-
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		host := os.Getenv("POSTGRES_HOST")
-		if host == "" {
-			host = "localhost"
-		}
-		port := os.Getenv("POSTGRES_PORT")
-		if port == "" {
-			port = "5432"
-		}
-		user := os.Getenv("POSTGRES_USER")
-		if user == "" {
-			user = "emergent"
-		}
-		pass := os.Getenv("POSTGRES_PASSWORD")
-		if pass == "" {
-			pass = "emergent"
-		}
-		name := os.Getenv("POSTGRES_DB")
-		if name == "" {
-			name = "emergent"
-		}
-		dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-			url.QueryEscape(user), url.QueryEscape(pass), host, port, name)
-	}
-
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := sqldb.PingContext(ctx); err != nil {
-		_ = sqldb.Close()
-		testdb.SkipOrFatal(t, "database unavailable (%v), skipping integration test", err)
-	}
-	db := bun.NewDB(sqldb, pgdialect.New())
-	t.Cleanup(func() { _ = db.Close() })
-	return db
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "mcp_skills")
+	t.Cleanup(tdb.Close)
+	return tdb.DB
 }
 
 // fakeEmbedder implements skills.Embedder for tests.

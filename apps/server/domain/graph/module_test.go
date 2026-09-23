@@ -2,7 +2,6 @@ package graph
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"os"
 	"sync"
@@ -12,26 +11,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
 
-func TestSchemaProviderCaching(t *testing.T) {
+// openGraphTestDB opens a throwaway test database owned by this test, so each
+// test runs against a uniquely-named database it drops on cleanup. Skips when
+// unavailable or in short mode; fails when REQUIRE_DB is set.
+func openGraphTestDB(t *testing.T) *bun.DB {
+	t.Helper()
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "graph_schema")
+	t.Cleanup(tdb.Close)
+	return tdb.DB
+}
 
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://emergent:emergent@localhost:5432/emergent?sslmode=disable"
-	}
-
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	db := bun.NewDB(sqldb, pgdialect.New())
-	defer db.Close()
+func TestSchemaProviderCaching(t *testing.T) {
+	db := openGraphTestDB(t)
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	provider := ProvideSchemaProvider(db, log)
@@ -202,18 +201,7 @@ func TestSchemaProviderCaching(t *testing.T) {
 }
 
 func TestSchemaProviderMetrics(t *testing.T) {
-	if testing.Short() {
-		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
-	}
-
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://emergent:emergent@localhost:5432/emergent?sslmode=disable"
-	}
-
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	db := bun.NewDB(sqldb, pgdialect.New())
-	defer db.Close()
+	db := openGraphTestDB(t)
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	provider := ProvideSchemaProvider(db, log)
@@ -297,18 +285,7 @@ func TestSchemaProviderMetrics(t *testing.T) {
 // reinstalled schemas (which set removed_at on the old row) caused stale removed
 // rows to be returned, leaving the type map empty.
 func TestSchemaProviderExcludesRemovedSchemas(t *testing.T) {
-	if testing.Short() {
-		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
-	}
-
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://emergent:emergent@localhost:5436/emergent?sslmode=disable"
-	}
-
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	db := bun.NewDB(sqldb, pgdialect.New())
-	defer db.Close()
+	db := openGraphTestDB(t)
 
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))

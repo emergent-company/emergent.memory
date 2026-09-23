@@ -138,7 +138,12 @@ jobs:
   # database is missing/unreachable (or the run is -short), so this coverage
   # cannot silently vanish again. TEST_DATABASE_URL is the explicit test DSN —
   # harnesses prefer it over ambient POSTGRES_*, so they can never touch a
-  # shared/application database. See apps/server/internal/testdb.
+  # shared/application database.
+  #
+  # Every DB-backed harness is now hermetic (#785): it creates a uniquely-named
+  # throwaway database it drops on cleanup, via internal/testdb's template
+  # mechanism, so tests never mutate a shared database and can run in parallel.
+  # See apps/server/internal/testdb.
   test-db:
     name: DB-backed Tests
     runs-on: [self-hosted, linux, x64, memory]
@@ -209,10 +214,11 @@ jobs:
       - name: Migrate test database
         working-directory: apps/server
         run: |
-          # The harnesses that read TEST_DATABASE_URL directly (domain/graph,
-          # internal/migrate) expect a migrated database, matching how they are
-          # run locally against a dev/e2e Postgres. testutil-based tests build
-          # their own throwaway databases from schema.sql and don't need this.
+          # Independent smoke test that the migrations apply cleanly to a fresh
+          # database: the DB-backed harnesses no longer need a migrated database
+          # (since #785 each builds a uniquely-named throwaway database from
+          # internal/testdb/schema.sql and drops it). Kept because this is the
+          # only place CI runs the migrate CLI against a real Postgres.
           go run ./cmd/migrate -c up -allow-localhost
 
       - name: Run DB-backed tests
@@ -222,10 +228,12 @@ jobs:
           # database-backed; they stay -short-gated in the unit job. Everything
           # else runs WITHOUT -short so the DB-backed suites execute.
           PKGS=$(go list ./internal/... ./pkg/... ./domain/... | grep -v '/domain/sandbox$')
-          # -p 1 serializes package binaries: testutil creates its shared
-          # go_test_template database with a check-then-create, which races if
-          # several packages bootstrap the template at once.
-          go test -p 1 $PKGS -v -count=1 -timeout 20m
+          # -p 4 runs package binaries in parallel. The go_test_template
+          # bootstrap is serialized across processes with a Postgres advisory
+          # lock (internal/testdb), and every throwaway database is uniquely
+          # named, so parallel packages no longer race the template create
+          # (#785). Verified locally with the affected packages at -p 4 and -p 8.
+          go test -p 4 $PKGS -v -count=1 -timeout 20m
 
       - name: Stop Postgres
         if: always()

@@ -2,25 +2,18 @@ package blueprints
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/url"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/pgdialect"
-	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -30,66 +23,17 @@ import (
 // Shared test helpers (same pattern as domain/skills/store_test.go)
 // ---------------------------------------------------------------------------
 
-// loadEnvFiles loads .env / .env.local from the repo root (walking up from CWD),
-// mirroring internal/testutil so tests can reach the local Postgres instance.
-func loadEnvFiles() {
-	if wd, err := os.Getwd(); err == nil {
-		for dir := wd; dir != "/"; dir = filepath.Dir(dir) {
-			envLocal := filepath.Join(dir, ".env.local")
-			if _, statErr := os.Stat(envLocal); statErr == nil {
-				_ = godotenv.Load(filepath.Join(dir, ".env"))
-				_ = godotenv.Overload(envLocal)
-				break
-			}
-		}
-	}
-}
-
-// connectTestDB connects to Postgres for integration tests. Honors TEST_DATABASE_URL,
-// falling back to POSTGRES_* env vars. Skips when unavailable or in short mode.
+// connectTestDB opens a throwaway test database owned by this test, so each
+// test runs against a uniquely-named database it drops on cleanup. Skips when
+// unavailable or in short mode; fails when REQUIRE_DB is set.
 func connectTestDB(t *testing.T) *bun.DB {
 	t.Helper()
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
 	}
-	loadEnvFiles()
-
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		host := os.Getenv("POSTGRES_HOST")
-		if host == "" {
-			host = "localhost"
-		}
-		port := os.Getenv("POSTGRES_PORT")
-		if port == "" {
-			port = "5432"
-		}
-		user := os.Getenv("POSTGRES_USER")
-		if user == "" {
-			user = "emergent"
-		}
-		pass := os.Getenv("POSTGRES_PASSWORD")
-		if pass == "" {
-			pass = "emergent"
-		}
-		name := os.Getenv("POSTGRES_DB")
-		if name == "" {
-			name = "emergent"
-		}
-		dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-			url.QueryEscape(user), url.QueryEscape(pass), host, port, name)
-	}
-
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := sqldb.PingContext(ctx); err != nil {
-		_ = sqldb.Close()
-		testdb.SkipOrFatal(t, "database unavailable (%v), skipping integration test", err)
-	}
-	db := bun.NewDB(sqldb, pgdialect.New())
-	t.Cleanup(func() { _ = db.Close() })
-	return db
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "blueprints")
+	t.Cleanup(tdb.Close)
+	return tdb.DB
 }
 
 // testLogger returns a discard logger for tests.
@@ -97,8 +41,8 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// uniqueName returns a unique name for a test row (avoids collisions in the
-// shared dev database across runs).
+// uniqueName returns a unique name for a test row (avoids (name, version)
+// uniqueness collisions within a test's database).
 func uniqueName(prefix string) string {
 	return prefix + "-" + uuid.NewString()[:8]
 }

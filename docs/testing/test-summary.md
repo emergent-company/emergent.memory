@@ -14,10 +14,11 @@ Generated from live recon of the Go monorepo (September 2026).
 | Integration | `tests/integration/` | 19 files | real Postgres + LLM creds (`DEEPSEEK_API_KEY`, `GOOGLE_API_KEY`); skip without key |
 | Sandbox e2e | `domain/sandbox/*e2e*_test.go` | 2 files | Docker daemon |
 
-**Test DB**: template `go_test_template` built from embedded `internal/testutil/schema.sql`
+**Test DB**: template `go_test_template` built from embedded `internal/testdb/schema.sql`
 (pg_dump; `kb` + `core` schemas, `pgcrypto`/`uuid-ossp`/`vector` extensions). Per-test DB via
 `CREATE DATABASE ... TEMPLATE`, dropped on close. No Goose migrations in Go tests.
-Helpers: `internal/testutil/` (BaseSuite, in-process Echo with ~30 routes, auth fixtures).
+Helpers: `internal/testdb/` (throwaway-DB template + `REQUIRE_DB` gate), `internal/testutil/`
+(BaseSuite, in-process Echo with ~30 routes, auth fixtures; re-exports the throwaway-DB setup).
 SDK mock: `pkg/sdk/testutil/mock.go`.
 
 **Envs**: `POSTGRES_HOST`/`POSTGRES_PORT` (dev 5432), `TEST_DATABASE_URL` (full DSN),

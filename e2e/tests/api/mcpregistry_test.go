@@ -585,11 +585,15 @@ func TestMCPRegistry_InstallFromRegistry_MissingRegistryName(t *testing.T) {
 	mustStatus(t, resp, http.StatusBadRequest)
 }
 
+// TestMCPRegistry_InstallFromRegistry_StdioOnlyBlocked asserts that installing
+// a registry entry whose only package is stdio (and has no remote) is rejected
+// with a 400 containing "stdio". It depends on the hermetic stub fixture
+// "io.github.upstash/context7" (e2e/stubs/mcp-registry), so it runs in
+// standalone CI too — the install path is auth-mode independent.
 func TestMCPRegistry_InstallFromRegistry_StdioOnlyBlocked(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
-	skipIfStandaloneMode(t)
 
 	projectID, _ := setupProjectLogged(t, rl)
 	resp := doAPILogged(t, rl, "POST", "/api/admin/mcp-registry/install", e2eTestToken(), projectID, jsonBody(map[string]any{
