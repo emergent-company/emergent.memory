@@ -110,13 +110,17 @@ func TestHandler_CreateGlobalSkill_SuperadminGated(t *testing.T) {
 	ctx := context.Background()
 
 	// seedSuperadminUser creates a core.user_profiles row (FK target of
-	// core.superadmins) and grants it superadmin.
-	seedSuperadminUser := func(t *testing.T, userID string) {
+	// core.superadmins) and inserts a superadmin grant with the given role. A
+	// raw INSERT is used so the test controls the role directly — the repository
+	// helper (GrantSuperadminToUser) hardcodes superadmin_readonly.
+	seedSuperadminUser := func(t *testing.T, userID, role string) {
 		t.Helper()
 		_, err := db.ExecContext(ctx, `INSERT INTO core.user_profiles (id, zitadel_user_id, display_name) VALUES (?, ?, ?)`,
 			userID, "zitadel-"+userID, "Test User")
 		require.NoError(t, err)
-		require.NoError(t, saRepo.GrantSuperadminToUser(ctx, userID, userID, nil))
+		_, err = db.ExecContext(ctx, `INSERT INTO core.superadmins (user_id, role, granted_by) VALUES (?, ?, ?)`,
+			userID, role, userID)
+		require.NoError(t, err)
 	}
 
 	t.Run("non-superadmin rejected", func(t *testing.T) {
@@ -136,9 +140,29 @@ func TestHandler_CreateGlobalSkill_SuperadminGated(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, apErr.HTTPStatus, "non-superadmin global create must be rejected with 403")
 	})
 
-	t.Run("superadmin accepted", func(t *testing.T) {
+	t.Run("superadmin_readonly rejected", func(t *testing.T) {
 		userID := uuid.NewString()
-		seedSuperadminUser(t, userID)
+		seedSuperadminUser(t, userID, auth.RoleSuperadminReadonly)
+
+		user := &auth.AuthUser{ID: userID}
+		body, err := json.Marshal(CreateSkillDTO{
+			Name:        "global-" + uuid.NewString(),
+			Description: "desc",
+			Content:     "content",
+		})
+		require.NoError(t, err)
+
+		c, _ := newEchoCtx(t, http.MethodPost, "/api/skills", body, user)
+		err = h.CreateGlobalSkill(c)
+		require.Error(t, err)
+		var apErr *apperror.Error
+		require.ErrorAs(t, err, &apErr)
+		assert.Equal(t, http.StatusForbidden, apErr.HTTPStatus, "superadmin_readonly global create must be rejected with 403")
+	})
+
+	t.Run("superadmin_full accepted", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadminUser(t, userID, auth.RoleSuperadminFull)
 
 		user := &auth.AuthUser{ID: userID}
 		body, err := json.Marshal(CreateSkillDTO{
