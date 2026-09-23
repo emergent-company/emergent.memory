@@ -390,7 +390,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-search",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Search entities by text query across name, key, and description fields. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
+			Description:  "Search entities by text query over the full-text index (key, type, title, name, description). Matching is lexeme-based, not substring: query terms match whole indexed words (a composite key such as \"lov/1997-06-13-44\" is also searchable by its components), Norwegian stop words are ignored, and a stop-word-only query returns no results. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -3037,8 +3037,13 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 		// separator-normalised key, type) and a `norwegian` prose space (bounded
 		// title/name/description). Lexemes carry no configuration, so a single
 		// `@@` against one query configuration only sees half the index — match
-		// both, mirroring graph.FTSSearch. The exact key match covers
-		// composite-key lookups ("lov/1997-06-13-44") directly.
+		// both, mirroring graph.FTSSearch. Composite-key lookups
+		// ("lov/1997-06-13-44", "lov 1997 06 13 44") are resolved by the
+		// normalised key in the `fts` vector (migration 00174), so no separate
+		// exact-key predicate is needed — and keeping one would defeat the GIN
+		// index: `go.key = ?` has no supporting index, and an OR arm that cannot
+		// be served by an index forces the planner to seq-scan the whole
+		// disjunction instead of using idx_graph_objects_fts.
 		runSearch := func(queryText string) error {
 			baseQuery := `
 			SELECT 
@@ -3056,15 +3061,14 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND (
-					go.key = ?
-					OR go.fts @@ websearch_to_tsquery('simple', ?)
+					go.fts @@ websearch_to_tsquery('simple', ?)
 					OR go.fts @@ websearch_to_tsquery('norwegian', ?)
 				)
 				` + branchFilter + `
 				` + namespaceClause + `
 				` + systemExclusionClause + `
 		`
-			queryArgs := append([]any{projectUUID, queryText, queryText, queryText}, branchArgs...)
+			queryArgs := append([]any{projectUUID, queryText, queryText}, branchArgs...)
 			if namespaceFilter != "all" && namespaceFilter != "" {
 				queryArgs = append(queryArgs, namespaceFilter)
 			} else if namespaceFilter == "" {
