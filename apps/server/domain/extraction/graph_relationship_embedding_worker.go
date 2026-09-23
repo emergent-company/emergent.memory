@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -50,6 +51,14 @@ type GraphRelationshipEmbeddingWorker struct {
 	paused    bool
 	mu        sync.Mutex
 	wg        sync.WaitGroup
+
+	// jobsWg tracks in-flight relationship goroutines so Stop can drain them;
+	// inFlight counts the jobs they hold, bounding batch admission.
+	jobsWg   sync.WaitGroup
+	inFlight atomic.Int64
+	// wakeCh nudges the poll loop when a relationship frees capacity, so the
+	// next tranche is claimed immediately instead of waiting for the next tick.
+	wakeCh chan struct{}
 
 	// Usage tracking & budget enforcement
 	usage                    EmbeddingUsageRecorder
@@ -115,6 +124,7 @@ func (w *GraphRelationshipEmbeddingWorker) Start(ctx context.Context) error {
 	w.running = true
 	w.stopCh = make(chan struct{})
 	w.stoppedCh = make(chan struct{})
+	w.wakeCh = make(chan struct{}, 1)
 	w.mu.Unlock()
 
 	go w.recoverStaleJobsOnStartup(ctx)
@@ -145,6 +155,21 @@ func (w *GraphRelationshipEmbeddingWorker) Stop(ctx context.Context) error {
 		w.log.Info("graph relationship embedding worker stopped gracefully")
 	case <-ctx.Done():
 		w.log.Warn("graph relationship embedding worker stop timeout, forcing shutdown")
+		return nil
+	}
+
+	// The poll loop no longer waits for a whole batch, so drain the
+	// relationship goroutines that are still holding claimed jobs.
+	drained := make(chan struct{})
+	go func() {
+		w.jobsWg.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		w.log.Info("graph relationship embedding worker drained in-flight jobs")
+	case <-ctx.Done():
+		w.log.Warn("graph relationship embedding worker drain timeout, forcing shutdown")
 	}
 	return nil
 }
@@ -177,10 +202,31 @@ func (w *GraphRelationshipEmbeddingWorker) run(ctx context.Context) {
 			if err := w.processBatch(ctx); err != nil {
 				w.log.Warn("rel embedding process batch failed", slog.String("error", err.Error()))
 			}
+		case <-w.wakeCh:
+			// Capacity freed up mid-interval; claim the next tranche now.
+			if err := w.processBatch(ctx); err != nil {
+				w.log.Warn("rel embedding process batch failed", slog.String("error", err.Error()))
+			}
 		}
 	}
 }
 
+// concurrency returns the effective number of jobs that may be in flight.
+func (w *GraphRelationshipEmbeddingWorker) concurrency() int {
+	concurrency := w.cfg.WorkerConcurrency
+	if w.scaler != nil {
+		concurrency = w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
+	}
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+	return concurrency
+}
+
+// processBatch claims jobs for the free in-flight capacity and dispatches them
+// asynchronously. It never waits for the claimed jobs to finish: a slow
+// embedding request holds only its own slot, so it cannot gate the rest of the
+// queue. The next tranche is claimed as capacity frees up.
 func (w *GraphRelationshipEmbeddingWorker) processBatch(ctx context.Context) error {
 	select {
 	case <-w.stopCh:
@@ -198,7 +244,20 @@ func (w *GraphRelationshipEmbeddingWorker) processBatch(ctx context.Context) err
 		return nil
 	}
 
-	jobs, err := w.jobs.Dequeue(ctx, w.cfg.WorkerBatchSize)
+	free := int64(w.concurrency()) - w.inFlight.Load()
+	if free <= 0 {
+		return nil
+	}
+
+	claim := w.cfg.WorkerBatchSize
+	if claim <= 0 || int64(claim) > free {
+		claim = int(free)
+	}
+	if claim <= 0 {
+		return nil
+	}
+
+	jobs, err := w.jobs.Dequeue(ctx, claim)
 	if err != nil {
 		return err
 	}
@@ -206,28 +265,36 @@ func (w *GraphRelationshipEmbeddingWorker) processBatch(ctx context.Context) err
 		return nil
 	}
 
-	// Use adaptive scaler to determine concurrency based on system health
-	concurrency := w.scaler.GetConcurrency(w.cfg.WorkerConcurrency)
-	if concurrency <= 0 {
-		concurrency = 10
-	}
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
+	// Reserve capacity before spawning so admission never overshoots the
+	// concurrency budget.
+	w.inFlight.Add(int64(len(jobs)))
+
 	for _, job := range jobs {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(j *GraphRelationshipEmbeddingJob) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			if err := w.processJob(ctx, j); err != nil {
-				w.log.Warn("rel embedding process job failed",
-					slog.String("job_id", j.ID),
-					slog.String("error", err.Error()))
-			}
-		}(job)
+		w.jobsWg.Add(1)
+		go w.processTrackedJob(ctx, job)
 	}
-	wg.Wait()
+
 	return nil
+}
+
+// processTrackedJob runs one claimed relationship job and always releases the
+// reserved capacity exactly once.
+func (w *GraphRelationshipEmbeddingWorker) processTrackedJob(ctx context.Context, job *GraphRelationshipEmbeddingJob) {
+	defer w.jobsWg.Done()
+	defer func() {
+		w.inFlight.Add(-1)
+		if w.wakeCh != nil {
+			select {
+			case w.wakeCh <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	if err := w.processJob(ctx, job); err != nil {
+		w.log.Warn("rel embedding process job failed",
+			slog.String("job_id", job.ID),
+			slog.String("error", err.Error()))
+	}
 }
 
 // processJob generates and stores the embedding for a single relationship job.

@@ -24,7 +24,7 @@ func TestListProjectProviders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	got, err := m.ListProjectProviders(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestListProviderModels(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	got, err := m.ListProviderModels(context.Background(), "deepseek")
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestListPricing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	got, err := m.ListPricing(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestListProjectPricingOverrides(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	got, err := m.ListProjectPricingOverrides(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestListProjectPricingOverridesNull(t *testing.T) {
 		_, _ = io.WriteString(w, `null`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	got, err := m.ListProjectPricingOverrides(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestUpsertProjectPricingOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	rates := modelPriceRates{TextInputPrice: 1.5, OutputPrice: 6}
 	got, err := m.UpsertProjectPricingOverride(context.Background(), "openai", "gpt-4o", rates)
 	if err != nil {
@@ -195,7 +195,7 @@ func TestDeleteProjectPricingOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	if err := m.DeleteProjectPricingOverride(context.Background(), "openai", "gpt-4o"); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestDeleteProjectPricingOverrideError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"upstream","message":"down"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DeleteProjectPricingOverride(context.Background(), "openai", "gpt-4o"); err == nil {
 		t.Fatal("want error, got nil")
 	} else if !strings.Contains(err.Error(), "down") {

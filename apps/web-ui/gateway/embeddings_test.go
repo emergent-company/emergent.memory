@@ -86,7 +86,7 @@ func TestGetEmbeddingProgress(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	p, err := m.GetEmbeddingProgress(context.Background())
 	if err != nil {
 		t.Fatalf("GetEmbeddingProgress: %v", err)
@@ -112,7 +112,7 @@ func TestGetEmbeddingStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	st, err := m.GetEmbeddingStatus(context.Background())
 	if err != nil {
 		t.Fatalf("GetEmbeddingStatus: %v", err)
@@ -141,7 +141,7 @@ func TestGetEffectiveModelConfig(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	mc, err := m.GetEffectiveModelConfig(context.Background())
 	if err != nil {
 		t.Fatalf("GetEffectiveModelConfig: %v", err)

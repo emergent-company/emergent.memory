@@ -145,6 +145,16 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "webhook secret without trigger token",
+			cfg:     Config{AuthMode: "dev", GitHubWebhookSecret: "s3cret"},
+			wantErr: true,
+		},
+		{
+			name:    "webhook secret with trigger token",
+			cfg:     Config{AuthMode: "dev", GitHubWebhookSecret: "s3cret", AgentTriggerToken: "emt_x"},
+			wantErr: false,
+		},
+		{
 			name:    "unknown mode",
 			cfg:     Config{AuthMode: "bogus"},
 			wantErr: true,

@@ -221,7 +221,10 @@ func TestRequireSessionOrKey401WithoutSessionOrKey(t *testing.T) {
 	}
 }
 
-func TestRequireSessionOrKeyServesWithAPIKey(t *testing.T) {
+// TestRequireSessionOrKeyRejectsAPIKey guards the removal of the session-less
+// X-API-Key path: a valid admin key can no longer reach /api/* without a
+// session, and the 401 names the removal instead of proxying an empty bearer.
+func TestRequireSessionOrKeyRejectsAPIKey(t *testing.T) {
 	s := &Server{cfg: func() Config { c := sessionCfg(); c.ClientAPIKey = "admin-secret"; return c }(), memory: &fakeMemory{}}
 	e := echo.New()
 	e.GET("/api/ping", func(c echo.Context) error { return c.String(http.StatusOK, "ok") }, s.requireSessionOrKey)
@@ -229,8 +232,11 @@ func TestRequireSessionOrKeyServesWithAPIKey(t *testing.T) {
 	req.Header.Set("X-API-Key", "admin-secret")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (valid X-API-Key)", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (X-API-Key no longer accepted)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "session_required") {
+		t.Errorf("body = %s, want session_required reason", rec.Body.String())
 	}
 }
 
@@ -258,18 +264,20 @@ func TestRequireSessionOrKeyServesWithSession(t *testing.T) {
 	}
 }
 
-func TestRequireSessionOrKeyInvalidSessionFallsBackToKey(t *testing.T) {
+// TestRequireSessionOrKeyInvalidSessionNoKeyFallback guards that a tampered
+// session is not rescued by a valid key now that the key path is removed.
+func TestRequireSessionOrKeyInvalidSessionNoKeyFallback(t *testing.T) {
 	s := &Server{cfg: func() Config { c := sessionCfg(); c.ClientAPIKey = "admin-secret"; return c }(), memory: &fakeMemory{}}
 	e := echo.New()
 	e.GET("/api/ping", func(c echo.Context) error { return c.String(http.StatusOK, "ok") }, s.requireSessionOrKey)
-	// Tampered session + valid key → key path wins.
+	// Tampered session + valid key → still rejected (key path removed).
 	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 	req.Header.Set("Cookie", cookieHeader(sessionCookieName, "tampered.value"))
 	req.Header.Set("X-API-Key", "admin-secret")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (key fallback)", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (key fallback removed)", rec.Code)
 	}
 }
 
@@ -335,15 +343,15 @@ func TestDispatchSessionModeMatrix(t *testing.T) {
 		t.Errorf("/api/agents body = %s", rec.Body.String())
 	}
 
-	// /api route with a valid X-API-Key → 200.
+	// /api route with a valid X-API-Key but no session → 401 (key path removed).
 	s2 := &Server{cfg: func() Config { c := sessionCfg(); c.ClientAPIKey = "admin-secret"; return c }(), memory: &fakeMemory{}}
 	e2 := sessionServer(s2)
 	req = httptest.NewRequest(http.MethodGet, "/api/agents", nil)
 	req.Header.Set("X-API-Key", "admin-secret")
 	rec = httptest.NewRecorder()
 	e2.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/api/agents with key = %d, want 200", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("/api/agents with key = %d, want 401 (session-less key path removed)", rec.Code)
 	}
 
 	// /api route with a valid session → 200.

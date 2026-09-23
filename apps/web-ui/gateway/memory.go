@@ -23,10 +23,10 @@ import (
 const maxMemoryResponseBytes = 64 << 20
 
 // MemoryClient is a thin HTTP client for the Emergent Memory REST API.
-// It holds the server-side memory credentials (never exposed to clients).
+// It holds no process-global credential: every request's bearer token and
+// project scope are resolved from the request's session context.
 type MemoryClient struct {
 	baseURL    string
-	token      string
 	projectID  string
 	http       *http.Client // non-streaming requests — short timeout
 	streamHTTP *http.Client // streaming (SSE) requests — no timeout; caller ctx governs lifetime
@@ -35,24 +35,24 @@ type MemoryClient struct {
 	shareRefSecret string
 }
 
-func NewMemoryClient(baseURL, token, projectID string) *MemoryClient {
+func NewMemoryClient(baseURL, projectID string) *MemoryClient {
 	return &MemoryClient{
 		baseURL:    baseURL,
-		token:      token,
 		projectID:  projectID,
 		http:       &http.Client{Timeout: 60 * time.Second},
 		streamHTTP: &http.Client{}, // no timeout — SSE streams stay open for the run
 	}
 }
 
-// tokenFor resolves the bearer token for one request: the session's token when
-// a session context is attached, else the static server-side token (the
-// API-key / supervisor path).
+// tokenFor resolves the bearer token for one request from the session context.
+// There is no process-global fallback: a session-less caller sends an empty
+// bearer token and the upstream rejects it with 401, which surfaces the mistake
+// loudly instead of silently acting as a shared service account.
 func (m *MemoryClient) tokenFor(ctx context.Context) string {
-	if sc, ok := sessionContextFrom(ctx); ok && sc.Token != "" {
+	if sc, ok := sessionContextFrom(ctx); ok {
 		return sc.Token
 	}
-	return m.token
+	return ""
 }
 
 // projectIDFor resolves the active project for one request: the session's

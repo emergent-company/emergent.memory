@@ -33,7 +33,7 @@ func tokenTestConfig() Config {
 // tokenAgentBackend lists "memory" so any memory-prefixed room passes the
 // allow-list (roomAllowed falls back to the agent-name prefix rule).
 func tokenAgentBackend() *fakeMemory {
-	return &fakeMemory{agents: []AgentDefinitionSummary{{ID: "a1", Name: "memory"}}}
+	return &fakeMemory{agents: []AgentDefinitionSummary{{ID: "a1", Name: "memory", Enabled: true}}}
 }
 
 // decodeRoomGrant parses the minted JWT and returns the video-grant room.
@@ -73,6 +73,8 @@ func TestMintTokenDerivesRoom(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/token",
 				strings.NewReader(tc.body))
 			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			// Voice requires a session; attach one so the binding resolves.
+			req = req.WithContext(withSessionContext(req.Context(), &sessionContext{Token: "sess", ProjectID: "proj-1"}))
 			e.ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusOK {
@@ -107,6 +109,7 @@ func TestMintTokenExplicitRoom(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/token",
 		strings.NewReader(`{"identity":"iphone-2","room":"memory-explicit"}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{Token: "sess", ProjectID: "proj-1"}))
 	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

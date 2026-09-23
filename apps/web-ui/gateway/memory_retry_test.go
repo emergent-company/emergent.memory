@@ -37,7 +37,7 @@ func TestDoHRetriesTransientGET(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mc := NewMemoryClient(srv.URL, "tok", "proj")
+	mc := NewMemoryClient(srv.URL, "proj")
 	var out struct {
 		OK bool `json:"ok"`
 	}
@@ -60,7 +60,7 @@ func TestDoHGETExhaustsRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mc := NewMemoryClient(srv.URL, "tok", "proj")
+	mc := NewMemoryClient(srv.URL, "proj")
 	err := mc.do(t.Context(), http.MethodGet, "/api/x", nil, nil)
 	if err == nil {
 		t.Fatal("do() error = nil, want non-nil")
@@ -83,7 +83,7 @@ func TestDoHGETDoesNotRetryClientError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mc := NewMemoryClient(srv.URL, "tok", "proj")
+	mc := NewMemoryClient(srv.URL, "proj")
 	err := mc.do(t.Context(), http.MethodGet, "/api/x", nil, nil)
 	if err == nil {
 		t.Fatal("do() error = nil, want non-nil")
@@ -104,7 +104,7 @@ func TestDoHPostDoesNotRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mc := NewMemoryClient(srv.URL, "tok", "proj")
+	mc := NewMemoryClient(srv.URL, "proj")
 	err := mc.do(t.Context(), http.MethodPost, "/api/x", map[string]string{"a": "b"}, nil)
 	if err == nil {
 		t.Fatal("do() error = nil, want non-nil")
@@ -128,7 +128,7 @@ func TestDoHHeadRetriesTransient(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mc := NewMemoryClient(srv.URL, "tok", "proj")
+	mc := NewMemoryClient(srv.URL, "proj")
 	if err := mc.do(t.Context(), http.MethodHead, "/api/x", nil, nil); err != nil {
 		t.Fatalf("do() error = %v, want nil", err)
 	}
@@ -139,7 +139,7 @@ func TestDoHHeadRetriesTransient(t *testing.T) {
 
 func TestDoHRetriesTransportErrorGET(t *testing.T) {
 	var calls atomic.Int32
-	mc := NewMemoryClient("http://memory.test", "tok", "proj")
+	mc := NewMemoryClient("http://memory.test", "proj")
 	mc.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if calls.Add(1) < 3 {
 			return nil, errors.New("connection reset by peer")
@@ -163,7 +163,7 @@ func TestDoHRetriesTransportErrorGET(t *testing.T) {
 
 func TestDoHTransportErrorPostFailsFast(t *testing.T) {
 	var calls atomic.Int32
-	mc := NewMemoryClient("http://memory.test", "tok", "proj")
+	mc := NewMemoryClient("http://memory.test", "proj")
 	mc.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		calls.Add(1)
 		return nil, errors.New("connection reset by peer")
@@ -180,7 +180,7 @@ func TestDoHTransportErrorPostFailsFast(t *testing.T) {
 
 func TestDoHTransportErrorGETExhaustsRetries(t *testing.T) {
 	var calls atomic.Int32
-	mc := NewMemoryClient("http://memory.test", "tok", "proj")
+	mc := NewMemoryClient("http://memory.test", "proj")
 	mc.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		calls.Add(1)
 		return nil, errors.New("eof")
@@ -283,7 +283,7 @@ func TestDoOnceFreshReaderPerAttempt(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mc := NewMemoryClient(srv.URL, "tok", "proj")
+	mc := NewMemoryClient(srv.URL, "proj")
 	body := []byte(`{"a":"b"}`)
 	// Two attempts' worth of doOnce calls must each send the full payload.
 	for range 2 {
@@ -310,7 +310,7 @@ func TestDoHBodySentInFull(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mc := NewMemoryClient(srv.URL, "tok", "proj")
+	mc := NewMemoryClient(srv.URL, "proj")
 	if err := mc.do(t.Context(), http.MethodPost, "/api/x", map[string]string{"a": "b"}, nil); err != nil {
 		t.Fatalf("do() error = %v, want nil", err)
 	}

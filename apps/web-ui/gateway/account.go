@@ -156,7 +156,10 @@ func (s *Server) backfillAccountEmail(ctx context.Context, a *accountSession) {
 	if a == nil || a.Email != "" || a.AccessToken == "" {
 		return
 	}
-	mem := NewMemoryClient(s.cfg.MemoryURL, a.AccessToken, s.cfg.MemoryProjectID)
+	mem := NewMemoryClient(s.cfg.MemoryURL, s.cfg.MemoryProjectID)
+	// Attach the account's OWN token as the session credential: the caller's
+	// ambient session may belong to a different account (select_account flow).
+	ctx = withSessionContext(ctx, &sessionContext{Token: a.AccessToken})
 	if p, err := mem.GetProfile(ctx); err == nil && p != nil && p.Email != "" {
 		a.Email = p.Email
 	}

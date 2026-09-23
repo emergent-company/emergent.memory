@@ -152,6 +152,7 @@ func TestGitHubWebhook(t *testing.T) {
 					GitHubWebhookSecret: tc.secret,
 					GitHubReviewAgentID: tc.agentID,
 					GitHubReviewRepos:   tc.repos,
+					AgentTriggerToken:   "mem-token",
 				},
 				memory: fake,
 			}

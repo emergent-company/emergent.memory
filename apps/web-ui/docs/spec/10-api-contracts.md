@@ -5,10 +5,13 @@ memory's OpenAPI + the Go app's OpenAPI); this pins the *direction* of each call
 
 ## 1. Clients → Go app (gateway)
 
-Auth: `X-API-Key: <per-device key>` on every `/api/*` request, **or** a valid session
-cookie when `AUTH_MODE=session` (see §1b). Per-device keys are issued by the QR setup flow
-(see §1a); `TOKEN_API_KEY` is an **optional admin key** that also passes. In dev mode there
-is no open mode — a missing or unknown key is `401`.
+Auth: a valid **session cookie** when `AUTH_MODE=session` (see §1b). The session-less
+`X-API-Key` / per-device key path was **removed** with the static `MEMORY_TOKEN`: it cannot
+mint a Memory credential, so `/api/*` now returns `401 {"error":"session_required"}` for a
+key-only caller instead of proxying an empty bearer. Issue #818 tracks a scoped replacement
+per-device credential. Per-device keys from the QR setup flow (see §1a) are no longer
+accepted for `/api/*`. In dev mode `/api/*` remains gated by `TOKEN_API_KEY` (open when
+unset) and has no Memory credential — local mock only.
 
 ```
 GET    /api/agents                     → list agents
@@ -104,9 +107,8 @@ The session cookie is stateless and HMAC-signed (`SESSION_SECRET`), carrying
 `{access_token, refresh_token, active_project_id, org_id, name, email, picture, avatar_override_url, exp}`
 (`avatar_override_url` is the uploaded photo's gateway-relative path, empty when not overridden).
 UI page routes require a valid session (else 302 → `/auth/login`); `/api/*` accepts a
-session **or** a key. Session-token calls to memory add `X-Project-ID` (and `X-Org-ID`
-when known); the shared `emt_*` API-key path adds no header (the token is already
-project-bound). Access tokens are refreshed server-side (`grant_type=refresh_token`,
+session **only** (session-less key access removed). Session-token calls to memory add
+`X-Project-ID` (and `X-Org-ID` when known). Access tokens are refreshed server-side (`grant_type=refresh_token`,
 5-min grace window, expired-cookie recovery). The cookie's browser lifetime is
 `SESSION_MAX_AGE` (default 30 days), independent of the access-token `exp`, so the
 refresh token survives access-token expiry and renews it silently.

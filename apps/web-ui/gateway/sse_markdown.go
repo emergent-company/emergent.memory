@@ -61,6 +61,7 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 	var sb strings.Builder
 	var snapshotEmitted bool   // true once this turn's html snapshot was emitted
 	var askInput *askUserInput // ask_user args awaiting the tool's question_id
+	var seenDone bool          // true once the upstream stream emitted a `done` event
 	for sc.Scan() {
 		raw := sc.Bytes()
 		data := extractSSEData(raw)
@@ -109,6 +110,7 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			}
 			sb.Reset()
 			snapshotEmitted = false
+			seenDone = true
 		case "mcp_tool":
 			if ev.Tool != "ask_user" {
 				if err := emitToolResultHTML(w, raw, data, ev.Result); err != nil {
@@ -175,6 +177,23 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 	// scanner failure) still gets its authoritative snapshot before termination.
 	if err := emitMarkdownSnapshot(w, &sb, &snapshotEmitted); err != nil {
 		return err
+	}
+	// A normal memory stream always ends with `done`. If the scan loop stopped
+	// at a clean upstream EOF without ever seeing it, the connection was
+	// interrupted (server restart/crash) and the client would otherwise hang on
+	// its "working" indicator. Emit a terminal `error` so the client surfaces
+	// the failure instead of spinning forever.
+	if !seenDone {
+		payload, err := marshalNoEscape(map[string]string{
+			"type":  "error",
+			"error": "The agent run was interrupted — the server connection was lost.",
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := fmtEvent(w, payload); err != nil {
+			return err
+		}
 	}
 	return sc.Err()
 }

@@ -2,12 +2,26 @@
 
 ## Connection
 
-Memory connects to Emergent Memory via MCP. Credentials in `.env`:
+Memory connects to Emergent Memory via MCP. Config in `.env`:
 ```
 MEMORY_URL=http://localhost:5300
-MEMORY_TOKEN=emt_<redacted — real value lives in .env, never commit>
 MEMORY_PROJECT_ID=7d018080-16f7-45cc-b498-9233fb0d7ab0
+AGENT_TRIGGER_TOKEN=emt_<redacted — real value lives in .env, never commit>
 ```
+The gateway holds no standing memory token: interactive/API calls authenticate
+with the signed-in user's session (Zitadel) token, and voice bridge workers get
+a short-lived project-scoped token per room from the internal binding endpoint.
+`AGENT_TRIGGER_TOKEN` is the only static memory credential — used solely by the
+session-less GitHub webhook to trigger the review agent.
+
+> **Migration (session-less auth removed):** `MEMORY_TOKEN` is no longer read by
+> the gateway (startup warns if it is still set). Session-less `X-API-Key` /
+> per-device-key access to `/api/*` is removed — a key-only caller gets
+> `401 session_required`. Affected: iOS device/QR setup clients and any
+> programmatic `X-API-Key` caller. Replacement: sign in with Zitadel (session);
+> `AGENT_TRIGGER_TOKEN` for the GitHub webhook only. A scoped per-device
+> credential is tracked in issue #818. `AUTH_MODE=dev` is now local-mock-only
+> (it carries no memory credential).
 
 MCP endpoint: `http://localhost:5300/api/mcp`
 

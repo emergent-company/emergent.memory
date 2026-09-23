@@ -44,7 +44,7 @@ func TestSyncMCPServer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.SyncMCPServer(context.Background(), "srv-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestSyncMCPServerSendsNoBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.SyncMCPServer(context.Background(), "srv-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestSyncMCPServerNotFound404(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"mcp_server not found"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.SyncMCPServer(context.Background(), "missing"); err == nil ||
 		!strings.Contains(err.Error(), "memory 404 not_found") {
 		t.Fatalf("error = %v, want memory 404 not_found", err)
@@ -95,7 +95,7 @@ func TestInspectMCPServer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	res, err := m.InspectMCPServer(context.Background(), "srv-1")
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestInspectMCPServerConnectionError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	res, err := m.InspectMCPServer(context.Background(), "srv-1")
 	if err != nil {
 		t.Fatalf("inspect must not error on 200 even when the connection failed: %v", err)
@@ -160,7 +160,7 @@ func TestInspectMCPServerInternal500(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"internal","message":"failed to inspect MCP server"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.InspectMCPServer(context.Background(), "srv-1"); err == nil ||
 		!strings.Contains(err.Error(), "memory 500 internal") {
 		t.Fatalf("error = %v, want memory 500 internal", err)
@@ -181,7 +181,7 @@ func TestListMCPServerTools(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tools, err := m.ListMCPServerTools(context.Background(), "srv-1")
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestListMCPServerToolsEmpty(t *testing.T) {
 		_, _ = io.WriteString(w, `{"success":true,"data":[]}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tools, err := m.ListMCPServerTools(context.Background(), "srv-1")
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +224,7 @@ func TestListMCPServerToolsNotFound404(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"mcp_server not found"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.ListMCPServerTools(context.Background(), "missing"); err == nil ||
 		!strings.Contains(err.Error(), "memory 404 not_found") {
 		t.Fatalf("error = %v, want memory 404 not_found", err)
@@ -242,7 +242,7 @@ func TestSetMCPServerToolEnabled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.SetMCPServerToolEnabled(context.Background(), "srv-1", "t1", false); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestSetMCPServerToolEnabledBadRequest400(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"bad_request","message":"at least one of enabled or config must be provided"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.SetMCPServerToolEnabled(context.Background(), "srv-1", "t1", true); err == nil ||
 		!strings.Contains(err.Error(), "memory 400 bad_request") {
 		t.Fatalf("error = %v, want memory 400 bad_request", err)
@@ -275,7 +275,7 @@ func TestMCPServerToolsUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
 	srv.Close()
-	m := NewMemoryClient(url, "tok", "proj")
+	m := NewMemoryClient(url, "proj")
 	if err := m.SyncMCPServer(context.Background(), "srv-1"); err == nil {
 		t.Error("SyncMCPServer: want transport error, got nil")
 	}

@@ -105,8 +105,8 @@ func TestSearchMemories(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok123", "proj")
-	mems, err := m.SearchMemories(context.Background(), "dark roast")
+	m := NewMemoryClient(srv.URL, "proj")
+	mems, err := m.SearchMemories(sessCtx("tok123"), "dark roast")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestSearchMemoriesError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"upstream","message":"memory down"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.SearchMemories(context.Background(), "x"); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -168,8 +168,8 @@ func TestListMemories(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok123", "proj")
-	mems, err := m.ListMemories(context.Background())
+	m := NewMemoryClient(srv.URL, "proj")
+	mems, err := m.ListMemories(sessCtx("tok123"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestGetCompiledTypes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	out, err := m.GetCompiledTypes(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestListAllSchemas(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	out, err := m.ListAllSchemas(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -273,8 +273,8 @@ func TestGetSchema(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
-	s, err := m.GetSchema(context.Background(), "s1")
+	m := NewMemoryClient(srv.URL, "proj")
+	s, err := m.GetSchema(sessCtx("tok"), "s1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestGetSchemaHistory(t *testing.T) {
 		_, _ = io.WriteString(w, `[{"id":"a1","schemaId":"s1","name":"agent-notes","version":"1.0.0","active":true,"installedAt":"2026-08-26T10:00:00Z","removedAt":""}]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	out, err := m.GetSchemaHistory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +328,7 @@ func TestPreviewMigration(t *testing.T) {
 		_, _ = io.WriteString(w, `{"project_id":"proj-1","from_schema_id":"s1","to_schema_id":"s2","overall_risk_level":"risky","can_proceed":false,"block_reason":"breaking changes","total_objects":12,"plan":{"type_renames":[{"from":"Contract","to":"Agreement"}],"property_renames":[{"type_name":"Agreement","from":"signedDate","to":"signed_at"}],"removed_properties":[{"type_name":"Agreement","name":"legacyId"}],"added_types":["Clause"],"added_properties":[{"type_name":"Agreement","name":"jurisdiction"}]},"per_type_results":[{"type_name":"Agreement","object_count":12,"risk_level":"risky","can_proceed":false,"block_reason":"breaking changes","migrated_props":["title"],"dropped_props":["legacyId"],"added_props":["jurisdiction"],"coerced_props":["signedDate"]}]}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	res, err := m.PreviewMigration(context.Background(), "s1", "s2")
 	if err != nil {
 		t.Fatal(err)
@@ -389,7 +389,7 @@ func TestExecuteMigration(t *testing.T) {
 		_, _ = io.WriteString(w, `{"project_id":"proj-1","objects_migrated":12,"objects_failed":0,"risk_level":"safe"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	res, err := m.ExecuteMigration(context.Background(), "s1", "s2", true)
 	if err != nil {
 		t.Fatal(err)
@@ -410,7 +410,7 @@ func TestRollbackMigration(t *testing.T) {
 		_, _ = io.WriteString(w, `{"project_id":"proj-1","to_version":"1.0.0","objects_restored":5,"objects_failed":0}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	res, err := m.RollbackMigration(context.Background(), "1.0.0")
 	if err != nil {
 		t.Fatal(err)
@@ -431,7 +431,7 @@ func TestGetMigrationJobStatus(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"job1","status":"completed","objects_migrated":12,"objects_failed":0}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	job, err := m.GetMigrationJobStatus(context.Background(), "job1")
 	if err != nil {
 		t.Fatal(err)
@@ -452,7 +452,7 @@ func TestValidateSchemas(t *testing.T) {
 		_, _ = io.WriteString(w, `{"project_id":"proj-1","total_objects":100,"stale_objects":3}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	res, err := m.ValidateSchemas(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -466,9 +466,9 @@ func TestValidateSchemas(t *testing.T) {
 }
 
 // TestSessionContextCredentialResolution asserts MemoryClient resolves the
-// bearer token and active project per request: static credentials when no
-// session context is attached (API-key / programmatic path) and the session's
-// credentials when withSessionContext is used (design D3).
+// bearer token and active project per request (design D3): the token has no
+// process-global fallback (a session-less call sends no bearer), while the
+// project still falls back to the client's configured project id.
 func TestSessionContextCredentialResolution(t *testing.T) {
 	type seen struct {
 		auth string
@@ -487,14 +487,15 @@ func TestSessionContextCredentialResolution(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "static-token", "static-project")
+	m := NewMemoryClient(srv.URL, "static-project")
 
-	// (a) No session context: falls back to the static server credentials.
+	// (a) No session context: no bearer token is sent (the upstream rejects it
+	// with 401), but the configured project still scopes the request.
 	if _, _, err := m.ListDocuments(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if got.auth != "Bearer static-token" {
-		t.Errorf("fallback auth = %q, want Bearer static-token", got.auth)
+	if got.auth != "Bearer" {
+		t.Errorf("session-less auth = %q, want empty bearer", got.auth)
 	}
 	if got.proj != "static-project" {
 		t.Errorf("fallback X-Project-ID = %q, want static-project", got.proj)
@@ -523,17 +524,25 @@ func TestSessionContextCredentialResolution(t *testing.T) {
 		t.Errorf("session path = %q, want /api/projects/sess-project/agent-definitions", got.path)
 	}
 
-	// (c) Partial session context: an empty field still falls back.
+	// (c) Partial session context: an empty token field yields no bearer, while
+	// the project comes from the session.
 	partialCtx := withSessionContext(context.Background(), &sessionContext{ProjectID: "only-proj"})
 	if _, _, err := m.ListDocuments(partialCtx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got.auth != "Bearer static-token" {
-		t.Errorf("partial auth = %q, want static-token fallback", got.auth)
+	if got.auth != "Bearer" {
+		t.Errorf("partial auth = %q, want empty bearer", got.auth)
 	}
 	if got.proj != "only-proj" {
 		t.Errorf("partial X-Project-ID = %q, want only-proj", got.proj)
 	}
+}
+
+// sessCtx returns a context carrying a session bearer token. Since
+// MemoryClient dropped its process-global token, a session context is the only
+// way a test can make an outbound memory call carry a credential.
+func sessCtx(token string) context.Context {
+	return withSessionContext(context.Background(), &sessionContext{Token: token})
 }
 
 // TestSessionContextFromCoversAbsence asserts sessionContextFrom reports
@@ -565,8 +574,8 @@ func TestListOrgs(t *testing.T) {
 		_, _ = io.WriteString(w, `[{"id":"o1","name":"Acme"},{"id":"o2","name":"Globex"}]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
-	orgs, err := m.ListOrgs(context.Background())
+	m := NewMemoryClient(srv.URL, "proj")
+	orgs, err := m.ListOrgs(sessCtx("tok"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +599,7 @@ func TestListProjects(t *testing.T) {
 		_, _ = io.WriteString(w, `[{"id":"p1","name":"Main","orgId":"o1"},{"id":"p2","name":"Lab","orgId":"o2"}]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	projects, err := m.ListProjects(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -617,7 +626,7 @@ func TestCreateProject(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"p-new","name":"New","orgId":"o1"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	p, err := m.CreateProject(context.Background(), "New", "o1")
 	if err != nil {
 		t.Fatal(err)
@@ -644,7 +653,7 @@ func TestListProjectsIncludingPending(t *testing.T) {
 		_, _ = io.WriteString(w, `[{"id":"p1","name":"Main","orgId":"o1"},{"id":"p2","name":"Gone","orgId":"o1","deletionStatus":"pending_deletion","deletionScheduledFor":"2026-09-20T00:00:00Z"}]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	projects, err := m.ListProjectsIncludingPending(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -672,7 +681,7 @@ func TestRestoreProject(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.RestoreProject(context.Background(), "p1"); err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +701,7 @@ func TestSessionHeadersOnOutbound(t *testing.T) {
 		_, _ = io.WriteString(w, `{"success":true,"data":[]}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "static-token", "static-project")
+	m := NewMemoryClient(srv.URL, "static-project")
 
 	// No session context (API-key path): no scoping headers on path-embedded
 	// routes — the token is already project-bound.
@@ -735,8 +744,8 @@ func TestCreateOrg(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"o-new","name":"Acme"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
-	o, err := m.CreateOrg(context.Background(), "Acme")
+	m := NewMemoryClient(srv.URL, "proj")
+	o, err := m.CreateOrg(sessCtx("tok"), "Acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -770,7 +779,7 @@ func TestGetOrgsAndProjects(t *testing.T) {
 		]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	tree, err := m.GetOrgsAndProjects(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -811,7 +820,7 @@ func TestTransferProject(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	ctx := withSessionContext(context.Background(), &sessionContext{
 		Token:     "sess-token",
 		ProjectID: "sess-project",
@@ -850,7 +859,7 @@ func TestListMembers(t *testing.T) {
 		]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	members, err := m.ListMembers(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -879,7 +888,7 @@ func TestRemoveMember(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		}))
 		defer srv.Close()
-		m := NewMemoryClient(srv.URL, "tok", "proj")
+		m := NewMemoryClient(srv.URL, "proj")
 		if err := m.RemoveMember(context.Background(), "u1"); err != nil {
 			t.Fatal(err)
 		}
@@ -897,7 +906,7 @@ func TestRemoveMember(t *testing.T) {
 			_, _ = io.WriteString(w, `{"error":{"code":"last-admin","message":"cannot remove the sole admin"}}`)
 		}))
 		defer srv.Close()
-		m := NewMemoryClient(srv.URL, "tok", "proj")
+		m := NewMemoryClient(srv.URL, "proj")
 		err := m.RemoveMember(context.Background(), "u1")
 		if err == nil {
 			t.Fatal("expected error for 403 last-admin, got nil")
@@ -921,7 +930,7 @@ func TestListInvites(t *testing.T) {
 		]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	invites, err := m.ListInvites(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -948,7 +957,7 @@ func TestCreateInvite(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"i-new","organizationId":"o1","projectId":"proj","email":"a@example.com","role":"project_admin","token":"inv-tok","status":"pending","createdAt":"2024-01-01T00:00:00Z"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	inv, err := m.CreateInvite(context.Background(), CreateInviteDto{
 		OrgID:     "o1",
 		ProjectID: "proj",
@@ -981,7 +990,7 @@ func TestAcceptInvite(t *testing.T) {
 		_, _ = io.WriteString(w, `{"status":"accepted"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.AcceptInvite(context.Background(), "inv-tok"); err != nil {
 		t.Fatal(err)
 	}
@@ -1005,7 +1014,7 @@ func TestListPendingInvites(t *testing.T) {
 		]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	invites, err := m.ListPendingInvites(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -1027,7 +1036,7 @@ func TestDeclineInvite(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DeclineInvite(context.Background(), "i1"); err != nil {
 		t.Fatal(err)
 	}
@@ -1045,7 +1054,7 @@ func TestCancelInvite(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.CancelInvite(context.Background(), "i1"); err != nil {
 		t.Fatal(err)
 	}
@@ -1066,7 +1075,7 @@ func TestSearchUsers(t *testing.T) {
 		]}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	users, err := m.SearchUsers(context.Background(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -1089,7 +1098,7 @@ func TestGetProfile(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"u1","subjectId":"sub-1","firstName":"Ada","lastName":"Lovelace","displayName":"Ada Lovelace","email":"ada@example.com","phoneE164":"+1234567890"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	p, err := m.GetProfile(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -1115,7 +1124,7 @@ func TestUpdateProfile(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"u1","firstName":"Grace","lastName":"Hopper","displayName":"Grace Hopper","phoneE164":"+0987654321"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	p, err := m.UpdateProfile(context.Background(), UpdateUserProfileDto{
 		FirstName:   "Grace",
 		LastName:    "Hopper",
@@ -1147,8 +1156,8 @@ func TestGetOrg(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"o1","name":"Acme"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
-	o, err := m.GetOrg(context.Background(), "o1")
+	m := NewMemoryClient(srv.URL, "proj")
+	o, err := m.GetOrg(sessCtx("tok"), "o1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1177,7 +1186,7 @@ func TestListOrgMembers(t *testing.T) {
 		]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	members, err := m.ListOrgMembers(context.Background(), "o1")
 	if err != nil {
 		t.Fatal(err)
@@ -1213,7 +1222,7 @@ func TestDeleteOrg(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DeleteOrg(context.Background(), "o1"); err != nil {
 		t.Fatal(err)
 	}
@@ -1236,7 +1245,7 @@ func TestListOrgToolSettings(t *testing.T) {
 		]`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	settings, err := m.ListOrgToolSettings(context.Background(), "o1")
 	if err != nil {
 		t.Fatal(err)
@@ -1268,7 +1277,7 @@ func TestUpsertOrgToolSetting(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"ts1","orgId":"o1","toolName":"web_search","enabled":true,"config":{"maxResults":5},"createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-02T00:00:00Z"}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	in := UpsertOrgToolSettingInput{
 		Enabled: true,
 		Config:  map[string]any{"maxResults": 5},
@@ -1298,7 +1307,7 @@ func TestDeleteOrgToolSetting(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DeleteOrgToolSetting(context.Background(), "o1", "web_search"); err != nil {
 		t.Fatal(err)
 	}
@@ -1329,8 +1338,8 @@ func TestUpdateObject(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok123", "proj")
-	obj, err := m.UpdateObject(context.Background(), "obj-v1", &UpdateObjectRequest{
+	m := NewMemoryClient(srv.URL, "proj")
+	obj, err := m.UpdateObject(sessCtx("tok123"), "obj-v1", &UpdateObjectRequest{
 		Key:        &key,
 		Status:     &status,
 		Labels:     []string{"contact", "colleague"},
@@ -1379,7 +1388,7 @@ func TestUpdateObjectError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"bad_request","message":"nope"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.UpdateObject(context.Background(), "o1", &UpdateObjectRequest{}); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -1399,7 +1408,7 @@ func TestCreateRelationship(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	err := m.CreateRelationship(context.Background(), &CreateRelationshipRequest{
 		Type:       "assigned_to",
 		SrcID:      "obj-1",
@@ -1427,7 +1436,7 @@ func TestCreateRelationshipError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"conflict","message":"exists"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.CreateRelationship(context.Background(), &CreateRelationshipRequest{Type: "t", SrcID: "a", DstID: "b"}); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -1452,8 +1461,8 @@ func TestCreateObject(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok123", "proj")
-	obj, err := m.CreateObject(context.Background(), &CreateObjectRequest{
+	m := NewMemoryClient(srv.URL, "proj")
+	obj, err := m.CreateObject(sessCtx("tok123"), &CreateObjectRequest{
 		Type:       "person",
 		Key:        &key,
 		Status:     &status,
@@ -1502,7 +1511,7 @@ func TestCreateObjectError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"bad_request","message":"nope"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.CreateObject(context.Background(), &CreateObjectRequest{Type: "person"}); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -1522,7 +1531,7 @@ func TestSearchObjectsFTS(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	out, err := m.SearchObjectsFTS(context.Background(), "sam lee", "person")
 	if err != nil {
 		t.Fatal(err)
@@ -1555,7 +1564,7 @@ func TestSearchObjectsFTSNoTypeFilter(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	out, err := m.SearchObjectsFTS(context.Background(), "sam", "")
 	if err != nil {
 		t.Fatal(err)
@@ -1609,7 +1618,7 @@ func TestCreateObjectConversation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	id, err := m.CreateObjectConversation(context.Background(), "canon-1", "sam-lee", "Help me work with this object")
 	if err != nil {
 		t.Fatal(err)
@@ -1634,7 +1643,7 @@ func TestCreateObjectConversationError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.CreateObjectConversation(context.Background(), "canon-1", "sam-lee", "hi"); err == nil {
 		t.Fatal("expected error, got nil")
 	}

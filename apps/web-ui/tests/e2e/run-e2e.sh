@@ -17,7 +17,7 @@ MOCK=$!
 # share cookie to http://localhost (no Secure flag, so cookies work over http).
 # Port 8097 avoids clashing with the shared dev gateway (8095).
 MEMORY_URL=http://localhost:5301 \
-MEMORY_TOKEN=test-token \
+AGENT_TRIGGER_TOKEN=test-token \
 MEMORY_PROJECT_ID=p1 \
 MEMORY_PORT=8097 \
 AUTH_MODE=dev \

@@ -10,9 +10,10 @@ roles (D1, D4). It owns **no durable state** and **no agent logic**.
 
 ### 1. Gateway API (client-facing)
 
-Thin REST surface. It authenticates clients (session cookie by default, or `X-API-Key`)
-and proxies/relays to memory. It is the only place the memory `emt_*` token lives
-(server-side).
+Thin REST surface. It authenticates clients (session cookie) and proxies/relays to memory.
+The session-less `X-API-Key` path was removed with the static `MEMORY_TOKEN` (a key-only
+caller gets `401 session_required`); interactive/voice sessions are the only memory callers.
+The gateway holds no standing memory token.
 
 | Route | Action | Backs onto |
 |---|---|---|
@@ -211,14 +212,16 @@ Voice is explicitly **not** in the web UI (D5).
 
 | Var | Purpose |
 |---|---|
-| `MEMORY_URL`, `MEMORY_TOKEN` | memory endpoint + `emt_*` token (server-side secret) |
+| `MEMORY_URL`, `MEMORY_PROJECT_ID` | memory endpoint + default project scope |
+| `AGENT_TRIGGER_TOKEN` | dedicated static `emt_*` token for the session-less GitHub webhook (server-side secret) |
+| `WORKER_IDLE_TTL` | idle timeout before an on-demand bridge worker is reaped; default `0` disables reaping (the gateway has no per-room liveness signal, so a worker on a long call looks idle) |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | token minting + worker env |
 | `LIVEKIT_PUBLIC_URL` | ws url returned to iOS clients |
 | `PUBLIC_BASE_URL` | externally-reachable base URL (`scheme://host[:port]`) for client setup/config URLs; also pins the cookie `Secure` flag (`http://` disables it); empty = derive from request Host/scheme. Browser requests on a different `Host` are 302'd to this host (canonical-host redirect) so host-only cookies match the pinned `ZITADEL_REDIRECT_URI`. Session mode requires `https://` outside development |
 | `AUTH_MODE` | browser-auth posture: `session` (default) requires Zitadel sign-in; `dev` = explicit unauthenticated local dev (validated + warned at startup) |
 | `SESSION_SECRET` | HMAC key for the session cookie (required in session mode) |
 | `ZITADEL_ISSUER`, `ZITADEL_CLIENT_ID`, `ZITADEL_REDIRECT_URI` | OIDC issuer + public client for browser sign-in (authorization-code + PKCE; no client secret) |
-| `TOKEN_API_KEY` | **optional admin** `X-API-Key`; per-device keys issued via QR setup flow (Project Settings) |
+| `TOKEN_API_KEY` | **optional admin** `X-API-Key`; still gates `/api/*` in dev mode only (session mode rejects key-only callers) |
 | `MEMORY_PORT` | HTTP port (default `8095`) |
 | `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY` | passed to bridge workers (env template) |
 | `LLM_BASE_URL`, `LLM_API_KEY` | LiteLLM (used by memory's model config; not directly by Go) |

@@ -3145,7 +3145,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Where("project_id = ?", params.ProjectID).
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL")
-		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -3161,7 +3161,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Where("project_id = ?", params.ProjectID).
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL")
-		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -3218,7 +3218,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Where("project_id = ?", params.ProjectID).
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL")
-		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -3238,7 +3238,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Where("project_id = ?", params.ProjectID).
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL")
-		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -3254,7 +3254,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Where("project_id = ?", params.ProjectID).
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL")
-		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -3270,7 +3270,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Where("project_id = ?", params.ProjectID).
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL")
-		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -3286,7 +3286,7 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 			Where("project_id = ?", params.ProjectID).
 			Where("supersedes_id IS NULL").
 			Where("deleted_at IS NULL")
-		q = applyBulkFilterToUpdate(q, params.Filter, resolvedFilters, limit)
+		q = r.applyBulkFilterToUpdate(q, params.ProjectID, params.Filter, resolvedFilters, limit)
 		result, qErr := q.Exec(ctx)
 		if qErr != nil {
 			return matched, 0, apperror.ErrDatabase.WithInternal(qErr)
@@ -3301,9 +3301,12 @@ func (r *Repository) BulkActionByFilter(ctx context.Context, params BulkActionPa
 	return matched, affected, nil
 }
 
-// applyBulkFilterToUpdate applies the BulkActionFilter (types, labels, property filters, limit)
-// to a Bun update query. Uses a subquery for limit support.
-func applyBulkFilterToUpdate(q *bun.UpdateQuery, filter BulkActionFilter, resolvedFilters []PropertyFilter, limit int) *bun.UpdateQuery {
+// applyBulkFilterToUpdate applies the BulkActionFilter (types, labels, property
+// filters) to a Bun update query and enforces the deterministic cap via
+// `id IN (SELECT id ... ORDER BY created_at ASC, id ASC LIMIT n)`. Callers pass
+// limit already defaulted to 1000 when params.Limit <= 0, so the value here is
+// always a positive cap (Postgres has no UPDATE ... LIMIT).
+func (r *Repository) applyBulkFilterToUpdate(q *bun.UpdateQuery, projectID uuid.UUID, filter BulkActionFilter, resolvedFilters []PropertyFilter, limit int) *bun.UpdateQuery {
 	q = applyPropertyFiltersUpdate(q, resolvedFilters)
 	if len(filter.Types) > 0 {
 		q = q.Where("type IN (?)", bun.In(filter.Types))
@@ -3317,7 +3320,35 @@ func applyBulkFilterToUpdate(q *bun.UpdateQuery, filter BulkActionFilter, resolv
 	if filter.Namespace != nil {
 		q = q.Where("namespace = ?", *filter.Namespace)
 	}
-	return q
+
+	// Postgres has no UPDATE ... LIMIT, so restrict the target set with a
+	// deterministic subselect. It mirrors the base predicates AND every filter
+	// predicate so the LIMIT is consumed only by rows the update would accept.
+	// Ordering matches the hard-delete convention (#797): created_at ASC, id ASC
+	// (oldest-first FIFO); id (PK) makes the order total and lives INSIDE the
+	// set the LIMIT truncates.
+	subQ := r.db.NewSelect().
+		TableExpr("kb.graph_objects").
+		ColumnExpr("id").
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("deleted_at IS NULL")
+	subQ = applyPropertyFilters(subQ, resolvedFilters)
+	if len(filter.Types) > 0 {
+		subQ = subQ.Where("type IN (?)", bun.In(filter.Types))
+	}
+	if len(filter.Labels) > 0 {
+		subQ = subQ.Where("labels && ?::text[]", formatTextArray(filter.Labels))
+	}
+	if filter.CreatedAfter != nil {
+		subQ = subQ.Where("created_at >= ?", filter.CreatedAfter.UTC())
+	}
+	if filter.Namespace != nil {
+		subQ = subQ.Where("namespace = ?", *filter.Namespace)
+	}
+	subQ = subQ.OrderExpr("created_at ASC, id ASC").Limit(limit)
+
+	return q.Where("id IN (?)", subQ)
 }
 
 // IncrementSessionCounters atomically increments message_count by 1 and total_tokens
@@ -3460,17 +3491,14 @@ func (r *Repository) FindSimilarObjectInBranch(
 // GetBranchRelationshipEmbedding fetches the embedding for a relationship version.
 // Returns nil when not yet embedded.
 //
-// NOTE: this helper still selects kb.graph_relationships.embedding_v2, a column
-// that does not exist on that table (the vector column is `embedding`, added in
-// migration 00011 and accompanied by embedding_updated_at in 00013). The helper
-// therefore errors, which is why the relationship similarity-merge branch in
-// applyMerge (service.go) stays dormant even though FindSimilarRelationshipInBranch
-// was corrected here. Making that path live is a behaviour change, deliberately
-// left to a dedicated follow-up rather than this ordering-only fix.
+// Reads kb.graph_relationships.embedding (added in migration 00011, with
+// embedding_updated_at in 00013). This activation is deliberate and covered by
+// tests — it makes the relationship similarity-merge branch in applyMerge
+// (service.go) live.
 func (r *Repository) GetBranchRelationshipEmbedding(ctx context.Context, relID uuid.UUID) ([]float32, error) {
 	var embStr string
 	err := r.db.NewRaw(`
-		SELECT COALESCE(embedding_v2::text, '')
+		SELECT COALESCE(embedding::text, '')
 		FROM kb.graph_relationships
 		WHERE id = ? LIMIT 1`, relID,
 	).Scan(ctx, &embStr)
@@ -3491,13 +3519,14 @@ func (r *Repository) GetBranchRelationshipEmbedding(ctx context.Context, relID u
 }
 
 // FindSimilarRelationshipInBranch finds the nearest relationship in the target branch
-// that has the same (remapped) src and dst endpoints, by cosine distance on the
+// that has the same type and (remapped) src/dst endpoints, by cosine distance on the
 // relationship embedding. Returns nil when no match within maxDistance.
 func (r *Repository) FindSimilarRelationshipInBranch(
 	ctx context.Context,
 	projectID uuid.UUID,
 	branchID *uuid.UUID,
 	srcCanonicalID, dstCanonicalID uuid.UUID,
+	relType string,
 	vector []float32,
 	excludeIDs []uuid.UUID,
 	maxDistance float32,
@@ -3529,7 +3558,7 @@ func (r *Repository) FindSimilarRelationshipInBranch(
 		       change_summary, deleted_at, created_at,
 		       (embedding <=> ?::vector) AS _dist
 		FROM kb.graph_relationships
-		WHERE project_id = ? AND src_id = ? AND dst_id = ? AND %s
+		WHERE project_id = ? AND src_id = ? AND dst_id = ? AND type = ? AND %s
 		  AND supersedes_id IS NULL AND deleted_at IS NULL
 		  AND embedding IS NOT NULL
 		  AND NOT (id = ANY(%s))
@@ -3537,7 +3566,7 @@ func (r *Repository) FindSimilarRelationshipInBranch(
 		ORDER BY _dist ASC, id ASC LIMIT 1`,
 		branchCond, excludeStr)
 
-	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID}
+	args := []any{vectorStr, projectID, srcCanonicalID, dstCanonicalID, relType}
 	args = append(args, branchArg...)
 	args = append(args, vectorStr, maxDistance)
 

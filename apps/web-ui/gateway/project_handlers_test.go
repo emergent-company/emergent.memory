@@ -69,9 +69,11 @@ func TestCreateProjectValidation(t *testing.T) {
 	}
 }
 
-// TestCreateProjectWithAPIKeySkipsCookieReissue asserts an API-key caller
-// (no session) still creates the project but gets no session cookie update.
-func TestCreateProjectWithAPIKeySkipsCookieReissue(t *testing.T) {
+// TestCreateProjectWithAPIKeyRejected guards the removal of the session-less
+// X-API-Key path: an API-key caller (no session) can no longer reach /api/*,
+// so project creation fails closed with 401 instead of proxying an empty
+// bearer to Memory.
+func TestCreateProjectWithAPIKeyRejected(t *testing.T) {
 	cfg := sessionCfg()
 	cfg.ClientAPIKey = "admin-secret"
 	f := &fakeMemory{}
@@ -83,11 +85,11 @@ func TestCreateProjectWithAPIKeySkipsCookieReissue(t *testing.T) {
 	req.Header.Set("X-API-Key", "admin-secret")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (%s)", rec.Code, rec.Body.String())
 	}
-	if len(f.createdProjects) != 1 {
-		t.Fatalf("create not forwarded: %+v", f.createdProjects)
+	if len(f.createdProjects) != 0 {
+		t.Fatalf("create must not be forwarded without a session: %+v", f.createdProjects)
 	}
 	if ck := findCookie(rec, sessionCookieName); ck != nil {
 		t.Errorf("no session to update for an API-key caller: %+v", ck)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -19,6 +20,15 @@ type tokenRequest struct {
 	Client         string `json:"client"`
 	ConversationID string `json:"conversation_id"`
 }
+
+// errVoiceSessionRequired reports a voice request with no authenticated
+// session. The removed key/device-mode fallback makes this a first-class auth
+// failure (401), not an upstream error.
+var errVoiceSessionRequired = errors.New("voice requires an authenticated session")
+
+// errVoiceAgentDisabled reports a voice request for an agent whose definition
+// is disabled; no worker may serve it.
+var errVoiceAgentDisabled = errors.New("voice agent is disabled")
 
 // mintToken mints a short-lived room-join JWT for a LiveKit client (iOS app or
 // browser), with agent dispatch baked into the room config. The room is
@@ -60,8 +70,17 @@ func (s *Server) mintToken(c echo.Context) error {
 	// Resolve the per-session voice binding (project/org, agent-definition id,
 	// language, and a project-scoped Memory token) and stash it server-side so
 	// the bridge worker can fetch it without any credential in the join JWT.
-	binding, err := s.voiceBindingFor(c.Request().Context(), agent, room)
+	binding, enabled, err := s.voiceBindingFor(c.Request().Context(), agent, room)
 	if err != nil {
+		if errors.Is(err, errVoiceSessionRequired) {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		}
+		if errors.Is(err, errVoiceAgentDisabled) {
+			if s.supervisor != nil {
+				s.supervisor.StopWorker(agent)
+			}
+			return c.JSON(http.StatusForbidden, map[string]string{"error": err.Error()})
+		}
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}
@@ -70,6 +89,11 @@ func (s *Server) mintToken(c echo.Context) error {
 	}
 	if s.bindings != nil {
 		s.bindings.Set(room, *binding)
+	}
+	// Spawn the agent's bridge worker on demand. Only enabled agents get a warm
+	// worker; voiceBindingFor rejects disabled agents before reaching here.
+	if enabled && s.supervisor != nil {
+		s.supervisor.EnsureWorker(agent)
 	}
 
 	at := auth.NewAccessToken(s.cfg.LiveKitAPIKey, s.cfg.LiveKitAPISecret)
@@ -131,14 +155,13 @@ func (s *Server) roomAllowed(ctx context.Context, room string) (bool, error) {
 	return strings.HasPrefix(room, "memory-"), nil
 }
 
-// resolveVoiceAgent resolves an agent name to its definition id + language code
-// in the request's active project (the session's project when session-
-// authenticated, else the static project). ok is false when the agent is not in
-// that project.
-func (s *Server) resolveVoiceAgent(ctx context.Context, name string) (defID, lang string, ok bool) {
+// resolveVoiceAgent resolves an agent name to its definition id, language code
+// and enabled flag in the request's active project. ok is false when the agent
+// is not in that project.
+func (s *Server) resolveVoiceAgent(ctx context.Context, name string) (defID, lang string, enabled, ok bool) {
 	agents, err := s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
-		return "", "", false
+		return "", "", false, false
 	}
 	var summary *AgentDefinitionSummary
 	for i := range agents {
@@ -148,46 +171,42 @@ func (s *Server) resolveVoiceAgent(ctx context.Context, name string) (defID, lan
 		}
 	}
 	if summary == nil {
-		return "", "", false
+		return "", "", false, false
 	}
 	def, err := s.memory.GetAgentDefinition(ctx, summary.ID)
 	if err != nil || def == nil {
-		return summary.ID, "", true
+		return summary.ID, "", summary.Enabled, true
 	}
-	return summary.ID, agentLanguageCode(agentLanguageValue(def)), true
+	return summary.ID, agentLanguageCode(agentLanguageValue(def)), summary.Enabled, true
 }
 
-// voiceBindingFor builds the per-room voice binding for a minted token. Session
-// mode resolves the signed-in user's active project/org, resolves the agent in
-// that project, and mints a short-lived project-scoped Memory token. Key/no-
-// session mode falls back to the static server token + project. A nil binding
-// with a nil error means the agent is not present in the active project.
-func (s *Server) voiceBindingFor(ctx context.Context, agent, room string) (*voiceBinding, error) {
-	if sc, ok := sessionContextFrom(ctx); ok && sc.ProjectID != "" {
-		defID, lang, ok := s.resolveVoiceAgent(ctx, agent)
-		if !ok {
-			return nil, nil
-		}
-		tok, err := s.memory.CreateAPIToken(ctx, "voice-"+room+"-"+randomHex(4), []string{"chat:use"})
-		if err != nil {
-			return nil, err
-		}
-		return &voiceBinding{
-			ProjectID:         sc.ProjectID,
-			OrgID:             sc.OrgID,
-			AgentDefinitionID: defID,
-			Language:          lang,
-			Token:             tok.Token,
-		}, nil
+// voiceBindingFor builds the per-room voice binding for a minted token from the
+// signed-in user's active project/org, and mints a short-lived project-scoped
+// Memory token for the worker. Voice now requires a session: there is no
+// key/device-mode static-token fallback. A nil binding with a nil error means
+// the agent is not present in the active project; the enabled flag reports
+// whether the agent should get a warm bridge worker.
+func (s *Server) voiceBindingFor(ctx context.Context, agent, room string) (*voiceBinding, bool, error) {
+	sc, ok := sessionContextFrom(ctx)
+	if !ok || sc.ProjectID == "" {
+		return nil, false, errVoiceSessionRequired
 	}
-	defID, lang, ok := s.resolveVoiceAgent(ctx, agent)
+	defID, lang, enabled, ok := s.resolveVoiceAgent(ctx, agent)
 	if !ok {
-		return nil, nil
+		return nil, false, nil
+	}
+	if !enabled {
+		return nil, false, errVoiceAgentDisabled
+	}
+	tok, err := s.memory.CreateAPIToken(ctx, "voice-"+room+"-"+randomHex(4), []string{"chat:use"})
+	if err != nil {
+		return nil, false, err
 	}
 	return &voiceBinding{
-		ProjectID:         s.cfg.MemoryProjectID,
+		ProjectID:         sc.ProjectID,
+		OrgID:             sc.OrgID,
 		AgentDefinitionID: defID,
 		Language:          lang,
-		Token:             s.cfg.MemoryToken,
-	}, nil
+		Token:             tok.Token,
+	}, enabled, nil
 }
