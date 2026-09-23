@@ -7,7 +7,7 @@ Makes hosted MCP server workspaces reclaimable by policy as well as by explicit 
 
 ### Requirement: Persistent MCP servers SHALL be reclaimable by a configurable idle policy
 
-The server SHALL support destroying persistent hosted MCP server workspaces whose `last_used_at` is older than a configured idle window, reusing the existing removal path (provider destroy followed by row deletion). The policy SHALL default to disabled, and while disabled no persistent MCP server SHALL be reclaimed by the policy. `last_used_at` is `NOT NULL DEFAULT now()`, so a server never called since creation is judged by its insert-time value; no NULL fallback exists. Among non-in-flight rows, eligibility SHALL be determined by `last_used_at` alone: `stopped` and `error` rows SHALL be reclaimable once idle (an abandoned persistent config), while `creating` and `stopping` rows SHALL never be reclaimed.
+The server SHALL support destroying persistent hosted MCP server workspaces whose `last_used_at` is older than a configured idle window, reusing the existing removal path (provider destroy followed by row deletion). The policy SHALL default to disabled, and while disabled no persistent MCP server SHALL be reclaimed by the policy. `last_used_at` is `NOT NULL DEFAULT now()`, so a server never called since creation is judged by its insert-time value; no NULL fallback exists. Among non-in-flight rows, eligibility SHALL be determined by `last_used_at` alone: `stopped` and `error` rows SHALL be reclaimable once idle (an abandoned persistent config), while `creating` and `stopping` rows SHALL never be reclaimed. A `stopped` row SHALL NOT be read as a durable keep-but-do-not-run state: boot-time auto-start lists and starts every persistent row regardless of status, so a row left `stopped` and idle beyond the window SHALL be reclaimed as abandoned. Persistent servers an operator wants to keep MUST be kept in use (or the idle policy left disabled), not merely stopped.
 
 #### Scenario: Disabled policy reclaims nothing
 - **GIVEN** the idle reclamation policy is disabled
@@ -41,6 +41,13 @@ The server SHALL support destroying persistent hosted MCP server workspaces whos
 - **WHEN** the cleanup cycle runs
 - **THEN** the server SHALL be reclaimed like any other idle persistent server
 - **AND** only the in-flight `creating` and `stopping` states SHALL be excluded
+
+#### Scenario: A stopped row is not durable across restarts
+- **GIVEN** a persistent MCP server was explicitly stopped and left idle beyond the window
+- **WHEN** the server process boots and auto-starts persistent MCP servers
+- **THEN** that `stopped` row SHALL be started along with every other persistent row, because auto-start ignores status
+- **AND** `stopped` SHALL therefore NOT be treated as a durable keep-but-do-not-run state
+- **AND** a cleanup cycle SHALL reclaim the row as an abandoned server once it is idle beyond the configured window
 
 #### Scenario: In-flight lifecycle states are never reclaimed
 - **GIVEN** a persistent MCP server is in a creating or stopping state
