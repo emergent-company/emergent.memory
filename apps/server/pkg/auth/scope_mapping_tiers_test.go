@@ -231,24 +231,28 @@ func TestTrustedSuperadminRolesIssuerGating(t *testing.T) {
 }
 
 func TestExtractZitadelProjectRoles(t *testing.T) {
+	// Real Zitadel wire shape: {role: {orgID: orgDomain}} — org IDs are the
+	// inner map KEYS, org domains are the values. One role may span multiple orgs.
 	claims := map[string]any{
 		"urn:zitadel:iam:org:project:123:roles": map[string]any{
-			"platform-admin": map[string]any{"orgID": orgA, "projectID": "123"},
-			"member":         map[string]any{"orgId": orgB, "projectId": "123"},
+			"platform-admin": map[string]any{orgA: "org-a.example.com", orgB: "org-b.example.com"},
+			"member":         map[string]any{orgB: "org-b.example.com"},
 		},
 		"openid": "ok",
 	}
 	roles := extractZitadelProjectRoles(claims)
-	want := map[string]string{
-		"platform-admin": orgA,
-		"member":         orgB,
+	// Expected: platform-admin@orgA, platform-admin@orgB, member@orgB.
+	want := map[string]bool{
+		"platform-admin\x00" + orgA: true,
+		"platform-admin\x00" + orgB: true,
+		"member\x00" + orgB:         true,
 	}
 	if len(roles) != len(want) {
-		t.Fatalf("roles = %v, want %v", roles, want)
+		t.Fatalf("roles = %v, want %d entries %v", roles, len(want), want)
 	}
 	for _, r := range roles {
-		if want[r.Name] != r.OrgID {
-			t.Fatalf("role %q org = %q, want %q", r.Name, r.OrgID, want[r.Name])
+		if !want[r.Name+"\x00"+r.OrgID] {
+			t.Fatalf("unexpected role %q @ %q (roles %v)", r.Name, r.OrgID, roles)
 		}
 	}
 
@@ -256,21 +260,25 @@ func TestExtractZitadelProjectRoles(t *testing.T) {
 	if got := extractZitadelProjectRoles(map[string]any{"urn:zitadel:iam:org:project:1:roles": "not-an-object"}); len(got) != 0 {
 		t.Fatalf("malformed claim produced roles %v, want none", got)
 	}
+	if got := extractZitadelProjectRoles(map[string]any{"urn:zitadel:iam:org:project:1:roles": map[string]any{"role": "not-a-map"}}); len(got) != 0 {
+		t.Fatalf("non-map inner value produced roles %v, want none", got)
+	}
 	if got := extractZitadelProjectRoles(nil); len(got) != 0 {
 		t.Fatalf("nil claims produced roles %v, want none", got)
 	}
 }
 
 // The standing role mapping is DEAD unless the introspection body's
-// urn:zitadel:iam:org:project:*:roles claim actually reaches the extractor. This
-// test round-trips a REAL introspection JSON body through json.Unmarshal into
-// introspectionResponse (the same path rs.Introspect uses) and asserts both the
-// extraction and the full resolution path. It is the regression guard for the
-// nil-Claims bug: encoding/json does not route unknown keys into a bare
-// map field.
+// urn:zitadel:iam:org:project:*:roles claim actually reaches the extractor in
+// the REAL wire shape {role: {orgID: orgDomain}}. This test round-trips a REAL
+// introspection JSON body through json.Unmarshal into introspectionResponse
+// (the same path rs.Introspect uses) and asserts both the extraction and the
+// full resolution path. It guards two bugs at once: (1) encoding/json does not
+// route unknown keys into a bare map field (nil-Claims), and (2) the inner map's
+// org IDs are the KEYS, not a "orgID"/"orgId" value.
 func TestRoleDerivedSuperadminFromIntrospectionBody(t *testing.T) {
 	const issuer = "https://zitadel.example.com"
-	const wantOrg = "org-aaa"
+	const wantOrg = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	const body = `{
 		"active": true,
 		"sub": "user-123",
@@ -279,7 +287,7 @@ func TestRoleDerivedSuperadminFromIntrospectionBody(t *testing.T) {
 		"scope": "openid profile",
 		"email": "admin@example.com",
 		"urn:zitadel:iam:org:project:123:roles": {
-			"platform-admin": {"orgID": "org-aaa", "projectID": "123"}
+			"platform-admin": {"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": "org-a.example.com"}
 		}
 	}`
 
@@ -296,7 +304,7 @@ func TestRoleDerivedSuperadminFromIntrospectionBody(t *testing.T) {
 		t.Fatalf("sub = %q, want %q", resp.Subject, "user-123")
 	}
 
-	// The role claim must actually reach the extractor.
+	// The role claim must reach the extractor with the org ID as the inner key.
 	roles := extractZitadelProjectRoles(resp.Claims)
 	if len(roles) != 1 || roles[0].Name != "platform-admin" || roles[0].OrgID != wantOrg {
 		t.Fatalf("extracted roles = %v, want exactly [platform-admin @ %s]", roles, wantOrg)
@@ -344,12 +352,57 @@ func TestRoleDerivedSuperadminFromIntrospectionBody(t *testing.T) {
 	t.Run("org mismatch denies", func(t *testing.T) {
 		m := newResolve()
 		m.cfg.Zitadel.TrustRoleSuperadmin = true
-		m.cfg.Zitadel.SuperadminOrgID = "org-other" // differs from the token's org-aaa
+		m.cfg.Zitadel.SuperadminOrgID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" // differs from the token's org
 		trusted := m.trustedSuperadminRoles(issuer, roles)
 		if got := m.resolveOIDCScopes(context.Background(), "user-123", projID, []string{"openid"}, trusted); len(got) != 0 {
 			t.Fatalf("org-mismatch scopes = %v, want none", got)
 		}
 	})
+}
+
+// A role spanning multiple orgs emits one entry per org; only the org matching
+// the configured triple grants superadmin_full.
+func TestRoleDerivedSuperadminMultiOrgRole(t *testing.T) {
+	const issuer = "https://zitadel.example.com"
+	const body = `{
+		"active": true,
+		"sub": "user-123",
+		"iss": "https://zitadel.example.com",
+		"exp": 4102444800,
+		"scope": "openid profile",
+		"urn:zitadel:iam:org:project:123:roles": {
+			"platform-admin": {
+				"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": "org-a.example.com",
+				"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb": "org-b.example.com"
+			}
+		}
+	}`
+
+	var resp introspectionResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("unmarshal introspection body: %v", err)
+	}
+	roles := extractZitadelProjectRoles(resp.Claims)
+	if len(roles) != 2 {
+		t.Fatalf("extracted roles = %v, want 2 (one per org)", roles)
+	}
+
+	resolve := func(org string) []string {
+		m := tierMiddleware(t)
+		m.cfg.Zitadel.TrustRoleSuperadmin = true
+		m.cfg.Zitadel.SuperadminRole = "platform-admin"
+		m.cfg.Zitadel.SuperadminOrgID = org
+		m.cfg.Zitadel.Issuer = issuer
+		m.superadminLookup = func(ctx context.Context, u string) (string, error) { return "", nil }
+		m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }
+		trusted := m.trustedSuperadminRoles(issuer, roles)
+		return m.resolveOIDCScopes(context.Background(), "user-123", projID, []string{"openid"}, trusted)
+	}
+
+	wantScopeSet(t, resolve("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), GetAllScopes())
+	if got := resolve("cccccccc-cccc-cccc-cccc-cccccccccccc"); len(got) != 0 {
+		t.Fatalf("non-member org scopes = %v, want none", got)
+	}
 }
 
 // A body with no roles claim is nil-safe: the extractor returns nothing and the
@@ -373,7 +426,7 @@ func TestRoleDerivedSuperadminNoRolesClaim(t *testing.T) {
 	m := tierMiddleware(t)
 	m.cfg.Zitadel.TrustRoleSuperadmin = true
 	m.cfg.Zitadel.SuperadminRole = "platform-admin"
-	m.cfg.Zitadel.SuperadminOrgID = "org-aaa"
+	m.cfg.Zitadel.SuperadminOrgID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	m.cfg.Zitadel.Issuer = "https://zitadel.example.com"
 	m.superadminLookup = func(ctx context.Context, u string) (string, error) { return "", nil }
 	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }

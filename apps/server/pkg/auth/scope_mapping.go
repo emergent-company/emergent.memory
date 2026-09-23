@@ -141,6 +141,13 @@ func filterMemoryScopes(scopes []string) []string {
 //
 // Roles are delivered only by RFC 7662 introspection; the userinfo fallback and
 // the local JWT path have no role claim and therefore never populate this.
+//
+// Zitadel wire shape (authoritative): the claim value is
+//
+//	{role: {orgID: orgDomain}}
+//
+// — the role name is the outer key, and the ORGANIZATION IDs are the KEYS of
+// the inner map (org domains are the values). One role may span multiple orgs.
 type ZitadelProjectRole struct {
 	Name  string
 	OrgID string
@@ -148,16 +155,19 @@ type ZitadelProjectRole struct {
 
 // zitadelRoleClaimPrefix / zitadelRoleClaimSuffix delimit the Zitadel project
 // role claim: urn:zitadel:iam:org:project:{projectID}:roles, whose value is an
-// object mapping role name → {"orgId"/"orgID": ..., "projectId"/"projectID": ...}.
+// object mapping role name → {orgID: orgDomain} (org IDs are the inner keys).
 const (
 	zitadelRoleClaimPrefix = "urn:zitadel:iam:org:project:"
 	zitadelRoleClaimSuffix = ":roles"
 )
 
 // extractZitadelProjectRoles extracts the project roles from the raw
-// introspection claims. It is deliberately tolerant of the claim value's key
-// casing but returns an empty set for any unexpected shape, so a claim it does
-// not understand can never produce a superadmin grant (fail closed).
+// introspection claims. The claim value is {role: {orgID: orgDomain}}: it
+// iterates the inner map's KEYS (the org IDs) and emits one role per
+// (roleName, orgID) pair, so a role spanning multiple orgs yields multiple
+// entries. An unexpected shape (a non-map inner value, a non-map claim value, or
+// an absent claim) yields nothing, so a claim it does not understand can never
+// produce a superadmin grant (fail closed).
 func extractZitadelProjectRoles(claims map[string]any) []ZitadelProjectRole {
 	if len(claims) == 0 {
 		return nil
@@ -172,24 +182,16 @@ func extractZitadelProjectRoles(claims map[string]any) []ZitadelProjectRole {
 			continue
 		}
 		for name, roleVal := range roleMap {
-			orgID := ""
-			if meta, ok := roleVal.(map[string]any); ok {
-				orgID = firstNonEmptyString(meta, "orgID", "orgId", "orgid")
+			meta, ok := roleVal.(map[string]any)
+			if !ok {
+				continue
 			}
-			roles = append(roles, ZitadelProjectRole{Name: name, OrgID: orgID})
+			for orgID := range meta {
+				roles = append(roles, ZitadelProjectRole{Name: name, OrgID: orgID})
+			}
 		}
 	}
 	return roles
-}
-
-// firstNonEmptyString returns the first non-empty value among the given keys.
-func firstNonEmptyString(m map[string]any, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := m[k].(string); ok && v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // resolveOIDCScopes derives the effective Memory scopes for an authenticated
