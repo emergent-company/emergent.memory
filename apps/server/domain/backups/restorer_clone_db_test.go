@@ -78,10 +78,9 @@ func TestCloneRestoreSkipsUnresolvableSchemaLinks(t *testing.T) {
 	mustExec(dstDB.DB, `INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgB, "org-b")
 	seedSchema(dstDB.DB, builtinB, "session-message-types", "1.0.0", "builtin", nil)
 	mustExec(dstDB.DB, `INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, newProjectID, orgB, "cloned-project")
-	// Simulate the target's builtin provisioning trigger (absent from the test
-	// schema snapshot) linking the project to the TARGET's own builtin.
-	mustExec(dstDB.DB, `INSERT INTO kb.project_schemas (id, project_id, schema_id) VALUES (?, ?, ?)`,
-		uuid.NewString(), newProjectID, builtinB)
+	// The builtin provisioning trigger (migration 00146) fires on project INSERT
+	// and links the new project to the TARGET's own builtin schema automatically,
+	// exactly as production does.
 
 	// Build the archive as the exporter would: graph_schemas carries only the
 	// project-owned row (global rows are filtered by project_id), while the link

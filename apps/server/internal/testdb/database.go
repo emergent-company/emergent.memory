@@ -3,11 +3,11 @@ package testdb
 import (
 	"context"
 	"crypto/sha256"
-	_ "embed"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -16,14 +16,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
+	"github.com/pressly/goose/v3"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/migrations"
 )
-
-//go:embed schema.sql
-var schemaSQL string
 
 const (
 	templateDBName = "go_test_template"
@@ -40,13 +39,40 @@ const (
 // lock, so it is released automatically if the holding process dies.
 const templateLockKey int64 = 0x6d656d6f7279 // "memory"
 
-// schemaFingerprint identifies the schema.sql content a template was built
+// schemaFingerprint identifies the embedded migration set a template was built
 // from. A template whose recorded fingerprint differs — a stale template left
-// on a persistent Postgres by an older schema snapshot, or a bootstrap that
+// on a persistent Postgres by an older migration set, or a bootstrap that
 // stopped before recording it — is treated as incomplete and rebuilt under the
-// advisory lock, so throwaway databases can never be cloned from an
-// out-of-date schema.
-var schemaFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte(schemaSQL)))
+// advisory lock, so throwaway databases can never be cloned from an out-of-date
+// schema.
+var schemaFingerprint = migrationsFingerprint()
+
+// migrationsFingerprint hashes the embedded migration set (filename + content,
+// sorted) so the template is rebuilt whenever any migration changes. This is
+// the same guarantee the old schema.sql content hash provided, but keyed to the
+// single source of truth (migrations) instead of a snapshot that could drift
+// behind it (issue #820).
+func migrationsFingerprint() string {
+	h := sha256.New()
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		panic(fmt.Sprintf("read embedded migrations: %v", err))
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		fmt.Fprintf(h, "%s\x00", e.Name())
+		b, err := migrations.FS.ReadFile(e.Name())
+		if err != nil {
+			panic(fmt.Sprintf("read migration %q: %v", e.Name(), err))
+		}
+		h.Write(b)
+		h.Write([]byte{0})
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
 
 var (
 	templateOnce sync.Once
@@ -304,21 +330,14 @@ func ensureTemplateDB(ctx context.Context, baseCfg *config.Config, log *slog.Log
 	}
 	defer templatePool.Close()
 
-	// Create required extensions
-	extensions := []string{"pgcrypto", `"uuid-ossp"`, "vector"}
-	for _, ext := range extensions {
-		_, err = templatePool.Exec(ctx, fmt.Sprintf("CREATE EXTENSION IF NOT EXISTS %s", ext))
-		if err != nil {
-			_ = dropDatabaseConn(ctx, conn, templateDBName)
-			return fmt.Errorf("create extension %s: %w", ext, err)
-		}
-	}
-
-	// Apply schema
-	_, err = templatePool.Exec(ctx, schemaSQL)
-	if err != nil {
+	// Apply the embedded migrations to head. The baseline migration (00001)
+	// creates the kb/core schemas and the pgcrypto / uuid-ossp / vector
+	// extensions, so the template is built from the exact same source
+	// production migrates — it can no longer drift from a stale schema.sql
+	// snapshot (issue #820).
+	if err := applyMigrations(ctx, templatePool); err != nil {
 		_ = dropDatabaseConn(ctx, conn, templateDBName)
-		return fmt.Errorf("apply schema: %w", err)
+		return fmt.Errorf("apply migrations to template: %w", err)
 	}
 
 	// Record the schema fingerprint last, so its presence proves the schema was
@@ -342,7 +361,7 @@ func ensureTemplateDB(ctx context.Context, baseCfg *config.Config, log *slog.Log
 }
 
 // templateDBComplete reports whether the template database already holds the
-// schema built from the *current* schema.sql. It compares the fingerprint the
+// schema built from the *current* migration set. It compares the fingerprint the
 // template recorded at build time against schemaFingerprint; a template that is
 // missing the fingerprint table (built by an older harness, or by a bootstrap
 // that stopped before recording it) or records a different one is treated as
@@ -364,6 +383,24 @@ func templateDBComplete(ctx context.Context, baseCfg *config.Config) (bool, erro
 		return false, nil
 	}
 	return recorded == schemaFingerprint, nil
+}
+
+// applyMigrations runs the embedded goose migrations to head against the given
+// pool. It is used by both the template bootstrap and the TestMigrationsApplyToHead
+// guard, so the two can never drift on how migrations are applied. Goose is
+// used directly rather than via internal/migrate because internal/migrate's own
+// tests import this package, which would form an import cycle.
+func applyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	goose.SetBaseFS(migrations.FS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		return fmt.Errorf("set goose dialect: %w", err)
+	}
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	defer sqlDB.Close()
+	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	return nil
 }
 
 // createPool creates a pgx connection pool

@@ -56,7 +56,7 @@ func (s *Server) mintToken(c echo.Context) error {
 	}
 	room := in.Room
 	if room == "" {
-		room = agent + "-" + client + "-" + randomHex(4)
+		room = agent + "-" + client + "-" + randomHex(16)
 	}
 	ok, err := s.roomAllowed(c.Request().Context(), room)
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *Server) mintToken(c echo.Context) error {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "agent not found in active project"})
 	}
 	if s.bindings != nil {
-		s.bindings.Set(room, *binding)
+		s.bindings.Set(room, agent, *binding)
 	}
 	// Spawn the agent's bridge worker on demand. Only enabled agents get a warm
 	// worker; voiceBindingFor rejects disabled agents before reaching here.
