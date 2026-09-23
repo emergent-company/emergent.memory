@@ -222,6 +222,12 @@ type ZitadelConfig struct {
 	// reconcileScopePolicyAliases and are not read elsewhere. Removed next release.
 	OIDCDefaultScopesAlias       []string `env:"ZITADEL_OIDC_DEFAULT_SCOPES"`
 	UserinfoGrantAllScopesAlias  bool     `env:"ZITADEL_USERINFO_GRANT_ALL_SCOPES"`
+
+	// TrustTokenScopes governs whether Memory scope names carried on a validated
+	// OIDC token are honoured as a grant. Introduced enabled so Release N changes
+	// no behaviour; the standing default flips to disabled in the following
+	// release, after which the token-scope grant path is removed.
+	TrustTokenScopes bool `env:"MEMORY_OIDC_TRUST_TOKEN_SCOPES" envDefault:"true"`
 }
 
 // IntrospectionConfigured reports whether RFC 7662 introspection is enabled and

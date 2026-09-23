@@ -127,7 +127,8 @@ func filterMemoryScopes(scopes []string) []string {
 // OIDC session. It fails closed and never returns GetAllScopes().
 //
 // Resolution order (first match wins, no union):
-//  1. explicit Memory scopes carried by the token, verbatim;
+//  1. explicit Memory scopes carried by the token, verbatim — only while
+//     MEMORY_OIDC_TRUST_TOKEN_SCOPES is enabled (terminal when it applies);
 //  2. the mapped canonical role for projectID;
 //  3. the operator-configured default scope set — only when the user has no
 //     project membership at all;
@@ -138,8 +139,10 @@ func filterMemoryScopes(scopes []string) []string {
 // the default scope set is a grant for non-members, never a fallback for
 // failures or unrecognised roles.
 func (m *Middleware) resolveOIDCScopes(ctx context.Context, userID, projectID string, rawScopes []string) []string {
-	if explicit := filterMemoryScopes(rawScopes); len(explicit) > 0 {
-		return explicit
+	if m.trustTokenScopes() {
+		if explicit := filterMemoryScopes(rawScopes); len(explicit) > 0 {
+			return explicit
+		}
 	}
 
 	if projectID != "" && userID != "" {
@@ -165,6 +168,16 @@ func (m *Middleware) resolveOIDCScopes(ctx context.Context, userID, projectID st
 	}
 
 	return m.defaultOIDCScopes()
+}
+
+// trustTokenScopes reports whether Memory scope names carried on a validated
+// OIDC token are honoured as a grant. Introduced enabled (default) so Release N
+// changes no behaviour; flips to disabled in the following release.
+func (m *Middleware) trustTokenScopes() bool {
+	if m.cfg == nil {
+		return false
+	}
+	return m.cfg.Zitadel.TrustTokenScopes
 }
 
 // defaultOIDCScopes returns a copy of the configured default scope set, or nil

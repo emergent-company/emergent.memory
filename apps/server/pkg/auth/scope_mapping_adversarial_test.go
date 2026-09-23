@@ -25,6 +25,9 @@ func clearZitadelEnv(t *testing.T) {
 		"ZITADEL_USERINFO_GRANT_ALL_SCOPES",
 		"ZITADEL_OIDC_DEFAULT_SCOPES",
 		"DISABLE_ZITADEL_INTROSPECTION",
+		"MEMORY_USERINFO_GRANT_ALL_SCOPES",
+		"MEMORY_OIDC_DEFAULT_SCOPES",
+		"MEMORY_OIDC_TRUST_TOKEN_SCOPES",
 	} {
 		prev, had := os.LookupEnv(k)
 		if err := os.Unsetenv(k); err != nil {

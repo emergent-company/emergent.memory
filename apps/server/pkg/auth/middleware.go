@@ -149,6 +149,7 @@ func NewMiddleware(p MiddlewareParams) *Middleware {
 	}
 
 	m.warnIfOIDCAllGrantActive()
+	m.warnIfTokenScopesTrusted()
 
 	return m
 }
@@ -692,6 +693,23 @@ func (m *Middleware) warnIfOIDCAllGrantActive() {
 			slog.Bool("introspection_configured", false),
 		)
 	}
+}
+
+// tokenScopeTrustWarningText is the operator-facing deprecation warning emitted
+// while token-carried Memory scopes are still honoured. It names the flag and
+// the effect of the upcoming default flip.
+const tokenScopeTrustWarningText = "token-scope trust is ENABLED: Memory scope names carried on OIDC tokens are still honoured as grants (MEMORY_OIDC_TRUST_TOKEN_SCOPES defaults to true). In the next release this default flips to false and token-carried Memory scopes will stop being honoured; operators who rely on them should migrate to application-owned scopes now."
+
+// warnIfTokenScopesTrusted emits a startup deprecation warning while
+// MEMORY_OIDC_TRUST_TOKEN_SCOPES is enabled (the Release N default).
+func (m *Middleware) warnIfTokenScopesTrusted() {
+	if m.cfg == nil || !m.cfg.Zitadel.TrustTokenScopes {
+		return
+	}
+	m.log.Warn(tokenScopeTrustWarningText,
+		slog.String("config", "MEMORY_OIDC_TRUST_TOKEN_SCOPES"),
+		slog.Bool("token_scopes_trusted", true),
+	)
 }
 
 // TokenClaims represents parsed token claims
