@@ -215,10 +215,12 @@ jobs:
         working-directory: apps/server
         run: |
           # Independent smoke test that the migrations apply cleanly to a fresh
-          # database: the DB-backed harnesses no longer need a migrated database
-          # (since #785 each builds a uniquely-named throwaway database from
-          # internal/testdb/schema.sql and drops it). Kept because this is the
-          # only place CI runs the migrate CLI against a real Postgres.
+          # database: the DB-backed harnesses no longer need a pre-migrated
+          # database (since #785 each builds a uniquely-named throwaway database
+          # and drops it; since #820 that template applies the embedded
+          # migrations to head rather than cloning a stale schema.sql dump).
+          # Kept because this is the only place CI runs the migrate CLI against
+          # a real Postgres.
           #
           # cmd/migrate gives DATABASE_URL precedence over POSTGRES_* (and a
           # DATABASE_URL bypasses the -allow-localhost guard), so pin it to the

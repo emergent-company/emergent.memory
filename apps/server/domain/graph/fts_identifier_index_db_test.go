@@ -14,30 +14,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
-	"github.com/emergent-company/emergent.memory/migrations"
 )
-
-// applyFTSIdentifierMigration applies the Up half of migration 00174's function
-// definitions to the throwaway test database. The test database is built from
-// the embedded schema.sql snapshot, which still carries the migration 00016
-// trigger, so without this the assertions below would exercise the old index
-// shape. Only the function definitions are taken (the CONCURRENTLY index
-// rebuild stays in the migration proper and is exercised on a scratch database).
-func applyFTSIdentifierMigration(t *testing.T, ctx context.Context, db bun.IDB) {
-	t.Helper()
-	raw, err := migrations.FS.ReadFile("00174_graph_objects_fts_identifiers.sql")
-	require.NoError(t, err)
-
-	src := string(raw)
-	start := strings.Index(src, "-- +goose Up")
-	require.GreaterOrEqual(t, start, 0, "migration is missing the goose Up marker")
-	const stopAt = "DROP INDEX CONCURRENTLY IF EXISTS kb.idx_graph_objects_fts"
-	end := strings.Index(src, stopAt)
-	require.Greater(t, end, start, "migration layout changed; cannot isolate the function definitions")
-
-	_, err = db.ExecContext(ctx, src[start+len("-- +goose Up"):end])
-	require.NoError(t, err, "applying migration 00174 function definitions")
-}
 
 // countStrictMatchesDual counts objects matched by the production strict query,
 // i.e. both text search configurations OR'd together.
@@ -62,7 +39,6 @@ func countStrictMatchesDual(t *testing.T, ctx context.Context, db bun.IDB, proje
 // ftsquery.Relax fallback is not what produces the result).
 func TestFTSIdentifierIndexMakesCompositeKeySearchable(t *testing.T) {
 	ctx, db, projectID, cfg := setupFTSRelaxTest(t)
-	applyFTSIdentifierMigration(t, ctx, db)
 	repo := graph.NewRepository(db, slog.Default(), cfg)
 
 	lawID := insertKeyedObject(t, ctx, db, projectID, "Law", "lov/1997-06-13-44",
@@ -93,7 +69,6 @@ func TestFTSIdentifierIndexMakesCompositeKeySearchable(t *testing.T) {
 // positive control confirms the object was indexed at all.
 func TestFTSIdentifierIndexExcludesNonWhitelistedProperties(t *testing.T) {
 	ctx, db, projectID, _ := setupFTSRelaxTest(t)
-	applyFTSIdentifierMigration(t, ctx, db)
 
 	insertKeyedObject(t, ctx, db, projectID, "Document", "plain/2020-01-01-1",
 		`{"custom_field":"zzquuxzorpmarker","title":"Ordinary title"}`)
@@ -113,7 +88,6 @@ func TestFTSIdentifierIndexExcludesNonWhitelistedProperties(t *testing.T) {
 // whitelist, so MAXENTRYPOS (16383) must never appear in the built vector.
 func TestFTSIdentifierIndexBoundsPositions(t *testing.T) {
 	ctx, db, projectID, _ := setupFTSRelaxTest(t)
-	applyFTSIdentifierMigration(t, ctx, db)
 
 	// A description with far more distinct tokens than MAXENTRYPOS positions.
 	var b strings.Builder

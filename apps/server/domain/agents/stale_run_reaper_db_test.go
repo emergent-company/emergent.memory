@@ -12,7 +12,8 @@ import (
 )
 
 // TestMarkStaleRunsAsError_HeartbeatSparesActiveRun exercises the idle-timeout
-// reaper against a real schema built from the current migrations/schema.sql:
+// reaper against a real schema built from the embedded migrations (applied to
+// head by internal/testdb):
 //
 //   - a running run with a fresh heartbeat survives the sweep,
 //   - a running run whose start AND heartbeat are stale is reaped,
