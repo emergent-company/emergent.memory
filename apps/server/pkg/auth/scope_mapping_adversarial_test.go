@@ -57,7 +57,7 @@ func TestAdversarialIntrospectionOutageDoesNotReenableAllGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validateToken: %v", err)
 	}
-	if len(user.Scopes) == len(GetAllScopes()) {
+	if scopesEqual(user.Scopes, GetAllScopes()) {
 		t.Fatalf("introspection outage re-enabled the all-grant: %v", user.Scopes)
 	}
 	if len(user.Scopes) != 0 {
@@ -95,8 +95,8 @@ func TestAdversarialShippedDefaultStillAllGrantsUserinfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validateToken: %v", err)
 	}
-	if len(user.Scopes) != len(GetAllScopes()) {
-		t.Fatalf("shipped default did not grant all scopes: got %d want %d", len(user.Scopes), len(GetAllScopes()))
+	if !scopesEqual(user.Scopes, GetAllScopes()) {
+		t.Fatalf("shipped default did not grant the exact full catalogue: got %v want %v", user.Scopes, GetAllScopes())
 	}
 }
 
@@ -152,7 +152,7 @@ func TestAdversarialCachedUserinfoEntryNoAllGrantWhenIntrospectionConfigured(t *
 	if err != nil {
 		t.Fatalf("finalizeOIDCUser: %v", err)
 	}
-	if len(user.Scopes) == len(GetAllScopes()) {
+	if scopesEqual(user.Scopes, GetAllScopes()) {
 		t.Fatalf("cached userinfo entry replayed as all-grant: %v", user.Scopes)
 	}
 	if len(user.Scopes) != 0 {
