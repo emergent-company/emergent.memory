@@ -575,3 +575,164 @@ func objIDs(objs []*GraphObject) []uuid.UUID {
 	}
 	return ids
 }
+
+// selectIDColumn runs a raw SELECT that returns a single id column (aliased
+// `id`) and returns the ids in result order. Used to assert which rows a bulk
+// action mutated.
+func selectIDColumn(t *testing.T, db *bun.DB, query string, args ...any) []uuid.UUID {
+	t.Helper()
+	var rows []struct {
+		ID uuid.UUID `bun:"id"`
+	}
+	err := db.NewRaw(query, args...).Scan(context.Background(), &rows)
+	require.NoError(t, err)
+	ids := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
+// TestBulkActionUpdate_DeterministicLimit proves that every UPDATE-based bulk
+// action honours its `limit` deterministically: with 12 same-created_at objects
+// inserted in descending id order, a Limit of 5 must mutate exactly the 5
+// SMALLEST ids (created_at ASC, id ASC), never an arbitrary heap-ordered subset.
+func TestBulkActionUpdate_DeterministicLimit(t *testing.T) {
+	db := openBulkTestDB(t)
+	repo := newBulkTestRepo(t, db)
+	ctx := context.Background()
+
+	type testCase struct {
+		name      string
+		action    string
+		value     string
+		props     map[string]any
+		labels    []string
+		preSeed   func(t *testing.T, pid uuid.UUID)
+		selectSQL string
+	}
+
+	cases := []testCase{
+		{
+			name:      "update_status",
+			action:    BulkActionUpdateStatus,
+			value:     "archived",
+			selectSQL: `SELECT id FROM kb.graph_objects WHERE project_id = ? AND status = 'archived' ORDER BY id ASC`,
+		},
+		{
+			name:      "soft_delete",
+			action:    BulkActionSoftDelete,
+			selectSQL: `SELECT id FROM kb.graph_objects WHERE project_id = ? AND deleted_at IS NOT NULL ORDER BY id ASC`,
+		},
+		{
+			name:      "merge_properties",
+			action:    BulkActionMergeProperties,
+			props:     map[string]any{"probe": "yes"},
+			selectSQL: `SELECT id FROM kb.graph_objects WHERE project_id = ? AND properties->>'probe' = 'yes' ORDER BY id ASC`,
+		},
+		{
+			name:      "replace_properties",
+			action:    BulkActionReplaceProperties,
+			props:     map[string]any{"probe": "yes"},
+			selectSQL: `SELECT id FROM kb.graph_objects WHERE project_id = ? AND properties->>'probe' = 'yes' ORDER BY id ASC`,
+		},
+		{
+			name:      "set_labels",
+			action:    BulkActionSetLabels,
+			labels:    []string{"marked"},
+			selectSQL: `SELECT id FROM kb.graph_objects WHERE project_id = ? AND 'marked' = ANY(labels) ORDER BY id ASC`,
+		},
+		{
+			name:      "add_labels",
+			action:    BulkActionAddLabels,
+			labels:    []string{"marked"},
+			selectSQL: `SELECT id FROM kb.graph_objects WHERE project_id = ? AND 'marked' = ANY(labels) ORDER BY id ASC`,
+		},
+		{
+			name:   "remove_labels",
+			action: BulkActionRemoveLabels,
+			labels: []string{"marked"},
+			// Seed every object with the label so removal is observable.
+			preSeed: func(t *testing.T, pid uuid.UUID) {
+				_, err := db.ExecContext(ctx, `UPDATE kb.graph_objects SET labels = ARRAY['marked'] WHERE project_id = ?`, pid)
+				require.NoError(t, err)
+			},
+			selectSQL: `SELECT id FROM kb.graph_objects WHERE project_id = ? AND NOT ('marked' = ANY(labels)) ORDER BY id ASC`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for iter := 0; iter < 3; iter++ {
+				pid := uuid.New()
+				seedProject(t, db, pid)
+				createdAt := time.Now().UTC().Truncate(time.Microsecond)
+				rids := descendingUUIDs(12)
+				for _, id := range rids {
+					insertOrderingObject(t, db, pid, id, "LimitTest", createdAt, nil, nil)
+				}
+				if tc.preSeed != nil {
+					tc.preSeed(t, pid)
+				}
+				t.Cleanup(func() {
+					_, _ = db.ExecContext(ctx, "DELETE FROM kb.graph_objects WHERE project_id = ?", pid)
+					_, _ = db.ExecContext(ctx, "DELETE FROM kb.projects WHERE id = ?", pid)
+				})
+
+				matched, affected, err := repo.BulkActionByFilter(ctx, BulkActionParams{
+					ProjectID:  pid,
+					Action:     tc.action,
+					Value:      tc.value,
+					Properties: tc.props,
+					Labels:     tc.labels,
+					Limit:      5,
+					Filter:     BulkActionFilter{Types: []string{"LimitTest"}},
+				})
+				require.NoError(t, err)
+				assert.Equal(t, 12, matched, "matched must count all 12 objects")
+				assert.Equal(t, 5, affected, "affected must be exactly the capped 5")
+
+				got := selectIDColumn(t, db, tc.selectSQL, pid)
+				want := ascendingSorted(rids)[:5]
+				assert.Equal(t, want, got, "iter %d: mutation must land on the 5 smallest ids, not the 7 largest", iter)
+			}
+		})
+	}
+}
+
+// TestGetBranchRelationshipEmbedding_ReadsEmbeddingColumn proves the helper reads
+// the real kb.graph_relationships.embedding column (added in migration 00011),
+// not the non-existent embedding_v2 column it previously selected.
+func TestGetBranchRelationshipEmbedding_ReadsEmbeddingColumn(t *testing.T) {
+	db := openBulkTestDB(t)
+	repo := newBulkTestRepo(t, db)
+	ctx := context.Background()
+
+	projectID := uuid.New()
+	seedProject(t, db, projectID)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM kb.graph_relationships WHERE project_id = ?", projectID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM kb.graph_objects WHERE project_id = ?", projectID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM kb.projects WHERE id = ?", projectID)
+	})
+
+	src := uuid.New()
+	dst := uuid.New()
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	emb := vec768OneLiteral()
+
+	relWithEmb := uuid.New()
+	insertOrderingRelationship(t, db, projectID, relWithEmb, src, dst, "links", createdAt, &emb)
+
+	relNoEmb := uuid.New()
+	insertOrderingRelationship(t, db, projectID, relNoEmb, src, dst, "links2", createdAt, nil)
+
+	vec, err := repo.GetBranchRelationshipEmbedding(ctx, relWithEmb)
+	require.NoError(t, err)
+	require.Len(t, vec, 768, "embedded relationship must return a 768-dim vector")
+	assert.Equal(t, float32(1), vec[0], "first component must be the seeded 1")
+
+	vec2, err := repo.GetBranchRelationshipEmbedding(ctx, relNoEmb)
+	require.NoError(t, err)
+	assert.Nil(t, vec2, "un-embedded relationship must return nil, nil")
+}
