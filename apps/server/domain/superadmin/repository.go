@@ -7,6 +7,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/internal/jobs"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // Repository provides data access for superadmin operations
@@ -36,6 +37,18 @@ func (r *Repository) IsSuperadmin(ctx context.Context, userID string) (bool, str
 	}
 
 	return true, sa.Role, nil
+}
+
+// IsSuperadminFull reports whether the user holds an active superadmin_full
+// grant. A superadmin_readonly grant — or any unknown role — is refused, so
+// platform-global mutations can rely on the same canonical role boundary the
+// superadmin handlers enforce.
+func (r *Repository) IsSuperadminFull(ctx context.Context, userID string) (bool, error) {
+	isSuperadmin, role, err := r.IsSuperadmin(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return isSuperadmin && role == auth.RoleSuperadminFull, nil
 }
 
 // ListUsers returns paginated users with optional search and org filter
@@ -909,7 +922,7 @@ func (r *Repository) CreateServiceUser(ctx context.Context, zitadelUserID, displ
 func (r *Repository) GrantSuperadminToUser(ctx context.Context, userID, grantedBy string, notes *string) error {
 	sa := &Superadmin{
 		UserID:    userID,
-		Role:      "superadmin_readonly",
+		Role:      auth.RoleSuperadminReadonly,
 		GrantedBy: &grantedBy,
 		Notes:     notes,
 	}
