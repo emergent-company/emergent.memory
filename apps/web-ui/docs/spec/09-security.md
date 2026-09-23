@@ -81,6 +81,46 @@ redirects to the discovered Zitadel `end_session` endpoint with `id_token_hint`/
   creds); keys are scoped to one device and revocable from Project Settings.
 - No secrets in git; compose `.env` is git-ignored.
 
+## GitHub webhook trigger credential (`AGENT_TRIGGER_TOKEN`)
+
+`AGENT_TRIGGER_TOKEN` is a single static `emt_*` bearer the gateway presents to memory
+to trigger the PR-review agent. It is a **deliberate, accepted decision** (issue #847),
+not an oversight. The rationale, the residual risk, and the future path are recorded here
+so the choice stays explicit.
+
+**Why a static shared secret is accepted for this surface:**
+
+- **The webhook ingress is already HMAC-gated.** GitHub authenticates each delivery with an
+  `X-Hub-Signature-256` header (`HMAC-SHA256`, verified in constant time via `hmac.Equal` in
+  `verifyGitHubSignature`). `AGENT_TRIGGER_TOKEN` is *not* the ingress gate: webhook callers
+  never see or present it. It is the gateway→memory credential only, presented as
+  `Authorization: Bearer …` on the trigger call.
+- **It fails closed on unset/empty.** `Config.Validate` refuses startup when
+  `GITHUB_WEBHOOK_SECRET` is set but `AGENT_TRIGGER_TOKEN` is empty, and the handler returns
+  `503` (retryable) *before* spawning the async trigger when the token is missing — so a
+  missing token can never be accepted and then fail invisibly after the `202`. There is no
+  path where an empty token is treated as a valid credential.
+- **There is no gateway-side token comparison to be made constant-time** — the token is
+  forwarded to memory, which resolves it by SHA-256 hash lookup.
+
+**Accepted residual risk** (why this is not yet a scoped marker credential):
+
+- The token is **shared** (no per-integration identity), **long-lived** (no expiry/forced
+  rotation), and carries **no reserved marker**, so no surface restriction can be enforced
+  against it server-side. A leaked token grants whatever scopes it was minted with, until an
+  operator rotates it.
+- Impact is bounded: the token's only use is the PR-review trigger; it is held server-side in
+  the gateway's env, never shipped to clients or the web UI, and never logged.
+
+**Rotation:** rotate by minting a fresh `emt_*` token in memory and updating `AGENT_TRIGGER_TOKEN`
+in the gateway env (then restart). Rotation is manual; there is no automated expiry.
+
+**Future path:** promote this to a real scoped credential — an `emt_*` token minted via an
+internal mint path carrying a reserved marker scope (e.g. `webhook:trigger`, following the
+`mcp:agent-call` / `share:agent-chat` precedents in `apps/server/domain/apitoken/`), with an
+expiry, a per-integration name, and a scope ceiling enforced on the trigger-agent route. That
+is a server-side change and is deliberately out of scope for #847.
+
 ## Room allow-list (iOS token)
 
 - `TOKEN_ALLOWED_ROOMS` (comma-separated) if set; else rooms prefixed by a registered agent
@@ -97,6 +137,7 @@ redirects to the discovered Zitadel `end_session` endpoint with `id_token_hint`/
 | Stolen one-time setup token | single-use + 10-min TTL; worst case one extra device key, revocable by deleting the setting row |
 | Device key leaks | per-device key is scoped to one client and revocable; not memory/LiveKit creds |
 | MCP server secrets (headers/env) stored **plaintext** in memory | scope by memory project isolation; do **not** store memory/LiveKit master creds as MCP headers; document the limitation |
+| `AGENT_TRIGGER_TOKEN` leaks (static, shared, no marker) | ingress is HMAC-gated (constant time); token held server-side only and never logged; fail-closed on unset; accepted risk with manual rotation, tracked for a reserved-marker scope ceiling (#847) |
 
 ## Non-goals (explicitly out)
 
