@@ -54,12 +54,7 @@ func (h *Handler) ListProjectProviders(c echo.Context) error {
 func (h *Handler) ListProjectConfigs(c echo.Context) error {
 	orgID := c.Param("orgId")
 
-	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		ctx = auth.ContextWithOrgID(ctx, orgID)
-	}
-
-	resp, err := h.creds.ListProjectConfigsByOrg(ctx, orgID)
+	resp, err := h.creds.ListProjectConfigsByOrg(c.Request().Context(), orgID)
 	if err != nil {
 		return err
 	}
@@ -270,11 +265,7 @@ func (h *Handler) GetOrgUsageSummary(c echo.Context) error {
 	orgID := c.Param("orgId")
 
 	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		ctx = auth.ContextWithOrgID(ctx, orgID)
-	}
-
-	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
+	if err := assertCallerOwnsOrg(ctx, h.repo, orgID); err != nil {
 		return err
 	}
 
@@ -342,11 +333,7 @@ func (h *Handler) GetOrgUsageTimeSeries(c echo.Context) error {
 	orgID := c.Param("orgId")
 
 	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		ctx = auth.ContextWithOrgID(ctx, orgID)
-	}
-
-	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
+	if err := assertCallerOwnsOrg(ctx, h.repo, orgID); err != nil {
 		return err
 	}
 
@@ -507,11 +494,7 @@ func (h *Handler) GetOrgUsageByProject(c echo.Context) error {
 	orgID := c.Param("orgId")
 
 	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		ctx = auth.ContextWithOrgID(ctx, orgID)
-	}
-
-	if err := assertCallerOwnsOrg(ctx, orgID); err != nil {
+	if err := assertCallerOwnsOrg(ctx, h.repo, orgID); err != nil {
 		return err
 	}
 
@@ -730,9 +713,10 @@ func (h *Handler) TestProvider(c echo.Context) error {
 		}
 		ctx = auth.ContextWithProjectID(ctx, projectID)
 	}
-	if orgID := c.QueryParam("orgId"); orgID != "" && auth.OrgIDFromContext(ctx) == "" {
-		ctx = auth.ContextWithOrgID(ctx, orgID)
-	}
+	// The ?orgId query param is intentionally not injected into the auth context:
+	// credential resolution is project-scoped only (org-level config is
+	// deprecated), so writing a request-controlled org into the context would be
+	// an untrusted-org injection with no effect (issue #841 sibling audit).
 
 	cred, err := h.creds.Resolve(ctx, p)
 	if err != nil {
