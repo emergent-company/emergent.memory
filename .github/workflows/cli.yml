@@ -388,12 +388,22 @@ jobs:
           echo "" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # Pass the commit list via an env var, never by interpolating it into the
+      # JS source. Interpolating it into a template literal lets a backtick or
+      # ${...} in any commit message break the script's parse (v0.82.1: a commit
+      # message contained `memory acp`), which skipped this step AND every later
+      # step in the job (asset upload included), shipping a release with no CLI
+      # binaries. continue-on-error keeps a future changelog failure from ever
+      # blocking release creation again.
       - name: Generate changelog
         id: changelog
+        continue-on-error: true
         uses: actions/github-script@v7
+        env:
+          COMMITS: ${{ steps.commits.outputs.commits }}
         with:
           script: |
-            const commits = `${{ steps.commits.outputs.commits }}`;
+            const commits = process.env.COMMITS || '';
 
             const lines = commits.split('\n').filter(l => l.trim());
 
@@ -500,6 +510,39 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: false
+
+      # Fail loudly if the published release is missing any of the CLI assets
+      # that build-cross must produce (and that install.sh + the release-notes
+      # table advertise). This would have caught v0.82.1, whose release object
+      # existed (created by the Connector Release workflow) but had no
+      # memory-cli-* binaries, because the changelog parse error skipped the
+      # upload. if: always() makes the job red even when an earlier step is
+      # skipped or fails, so a half-populated release can never ship silently.
+      - name: Verify CLI release assets
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          ASSETS=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets[].name' 2>/dev/null || true)
+          echo "Assets on release ${TAG}:"
+          printf '%s\n' "${ASSETS}"
+          missing=0
+          for asset in \
+            memory-cli-linux-amd64.tar.gz \
+            memory-cli-darwin-amd64.tar.gz \
+            memory-cli-darwin-arm64.tar.gz; do
+            if ! printf '%s\n' "${ASSETS}" | grep -qx "${asset}"; then
+              echo "::error::missing expected asset: ${asset}"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "::error::release ${TAG} is missing memory-cli-* assets"
+            exit 1
+          fi
+          echo "OK: all memory-cli-* assets present on ${TAG}"
 
   docker:
     name: Docker Build (CLI Container)
