@@ -142,10 +142,11 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 			<div id="chat-log" class="min-h-0 grow overflow-y-auto">
 				<!-- Scroll-fill transcript column: the outer flex wrapper keeps the
 				     min-h-full/justify-end trick (short transcripts rest on the
-				     composer) while layout.Container supplies the shared page
-				     width + padding — the same ContainerLG every other page uses. -->
+				     composer) while layout.Container supplies the shared padding
+				     plus a very generous width cap (only bites on very large
+				     screens) so the stream can actually fill the chat pane. -->
 				<div class="flex min-h-full min-w-0 flex-col justify-end">
-					@layout.Container(layout.ContainerLG, nil) {
+					@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
 						<div class="flex w-full flex-col gap-3">
 							@chatWelcomeHero("chat-empty", "lucide--sparkles", "gap-4 py-10", "Ready when you are", 2, "text-base", "Ask anything — Memory answers from the selected agent's persona, using its model and tools.", "mt-1 max-w-sm text-sm") {
 								<div class="flex w-full max-w-xs flex-col items-center gap-1.5">
@@ -187,8 +188,9 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				<div id="chat-queue" class="memory-queue hidden" aria-live="polite"></div>
 				<form id="chat-form" hx-boost="false">
 					<!-- Width + gutter come from the shared Container, so the composer
-					     can never drift from the message column above. -->
-					@layout.Container(layout.ContainerLG, nil) {
+					     can never drift from the message column above. The wider
+					     container matches the transcript's. -->
+					@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
 						<div class="flex flex-wrap items-stretch gap-2">
 							<textarea
 								id="chat-input"
@@ -536,7 +538,7 @@ templ chatRailEmpty(hasRows bool) {
 // the hidden class when the #chat-agent picker changes; the text itself always
 // comes from the server-computed map (never duplicated client-side).
 templ chatModelWarningBanner(message string) {
-	@layout.Container(layout.ContainerLG, nil) {
+	@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
 		<div id="chat-model-warning" role="alert" class={ "alert alert-error alert-outline", templ.KV("hidden", message == "") }>
 			@ui.IconSpan("lucide--alert-triangle", "size-5")
 			<div class="flex min-w-0 items-center gap-3">
