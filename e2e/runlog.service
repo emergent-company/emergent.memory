@@ -5,6 +5,11 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now runlog.service
 #
+# WorkingDirectory must already exist when you run `enable --now`: systemd fails
+# at CHDIR otherwise and the UI never starts. The default below points at the
+# shared checkout, which exists wherever the repo is cloned (see repo AGENTS.md).
+# If you override it, create the target checkout FIRST.
+#
 # Override any path WITHOUT editing the installed unit — use a drop-in:
 #   sudo systemctl edit runlog.service
 #     [Service]
@@ -27,18 +32,29 @@
 # -------------------------
 # Point it at an e2e directory that (a) contains `tests/` and (b) is stable.
 # The daemon discovers tests by scanning that directory at startup, so an e2e
-# dir without `tests/` renders an empty UI:
+# dir without `tests/` renders an empty UI.
 #
-#   * A shared checkout usually satisfies (a) but not (b) — it is used by other
-#     sessions, can sit on any branch, and can be mid-edit or mid-rebase. The
-#     default below therefore targets a dedicated, detached checkout:
-#       git worktree add --detach /root/emergent.memory-wt/runlog-dashboard origin/main
-#     Refresh it with:
-#       git -C /root/emergent.memory-wt/runlog-dashboard fetch origin main
-#       git -C /root/emergent.memory-wt/runlog-dashboard reset --hard origin/main
-#       systemctl restart runlog
-#   * To follow a branch instead, override WorkingDirectory + ExecStart with a
-#     drop-in as shown above.
+# The default below is the shared checkout. That keeps `task -d e2e runlog:test`
+# and the UI coherent: the CLI writes runs to the invoking checkout's
+# .runlog/runs.db, so the daemon must serve that same file for new runs to show
+# up. It also exists out of the box, so `enable --now` cannot fail at CHDIR.
+#
+# Hardening (recommended on a busy host): point the daemon at a dedicated,
+# detached checkout so it is not affected by other sessions switching branches
+# or mid-edit files. Create the checkout FIRST, then install the drop-in above
+# with WorkingDirectory/ExecStart matching it:
+#
+#   git worktree add --detach /root/emergent.memory-wt/runlog-dashboard origin/main
+#   # refresh it later:
+#   git -C /root/emergent.memory-wt/runlog-dashboard fetch origin main
+#   git -C /root/emergent.memory-wt/runlog-dashboard reset --hard origin/main
+#   systemctl restart runlog
+#
+# CAVEAT for the dedicated-checkout setup: `runlog test` run from your normal
+# checkout writes runs to *its* .runlog/runs.db, while the daemon serves the
+# dedicated checkout's copy — the UI would not show those runs. Run the tests
+# from the dedicated checkout, or point the tasks at the daemon's DB
+# (WORK_DIR/RUNLOG_DB override). `runlog:status` warns when the two paths differ.
 #
 # Discovery is computed once at startup, so restart the unit after changing the
 # checkout, its branch, or its config:  systemctl restart runlog
@@ -61,8 +77,8 @@ Type=simple
 # Must be the e2e project dir: runlog resolves .runlog.yaml (daemon_port, db,
 # test categories), the .runlog/ pidfile, and test discovery from it.
 # NOTE: WorkingDirectory= does not expand environment variables — use a drop-in
-# to change it, not an EnvironmentFile.
-WorkingDirectory=/root/emergent.memory-wt/runlog-dashboard/e2e
+# to change it, not an EnvironmentFile. This path must exist before `enable --now`.
+WorkingDirectory=/root/emergent.memory/e2e
 Environment=PATH=/root/go/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/root
 
@@ -70,7 +86,7 @@ Environment=HOME=/root
 # re-execs and detaches, so systemd would see the parent exit and treat the unit
 # as failed. --daemon serves in the foreground, which is what Type=simple
 # expects, and still writes .runlog/daemon.pid and removes it on SIGTERM.
-ExecStart=/root/go/bin/runlog --daemon --db /root/emergent.memory-wt/runlog-dashboard/e2e/.runlog/runs.db --port=17432
+ExecStart=/root/go/bin/runlog --daemon --db /root/emergent.memory/e2e/.runlog/runs.db --port=17432
 
 Restart=always
 RestartSec=3
