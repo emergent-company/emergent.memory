@@ -8,7 +8,7 @@ Defines the single-authority posture for Memory's fine-grained authorization: th
 
 ### Requirement: Single fine-grained scope authority
 
-The system SHALL treat the application as the sole authority for fine-grained Memory scopes. The identity provider SHALL be used for authentication only: it establishes the subject identity and MAY carry at most one coarse, app-defined signal. An OIDC token SHALL NOT, by default, be able to grant a fine-grained Memory scope. No other third party SHALL be an authority for Memory scopes. Where an identity-provider-side coarse signal is configured, it SHALL map to at most one application-side superadmin grant and SHALL NOT populate any other entitlement tier.
+The system SHALL treat the application as the sole authority for fine-grained Memory scopes. The identity provider SHALL be used for authentication only: it establishes the subject identity and MAY carry at most one coarse, app-defined signal. An OIDC token SHALL NOT be able to grant a fine-grained Memory scope in the target state: the standing default of the token-scope trust flag SHALL be disabled. During the sequenced rollout the flag is introduced enabled and flips to disabled in the following release (see 'Sequenced rollout preserves existing grants'). No other third party SHALL be an authority for Memory scopes. Where an identity-provider-side coarse signal is configured, it SHALL map to at most one application-side superadmin grant and SHALL NOT populate any other entitlement tier.
 
 #### Scenario: A token-carried Memory scope is not a grant by default
 - **GIVEN** the token-scope trust flag is disabled
@@ -51,12 +51,17 @@ The system SHALL resolve effective scopes from exactly one of two mutually exclu
 
 ### Requirement: Entitlement tier grants
 
-The system SHALL grant, for an OIDC session: a superadmin grant the full scope catalogue, terminally; an `org_admin` membership the organization-administration scope set, comprising `org:read`, `org:invite:create`, `org:project:create`, and `org:project:delete`, and containing no `project:*` scope and no data, schema, or agent scope; and a project membership the role scope set for the declared project. The organization-administration set and the project role set SHALL be combined, because they govern disjoint resource families. A superadmin grant SHALL be terminal and SHALL NOT be combined with lower tiers. The request's organization SHALL be resolved from the declared project's owning organization, or the standalone organization when no project is declared. An `org_admin` membership SHALL NOT widen the project-scope tier: the organization-administration set SHALL contain no `project:*` scope, so it cannot add a project scope a pure project member would not have.
+The system SHALL grant, for an OIDC session: a **full** superadmin grant (`superadmin_full`) the full scope catalogue, terminally; a **read-only** superadmin grant (`superadmin_readonly`) SHALL NOT receive the full scope catalogue and SHALL receive at most a bounded read-only set; an `org_admin` membership the organization-administration scope set, comprising `org:read`, `org:invite:create`, `org:project:create`, and `org:project:delete`, and containing no `project:*` scope and no data, schema, or agent scope; and a project membership the role scope set for the declared project. The organization-administration set and the project role set SHALL be combined, because they govern disjoint resource families. A full superadmin grant SHALL be terminal and SHALL NOT be combined with lower tiers. The request's organization SHALL be resolved from the declared project's owning organization, or else from an org context validated by the authentication middleware; where neither is available the `org_admin` tier SHALL NOT be granted. An `org_admin` membership SHALL NOT widen the project-scope tier: the organization-administration set SHALL contain no `project:*` scope, so it cannot add a project scope a pure project member would not have.
 
 #### Scenario: Superadmin receives the full catalogue
-- **GIVEN** a user holds an active superadmin grant
+- **GIVEN** a user holds an active `superadmin_full` grant
 - **WHEN** the session scopes are resolved
 - **THEN** the session receives the full scope catalogue
+
+#### Scenario: A read-only superadmin does not receive the full catalogue
+- **GIVEN** a user holds a `superadmin_readonly` grant
+- **WHEN** the session scopes are resolved
+- **THEN** the session does not receive the full scope catalogue and receives no write or admin scope
 
 #### Scenario: Organization administrator receives the organization-administration set
 - **GIVEN** a user holds `org_admin` in the request's organization and no project membership
@@ -83,7 +88,7 @@ The system SHALL grant, for an OIDC session: a superadmin grant the full scope c
 
 ### Requirement: Organization-scoped entitlement decisions
 
-The system SHALL authorize organization-scoped decisions with a check of: an active superadmin grant, or an `org_admin` membership. The check SHALL NOT consult the project membership role. `admin:all` token minting SHALL be authorized through this check. The check SHALL preserve the existing any-organization semantics of `org_admin` eligibility (an `org_admin` in any organization qualifies), so replacing the existing bespoke query does not silently narrow cross-organization behaviour. The check SHALL be defined once and consumed by every org-scoped decision; existing bespoke membership queries SHALL become consumers of it.
+The system SHALL authorize organization-scoped decisions with a check of: an active **full** superadmin grant (`superadmin_full`), or an `org_admin` membership. A `superadmin_readonly` grant SHALL NOT satisfy this check. The check SHALL NOT consult the project membership role. `admin:all` token minting SHALL be authorized through this check. The check SHALL preserve the existing any-organization semantics of `org_admin` eligibility (an `org_admin` in any organization qualifies), so replacing the existing bespoke query does not silently narrow cross-organization behaviour. The check SHALL be defined once and consumed by every org-scoped decision; existing bespoke membership queries SHALL become consumers of it.
 
 #### Scenario: Organization administrator is authorized to mint an admin:all token
 - **GIVEN** a user holds `org_admin` in an organization and no superadmin grant
@@ -97,6 +102,11 @@ The system SHALL authorize organization-scoped decisions with a check of: an act
 
 #### Scenario: A user with neither entitlement is refused
 - **GIVEN** a user holds neither a superadmin grant nor an `org_admin` membership
+- **WHEN** the user requests an `admin:all` token
+- **THEN** the request is refused
+
+#### Scenario: A read-only superadmin is refused admin:all minting
+- **GIVEN** a user holds a `superadmin_readonly` grant and no `org_admin` membership
 - **WHEN** the user requests an `admin:all` token
 - **THEN** the request is refused
 

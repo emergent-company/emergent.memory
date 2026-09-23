@@ -49,7 +49,7 @@ The system SHALL resolve OIDC scopes in the order: explicit Memory scopes from t
 - **THEN** the session receives no Memory scopes
 
 ### Requirement: Explicit Memory scopes are authoritative
-When a validated token carries scopes that are part of the Memory scope vocabulary, the system SHALL use those scopes verbatim and terminally — adding no role-derived, entitlement, or default scopes — but only while the `MEMORY_OIDC_TRUST_TOKEN_SCOPES` flag is enabled. When that flag is disabled, the system SHALL ignore Memory scope names carried by the token and resolve scopes solely from application-owned state. Non-Memory OIDC scopes (such as `openid`, `profile`, `email`, `offline_access`) SHALL NOT be treated as an explicit grant in any configuration.
+When a validated token carries scopes that are part of the Memory scope vocabulary, the system SHALL use those scopes verbatim and terminally — adding no role-derived, entitlement, or default scopes — but only while the `MEMORY_OIDC_TRUST_TOKEN_SCOPES` flag is enabled. The flag SHALL be introduced enabled so that the introduction release changes no effective grant, and its standing default SHALL be disabled from the following release (see `scope-authority` 'Sequenced rollout preserves existing grants'). When that flag is disabled, the system SHALL ignore Memory scope names carried by the token and resolve scopes solely from application-owned state. Non-Memory OIDC scopes (such as `openid`, `profile`, `email`, `offline_access`) SHALL NOT be treated as an explicit grant in any configuration.
 
 #### Scenario: Explicit token scopes win over role derivation
 - **GIVEN** `MEMORY_OIDC_TRUST_TOKEN_SCOPES=true`

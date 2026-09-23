@@ -7,7 +7,7 @@ Sequencing rule: **never remove a grant path in the same release that removes it
 ## 0. Preconditions
 
 - [x] 0.1 #803 (`fix/oidc-role-scope-sets`) merged as `589923ff`; this change's `oidc-scope-mapping` delta is authored against the post-#803 main spec with its scenario names carried forward
-- [ ] 0.2 Operator answers the eight open questions in `design.md`; re-scope the flag-timing tasks if the answers change the release calendar
+- [ ] 0.2 Operator answers the ten open questions in `design.md`; re-scope the flag-timing tasks if the answers change the release calendar
 - [ ] 0.3 Merge this design PR (open questions answered or explicitly deferred)
 
 ## 1. App-owned configuration vocabulary (non-breaking)
@@ -30,11 +30,11 @@ Sequencing rule: **never remove a grant path in the same release that removes it
 - [ ] 3.2 Add a **dedicated** `scope_authority` object to the health response (the `Check` type is `{Status, Message}` and cannot carry booleans) exposing `token_scopes_trusted`, `permissive_all_grant`, and `introspection_configured`, and verify with a health handler unit test
 - [ ] 3.3 Decide health auth posture per open question 5 and apply it; verify the field is absent-or-false in a non-permissive config
 
-## 4. Organization entitlement tier (non-breaking)
+## 4. Organization entitlement tier (non-breaking; adds deliberate session-scope widenings — see design security analysis)
 
-- [ ] 4.1 Add the entitlement tiers to the OIDC resolution point: superadmin → full catalogue (terminal); `org_admin` → the organization-administration set (`org:read`, `org:invite:create`, `org:project:create`, `org:project:delete`); project membership → the #803 role set. Verify each tier's exact set with set-equality tests, the org∪project combination, and no-entitlement → default → empty
-- [ ] 4.2 Thread the request organization into the resolution seam (owning org of `X-Project-ID`, or the standalone org), add the org-scoped `kb.organization_memberships` query, and verify an org-isolation test (org_admin in A is not org_admin for a project in B)
-- [ ] 4.3 Add a single app-side **decision** check behind one seam — `superadmin OR org_admin`, **no project tier**, preserving existing any-organization semantics — and route `apitoken.CanGrantAdminAll` through it instead of its bespoke `EXISTS` query; verify the existing `admin:all` minting tests still pass plus an `org_admin` allowed case, a bare `project_admin` refused case, and a neither-entitlement denied case
+- [ ] 4.1 Add the entitlement tiers to the OIDC resolution point: `superadmin_full` → full catalogue (terminal); `superadmin_readonly` → a bounded read-only set, never the full catalogue; `org_admin` → the organization-administration set (`org:read`, `org:invite:create`, `org:project:create`, `org:project:delete`); project membership → the #803 role set. Verify each tier's exact set with set-equality tests, the org∪project combination, a `superadmin_readonly` denial of the full catalogue, and no-entitlement → default → empty
+- [ ] 4.2 Thread the request organization into the resolution seam (owning org of `X-Project-ID`, or else an auth-middleware-validated org id; no trusted org context → tier 2 not granted), add the org-scoped `kb.organization_memberships` query, and verify an org-isolation test (org_admin in A is not org_admin for a project in B) plus a no-org-context tier-2-denied test
+- [ ] 4.3 Add a single app-side **decision** check behind one seam — `superadmin_full OR org_admin`, **no project tier**, preserving existing any-organization semantics (and requiring `superadmin_full`, so a `superadmin_readonly` row is refused) — and route `apitoken.CanGrantAdminAll` through it instead of its bespoke `EXISTS` query; verify the existing `admin:all` minting tests still pass plus an `org_admin` allowed case, a bare `project_admin` refused case, a `superadmin_readonly` refused case, and a neither-entitlement denied case
 - [ ] 4.4 Verify `org_admin` does **not** widen the session's project scope set — tier 2 carries no `project:*`/data/schema/agent scope, so the org∪project union adds nothing a pure member would lack — with an exact-set test
 - [ ] 4.5 **Deferred follow-up (separate change):** route the remaining org-scoped decision points (org settings, org member invitation, project create/delete within an org) through the shared entitlement check. Recorded so it is not lost, but out of this implementation's scope (design open question 8)
 
@@ -42,7 +42,7 @@ Sequencing rule: **never remove a grant path in the same release that removes it
 
 - [ ] 5.1 Change `domain/standalone/bootstrap.go` to write `role = 'org_admin'` for the bootstrapped organization membership, and verify with a bootstrap unit test
 - [ ] 5.2 Add a Goose migration normalising `kb.organization_memberships` rows with `role = 'owner'` to `org_admin`, idempotent, with a documented no-op down path, and verify up/down locally
-- [ ] 5.3 **Review the widening explicitly:** standalone requests already hold `GetAllScopes()` via `checkStandaloneAPIKey`, so the only principal that genuinely widens under D5 is a **non-standalone** `owner` row (newly eligible to mint `admin:all`). Confirm with the operator (open question 4) that no non-standalone `owner` rows exist; record the row count in the PR
+- [ ] 5.3 **Review the widening explicitly:** standalone requests already hold `GetAllScopes()` via `checkStandaloneAPIKey`, so the only principal that genuinely widens under D5 is a **non-standalone** `owner` row (newly eligible to mint `admin:all` and to pass the project-transfer `org_admin` check). Confirm with the operator (open question 4) that no non-standalone `owner` rows exist; record the row count in the PR
 - [ ] 5.4 Correct the stale `owner`-is-the-org-role claims in `openspec/specs/project-viewer-role/spec.md` and the migration 00165 comment, and verify `openspec validate --specs --strict` passes
 
 ## 6. Spec sync (non-breaking)
@@ -59,7 +59,7 @@ Sequencing rule: **never remove a grant path in the same release that removes it
 
 ## 8. [BREAKING] Remove the duplicate authority (Release N+2)
 
-- [ ] 8.1 Delete the token-trust flag and the `filterMemoryScopes` grant branch; keep `memoryScopeVocabulary` only as the API-token vocabulary check
+- [ ] 8.1 Delete the token-trust flag and the `filterMemoryScopes` grant branch. `memoryScopeVocabulary` then loses its only production consumer (API-token creation validates against `domain/apitoken.ValidApiTokenScopes`), so delete it too unless a new consumer is deliberately wired; verify no dead reference remains
 - [ ] 8.2 Delete `UserinfoGrantAllScopes`, the `authSourceUserinfo` all-grant branch in `finalizeOIDCUser`, and the `permissive_all_grant` health field
 - [ ] 8.3 Verify the userinfo fallback now uses the standard fail-closed resolution with an exact-set test; verify `openspec validate --all --strict` passes
 - [ ] 8.4 Re-scope #736 item 3 against the reduced live-Zitadel surface and update the issue

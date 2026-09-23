@@ -4,14 +4,14 @@ Memory derives a request's effective scopes from several planes, and two of them
 
 | Plane | Where | Authority today |
 |---|---|---|
-| IdP token scopes | `filterMemoryScopes(rawScopes)` — `apps/server/pkg/auth/scope_mapping.go:79` | **Memory scope names on an OIDC token are honoured verbatim** and win over everything else (`oidc-scope-mapping` spec: "Explicit Memory scopes are authoritative") |
-| App role map | `roleToScopes` — `scope_mapping.go:67`, from `kb.project_memberships` | viewer / user / admin (#803) |
+| IdP token scopes | `filterMemoryScopes(rawScopes)` — `apps/server/pkg/auth/scope_mapping.go:112` | **Memory scope names on an OIDC token are honoured verbatim** and win over everything else (`oidc-scope-mapping` spec: "Explicit Memory scopes are authoritative") |
+| App role map | `roleToScopes` — `scope_mapping.go:96`, from `kb.project_memberships` | viewer / user / admin (#803) |
 | App default set | `ZITADEL_OIDC_DEFAULT_SCOPES` — `internal/config/config.go:203` | app policy, IdP-named |
 | App all-grant | `ZITADEL_USERINFO_GRANT_ALL_SCOPES`, default `true` — `config.go:211`, gated by `auth_source == userinfo && oidcAllGrantEnabled()` — `middleware.go:638` | app policy, IdP-named, permissive |
-| Machine grants | `core.api_tokens.scopes` + `RequireAPITokenScopes` — `middleware.go:431` | app-owned, a **separate authentication plane** (`validateAPIToken` returns before OIDC resolution, `middleware.go:567`) |
-| Coarse platform flag | `core.superadmins` (`revoked_at IS NULL`) — `domain/apitoken/repository.go:274` | app-owned, but **not a scope source today** — read only by `CanGrantAdminAll`; it never feeds `AuthUser.Scopes` |
-| Org membership | `kb.organization_memberships` | app-owned, but **not a scope source today** — read only by `CanGrantAdminAll` (`repository.go:276`) |
-| Scope catalogue | `GetAllScopes()` — `middleware.go:1041`; `memoryScopeVocabulary` — `scope_mapping.go:34` | app-owned |
+| Machine grants | `core.api_tokens.scopes` + `RequireAPITokenScopes` — `middleware.go:431` | app-owned, a **separate authentication plane** (`validateAPIToken` returns before OIDC resolution, `middleware.go:568`) |
+| Coarse platform flag | `core.superadmins` (`revoked_at IS NULL`) — `domain/apitoken/repository.go:270` | app-owned, but **not a scope source today** — read only by `CanGrantAdminAll`; it never feeds `AuthUser.Scopes` |
+| Org membership | `kb.organization_memberships` | app-owned, but **not a scope source today** — read by `CanGrantAdminAll` (`repository.go:276`) and by the route-local project-transfer check (`domain/projects/service.go:409-414`, see §D4) |
+| Scope catalogue | `GetAllScopes()` — `middleware.go:1041`; `memoryScopeVocabulary` — `scope_mapping.go:64` | app-owned |
 
 The duplication is the first row: the IdP can mint fine-grained grants. Everything below it was the app trying to compensate — a role map, a default set, and an all-grant escape hatch.
 
@@ -78,20 +78,20 @@ Deprecation mechanics: if a deprecated name is set and the canonical name is not
 
 `UserinfoGrantAllScopes` defaults `true` and short-circuits to `GetAllScopes()` for the userinfo path whenever introspection is unconfigured (`middleware.go:638`). This is a pilot posture, and it should be impossible to run in production by accident.
 
-- **While `UserinfoGrantAllScopes && !introspectionConfigured`**: emit a startup `WARN` ("scope authority: userinfo all-grant enabled; every authenticated user receives the full scope catalogue — configure introspection or disable `MEMORY_USERINFO_GRANT_ALL_SCOPES`"), and expose a health field (D7).
+- **While `UserinfoGrantAllScopes && !introspectionConfigured`**: emit a startup `WARN` ("scope authority: userinfo all-grant enabled; every userinfo-authenticated user receives the full scope catalogue — configure introspection or disable `MEMORY_USERINFO_GRANT_ALL_SCOPES`"), and expose a health field (D7).
 - **Then remove**: once introspection is the norm, delete the knob, the `authSourceUserinfo` all-grant branch, and its health field. After removal the userinfo fallback uses the standard fail-closed resolution like every other path.
 
 Sequencing: signal → measure (`introspection_configured` in the health field tells the operator how close they are) → delete. D4 must land before D3's removal, because the all-grant is what users currently rely on for org/superadmin access.
 
 ### D4 — Entitlement tiers (introduced, not existing)
 
-Today exactly one check reads superadmin/org membership (`apitoken.CanGrantAdminAll`), and **neither feeds session scopes**. This design defines them as app-side scope tiers, consulted at the single OIDC resolution point:
+Today exactly one *shared* check reads superadmin/org membership (`apitoken.CanGrantAdminAll`; a route-local project-transfer check reads org membership too), and **neither feeds session scopes**. This design defines them as app-side scope tiers, consulted at the single OIDC resolution point:
 
 ```
 OIDC session scope resolution (app-owned, first match for the project tier):
 
   0. Token-carried Memory scopes   only while MEMORY_OIDC_TRUST_TOKEN_SCOPES is on   (terminal)
-  1. superadmin                    core.superadmins, revoked_at IS NULL              (terminal: full catalogue)
+  1. superadmin_full               core.superadmins, revoked_at IS NULL AND role='superadmin_full' (terminal: full catalogue)
   2. org_admin                     kb.organization_memberships for the request org   (org-administration set)
   3. project membership            kb.project_memberships for X-Project-ID           (role scope set, #803)
   4. app-owned default set         MEMORY_OIDC_DEFAULT_SCOPES
@@ -100,15 +100,15 @@ OIDC session scope resolution (app-owned, first match for the project tier):
 
 Tier semantics — specified explicitly, because the difference is a security decision:
 
-- **superadmin (tier 1)** is terminal and grants the full scope catalogue. This is the post-all-grant replacement for platform operators; it is a deliberate grant, not a subset of any prior path.
+- **superadmin (tier 1)** is terminal. A **full** superadmin (`superadmin_full`) grants the full scope catalogue; a **read-only** superadmin (`superadmin_readonly`, migration 00070) SHALL NOT receive the full catalogue — it maps to at most a bounded read-only set, so the role boundary enforced by `domain/superadmin/handler.go:112-114` is not undone at the scope layer (open question 9). This is the post-all-grant replacement for platform operators; it is a deliberate grant, not a subset of any prior path.
 - **org_admin (tier 2)** grants the **org-administration scope set**: `org:read`, `org:invite:create`, `org:project:create`, `org:project:delete`. It SHALL contain **no `project:*` scope** and no data, schema, or agent scope. The exact list is operator-confirmable (open question 2).
 - **project membership (tier 3)** grants the nested role set from #803 for the declared project only.
 - **Tier 2 and tier 3 are disjoint resource families and are combined** (a user can be org admin and project member): the session's app-derived scopes are the union of the org-administration set and the project-role set. Because the org set carries no `project:*` scope, the union cannot add a project scope a pure project member would not have. There is **no union** between tier 0 (token scopes) and any app-derived tier, nor between tier 4 and any entitlement tier.
 - Tier 1 short-circuits: no union is needed.
 
-**The request organization must be resolved.** `resolveOIDCScopes(ctx, userID, projectID, rawScopes)` (`scope_mapping.go:104`) has no organization input today, and tier 2 needs one. The request's organization is the owning organization of the project declared by `X-Project-ID`, or the standalone organization when no project is declared. This is a new parameter on the resolution seam and a new query (`kb.organization_memberships` scoped to that organization); it is called out as a task and covered by an org-isolation scenario (org admin in A is not org admin in B).
+**The request organization must be resolved.** `resolveOIDCScopes(ctx, userID, projectID, rawScopes)` (`scope_mapping.go:140`) has no organization input today, and tier 2 needs one. The resolver acquires a **trusted** org context from exactly one of: (a) the owning organization of the project declared by `X-Project-ID` (route-derived, authoritative); or (b) the authenticated organization of a non-standalone request, carried into the seam by `RequireAuth` rather than read raw from the client. `validateToken` passes only `X-Project-ID` into resolution today (`middleware.go:527-529`); `X-Org-ID` is attached later in `RequireAuth` (`middleware.go:194`), so the seam must be extended to carry an org id explicitly, and a bare client `X-Org-ID` header MUST NOT be trusted without a membership check. Where no trusted org context exists (non-standalone request, no project declared), tier 2 SHALL NOT be granted. This is a new parameter on the resolution seam and a new query (`kb.organization_memberships` scoped to that organization); it is called out as a task and covered by an org-isolation scenario (org admin in A is not org admin in B). The residual source decision (route-bound org id only, or a validated `X-Org-ID`) is open question 10.
 
-**The decision check is narrower than the scope tier list.** `apitoken.CanGrantAdminAll` today is `superadmin OR org_admin-in-any-org` — **no project tier**. The shared decision check (task 4.2) SHALL therefore be `superadmin OR org_admin` only: adding the project tier there would let a bare `project_admin` mint `admin:all`, a widening the security analysis does not sanction. It also SHALL preserve the existing **any-org** semantics of `org_admin` eligibility, so replacing the bespoke query does not silently narrow cross-organization minting. The request-org scoping applies to the *scope grant* (tier 2), not to the decision check.
+**The decision check is narrower than the scope tier list.** `apitoken.CanGrantAdminAll` today is `superadmin OR org_admin-in-any-org`, with no role filter on the superadmin arm — **no project tier**. The shared decision check (task 4.3) SHALL be `superadmin_full OR org_admin` only: adding the project tier there would let a bare `project_admin` mint `admin:all`, a widening the security analysis does not sanction, and because `admin:all` grants write scopes a `superadmin_readonly` row SHALL NOT mint it (a deliberate narrowing of today's unfiltered check — open question 9). It also SHALL preserve the existing **any-org** semantics of `org_admin` eligibility, so replacing the bespoke query does not silently narrow cross-organization minting. The request-org scoping applies to the *scope grant* (tier 2), not to the decision check.
 
 A Zitadel coarse signal, if an operator configures one, may **bootstrap tier 1 only**. It must not populate tier 2 or 3.
 
@@ -118,14 +118,15 @@ This is specified, not implemented here. Making the broad set of org-scoped deci
 
 The two vocabularies disagree:
 
-- **Writes `org_admin`**: `domain/orgs/repository.go:153` (org creation), `domain/invites/service.go:175` (accepted-role validation; `:293` is only a display label in `roleLabelFor`).
-- **Checks `org_admin`**: `domain/apitoken/repository.go:276` — the only org-membership authorization check.
-- **Writes `owner`**: `domain/standalone/bootstrap.go:143` (standalone bootstrap org membership).
-- **Claims `owner` is valid**: `openspec/specs/project-viewer-role/spec.md:10`, migration 00165's comment, and the archived `oidc-scope-mapping` proposal.
+- **Writes `org_admin`**: `domain/orgs/repository.go:153` (org creation).
+- **Checks `org_admin`**: `domain/apitoken/repository.go:276` — the shared `admin:all` entitlement check. The route-local project-transfer check (`domain/projects/service.go:409-414`) also reads `org_admin`; §4 defers routing it through the shared seam.
+- **Validates `org_admin`**: `domain/invites/service.go:175` — an entry in the invite-role allow-list; it writes no `kb.organization_memberships` row (its accept path writes the distinct `kb.org_memberships` table, `service.go:375-379`). `:293` is only a display label in `roleLabelFor`.
+- **Writes `owner`**: `domain/standalone/bootstrap.go:143` (standalone bootstrap org membership) — the only production writer.
+- **Claims `owner` is valid**: `openspec/specs/project-viewer-role/spec.md:10`, migration 00165's comment, and the archived `oidc-scope-mapping` proposal/design.
 
-`org_admin` is authoritative — it is what the only consumer checks and what every other writer writes. The `owner` claim is stale: it describes a role no other code path uses.
+`org_admin` is authoritative — it is what the shared consumer checks and what the org-creation writer writes. The `owner` claim is stale: it describes a role no production code path reads.
 
-**Correct framing of the risk.** The obvious story ("standalone org creators hit a latent 403") is mostly cosmetic: standalone requests are authenticated by `checkStandaloneAPIKey` (`middleware.go:826`), which returns `Scopes: GetAllScopes()` regardless of membership, so standalone users already hold full access and do not need `CanGrantAdminAll` to succeed. The **real** D5 risk is the opposite direction and is exclusive to **non-standalone** `owner` rows (if any exist): normalising them to `org_admin` makes them newly eligible to mint `admin:all` tokens where they previously failed. That is a deliberate widening and must be reviewed against real row counts (open question 4) before the migration lands.
+**Correct framing of the risk.** The obvious story ("standalone org creators hit a latent 403") is mostly cosmetic: standalone requests are authenticated by `checkStandaloneAPIKey` (`middleware.go:788`), which returns `Scopes: GetAllScopes()` regardless of membership, so standalone users already hold full access and do not need `CanGrantAdminAll` to succeed. The **real** D5 risk is the opposite direction and is exclusive to **non-standalone** `owner` rows (if any exist): normalising them to `org_admin` makes them newly eligible to mint `admin:all` tokens (and to pass the project-transfer `org_admin` check) where they previously failed. That is a deliberate widening and must be reviewed against real row counts (open question 4) before the migration lands.
 
 Reconciliation:
 
@@ -149,7 +150,7 @@ The IdP token branch is present **only** while `MEMORY_OIDC_TRUST_TOKEN_SCOPES` 
 
 ### D7 — Health and observability
 
-The existing health `Check` type is `{Status, Message}` (`domain/health/handler.go:99-103`) and cannot carry structured booleans. Add a **dedicated** top-level `scope_authority` object to the health response (alongside `Tracing`, `handler.go:79`) with at least:
+The existing health `Check` type is `{Status, Message}` (`domain/health/handler.go:101-104`) and cannot carry structured booleans. Add a **dedicated** top-level `scope_authority` object to the health response (alongside `Tracing`, `handler.go:79`) with at least:
 
 - `token_scopes_trusted` — whether `MEMORY_OIDC_TRUST_TOKEN_SCOPES` is on (should be `false` in the target state);
 - `permissive_all_grant` — whether the userinfo all-grant is active (D3);
@@ -183,11 +184,12 @@ At every step the break is preventable by configuration, and the warning names t
 **Precision over a blanket claim.** There is no blanket "nobody gains more than today" — two deliberate widenings exist. The correct statement is:
 
 - **Scope-resolution path (token trust off): strictly narrower.** Removing the token branch can only drop a grant source; the app-derived tiers replace it. Relative to a *strict introspection* deployment (default empty), a superadmin or `org_admin` newly gains their tier — but that is the explicit entitlement model (D4), and the same principal could already obtain more via the userinfo all-grant whenever introspection was unconfigured. Relative to the **all-grant pilot posture**, every non-superadmin is strictly narrower: they lose the full catalogue.
-- **No D4 tier exceeds the all-grant.** The all-grant hands the full catalogue to any userinfo-authenticated user; tier 1 is exactly `GetAllScopes()` and tier 2 is bounded strictly below it. This bound applies to the D4 *session-scope* tiers only — D5's `admin:all` **minting** entitlement is a separate grant and is not bounded by `GetAllScopes()` (the `admin:all` umbrella includes scopes outside the catalogue, `middleware.go:387-410`).
+- **No D4 tier exceeds the all-grant.** The all-grant hands the full catalogue to any userinfo-authenticated user; `superadmin_full` is exactly `GetAllScopes()`, while `superadmin_readonly` and tier 2 are bounded strictly below it. This bound applies to the D4 *session-scope* tiers only — D5's `admin:all` **minting** entitlement is a separate grant and is not bounded by `GetAllScopes()` (the `admin:all` umbrella includes scopes outside the catalogue, `middleware.go:387-410`).
 - **IdP-minting authority is removed.** With trust off, a compromised IdP client or a Zitadel misconfiguration can no longer mint a Memory grant — the security point of the change.
-- **Bounded widenings, each reviewed separately:**
-  - **D4 tier 1/2** — superadmin and `org_admin` gain session scopes they do not have on the strict introspection path. Required for the target state to function once the all-grant is removed; bounded by the explicit org-administration set (tier 2) and by `GetAllScopes()` (tier 1).
-  - **D5** — normalising non-standalone `owner` rows to `org_admin` gives those principals `admin:all` minting rights they previously lacked. Gated on the open-question-4 row count.
+- **Bounded widenings and one deliberate narrowing, each reviewed separately:**
+  - **D4 tier 1/2** — `superadmin_full` and `org_admin` gain session scopes they do not have on the strict introspection path. Required for the target state to function once the all-grant is removed; bounded by the explicit org-administration set (tier 2) and by `GetAllScopes()` (`superadmin_full`).
+  - **D4 tier 1 (readonly)** — a deliberate *narrowing*: `superadmin_readonly` no longer resolves to the full catalogue and no longer mints `admin:all` (today's unfiltered check allows both). Confirm in open question 9.
+  - **D5** — normalising non-standalone `owner` rows to `org_admin` gives those principals `admin:all` minting rights and project-transfer authorization they previously lacked. Gated on the open-question-4 row count.
 - **The permissive default only narrows**: D3 moves "everyone gets everything" → fail-closed.
 - **Failures fail closed, not open**: a removed alias leaves the default set empty (403), never a silent grant.
 
@@ -220,6 +222,8 @@ Net: item 3 gets materially smaller and should be re-scoped against this shape r
 6. **Superadmin via Zitadel.** Reserve the one-claim→one-superadmin shape (as designed), or implement it now to bootstrap the first superadmin over SSO?
 7. **All-grant removal gate.** Confirm "introspection configured" is the right precondition, or name a release target.
 8. **Org-tier routing scope.** Confirm deferring the broad "every org-scoped decision consumes the tier" refactor to a follow-up change, keeping this one to the tier definition plus `CanGrantAdminAll` as its first consumer.
+9. **Read-only superadmin treatment.** `core.superadmins` distinguishes `superadmin_full` from `superadmin_readonly` (migration 00070), and the role boundary is enforced today at `domain/superadmin/handler.go:112-114`. Confirm that tier 1 resolves `superadmin_full` only (a read-only row gets a bounded read set, or nothing) and that `admin:all` minting requires `superadmin_full` — both are narrowings of today's unfiltered `revoked_at IS NULL` check and need an explicit yes.
+10. **Trusted org-context source.** For tier 2, confirm the resolver may carry only a route-derived/`RequireAuth`-validated org id, or whether a client `X-Org-ID` may be accepted subject to a membership check. Until a source is chosen, a non-standalone request with no declared project grants no tier 2.
 
 ## Relationship to #803 (merged)
 
