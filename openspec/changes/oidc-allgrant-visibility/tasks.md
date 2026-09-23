@@ -6,12 +6,12 @@
 ## 2. Startup warning (visibility)
 
 - [x] 2.1 Emit a `WARN` at startup when the all-grant is active, naming the effect and both remediations (`ZITADEL_CLIENT_JWT`/`ZITADEL_CLIENT_JWT_PATH`, or `ZITADEL_USERINFO_GRANT_ALL_SCOPES=false`)
-- [x] 2.2 Capture the log line in `TestWarnIfOIDCAllGrantActive` for all four combinations (asserting nothing is logged when inactive)
+- [x] 2.2 Capture the log line in `TestWarnIfOIDCAllGrantActive` for all four combinations (asserting nothing is logged when inactive), and assert the startup path itself emits it via `TestNewMiddlewareWarnsWhenAllGrantActive`
 
 ## 3. Health visibility
 
 - [x] 3.1 Add an `oidc_all_grant` check entry reporting `warning`/`healthy`; keep it out of the critical/optional component lists so it never changes the overall status
-- [x] 3.2 Cover the check in `TestOIDCAllGrantCheck` for all four combinations
+- [x] 3.2 Cover the check in `TestOIDCAllGrantCheck` for all four combinations; assert the entry is actually registered by `runChecks` (`TestRunChecksEmitsOIDCAllGrant`) and that a `warning` (or even `unhealthy`) entry cannot alter the overall status or HTTP code (`TestOverallHealthIgnoresOIDCAllGrantWarning`)
 
 ## 4. Spec + docs
 

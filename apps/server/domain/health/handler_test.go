@@ -3,14 +3,21 @@ package health
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/internal/version"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/kreuzberg"
+	"github.com/emergent-company/emergent.memory/pkg/whisper"
 )
 
 func TestBuildInfo(t *testing.T) {
@@ -284,5 +291,84 @@ func TestOIDCAllGrantCheck(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestOverallHealthIgnoresOIDCAllGrantWarning pins the promise that the new
+// oidc_all_grant entry never changes system health semantics: it is deliberately
+// absent from the critical/optional component lists, so a "warning" (and even a
+// hypothetical "unhealthy") entry must leave the overall status "healthy" with
+// HTTP 200.
+func TestOverallHealthIgnoresOIDCAllGrantWarning(t *testing.T) {
+	healthy := func() map[string]Check {
+		return map[string]Check{
+			"database":        {Status: "healthy"},
+			"storage":         {Status: "healthy"},
+			"auth":            {Status: "healthy"},
+			"kreuzberg":       {Status: "healthy"},
+			"whisper":         {Status: "healthy"},
+			"embeddings":      {Status: "healthy"},
+			"database_backup": {Status: "healthy"},
+			"oidc_all_grant":  {Status: "warning", Message: "all-grant active"},
+		}
+	}
+
+	status, code := overallHealth(healthy())
+	if status != "healthy" {
+		t.Errorf("overall status = %q, want %q", status, "healthy")
+	}
+	if code != http.StatusOK {
+		t.Errorf("status code = %d, want %d", code, http.StatusOK)
+	}
+
+	checks := healthy()
+	checks["oidc_all_grant"] = Check{Status: "unhealthy"}
+	status, code = overallHealth(checks)
+	if status != "healthy" || code != http.StatusOK {
+		t.Errorf("oidc_all_grant moved the overall status: status = %q, code = %d; want healthy/200", status, code)
+	}
+}
+
+// healthTestPool returns a pgxpool.Pool whose connections always fail to dial,
+// so runChecks' database probe reports an error without touching a real
+// database or the network.
+func healthTestPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pc, err := pgxpool.ParseConfig("postgres://u:p@127.0.0.1:1/health_test")
+	if err != nil {
+		t.Fatalf("parse pool config: %v", err)
+	}
+	pc.ConnConfig.DialFunc = func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("no database in unit tests")
+	}
+	p, err := pgxpool.NewWithConfig(context.Background(), pc)
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	t.Cleanup(p.Close)
+	return p
+}
+
+// TestRunChecksEmitsOIDCAllGrant proves the registration itself, not just the
+// check body: runChecks must emit the oidc_all_grant key with the warning status
+// on the shipped default posture.
+func TestRunChecksEmitsOIDCAllGrant(t *testing.T) {
+	h := &Handler{
+		pool:       healthTestPool(t),
+		db:         fakeRowQuerier{row: fakeRow{scanErr: pgx.ErrNoRows}},
+		cfg:        &config.Config{Zitadel: config.ZitadelConfig{UserinfoGrantAllScopes: true}},
+		storage:    &storage.Service{},
+		kreuzberg:  &kreuzberg.Client{},
+		whisper:    &whisper.Client{},
+		embeddings: &embeddings.Service{},
+	}
+
+	checks := h.runChecks(context.Background())
+	got, ok := checks["oidc_all_grant"]
+	if !ok {
+		t.Fatalf("runChecks did not emit the oidc_all_grant entry; got keys %v", checks)
+	}
+	if got.Status != "warning" {
+		t.Errorf("oidc_all_grant status = %q, want %q", got.Status, "warning")
 	}
 }
