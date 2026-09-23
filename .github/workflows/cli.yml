@@ -212,8 +212,8 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="${{ github.ref_name }}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
             VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           fi
@@ -232,9 +232,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
           GOWORK: off
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+          BUILD_TIME: ${{ steps.version.outputs.build_time }}
         run: |
           go build \
-            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
             -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
             ./cmd
 
@@ -286,8 +289,8 @@ jobs:
       - name: Get version info
         id: version
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="${{ github.ref_name }}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
             VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           fi
@@ -315,6 +318,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
           GOWORK: off
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+          BUILD_TIME: ${{ steps.version.outputs.build_time }}
         run: |
           EXT=""
           if [ "${{ matrix.goos }}" = "windows" ]; then
@@ -322,7 +328,7 @@ jobs:
           fi
 
           go build \
-            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${{ steps.version.outputs.version }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${{ steps.version.outputs.commit }} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${{ steps.version.outputs.build_time }}" \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
             -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} \
             ./cmd
 
@@ -374,7 +380,7 @@ jobs:
         id: prev_tag
         run: |
           PREV_TAG=$(git tag --sort=-version:refname | grep "^v" | head -2 | tail -1 || echo "")
-          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${{ github.ref_name }}" ]; then
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${GITHUB_REF_NAME}" ]; then
             PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
           fi
           echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
@@ -382,9 +388,11 @@ jobs:
 
       - name: Get commit messages for changelog
         id: commits
+        env:
+          PREV_TAG: ${{ steps.prev_tag.outputs.tag }}
         run: |
           echo "commits<<EOF" >> $GITHUB_OUTPUT
-          git log ${{ steps.prev_tag.outputs.tag }}..${{ github.ref_name }} --pretty=format:"- %s (%h)" >> $GITHUB_OUTPUT || echo "- Initial release" >> $GITHUB_OUTPUT
+          git log "${PREV_TAG}".."${GITHUB_REF_NAME}" --pretty=format:"- %s (%h)" >> $GITHUB_OUTPUT || echo "- Initial release" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
@@ -524,7 +532,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${GITHUB_REF_NAME}"
           ASSETS=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets[].name' 2>/dev/null || true)
           echo "Assets on release ${TAG}:"
           printf '%s\n' "${ASSETS}"

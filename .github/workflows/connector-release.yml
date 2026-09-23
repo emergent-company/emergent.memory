@@ -115,11 +115,11 @@ jobs:
         run: |
           cat release-assets/*.sha256 > release-assets/checksums.txt
           scripts/gen-manifest.sh memory-connector stable release-assets \
-            "${{ github.repository }}" "${{ github.ref_name }}"
+            "${{ github.repository }}" "${GITHUB_REF_NAME}"
 
       - name: Publish to release
         shell: bash
         run: |
-          gh release create "${{ github.ref_name }}" --verify-tag \
-            --title "Memory ${{ github.ref_name }}" --generate-notes || true
-          gh release upload "${{ github.ref_name }}" release-assets/* --clobber
+          gh release create "${GITHUB_REF_NAME}" --verify-tag \
+            --title "Memory ${GITHUB_REF_NAME}" --generate-notes || true
+          gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber

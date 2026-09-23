@@ -58,7 +58,10 @@ jobs:
           cache-to: type=gha,scope=memory-workspace,mode=min
 
       - name: Image digest
+        env:
+          DIGEST: ${{ steps.meta.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           echo "Image: ${{ env.IMAGE_NAME }}"
-          echo "Digest: ${{ steps.meta.outputs.digest }}"
-          echo "Tags: ${{ steps.meta.outputs.tags }}"
+          echo "Digest: ${DIGEST}"
+          echo "Tags: ${TAGS}"
