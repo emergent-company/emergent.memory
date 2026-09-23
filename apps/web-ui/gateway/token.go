@@ -32,7 +32,7 @@ var errVoiceAgentDisabled = errors.New("voice agent is disabled")
 
 // mintToken mints a short-lived room-join JWT for a LiveKit client (iOS app or
 // browser), with agent dispatch baked into the room config. The room is
-// optional: when omitted a fresh per-token room `<agent>-<client>-<8hex>` is
+// optional: when omitted a fresh per-token room `<agent>-<client>-<32hex>` is
 // derived (client defaults to "web") so each client session gets its own
 // agent-dispatch room. Fail-closed when unconfigured.
 func (s *Server) mintToken(c echo.Context) error {
