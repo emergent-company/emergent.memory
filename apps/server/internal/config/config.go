@@ -211,6 +211,27 @@ type ZitadelConfig struct {
 	UserinfoGrantAllScopes bool `env:"ZITADEL_USERINFO_GRANT_ALL_SCOPES" envDefault:"true"`
 }
 
+// IntrospectionConfigured reports whether RFC 7662 introspection is enabled and
+// has client credentials — the same precondition ZitadelService.Introspect uses.
+// DisableIntrospection forces false even when credentials are present.
+func (z *ZitadelConfig) IntrospectionConfigured() bool {
+	if z == nil || z.DisableIntrospection {
+		return false
+	}
+	return z.ClientJWT != "" || z.ClientJWTPath != ""
+}
+
+// UserinfoAllGrantActive reports whether the legacy all-or-nothing userinfo
+// grant is currently in effect: the flag is enabled AND introspection is not
+// configured. Enabling introspection disables the grant even at the default
+// flag value, so an introspection outage cannot re-enable it.
+func (z *ZitadelConfig) UserinfoAllGrantActive() bool {
+	if z == nil {
+		return false
+	}
+	return z.UserinfoGrantAllScopes && !z.IntrospectionConfigured()
+}
+
 // EmbeddingsConfig holds embedding service configuration
 type EmbeddingsConfig struct {
 	// Provider: "vertex" (production) or "genai" (development)

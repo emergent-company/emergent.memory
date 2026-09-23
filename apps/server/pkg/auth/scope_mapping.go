@@ -218,10 +218,10 @@ func (m *Middleware) dbProjectRole(ctx context.Context, projectID, userID string
 // introspectionConfigured reports whether RFC 7662 introspection is enabled and
 // has client credentials — the same precondition ZitadelService.Introspect uses.
 func (m *Middleware) introspectionConfigured() bool {
-	if m.cfg == nil || m.cfg.Zitadel.DisableIntrospection {
+	if m.cfg == nil {
 		return false
 	}
-	return m.cfg.Zitadel.ClientJWT != "" || m.cfg.Zitadel.ClientJWTPath != ""
+	return m.cfg.Zitadel.IntrospectionConfigured()
 }
 
 // oidcAllGrantEnabled reports whether the legacy all-or-nothing grant may be
@@ -232,5 +232,5 @@ func (m *Middleware) oidcAllGrantEnabled() bool {
 	if m.cfg == nil {
 		return false
 	}
-	return m.cfg.Zitadel.UserinfoGrantAllScopes && !m.introspectionConfigured()
+	return m.cfg.Zitadel.UserinfoAllGrantActive()
 }
