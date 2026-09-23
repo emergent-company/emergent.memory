@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,42 @@ func scopesEqual(a, b []string) bool {
 	return true
 }
 
+// wantScopeSet asserts got is EXACTLY want as a set. It compares sorted copies
+// (order-insensitive) so a same-cardinality swap of distinct scopes fails, and
+// it rejects duplicates in got that a multiset count could hide. Scope
+// assertions in this file use this helper, never a bare len() comparison.
+func wantScopeSet(t *testing.T, got, want []string) {
+	t.Helper()
+	g := append([]string(nil), got...)
+	w := append([]string(nil), want...)
+	sort.Strings(g)
+	sort.Strings(w)
+	if len(g) != len(w) {
+		t.Fatalf("scope set = %v, want exactly %v", got, want)
+	}
+	for i := range g {
+		if g[i] != w[i] {
+			t.Fatalf("scope set = %v, want exactly %v", got, want)
+		}
+	}
+	for i := 1; i < len(g); i++ {
+		if g[i] == g[i-1] {
+			t.Fatalf("scope set contains duplicate %q: %v", g[i], got)
+		}
+	}
+}
+
+// sortedKeys returns the keys of a scope set as a sorted slice (for exact
+// comparison of expandScopes output).
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for s := range set {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // --- resolveOIDCScopes -----------------------------------------------------
 
 func TestResolveOIDCScopes(t *testing.T) {
@@ -117,11 +154,18 @@ func TestResolveOIDCScopes(t *testing.T) {
 			want:       []string{"data:read", "schema:read", "agents:read", "projects:read"},
 		},
 		{
-			name:       "unmapped admin role yields no scopes without a default",
+			name:       "user membership yields the viewer set plus data:write",
+			rawScopes:  []string{"openid"},
+			projectID:  projectID,
+			roleLookup: roleOK(RoleProjectUser),
+			want:       []string{"data:read", "schema:read", "agents:read", "projects:read", "data:write"},
+		},
+		{
+			name:       "admin membership yields the user set plus agents:write and schema:write",
 			rawScopes:  []string{"openid"},
 			projectID:  projectID,
 			roleLookup: roleOK(RoleProjectAdmin),
-			want:       nil,
+			want:       []string{"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write"},
 		},
 		{
 			name:       "legacy owner role yields no scopes without a default",
@@ -131,20 +175,30 @@ func TestResolveOIDCScopes(t *testing.T) {
 			want:       nil,
 		},
 		{
-			name:       "configured default set is applied when there is no grant",
+			// #736 decision B: an unrecognised role fails closed even when an
+			// operator default is configured — the default is for non-members.
+			name:       "legacy owner role yields no scopes even with a default configured",
+			rawScopes:  []string{"openid"},
+			projectID:  projectID,
+			defaults:   []string{"data:write"},
+			roleLookup: roleOK("owner"),
+			want:       nil,
+		},
+		{
+			name:       "typo role yields no scopes even with a default configured",
+			rawScopes:  []string{"openid"},
+			projectID:  projectID,
+			defaults:   []string{"data:read"},
+			roleLookup: roleOK("project_admn"),
+			want:       nil,
+		},
+		{
+			name:       "configured default set is applied when there is no membership",
 			rawScopes:  []string{"openid", "profile"},
 			projectID:  projectID,
 			defaults:   []string{"data:read", "search"},
 			roleLookup: roleOK(""),
 			want:       []string{"data:read", "search"},
-		},
-		{
-			name:       "configured default set is applied to unmapped roles",
-			rawScopes:  []string{"openid"},
-			projectID:  projectID,
-			defaults:   []string{"data:read"},
-			roleLookup: roleOK("owner"),
-			want:       []string{"data:read"},
 		},
 		{
 			name:      "configured default set is applied without a project context",
@@ -197,9 +251,7 @@ func TestResolveOIDCScopes(t *testing.T) {
 			m.roleLookup = tt.roleLookup
 
 			got := m.resolveOIDCScopes(context.Background(), "user-uuid", tt.projectID, tt.rawScopes)
-			if !scopesEqual(got, tt.want) {
-				t.Fatalf("resolveOIDCScopes() = %v, want %v", got, tt.want)
-			}
+			wantScopeSet(t, got, tt.want)
 		})
 	}
 }
@@ -207,18 +259,202 @@ func TestResolveOIDCScopes(t *testing.T) {
 // --- roleToScopes ----------------------------------------------------------
 
 func TestRoleToScopes(t *testing.T) {
-	scopes, ok := roleToScopes(RoleProjectViewer)
-	if !ok {
-		t.Fatal("roleToScopes(project_viewer) not mapped")
-	}
-	if !scopesEqual(scopes, []string{"data:read", "schema:read", "agents:read", "projects:read"}) {
-		t.Fatalf("roleToScopes(project_viewer) = %v", scopes)
+	tests := []struct {
+		role string
+		want []string
+	}{
+		{
+			role: RoleProjectViewer,
+			want: []string{"data:read", "schema:read", "agents:read", "projects:read"},
+		},
+		{
+			role: RoleProjectUser,
+			want: []string{"data:read", "schema:read", "agents:read", "projects:read", "data:write"},
+		},
+		{
+			role: RoleProjectAdmin,
+			want: []string{"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write"},
+		},
 	}
 
-	for _, role := range []string{RoleProjectAdmin, RoleProjectUser, "owner", "", "unknown"} {
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			scopes, ok := roleToScopes(tt.role)
+			if !ok {
+				t.Fatalf("roleToScopes(%q) not mapped", tt.role)
+			}
+			wantScopeSet(t, scopes, tt.want)
+		})
+	}
+
+	// Unrecognised role strings are unmapped and must fail closed — including
+	// the legacy project role `owner` that migration 00165 rewrites, and
+	// case/typo variants.
+	for _, role := range []string{"owner", "admin", "", "unknown", "project_admn", "Project_Admin", "PROJECT_USER"} {
 		if _, ok := roleToScopes(role); ok {
 			t.Errorf("roleToScopes(%q) should be unmapped (fail closed)", role)
 		}
+	}
+}
+
+// exclusionPrefixes are the scope families a project role must never reach:
+// account/org administration and the reserved mcp admin scope (#736 decision A).
+var excludedRoleScopes = []string{
+	"admin",
+	"admin:read",
+	"admin:write",
+	"admin:all",
+	"mcp:admin",
+	"org:read",
+	"org:invite:create",
+	"org:project:create",
+	"org:project:delete",
+	"project:invite:create",
+}
+
+// The three role sets must be nested: admin ⊇ user ⊇ viewer, both before and
+// after umbrella expansion, since the expanded set is what authorization
+// actually consumes.
+func TestRoleScopeInvariantAdminSupersetUserSupersetViewer(t *testing.T) {
+	rawViewer, _ := roleToScopes(RoleProjectViewer)
+	rawUser, _ := roleToScopes(RoleProjectUser)
+	rawAdmin, _ := roleToScopes(RoleProjectAdmin)
+
+	superset := func(t *testing.T, outer, inner []string, label string) {
+		t.Helper()
+		set := make(map[string]bool, len(outer))
+		for _, s := range outer {
+			set[s] = true
+		}
+		for _, s := range inner {
+			if !set[s] {
+				t.Fatalf("%s: %q missing from outer set %v (inner %v)", label, s, outer, inner)
+			}
+		}
+	}
+
+	superset(t, rawUser, rawViewer, "raw user ⊇ viewer")
+	superset(t, rawAdmin, rawUser, "raw admin ⊇ user")
+
+	superset(t, sortedKeys(expandScopes(rawUser)), sortedKeys(expandScopes(rawViewer)), "expanded user ⊇ viewer")
+	superset(t, sortedKeys(expandScopes(rawAdmin)), sortedKeys(expandScopes(rawUser)), "expanded admin ⊇ user")
+}
+
+// The slices returned by roleToScopes must never share a backing array — with
+// package state, or across roles. A shared array would let one caller's
+// in-place edit leak privileges into another role's set. This pins the copy
+// semantics that `withScopes`/roleToScopes rely on.
+func TestRoleScopeSetsDoNotShareBackingArray(t *testing.T) {
+	want := map[string][]string{
+		RoleProjectViewer: {"data:read", "schema:read", "agents:read", "projects:read"},
+		RoleProjectUser:   {"data:read", "schema:read", "agents:read", "projects:read", "data:write"},
+		RoleProjectAdmin:  {"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write"},
+	}
+
+	// 1. Independently fetched slices must not alias across roles: overwriting
+	//    every element of the viewer slice must not change a separately fetched
+	//    user slice.
+	viewer, ok := roleToScopes(RoleProjectViewer)
+	if !ok {
+		t.Fatal("roleToScopes(project_viewer) not mapped")
+	}
+	user, ok := roleToScopes(RoleProjectUser)
+	if !ok {
+		t.Fatal("roleToScopes(project_user) not mapped")
+	}
+	for i := range viewer {
+		viewer[i] = "admin:all"
+	}
+	wantScopeSet(t, user, want[RoleProjectUser])
+
+	// 2. An in-place edit (and an append that would spill into any shared spare
+	//    capacity) must not corrupt package state: a fresh read of each role
+	//    still yields its exact set.
+	for role := range want {
+		scopes, ok := roleToScopes(role)
+		if !ok {
+			t.Fatalf("roleToScopes(%q) not mapped", role)
+		}
+		for i := range scopes {
+			scopes[i] = "admin:all"
+		}
+		_ = append(scopes, "admin:all")
+	}
+	for role, w := range want {
+		got, ok := roleToScopes(role)
+		if !ok {
+			t.Fatalf("roleToScopes(%q) not mapped", role)
+		}
+		wantScopeSet(t, got, w)
+	}
+}
+
+// Role-derived scopes are umbrella scopes, and their expansion is an accepted,
+// deliberate widening (#736 decision A). This test PINS the exact expanded set
+// per role so any future change to scopeImplies that widens a role's effective
+// grant must update this test and be re-reviewed. It also asserts the expansion
+// never reaches an excluded admin/org/account scope, which would be a blocker.
+func TestRoleScopeUmbrellaExpansionIsPinned(t *testing.T) {
+	tests := []struct {
+		role string
+		want []string
+	}{
+		{
+			role: RoleProjectViewer,
+			want: []string{
+				"data:read", "documents:read", "chunks:read", "search:read", "graph:read",
+				"graph:search:read", "extraction:read", "schema:read", "tasks:read",
+				"user-activity:read", "notifications:read", "search", "journal:read",
+				"agents:read", "chat:use", "skills:read", "projects:read",
+			},
+		},
+		{
+			role: RoleProjectUser,
+			want: []string{
+				"data:read", "documents:read", "chunks:read", "search:read", "graph:read",
+				"graph:search:read", "extraction:read", "schema:read", "tasks:read",
+				"user-activity:read", "notifications:read", "search", "journal:read",
+				"agents:read", "chat:use", "skills:read", "projects:read",
+				"data:write", "documents:write", "documents:delete", "chunks:write",
+				"graph:write", "ingest:write", "extraction:write", "tasks:write",
+				"user-activity:write", "notifications:write", "schema:write", "journal:write",
+			},
+		},
+		{
+			role: RoleProjectAdmin,
+			want: []string{
+				"data:read", "documents:read", "chunks:read", "search:read", "graph:read",
+				"graph:search:read", "extraction:read", "schema:read", "tasks:read",
+				"user-activity:read", "notifications:read", "search", "journal:read",
+				"agents:read", "chat:use", "skills:read", "projects:read",
+				"data:write", "documents:write", "documents:delete", "chunks:write",
+				"graph:write", "ingest:write", "extraction:write", "tasks:write",
+				"user-activity:write", "notifications:write", "schema:write", "journal:write",
+				"agents:write", "chat:admin", "skills:write", "schema:migrate",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			scopes, ok := roleToScopes(tt.role)
+			if !ok {
+				t.Fatalf("roleToScopes(%q) not mapped", tt.role)
+			}
+			expanded := sortedKeys(expandScopes(scopes))
+			wantScopeSet(t, expanded, tt.want)
+
+			for _, s := range expanded {
+				for _, ex := range excludedRoleScopes {
+					if s == ex {
+						t.Fatalf("role %q expansion reached excluded scope %q", tt.role, s)
+					}
+				}
+				if strings.HasPrefix(s, "admin") || strings.HasPrefix(s, "org:") || strings.HasPrefix(s, "account:") {
+					t.Fatalf("role %q expansion reached excluded scope family %q", tt.role, s)
+				}
+			}
+		})
 	}
 }
 
@@ -304,12 +540,33 @@ func TestValidateTokenIntrospectionPath(t *testing.T) {
 		}
 	})
 
-	t.Run("configured default set is applied", func(t *testing.T) {
+	t.Run("configured default set is applied to a user with no membership", func(t *testing.T) {
 		m := newTestMiddleware(t)
 		m.cfg.Zitadel.OIDCDefaultScopes = []string{"data:read", "search"}
 		m.zitadelSvc = &fakeIntrospector{introResult: &IntrospectionResult{
 			Active: true,
 			Sub:    "user-3",
+			Scope:  "openid profile",
+			Exp:    4102444800,
+		}}
+		m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }
+
+		user, err := m.validateToken(context.Background(), "oidc-token", projectID)
+		if err != nil {
+			t.Fatalf("validateToken: %v", err)
+		}
+		if !scopesEqual(user.Scopes, []string{"data:read", "search"}) {
+			t.Fatalf("scopes = %v, want configured default set", user.Scopes)
+		}
+	})
+
+	t.Run("admin membership resolves the write-inclusive admin set end to end", func(t *testing.T) {
+		m := newTestMiddleware(t)
+		// A configured default must not leak into a mapped role's result.
+		m.cfg.Zitadel.OIDCDefaultScopes = []string{"admin:write"}
+		m.zitadelSvc = &fakeIntrospector{introResult: &IntrospectionResult{
+			Active: true,
+			Sub:    "user-admin",
 			Scope:  "openid profile",
 			Exp:    4102444800,
 		}}
@@ -319,8 +576,29 @@ func TestValidateTokenIntrospectionPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("validateToken: %v", err)
 		}
-		if !scopesEqual(user.Scopes, []string{"data:read", "search"}) {
-			t.Fatalf("scopes = %v, want configured default set", user.Scopes)
+		wantScopeSet(t, user.Scopes, []string{
+			"data:read", "schema:read", "agents:read", "projects:read",
+			"data:write", "agents:write", "schema:write",
+		})
+	})
+
+	t.Run("unrecognised membership role fails closed despite a configured default", func(t *testing.T) {
+		m := newTestMiddleware(t)
+		m.cfg.Zitadel.OIDCDefaultScopes = []string{"data:write", "search"}
+		m.zitadelSvc = &fakeIntrospector{introResult: &IntrospectionResult{
+			Active: true,
+			Sub:    "user-legacy",
+			Scope:  "openid profile",
+			Exp:    4102444800,
+		}}
+		m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "owner", nil }
+
+		user, err := m.validateToken(context.Background(), "oidc-token", projectID)
+		if err != nil {
+			t.Fatalf("validateToken: %v", err)
+		}
+		if len(user.Scopes) != 0 {
+			t.Fatalf("scopes = %v, want none (unmapped role must fail closed)", user.Scopes)
 		}
 	})
 }
