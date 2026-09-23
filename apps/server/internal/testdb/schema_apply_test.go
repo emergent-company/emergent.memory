@@ -11,17 +11,16 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
-// TestSchemaSQLApplies is a regression guard for the embedded test fixture
-// (schema.sql).
+// TestMigrationsApplyToHead is a regression guard for the embedded migration
+// set that the test fixture is now built from.
 //
 // Every *_db_test.go in the repo treats any SetupTestDB error as "database
-// unavailable" and calls t.Skipf, so a fixture that fails to apply produced a
-// silently PASSing suite (see #601: schema.sql referenced core.api_tokens(id)
-// before its primary key was declared). This test connects to Postgres
-// directly, applies the embedded fixture to a throwaway database, and fails
-// loudly when the fixture is broken. It skips only when Postgres itself is
-// unreachable.
-func TestSchemaSQLApplies(t *testing.T) {
+// unavailable" and calls t.Skipf, so a broken migration produced a silently
+// PASSing suite (see #601: schema.sql referenced core.api_tokens(id) before
+// its primary key was declared). This test connects to Postgres directly,
+// applies the embedded migrations to a throwaway database, and fails loudly
+// when they are broken. It skips only when Postgres itself is unreachable.
+func TestMigrationsApplyToHead(t *testing.T) {
 	if testing.Short() {
 		SkipOrFatal(t, "skipping database integration test in short mode")
 	}
@@ -52,7 +51,7 @@ func TestSchemaSQLApplies(t *testing.T) {
 		SkipOrFatal(t, "postgres unavailable: %v", err)
 	}
 
-	dbName := fmt.Sprintf("go_test_schema_check_%d", time.Now().UnixNano())
+	dbName := fmt.Sprintf("go_test_migrate_check_%d", time.Now().UnixNano())
 	if _, err := adminPool.Exec(ctx, "CREATE DATABASE "+dbName); err != nil {
 		t.Fatalf("create scratch database: %v", err)
 	}
@@ -73,13 +72,7 @@ func TestSchemaSQLApplies(t *testing.T) {
 	}
 	defer pool.Close()
 
-	for _, ext := range []string{"pgcrypto", `"uuid-ossp"`, "vector"} {
-		if _, err := pool.Exec(ctx, fmt.Sprintf("CREATE EXTENSION IF NOT EXISTS %s", ext)); err != nil {
-			t.Fatalf("create extension %s: %v", ext, err)
-		}
-	}
-
-	if _, err := pool.Exec(ctx, schemaSQL); err != nil {
-		t.Fatalf("apply embedded schema.sql: %v", err)
+	if err := applyMigrations(ctx, pool); err != nil {
+		t.Fatalf("apply embedded migrations to head: %v", err)
 	}
 }

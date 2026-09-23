@@ -12,71 +12,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// fts00174Builder is the migration 00174 `kb.graph_object_fts` tsvector builder
-// verbatim. It lives here because connectTestDB clones internal/testdb/schema.sql,
-// which still embeds the pre-00174 trigger (a `simple` vector over the raw key,
-// type and every property value). Replacing the functions on the throwaway test
-// database makes these tests exercise the production-normalised vector: raw +
-// separator-normalised key, type, and a bounded `norwegian` prose space.
-const fts00174Builder = `
-CREATE OR REPLACE FUNCTION kb.graph_object_fts(
-    p_key text,
-    p_type text,
-    p_properties jsonb
-) RETURNS tsvector
-    LANGUAGE sql
-    IMMUTABLE
-    PARALLEL SAFE
-    AS $$
-    SELECT
-        setweight(to_tsvector('simple', coalesce(p_key, '')), 'A')
-        || setweight(to_tsvector('simple',
-               translate(coalesce(p_key, ''), '/-#', '   ')
-               || ' '
-               || replace(replace(replace(coalesce(p_key, ''), '/', ' '), '#', ' '), '-', ' -')
-           ), 'A')
-        || setweight(to_tsvector('simple', coalesce(p_type, '')), 'B')
-        || setweight(to_tsvector('norwegian',
-               left(coalesce(p_properties ->> 'title', ''), 4000)
-               || ' ' || left(coalesce(p_properties ->> 'name', ''), 4000)
-               || ' ' || left(coalesce(p_properties ->> 'description', ''), 4000)
-           ), 'C');
-$$`
-
-// fts00174Trigger is the migration 00174 `kb.update_graph_objects_fts` trigger
-// body verbatim.
-const fts00174Trigger = `
-CREATE OR REPLACE FUNCTION kb.update_graph_objects_fts() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    IF TG_OP = 'UPDATE' AND
-       NEW.key IS NOT DISTINCT FROM OLD.key AND
-       NEW.type IS NOT DISTINCT FROM OLD.type AND
-       NEW.properties IS NOT DISTINCT FROM OLD.properties THEN
-        RETURN NEW;
-    END IF;
-
-    NEW.fts := kb.graph_object_fts(NEW.key, NEW.type, NEW.properties);
-    RETURN NEW;
-END;
-$$`
-
-// connectFTSearchTestDB returns a throwaway test database whose fts trigger
-// matches production (migration 00174). connectTestDB alone clones a schema
-// snapshot whose trigger predates 00174, so component-token and norwegian-prose
-// assertions would silently test the wrong vector.
-func connectFTSearchTestDB(t *testing.T) *bun.DB {
-	t.Helper()
-	db := connectTestDB(t)
-	ctx := context.Background()
-	_, err := db.ExecContext(ctx, fts00174Builder)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, fts00174Trigger)
-	require.NoError(t, err)
-	return db
-}
-
 // insertSearchEntity inserts a HEAD graph object with an explicit key and
 // properties so that kb.update_graph_objects_fts builds the tsvector from the
 // same inputs as production. Returns the object id.
@@ -124,7 +59,7 @@ func runEntitySearch(t *testing.T, svc *Service, projectID string, args map[stri
 // TestEntitySearchFreeTextNameMatch verifies a free-text query matches an
 // object by its name property through the fts index (not an ILIKE scan).
 func TestEntitySearchFreeTextNameMatch(t *testing.T) {
-	db := connectFTSearchTestDB(t)
+	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 	svc := &Service{db: db}
 
@@ -141,7 +76,7 @@ func TestEntitySearchFreeTextNameMatch(t *testing.T) {
 // its exact form. There is no `key = ?` predicate — the raw key is a lexeme in
 // the fts vector — so this also pins that the indexed path resolves it.
 func TestEntitySearchExactKeyMatch(t *testing.T) {
-	db := connectFTSearchTestDB(t)
+	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 	svc := &Service{db: db}
 
@@ -159,7 +94,7 @@ func TestEntitySearchExactKeyMatch(t *testing.T) {
 // pre-00174 vector indexed "lov/1997-06-13-44" as one opaque lexeme, so the
 // component query returned nothing.
 func TestEntitySearchComponentKeyMatch(t *testing.T) {
-	db := connectFTSearchTestDB(t)
+	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 	svc := &Service{db: db}
 
@@ -175,7 +110,7 @@ func TestEntitySearchComponentKeyMatch(t *testing.T) {
 // unsatisfiable phrase zeroes the strict clause, and the relaxed form (which
 // drops the purely numeric run) still finds the text match.
 func TestEntitySearchRelaxesUnsatisfiableIdentifier(t *testing.T) {
-	db := connectFTSearchTestDB(t)
+	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 	svc := &Service{db: db}
 
@@ -190,7 +125,7 @@ func TestEntitySearchRelaxesUnsatisfiableIdentifier(t *testing.T) {
 // is a deliberate widening versus the old ILIKE predicate, which only scanned
 // key, name and description.
 func TestEntitySearchTitleMatch(t *testing.T) {
-	db := connectFTSearchTestDB(t)
+	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 	svc := &Service{db: db}
 
@@ -204,7 +139,7 @@ func TestEntitySearchTitleMatch(t *testing.T) {
 // TestEntitySearchTypeFilter verifies the type_name filter narrows results to a
 // single type.
 func TestEntitySearchTypeFilter(t *testing.T) {
-	db := connectFTSearchTestDB(t)
+	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 	svc := &Service{db: db}
 
@@ -220,7 +155,7 @@ func TestEntitySearchTypeFilter(t *testing.T) {
 // TestEntitySearchEmptyResult verifies a query matching nothing returns an
 // empty entity list and a zero count.
 func TestEntitySearchEmptyResult(t *testing.T) {
-	db := connectFTSearchTestDB(t)
+	db := connectTestDB(t)
 	_, projectID := seedProject(t, db)
 	svc := &Service{db: db}
 
