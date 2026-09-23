@@ -17,10 +17,9 @@ import (
 // validAPIKey reports whether the request carries a valid client API key.
 // When TOKEN_API_KEY is empty (dev), every request is valid (routes open) —
 // matching the memory standalone convention and keeping the browser UI usable
-// without a device key. Otherwise it accepts the admin key or a registered
-// per-device key (stored in memory under the ios_device_keys category).
+// without a device key. Otherwise it accepts the admin key.
 // This "open when TOKEN_API_KEY is unset" path is dev-mode only and is never
-// reached in session mode (session mode uses validAPIKeyValue).
+// reached in session mode.
 func (s *Server) validAPIKey(c echo.Context) bool {
 	if s.cfg.ClientAPIKey == "" {
 		return true
@@ -28,10 +27,9 @@ func (s *Server) validAPIKey(c echo.Context) bool {
 	return s.validAPIKeyValue(c)
 }
 
-// validAPIKeyValue reports whether the presented X-API-Key is the admin key or
-// a registered device key. Unlike validAPIKey it has no "open when unset"
-// semantics — used for the session-mode key fallback where an absent key must
-// deny.
+// validAPIKeyValue reports whether the presented X-API-Key is the admin key.
+// The per-device registry-key path was retired with the scoped device
+// credential (see #848): dev-mode /api/* is gated by the admin key alone.
 func (s *Server) validAPIKeyValue(c echo.Context) bool {
 	key := c.Request().Header.Get("X-API-Key")
 	if key == "" {
@@ -40,7 +38,7 @@ func (s *Server) validAPIKeyValue(c echo.Context) bool {
 	if s.cfg.ClientAPIKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.ClientAPIKey)) == 1 {
 		return true
 	}
-	return s.deviceKeyValid(c.Request().Context(), key)
+	return false
 }
 
 // requireClientKey gates client API routes (the programmatic / iOS path).
@@ -588,11 +586,6 @@ func deviceSurfacePath(method, path string) bool {
 		return false
 	}
 }
-
-// errDeviceCredentialRejected is the sentinel for a bearer that is not a valid,
-// on-surface device credential. It maps to a 401 so the rejection is loud and
-// self-explanatory without leaking whether a specific token exists.
-var errDeviceCredentialRejected = errors.New("device credential rejected")
 
 // requireDeviceCredential accepts a scoped per-device credential on the device
 // surface. A missing bearer, a non-emt_* bearer, a token that fails

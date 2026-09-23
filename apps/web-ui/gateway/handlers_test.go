@@ -327,24 +327,24 @@ type fakeMemory struct {
 
 	// API tokens: a small stateful store so handler flows (create → list,
 	// revoke → relist, regenerate → replacement) can be exercised end-to-end.
-	apiTokens                 []APIToken        // project-scoped store
-	apiTokenSecrets           map[string]string // plaintext per token id
-	apiTokenErr               error             // failure for any project api-token method
-	apiTokenRevealPlaintext   bool              // GetAPIToken returns plaintext when true (encryption configured)
-	lastAPITokenID            string            // last project token id passed to any api-token op
-	lastAPITokenScopes        []string          // scopes of the last create/update/regenerate
-	apiTokenSeq               int               // project token id counter
+	apiTokens               []APIToken        // project-scoped store
+	apiTokenSecrets         map[string]string // plaintext per token id
+	apiTokenErr             error             // failure for any project api-token method
+	apiTokenRevealPlaintext bool              // GetAPIToken returns plaintext when true (encryption configured)
+	lastAPITokenID          string            // last project token id passed to any api-token op
+	lastAPITokenScopes      []string          // scopes of the last create/update/regenerate
+	apiTokenSeq             int               // project token id counter
 	// Device credentials (web-device-credential): introspection + mint.
-	introspectInfo    *deviceTokenInfo // returned by IntrospectDeviceToken when set
-	introspectErr     error            // IntrospectDeviceToken failure
-	introspectSeen    []string         // tokens presented to IntrospectDeviceToken
-	lastDeviceTokenID string           // id minted by CreateDeviceToken
-	accountAPITokens          []APIToken        // account-scoped store
-	accountAPITokenErr        error             // failure for any account api-token method
-	accountAPITokenReveal     bool              // GetAccountAPIToken returns plaintext when true
-	lastAccountAPITokenID     string            // last account token id passed to any api-token op
-	lastAccountAPITokenScopes []string          // scopes of the last account create/update/regenerate
-	accountAPITokenSeq        int               // account token id counter
+	introspectInfo            *deviceTokenInfo // returned by IntrospectDeviceToken when set
+	introspectErr             error            // IntrospectDeviceToken failure
+	introspectSeen            []string         // tokens presented to IntrospectDeviceToken
+	lastDeviceTokenID         string           // id minted by CreateDeviceToken
+	accountAPITokens          []APIToken       // account-scoped store
+	accountAPITokenErr        error            // failure for any account api-token method
+	accountAPITokenReveal     bool             // GetAccountAPIToken returns plaintext when true
+	lastAccountAPITokenID     string           // last account token id passed to any api-token op
+	lastAccountAPITokenScopes []string         // scopes of the last account create/update/regenerate
+	accountAPITokenSeq        int              // account token id counter
 
 	// Agent-owned MCP endpoint + labeled keys + external sessions
 	// (agent-scoped-mcp-endpoint): mcpEndpoint is returned by

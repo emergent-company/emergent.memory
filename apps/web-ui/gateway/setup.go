@@ -14,29 +14,17 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// deviceKeyRegistryCategory / deviceKeyRegistryKey are the single settings
-// coordinates of the device-key registry. Memory has no list-by-category HTTP
-// route, so per-key settings could never be enumerated — instead all device
-// keys live in ONE setting whose value is
-// {"devices": {"<device-key-hex>": {"createdAt": "<RFC3339>"}}}.
-const (
-	deviceKeyRegistryCategory = "ios_device_keys"
-	deviceKeyRegistryKey      = "registry"
-)
-
-// device is one registered device, as shown in the settings UI. Key/CreatedAt
-// always come from the registry entry; the metadata fields (Platform, Name,
-// ModelID, ModelDisplay, OSName, OSVersion) are only populated when the entry
-// carries a self-reported "device" manifest (absent for legacy entries).
+// device is one registered device credential, as shown in the settings UI. It
+// mirrors a project-scoped core.api_tokens row carrying the reserved device:api
+// marker. The credential itself is never exposed — only its id (for revoke),
+// name and masked prefix.
 type device struct {
-	Key          string
-	CreatedAt    string // RFC3339
-	Platform     string
-	Name         string
-	ModelID      string
-	ModelDisplay string
-	OSName       string
-	OSVersion    string
+	ID         string
+	Name       string
+	Prefix     string
+	CreatedAt  string // RFC3339
+	IsRevoked  bool
+	LastUsedAt *time.Time
 }
 
 // setupTokenCategory / setupTokenKey / setupTokenTTL are the settings
@@ -44,7 +32,11 @@ type device struct {
 // the memory backend (not in-process) so it survives gateway restarts — `air`
 // hot-reload restarts the binary on any code change, and an in-memory token
 // minted before a restart would be rejected with 401 afterwards. Stored value:
-// {"token": "<32-hex>", "createdAt": "<RFC3339 UTC>", "used": false}.
+// {"token": "<32-hex>", "createdAt": "<RFC3339 UTC>", "used": false,
+// "deviceToken": "<emt_* plaintext>", "deviceTokenId": "<uuid>"}. The device
+// credential is minted server-side at setup-token mint time (session present)
+// and stored here for a single claim at /api/setup — the same plaintext trust
+// level as the setup token itself, with a 10-minute window.
 const (
 	setupTokenCategory = "ios_setup_token"
 	setupTokenKey      = "current"
@@ -53,7 +45,9 @@ const (
 
 // mintSetupToken returns the current one-time setup token. While the stored
 // token is unexpired and unused it is REUSED, which keeps the QR stable across
-// page reloads; otherwise a fresh 32-hex token is minted and persisted.
+// page reloads; otherwise a fresh 32-hex token is minted and persisted, and a
+// fresh device credential is minted server-side alongside it (revoking any
+// orphaned prior credential so an unclaimed QR never leaks a live credential).
 func (s *Server) mintSetupToken(ctx context.Context) (string, error) {
 	if ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey); err != nil {
 		return "", err
@@ -65,40 +59,74 @@ func (s *Server) mintSetupToken(ctx context.Context) (string, error) {
 			return token, nil
 		}
 	}
+
+	// Rotate: revoke any prior unclaimed device credential so it cannot linger.
+	if ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey); err == nil && ps != nil {
+		if priorID, _ := ps.Value["deviceTokenId"].(string); priorID != "" {
+			_ = s.memory.RevokeAPIToken(ctx, priorID)
+		}
+	}
+
+	// Mint the device credential server-side while the session context is
+	// present (the devices page is session-authenticated). In dev mode there is
+	// no session token, so the mint fails and the setup token is issued without
+	// a device credential — /api/setup then reports the credential is
+	// unavailable rather than proxying an empty bearer.
+	var deviceToken, deviceTokenID string
+	if dc, err := s.memory.CreateDeviceToken(ctx, "device"); err == nil && dc != nil {
+		deviceToken = dc.Token
+		deviceTokenID = dc.ID
+	} else if err != nil {
+		captureError(err)
+	}
+
 	token := randomHex(32)
-	if err := s.memory.SetProjectSetting(ctx, setupTokenCategory, setupTokenKey, map[string]any{
+	value := map[string]any{
 		"token":     token,
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 		"used":      false,
-	}); err != nil {
+	}
+	if deviceToken != "" {
+		value["deviceToken"] = deviceToken
+		value["deviceTokenId"] = deviceTokenID
+	}
+	if err := s.memory.SetProjectSetting(ctx, setupTokenCategory, setupTokenKey, value); err != nil {
 		return "", err
 	}
 	return token, nil
 }
 
-// consumeSetupToken validates and single-uses the current setup token. A nil
-// setting, memory error, mismatched/used/expired/unparsable token all return
-// false. On success the same value is written back with used=true, so a second
-// consume returns false.
-func (s *Server) consumeSetupToken(ctx context.Context, token string) bool {
+// consumeSetupToken validates and single-uses the current setup token, returning
+// the device credential it carries. A nil setting, memory error,
+// mismatched/used/expired/unparsable token, or a missing device credential all
+// return ("", false). On success the same value is written back with used=true,
+// so a second consume returns false.
+func (s *Server) consumeSetupToken(ctx context.Context, token string) (string, bool) {
 	ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey)
 	if err != nil || ps == nil {
-		return false
+		return "", false
 	}
 	stored, _ := ps.Value["token"].(string)
 	used, _ := ps.Value["used"].(bool)
 	createdAt, _ := ps.Value["createdAt"].(string)
 	if stored == "" || subtle.ConstantTimeCompare([]byte(stored), []byte(token)) != 1 || used || !setupTokenFresh(createdAt) {
-		return false
+		return "", false
 	}
+	deviceToken, _ := ps.Value["deviceToken"].(string)
+	if deviceToken == "" {
+		return "", false
+	}
+	// Mark used, preserving the already-issued device credential.
 	if err := s.memory.SetProjectSetting(ctx, setupTokenCategory, setupTokenKey, map[string]any{
-		"token":     stored,
-		"createdAt": createdAt,
-		"used":      true,
+		"token":         stored,
+		"createdAt":     createdAt,
+		"used":          true,
+		"deviceToken":   deviceToken,
+		"deviceTokenId": ps.Value["deviceTokenId"],
 	}); err != nil {
-		return false
+		return "", false
 	}
-	return true
+	return deviceToken, true
 }
 
 // setupTokenFresh reports whether a stored RFC3339 createdAt is still within
@@ -131,110 +159,47 @@ type deviceManifest struct {
 	AppBuild     string `json:"appBuild,omitempty"`
 }
 
-// toMap renders the manifest as the stored map, keeping only the non-empty
-// fields under their JSON keys. An empty result means nothing is worth
-// persisting. Stored as map[string]any (never a struct) because the memory
-// backend JSON-round-trips the registry setting.
-func (m deviceManifest) toMap() map[string]any {
-	out := map[string]any{}
-	for _, kv := range []struct{ k, v string }{
-		{"platform", m.Platform},
-		{"formFactor", m.FormFactor},
-		{"name", m.Name},
-		{"modelId", m.ModelID},
-		{"modelDisplay", m.ModelDisplay},
-		{"osName", m.OSName},
-		{"osVersion", m.OSVersion},
-		{"appVersion", m.AppVersion},
-		{"appBuild", m.AppBuild},
-	} {
-		if kv.v != "" {
-			out[kv.k] = kv.v
+// hasDeviceScope reports whether a token's scope set carries the reserved
+// device:api marker, i.e. the token is a device credential.
+func hasDeviceScope(scopes []string) bool {
+	for _, s := range scopes {
+		if s == "device:api" {
+			return true
 		}
 	}
-	return out
+	return false
 }
 
-// deviceRegistry reads the device-key registry setting, returning its devices
-// map. Nil map = no registry yet; error = memory unreachable.
-func (s *Server) deviceRegistry(ctx context.Context) (map[string]any, error) {
-	ps, err := s.memory.GetProjectSetting(ctx, deviceKeyRegistryCategory, deviceKeyRegistryKey)
+// listDeviceTokens returns the project's device credentials, most recently
+// issued first. The list reuses the project-token listing and filters to the
+// device:api marker; only non-revoked credentials are shown (a revoked device
+// is no longer "registered"). The unclaimed credential referenced by the
+// current setup token is excluded — it is pending onboarding, not yet a
+// registered device.
+func (s *Server) listDeviceTokens(ctx context.Context) ([]device, error) {
+	pendingID := ""
+	if ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey); err == nil && ps != nil {
+		if used, _ := ps.Value["used"].(bool); !used {
+			pendingID, _ = ps.Value["deviceTokenId"].(string)
+		}
+	}
+	tokens, err := s.memory.ListAPITokens(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if ps == nil {
-		return nil, nil
-	}
-	devices, _ := ps.Value["devices"].(map[string]any)
-	return devices, nil
-}
-
-// deviceKeyValid reports whether key is a registered per-device key (looked up
-// in the device-key registry). GetProjectSetting returns (nil, nil) on 404,
-// which is treated as invalid.
-func (s *Server) deviceKeyValid(ctx context.Context, key string) bool {
-	devices, err := s.deviceRegistry(ctx)
-	if err != nil || devices == nil {
-		return false
-	}
-	_, ok := devices[key]
-	return ok
-}
-
-// issueDeviceKey mints a fresh 32-hex per-device key and inserts it into the
-// device-key registry. When m is non-nil, the non-empty manifest fields are
-// persisted under the entry's "device" key (a nil/empty manifest yields the
-// legacy {"createdAt": ...} shape). The read-modify-write is not locked: a
-// concurrent issue could drop a key, which is acceptable for a single-admin
-// self-host (setup tokens are single-use, which already serializes real-world
-// issuance).
-func (s *Server) issueDeviceKey(ctx context.Context, m *deviceManifest) (string, error) {
-	key := randomHex(32)
-	devices, err := s.deviceRegistry(ctx)
-	if err != nil {
-		return "", err
-	}
-	if devices == nil {
-		devices = map[string]any{}
-	}
-	entry := map[string]any{"createdAt": time.Now().UTC().Format(time.RFC3339)}
-	if m != nil {
-		if dev := m.toMap(); len(dev) > 0 {
-			entry["device"] = dev
+	out := make([]device, 0, len(tokens))
+	for _, t := range tokens {
+		if t.IsRevoked || !hasDeviceScope(t.Scopes) || (pendingID != "" && t.ID == pendingID) {
+			continue
 		}
-	}
-	devices[key] = entry
-	if err := s.memory.SetProjectSetting(ctx, deviceKeyRegistryCategory, deviceKeyRegistryKey, map[string]any{"devices": devices}); err != nil {
-		return "", err
-	}
-	return key, nil
-}
-
-// listDeviceKeys returns the registered devices, most recently issued first.
-// An empty or absent registry yields an empty slice (RFC3339 UTC timestamps
-// sort lexicographically, so a plain string comparison is correct). Metadata
-// fields are read from the entry's "device" manifest when present; legacy
-// entries (no "device") keep those fields empty.
-func (s *Server) listDeviceKeys(ctx context.Context) ([]device, error) {
-	devices, err := s.deviceRegistry(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]device, 0, len(devices))
-	for key, v := range devices {
-		d := device{Key: key}
-		if m, ok := v.(map[string]any); ok {
-			d.CreatedAt, _ = m["createdAt"].(string)
-			if dev, ok := m["device"].(map[string]any); ok {
-				d.Platform, _ = dev["platform"].(string)
-				d.Name, _ = dev["name"].(string)
-				d.ModelID, _ = dev["modelId"].(string)
-				d.ModelDisplay, _ = dev["modelDisplay"].(string)
-				d.OSName, _ = dev["osName"].(string)
-				d.OSVersion, _ = dev["osVersion"].(string)
-			}
-		}
-		out = append(out, d)
+		out = append(out, device{
+			ID:         t.ID,
+			Name:       t.Name,
+			Prefix:     t.TokenPrefix,
+			CreatedAt:  t.CreatedAt,
+			IsRevoked:  t.IsRevoked,
+			LastUsedAt: t.LastUsedAt,
+		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].CreatedAt > out[j].CreatedAt
@@ -242,28 +207,10 @@ func (s *Server) listDeviceKeys(ctx context.Context) ([]device, error) {
 	return out, nil
 }
 
-// revokeDeviceKey removes key from the device-key registry. Removing an
-// absent key is a no-op (the registry is still written back unchanged).
-func (s *Server) revokeDeviceKey(ctx context.Context, key string) error {
-	devices, err := s.deviceRegistry(ctx)
-	if err != nil {
-		return err
-	}
-	if devices == nil {
-		return nil
-	}
-	delete(devices, key)
-	return s.memory.SetProjectSetting(ctx, deviceKeyRegistryCategory, deviceKeyRegistryKey, map[string]any{"devices": devices})
-}
-
-// maskDeviceKey renders a device key for display: a bullet mask plus the last
-// 6 characters (device keys are 64-hex; the suffix is enough to tell devices
-// apart without exposing the full credential).
-func maskDeviceKey(key string) string {
-	if len(key) <= 6 {
-		return key
-	}
-	return "••••••" + key[len(key)-6:]
+// revokeDeviceToken revokes a device credential by token id via the shared
+// project-token revoke endpoint.
+func (s *Server) revokeDeviceToken(ctx context.Context, tokenID string) error {
+	return s.memory.RevokeAPIToken(ctx, tokenID)
 }
 
 // publicBaseURL returns the externally-reachable base URL (scheme://host[:port],
@@ -289,23 +236,20 @@ func (s *Server) ttsStrategy() string {
 }
 
 // setupClient implements POST /api/setup (no auth): exchange a one-time setup
-// token for a per-device API key. The returned URLs point at this gateway
-// (single origin), pinned to PUBLIC_BASE_URL when configured.
+// token for a scoped per-device credential (an emt_* bearer carrying the
+// device:api marker). The returned URLs point at this gateway (single origin),
+// pinned to PUBLIC_BASE_URL when configured.
 func (s *Server) setupClient(c echo.Context) error {
 	var in struct {
 		Token  string          `json:"token"`
-		Device *deviceManifest `json:"device"`
+		Device *deviceManifest `json:"device"` // accepted for back-compat; the credential is minted at QR time
 	}
 	if err := c.Bind(&in); err != nil || in.Token == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid or missing token"})
 	}
-	if !s.consumeSetupToken(c.Request().Context(), in.Token) {
+	deviceToken, ok := s.consumeSetupToken(c.Request().Context(), in.Token)
+	if !ok {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unknown, expired, or already-used token"})
-	}
-	key, err := s.issueDeviceKey(c.Request().Context(), in.Device)
-	if err != nil {
-		captureError(err)
-		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}
 	serverURL := s.cfg.LiveKitPublicURL
 	if serverURL == "" {
@@ -316,7 +260,7 @@ func (s *Server) setupClient(c echo.Context) error {
 		"serverURL":     serverURL,
 		"tokenEndpoint": base + "/api/token",
 		"apiBaseURL":    base + "/",
-		"apiKey":        key,
+		"apiKey":        deviceToken,
 		"ttsStrategy":   s.ttsStrategy(),
 	})
 }

@@ -284,23 +284,9 @@ func TestCreateExtractionJob(t *testing.T) {
 func newDocAPIServer(f *fakeMemory, apiKey string) (*Server, *echo.Echo) {
 	s := &Server{cfg: Config{DefaultAgent: "memory", ClientAPIKey: apiKey}, memory: f}
 	e := echo.New()
-	if apiKey == "" {
-		// Test convenience: register a device key and inject it when the
-		// request omits X-API-Key, so the handler tests exercise the real
-		// requireClientKey middleware without per-request headers.
-		key := randomHex(32)
-		_ = f.SetProjectSetting(context.Background(), "ios_device_keys", "registry", map[string]any{
-			"devices": map[string]any{key: map[string]any{"createdAt": "2026-08-30T00:00:00Z"}},
-		})
-		e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-			return func(c echo.Context) error {
-				if c.Request().Header.Get("X-API-Key") == "" {
-					c.Request().Header.Set("X-API-Key", key)
-				}
-				return next(c)
-			}
-		})
-	}
+	// When apiKey is empty, requireClientKey is open (dev mode); when set, the
+	// admin key gates /api. The retired registry-key path is no longer needed
+	// here.
 	api := e.Group("/api", s.requireClientKey)
 	api.GET("/documents", s.listDocuments)
 	api.GET("/documents/:id", s.getDocument)
