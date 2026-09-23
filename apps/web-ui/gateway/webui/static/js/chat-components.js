@@ -434,6 +434,24 @@
     el.className = "memory-run-marker";
     el.setAttribute("data-phase", phase);
     el.setAttribute("data-status", status);
+    // A failed run is not a faint divider line — it is a full-width alert
+    // banner (daisyUI alert-error equivalent): an alert icon, a "Run failed"
+    // heading, and the error message. role=alert makes screen readers announce
+    // it the moment it mounts, so a failure is impossible to overlook.
+    if (phase === "end" && (status === "failed" || status === "error")) {
+      el.setAttribute("role", "alert");
+      var banner = document.createElement("div");
+      banner.className = "memory-run-marker-failure";
+      banner.innerHTML =
+        '<span class="memory-run-marker-failure-icon">' +
+        '<span class="iconify lucide--circle-alert size-4" aria-hidden="true"></span></span>' +
+        '<div class="memory-run-marker-failure-body">' +
+        '<p class="memory-run-marker-failure-title">Run failed</p>' +
+        '<p class="memory-run-marker-failure-msg">' + escapeHTML(o.error || "The agent run failed.") + "</p>" +
+        "</div>";
+      el.appendChild(banner);
+      return el;
+    }
     var modelChip = (phase === "start" && o.model)
       ? '<span class="memory-run-marker-model">' + escapeHTML(o.model) + "</span>"
       : "";
@@ -443,13 +461,6 @@
       '<span class="memory-run-marker-label">' + escapeHTML(label) + "</span>" +
       modelChip +
       '<span class="memory-run-marker-line" aria-hidden="true"></span>';
-    if (phase === "end" && (status === "failed" || status === "error")) {
-      el.setAttribute("role", "alert");
-      var err = document.createElement("p");
-      err.className = "memory-run-marker-error";
-      err.textContent = o.error || "The agent run failed.";
-      el.appendChild(err);
-    }
     return el;
   }
 
@@ -485,13 +496,19 @@
       ".memory-run-marker-model{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;" +
       "text-transform:none;letter-spacing:0;font-size:.6875rem;padding:.05rem .4rem;border-radius:.375rem;" +
       "background:color-mix(in oklab,var(--color-base-content) 8%,transparent);color:color-mix(in oklab,var(--color-base-content) 60%,transparent)}" +
-      ".memory-run-marker[data-status='failed']{color:var(--color-error)}" +
+      ".memory-run-marker[data-status='failed']{display:block;margin:.5rem 0}" +
       ".memory-run-marker[data-status='input-required']{color:var(--color-warning)}" +
       ".memory-run-marker[data-status='cancelled']{color:color-mix(in oklab,var(--color-base-content) 55%,transparent)}" +
-      ".memory-run-marker-error{flex-basis:100%;margin:.15rem 0 0;padding:.5rem .75rem;border-radius:.5rem;" +
-      "font-size:.8rem;text-transform:none;letter-spacing:normal;white-space:pre-wrap;word-break:break-word;" +
-      "color:var(--color-error);background:color-mix(in oklab,var(--color-error) 8%,transparent);" +
-      "border:1px solid color-mix(in oklab,var(--color-error) 25%,transparent)}" +
+      ".memory-run-marker-failure{display:flex;align-items:flex-start;gap:.6rem;padding:.7rem .85rem;" +
+      "border-radius:.6rem;border:1px solid color-mix(in oklab,var(--color-error) 42%,transparent);" +
+      "border-left:3px solid var(--color-error);" +
+      "background:color-mix(in oklab,var(--color-error) 18%,var(--color-base-100));" +
+      "text-transform:none;letter-spacing:normal}" +
+      ".memory-run-marker-failure-icon{display:inline-flex;flex:0 0 auto;margin-top:.05rem;color:var(--color-error)}" +
+      ".memory-run-marker-failure-body{min-width:0}" +
+      ".memory-run-marker-failure-title{margin:0;font-size:.8125rem;font-weight:600;line-height:1.3;color:var(--color-error)}" +
+      ".memory-run-marker-failure-msg{margin:.2rem 0 0;font-size:.8125rem;line-height:1.45;white-space:pre-wrap;" +
+      "word-break:break-word;color:color-mix(in oklab,var(--color-base-content) 80%,transparent)}" +
       /* turn footer */
       ".memory-turn-footer{display:flex;align-items:center;gap:.5rem;margin-top:.25rem;" +
       "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.6875rem;" +
