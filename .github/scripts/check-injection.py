@@ -14,12 +14,13 @@ not re-parsed for command substitution.
 
 Detection model
 ---------------
-The scanner walks the YAML structurally (no external YAML dependency) and
-locates every step's ``run`` scalar and every ``with.script`` scalar, in both
-spellings GitHub Actions accepts:
+The scanner walks the YAML structurally (Python 3 stdlib only, no external YAML
+dependency) and locates ``run`` / ``with.script`` scalars in these spellings:
 
-  * mapping form:  ``run: |`` / ``run: >`` / ``run: echo …`` (any indentation)
-  * list-item form: ``- run: |`` / ``- run: echo …`` (a leading ``- `` prefix)
+  * block scalars (``run: |``, ``run: >``) and inline scalars (``run: echo …``),
+    in mapping form (``run:`` at line start) and list-item form (``- run:``);
+  * single-line flow collections: ``- {name: x, run: "…"}`` and
+    ``steps: [{run: '…'}]`` (``run``/``script`` keys inside ``{ … }``/``[ … ]``).
 
 For each scalar it scans the raw text for the untrusted-expression families.
 Within a ``run:`` body it applies shell-aware masking:
@@ -31,14 +32,23 @@ Within a ``run:`` body it applies shell-aware masking:
     scanned — only the ``<< 'EOF'`` token itself is removed;
   * a full-line shell comment (first non-blank char ``#``) is not scanned.
 
-Comments are not part of the payload, so ``# ${{ github.ref_name }}`` on a
-comment line and ``# …`` trailing a plain scalar (a YAML comment) are ignored.
+For flow-style steps, the ``run``/``script`` value is extracted (quoted or
+plain, up to the flow delimiter at depth 0) so that interpolations in *other*
+keys of the same flow mapping (e.g. a ``name:``) are not mistaken for payloads.
+YAML comments (``# …``) and quoted literals are masked before a ``run``/``script``
+key is recognised, so a literal ``run:`` inside a string or comment is ignored.
 
 Known, deliberate exclusions (not attacker-controlled text):
   * ``github.event_name`` — a fixed enum (``push``/``pull_request``/…), no dot.
   * ``github.repository`` / ``github.repository_owner`` / ``github.actor`` /
     ``github.sha`` / ``matrix.*`` / ``runner.*`` / ``env.*`` / ``secrets.*`` —
     repo identity, fixed config, or secret-handling concerns.
+
+This is a **tripwire, not a security boundary**: it detects the interpolation
+spellings enumerated above so the common forms are kept out of the tree. It can
+be bypassed by creative YAML the scanner does not model (plain multi-line
+scalars with continuation lines, or other unusual encodings); defence-in-depth
+still relies on reviewers not re-introducing the pattern.
 
 Usage:
   check-injection.py [WORKFLOW_DIR_OR_FILE ...]   # scan (default .github/workflows)
@@ -61,7 +71,7 @@ FAMILIES = (
 )
 DANGEROUS = re.compile(r"\$\{\{\s*(?:" + "|".join(FAMILIES) + r")")
 
-# A ``run:``/``script:`` mapping key, in either spelling:
+# A ``run:``/``script:`` mapping key, in either block/list-item spelling:
 #   run: …            (mapping key)
 #   - run: …          (sequence item with an inline mapping)
 # ``m.start('key')`` is the column where ``run``/``script`` begins, which is the
@@ -77,6 +87,11 @@ BLOCK_RE = re.compile(r"^[|>]")
 # match — they are not heredocs. Unquoted heredocs (``<<EOF``) do not match
 # either, so their (evaluated) bodies are scanned as code.
 HEREDOC_RE = re.compile(r"<<-?\s*(?P<q>'[^']*'|\"[^\"]*\")")
+
+# A ``run``/``script`` flow key: the word ``run``/``script`` (not a substring of
+# a longer identifier) followed by ``:``. Used only after quotes/comments are
+# masked, and gated on being inside a flow ``{ … }``/``[ … ]`` collection.
+FLOW_KEY_RE = re.compile(r"(?<![A-Za-z0-9_-])(run|script):")
 
 
 def strip_yaml_comment(s):
@@ -108,52 +123,139 @@ def is_comment_line(line, kind):
     return stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*")
 
 
+def mask_quotes_comments(line):
+    """Return a same-length copy of ``line`` with quoted-string contents and
+    YAML comments blanked to spaces, leaving only unquoted, non-comment text.
+    Used to locate ``run``/``script`` keys without matching a literal ``run:``
+    inside a string or a comment."""
+    out = list(line)
+    quote = None
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if quote is not None:
+            out[i] = " "
+            if c == quote and not (quote == '"' and i > 0 and line[i - 1] == "\\"):
+                quote = None
+            i += 1
+            continue
+        if c in "'\"":
+            quote = c
+            out[i] = " "
+            i += 1
+            continue
+        if c == "#" and i > 0 and line[i - 1] in " \t":
+            while i < n:
+                out[i] = " "
+                i += 1
+            break
+        i += 1
+    return "".join(out)
+
+
+def flow_value(line, colon_end):
+    """Extract the value of a flow key whose ``:`` ends at ``colon_end`` (index
+    of the char after ``:``). Handles a quoted scalar (``'…'``/``"…"``) or a
+    plain scalar that runs until a flow delimiter (`,``/``}``/``]`) at depth 0."""
+    i = colon_end
+    n = len(line)
+    while i < n and line[i] in " \t":
+        i += 1
+    if i >= n:
+        return ""
+    c = line[i]
+    if c in "'\"":
+        q = c
+        j = i + 1
+        while j < n:
+            if line[j] == q and not (q == '"' and line[j - 1] == "\\"):
+                return line[i : j + 1]
+            j += 1
+        return line[i:]
+    j = i
+    depth = 0
+    while j < n:
+        ch = line[j]
+        if depth == 0 and ch in ",}]":
+            break
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+        j += 1
+    return line[i:j]
+
+
+def flow_violations(line):
+    """Return the dangerous expressions interpolated into flow-style
+    ``run``/``script`` values on a single line."""
+    masked = mask_quotes_comments(line)
+    violations = []
+    for m in FLOW_KEY_RE.finditer(masked):
+        prefix = masked[: m.start()]
+        depth = prefix.count("{") + prefix.count("[") - prefix.count("}") - prefix.count("]")
+        if depth <= 0:
+            continue  # not inside a flow collection; e.g. a plain scalar 'run:' in a name
+        value = flow_value(line, m.end())
+        for em in DANGEROUS.finditer(value):
+            violations.append(em.group(0))
+    return violations
+
+
 def iter_scalars(text):
-    """Yield ``(kind, first_body_line_no, body_lines)`` for every run:/script:
-    scalar value in ``text`` (kind is ``'run'`` or ``'script'``)."""
+    """Yield ``(kind, first_body_line_no, body_lines, flow)`` for every run:/
+    script: scalar in ``text``. ``flow`` is True for single-line flow-style
+    steps (``{… run: …}`` / ``[… run: …]``)."""
     lines = text.split("\n")
     i = 0
     n = len(lines)
     while i < n:
-        m = KEY_RE.match(lines[i])
-        if not m:
-            i += 1
+        line = lines[i]
+        m = KEY_RE.match(line)
+        if m:
+            kind = m.group("key")
+            key_col = m.start("key")
+            rest = m.group("rest")
+            rest = rest.strip() if rest.strip() else rest
+            if BLOCK_RE.match(rest.lstrip()) or rest.strip() == "":
+                body = []
+                j = i + 1
+                while j < n:
+                    linej = lines[j]
+                    if linej.strip() == "":
+                        body.append(linej)
+                        j += 1
+                        continue
+                    cur_indent = len(linej) - len(linej.lstrip(" \t"))
+                    if cur_indent > key_col:
+                        body.append(linej)
+                        j += 1
+                    else:
+                        break
+                yield kind, i + 2, body, False
+                i = j
+            else:
+                yield kind, i + 1, [strip_yaml_comment(rest)], False
+                i += 1
             continue
-        kind = m.group("key")
-        key_col = m.start("key")
-        rest = m.group("rest")
-        rest = rest.strip() if rest.strip() else rest
-        if BLOCK_RE.match(rest.lstrip()) or rest.strip() == "":
-            # Block scalar (``|``/``>``) or a plain multi-line scalar starting on
-            # the next line: collect lines indented past the key.
-            body = []
-            j = i + 1
-            while j < n:
-                line = lines[j]
-                if line.strip() == "":
-                    body.append(line)
-                    j += 1
-                    continue
-                cur_indent = len(line) - len(line.lstrip(" \t"))
-                if cur_indent > key_col:
-                    body.append(line)
-                    j += 1
-                else:
-                    break
-            yield kind, i + 2, body  # first body line is the line after the key
-            i = j
-        else:
-            # Inline scalar on the key line; a trailing ``# …`` is a YAML comment.
-            yield kind, i + 1, [strip_yaml_comment(rest)]
-            i += 1
+        # flow-style probe: run:/script: inside {…} or […] on this line
+        if FLOW_KEY_RE.search(mask_quotes_comments(line)):
+            yield "run", i + 1, [line], True
+        i += 1
 
 
-def find_violations(kind, first_line_no, body_lines):
+def find_violations(kind, first_line_no, body_lines, flow):
     """Return a list of ``(file_line_no, expression)`` for dangerous
     interpolations in a run:/script: body. Quoted-heredoc bodies of a ``run:``
     body are inert and skipped; unquoted-heredoc bodies are scanned."""
     violations = []
-    in_heredoc = None  # quoted heredoc delimiter while inside its inert body
+    if flow:
+        for offset, line in enumerate(body_lines):
+            for expr in flow_violations(line):
+                violations.append((first_line_no + offset, expr))
+        return violations
+    in_heredoc = None
     for offset, line in enumerate(body_lines):
         file_line_no = first_line_no + offset
         if kind == "run":
@@ -163,8 +265,6 @@ def find_violations(kind, first_line_no, body_lines):
                 continue
             h = HEREDOC_RE.search(line)
             if h:
-                # Scan the whole opener line minus the ``<< 'EOF'`` token, so a
-                # redirect target after it (``> "x-${{ … }}.md"``) is still seen.
                 line = line[: h.start()] + line[h.end():]
                 in_heredoc = h.group("q").strip("'\"")
             if is_comment_line(line, "run"):
@@ -180,8 +280,8 @@ def find_violations(kind, first_line_no, body_lines):
 def scan_text(text):
     """Return a list of ``(file_line_no, expression)`` violations in ``text``."""
     violations = []
-    for kind, first_line_no, body in iter_scalars(text):
-        violations.extend(find_violations(kind, first_line_no, body))
+    for kind, first_line_no, body, flow in iter_scalars(text):
+        violations.extend(find_violations(kind, first_line_no, body, flow))
     return violations
 
 
@@ -233,7 +333,6 @@ jobs:
           EOF
 """
 
-# Each violating fixture holds exactly one interpolation that must be caught.
 _FIXTURES = [
     ("- run: inline", """\
 name: x
@@ -320,6 +419,23 @@ jobs:
           body
           EOF
 """, True),
+    ("flow mapping (- {name: x, run: \"…\"})", """\
+name: x
+on: [push]
+jobs:
+  b:
+    runs-on: ubuntu-latest
+    steps:
+      - {name: x, run: "echo ${{ github.ref_name }}"}
+""", True),
+    ("flow sequence (steps: [{run: '…'}])", """\
+name: x
+on: [push]
+jobs:
+  b:
+    runs-on: ubuntu-latest
+    steps: [{run: 'echo ${{ github.ref_name }}'}]
+""", True),
     # --- clean fixtures ---
     ("env value (clean)", """\
 name: x
@@ -365,6 +481,24 @@ jobs:
           ${{ github.ref_name }}
           EOF
 """, False),
+    ("flow: literal run: in quoted value (clean)", """\
+name: x
+on: [push]
+jobs:
+  b:
+    runs-on: ubuntu-latest
+    steps:
+      - {name: x, run: "echo see run: docs"}
+""", False),
+    ("flow: run: in name value (clean)", """\
+name: x
+on: [push]
+jobs:
+  b:
+    runs-on: ubuntu-latest
+    steps:
+      - {name: Memory ${{ github.ref_name }}, run: echo hi}
+""", False),
 ]
 
 
@@ -383,7 +517,7 @@ def self_test():
             print("self-test FAILED:", f, file=sys.stderr)
         return 1
     n = len(_FIXTURES)
-    print(f"self-test OK: {n} fixtures + clean workflow all passed (incl. - run: forms)")
+    print(f"self-test OK: {n} fixtures + clean workflow all passed (incl. - run: and flow forms)")
     return 0
 
 
