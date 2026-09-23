@@ -38,8 +38,9 @@ func main() {
 	defer sentry.Flush(2 * time.Second)
 	memory := NewMemoryClient(cfg.MemoryURL, cfg.MemoryProjectID)
 	memory.shareRefSecret = cfg.ShareRefSecret
-	sup := NewSupervisor(cfg.BridgeBin, cfg.BridgeArgs, cfg.BridgeWorkdir, cfg.SupervisorInterval, cfg.WorkerIdleTTL, cfg.WorkerInternalKey, "http://127.0.0.1:"+cfg.Port)
-	s := &Server{cfg: cfg, memory: memory, supervisor: sup, bindings: newVoiceBindingStore(), shutdownCh: make(chan struct{})}
+	workerCreds := newWorkerRegistry()
+	sup := NewSupervisor(cfg.BridgeBin, cfg.BridgeArgs, cfg.BridgeWorkdir, cfg.SupervisorInterval, cfg.WorkerIdleTTL, workerCreds, "http://127.0.0.1:"+cfg.Port)
+	s := &Server{cfg: cfg, memory: memory, supervisor: sup, bindings: newVoiceBindingStore(), workerCreds: workerCreds, shutdownCh: make(chan struct{})}
 	s.hub = newConversationHub(s)
 	s.registry = newAccountRegistry()
 	s.shareIPLimiter = newKeyedRateLimiter(cfg.ShareRateIPPerMin, cfg.ShareRateIPBurst)
@@ -93,7 +94,7 @@ func main() {
 	e.Use(s.authDispatch)
 
 	// Internal worker endpoint — exempt from session auth (see publicAuthPath);
-	// gated by the X-Worker-Key header instead.
+	// gated by a per-worker credential in the X-Worker-Key header instead.
 	e.GET("/internal/voice-binding", s.voiceBindingHandler)
 
 	// GitHub webhook ingress — HMAC-signature authenticated, NOT behind the

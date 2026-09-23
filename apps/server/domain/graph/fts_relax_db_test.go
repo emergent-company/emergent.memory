@@ -54,28 +54,14 @@ func insertKeyedObject(t *testing.T, ctx context.Context, db bun.IDB, projectID 
 	return id
 }
 
-// countStrictMatches counts objects matched by the raw query without any
-// relaxation, i.e. what FTSSearch would have returned before this change.
-func countStrictMatches(t *testing.T, ctx context.Context, db bun.IDB, projectID uuid.UUID, query string) int {
-	t.Helper()
-	var rows []struct {
-		Count int `bun:"count"`
-	}
-	require.NoError(t, db.NewRaw(`
-		SELECT count(*) AS count FROM kb.graph_objects
-		WHERE project_id = uuid(?) AND fts @@ websearch_to_tsquery('simple', ?)
-	`, projectID.String(), query).Scan(ctx, &rows))
-	require.Len(t, rows, 1)
-	return rows[0].Count
-}
-
 // TestFTSSearchRelaxesUnsatisfiableIdentifier covers the failure mode where a
 // document identifier in the query is rewritten by websearch_to_tsquery into a
 // phrase that cannot match, silently zeroing an otherwise valid search.
 //
-// The law's key is a composite identifier ("lov/1997-06-13-44") which the
-// default parser indexes as a single lexeme, so its numeric components are
-// absent from the tsvector and the generated phrase is unsatisfiable.
+// The identifier's hyphenated run ("2001-02-03-04") is not present in the law's
+// key, so the default parser turns it into a phrase with no lexemes in the
+// tsvector and the strict query is unsatisfiable; Relax drops the numeric run
+// and the text terms find the law.
 func TestFTSSearchRelaxesUnsatisfiableIdentifier(t *testing.T) {
 	ctx, db, projectID, cfg := setupFTSRelaxTest(t)
 	repo := graph.NewRepository(db, slog.Default(), cfg)
@@ -83,11 +69,11 @@ func TestFTSSearchRelaxesUnsatisfiableIdentifier(t *testing.T) {
 	lawID := insertKeyedObject(t, ctx, db, projectID, "Law", "lov/1997-06-13-44",
 		`{"title":"Lov om aksjeselskaper (aksjeloven)"}`)
 
-	const rawQuery = "aksjeloven lov 1997-06-13-44"
+	const rawQuery = "aksjeloven lov 2001-02-03-04"
 
 	// Guard the premise: the strict query really does match nothing here, so the
 	// assertions below can only pass because of the relaxed fallback.
-	if got := countStrictMatches(t, ctx, db, projectID, rawQuery); got != 0 {
+	if got := countStrictMatchesDual(t, ctx, db, projectID, rawQuery); got != 0 {
 		t.Fatalf("premise changed: strict tsquery matches %d object(s), so this test no longer proves the fallback is what found the law", got)
 	}
 
@@ -113,7 +99,7 @@ func TestFTSSearchUsesStrictQueryWhenItMatches(t *testing.T) {
 		`{"title":"Lov om aksjeselskaper (aksjeloven)"}`)
 
 	const query = "aksjeloven lov"
-	require.NotZero(t, countStrictMatches(t, ctx, db, projectID, query),
+	require.NotZero(t, countStrictMatchesDual(t, ctx, db, projectID, query),
 		"premise changed: the strict query should match this object")
 
 	results, err := repo.FTSSearch(ctx, graph.FTSSearchParams{
@@ -144,11 +130,11 @@ func TestFTSSearchDoesNotRelaxBeyondFirstPage(t *testing.T) {
 	insertKeyedObject(t, ctx, db, projectID, "Law", "lov/1998-07-14-45",
 		`{"title":"Lov om aksjeselskaper (aksjeloven)"}`)
 
-	const rawQuery = "aksjeloven lov 1997-06-13-44"
+	const rawQuery = "aksjeloven lov 2001-02-03-04"
 
 	// Guard the premise: the strict query matches nothing, so the only way the
 	// first page returns rows is through the relaxed fallback.
-	if got := countStrictMatches(t, ctx, db, projectID, rawQuery); got != 0 {
+	if got := countStrictMatchesDual(t, ctx, db, projectID, rawQuery); got != 0 {
 		t.Fatalf("premise changed: strict tsquery matches %d object(s), so this test no longer proves the fallback is gated", got)
 	}
 	first, err := repo.FTSSearch(ctx, graph.FTSSearchParams{

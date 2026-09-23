@@ -21,7 +21,7 @@ func TestSupervisorEnsureWorkerIdempotentAndReap(t *testing.T) {
 	if err != nil {
 		t.Skip("sleep binary not available")
 	}
-	s := NewSupervisor(bin, []string{"60"}, "", time.Hour, 40*time.Millisecond, "k", "u")
+	s := NewSupervisor(bin, []string{"60"}, "", time.Hour, 40*time.Millisecond, nil, "u")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -56,7 +56,7 @@ func TestSupervisorEnsureWorkerIdempotentAndReap(t *testing.T) {
 // TestSupervisorRunClosesDone asserts Run returns (and closes Done) promptly
 // after its context is cancelled.
 func TestSupervisorRunClosesDone(t *testing.T) {
-	s := NewSupervisor("true", nil, "", time.Hour, time.Minute, "k", "u")
+	s := NewSupervisor("true", nil, "", time.Hour, time.Minute, nil, "u")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	go s.Run(ctx)
@@ -128,7 +128,7 @@ func TestSupervisorStopWorker(t *testing.T) {
 	if err != nil {
 		t.Skip("sleep binary not available")
 	}
-	s := NewSupervisor(bin, []string{"60"}, "", 0, 0, "k", "u")
+	s := NewSupervisor(bin, []string{"60"}, "", 0, 0, nil, "u")
 	t.Cleanup(s.stopAll)
 
 	s.EnsureWorker("agent-b")
@@ -165,7 +165,7 @@ func TestSupervisorZeroTTLDisablesReaping(t *testing.T) {
 	if err != nil {
 		t.Skip("sleep binary not available")
 	}
-	s := NewSupervisor(bin, []string{"60"}, "", time.Hour, 0, "k", "u")
+	s := NewSupervisor(bin, []string{"60"}, "", time.Hour, 0, nil, "u")
 	t.Cleanup(s.stopAll)
 
 	s.EnsureWorker("agent-c")
