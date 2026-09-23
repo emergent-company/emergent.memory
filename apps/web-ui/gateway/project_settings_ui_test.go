@@ -248,9 +248,8 @@ func TestOverrideSummary(t *testing.T) {
 	}
 }
 
-// TestRenderDevicesPanel covers the Devices panel: empty state, a metadata
-// device row (name + platform + OS version), a legacy device row (masked key +
-// registration time fallback), and the per-device revoke forms.
+// TestRenderDevicesPanel covers the Devices panel: empty state, a device
+// credential row (name + registration time), and the per-device revoke form.
 func TestRenderDevicesPanel(t *testing.T) {
 	// empty state
 	html := renderHTML(t, devicesPanel(nil))
@@ -260,73 +259,31 @@ func TestRenderDevicesPanel(t *testing.T) {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// metadata device: self-reported name/platform/OS shown, key stays masked
-	mdKey := strings.Repeat("cd", 32) // 64 hex chars
+	// device credential: name shown as the row title, masked prefix not leaked
+	id := "tok-123"
 	html = renderHTML(t, devicesPanel([]device{
-		{
-			Key:          mdKey,
-			CreatedAt:    now,
-			Platform:     "macos",
-			Name:         "MacBook Pro",
-			ModelID:      "Mac14,2",
-			ModelDisplay: "MacBook Pro (M2)",
-			OSName:       "macOS",
-			OSVersion:    "15.0",
-		},
+		{ID: id, Name: "device", Prefix: "emt_device_x", CreatedAt: now},
 	}))
 	for _, want := range []string{
 		"Devices",
-		"MacBook Pro",        // name shown as the row title
-		"macos · macOS 15.0", // platform + OS version
+		"device", // name shown as the row title
 		"Registered", "just now",
-		`action="/settings/devices/` + mdKey + `/revoke"`,
+		`action="/settings/devices/` + id + `/revoke"`,
 		"Revoke",
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("metadata device panel missing %q", want)
+			t.Errorf("device panel missing %q", want)
 		}
-	}
-	// the metadata device's full key appears only in the revoke form action
-	// (which needs it to target the route), never in the display row
-	mdDisplay := strings.SplitN(html, "<form", 2)[0]
-	if strings.Contains(mdDisplay, mdKey[:10]) {
-		t.Error("metadata device full key must not leak into the display row")
-	}
-
-	// legacy device (no manifest): masked key + registration time fallback
-	key := strings.Repeat("ab", 32) // 64 hex chars
-	html = renderHTML(t, devicesPanel([]device{
-		{Key: key, CreatedAt: now},
-	}))
-	for _, want := range []string{
-		"Devices",
-		"••••••" + key[len(key)-6:],
-		"Registered", "just now",
-		`action="/settings/devices/` + key + `/revoke"`,
-		"Revoke",
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("legacy device panel missing %q", want)
-		}
-	}
-	// the key is masked in the display row; it appears in full only in the
-	// revoke form action (which needs it to target the route)
-	display := strings.SplitN(html, "<form", 2)[0]
-	if strings.Contains(display, key[:10]) {
-		t.Error("device key must be masked in display, full key must not leak")
 	}
 }
 
-// TestMaskDeviceKey covers the key-masking helper.
-func TestMaskDeviceKey(t *testing.T) {
-	if got := maskDeviceKey("0123456789abcdef"); got != "••••••abcdef" {
-		t.Errorf("maskDeviceKey = %q, want ••••••abcdef", got)
+// TestDeviceDisplayName covers the device-name fallback helper.
+func TestDeviceDisplayName(t *testing.T) {
+	if got := deviceDisplayName(device{Name: "iPhone", Prefix: "emt_x"}); got != "iPhone" {
+		t.Errorf("deviceDisplayName = %q, want iPhone", got)
 	}
-	if got := maskDeviceKey("short"); got != "short" {
-		t.Errorf("short key should pass through unmasked, got %q", got)
-	}
-	if got := maskDeviceKey(""); got != "" {
-		t.Errorf("empty key should stay empty, got %q", got)
+	if got := deviceDisplayName(device{Prefix: "emt_prefix1234"}); got != "emt_prefix1234" {
+		t.Errorf("deviceDisplayName fallback = %q, want the prefix", got)
 	}
 }
 

@@ -69,260 +69,90 @@ func TestRequireClientKeyAdminKey(t *testing.T) {
 	}
 }
 
-func TestRequireClientKeyDeviceKey(t *testing.T) {
-	f := &fakeMemory{}
-	s, e := newAuthEcho(f, Config{})
-	key, err := s.issueDeviceKey(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestRequireClientKeyRejectsRetiredRegistryKey(t *testing.T) {
+	// The 64-hex registry key path was retired with the scoped device
+	// credential (#848): a bare registry key is no longer a valid client key.
+	_, e := newAuthEcho(&fakeMemory{}, Config{ClientAPIKey: "admin-secret"})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	req.Header.Set("X-API-Key", key)
+	req.Header.Set("X-API-Key", strings.Repeat("0", 64))
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (registered device key should pass)", rec.Code)
-	}
-	if len(f.settingWrites) != 1 || f.settingWrites[0].Category != "ios_device_keys" || f.settingWrites[0].Key != "registry" {
-		t.Errorf("device key not persisted to ios_device_keys/registry: %+v", f.settingWrites)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (registry key retired)", rec.Code)
 	}
 }
 
-// --- device-key registry ---
+// --- device credentials (web-device-credential) ---
 
-// TestDeviceKeyRegistryShape asserts the single-registry storage shape:
-// ios_device_keys/registry = {"devices": {"<key>": {"createdAt": "<RFC3339>",
-// "device": {<manifest>}}}}. With a manifest supplied the entry carries the
-// non-empty manifest fields under "device"; without one the entry is exactly
-// {"createdAt": ...}.
-func TestDeviceKeyRegistryShape(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
-	key, err := s.issueDeviceKey(t.Context(), &deviceManifest{
-		Platform:   "ios",
-		Name:       "John's iPhone",
-		ModelID:    "iPhone15,2",
-		OSName:     "iOS",
-		OSVersion:  "18.3.1",
-		AppVersion: "1.2.0",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg := f.settings["ios_device_keys"]["registry"]
-	if reg == nil {
-		t.Fatal("registry setting missing after issueDeviceKey")
-	}
-	devices, ok := reg["devices"].(map[string]any)
-	if !ok {
-		t.Fatalf("registry devices = %v (%T), want map[string]any", reg["devices"], reg["devices"])
-	}
-	entry, ok := devices[key].(map[string]any)
-	if !ok {
-		t.Fatalf("device entry = %v (%T), want map[string]any", devices[key], devices[key])
-	}
-	createdAt, ok := entry["createdAt"].(string)
-	if !ok || createdAt == "" {
-		t.Errorf("device entry createdAt = %v, want RFC3339 string", entry["createdAt"])
-	}
-	dev, ok := entry["device"].(map[string]any)
-	if !ok {
-		t.Fatalf("device entry device = %v (%T), want map[string]any", entry["device"], entry["device"])
-	}
-	want := map[string]string{
-		"platform":   "ios",
-		"name":       "John's iPhone",
-		"modelId":    "iPhone15,2",
-		"osName":     "iOS",
-		"osVersion":  "18.3.1",
-		"appVersion": "1.2.0",
-	}
-	for k, v := range want {
-		if gotV, ok := dev[k].(string); !ok || gotV != v {
-			t.Errorf("device[%q] = %v (%T), want %q", k, dev[k], dev[k], v)
-		}
-	}
-	if _, present := dev["appBuild"]; present {
-		t.Errorf("empty manifest fields must not be persisted, got %+v", dev)
-	}
-}
-
-// TestDeviceKeyRegistryLifecycle covers issue → valid → list → revoke → invalid
-// on the registry storage.
-func TestDeviceKeyRegistryLifecycle(t *testing.T) {
+// TestDeviceTokenLifecycle covers mint (server-side) → list → revoke → relist
+// on the token store. Device credentials are project tokens carrying the
+// device:api marker; the devices UI lists and revokes them via the shared
+// project-token surface.
+func TestDeviceTokenLifecycle(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{}, memory: f}
 
-	// empty registry lists nothing
-	devices, err := s.listDeviceKeys(t.Context())
+	// empty store lists nothing
+	devices, err := s.listDeviceTokens(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(devices) != 0 {
-		t.Fatalf("empty registry should list nothing, got %+v", devices)
+		t.Fatalf("empty store should list nothing, got %+v", devices)
 	}
 
-	k1, err := s.issueDeviceKey(t.Context(), nil)
-	if err != nil {
+	// two device credentials minted server-side
+	if _, err := f.CreateDeviceToken(t.Context(), "device"); err != nil {
 		t.Fatal(err)
 	}
-	k2, err := s.issueDeviceKey(t.Context(), nil)
-	if err != nil {
+	if _, err := f.CreateDeviceToken(t.Context(), "device"); err != nil {
+		t.Fatal(err)
+	}
+	// a non-device programmatic token must NOT appear in the device list
+	if _, err := f.CreateAPIToken(t.Context(), "programmatic", []string{"data:read"}); err != nil {
 		t.Fatal(err)
 	}
 
-	if !s.deviceKeyValid(t.Context(), k1) || !s.deviceKeyValid(t.Context(), k2) {
-		t.Fatal("issued keys should be valid via the registry")
-	}
-	if s.deviceKeyValid(t.Context(), strings.Repeat("0", 64)) {
-		t.Fatal("unregistered key must be invalid")
-	}
-
-	// both listed, createdAt populated
-	devices, err = s.listDeviceKeys(t.Context())
+	devices, err = s.listDeviceTokens(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(devices) != 2 {
-		t.Fatalf("want 2 devices, got %d: %+v", len(devices), devices)
+		t.Fatalf("want 2 device credentials (programmatic excluded), got %d: %+v", len(devices), devices)
 	}
 	for _, d := range devices {
-		if d.CreatedAt == "" {
-			t.Errorf("device %s has empty createdAt", d.Key)
+		if d.CreatedAt == "" || d.ID == "" {
+			t.Errorf("device %+v missing id/createdAt", d)
 		}
 	}
 
-	// revoke k1: k1 invalid, k2 unaffected, list shrinks
-	if err := s.revokeDeviceKey(t.Context(), k1); err != nil {
+	// revoke one: list shrinks
+	id := devices[0].ID
+	if err := s.revokeDeviceToken(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
-	if s.deviceKeyValid(t.Context(), k1) {
-		t.Error("revoked key must be invalid")
-	}
-	if !s.deviceKeyValid(t.Context(), k2) {
-		t.Error("revoking one key must not affect others")
-	}
-	devices, _ = s.listDeviceKeys(t.Context())
-	if len(devices) != 1 || devices[0].Key != k2 {
-		t.Errorf("after revoke, want only %s, got %+v", k2, devices)
-	}
-
-	// revoking an absent key is a no-op
-	if err := s.revokeDeviceKey(t.Context(), k1); err != nil {
-		t.Fatalf("re-revoke should be a no-op, got %v", err)
-	}
-	devices, _ = s.listDeviceKeys(t.Context())
+	devices, _ = s.listDeviceTokens(t.Context())
 	if len(devices) != 1 {
-		t.Errorf("no-op revoke should not change the registry, got %+v", devices)
+		t.Errorf("after revoke, want 1 device, got %d: %+v", len(devices), devices)
 	}
-}
-
-// TestListDeviceKeysPopulatesMetadata asserts listDeviceKeys reads the stored
-// "device" manifest back into the device struct: an entry with a manifest
-// yields populated metadata fields, a legacy entry (no "device") yields empty
-// metadata fields while keeping Key/CreatedAt.
-func TestListDeviceKeysPopulatesMetadata(t *testing.T) {
-	f := &fakeMemory{}
-	s := &Server{cfg: Config{}, memory: f}
-	if err := f.SetProjectSetting(t.Context(), "ios_device_keys", "registry", map[string]any{
-		"devices": map[string]any{
-			// modern entry: self-reported manifest
-			"meta": map[string]any{
-				"createdAt": "2026-08-02T10:00:00Z",
-				"device": map[string]any{
-					"platform":     "macos",
-					"name":         "MacBook Pro",
-					"modelId":      "Mac14,2",
-					"modelDisplay": "MacBook Pro (M2)",
-					"osName":       "macOS",
-					"osVersion":    "15.0",
-					"appVersion":   "1.2.0",
-				},
-			},
-			// legacy entry: no device field at all
-			"legacy": map[string]any{
-				"createdAt": "2026-08-01T10:00:00Z",
-			},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	devices, err := s.listDeviceKeys(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(devices) != 2 {
-		t.Fatalf("want 2 devices, got %+v", devices)
-	}
-
-	var meta, legacy *device
-	for i := range devices {
-		switch devices[i].Key {
-		case "meta":
-			meta = &devices[i]
-		case "legacy":
-			legacy = &devices[i]
-		}
-	}
-	if meta == nil || legacy == nil {
-		t.Fatalf("both seeded devices must be listed, got %+v", devices)
-	}
-
-	// modern entry: all reported fields surfaced
-	fields := []struct {
-		name string
-		get  func(d device) string
-	}{
-		{"Platform", func(d device) string { return d.Platform }},
-		{"Name", func(d device) string { return d.Name }},
-		{"ModelID", func(d device) string { return d.ModelID }},
-		{"ModelDisplay", func(d device) string { return d.ModelDisplay }},
-		{"OSName", func(d device) string { return d.OSName }},
-		{"OSVersion", func(d device) string { return d.OSVersion }},
-	}
-	wantMeta := map[string]string{
-		"Platform":     "macos",
-		"Name":         "MacBook Pro",
-		"ModelID":      "Mac14,2",
-		"ModelDisplay": "MacBook Pro (M2)",
-		"OSName":       "macOS",
-		"OSVersion":    "15.0",
-	}
-	for _, f := range fields {
-		if got := f.get(*meta); got != wantMeta[f.name] {
-			t.Errorf("meta device %s = %q, want %q", f.name, got, wantMeta[f.name])
-		}
-	}
-	if meta.CreatedAt != "2026-08-02T10:00:00Z" {
-		t.Errorf("meta device createdAt = %q, want seeded value", meta.CreatedAt)
-	}
-
-	// legacy entry: key + createdAt kept, metadata empty
-	if legacy.CreatedAt != "2026-08-01T10:00:00Z" {
-		t.Errorf("legacy device createdAt = %q, want seeded value", legacy.CreatedAt)
-	}
-	for _, f := range fields {
-		if got := f.get(*legacy); got != "" {
-			t.Errorf("legacy device %s = %q, want empty", f.name, got)
+	for _, d := range devices {
+		if d.ID == id {
+			t.Errorf("revoked device %s still listed", id)
 		}
 	}
 }
 
-// TestListDeviceKeysNewestFirst asserts deterministic newest-first ordering
-// (registry seeded directly with distinct timestamps).
-func TestListDeviceKeysNewestFirst(t *testing.T) {
+// TestListDeviceTokensNewestFirst asserts deterministic newest-first ordering.
+func TestListDeviceTokensNewestFirst(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{}, memory: f}
-	if err := f.SetProjectSetting(t.Context(), "ios_device_keys", "registry", map[string]any{
-		"devices": map[string]any{
-			"aaa": map[string]any{"createdAt": "2026-08-01T10:00:00Z"},
-			"bbb": map[string]any{"createdAt": "2026-08-02T10:00:00Z"},
-			"ccc": map[string]any{"createdAt": "2026-08-03T10:00:00Z"},
-		},
-	}); err != nil {
-		t.Fatal(err)
+	f.apiTokens = []APIToken{
+		{ID: "aaa", Name: "device", Scopes: []string{"device:api", "agents:read", "data:read"}, CreatedAt: "2026-08-01T10:00:00Z"},
+		{ID: "bbb", Name: "device", Scopes: []string{"device:api", "agents:read", "data:read"}, CreatedAt: "2026-08-02T10:00:00Z"},
+		{ID: "ccc", Name: "device", Scopes: []string{"device:api", "agents:read", "data:read"}, CreatedAt: "2026-08-03T10:00:00Z"},
+		{ID: "zzz", Name: "programmatic", Scopes: []string{"data:read"}, CreatedAt: "2026-08-04T10:00:00Z"},
 	}
-	devices, err := s.listDeviceKeys(t.Context())
+	devices, err := s.listDeviceTokens(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,33 +161,33 @@ func TestListDeviceKeysNewestFirst(t *testing.T) {
 	}
 	want := []string{"ccc", "bbb", "aaa"}
 	for i, w := range want {
-		if devices[i].Key != w {
-			t.Errorf("position %d = %s, want %s", i, devices[i].Key, w)
+		if devices[i].ID != w {
+			t.Errorf("position %d = %s, want %s", i, devices[i].ID, w)
 		}
 	}
 }
 
 // TestUIRevokeDevice exercises the settings revoke form (PRG → 303 redirect,
-// key no longer valid afterwards).
+// credential revoked afterwards).
 func TestUIRevokeDevice(t *testing.T) {
 	f := &fakeMemory{}
 	s, e := newAuthEcho(f, Config{})
-	key, err := s.issueDeviceKey(t.Context(), nil)
+	tok, err := f.CreateDeviceToken(t.Context(), "device")
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.POST("/settings/devices/:key/revoke", s.uiRevokeDevice)
+	e.POST("/settings/devices/:id/revoke", s.uiRevokeDevice)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/devices/"+key+"/revoke", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/devices/"+tok.ID+"/revoke", nil))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", rec.Code)
 	}
 	if loc := rec.Header().Get("Location"); loc != "/settings/devices?updated=1" {
 		t.Errorf("redirect = %q, want /settings/devices?updated=1", loc)
 	}
-	if s.deviceKeyValid(t.Context(), key) {
-		t.Error("device key should be revoked after the handler runs")
+	if !f.apiTokens[fakeAPITokenFind(f.apiTokens, tok.ID)].IsRevoked {
+		t.Error("device credential should be revoked after the handler runs")
 	}
 }
 
@@ -402,7 +232,8 @@ func TestSetupClientUnknownToken(t *testing.T) {
 }
 
 func TestSetupClientSuccess(t *testing.T) {
-	s, e := newAuthEcho(&fakeMemory{}, Config{
+	f := &fakeMemory{}
+	s, e := newAuthEcho(f, Config{
 		LiveKitPublicURL: "wss://lk.example.com",
 		LiveKitURL:       "ws://internal:7880",
 		DefaultAgent:     "memory",
@@ -439,20 +270,14 @@ func TestSetupClientSuccess(t *testing.T) {
 		}
 	}
 	apiKey := got["apiKey"]
-	if len(apiKey) != 64 {
-		t.Errorf("apiKey = %q, want 64 lowercase hex chars (randomHex(32))", apiKey)
-	}
-	if strings.Trim(apiKey, "0123456789abcdef") != "" {
-		t.Errorf("apiKey = %q, want hex only", apiKey)
+	if !strings.HasPrefix(apiKey, "emt_") {
+		t.Errorf("apiKey = %q, want an emt_* device credential", apiKey)
 	}
 
-	// the returned key is a registered device key: it passes requireClientKey
-	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	req2.Header.Set("X-API-Key", apiKey)
-	e.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("issued key should authenticate /api/health, got %d", rec2.Code)
+	// the returned credential is a device credential minted server-side at QR
+	// time; the setup flow stores it and returns it verbatim.
+	if len(f.apiTokens) != 1 || !hasDeviceScope(f.apiTokens[0].Scopes) {
+		t.Errorf("expected exactly one device credential minted, got %+v", f.apiTokens)
 	}
 }
 
@@ -499,6 +324,10 @@ func TestSetupClientServerURLFallback(t *testing.T) {
 // TestSetupClientAcceptsDeviceManifest asserts the optional device manifest is
 // persisted with the issued key: after a POST /api/setup carrying a device
 // object, the registry entry holds the reported fields under "device".
+// TestSetupClientAcceptsDeviceManifest asserts the optional device manifest is
+// still accepted in the request body (back-compat with pre-credential iOS
+// clients) and ignored — the credential was already minted server-side at QR
+// time and is returned verbatim.
 func TestSetupClientAcceptsDeviceManifest(t *testing.T) {
 	f := &fakeMemory{}
 	s, e := newAuthEcho(f, Config{})
@@ -522,48 +351,22 @@ func TestSetupClientAcceptsDeviceManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := got["apiKey"]
-	if key == "" {
-		t.Fatal("setup response missing apiKey")
+	if !strings.HasPrefix(key, "emt_") {
+		t.Fatalf("apiKey = %q, want an emt_* device credential", key)
 	}
-
-	// the issued key's registry entry carries the manifest under "device"
-	reg := f.settings["ios_device_keys"]["registry"]
-	if reg == nil {
-		t.Fatal("registry setting missing after setup")
+	// exactly one device credential minted at QR time; the manifest is not a
+	// separate registry entry.
+	if len(f.apiTokens) != 1 {
+		t.Errorf("want 1 device credential, got %+v", f.apiTokens)
 	}
-	devices, _ := reg["devices"].(map[string]any)
-	entry, ok := devices[key].(map[string]any)
-	if !ok {
-		t.Fatalf("device entry = %v (%T), want map[string]any", devices[key], devices[key])
-	}
-	dev, ok := entry["device"].(map[string]any)
-	if !ok {
-		t.Fatalf("entry device = %v (%T), want map[string]any", entry["device"], entry["device"])
-	}
-	want := map[string]string{
-		"platform":     "ios",
-		"formFactor":   "phone",
-		"name":         "John's iPhone",
-		"modelId":      "iPhone15,2",
-		"modelDisplay": "iPhone 14 Pro",
-		"osName":       "iOS",
-		"osVersion":    "18.3.1",
-		"appVersion":   "1.2.0",
-		"appBuild":     "42",
-	}
-	for k, v := range want {
-		if gotV, ok := dev[k].(string); !ok || gotV != v {
-			t.Errorf("device[%q] = %v (%T), want %q", k, dev[k], dev[k], v)
-		}
-	}
-	if _, ok := entry["createdAt"].(string); !ok {
-		t.Errorf("device entry createdAt = %v, want RFC3339 string", entry["createdAt"])
+	if _, has := f.settings["ios_device_keys"]; has {
+		t.Errorf("ios_device_keys registry must be retired: %+v", f.settings["ios_device_keys"])
 	}
 }
 
-// TestSetupClientWithoutManifest asserts a legacy POST /api/setup with no
-// device object still issues a key and records the registration WITHOUT a
-// device field (backward compatible with pre-manifest clients).
+// TestSetupClientWithoutManifest asserts a POST /api/setup with no device
+// object still returns the device credential (the manifest is optional and no
+// longer persisted).
 func TestSetupClientWithoutManifest(t *testing.T) {
 	f := &fakeMemory{}
 	s, e := newAuthEcho(f, Config{})
@@ -583,25 +386,8 @@ func TestSetupClientWithoutManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := got["apiKey"]
-	if key == "" {
-		t.Fatal("setup without a manifest must still issue a key")
-	}
-
-	// the entry is registered with the legacy shape: no device field
-	reg := f.settings["ios_device_keys"]["registry"]
-	if reg == nil {
-		t.Fatal("registry setting missing after setup")
-	}
-	devices, _ := reg["devices"].(map[string]any)
-	entry, ok := devices[key].(map[string]any)
-	if !ok {
-		t.Fatalf("device entry = %v (%T), want map[string]any", devices[key], devices[key])
-	}
-	if _, present := entry["device"]; present {
-		t.Errorf("registry entry must have no device field without a manifest, got %+v", entry)
-	}
-	if _, ok := entry["createdAt"].(string); !ok {
-		t.Errorf("device entry createdAt = %v, want RFC3339 string", entry["createdAt"])
+	if !strings.HasPrefix(key, "emt_") {
+		t.Fatalf("apiKey = %q, want an emt_* device credential", key)
 	}
 }
 
@@ -618,7 +404,7 @@ func TestConsumeSetupTokenExpired(t *testing.T) {
 		"createdAt": time.Now().Add(-11 * time.Minute).UTC().Format(time.RFC3339),
 		"used":      false,
 	})
-	if s.consumeSetupToken(t.Context(), stale) {
+	if _, ok := s.consumeSetupToken(t.Context(), stale); ok {
 		t.Fatal("expired token must not be consumable")
 	}
 
@@ -628,7 +414,7 @@ func TestConsumeSetupTokenExpired(t *testing.T) {
 		"createdAt": "not-a-timestamp",
 		"used":      false,
 	})
-	if s.consumeSetupToken(t.Context(), stale) {
+	if _, ok := s.consumeSetupToken(t.Context(), stale); ok {
 		t.Fatal("token with unparsable createdAt must not be consumable")
 	}
 
@@ -637,7 +423,7 @@ func TestConsumeSetupTokenExpired(t *testing.T) {
 		"token": stale,
 		"used":  false,
 	})
-	if s.consumeSetupToken(t.Context(), stale) {
+	if _, ok := s.consumeSetupToken(t.Context(), stale); ok {
 		t.Fatal("token with missing createdAt must not be consumable")
 	}
 }
@@ -648,13 +434,13 @@ func TestConsumeSetupTokenFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !s.consumeSetupToken(t.Context(), token) {
+	if _, ok := s.consumeSetupToken(t.Context(), token); !ok {
 		t.Fatal("fresh minted token should be consumable")
 	}
-	if s.consumeSetupToken(t.Context(), token) {
+	if _, ok := s.consumeSetupToken(t.Context(), token); ok {
 		t.Fatal("token must be single-use")
 	}
-	if s.consumeSetupToken(t.Context(), strings.Repeat("0", 32)) {
+	if _, ok := s.consumeSetupToken(t.Context(), strings.Repeat("0", 32)); ok {
 		t.Fatal("unknown token must be rejected")
 	}
 }
@@ -675,7 +461,7 @@ func TestMintSetupTokenReusesValid(t *testing.T) {
 	if t1 != t2 {
 		t.Errorf("mintSetupToken should reuse the valid stored token, got %s vs %s", t1, t2)
 	}
-	if !s.consumeSetupToken(t.Context(), t1) {
+	if _, ok := s.consumeSetupToken(t.Context(), t1); !ok {
 		t.Fatal("token should be consumable")
 	}
 	t3, err := s.mintSetupToken(t.Context())
@@ -699,10 +485,10 @@ func TestSetupTokenSurvivesRestart(t *testing.T) {
 	}
 
 	s2 := &Server{cfg: Config{}, memory: f} // "restarted" process, same backend
-	if !s2.consumeSetupToken(t.Context(), token) {
+	if _, ok := s2.consumeSetupToken(t.Context(), token); !ok {
 		t.Fatal("token minted before restart must survive and be consumable")
 	}
-	if s2.consumeSetupToken(t.Context(), token) {
+	if _, ok := s2.consumeSetupToken(t.Context(), token); ok {
 		t.Fatal("token must still be single-use after restart")
 	}
 }
@@ -733,10 +519,10 @@ func TestSetupQRPayloadShape(t *testing.T) {
 		t.Errorf("token = %q, want 64 lowercase hex chars (randomHex(32))", got.Token)
 	}
 	// the token in the QR is a valid one-time setup token
-	if !s.consumeSetupToken(t.Context(), got.Token) {
+	if _, ok := s.consumeSetupToken(t.Context(), got.Token); !ok {
 		t.Error("QR token should be consumable exactly once")
 	}
-	if s.consumeSetupToken(t.Context(), got.Token) {
+	if _, ok := s.consumeSetupToken(t.Context(), got.Token); ok {
 		t.Error("QR token must be single-use")
 	}
 }

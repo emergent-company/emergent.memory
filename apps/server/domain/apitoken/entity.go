@@ -117,6 +117,14 @@ var ValidApiTokenScopes = []string{
 	// share key as a Bearer credential; share routes resolve token -> link ->
 	// agent -> project and ignore client-supplied project/org headers.
 	"share:agent-chat",
+	// Marker scope minted on scoped per-device credentials. Like mcp:agent-call
+	// and share:agent-chat it is reserved for an internal mint path
+	// (Service.CreateDeviceToken) and deliberately absent from the user-facing
+	// oneof tags; Service.Create / CreateAccountToken / UpdateScopes reject it.
+	// The gateway recognises a device credential by introspecting for this
+	// marker (see rejectDeviceTokenOutsideSurface); the server enforces the
+	// exact-set device ceiling at validation time.
+	"device:api",
 }
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO
