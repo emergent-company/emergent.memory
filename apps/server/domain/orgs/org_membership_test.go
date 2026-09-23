@@ -103,6 +103,27 @@ func (s *OrgMembershipSuite) TestOwnOrgRoutesAllowed() {
 		"own-org delete must succeed, got %d: %s", resp.StatusCode, resp.String())
 }
 
+// TestNonexistentOrgForbidden pins the contract decision for #851: a caller
+// addressing an org that does not exist receives the same 403 as a caller
+// addressing an org they are not a member of (uniform fail-closed, no
+// org-existence oracle). This mirrors the e2e api-suite expectations.
+func (s *OrgMembershipSuite) TestNonexistentOrgForbidden() {
+	checks := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/orgs/00000000-0000-0000-0000-000000000000"},
+		{method: http.MethodDelete, path: "/api/orgs/00000000-0000-0000-0000-000000000000"},
+		{method: http.MethodGet, path: "/api/orgs/00000000-0000-0000-0000-000000000000/members"},
+	}
+
+	for _, tc := range checks {
+		resp := s.Client.Request(tc.method, tc.path, testutil.WithAuth("e2e-test-user"))
+		s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+			"%s %s (nonexistent org) must be 403, got %d: %s", tc.method, tc.path, resp.StatusCode, resp.String())
+	}
+}
+
 // TestNoUserUnauthorized proves the routes fail closed with 401 when no
 // authenticated user is present.
 func (s *OrgMembershipSuite) TestNoUserUnauthorized() {
