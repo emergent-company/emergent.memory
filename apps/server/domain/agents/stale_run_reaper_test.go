@@ -71,3 +71,48 @@ func TestTouchRun_SetsLastStepAt(t *testing.T) {
 	q := sharedCaptureDriver.lastQuery()
 	require.Contains(t, q, "last_step_at", "TouchRun must set last_step_at; got: %s", q)
 }
+
+// TestTouchRun_OnlyTouchesRunningRuns pins the status guard: a heartbeat that
+// races a terminal transition must not resurrect liveness on a finished run.
+func TestTouchRun_OnlyTouchesRunningRuns(t *testing.T) {
+	resetCaptureDriver()
+	repo := newCaptureExecRepository(t)
+
+	err := repo.TouchRun(context.Background(), "run-1")
+	require.NoError(t, err)
+
+	q := sharedCaptureDriver.lastQuery()
+	require.Contains(t, q, "last_step_at", "TouchRun must set last_step_at; got: %s", q)
+	require.Contains(t, q, "status", "TouchRun must restrict to running rows; got: %s", q)
+}
+
+// TestStartRunHeartbeat_TouchesPeriodicallyThenStops covers the run-lifetime
+// heartbeat: it must keep refreshing last_step_at while the executor goroutine
+// is alive (so provisioning and long blocking phases count as activity), and it
+// must stop cleanly when the executor returns — a dead goroutine stops ticking,
+// so its run is still reaped.
+func TestStartRunHeartbeat_TouchesPeriodicallyThenStops(t *testing.T) {
+	resetCaptureDriver()
+	repo := newCaptureExecRepository(t)
+
+	stop := repo.StartRunHeartbeat("run-heartbeat", 20*time.Millisecond)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for sharedCaptureDriver.lastQuery() == "" && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.Contains(t, sharedCaptureDriver.lastQuery(), "last_step_at",
+		"heartbeat must write last_step_at")
+
+	stop()
+	// Give any in-flight tick a chance to observe the closed channel, then prove
+	// that no further writes arrive over several heartbeat intervals.
+	time.Sleep(50 * time.Millisecond)
+	resetCaptureDriver()
+	time.Sleep(60 * time.Millisecond)
+	require.Empty(t, sharedCaptureDriver.lastQuery(),
+		"heartbeat must stop writing once stop() is called")
+
+	// stop must be idempotent.
+	require.NotPanics(t, stop)
+}

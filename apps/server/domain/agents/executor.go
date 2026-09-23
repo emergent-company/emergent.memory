@@ -585,6 +585,14 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	})
 	defer cleanup.Cleanup()
 
+	// Run-lifetime heartbeat: keep last_step_at fresh from before workspace
+	// provisioning through the whole pipeline, so a live executor is never
+	// reaped during a long blocking phase (sandbox build, slow model/tool call).
+	// It stops when this function returns; a dead executor stops ticking and is
+	// reaped as before.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
+
 	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
 		// Fatal provisioning failure (e.g. image not ready) — fail the run
@@ -779,6 +787,11 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
 	})
 	defer cleanup.Cleanup()
+
+	// Run-lifetime heartbeat (see Execute) — covers provisioning and long
+	// blocking phases for this async entry point too.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
 
 	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
@@ -994,6 +1007,11 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
 	})
 	defer cleanup.Cleanup()
+
+	// Run-lifetime heartbeat (see Execute) — resumed runs can also block in
+	// provisioning/tool phases, so cover them with the same ticker.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(newRun.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
 
 	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, req)
 	if wsErr != nil {

@@ -14,6 +14,13 @@ const (
 
 	// staleRunReaperInterval is how often the reaper checks for stale runs.
 	staleRunReaperInterval = 5 * time.Minute
+
+	// defaultRunHeartbeatInterval is how often a live executor refreshes its
+	// run's last_step_at via StartRunHeartbeat. Kept well below
+	// staleRunThreshold (15 ticks per window) so a run whose executor goroutine
+	// is alive is never reaped, even across long blocking phases such as
+	// workspace provisioning/build or a slow in-flight model/tool call.
+	defaultRunHeartbeatInterval = 2 * time.Minute
 )
 
 // StaleRunReaper periodically scans for agent runs stuck in "running" status

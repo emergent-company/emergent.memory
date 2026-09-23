@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -213,14 +214,52 @@ func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
 
 // TouchRun bumps the run's last_step_at heartbeat to now. The executor calls
 // this at each pipeline step so the stale-run reaper can distinguish a live run
-// from one that has genuinely stalled (or been abandoned).
+// from one that has genuinely stalled (or been abandoned). Only rows still in
+// "running" status are touched, so a heartbeat that races a terminal transition
+// cannot resurrect liveness on a finished run.
 func (r *Repository) TouchRun(ctx context.Context, runID string) error {
 	_, err := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
 		Set("last_step_at = ?", time.Now()).
 		Where("id = ?", runID).
+		Where("status = ?", RunStatusRunning).
 		Exec(ctx)
 	return err
+}
+
+// StartRunHeartbeat launches a background goroutine that refreshes runID's
+// last_step_at every interval until the returned stop function is called.
+//
+// It complements the per-step TouchRun calls: those only fire when the pipeline
+// reaches a model/tool boundary, so a long blocking phase — workspace
+// provisioning and sandbox build before the pipeline starts, or a single slow
+// model/tool call in flight — could still exceed the stale threshold with no
+// heartbeat. A run-lifetime ticker keeps last_step_at fresh for as long as the
+// executor goroutine is alive, while a goroutine that dies (panic, cancellation,
+// abandoned execution) stops ticking and the run is reaped as before.
+//
+// The returned stop function is idempotent and safe to call more than once.
+// interval <= 0 falls back to defaultRunHeartbeatInterval.
+func (r *Repository) StartRunHeartbeat(runID string, interval time.Duration) (stop func()) {
+	if interval <= 0 {
+		interval = defaultRunHeartbeatInterval
+	}
+	stopCh := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				// Best-effort: a transient failure is retried on the next tick.
+				_ = r.TouchRun(context.Background(), runID)
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(stopCh) }) }
 }
 
 // MarkStaleRunsAsError finds runs stuck in "running" status for longer than
