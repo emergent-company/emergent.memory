@@ -34,6 +34,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -408,7 +409,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "entity-search",
 			OutputSchema: objectOutputSchema(),
-			Description:  "Search entities by text query across name, key, and description fields. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
+			Description:  "Search entities by text query over the full-text index (key, type, title, name, description). Matching is lexeme-based, not substring: query terms match whole indexed words (a composite key such as \"lov/1997-06-13-44\" is also searchable by its components), Norwegian stop words are ignored, and a stop-word-only query returns no results. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -3040,7 +3041,6 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 	}
 
 	var entities []entityRow
-	searchPattern := "%" + query + "%"
 
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
@@ -3072,7 +3072,19 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			systemExclusionClause = ""
 		}
 
-		baseQuery := `
+		// The tsvector is a concatenation of a `simple` identifier space (raw +
+		// separator-normalised key, type) and a `norwegian` prose space (bounded
+		// title/name/description). Lexemes carry no configuration, so a single
+		// `@@` against one query configuration only sees half the index — match
+		// both, mirroring graph.FTSSearch. Composite-key lookups
+		// ("lov/1997-06-13-44", "lov 1997 06 13 44") are resolved by the
+		// normalised key in the `fts` vector (migration 00174), so no separate
+		// exact-key predicate is needed — and keeping one would defeat the GIN
+		// index: `go.key = ?` has no supporting index, and an OR arm that cannot
+		// be served by an index forces the planner to seq-scan the whole
+		// disjunction instead of using idx_graph_objects_fts.
+		runSearch := func(queryText string) error {
+			baseQuery := `
 			SELECT 
 				go.id,
 				go.key,
@@ -3088,31 +3100,49 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND (
-					go.key ILIKE ?
-					OR go.properties->>'name' ILIKE ?
-					OR go.properties->>'description' ILIKE ?
+					go.fts @@ websearch_to_tsquery('simple', ?)
+					OR go.fts @@ websearch_to_tsquery('norwegian', ?)
 				)
 				` + branchFilter + `
 				` + namespaceClause + `
 				` + systemExclusionClause + `
 		`
-		queryArgs := append([]any{projectUUID, searchPattern, searchPattern, searchPattern}, branchArgs...)
-		if namespaceFilter != "all" && namespaceFilter != "" {
-			queryArgs = append(queryArgs, namespaceFilter)
-		} else if namespaceFilter == "" {
-			// systemExclusionClause subquery needs project_id
-			queryArgs = append(queryArgs, projectUUID)
+			queryArgs := append([]any{projectUUID, queryText, queryText}, branchArgs...)
+			if namespaceFilter != "all" && namespaceFilter != "" {
+				queryArgs = append(queryArgs, namespaceFilter)
+			} else if namespaceFilter == "" {
+				// systemExclusionClause subquery needs project_id
+				queryArgs = append(queryArgs, projectUUID)
+			}
+
+			if typeName != "" {
+				baseQuery += " AND go.type = ?"
+				queryArgs = append(queryArgs, typeName)
+			}
+
+			baseQuery += " ORDER BY go.created_at DESC LIMIT ?"
+			queryArgs = append(queryArgs, limit)
+
+			return tx.NewRaw(baseQuery, queryArgs...).Scan(ctx, &entities)
 		}
 
-		if typeName != "" {
-			baseQuery += " AND go.type = ?"
-			queryArgs = append(queryArgs, typeName)
+		if err := runSearch(query); err != nil {
+			return err
+		}
+		if len(entities) > 0 {
+			return nil
 		}
 
-		baseQuery += " ORDER BY go.created_at DESC LIMIT ?"
-		queryArgs = append(queryArgs, limit)
-
-		return tx.NewRaw(baseQuery, queryArgs...).Scan(ctx, &entities)
+		// Strict query matched nothing. A single unsatisfiable term (typically a
+		// hyphenated identifier that websearch_to_tsquery rewrites into a phrase)
+		// zeroes the whole clause, so retry once with the relaxed form before
+		// reporting no results — mirroring graph.FTSSearch.
+		relaxed, ok := ftsquery.Relax(query)
+		if !ok {
+			return nil
+		}
+		entities = nil
+		return runSearch(relaxed)
 	})
 
 	if err != nil {
