@@ -306,9 +306,14 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 			if projectIDForOrg == "" {
 				projectIDForOrg = user.APITokenProjectID
 			}
-			// Last resort: use the :projectId URL path param (e.g. /api/projects/:projectId/remember).
-			// This covers standalone mode where neither header nor token carries a project ID.
-			if projectIDForOrg == "" {
+			// Last resort: use the :projectId URL path param (e.g.
+			// /api/projects/:projectId/remember). This covers standalone mode
+			// where neither header nor token carries a project ID. It is gated to
+			// standalone because the path param is caller-supplied and must never
+			// be treated as authorization truth — the org derived here is only a
+			// scope hint; route-level authorization resolves the caller's org from
+			// membership (issue #850).
+			if projectIDForOrg == "" && m.cfg.Standalone.IsEnabled() {
 				projectIDForOrg = c.Param("projectId")
 			}
 
@@ -406,8 +411,15 @@ func (m *Middleware) RequireProjectID() echo.MiddlewareFunc {
 }
 
 // RequireProjectScope returns middleware that enforces API token project scope.
-// For emt_* tokens, it validates that the :projectId URL param matches the token's project.
-// For non-API-token auth (e.g. OAuth sessions), this is a no-op pass-through.
+// For emt_* API tokens it validates that the :projectId URL param matches the
+// token's bound project (rejecting a mismatch with 403).
+//
+// For non-API-token auth (OAuth/human sessions) this is a NO-OP pass-through:
+// it is a token-binding check, NOT a membership check, and does not by itself
+// authorize access to a project. Route handlers that need to authorize a human
+// caller against a project must assert real project/org membership themselves
+// (e.g. provider.assertCallerOwnsProject, skills.requireProjectMember) — the
+// name describes the token-scope guard only (issue #849/#850).
 func (m *Middleware) RequireProjectScope() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
