@@ -802,7 +802,8 @@ CREATE TABLE kb.agent_runs (
     provider text,
     tools text[] DEFAULT '{}'::text[] NOT NULL,
     agent_definition_id uuid,
-    suspend_context jsonb
+    suspend_context jsonb,
+    last_step_at timestamp with time zone
 );
 
 

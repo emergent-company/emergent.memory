@@ -585,6 +585,14 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	})
 	defer cleanup.Cleanup()
 
+	// Run-lifetime heartbeat: keep last_step_at fresh from before workspace
+	// provisioning through the whole pipeline, so a live executor is never
+	// reaped during a long blocking phase (sandbox build, slow model/tool call).
+	// It stops when this function returns; a dead executor stops ticking and is
+	// reaped as before.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
+
 	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
 		// Fatal provisioning failure (e.g. image not ready) — fail the run
@@ -779,6 +787,11 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
 	})
 	defer cleanup.Cleanup()
+
+	// Run-lifetime heartbeat (see Execute) — covers provisioning and long
+	// blocking phases for this async entry point too.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
 
 	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
 	if wsErr != nil {
@@ -994,6 +1007,11 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
 	})
 	defer cleanup.Cleanup()
+
+	// Run-lifetime heartbeat (see Execute) — resumed runs can also block in
+	// provisioning/tool phases, so cover them with the same ticker.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(newRun.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
 
 	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, req)
 	if wsErr != nil {
@@ -1948,6 +1966,10 @@ func (ae *AgentExecutor) runPipeline(
 
 		currentStep := tracker.increment()
 
+		// Heartbeat: bump last_step_at so the stale-run reaper keys off recent
+		// activity rather than started_at, keeping long-running-but-active runs alive.
+		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
 		// Check step limit
 		if tracker.exceeded() {
 			ae.log.Warn("step limit reached, stopping agent",
@@ -2013,6 +2035,10 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
 	beforeToolCb := func(tCtx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+		// Heartbeat on tool invocation so long tool phases (sandbox build, MCP
+		// round-trips) between model steps keep refreshing last_step_at.
+		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
 		if req.StreamCallback != nil {
 			req.StreamCallback(StreamEvent{
 				Type:  StreamEventToolCallStart,
