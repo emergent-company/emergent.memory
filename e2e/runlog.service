@@ -5,6 +5,19 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now runlog.service
 #
+# WorkingDirectory must already exist when you run `enable --now`: systemd fails
+# at CHDIR otherwise and the UI never starts. The default below points at the
+# shared checkout, which exists wherever the repo is cloned (see repo AGENTS.md).
+# If you override it, create the target checkout FIRST.
+#
+# Override any path WITHOUT editing the installed unit — use a drop-in:
+#   sudo systemctl edit runlog.service
+#     [Service]
+#     WorkingDirectory=/other/checkout/e2e
+#     ExecStart=
+#     ExecStart=/root/go/bin/runlog --daemon --db /other/checkout/e2e/.runlog/runs.db --port=17432
+#   (the empty ExecStart= resets the value before redefining it)
+#
 # Why a unit: runlog's daemon is a detached background process with no
 # supervisor. Started from a shell or an agent session it survives until
 # something sends it SIGTERM — and then nothing brings it back, so the web UI
@@ -15,8 +28,43 @@
 # when this unit is installed and enabled, the tasks delegate to it instead of
 # racing it for the port.
 #
-# NOTE: adjust WorkingDirectory and the --db path if your checkout is not at
-# /root/emergent.memory.
+# CHOOSING WorkingDirectory
+# -------------------------
+# Point it at an e2e directory that (a) contains `tests/` and (b) is stable.
+# The daemon discovers tests by scanning that directory at startup, so an e2e
+# dir without `tests/` renders an empty UI.
+#
+# The default below is the shared checkout. That keeps `task -d e2e runlog:test`
+# and the UI coherent: the CLI writes runs to the invoking checkout's
+# .runlog/runs.db, so the daemon must serve that same file for new runs to show
+# up. It also exists out of the box, so `enable --now` cannot fail at CHDIR.
+#
+# Hardening (recommended on a busy host): point the daemon at a dedicated,
+# detached checkout so it is not affected by other sessions switching branches
+# or mid-edit files. Create the checkout FIRST, then install the drop-in above
+# with WorkingDirectory/ExecStart matching it:
+#
+#   git worktree add --detach /root/emergent.memory-wt/runlog-dashboard origin/main
+#   # refresh it later:
+#   git -C /root/emergent.memory-wt/runlog-dashboard fetch origin main
+#   git -C /root/emergent.memory-wt/runlog-dashboard reset --hard origin/main
+#   systemctl restart runlog
+#
+# CAVEAT for the dedicated-checkout setup: `runlog test` run from your normal
+# checkout writes runs to *its* .runlog/runs.db, while the daemon serves the
+# dedicated checkout's copy — the UI would not show those runs. Run the tests
+# from the dedicated checkout, or point the tasks at the daemon's DB
+# (WORK_DIR/RUNLOG_DB override). `runlog:status` warns when the two paths differ.
+#
+# Discovery is computed once at startup, so restart the unit after changing the
+# checkout, its branch, or its config:  systemctl restart runlog
+#
+# The daemon binary must match the runlog version pinned in e2e/go.mod. An older
+# daemon creates runs.db with an older schema, so tables added later (e.g.
+# test_definitions in v0.3.0) never exist, writes to them fail silently, and the
+# UI/CLI show no tests. Check with:
+#   go version -m /root/go/bin/runlog | grep emergent-company/runlog
+# `task -d e2e runlog:status` performs this check for you.
 
 [Unit]
 Description=runlog daemon + web UI (e2e test run browser)
@@ -25,8 +73,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# WorkingDirectory must be the e2e project dir: runlog resolves .runlog.yaml
-# (daemon_port, db, test categories) and the .runlog/ pidfile from it.
+
+# Must be the e2e project dir: runlog resolves .runlog.yaml (daemon_port, db,
+# test categories), the .runlog/ pidfile, and test discovery from it.
+# NOTE: WorkingDirectory= does not expand environment variables — use a drop-in
+# to change it, not an EnvironmentFile. This path must exist before `enable --now`.
 WorkingDirectory=/root/emergent.memory/e2e
 Environment=PATH=/root/go/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/root
