@@ -134,8 +134,14 @@ func TestBootstrapService_DefaultValues(t *testing.T) {
 
 // TestBootstrapProjectRoleIsCanonical guards issue #667: the bootstrapped
 // project membership must use a canonical kb.project_memberships role, not the
-// legacy 'owner' string (which is only valid for kb.organization_memberships
-// and failed every project_admin role check).
+// legacy 'owner' string (which failed every project_admin role check).
 func TestBootstrapProjectRoleIsCanonical(t *testing.T) {
 	assert.Equal(t, projects.RoleProjectAdmin, bootstrapProjectRole)
+}
+
+// TestBootstrapOrgRoleIsCanonical guards the scope-authority reconciliation:
+// the bootstrapped organization membership must use the authoritative
+// kb.organization_memberships role 'org_admin', not the legacy 'owner' string.
+func TestBootstrapOrgRoleIsCanonical(t *testing.T) {
+	assert.Equal(t, "org_admin", bootstrapOrgRole)
 }

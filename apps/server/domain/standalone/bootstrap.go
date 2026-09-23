@@ -140,10 +140,10 @@ func (s *BootstrapService) createOrganization(ctx context.Context, tx bun.Tx, us
 
 	memberQuery := `
 		INSERT INTO kb.organization_memberships (organization_id, user_id, role, created_at)
-		VALUES (?, ?, 'owner', NOW())
+		VALUES (?, ?, ?, NOW())
 	`
 
-	_, err = tx.NewRaw(memberQuery, orgID, userID).Exec(ctx)
+	_, err = tx.NewRaw(memberQuery, orgID, userID, bootstrapOrgRole).Exec(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -152,11 +152,17 @@ func (s *BootstrapService) createOrganization(ctx context.Context, tx bun.Tx, us
 	return orgID, nil
 }
 
+// bootstrapOrgRole is the canonical kb.organization_memberships role written
+// for the bootstrapped standalone organization. org_admin is the authoritative
+// organization membership role (see domain/orgs/repository.go); 'owner' is not
+// written by any server code path. See migration 00166.
+const bootstrapOrgRole = "org_admin"
+
 // bootstrapProjectRole is the canonical kb.project_memberships role written for
 // the bootstrapped standalone project. It must remain one of the canonical
 // project roles — a previous value of 'owner' failed every `project_admin` role
-// check (e.g. embeddings/retrigger) because 'owner' is only valid for
-// kb.organization_memberships. See migration 00165.
+// check (e.g. embeddings/retrigger) because 'owner' is not a valid
+// kb.project_memberships role. See migration 00165.
 const bootstrapProjectRole = "project_admin"
 
 func (s *BootstrapService) createProject(ctx context.Context, tx bun.Tx, orgID, userID string) (string, error) {
