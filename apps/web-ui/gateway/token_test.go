@@ -94,9 +94,9 @@ func TestMintTokenDerivesRoom(t *testing.T) {
 				t.Fatal("participant_token empty")
 			}
 			room := decodeRoomGrant(t, got.ParticipantToken, "lksecret")
-			re := regexp.MustCompile(`^` + regexp.QuoteMeta(tc.prefix) + `[0-9a-f]{8}$`)
+			re := regexp.MustCompile(`^` + regexp.QuoteMeta(tc.prefix) + `[0-9a-f]{32}$`)
 			if !re.MatchString(room) {
-				t.Errorf("derived room = %q, want ^%s[0-9a-f]{8}$", room, tc.prefix)
+				t.Errorf("derived room = %q, want ^%s[0-9a-f]{32}$", room, tc.prefix)
 			}
 		})
 	}

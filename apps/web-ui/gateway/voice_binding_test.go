@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,53 +18,105 @@ import (
 
 func TestVoiceBindingStoreSetConsume(t *testing.T) {
 	s := newVoiceBindingStore()
-	s.Set("room-1", voiceBinding{ProjectID: "p1", Token: "emt-x"})
-	b, ok := s.Consume("room-1")
+	s.Set("room-1", "agent-a", voiceBinding{ProjectID: "p1", Token: "emt-x"})
+	b, ok := s.Consume("room-1", "agent-a")
 	if !ok || b.ProjectID != "p1" || b.Token != "emt-x" {
 		t.Fatalf("consume = %+v ok=%v", b, ok)
 	}
-	if _, ok := s.Consume("room-1"); ok {
+	if _, ok := s.Consume("room-1", "agent-a"); ok {
 		t.Fatal("second consume must be empty (one-time)")
 	}
 }
 
 func TestVoiceBindingStoreExpiry(t *testing.T) {
 	s := newVoiceBindingStore()
-	s.Set("room-e", voiceBinding{Token: "emt-e"})
+	s.Set("room-e", "agent-a", voiceBinding{Token: "emt-e"})
 	// Force expiry by rewinding the entry's deadline.
 	s.mu.Lock()
 	e := s.entries["room-e"]
 	e.expiresAt = time.Now().Add(-time.Second)
 	s.entries["room-e"] = e
 	s.mu.Unlock()
-	if _, ok := s.Consume("room-e"); ok {
+	if _, ok := s.Consume("room-e", "agent-a"); ok {
 		t.Fatal("expired binding must not be consumed")
 	}
 }
 
 func TestVoiceBindingStoreUnknown(t *testing.T) {
 	s := newVoiceBindingStore()
-	if _, ok := s.Consume("nope"); ok {
+	if _, ok := s.Consume("nope", "agent-a"); ok {
 		t.Fatal("unknown room must not consume")
+	}
+}
+
+// TestVoiceBindingStoreCrossWorkerRejected is the security regression guard for
+// issue #821: a binding minted for one agent must not be consumable by another,
+// and the rejected attempt must NOT consume it (the rightful worker still gets
+// it later).
+func TestVoiceBindingStoreCrossWorkerRejected(t *testing.T) {
+	s := newVoiceBindingStore()
+	s.Set("room-x", "agent-a", voiceBinding{ProjectID: "p1", Token: "emt-x"})
+
+	if _, ok := s.Consume("room-x", "agent-b"); ok {
+		t.Fatal("agent-b must not consume agent-a's binding")
+	}
+	b, ok := s.Consume("room-x", "agent-a")
+	if !ok || b.Token != "emt-x" {
+		t.Fatalf("binding not preserved for the rightful agent: %+v ok=%v", b, ok)
+	}
+}
+
+// TestVoiceBindingStoreConcurrentSingleWinner asserts the consume is atomic: a
+// concurrent race for the same binding yields exactly one winner, and the
+// winner is attributable after the fact.
+func TestVoiceBindingStoreConcurrentSingleWinner(t *testing.T) {
+	s := newVoiceBindingStore()
+	s.Set("room-c", "agent-a", voiceBinding{Token: "emt-c"})
+
+	const n = 64
+	wins := make(chan bool, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() {
+			_, ok := s.Consume("room-c", "agent-a")
+			wins <- ok
+		})
+	}
+	wg.Wait()
+	close(wins)
+
+	total := 0
+	for ok := range wins {
+		if ok {
+			total++
+		}
+	}
+	if total != 1 {
+		t.Fatalf("concurrent consume winners = %d, want exactly 1", total)
+	}
+	if c, ok := s.LastConsumption("room-c"); !ok || c.agent != "agent-a" {
+		t.Fatalf("consumption not attributable to agent-a: %+v ok=%v", c, ok)
 	}
 }
 
 // --- voiceBindingHandler ---
 
-func newBindingEcho(cfg Config) (*Server, *echo.Echo) {
-	s := &Server{cfg: cfg, bindings: newVoiceBindingStore()}
+func newBindingEcho(cfg Config) (*Server, *echo.Echo, *workerRegistry) {
+	creds := newWorkerRegistry()
+	s := &Server{cfg: cfg, bindings: newVoiceBindingStore(), workerCreds: creds}
 	e := echo.New()
 	e.GET("/internal/voice-binding", s.voiceBindingHandler)
-	return s, e
+	return s, e, creds
 }
 
 func TestVoiceBindingHandlerAuthorized(t *testing.T) {
-	s, e := newBindingEcho(Config{WorkerInternalKey: "wk-1"})
-	s.bindings.Set("room-1", voiceBinding{ProjectID: "p1", AgentDefinitionID: "a1", Token: "emt-1"})
+	s, e, creds := newBindingEcho(Config{})
+	credA := creds.issue("agent-a")
+	s.bindings.Set("room-1", "agent-a", voiceBinding{ProjectID: "p1", AgentDefinitionID: "a1", Token: "emt-1"})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/internal/voice-binding?room=room-1", nil)
-	req.Header.Set("X-Worker-Key", "wk-1")
+	req.Header.Set("X-Worker-Key", credA)
 	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -79,7 +132,7 @@ func TestVoiceBindingHandlerAuthorized(t *testing.T) {
 	// One-time consumption: a second fetch returns 404.
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(http.MethodGet, "/internal/voice-binding?room=room-1", nil)
-	req2.Header.Set("X-Worker-Key", "wk-1")
+	req2.Header.Set("X-Worker-Key", credA)
 	e.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusNotFound {
 		t.Fatalf("second fetch status = %d, want 404", rec2.Code)
@@ -87,9 +140,10 @@ func TestVoiceBindingHandlerAuthorized(t *testing.T) {
 }
 
 func TestVoiceBindingHandlerUnauthorized(t *testing.T) {
-	for name, key := range map[string]string{"missing": "", "wrong": "nope"} {
+	_, e, creds := newBindingEcho(Config{})
+	creds.issue("agent-a")
+	for name, key := range map[string]string{"missing": "", "forged": "nope"} {
 		t.Run(name, func(t *testing.T) {
-			_, e := newBindingEcho(Config{WorkerInternalKey: "wk-1"})
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/internal/voice-binding?room=room-1", nil)
 			if key != "" {
@@ -104,13 +158,41 @@ func TestVoiceBindingHandlerUnauthorized(t *testing.T) {
 }
 
 func TestVoiceBindingHandlerUnknownRoom(t *testing.T) {
-	_, e := newBindingEcho(Config{WorkerInternalKey: "wk-1"})
+	_, e, creds := newBindingEcho(Config{})
+	credA := creds.issue("agent-a")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/internal/voice-binding?room=ghost", nil)
-	req.Header.Set("X-Worker-Key", "wk-1")
+	req.Header.Set("X-Worker-Key", credA)
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestVoiceBindingHandlerCrossWorkerRejected guards the endpoint against the
+// issue #821 theft: a worker authenticated as agent-b must not be handed
+// agent-a's binding for a room, and the rejection must leave the binding in
+// place for the rightful worker.
+func TestVoiceBindingHandlerCrossWorkerRejected(t *testing.T) {
+	s, e, creds := newBindingEcho(Config{})
+	credA := creds.issue("agent-a")
+	credB := creds.issue("agent-b")
+	s.bindings.Set("room-1", "agent-a", voiceBinding{ProjectID: "p1", Token: "emt-1"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/internal/voice-binding?room=room-1", nil)
+	req.Header.Set("X-Worker-Key", credB)
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-worker fetch status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/internal/voice-binding?room=room-1", nil)
+	req2.Header.Set("X-Worker-Key", credA)
+	e.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("rightful worker fetch status = %d, want 200; body=%s", rec2.Code, rec2.Body.String())
 	}
 }
 
@@ -154,7 +236,7 @@ func TestMintTokenSessionModeStoresBinding(t *testing.T) {
 	}
 	room := decodeRoomGrant(t, got.ParticipantToken, "lksecret")
 
-	b, ok := s.bindings.Consume(room)
+	b, ok := s.bindings.Consume(room, "memory")
 	if !ok {
 		t.Fatal("binding not stored for room " + room)
 	}
@@ -206,7 +288,7 @@ func TestMintTokenDisabledAgentRejected(t *testing.T) {
 
 	bin, err := exec.LookPath("sleep")
 	if err == nil {
-		sup := NewSupervisor(bin, []string{"60"}, "", 0, 0, "k", "u")
+		sup := NewSupervisor(bin, []string{"60"}, "", 0, 0, nil, "u")
 		sup.EnsureWorker("memory")
 		s.supervisor = sup
 		t.Cleanup(func() { sup.stopAll() })
