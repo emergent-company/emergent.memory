@@ -233,7 +233,8 @@ func TestRewriteChatStreamDoneNoTokens(t *testing.T) {
 }
 
 // TestRewriteChatStreamErrorFallbackSnapshot asserts a stream terminated by an
-// `error` event (no `done`) still emits the authoritative snapshot.
+// `error` event (no `done`) still emits the authoritative snapshot, followed by
+// a synthesized terminal `error`.
 func TestRewriteChatStreamErrorFallbackSnapshot(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"type":"token","token":"par"}`,
@@ -251,7 +252,7 @@ func TestRewriteChatStreamErrorFallbackSnapshot(t *testing.T) {
 			htmlCount++
 		}
 	}
-	if want := []string{"token", "token", "error", "html"}; !slices.Equal(types, want) {
+	if want := []string{"token", "token", "error", "html", "error"}; !slices.Equal(types, want) {
 		t.Fatalf("event sequence = %v, want %v", types, want)
 	}
 	if htmlCount != 1 {
@@ -263,18 +264,84 @@ func TestRewriteChatStreamErrorFallbackSnapshot(t *testing.T) {
 }
 
 // TestRewriteChatStreamEOFFallbackSnapshot asserts EOF without `done` emits the
-// authoritative snapshot.
+// authoritative snapshot followed by a synthesized terminal `error`.
 func TestRewriteChatStreamEOFFallbackSnapshot(t *testing.T) {
 	out := rewrite(t, `data: {"type":"token","token":"open"}`+"\n\n")
 	events := parseStream(t, out)
-	if len(events) != 2 {
-		t.Fatalf("events = %d, want 2 (%v)", len(events), events)
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3 (%v)", len(events), events)
 	}
 	if events[0].Type != "token" || events[0].Token != "open" {
 		t.Errorf("first event = %+v, want token \"open\"", events[0])
 	}
 	if events[1].Type != "html" || !strings.Contains(events[1].HTML, "open") {
 		t.Errorf("second event = %+v, want html snapshot", events[1])
+	}
+	if events[2].Type != "error" {
+		t.Errorf("third event = %+v, want error", events[2])
+	}
+}
+
+// TestRewriteChatStreamInterruptedEmitsError asserts a stream that ends (clean
+// EOF) without ever emitting `done` — e.g. the memory service restarted
+// mid-run — emits a terminal `error` event after the authoritative snapshot, so
+// the client surfaces the interruption instead of hanging on its indicator.
+func TestRewriteChatStreamInterruptedEmitsError(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"token","token":"par"}`,
+		`data: {"type":"token","token":"tial"}`,
+	}, "\n\n") + "\n\n"
+
+	events := parseStream(t, rewrite(t, stream))
+
+	var types []string
+	htmlCount := 0
+	for _, ev := range events {
+		types = append(types, ev.Type)
+		if ev.Type == "html" {
+			htmlCount++
+		}
+	}
+	if want := []string{"token", "token", "html", "error"}; !slices.Equal(types, want) {
+		t.Fatalf("event sequence = %v, want %v", types, want)
+	}
+	if htmlCount != 1 {
+		t.Errorf("html events = %d, want 1", htmlCount)
+	}
+	if !strings.Contains(events[2].HTML, "partial") {
+		t.Errorf("snapshot missing accumulated text: %q", events[2].HTML)
+	}
+}
+
+// TestRewriteChatStreamInterruptedEmptyEmitsError asserts even a token-less
+// stream that ends without `done` emits a terminal `error` (no snapshot, since
+// there is no text to render).
+func TestRewriteChatStreamInterruptedEmptyEmitsError(t *testing.T) {
+	out := rewrite(t, `data: {"type":"meta","conversationId":"c1"}`+"\n\n")
+	events := parseStream(t, out)
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2 (%v)", len(events), events)
+	}
+	if events[0].Type != "meta" || events[1].Type != "error" {
+		t.Errorf("events = %+v, want [meta error]", events)
+	}
+	if strings.Contains(out, `"type":"html"`) {
+		t.Errorf("empty turn must not emit html: %s", out)
+	}
+}
+
+// TestRewriteChatStreamDoneNoError asserts a stream that ends with `done` emits
+// no synthesized `error` event.
+func TestRewriteChatStreamDoneNoError(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"token","token":"hi"}`,
+		`data: {"type":"done"}`,
+	}, "\n\n") + "\n\n"
+
+	for _, ev := range parseStream(t, rewrite(t, stream)) {
+		if ev.Type == "error" {
+			t.Fatalf("done-terminated stream must not emit error: %+v", ev)
+		}
 	}
 }
 
@@ -321,8 +388,9 @@ func TestRewriteChatStreamSnapshotMatchesHistory(t *testing.T) {
 }
 
 // TestRewriteChatStreamMalformedPassthrough asserts malformed / partial input
-// neither panics nor is dropped: the raw event is forwarded byte-for-byte and
-// the stream terminates.
+// neither panics nor is dropped: the raw event is forwarded byte-for-byte,
+// followed by a synthesized terminal `error` (no `done` was seen), and the
+// stream terminates.
 func TestRewriteChatStreamMalformedPassthrough(t *testing.T) {
 	cases := []string{
 		`data: {not json}` + "\n\n",
@@ -331,28 +399,42 @@ func TestRewriteChatStreamMalformedPassthrough(t *testing.T) {
 	}
 	for _, in := range cases {
 		out := rewrite(t, in)
-		if out != in {
-			t.Errorf("malformed event %q: out = %q, want verbatim passthrough", in, out)
+		if !strings.HasPrefix(out, in) {
+			t.Errorf("malformed event %q: out = %q, want verbatim prefix", in, out)
+		}
+		if !strings.Contains(out, `"type":"error"`) {
+			t.Errorf("malformed event %q: out = %q, want terminal error", in, out)
 		}
 	}
 }
 
 // TestRewriteChatStreamPassthroughEvents asserts non-rewritten event types are
-// forwarded verbatim (approval, unknown, meta, done, empty data).
+// forwarded verbatim (approval, unknown, done) and that a stream ending without
+// `done` gains a synthesized terminal `error`.
 func TestRewriteChatStreamPassthroughEvents(t *testing.T) {
+	// `done` terminates the stream normally: verbatim, no synthesized error.
+	if in, out := `data: {"type":"done"}`+"\n\n", rewrite(t, `data: {"type":"done"}`+"\n\n"); out != in {
+		t.Errorf("done event %q: out = %q, want verbatim", in, out)
+	}
+	// Non-done passthrough events are forwarded verbatim, then terminated with
+	// a synthesized error (no `done` was seen).
 	cases := []string{
 		`data: {"type":"approval","questionId":"a1","tool":"shell"}` + "\n\n",
 		`data: {"type":"something_unknown","x":1}` + "\n\n",
-		`data: {"type":"done"}` + "\n\n",
 	}
 	for _, in := range cases {
-		if out := rewrite(t, in); out != in {
-			t.Errorf("event %q: out = %q, want verbatim", in, out)
+		out := rewrite(t, in)
+		if !strings.HasPrefix(out, in) {
+			t.Errorf("event %q: out = %q, want verbatim prefix", in, out)
+		}
+		if !strings.Contains(out, `"type":"error"`) {
+			t.Errorf("event %q: out = %q, want terminal error", in, out)
 		}
 	}
-	// a non-comment event carrying no data line is skipped entirely.
-	if out := rewrite(t, "event: ping\n\n"); out != "" {
-		t.Errorf("data-less event should be skipped, got %q", out)
+	// a non-comment event carrying no data line is skipped, but still yields a
+	// terminal error since no `done` terminated the stream.
+	if out := rewrite(t, "event: ping\n\n"); !strings.Contains(out, `"type":"error"`) || strings.Contains(out, "ping") {
+		t.Errorf("data-less event should be skipped but error-synthesized, got %q", out)
 	}
 }
 
@@ -397,11 +479,16 @@ func TestRewriteChatStreamToolResultHTML(t *testing.T) {
 }
 
 // TestRewriteChatStreamToolResultNonJSONPassthrough asserts a tool result that
-// isn't a JSON object/array falls back to the verbatim raw event.
+// isn't a JSON object/array falls back to the verbatim raw event, followed by a
+// synthesized terminal `error` (no `done`).
 func TestRewriteChatStreamToolResultNonJSONPassthrough(t *testing.T) {
 	in := `data: {"type":"mcp_tool","tool":"shell","result":"plain text"}` + "\n\n"
-	if out := rewrite(t, in); out != in {
-		t.Errorf("non-JSON result should passthrough, out = %q", out)
+	out := rewrite(t, in)
+	if !strings.HasPrefix(out, in) {
+		t.Errorf("non-JSON result should passthrough verbatim, out = %q", out)
+	}
+	if !strings.Contains(out, `"type":"error"`) {
+		t.Errorf("non-JSON result should gain a terminal error, out = %q", out)
 	}
 }
 
@@ -448,8 +535,12 @@ func TestRewriteChatStreamAskUserQuestion(t *testing.T) {
 	if strings.Contains(out, `"tool":"ask_user"`) {
 		t.Errorf("raw ask_user tool events must be suppressed: %s", out)
 	}
-	if strings.Count(out, "\n\n") != 1 {
-		t.Errorf("want exactly one emitted frame, got: %q", out)
+	// one question frame plus one synthesized terminal `error` (no `done`).
+	if strings.Count(out, "\n\n") != 2 {
+		t.Errorf("want exactly two emitted frames (question + error), got: %q", out)
+	}
+	if !strings.Contains(out, `"type":"error"`) {
+		t.Errorf("ask_user stream should gain a terminal error, got: %q", out)
 	}
 }
 
