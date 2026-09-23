@@ -180,6 +180,7 @@ type AgentRun struct {
 	AgentID      string         `bun:"agent_id,type:uuid,notnull" json:"agentId"`
 	Status       AgentRunStatus `bun:"status,notnull" json:"status"`
 	StartedAt    time.Time      `bun:"started_at,notnull" json:"startedAt"`
+	LastStepAt   *time.Time     `bun:"last_step_at,type:timestamptz" json:"lastStepAt,omitempty"`
 	CompletedAt  *time.Time     `bun:"completed_at" json:"completedAt"`
 	DurationMs   *int           `bun:"duration_ms" json:"durationMs"`
 	Summary      map[string]any `bun:"summary,type:jsonb,default:'{}'" json:"summary"`

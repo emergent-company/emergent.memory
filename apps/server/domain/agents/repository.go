@@ -211,10 +211,27 @@ func (r *Repository) MarkOrphanedRunsAsError(ctx context.Context) (int, error) {
 	return int(n), nil
 }
 
+// TouchRun bumps the run's last_step_at heartbeat to now. The executor calls
+// this at each pipeline step so the stale-run reaper can distinguish a live run
+// from one that has genuinely stalled (or been abandoned).
+func (r *Repository) TouchRun(ctx context.Context, runID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*AgentRun)(nil)).
+		Set("last_step_at = ?", time.Now()).
+		Where("id = ?", runID).
+		Exec(ctx)
+	return err
+}
+
 // MarkStaleRunsAsError finds runs stuck in "running" status for longer than
 // the given threshold and marks them as errored. Unlike MarkOrphanedRunsAsError
 // (which runs at startup), this runs periodically to catch runs abandoned
 // mid-execution (e.g. CLI connection drop without graceful close).
+//
+// The idle check keys off COALESCE(last_step_at, started_at) so a run that is
+// actively heartbeating (long sandbox build, many MCP round-trips) is not
+// failed merely because it started long ago; only runs whose last activity —
+// or start, for runs that never heartbeated — predates the threshold are reaped.
 func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Duration) (int, error) {
 	cutoff := time.Now().Add(-threshold)
 	now := time.Now()
@@ -224,7 +241,7 @@ func (r *Repository) MarkStaleRunsAsError(ctx context.Context, threshold time.Du
 		Set("completed_at = ?", now).
 		Set("error_message = ?", "run exceeded idle timeout (likely abandoned by client)").
 		Where("status = ?", RunStatusRunning).
-		Where("started_at < ?", cutoff).
+		Where("COALESCE(last_step_at, started_at) < ?", cutoff).
 		Exec(ctx)
 	if err != nil {
 		return 0, err

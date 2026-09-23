@@ -1948,6 +1948,10 @@ func (ae *AgentExecutor) runPipeline(
 
 		currentStep := tracker.increment()
 
+		// Heartbeat: bump last_step_at so the stale-run reaper keys off recent
+		// activity rather than started_at, keeping long-running-but-active runs alive.
+		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
 		// Check step limit
 		if tracker.exceeded() {
 			ae.log.Warn("step limit reached, stopping agent",
@@ -2013,6 +2017,10 @@ func (ae *AgentExecutor) runPipeline(
 
 	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
 	beforeToolCb := func(tCtx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+		// Heartbeat on tool invocation so long tool phases (sandbox build, MCP
+		// round-trips) between model steps keep refreshing last_step_at.
+		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
 		if req.StreamCallback != nil {
 			req.StreamCallback(StreamEvent{
 				Type:  StreamEventToolCallStart,
