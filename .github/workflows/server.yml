@@ -51,12 +51,13 @@ jobs:
           # concurrent jobs, which makes the default golangci-lint lock
           # collide ("parallel golangci-lint is running").
           GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
+          BEFORE: ${{ github.event.before }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
-            BASE="origin/${{ github.base_ref }}"
+            git fetch --no-tags origin "${GITHUB_BASE_REF}" 2>/dev/null || true
+            BASE="origin/${GITHUB_BASE_REF}"
           else
-            BASE="${{ github.event.before }}"
+            BASE="${BEFORE}"
           fi
           golangci-lint run --new-from-rev="$BASE" ./...
 
@@ -306,8 +307,8 @@ jobs:
       - name: Reject changes to existing migrations
         run: |
           set -euo pipefail
-          BASE="origin/${{ github.base_ref }}"
-          git fetch --no-tags origin "${{ github.base_ref }}" --depth=1
+          BASE="origin/${GITHUB_BASE_REF}"
+          git fetch --no-tags origin "${GITHUB_BASE_REF}" --depth=1
           CHANGED=$(git diff --name-status --diff-filter=MDRT "$BASE"...HEAD -- 'apps/server/migrations/*.sql' || true)
           if [ -n "$CHANGED" ]; then
             echo "::error::Existing migrations must never be modified, renamed, or deleted."
@@ -348,8 +349,8 @@ jobs:
           # `base...HEAD` fail with "no merge base" when the PR head does not
           # already contain the base tip. The fetch-depth: 0 checkout already
           # has full history, so this fetch is cheap and stays complete.
-          git fetch --no-tags origin "${{ github.base_ref }}"
-          go run ./cmd/migration-order-guard -base "origin/${{ github.base_ref }}"
+          git fetch --no-tags origin "${GITHUB_BASE_REF}"
+          go run ./cmd/migration-order-guard -base "origin/${GITHUB_BASE_REF}"
 
   ci:
     name: ci

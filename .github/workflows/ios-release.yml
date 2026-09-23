@@ -31,8 +31,10 @@ jobs:
       - name: Diff since last tag
         id: c
         shell: bash
+        env:
+          FORCE: ${{ github.event.inputs.force }}
         run: |
-          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+          if [ "${FORCE}" = "true" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -66,7 +68,7 @@ jobs:
       - name: Derive version
         id: version
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             MARKETING="${GITHUB_REF_NAME#v}"
           else
             MARKETING="0.0.0"
@@ -96,6 +98,9 @@ jobs:
 
       - name: Archive
         working-directory: apps/ios
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
         run: |
           xcodebuild archive \
             -project VoiceAgent.xcodeproj \
@@ -106,8 +111,8 @@ jobs:
             DEVELOPMENT_TEAM=74LC88G9SC \
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_VERSION=5 \
-            MARKETING_VERSION=${{ steps.version.outputs.marketing }} \
-            CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build_number }}
+            MARKETING_VERSION="${MARKETING_VERSION}" \
+            CURRENT_PROJECT_VERSION="${BUILD_NUMBER}"
 
       - name: Export IPA
         working-directory: apps/ios

@@ -24,5 +24,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Reject dynamic ${{ ... }} interpolation (refs, inputs, outputs, event
+      # payloads) inside shell run:/github-script script: payloads. Runs here so
+      # the branch-protection-required `ci` check enforces it repo-wide.
+      - name: Workflow injection guard (self-test)
+        run: python3 .github/scripts/check-injection.py --self-test
+      - name: Workflow injection guard
+        run: python3 .github/scripts/check-injection.py .github/workflows
       - name: Meta checks
         run: 'echo "Meta CI: no meta checks remain in this repository."'
