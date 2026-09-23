@@ -108,6 +108,10 @@ test.describe('Chat agent-switch navigation scenario', () => {
       await page.locator('#chat-agent').selectOption(agentA);
       await sendChatMessage(page, 'Hello from A.');
 
+      // The first message must "enter" the freshly-created conversation: the URL
+      // flips to ?c=<conversationId> immediately — not only on a later resume.
+      await expect(page).toHaveURL(/\/chat\?c=/);
+
       // A's conversation lands in the session rail and is the active row.
       const rowA = page.locator(`[data-testid="session-row"][data-agent="${agentA}"]`);
       await expect(rowA).toBeVisible();
