@@ -2,6 +2,7 @@ package testdb
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"fmt"
 	"log/slog"
@@ -24,12 +25,28 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const templateDBName = "go_test_template"
+const (
+	templateDBName = "go_test_template"
+
+	// templateMetaTable records a fingerprint of the exact schema the template
+	// was built from. It lives in the `public` schema so it is not truncated by
+	// TruncateTables (which only touches kb/core) and does not shadow any
+	// application table.
+	templateMetaTable = "public.go_test_template_meta"
+)
 
 // templateLockKey is a stable Postgres advisory-lock key that serializes the
 // go_test_template bootstrap across concurrent processes. It is a session-level
 // lock, so it is released automatically if the holding process dies.
 const templateLockKey int64 = 0x6d656d6f7279 // "memory"
+
+// schemaFingerprint identifies the schema.sql content a template was built
+// from. A template whose recorded fingerprint differs — a stale template left
+// on a persistent Postgres by an older schema snapshot, or a bootstrap that
+// stopped before recording it — is treated as incomplete and rebuilt under the
+// advisory lock, so throwaway databases can never be cloned from an
+// out-of-date schema.
+var schemaFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte(schemaSQL)))
 
 var (
 	templateOnce sync.Once
@@ -304,14 +321,32 @@ func ensureTemplateDB(ctx context.Context, baseCfg *config.Config, log *slog.Log
 		return fmt.Errorf("apply schema: %w", err)
 	}
 
+	// Record the schema fingerprint last, so its presence proves the schema was
+	// applied completely. templateDBComplete() compares it on reuse.
+	if _, err := templatePool.Exec(ctx, fmt.Sprintf(
+		"CREATE TABLE IF NOT EXISTS %s (fingerprint text NOT NULL)", templateMetaTable),
+	); err != nil {
+		_ = dropDatabaseConn(ctx, conn, templateDBName)
+		return fmt.Errorf("create template meta table: %w", err)
+	}
+	if _, err := templatePool.Exec(ctx, fmt.Sprintf(
+		"INSERT INTO %s (fingerprint) VALUES ($1)", templateMetaTable),
+		schemaFingerprint,
+	); err != nil {
+		_ = dropDatabaseConn(ctx, conn, templateDBName)
+		return fmt.Errorf("record template schema fingerprint: %w", err)
+	}
+
 	log.Info("template database created with schema", slog.String("name", templateDBName))
 	return nil
 }
 
-// templateDBComplete reports whether the template database exists AND its
-// schema was fully applied, using kb.documents as the sentinel table. A
-// template left behind by a crashed bootstrap exists in pg_database but lacks
-// the sentinel, so it must be rebuilt.
+// templateDBComplete reports whether the template database already holds the
+// schema built from the *current* schema.sql. It compares the fingerprint the
+// template recorded at build time against schemaFingerprint; a template that is
+// missing the fingerprint table (built by an older harness, or by a bootstrap
+// that stopped before recording it) or records a different one is treated as
+// incomplete and must be rebuilt.
 func templateDBComplete(ctx context.Context, baseCfg *config.Config) (bool, error) {
 	cfg := *baseCfg
 	cfg.Database.Database = templateDBName
@@ -322,12 +357,13 @@ func templateDBComplete(ctx context.Context, baseCfg *config.Config) (bool, erro
 	}
 	defer pool.Close()
 
-	var complete bool
-	err = pool.QueryRow(ctx, "SELECT to_regclass('kb.documents') IS NOT NULL").Scan(&complete)
+	var recorded string
+	err = pool.QueryRow(ctx, fmt.Sprintf("SELECT fingerprint FROM %s LIMIT 1", templateMetaTable)).Scan(&recorded)
 	if err != nil {
+		// Missing/unreadable fingerprint table → stale or incomplete template.
 		return false, nil
 	}
-	return complete, nil
+	return recorded == schemaFingerprint, nil
 }
 
 // createPool creates a pgx connection pool
@@ -412,7 +448,7 @@ func TruncateTables(ctx context.Context, db bun.IDB) error {
 
 	// Disable triggers and truncate all tables in one statement
 	_, _ = db.NewRaw("SET session_replication_role = 'replica'").Exec(ctx)
-	defer db.NewRaw("SET session_replication_role = 'origin'").Exec(ctx)
+	defer func() { _, _ = db.NewRaw("SET session_replication_role = 'origin'").Exec(ctx) }()
 
 	// Single TRUNCATE for all tables is much faster than 60 individual truncates
 	truncateSQL := fmt.Sprintf("TRUNCATE TABLE %s CASCADE", strings.Join(tableNames, ", "))
@@ -428,9 +464,18 @@ func TruncateTables(ctx context.Context, db bun.IDB) error {
 // if you want to force schema refresh on next run.
 func DropTemplateDB(ctx context.Context) error {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	// Resolve the DSN exactly like SetupTestDB: load local dotenv files and let
+	// TEST_DATABASE_URL override ambient POSTGRES_*. Otherwise a caller with a
+	// throwaway TEST_DATABASE_URL but no matching POSTGRES_* would silently
+	// target the shared localhost:5432 default here.
+	loadRepoEnvFiles()
 	baseCfg, err := config.NewConfig(log)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if err := Apply(&baseCfg.Database); err != nil {
+		return err
 	}
 	dropTestDB(ctx, baseCfg, templateDBName)
 	return nil

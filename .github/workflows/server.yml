@@ -219,6 +219,12 @@ jobs:
           # (since #785 each builds a uniquely-named throwaway database from
           # internal/testdb/schema.sql and drops it). Kept because this is the
           # only place CI runs the migrate CLI against a real Postgres.
+          #
+          # cmd/migrate gives DATABASE_URL precedence over POSTGRES_* (and a
+          # DATABASE_URL bypasses the -allow-localhost guard), so pin it to the
+          # throwaway test DSN: an inherited DATABASE_URL on the persistent
+          # self-hosted runner must not redirect this migration at a real DB.
+          export DATABASE_URL="$TEST_DATABASE_URL"
           go run ./cmd/migrate -c up -allow-localhost
 
       - name: Run DB-backed tests
