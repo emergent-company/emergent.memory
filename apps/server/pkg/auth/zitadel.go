@@ -273,9 +273,45 @@ type introspectionResponse struct {
 	GivenName         string `json:"given_name"`
 	FamilyName        string `json:"family_name"`
 
-	// All claims for extension. No json tag so it captures every claim not mapped
-	// to an explicit field above (Zitadel project roles live here).
+	// Claims holds the raw Zitadel project-role claims
+	// (urn:zitadel:iam:org:project:*:roles) extracted from the introspection
+	// body. It is populated by UnmarshalJSON (a plain map field cannot capture
+	// leftover keys — encoding/json only matches a literal "claims" key). The
+	// roles are the sole feed for the standing superadmin mapping.
 	Claims map[string]any
+}
+
+// UnmarshalJSON decodes the standard introspection fields AND captures the
+// Zitadel project-role claims into Claims. encoding/json does not route unknown
+// keys into a bare map field, so without this the role claims
+// (urn:zitadel:iam:org:project:*:roles) would be silently dropped and the
+// role-derived superadmin grant would never fire.
+func (r *introspectionResponse) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	claims := map[string]any{}
+	for key, val := range raw {
+		if !strings.HasPrefix(key, zitadelRoleClaimPrefix) || !strings.HasSuffix(key, zitadelRoleClaimSuffix) {
+			continue
+		}
+		var decoded any
+		if err := json.Unmarshal(val, &decoded); err != nil {
+			return err
+		}
+		claims[key] = decoded
+	}
+
+	// Decode the known fields via a type alias so the standard field decoding
+	// (including the Time type's custom unmarshaler) is reused without recursing
+	// into this method.
+	type plain introspectionResponse
+	if err := json.Unmarshal(data, (*plain)(r)); err != nil {
+		return err
+	}
+	r.Claims = claims
+	return nil
 }
 
 // Implement required interface methods

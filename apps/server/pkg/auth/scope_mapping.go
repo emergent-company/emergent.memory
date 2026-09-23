@@ -138,6 +138,9 @@ func filterMemoryScopes(scopes []string) []string {
 // its Name and owning OrgID are relevant to the standing superadmin role
 // mapping (issue #812 Q6): the grant requires an exact (issuer, org_id, role)
 // triple, so any partial match is a mismatch.
+//
+// Roles are delivered only by RFC 7662 introspection; the userinfo fallback and
+// the local JWT path have no role claim and therefore never populate this.
 type ZitadelProjectRole struct {
 	Name  string
 	OrgID string
@@ -327,6 +330,12 @@ func (m *Middleware) roleMatchesSuperadmin(roles []ZitadelProjectRole) bool {
 // superadmin grant: only when the standing-role flag is enabled AND the token
 // issuer matches the configured issuer exactly. Anything else yields nil so a
 // mismatched or foreign issuer can never mint superadmin (issue #812 Q6).
+//
+// A role-derived superadmin is INTROSPECTION-ONLY by construction: roles are
+// extracted from the RFC 7662 introspection response; the userinfo fallback
+// (authSourceUserinfo) and the local JWT path carry no role claims, so their
+// roles slice is empty and this returns nil. Never cache the derived grant — the
+// roles are raw identity claims; the superadmin grant is re-resolved per request.
 func (m *Middleware) trustedSuperadminRoles(issuer string, roles []ZitadelProjectRole) []ZitadelProjectRole {
 	if m.cfg == nil || !m.cfg.Zitadel.TrustRoleSuperadmin {
 		return nil

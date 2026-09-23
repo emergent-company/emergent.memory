@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -257,5 +258,128 @@ func TestExtractZitadelProjectRoles(t *testing.T) {
 	}
 	if got := extractZitadelProjectRoles(nil); len(got) != 0 {
 		t.Fatalf("nil claims produced roles %v, want none", got)
+	}
+}
+
+// The standing role mapping is DEAD unless the introspection body's
+// urn:zitadel:iam:org:project:*:roles claim actually reaches the extractor. This
+// test round-trips a REAL introspection JSON body through json.Unmarshal into
+// introspectionResponse (the same path rs.Introspect uses) and asserts both the
+// extraction and the full resolution path. It is the regression guard for the
+// nil-Claims bug: encoding/json does not route unknown keys into a bare
+// map field.
+func TestRoleDerivedSuperadminFromIntrospectionBody(t *testing.T) {
+	const issuer = "https://zitadel.example.com"
+	const wantOrg = "org-aaa"
+	const body = `{
+		"active": true,
+		"sub": "user-123",
+		"iss": "https://zitadel.example.com",
+		"exp": 4102444800,
+		"scope": "openid profile",
+		"email": "admin@example.com",
+		"urn:zitadel:iam:org:project:123:roles": {
+			"platform-admin": {"orgID": "org-aaa", "projectID": "123"}
+		}
+	}`
+
+	var resp introspectionResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("unmarshal introspection body: %v", err)
+	}
+
+	// The standard fields must still decode alongside the role claim.
+	if resp.Issuer != issuer {
+		t.Fatalf("iss = %q, want %q (standard field decoding must be preserved)", resp.Issuer, issuer)
+	}
+	if resp.Subject != "user-123" {
+		t.Fatalf("sub = %q, want %q", resp.Subject, "user-123")
+	}
+
+	// The role claim must actually reach the extractor.
+	roles := extractZitadelProjectRoles(resp.Claims)
+	if len(roles) != 1 || roles[0].Name != "platform-admin" || roles[0].OrgID != wantOrg {
+		t.Fatalf("extracted roles = %v, want exactly [platform-admin @ %s]", roles, wantOrg)
+	}
+
+	newResolve := func() *Middleware {
+		m := tierMiddleware(t)
+		m.cfg.Zitadel.SuperadminRole = "platform-admin"
+		m.cfg.Zitadel.SuperadminOrgID = wantOrg
+		m.cfg.Zitadel.Issuer = issuer
+		m.superadminLookup = func(ctx context.Context, u string) (string, error) { return "", nil } // no app-side row
+		m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }
+		return m
+	}
+
+	t.Run("exact triple grants superadmin_full", func(t *testing.T) {
+		m := newResolve()
+		m.cfg.Zitadel.TrustRoleSuperadmin = true
+		trusted := m.trustedSuperadminRoles(issuer, roles)
+		got := m.resolveOIDCScopes(context.Background(), "user-123", projID, []string{"openid"}, trusted)
+		wantScopeSet(t, got, GetAllScopes())
+	})
+
+	t.Run("flag off denies", func(t *testing.T) {
+		m := newResolve()
+		m.cfg.Zitadel.TrustRoleSuperadmin = false
+		trusted := m.trustedSuperadminRoles(issuer, roles)
+		if got := m.resolveOIDCScopes(context.Background(), "user-123", projID, []string{"openid"}, trusted); len(got) != 0 {
+			t.Fatalf("flag-off scopes = %v, want none", got)
+		}
+	})
+
+	t.Run("issuer mismatch denies", func(t *testing.T) {
+		m := newResolve()
+		m.cfg.Zitadel.TrustRoleSuperadmin = true
+		trusted := m.trustedSuperadminRoles("https://evil.example.com", roles)
+		if trusted != nil {
+			t.Fatalf("foreign issuer must not trust roles, got %v", trusted)
+		}
+		if got := m.resolveOIDCScopes(context.Background(), "user-123", projID, []string{"openid"}, trusted); len(got) != 0 {
+			t.Fatalf("issuer-mismatch scopes = %v, want none", got)
+		}
+	})
+
+	t.Run("org mismatch denies", func(t *testing.T) {
+		m := newResolve()
+		m.cfg.Zitadel.TrustRoleSuperadmin = true
+		m.cfg.Zitadel.SuperadminOrgID = "org-other" // differs from the token's org-aaa
+		trusted := m.trustedSuperadminRoles(issuer, roles)
+		if got := m.resolveOIDCScopes(context.Background(), "user-123", projID, []string{"openid"}, trusted); len(got) != 0 {
+			t.Fatalf("org-mismatch scopes = %v, want none", got)
+		}
+	})
+}
+
+// A body with no roles claim is nil-safe: the extractor returns nothing and the
+// resolution path never grants superadmin.
+func TestRoleDerivedSuperadminNoRolesClaim(t *testing.T) {
+	const body = `{
+		"active": true,
+		"sub": "user-123",
+		"iss": "https://zitadel.example.com",
+		"exp": 4102444800,
+		"scope": "openid profile"
+	}`
+	var resp introspectionResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("unmarshal introspection body: %v", err)
+	}
+	if got := extractZitadelProjectRoles(resp.Claims); len(got) != 0 {
+		t.Fatalf("no-roles body extracted %v, want none", got)
+	}
+
+	m := tierMiddleware(t)
+	m.cfg.Zitadel.TrustRoleSuperadmin = true
+	m.cfg.Zitadel.SuperadminRole = "platform-admin"
+	m.cfg.Zitadel.SuperadminOrgID = "org-aaa"
+	m.cfg.Zitadel.Issuer = "https://zitadel.example.com"
+	m.superadminLookup = func(ctx context.Context, u string) (string, error) { return "", nil }
+	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }
+
+	trusted := m.trustedSuperadminRoles("https://zitadel.example.com", nil)
+	if got := m.resolveOIDCScopes(context.Background(), "user-123", projID, []string{"openid"}, trusted); len(got) != 0 {
+		t.Fatalf("no-roles resolution scopes = %v, want none", got)
 	}
 }
