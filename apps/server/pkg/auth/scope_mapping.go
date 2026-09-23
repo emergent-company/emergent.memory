@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -184,7 +185,11 @@ func (m *Middleware) lookupProjectRole(ctx context.Context, projectID, userID st
 	return m.dbProjectRole(ctx, projectID, userID)
 }
 
-// dbProjectRole reads the role from kb.project_memberships.
+// dbProjectRole reads the role from kb.project_memberships. A missing row
+// returns ("", nil) — "no membership". A row whose stored role is empty is
+// dirty data, not an absence, so it returns an error; resolveOIDCScopes then
+// fails closed instead of granting the configured default to an unrecognised
+// membership (#736 decision B).
 func (m *Middleware) dbProjectRole(ctx context.Context, projectID, userID string) (string, error) {
 	if m.db == nil {
 		return "", errors.New("auth: no database available for project role lookup")
@@ -203,6 +208,9 @@ func (m *Middleware) dbProjectRole(ctx context.Context, projectID, userID string
 			return "", nil
 		}
 		return "", err
+	}
+	if strings.TrimSpace(role) == "" {
+		return "", fmt.Errorf("auth: project membership for project %s has an empty role", projectID)
 	}
 	return role, nil
 }

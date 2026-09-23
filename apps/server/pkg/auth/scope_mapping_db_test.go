@@ -289,6 +289,42 @@ func TestResolveOIDCScopesWrongUserHasNoMembership(t *testing.T) {
 	}
 }
 
+// A stored membership whose role is the empty string is dirty data, not "no
+// membership": it must fail closed (zero scopes) rather than inherit the
+// configured default scope set (#736 decision B). Copilot review on #803.
+func TestResolveOIDCScopesEmptyStoredRoleFailsClosed(t *testing.T) {
+	db := setupAuthDBTest(t)
+	ctx := context.Background()
+
+	projectID := uuid.NewString()
+	emptyRoleID := seedAuthTestUser(t, ctx, db)
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO kb.project_memberships (project_id, user_id, role) VALUES (?, ?, '')`,
+		projectID, emptyRoleID); err != nil {
+		t.Fatalf("seed empty-role membership: %v", err)
+	}
+
+	clearZitadelEnv(t)
+	m := newTestMiddleware(t)
+	m.db = db // no roleLookup seam: force the real SQL path
+	// A configured default must NOT be applied to an empty stored role.
+	m.cfg.Zitadel.OIDCDefaultScopes = []string{"data:write"}
+
+	rawScopes := []string{"openid", "profile"}
+
+	got := m.resolveOIDCScopes(ctx, emptyRoleID, projectID, rawScopes)
+	if len(got) != 0 {
+		t.Fatalf("empty stored role scopes = %v, want none (must fail closed, not the default)", got)
+	}
+
+	// Sanity: a genuine non-member (no row) still receives the configured
+	// default, so the assertion above is not vacuous.
+	nonMemberID := seedAuthTestUser(t, ctx, db)
+	if def := m.resolveOIDCScopes(ctx, nonMemberID, projectID, rawScopes); !scopesEqual(def, []string{"data:write"}) {
+		t.Fatalf("non-member scopes = %v, want the configured default", def)
+	}
+}
+
 // --- migration 00165 idempotency -------------------------------------------
 
 // migration00165UpUpdate extracts the UPDATE statement from 00165's Up section.
