@@ -340,6 +340,55 @@ func TestRoleScopeInvariantAdminSupersetUserSupersetViewer(t *testing.T) {
 	superset(t, sortedKeys(expandScopes(rawAdmin)), sortedKeys(expandScopes(rawUser)), "expanded admin ⊇ user")
 }
 
+// The slices returned by roleToScopes must never share a backing array — with
+// package state, or across roles. A shared array would let one caller's
+// in-place edit leak privileges into another role's set. This pins the copy
+// semantics that `withScopes`/roleToScopes rely on.
+func TestRoleScopeSetsDoNotShareBackingArray(t *testing.T) {
+	want := map[string][]string{
+		RoleProjectViewer: {"data:read", "schema:read", "agents:read", "projects:read"},
+		RoleProjectUser:   {"data:read", "schema:read", "agents:read", "projects:read", "data:write"},
+		RoleProjectAdmin:  {"data:read", "schema:read", "agents:read", "projects:read", "data:write", "agents:write", "schema:write"},
+	}
+
+	// 1. Independently fetched slices must not alias across roles: overwriting
+	//    every element of the viewer slice must not change a separately fetched
+	//    user slice.
+	viewer, ok := roleToScopes(RoleProjectViewer)
+	if !ok {
+		t.Fatal("roleToScopes(project_viewer) not mapped")
+	}
+	user, ok := roleToScopes(RoleProjectUser)
+	if !ok {
+		t.Fatal("roleToScopes(project_user) not mapped")
+	}
+	for i := range viewer {
+		viewer[i] = "admin:all"
+	}
+	wantScopeSet(t, user, want[RoleProjectUser])
+
+	// 2. An in-place edit (and an append that would spill into any shared spare
+	//    capacity) must not corrupt package state: a fresh read of each role
+	//    still yields its exact set.
+	for role := range want {
+		scopes, ok := roleToScopes(role)
+		if !ok {
+			t.Fatalf("roleToScopes(%q) not mapped", role)
+		}
+		for i := range scopes {
+			scopes[i] = "admin:all"
+		}
+		_ = append(scopes, "admin:all")
+	}
+	for role, w := range want {
+		got, ok := roleToScopes(role)
+		if !ok {
+			t.Fatalf("roleToScopes(%q) not mapped", role)
+		}
+		wantScopeSet(t, got, w)
+	}
+}
+
 // Role-derived scopes are umbrella scopes, and their expansion is an accepted,
 // deliberate widening (#736 decision A). This test PINS the exact expanded set
 // per role so any future change to scopeImplies that widens a role's effective
