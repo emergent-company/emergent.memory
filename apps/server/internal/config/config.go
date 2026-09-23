@@ -81,6 +81,9 @@ type Config struct {
 	// Skills configuration
 	Skills SkillsConfig
 
+	// MCPRegistry configures the official MCP registry client.
+	MCPRegistry MCPRegistryConfig
+
 	// AppURL is the base URL of the application frontend (used for invite links in emails).
 	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
 	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
@@ -564,6 +567,15 @@ func (s SkillsConfig) MaxContentSize() int {
 		return 1 << 20
 	}
 	return s.MaxContentSizeBytes
+}
+
+// MCPRegistryConfig configures the client for the official MCP registry
+// (registry.modelcontextprotocol.io). It exists so tests can point the
+// server at a local stub instead of the live upstream.
+type MCPRegistryConfig struct {
+	// BaseURL overrides the official MCP registry endpoint. Empty means the
+	// default DefaultRegistryBaseURL (https://registry.modelcontextprotocol.io).
+	BaseURL string `env:"MCP_REGISTRY_BASE_URL" envDefault:""`
 }
 
 // AgentSafeguardsConfig holds configuration for agent queue explosion safeguards.

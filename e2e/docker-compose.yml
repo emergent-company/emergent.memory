@@ -72,6 +72,21 @@ services:
       "
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Stub MCP registry — impersonates the official MCP registry API so the
+  # server's registry client (and API e2e tests) never hit the live upstream.
+  # ─────────────────────────────────────────────────────────────────────────
+  test-mcp-registry:
+    build:
+      context: ./stubs/mcp-registry
+    container_name: test-mcp-registry
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Memory API server (standalone mode)
   # ─────────────────────────────────────────────────────────────────────────
   test-emergent-server:
@@ -84,6 +99,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      test-mcp-registry:
+        condition: service_healthy
     environment:
       # Standalone mode — API key is used instead of Zitadel OAuth
       STANDALONE_MODE: "true"
@@ -112,6 +129,10 @@ services:
       PORT: "3002"
       GO_ENV: development
       DB_AUTOINIT: "true"
+
+      # Point the MCP registry client at the local stub instead of the live
+      # official registry (registry.modelcontextprotocol.io) for hermetic e2e.
+      MCP_REGISTRY_BASE_URL: "http://test-mcp-registry:8080"
 
       # Disable optional features that need external services
       ENABLE_AGENT_WORKSPACES: "false"

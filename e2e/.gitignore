@@ -13,6 +13,9 @@ runlog
 /gen-fixtures
 .runlog/
 
+# Built stub binary (go build ./... in e2e/stubs/mcp-registry)
+stubs/mcp-registry/mcp-registry
+
 # Editor / tool artifacts
 @!
 tui.json
