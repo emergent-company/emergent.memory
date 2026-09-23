@@ -2,12 +2,10 @@ package migrate
 
 import (
 	"context"
-	"database/sql"
-	"os"
 	"strings"
 	"testing"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
@@ -67,24 +65,24 @@ func TestIndexNames(t *testing.T) {
 	}
 }
 
-// TestFindInvalidIndexes requires a live PostgreSQL database (skipped unless
-// TEST_DATABASE_URL is set, because the unit job has no Postgres service). It
-// asserts the detection behaviour against a *controlled* invalid index: a
+// TestFindInvalidIndexes requires a live PostgreSQL database (skipped when
+// unavailable or in short mode, because the unit job has no Postgres service).
+// It asserts the detection behaviour against a *controlled* invalid index: a
 // CONCURRENTLY unique build over duplicate values is aborted by PostgreSQL and
 // leaves the index behind with indisvalid = false, exactly the residue the query
 // targets. It also asserts the healthy (no-probe) case reports nothing. The SQL
 // predicate itself lives in the query, so it can only be exercised against a
 // real catalog — a mock driver would just return pre-filtered rows.
 func TestFindInvalidIndexes(t *testing.T) {
-	dbURL := os.Getenv("TEST_DATABASE_URL")
-	if dbURL == "" {
-		testdb.SkipOrFatal(t, "TEST_DATABASE_URL not set; skipping live FindInvalidIndexes test")
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 
-	db, err := sql.Open("pgx", dbURL)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "migrate_invalid_indexes")
+	t.Cleanup(tdb.Close)
+
+	// FindInvalidIndexes needs a database/sql handle; open one from the pool.
+	db := stdlib.OpenDBFromPool(tdb.Pool)
 	defer db.Close()
 	ctx := context.Background()
 

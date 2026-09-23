@@ -2,7 +2,6 @@ package testdb
 
 import (
 	"net/url"
-	"os"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -36,7 +35,7 @@ func TestRequired(t *testing.T) {
 }
 
 func TestApplyNoURLKeepsConfig(t *testing.T) {
-	os.Unsetenv(URLEnv)
+	t.Setenv(URLEnv, "")
 	cfg := config.DatabaseConfig{Host: "db.internal", Port: 6543, User: "app", Password: "pw", Database: "prod", SSLMode: "require"}
 	if err := Apply(&cfg); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -105,7 +104,7 @@ func TestApplyRoundTripsEscapedCredentials(t *testing.T) {
 }
 
 func TestURL(t *testing.T) {
-	os.Unsetenv(URLEnv)
+	t.Setenv(URLEnv, "")
 	if _, ok := URL(); ok {
 		t.Fatalf("URL reported set for empty %s", URLEnv)
 	}
