@@ -14,6 +14,13 @@ import (
 // Every page's outermost element must carry exactly this.
 const pageContainerClass = "mx-auto p-6 lg:p-8 max-w-6xl"
 
+// chatContainerClass is the class layout.Container renders for the chat
+// stream's own size: the same centered gutter, but a much wider cap
+// (max-w-[100rem]) that only bites on very large screens, so the transcript,
+// composer, and model-warning banner fill the chat pane instead of being
+// boxed into the narrower ContainerLG width every other page uses.
+const chatContainerClass = "mx-auto p-6 lg:p-8 max-w-[100rem]"
+
 // TestPageWidthConsistency guards the page content-width rule: every page
 // renders inside layout.Container(layout.ContainerLG, …), never the narrower
 // ContainerMD, and never its own ad-hoc centered wrapper. Mixed widths made
@@ -134,7 +141,8 @@ func TestAgentsAndObjectsSharePageContainer(t *testing.T) {
 
 // TestChatWorkspaceKeepsScrollFillAndSharedContainer covers the riskiest part
 // of the width unification: the chat workspace's transcript column must use the
-// shared ContainerLG wrapper (same width/gutter as every other page) without
+// chat stream's own wide container (same centered gutter as every other page,
+// but a much wider max-w-[100rem] cap so the stream fills the pane) without
 // losing its full-height flex wrapper (min-h-full + justify-end keeps a short
 // transcript resting on the composer) or the htmx targets chat.js drives.
 func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
@@ -157,8 +165,20 @@ func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(html, `"`+pageContainerClass+`"`) {
-		t.Errorf("chat transcript column must use the shared container %q", pageContainerClass)
+	// Scope the container assertion to the transcript region rather than the
+	// whole page: the composer and model-warning banner legitimately reuse the
+	// very same class, so a page-wide Contains would still pass if the
+	// transcript column lost its own wrapper.
+	_, transcriptRegion, ok := strings.Cut(html, `id="chat-log"`)
+	if !ok {
+		t.Fatal("chat transcript region missing (no chat-log target)")
+	}
+	transcriptRegion, _, ok = strings.Cut(transcriptRegion, `<form id="chat-form"`)
+	if !ok {
+		t.Fatal("could not delimit chat transcript region (no chat-form target)")
+	}
+	if !strings.Contains(transcriptRegion, `class="`+chatContainerClass+`"`) {
+		t.Errorf("chat transcript column must use the wide chat container %q", chatContainerClass)
 	}
 	if strings.Contains(html, "max-w-3xl") {
 		t.Error("chat page must not hardcode the narrower max-w-3xl width")
@@ -183,8 +203,8 @@ func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 			t.Fatal("chat composer textarea missing")
 		}
 		composerHead := html[formStart : formStart+textareaStart]
-		if !strings.Contains(composerHead, `class="`+pageContainerClass+`"`) {
-			t.Errorf("chat composer input must sit inside the shared container %q", pageContainerClass)
+		if !strings.Contains(composerHead, `class="`+chatContainerClass+`"`) {
+			t.Errorf("chat composer input must sit inside the wide chat container %q", chatContainerClass)
 		}
 	}
 
@@ -193,8 +213,8 @@ func TestChatWorkspaceKeepsScrollFillAndSharedContainer(t *testing.T) {
 	if i := strings.Index(html, `id="chat-model-warning"`); i >= 0 {
 		before := html[:i]
 		j := strings.LastIndex(before, `<div class="`)
-		if j < 0 || !strings.Contains(before[j:], pageContainerClass) {
-			t.Error("chat model-warning banner must sit inside the shared container")
+		if j < 0 || !strings.Contains(before[j:], chatContainerClass) {
+			t.Error("chat model-warning banner must sit inside the wide chat container")
 		}
 	}
 }
