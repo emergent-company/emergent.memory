@@ -34,6 +34,7 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/database"
 	"github.com/emergent-company/emergent.memory/internal/storage"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -3001,7 +3002,6 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 	}
 
 	var entities []entityRow
-	searchPattern := "%" + query + "%"
 
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
@@ -3033,7 +3033,14 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			systemExclusionClause = ""
 		}
 
-		baseQuery := `
+		// The tsvector is a concatenation of a `simple` identifier space (raw +
+		// separator-normalised key, type) and a `norwegian` prose space (bounded
+		// title/name/description). Lexemes carry no configuration, so a single
+		// `@@` against one query configuration only sees half the index — match
+		// both, mirroring graph.FTSSearch. The exact key match covers
+		// composite-key lookups ("lov/1997-06-13-44") directly.
+		runSearch := func(queryText string) error {
+			baseQuery := `
 			SELECT 
 				go.id,
 				go.key,
@@ -3049,31 +3056,50 @@ func (s *Service) executeSearchEntities(ctx context.Context, projectID string, a
 			WHERE go.deleted_at IS NULL
 				AND go.project_id = ?
 				AND (
-					go.key ILIKE ?
-					OR go.properties->>'name' ILIKE ?
-					OR go.properties->>'description' ILIKE ?
+					go.key = ?
+					OR go.fts @@ websearch_to_tsquery('simple', ?)
+					OR go.fts @@ websearch_to_tsquery('norwegian', ?)
 				)
 				` + branchFilter + `
 				` + namespaceClause + `
 				` + systemExclusionClause + `
 		`
-		queryArgs := append([]any{projectUUID, searchPattern, searchPattern, searchPattern}, branchArgs...)
-		if namespaceFilter != "all" && namespaceFilter != "" {
-			queryArgs = append(queryArgs, namespaceFilter)
-		} else if namespaceFilter == "" {
-			// systemExclusionClause subquery needs project_id
-			queryArgs = append(queryArgs, projectUUID)
+			queryArgs := append([]any{projectUUID, queryText, queryText, queryText}, branchArgs...)
+			if namespaceFilter != "all" && namespaceFilter != "" {
+				queryArgs = append(queryArgs, namespaceFilter)
+			} else if namespaceFilter == "" {
+				// systemExclusionClause subquery needs project_id
+				queryArgs = append(queryArgs, projectUUID)
+			}
+
+			if typeName != "" {
+				baseQuery += " AND go.type = ?"
+				queryArgs = append(queryArgs, typeName)
+			}
+
+			baseQuery += " ORDER BY go.created_at DESC LIMIT ?"
+			queryArgs = append(queryArgs, limit)
+
+			return tx.NewRaw(baseQuery, queryArgs...).Scan(ctx, &entities)
 		}
 
-		if typeName != "" {
-			baseQuery += " AND go.type = ?"
-			queryArgs = append(queryArgs, typeName)
+		if err := runSearch(query); err != nil {
+			return err
+		}
+		if len(entities) > 0 {
+			return nil
 		}
 
-		baseQuery += " ORDER BY go.created_at DESC LIMIT ?"
-		queryArgs = append(queryArgs, limit)
-
-		return tx.NewRaw(baseQuery, queryArgs...).Scan(ctx, &entities)
+		// Strict query matched nothing. A single unsatisfiable term (typically a
+		// hyphenated identifier that websearch_to_tsquery rewrites into a phrase)
+		// zeroes the whole clause, so retry once with the relaxed form before
+		// reporting no results — mirroring graph.FTSSearch.
+		relaxed, ok := ftsquery.Relax(query)
+		if !ok {
+			return nil
+		}
+		entities = nil
+		return runSearch(relaxed)
 	})
 
 	if err != nil {
