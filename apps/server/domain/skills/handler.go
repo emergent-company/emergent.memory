@@ -73,13 +73,16 @@ func (h *Handler) ListGlobalSkills(c echo.Context) error {
 func (h *Handler) CreateGlobalSkill(c echo.Context) error {
 	user := auth.MustGetUser(c)
 
-	// Creating a global skill requires superadmin privileges.
+	// Creating a global skill requires superadmin_full privileges. IsSuperadmin
+	// returns the role alongside existence, so we enforce the same full/readonly
+	// boundary the superadmin routes enforce via requireSuperadminRole; a
+	// superadmin_readonly grant must not mint platform-global skills.
 	if h.superadmin != nil {
-		ok, _, err := h.superadmin.IsSuperadmin(c.Request().Context(), user.ID)
+		ok, role, err := h.superadmin.IsSuperadmin(c.Request().Context(), user.ID)
 		if err != nil {
 			return apperror.NewInternal("failed to check superadmin status", err)
 		}
-		if !ok {
+		if !ok || role != auth.RoleSuperadminFull {
 			return apperror.ErrForbidden
 		}
 	}
