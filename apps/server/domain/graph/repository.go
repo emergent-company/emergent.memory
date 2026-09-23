@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -2337,6 +2338,12 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			q = q.Where("type IN (?)", bun.In(params.RelationshipTypes))
 		}
 
+		// id is the kb.graph_relationships PK → unique → total order. This makes
+		// edge order and MaxEdges truncation deterministic even when the
+		// similarity sort below is skipped (no QueryVector) or the similarity
+		// query fails (graceful degradation to raw BFS order).
+		q = q.OrderExpr("id ASC")
+
 		err := q.Scan(ctx)
 		if err != nil && err != sql.ErrNoRows {
 			return nil, apperror.ErrDatabase.WithInternal(err)
@@ -2371,8 +2378,13 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 					simMap[s.ID] = s.Similarity
 				}
 
-				sort.SliceStable(relationships, func(i, j int) bool {
-					return simMap[relationships[i].ID] > simMap[relationships[j].ID]
+				sort.Slice(relationships, func(i, j int) bool {
+					if simMap[relationships[i].ID] != simMap[relationships[j].ID] {
+						return simMap[relationships[i].ID] > simMap[relationships[j].ID]
+					}
+					// Tie-break on the unique relationship id so equal-similarity
+					// (e.g. all-missing-embedding → 0.0) ordering is deterministic.
+					return slices.Compare(relationships[i].ID[:], relationships[j].ID[:]) < 0
 				})
 			}
 			// If similarity query fails, fall through to standard BFS order (graceful degradation)
@@ -2436,6 +2448,11 @@ func (r *Repository) ExpandGraph(ctx context.Context, params ExpandParams) (*Exp
 			if len(params.Labels) > 0 {
 				nq = nq.Where("labels && ?::text[]", formatTextArray(params.Labels))
 			}
+
+			// canonical_id groups versions; id is the unique PK. Together they give
+			// a deterministic total order so MaxNodes truncation selects the same
+			// neighbours on every run regardless of the scan order.
+			nq = nq.OrderExpr("canonical_id ASC, id ASC")
 
 			err := nq.Scan(ctx)
 			if err != nil && err != sql.ErrNoRows {

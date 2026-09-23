@@ -4518,7 +4518,10 @@ func sortMergeObjectSummaries(summaries []*BranchMergeObjectSummary) {
 		"merged":       5,
 	}
 	sort.Slice(summaries, func(i, j int) bool {
-		return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
+		if statusOrder[summaries[i].Status] != statusOrder[summaries[j].Status] {
+			return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
+		}
+		return slices.Compare(summaries[i].CanonicalID[:], summaries[j].CanonicalID[:]) < 0
 	})
 }
 
@@ -4531,7 +4534,10 @@ func sortMergeRelationshipSummaries(summaries []*BranchMergeRelationshipSummary)
 		"unchanged":    4,
 	}
 	sort.Slice(summaries, func(i, j int) bool {
-		return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
+		if statusOrder[summaries[i].Status] != statusOrder[summaries[j].Status] {
+			return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
+		}
+		return slices.Compare(summaries[i].CanonicalID[:], summaries[j].CanonicalID[:]) < 0
 	})
 }
 
