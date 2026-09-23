@@ -61,8 +61,18 @@ type IntrospectionResult struct {
 	GivenName  string `json:"given_name"`
 	FamilyName string `json:"family_name"`
 
-	// Zitadel-specific claims
-	Claims map[string]any `json:"-"` // All claims for role extraction
+	// Issuer is the token's `iss` claim, used to gate the standing Zitadel role
+	// mapping on an exact issuer match (issue #812 Q6).
+	Issuer string `json:"iss"`
+
+	// Roles are the Zitadel project roles extracted from the raw claims. They are
+	// raw identity claims (not derived grants), so they may be cached; the
+	// derived superadmin grant is re-resolved per request.
+	Roles []ZitadelProjectRole `json:"roles,omitempty"`
+
+	// Claims is the raw claim set (role extraction source). Excluded from the
+	// JSON serialisation so only the extracted Roles survive the cache round trip.
+	Claims map[string]any `json:"-"`
 }
 
 const (
@@ -186,6 +196,8 @@ func (z *ZitadelService) doIntrospect(ctx context.Context, token string) (*Intro
 		Name:       resp.GetName(),
 		GivenName:  resp.GivenName,
 		FamilyName: resp.FamilyName,
+		Issuer:     resp.Issuer,
+		Roles:      extractZitadelProjectRoles(resp.Claims),
 		Claims:     resp.Claims,
 	}
 
@@ -261,8 +273,9 @@ type introspectionResponse struct {
 	GivenName         string `json:"given_name"`
 	FamilyName        string `json:"family_name"`
 
-	// All claims for extension
-	Claims map[string]any `json:"-"`
+	// All claims for extension. No json tag so it captures every claim not mapped
+	// to an explicit field above (Zitadel project roles live here).
+	Claims map[string]any
 }
 
 // Implement required interface methods

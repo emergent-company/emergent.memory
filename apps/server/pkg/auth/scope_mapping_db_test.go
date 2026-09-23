@@ -69,6 +69,20 @@ var authDBTestDDL = []string{
 		created_at timestamptz NOT NULL DEFAULT now(),
 		updated_at timestamptz NOT NULL DEFAULT now()
 	)`,
+	`CREATE TABLE core.superadmins (
+		user_id uuid NOT NULL REFERENCES core.user_profiles(id) ON DELETE CASCADE,
+		role text NOT NULL,
+		revoked_at timestamptz
+	)`,
+	`CREATE TABLE kb.orgs (
+		id uuid PRIMARY KEY,
+		name text NOT NULL
+	)`,
+	`CREATE TABLE kb.projects (
+		id uuid PRIMARY KEY,
+		organization_id uuid NOT NULL,
+		name text NOT NULL
+	)`,
 	`CREATE TABLE kb.project_memberships (
 		id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 		project_id uuid NOT NULL,
@@ -278,12 +292,12 @@ func TestResolveOIDCScopesWrongUserHasNoMembership(t *testing.T) {
 	rawScopes := []string{"openid", "profile"}
 
 	// Sanity: the member resolves the viewer set through the real query.
-	if got := m.resolveOIDCScopes(ctx, memberID, projectID, rawScopes); !scopesEqual(got, viewerReadOnlyScopes) {
+	if got := m.resolveOIDCScopes(ctx, memberID, projectID, rawScopes, nil); !scopesEqual(got, viewerReadOnlyScopes) {
 		t.Fatalf("member scopes = %v, want the viewer read-only set", got)
 	}
 
 	// The wrong user must yield ZERO scopes, not merely a different set.
-	got := m.resolveOIDCScopes(ctx, nonMemberID, projectID, rawScopes)
+	got := m.resolveOIDCScopes(ctx, nonMemberID, projectID, rawScopes, nil)
 	if len(got) != 0 {
 		t.Fatalf("wrong-user scopes = %v, want none (membership is user-id bound)", got)
 	}
@@ -312,7 +326,7 @@ func TestResolveOIDCScopesEmptyStoredRoleFailsClosed(t *testing.T) {
 
 	rawScopes := []string{"openid", "profile"}
 
-	got := m.resolveOIDCScopes(ctx, emptyRoleID, projectID, rawScopes)
+	got := m.resolveOIDCScopes(ctx, emptyRoleID, projectID, rawScopes, nil)
 	if len(got) != 0 {
 		t.Fatalf("empty stored role scopes = %v, want none (must fail closed, not the default)", got)
 	}
@@ -320,7 +334,7 @@ func TestResolveOIDCScopesEmptyStoredRoleFailsClosed(t *testing.T) {
 	// Sanity: a genuine non-member (no row) still receives the configured
 	// default, so the assertion above is not vacuous.
 	nonMemberID := seedAuthTestUser(t, ctx, db)
-	if def := m.resolveOIDCScopes(ctx, nonMemberID, projectID, rawScopes); !scopesEqual(def, []string{"data:write"}) {
+	if def := m.resolveOIDCScopes(ctx, nonMemberID, projectID, rawScopes, nil); !scopesEqual(def, []string{"data:write"}) {
 		t.Fatalf("non-member scopes = %v, want the configured default", def)
 	}
 }
@@ -426,4 +440,142 @@ func scanRole(t *testing.T, ctx context.Context, db *bun.DB, query string, args 
 		t.Fatalf("scan role: %v", err)
 	}
 	return role
+}
+
+// --- entitlement-tier SQL binding -------------------------------------------
+
+// TestDBOrgAdminBindsOrgAndUser pins the org_admin query: the membership must
+// bind on BOTH the organization and the user, so an org_admin in organization A
+// is not an org_admin in B, and a different user of A is not an org_admin.
+func TestDBOrgAdminBindsOrgAndUser(t *testing.T) {
+	db := setupAuthDBTest(t)
+	ctx := context.Background()
+
+	memberID := seedAuthTestUser(t, ctx, db)
+	strangerID := seedAuthTestUser(t, ctx, db)
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_admin')`,
+		orgA, memberID); err != nil {
+		t.Fatalf("seed org membership: %v", err)
+	}
+
+	m := &Middleware{db: db, cfg: &config.Config{}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	isAdmin := func(t *testing.T, org, user string) bool {
+		t.Helper()
+		ok, err := m.dbOrgAdmin(ctx, org, user)
+		if err != nil {
+			t.Fatalf("dbOrgAdmin(%s, %s): %v", org, user, err)
+		}
+		return ok
+	}
+
+	if !isAdmin(t, orgA, memberID) {
+		t.Fatal("org_admin in A should be org_admin in A")
+	}
+	if isAdmin(t, orgB, memberID) {
+		t.Fatal("org_admin in A must not be org_admin in B (org binding)")
+	}
+	if isAdmin(t, orgA, strangerID) {
+		t.Fatal("a different user of A must not be org_admin (user binding)")
+	}
+}
+
+// TestDBSuperadminRoleBindsUserAndActive pins the superadmin query: only an
+// active (non-revoked) row counts, and a superadmin_readonly row is returned as
+// its role (so the resolver can refuse it), never conflated with full.
+func TestDBSuperadminRoleBindsUserAndActive(t *testing.T) {
+	db := setupAuthDBTest(t)
+	ctx := context.Background()
+
+	fullID := seedAuthTestUser(t, ctx, db)
+	readonlyID := seedAuthTestUser(t, ctx, db)
+	revokedID := seedAuthTestUser(t, ctx, db)
+	strangerID := seedAuthTestUser(t, ctx, db)
+
+	for _, m := range []struct{ user, role string }{
+		{fullID, RoleSuperadminFull},
+		{readonlyID, RoleSuperadminReadonly},
+	} {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO core.superadmins (user_id, role) VALUES (?, ?)`, m.user, m.role); err != nil {
+			t.Fatalf("seed superadmin: %v", err)
+		}
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO core.superadmins (user_id, role, revoked_at) VALUES (?, ?, NOW())`,
+		revokedID, RoleSuperadminFull); err != nil {
+		t.Fatalf("seed revoked superadmin: %v", err)
+	}
+
+	m := &Middleware{db: db, cfg: &config.Config{}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	roleOf := func(t *testing.T, user string) string {
+		t.Helper()
+		role, err := m.dbSuperadminRole(ctx, user)
+		if err != nil {
+			t.Fatalf("dbSuperadminRole(%s): %v", user, err)
+		}
+		return role
+	}
+
+	if got := roleOf(t, fullID); got != RoleSuperadminFull {
+		t.Fatalf("full role = %q, want %q", got, RoleSuperadminFull)
+	}
+	if got := roleOf(t, readonlyID); got != RoleSuperadminReadonly {
+		t.Fatalf("readonly role = %q, want %q", got, RoleSuperadminReadonly)
+	}
+	if got := roleOf(t, revokedID); got != "" {
+		t.Fatalf("revoked superadmin role = %q, want empty", got)
+	}
+	if got := roleOf(t, strangerID); got != "" {
+		t.Fatalf("stranger role = %q, want empty", got)
+	}
+}
+
+// TestResolveOIDCScopesOrgAdminEndToEnd exercises the org tier over the real SQL
+// path: the declared project's owning org is resolved, and the org_admin
+// membership in that org yields the org-administration set while a membership in
+// a different org does not.
+func TestResolveOIDCScopesOrgAdminEndToEnd(t *testing.T) {
+	db := setupAuthDBTest(t)
+	ctx := context.Background()
+
+	adminID := seedAuthTestUser(t, ctx, db)
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?), (?, ?)`, orgA, "A", orgB, "B"); err != nil {
+		t.Fatalf("seed orgs: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`, projID, orgB, "B-project"); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_admin')`,
+		orgA, adminID); err != nil {
+		t.Fatalf("seed org_admin in A: %v", err)
+	}
+
+	clearZitadelEnv(t)
+	m := newTestMiddleware(t)
+	m.db = db // no seams: force the real SQL path
+	m.superadminLookup = nil
+	m.projectOrgLookup = nil
+	m.orgAdminLookup = nil
+	m.cfg.Zitadel.TrustTokenScopes = false
+
+	got := m.resolveOIDCScopes(ctx, adminID, projID, []string{"openid"}, nil)
+	if len(got) != 0 {
+		t.Fatalf("org_admin in A must not grant org scopes for a project in B: %v", got)
+	}
+
+	// Move the project to org A: the same principal now resolves the org set.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE kb.projects SET organization_id = ? WHERE id = ?`, orgA, projID); err != nil {
+		t.Fatalf("re-own project: %v", err)
+	}
+	got = m.resolveOIDCScopes(ctx, adminID, projID, []string{"openid"}, nil)
+	wantScopeSet(t, got, []string{"org:read", "org:invite:create", "org:project:create", "org:project:delete"})
 }

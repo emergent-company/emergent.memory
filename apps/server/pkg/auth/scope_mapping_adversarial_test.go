@@ -115,7 +115,7 @@ func TestAdversarialNonMemberReceivesConfiguredDefault(t *testing.T) {
 	m.cfg.Zitadel.OIDCDefaultScopes = []string{"data:write"}
 	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil } // non-member
 
-	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "foreign-project", []string{"openid", "profile"})
+	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "foreign-project", []string{"openid", "profile"}, nil)
 	if !scopesEqual(got, []string{"data:write"}) {
 		t.Fatalf("scopes = %v, want the configured default for a non-member", got)
 	}
@@ -130,7 +130,7 @@ func TestAdversarialExplicitScopesBypassMembership(t *testing.T) {
 	m := newTestMiddleware(t)
 	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil } // non-member
 
-	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "foreign-project", []string{"data:write", "openid"})
+	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "foreign-project", []string{"data:write", "openid"}, nil)
 	if !scopesEqual(got, []string{"data:write"}) {
 		t.Fatalf("scopes = %v, want explicit data:write verbatim", got)
 	}
@@ -196,13 +196,13 @@ func TestAdversarialResolveScopesBindsAuthenticatedUser(t *testing.T) {
 
 	// Sanity: the real member resolves to the viewer read-only set, so the
 	// wrong-user assertion below is not vacuous.
-	if got := m.resolveOIDCScopes(context.Background(), memberID, projectID, []string{"openid", "profile"}); !scopesEqual(got, viewerReadOnlyScopes) {
+	if got := m.resolveOIDCScopes(context.Background(), memberID, projectID, []string{"openid", "profile"}, nil); !scopesEqual(got, viewerReadOnlyScopes) {
 		t.Fatalf("member scopes = %v, want the viewer read-only set", got)
 	}
 
 	// A different user of the same project has no membership: zero scopes,
 	// not merely a different set.
-	got := m.resolveOIDCScopes(context.Background(), otherID, projectID, []string{"openid", "profile"})
+	got := m.resolveOIDCScopes(context.Background(), otherID, projectID, []string{"openid", "profile"}, nil)
 	if len(got) != 0 {
 		t.Fatalf("wrong-user scopes = %v, want none (membership is user-id bound)", got)
 	}

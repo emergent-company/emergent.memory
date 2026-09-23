@@ -22,7 +22,7 @@ func TestTrustTokenScopesOnHonoursTokenScopesVerbatim(t *testing.T) {
 	m.cfg.Zitadel.OIDCDefaultScopes = []string{"data:read"}
 	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return RoleProjectViewer, nil }
 
-	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "proj", []string{"schema:write", "openid"})
+	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "proj", []string{"schema:write", "openid"}, nil)
 	wantScopeSet(t, got, []string{"schema:write"})
 }
 
@@ -32,7 +32,7 @@ func TestTrustTokenScopesOffIgnoresTokenScopes(t *testing.T) {
 	m.cfg.Zitadel.OIDCDefaultScopes = []string{"data:read"}
 	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return RoleProjectViewer, nil }
 
-	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "proj", []string{"schema:write", "openid"})
+	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "proj", []string{"schema:write", "openid"}, nil)
 	// Exact set equality: the viewer read-only set, never a union with the token
 	// scope, never the configured default.
 	wantScopeSet(t, got, []string{"data:read", "schema:read", "agents:read", "projects:read"})
@@ -43,7 +43,7 @@ func TestTrustTokenScopesOffNoEntitlementEmpty(t *testing.T) {
 	m.cfg.Zitadel.TrustTokenScopes = false
 	m.roleLookup = func(ctx context.Context, p, u string) (string, error) { return "", nil }
 
-	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "proj", []string{"schema:write"})
+	got := m.resolveOIDCScopes(context.Background(), "user-uuid", "proj", []string{"schema:write"}, nil)
 	if len(got) != 0 {
 		t.Fatalf("scopes = %v, want none (token scope ignored, no entitlement, no default)", got)
 	}
@@ -51,9 +51,9 @@ func TestTrustTokenScopesOffNoEntitlementEmpty(t *testing.T) {
 
 func TestWarnIfTokenScopesTrusted(t *testing.T) {
 	tests := []struct {
-		name      string
-		trust     bool
-		wantWarn  bool
+		name     string
+		trust    bool
+		wantWarn bool
 	}{
 		{name: "trust on warns", trust: true, wantWarn: true},
 		{name: "trust off silent", trust: false, wantWarn: false},

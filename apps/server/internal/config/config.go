@@ -228,6 +228,22 @@ type ZitadelConfig struct {
 	// no behaviour; the standing default flips to disabled in the following
 	// release, after which the token-scope grant path is removed.
 	TrustTokenScopes bool `env:"MEMORY_OIDC_TRUST_TOKEN_SCOPES" envDefault:"true"`
+
+	// TrustRoleSuperadmin governs whether a standing Zitadel project role maps to
+	// the superadmin_full entitlement (issue #812 Q6). Default OFF; the role must
+	// match the exact (issuer, SuperadminOrgID, SuperadminRole) triple and maps to
+	// superadmin_full only. Fail-closed when disabled or mismatched.
+	TrustRoleSuperadmin bool `env:"MEMORY_OIDC_TRUST_ROLE_SUPERADMIN" envDefault:"false"`
+
+	// SuperadminRole is the exact Zitadel project role name that resolves to
+	// superadmin_full when TrustRoleSuperadmin is enabled.
+	SuperadminRole string `env:"MEMORY_OIDC_SUPERADMIN_ROLE"`
+
+	// SuperadminOrgID is the exact Zitadel organization that owns the superadmin
+	// project role. Together with SuperadminRole and the configured issuer it
+	// forms the exact triple that must match before a role-derived superadmin is
+	// granted.
+	SuperadminOrgID string `env:"MEMORY_OIDC_SUPERADMIN_ORG_ID"`
 }
 
 // IntrospectionConfigured reports whether RFC 7662 introspection is enabled and
