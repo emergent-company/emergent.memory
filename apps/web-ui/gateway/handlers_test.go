@@ -334,6 +334,11 @@ type fakeMemory struct {
 	lastAPITokenID            string            // last project token id passed to any api-token op
 	lastAPITokenScopes        []string          // scopes of the last create/update/regenerate
 	apiTokenSeq               int               // project token id counter
+	// Device credentials (web-device-credential): introspection + mint.
+	introspectInfo    *deviceTokenInfo // returned by IntrospectDeviceToken when set
+	introspectErr     error            // IntrospectDeviceToken failure
+	introspectSeen    []string         // tokens presented to IntrospectDeviceToken
+	lastDeviceTokenID string           // id minted by CreateDeviceToken
 	accountAPITokens          []APIToken        // account-scoped store
 	accountAPITokenErr        error             // failure for any account api-token method
 	accountAPITokenReveal     bool              // GetAccountAPIToken returns plaintext when true
@@ -2649,6 +2654,43 @@ func fakeAPITokenFind(tokens []APIToken, id string) int {
 		}
 	}
 	return -1
+}
+
+func (f *fakeMemory) IntrospectDeviceToken(ctx context.Context, token string) (*deviceTokenInfo, error) {
+	f.introspectSeen = append(f.introspectSeen, token)
+	if f.introspectErr != nil {
+		return nil, f.introspectErr
+	}
+	if f.introspectInfo != nil {
+		return f.introspectInfo, nil
+	}
+	return nil, fmt.Errorf("memory 401 invalid_token: unknown token")
+}
+
+func (f *fakeMemory) CreateDeviceToken(ctx context.Context, name string) (*APITokenCreateResponse, error) {
+	if f.apiTokenErr != nil {
+		return nil, f.apiTokenErr
+	}
+	if f.apiTokenSecrets == nil {
+		f.apiTokenSecrets = map[string]string{}
+	}
+	f.apiTokenSeq++
+	id := fmt.Sprintf("tok-%d", f.apiTokenSeq)
+	secret := fakeAPITokenSecret(name, id)
+	f.apiTokenSecrets[id] = secret
+	tok := APIToken{
+		ID:          id,
+		Name:        name,
+		TokenPrefix: fakeAPITokenPrefix(secret),
+		Scopes:      []string{"device:api", "agents:read", "data:read"},
+		CreatedAt:   fakeAPITokenCreatedAt,
+	}
+	f.apiTokens = append(f.apiTokens, tok)
+	f.lastAPITokenID = id
+	f.lastDeviceTokenID = id
+	out := APITokenCreateResponse{APIToken: tok}
+	out.Token = secret
+	return &out, nil
 }
 
 func (f *fakeMemory) ListAPITokens(ctx context.Context) ([]APIToken, error) {

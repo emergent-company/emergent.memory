@@ -535,26 +535,112 @@ func (s *Server) requireSession(next echo.HandlerFunc) echo.HandlerFunc {
 }
 
 // requireSessionOrKey gates the /api routes. Session mode requires a valid
-// session (refreshed when needed, credentials attached). The former X-API-Key
-// fallback is gone: a device/admin key cannot mint a Memory credential, so
-// accepting one would only proxy an empty bearer upstream and surface a
-// confusing memory-side 401. Session-less access now fails closed with a 401
-// that names the removal instead.
+// session (refreshed when needed, credentials attached). When no session is
+// present a scoped per-device credential (an emt_* bearer carrying the
+// reserved device:api marker, verified by introspection) is accepted on the
+// device surface only. The former X-API-Key / registry-key fallback is gone:
+// anything else fails closed with a 401 that names the requirement.
 func (s *Server) requireSessionOrKey(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if s.cfg.AuthMode != "session" {
 			return s.requireClientKey(next)(c)
 		}
 		claims, err := s.ensureFreshSession(c)
-		if err != nil {
+		if err == nil {
+			s.attachSession(c, claims)
+			return next(c)
+		}
+		// No live session: fall back to the scoped device credential path.
+		return s.requireDeviceCredential(next)(c)
+	}
+}
+
+// bearerToken returns the request's Bearer token, or "" when absent.
+func bearerToken(c echo.Context) string {
+	auth := c.Request().Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	return ""
+}
+
+// deviceSurfacePath reports whether a gateway request path/method is within the
+// device surface: room-token mint, agent picker (list/detail), chat relay,
+// session log/records, and memory browsing. A device credential is rejected on
+// everything else (defence in depth over the server's own surface guard).
+func deviceSurfacePath(method, path string) bool {
+	switch method {
+	case http.MethodGet:
+		switch {
+		case path == "/api/agents":
+			return true
+		case strings.HasPrefix(path, "/api/agents/") && !strings.Contains(strings.TrimPrefix(path, "/api/agents/"), "/"):
+			return true
+		case path == "/api/sessions" || path == "/api/session":
+			return true
+		case path == "/api/memories" || path == "/api/memories/capability":
+			return true
+		}
+		return false
+	case http.MethodPost:
+		return path == "/api/token" || path == "/api/chat"
+	default:
+		return false
+	}
+}
+
+// errDeviceCredentialRejected is the sentinel for a bearer that is not a valid,
+// on-surface device credential. It maps to a 401 so the rejection is loud and
+// self-explanatory without leaking whether a specific token exists.
+var errDeviceCredentialRejected = errors.New("device credential rejected")
+
+// requireDeviceCredential accepts a scoped per-device credential on the device
+// surface. A missing bearer, a non-emt_* bearer, a token that fails
+// introspection (unknown/revoked/expired/store-down), a non-device emt_* token,
+// or a device token outside the surface all fail closed with 401/403 — never
+// proxied.
+func (s *Server) requireDeviceCredential(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		tok := bearerToken(c)
+		if tok == "" || !strings.HasPrefix(tok, "emt_") {
 			return c.JSON(http.StatusUnauthorized, map[string]string{
 				"error":   "session_required",
-				"message": "Session-less API-key/device authentication was removed; sign in with your Memory account (scoped per-device credentials: see issue #818)",
+				"message": "Session-less API-key/device authentication was removed; sign in with your Memory account or present a scoped per-device credential (see issue #848)",
 			})
 		}
-		s.attachSession(c, claims)
+		info, err := s.memory.IntrospectDeviceToken(c.Request().Context(), tok)
+		if err != nil || info == nil || !info.hasDeviceMarker() {
+			return c.JSON(http.StatusUnauthorized, map[string]string{
+				"error":   "invalid_device_credential",
+				"message": "unknown, revoked, or expired device credential",
+			})
+		}
+		if !deviceSurfacePath(c.Request().Method, c.Request().URL.Path) {
+			return c.JSON(http.StatusForbidden, map[string]string{
+				"error":   "device_credential_surface",
+				"message": "device credentials are only valid on the device surface",
+			})
+		}
+		// Attach a device context: the credential is proxied verbatim and
+		// project/org come from introspection (the token binding), never from
+		// raw X-Project-ID / X-Org-ID headers.
+		attachDeviceContext(c, info, tok)
 		return next(c)
 	}
+}
+
+// attachDeviceContext threads a device credential through the request context
+// so the shared MemoryClient proxies it verbatim with the token-derived
+// project/org.
+func attachDeviceContext(c echo.Context, info *deviceTokenInfo, token string) {
+	sc := &sessionContext{
+		Token:     token,
+		ProjectID: info.ProjectID,
+		OrgID:     info.OrgID,
+		Device:    true,
+	}
+	ctx := withSessionContext(c.Request().Context(), sc)
+	c.SetRequest(c.Request().WithContext(ctx))
 }
 
 // projectScopePath reports whether a request path targets a project-scoped

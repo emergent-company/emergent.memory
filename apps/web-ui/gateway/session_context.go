@@ -17,6 +17,11 @@ type sessionContext struct {
 	Picture      string
 	Sub          string // stable account id (Zitadel subject)
 
+	// Device marks a scoped per-device credential context (not a web session).
+	// Token then holds the device credential verbatim and ProjectID/OrgID are
+	// derived from token introspection, never from raw client headers.
+	Device bool
+
 	// AvatarOverrideURL is the gateway-relative memory avatar URL
 	// (/api/user/avatar?v=<key>) when the user uploaded a profile photo; it
 	// wins over the IdP picture when both are present.

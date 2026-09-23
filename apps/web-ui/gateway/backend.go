@@ -192,6 +192,11 @@ type MemoryBackend interface {
 	UpdateAPITokenScopes(ctx context.Context, tokenID string, scopes []string) (*APIToken, error)
 	RevokeAPIToken(ctx context.Context, tokenID string) error
 	RegenerateAPIToken(ctx context.Context, tokenID string) (*APITokenCreateResponse, error)
+	// Scoped per-device credential (see web-device-credential): introspect a raw
+	// bearer to recognise the device:api marker + resolve its project/org, and
+	// mint a credential on the session-authenticated setup flow.
+	IntrospectDeviceToken(ctx context.Context, token string) (*deviceTokenInfo, error)
+	CreateDeviceToken(ctx context.Context, name string) (*APITokenCreateResponse, error)
 	// API-token management (account-scoped: the signed-in user).
 	ListAccountAPITokens(ctx context.Context) ([]APIToken, error)
 	CreateAccountAPIToken(ctx context.Context, name string, scopes []string) (*APITokenCreateResponse, error)
