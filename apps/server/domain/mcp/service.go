@@ -239,6 +239,25 @@ func (s *Service) RegisterMCPRegistryToolHandler(h MCPRegistryToolHandler) {
 	s.mcpRegistryToolHandler = h
 }
 
+// dynamicToolBuilders is the ordered list of package-level tool builders that
+// GetToolDefinitions appends to the static catalog. GetToolDefinitions and
+// mcpToolScopeVocabulary both consume this list, so the tool-scope vocabulary is
+// derived from the same source as the tools it guards and cannot silently fall
+// out of step with them. Handler-provided tools (agent/registry) are appended
+// separately by GetToolDefinitions and are not part of this list.
+var dynamicToolBuilders = []func() []ToolDefinition{
+	agentExtToolDefinitions,
+	skillsToolDefinitions,
+	documentsToolDefinitions,
+	embeddingsToolDefinitions,
+	providerToolDefinitions,
+	tokenToolDefinitions,
+	traceToolDefinitions,
+	queryToolDefinitions,
+	domainToolDefinitions,
+	blueprintsToolDefinitions,
+}
+
 // GetToolDefinitions returns all available MCP tools
 func (s *Service) GetToolDefinitions() []ToolDefinition {
 	tools := []ToolDefinition{
@@ -1330,24 +1349,20 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		tools = append(tools, s.agentToolHandler.GetAgentToolDefinitions()...)
 	}
 
-	// Append agent extension tools (questions, hooks, ADK sessions)
-	tools = append(tools, agentExtToolDefinitions()...)
+	// Append the package-level tool builders from the single ordered list shared
+	// with mcpToolScopeVocabulary. agentExtToolDefinitions is first; the
+	// handler-provided registry tools remain interleaved immediately after it to
+	// preserve catalog order; the remaining builders follow.
+	tools = append(tools, dynamicToolBuilders[0]()...)
 
 	// Append MCP registry tool definitions if handler is available
 	if s.mcpRegistryToolHandler != nil {
 		tools = append(tools, s.mcpRegistryToolHandler.GetMCPRegistryToolDefinitions()...)
 	}
 
-	// Append new domain tool definitions
-	tools = append(tools, skillsToolDefinitions()...)
-	tools = append(tools, documentsToolDefinitions()...)
-	tools = append(tools, embeddingsToolDefinitions()...)
-	tools = append(tools, providerToolDefinitions()...)
-	tools = append(tools, tokenToolDefinitions()...)
-	tools = append(tools, traceToolDefinitions()...)
-	tools = append(tools, queryToolDefinitions()...)
-	tools = append(tools, domainToolDefinitions()...)
-	tools = append(tools, blueprintsToolDefinitions()...)
+	for _, build := range dynamicToolBuilders[1:] {
+		tools = append(tools, build()...)
+	}
 
 	// Journal tools
 	tools = append(tools, ToolDefinition{
@@ -1640,41 +1655,49 @@ func FilterToolsForScopes(tools []ToolDefinition, scopes []string) []ToolDefinit
 	return out
 }
 
-// expandScopesSet returns the full effective scope set for a token, expanding umbrella scopes.
-// Exported so it can be used by FilterToolsForScopes and handleToolsCall enforcement.
+// mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
+// It is derived from the tool catalog — the central static scope map plus the
+// package-level builders in dynamicToolBuilders (the same list GetToolDefinitions
+// consumes) — so it cannot drift from the tools it guards.
+// TestMCPToolScopeVocabularyCoversCatalog additionally asserts completeness
+// against the full catalog, including handler-provided tools. It is the
+// projection target for umbrella-scope implications: MCP honors an implied scope
+// only when some tool can require it.
+var mcpToolScopeVocabulary = func() map[string]bool {
+	vocab := make(map[string]bool, len(toolRequiredScope))
+	for _, s := range toolRequiredScope {
+		vocab[s] = true
+	}
+	for _, build := range dynamicToolBuilders {
+		for _, def := range build() {
+			if def.RequiredScope != "" {
+				vocab[def.RequiredScope] = true
+			}
+		}
+	}
+	return vocab
+}()
+
+// expandScopesSet returns the effective scope set the MCP tool surface may
+// exercise for a token. Explicitly held scopes are always retained. Implied
+// scopes come from the canonical auth.ExpandScopes relation, projected onto
+// mcpToolScopeVocabulary: an implication is honored only when some MCP tool can
+// require the implied scope. Account/organisation/global-admin scopes
+// (admin:read, admin:write, mcp:admin, org:*, project:invite:create, account:*)
+// are never tool RequiredScopes, so they are excluded by construction rather
+// than by a hand-maintained deny list.
 func expandScopesSet(scopes []string) map[string]bool {
-	result := make(map[string]bool, len(scopes)*4)
+	canonical := auth.ExpandScopes(scopes)
+	result := make(map[string]bool, len(canonical))
 	for _, s := range scopes {
 		result[s] = true
-		for _, implied := range scopeImpliesMap[s] {
-			result[implied] = true
+	}
+	for s := range canonical {
+		if mcpToolScopeVocabulary[s] {
+			result[s] = true
 		}
 	}
 	return result
-}
-
-// scopeImpliesMap mirrors auth/middleware.go's scopeImplies but for MCP fine-grained scopes.
-// It must stay in sync with the auth package's expansion table.
-var scopeImpliesMap = map[string][]string{
-	"data:read":       {"graph:read", "search", "journal:read", "documents:read"},
-	"data:write":      {"graph:write", "journal:write", "documents:write"},
-	"schema:write":    {"schema:write", "schema:migrate"},
-	"agents:read":     {"agents:read", "skills:read"},
-	"agents:write":    {"agents:write", "skills:write"},
-	"graph:write":     {"graph:read"},
-	"branches:write":  {"branches:read"},
-	"journal:write":   {"journal:read"},
-	"skills:write":    {"skills:read"},
-	"documents:write": {"documents:read"},
-	"admin:all": {
-		"admin", "graph:read", "graph:write",
-		"schema:read", "schema:write", "schema:migrate",
-		"branches:read", "branches:write", "search",
-		"journal:read", "journal:write",
-		"skills:read", "skills:write",
-		"documents:read", "documents:write",
-		"agents:read", "agents:write", "chat:use", "chat:admin",
-	},
 }
 
 // toolIndex is built once from the full tool list for O(1) lookups in handleToolsCall.
