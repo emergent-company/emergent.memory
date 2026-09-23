@@ -14,7 +14,7 @@ type Config struct {
 	Port            string
 	MemoryURL       string
 	MemoryProjectID string
-	ClientAPIKey    string // optional admin key (TOKEN_API_KEY); per-device keys are issued via the QR setup flow
+	ClientAPIKey    string // optional admin key (TOKEN_API_KEY); gates /api/* in dev mode only — session mode no longer accepts key-only callers
 	BridgeBin       string
 	BridgeArgs      []string
 	BridgeWorkdir   string

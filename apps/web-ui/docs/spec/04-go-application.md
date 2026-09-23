@@ -10,9 +10,10 @@ roles (D1, D4). It owns **no durable state** and **no agent logic**.
 
 ### 1. Gateway API (client-facing)
 
-Thin REST surface. It authenticates clients (session cookie by default, or `X-API-Key`)
-and proxies/relays to memory. It is the only place the memory `emt_*` token lives
-(server-side).
+Thin REST surface. It authenticates clients (session cookie) and proxies/relays to memory.
+The session-less `X-API-Key` path was removed with the static `MEMORY_TOKEN` (a key-only
+caller gets `401 session_required`); interactive/voice sessions are the only memory callers.
+The gateway holds no standing memory token.
 
 | Route | Action | Backs onto |
 |---|---|---|
@@ -220,7 +221,7 @@ Voice is explicitly **not** in the web UI (D5).
 | `AUTH_MODE` | browser-auth posture: `session` (default) requires Zitadel sign-in; `dev` = explicit unauthenticated local dev (validated + warned at startup) |
 | `SESSION_SECRET` | HMAC key for the session cookie (required in session mode) |
 | `ZITADEL_ISSUER`, `ZITADEL_CLIENT_ID`, `ZITADEL_REDIRECT_URI` | OIDC issuer + public client for browser sign-in (authorization-code + PKCE; no client secret) |
-| `TOKEN_API_KEY` | **optional admin** `X-API-Key`; per-device keys issued via QR setup flow (Project Settings) |
+| `TOKEN_API_KEY` | **optional admin** `X-API-Key`; still gates `/api/*` in dev mode only (session mode rejects key-only callers) |
 | `MEMORY_PORT` | HTTP port (default `8095`) |
 | `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY` | passed to bridge workers (env template) |
 | `LLM_BASE_URL`, `LLM_API_KEY` | LiteLLM (used by memory's model config; not directly by Go) |

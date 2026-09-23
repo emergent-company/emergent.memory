@@ -14,6 +14,15 @@ a short-lived project-scoped token per room from the internal binding endpoint.
 `AGENT_TRIGGER_TOKEN` is the only static memory credential — used solely by the
 session-less GitHub webhook to trigger the review agent.
 
+> **Migration (session-less auth removed):** `MEMORY_TOKEN` is no longer read by
+> the gateway (startup warns if it is still set). Session-less `X-API-Key` /
+> per-device-key access to `/api/*` is removed — a key-only caller gets
+> `401 session_required`. Affected: iOS device/QR setup clients and any
+> programmatic `X-API-Key` caller. Replacement: sign in with Zitadel (session);
+> `AGENT_TRIGGER_TOKEN` for the GitHub webhook only. A scoped per-device
+> credential is tracked in issue #818. `AUTH_MODE=dev` is now local-mock-only
+> (it carries no memory credential).
+
 MCP endpoint: `http://localhost:5300/api/mcp`
 
 **91 tools available** (scope-filtered from 117 total). All key memory tools present.

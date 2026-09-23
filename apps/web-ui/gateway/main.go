@@ -25,6 +25,12 @@ func main() {
 	}
 	if cfg.AuthMode != "session" {
 		log.Printf("WARNING: AUTH_MODE=%s — authentication is relaxed; development only", cfg.AuthMode)
+		log.Printf("WARNING: AUTH_MODE=%s carries no Memory credential; session-less calls send no bearer. Use only with the local mock backend, not a real Memory instance.", cfg.AuthMode)
+	}
+	// The static MEMORY_TOKEN was removed from the gateway. Operators upgrading
+	// may still export it; name it explicitly so the break is not silent.
+	if os.Getenv("MEMORY_TOKEN") != "" {
+		log.Printf("WARNING: MEMORY_TOKEN is set but no longer read by the gateway; it was replaced by session auth for interactive/voice calls and AGENT_TRIGGER_TOKEN for the GitHub webhook (see issue #818 for per-device credentials).")
 	}
 	if err := initSentry(cfg.SentryDSN, cfg.SentryEnvironment, cfg.SentryTracesSampleRate); err != nil {
 		log.Printf("sentry init: %v", err)

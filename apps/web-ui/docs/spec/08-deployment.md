@@ -67,7 +67,7 @@ short-lived per-room token from the gateway's internal binding endpoint.
 |---|---|---|
 | `AGENT_TRIGGER_TOKEN` (`emt_*`) | Go app (GitHub webhook only) | static memory token for the session-less PR-review trigger |
 | `LIVEKIT_API_KEY/SECRET` | Go app + bridge | server key for token mint + worker join |
-| `TOKEN_API_KEY` | Go app | **optional admin** client `X-API-Key`; per-device keys issued via QR setup flow |
+| `TOKEN_API_KEY` | Go app | **optional admin** client `X-API-Key`; dev-mode only (session mode rejects session-less key callers) |
 | `AUTH_MODE` | Go app | browser-auth posture: `session` (**default**) requires Zitadel; `dev` = explicit unauthenticated local dev |
 | `SESSION_SECRET` | Go app | HMAC key for the session cookie (required in session mode) |
 | `ZITADEL_ISSUER`, `ZITADEL_CLIENT_ID`, `ZITADEL_REDIRECT_URI` | Go app | OIDC issuer + public client (authorization-code + PKCE; no client secret) |
