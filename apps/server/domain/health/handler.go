@@ -215,7 +215,7 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 	var (
 		mu      sync.Mutex
 		wg      sync.WaitGroup
-		results = make(map[string]Check, 7)
+		results = make(map[string]Check, 8)
 	)
 
 	emit := func(name string, chk Check) {
@@ -344,6 +344,16 @@ func (h *Handler) runChecks(ctx context.Context) map[string]Check {
 		emit("database_backup", h.databaseBackupCheck(ctx))
 	}()
 
+	// OIDC all-grant posture (config-only, no live probe). A configuration
+	// warning, not a failing check: reported as "warning" when the legacy
+	// userinfo all-grant is in effect. It is neither a critical nor an optional
+	// component, so it never affects the overall status.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		emit("oidc_all_grant", h.oidcAllGrantCheck())
+	}()
+
 	wg.Wait()
 	return results
 }
@@ -368,6 +378,23 @@ func (h *Handler) databaseBackupCheck(ctx context.Context) Check {
 	default:
 		return classifyDatabaseBackup(status, errMsg, startedAt, time.Now())
 	}
+}
+
+// oidcAllGrantCheck reports the OIDC all-grant posture as a configuration
+// warning. "warning" means the legacy userinfo all-grant is active; "healthy"
+// means it is not. It is deliberately excluded from the critical/optional
+// component lists so the service is never reported unhealthy because of it.
+func (h *Handler) oidcAllGrantCheck() Check {
+	if h.cfg == nil {
+		return Check{Status: "healthy", Message: "configuration unavailable"}
+	}
+	if h.cfg.Zitadel.UserinfoAllGrantActive() {
+		return Check{
+			Status:  "warning",
+			Message: "OIDC all-scope grant active: ZITADEL_USERINFO_GRANT_ALL_SCOPES is enabled and introspection is not configured, so userinfo-authenticated users receive the full scope catalogue. Configure ZITADEL_CLIENT_JWT or ZITADEL_CLIENT_JWT_PATH, or set ZITADEL_USERINFO_GRANT_ALL_SCOPES=false.",
+		}
+	}
+	return Check{Status: "healthy", Message: "all-grant inactive"}
 }
 
 // Healthz returns a simple health check (for k8s liveness probe)

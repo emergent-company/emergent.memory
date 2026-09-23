@@ -148,6 +148,8 @@ func NewMiddleware(p MiddlewareParams) *Middleware {
 		m.debugToken = "Bearer " + p.Cfg.Zitadel.DebugToken
 	}
 
+	m.warnIfOIDCAllGrantActive()
+
 	return m
 }
 
@@ -652,6 +654,34 @@ const (
 	authSourceIntrospection oidcAuthSource = "introspection"
 	authSourceUserinfo      oidcAuthSource = "userinfo"
 )
+
+// oidcAllGrantWarningText is the operator-facing warning emitted when the legacy
+// userinfo all-grant is active. It names the effect and both remediations.
+const oidcAllGrantWarningText = "OIDC all-scope grant is ACTIVE: ZITADEL_USERINFO_GRANT_ALL_SCOPES is enabled and token introspection is not configured, so every OIDC user authenticated via the userinfo fallback receives the full Memory scope catalogue (GetAllScopes). Remediate by configuring ZITADEL_CLIENT_JWT (or ZITADEL_CLIENT_JWT_PATH) to enable introspection, or by setting ZITADEL_USERINFO_GRANT_ALL_SCOPES=false."
+
+// oidcAllGrantWarning returns the startup warning to emit when the legacy
+// userinfo all-grant is active, or "" when it is not (flag disabled, or
+// introspection configured).
+func oidcAllGrantWarning(z *config.ZitadelConfig) string {
+	if !z.UserinfoAllGrantActive() {
+		return ""
+	}
+	return oidcAllGrantWarningText
+}
+
+// warnIfOIDCAllGrantActive emits the loud startup warning when the legacy
+// userinfo all-grant is in effect. Visibility only — it changes no behaviour.
+func (m *Middleware) warnIfOIDCAllGrantActive() {
+	if m.cfg == nil {
+		return
+	}
+	if msg := oidcAllGrantWarning(&m.cfg.Zitadel); msg != "" {
+		m.log.Warn(msg,
+			slog.String("config", "ZITADEL_USERINFO_GRANT_ALL_SCOPES"),
+			slog.Bool("introspection_configured", false),
+		)
+	}
+}
 
 // TokenClaims represents parsed token claims
 type TokenClaims struct {

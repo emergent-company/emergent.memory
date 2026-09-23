@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/version"
 )
 
@@ -246,6 +247,41 @@ func TestDatabaseBackupCheck(t *testing.T) {
 			}
 			if tt.msgHas != "" && !strings.Contains(got.Message, tt.msgHas) {
 				t.Errorf("message = %q, want it to contain %q", got.Message, tt.msgHas)
+			}
+		})
+	}
+}
+
+func TestOIDCAllGrantCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		flag       bool
+		introspect bool
+		wantStatus string
+	}{
+		{name: "flag on, introspection unconfigured", flag: true, wantStatus: "warning"},
+		{name: "flag on, introspection configured", flag: true, introspect: true, wantStatus: "healthy"},
+		{name: "flag off, introspection unconfigured", flag: false, wantStatus: "healthy"},
+		{name: "flag off, introspection configured", flag: false, introspect: true, wantStatus: "healthy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			z := config.ZitadelConfig{UserinfoGrantAllScopes: tt.flag}
+			if tt.introspect {
+				z.ClientJWT = "jwt"
+			}
+			h := &Handler{cfg: &config.Config{Zitadel: z}}
+			got := h.oidcAllGrantCheck()
+			if got.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", got.Status, tt.wantStatus)
+			}
+			if tt.wantStatus == "warning" {
+				if !strings.Contains(got.Message, "ZITADEL_CLIENT_JWT") {
+					t.Errorf("message = %q, want it to contain %q", got.Message, "ZITADEL_CLIENT_JWT")
+				}
+				if !strings.Contains(got.Message, "ZITADEL_USERINFO_GRANT_ALL_SCOPES=false") {
+					t.Errorf("message = %q, want it to contain %q", got.Message, "ZITADEL_USERINFO_GRANT_ALL_SCOPES=false")
+				}
 			}
 		})
 	}
