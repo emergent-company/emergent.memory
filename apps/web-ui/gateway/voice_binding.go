@@ -30,27 +30,18 @@ type voiceBindingEntry struct {
 	expiresAt time.Time
 }
 
-// voiceConsumption is the audit record of a one-time binding consumption: which
-// authenticated agent took it and when.
-type voiceConsumption struct {
-	agent string
-	at    time.Time
-}
-
 // voiceBindingStore is an in-memory, one-time-consume store of voice bindings
 // keyed by (LiveKit room, agent). Bindings are short-lived and deleted on a
 // successful consume, so a room's credential is handed out exactly once — and
 // only to the worker whose authenticated agent matches the binding's agent.
 type voiceBindingStore struct {
-	mu       sync.Mutex
-	entries  map[string]voiceBindingEntry
-	consumed map[string]voiceConsumption
+	mu      sync.Mutex
+	entries map[string]voiceBindingEntry
 }
 
 func newVoiceBindingStore() *voiceBindingStore {
 	return &voiceBindingStore{
-		entries:  map[string]voiceBindingEntry{},
-		consumed: map[string]voiceConsumption{},
+		entries: map[string]voiceBindingEntry{},
 	}
 }
 
@@ -65,7 +56,7 @@ func (s *voiceBindingStore) Set(room, agent string, b voiceBinding) {
 // the authenticated agent matches the agent the binding was minted for. The
 // bool is false when the room is unknown, expired, or bound to a different
 // agent. A mismatched agent does NOT consume the binding — the rightful worker
-// can still take it later. A successful consume records the agent for audit.
+// can still take it later.
 func (s *voiceBindingStore) Consume(room, agent string) (voiceBinding, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -81,18 +72,7 @@ func (s *voiceBindingStore) Consume(room, agent string) (voiceBinding, bool) {
 		return voiceBinding{}, false
 	}
 	delete(s.entries, room)
-	s.consumed[room] = voiceConsumption{agent: agent, at: time.Now()}
 	return e.binding, true
-}
-
-// LastConsumption reports the authenticated agent that consumed room, if any.
-// This is the "attributable" half of consumption: after the fact the gateway
-// can say which worker took a room's binding.
-func (s *voiceBindingStore) LastConsumption(room string) (voiceConsumption, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.consumed[room]
-	return c, ok
 }
 
 // workerIdentity is the authenticated identity behind a per-worker credential.

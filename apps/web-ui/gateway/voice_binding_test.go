@@ -67,8 +67,7 @@ func TestVoiceBindingStoreCrossWorkerRejected(t *testing.T) {
 }
 
 // TestVoiceBindingStoreConcurrentSingleWinner asserts the consume is atomic: a
-// concurrent race for the same binding yields exactly one winner, and the
-// winner is attributable after the fact.
+// concurrent race for the same binding yields exactly one winner.
 func TestVoiceBindingStoreConcurrentSingleWinner(t *testing.T) {
 	s := newVoiceBindingStore()
 	s.Set("room-c", "agent-a", voiceBinding{Token: "emt-c"})
@@ -93,9 +92,6 @@ func TestVoiceBindingStoreConcurrentSingleWinner(t *testing.T) {
 	}
 	if total != 1 {
 		t.Fatalf("concurrent consume winners = %d, want exactly 1", total)
-	}
-	if c, ok := s.LastConsumption("room-c"); !ok || c.agent != "agent-a" {
-		t.Fatalf("consumption not attributable to agent-a: %+v ok=%v", c, ok)
 	}
 }
 
