@@ -9,14 +9,17 @@ Auth: a valid **session cookie** when `AUTH_MODE=session` (see §1b), or a scope
 **device credential** on the device surface. The session-less `X-API-Key` / registry-key path
 was **removed** with the static `MEMORY_TOKEN`: it cannot mint a Memory credential, so a
 key-only caller gets `401 {"error":"session_required"}` instead of proxying an empty bearer.
-Session-less **device** callers present an `emt_*` device credential (`Authorization: Bearer
-emt_…`) carrying the reserved `device:api` marker; the gateway recognises it by introspection
-(`GET /api/auth/me`), then accepts it on the device surface only (room-token mint, agent
-picker, chat/session relay, memory browsing) and proxies it verbatim. In dev mode `/api/*`
+Session-less **device** callers present an `emt_*` device credential carrying the reserved
+`device:api` marker on either `Authorization: Bearer emt_…` or the `X-API-Key` header (the
+iOS client's convention — the same credential, validated identically); the gateway
+recognises it by introspection (`GET /api/auth/me`), then accepts it on the device surface
+only (room-token mint, agent picker, chat/session relay, memory browsing) and proxies it
+verbatim. In dev mode `/api/*`
 remains gated by `TOKEN_API_KEY` (open when unset) and has no Memory credential — local mock
 only.
 
-The **device surface** (session-less, `Authorization: Bearer emt_…`):
+The **device surface** (session-less, `emt_*` credential on `Authorization: Bearer` or
+`X-API-Key`):
 
 ```
 POST   /api/token                      → {identity, agent, room?} → {server_url, participant_token}

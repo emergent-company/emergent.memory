@@ -25,15 +25,16 @@ internet
    request must carry a valid session cookie (the browser's access token is the bearer sent
    to memory, with `X-Project-ID`/`X-Org-ID` headers scoping the active project/org). A
    session-less **device client** (the iOS voice app) presents a scoped `emt_*` **device
-   credential** (marker scope `device:api`), which the gateway recognises by introspection
-   and accepts on the **device surface only** — room-token mint, agent picker, chat/session
-   relay, memory browsing — proxying the credential verbatim and deriving project/org from
-   the token, never from raw headers. The blanket `X-API-Key` / `TOKEN_API_KEY` path is
-   **removed**: a bare key or a programmatic `emt_*` token on the gateway returns
-   `401 session_required` / `401 invalid_device_credential` rather than proxying an empty
-   bearer upstream. In the explicit dev mode (`AUTH_MODE=dev`) `/api/*` is gated by
-   `requireClientKey` (open when `TOKEN_API_KEY` is unset) and has no Memory credential — it
-   is for the local mock backend only.
+   credential** (marker scope `device:api`) on `X-API-Key` (its convention) or
+   `Authorization: Bearer emt_…` — the same credential, validated identically — which the
+   gateway recognises by introspection and accepts on the **device surface only** — room-token
+   mint, agent picker, chat/session relay, memory browsing — proxying the credential verbatim
+   and deriving project/org from the token, never from raw headers. The blanket **shared**
+   `X-API-Key` / `TOKEN_API_KEY` path is **removed**: a bare shared key or a programmatic
+   `emt_*` token on the gateway returns `401 session_required` / `401 invalid_device_credential`
+   rather than proxying an empty bearer upstream. In the explicit dev mode (`AUTH_MODE=dev`)
+   `/api/*` is gated by `requireClientKey` (open when `TOKEN_API_KEY` is unset) and has no
+   Memory credential — it is for the local mock backend only.
 2. **Go app → memory:** the caller's scoped session token or device credential (server-side,
    never sent to clients); the GitHub webhook uses the dedicated `AGENT_TRIGGER_TOKEN`.
    Project is derived from the token.

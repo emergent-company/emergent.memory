@@ -553,13 +553,18 @@ func (s *Server) requireSessionOrKey(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-// bearerToken returns the request's Bearer token, or "" when absent.
-func bearerToken(c echo.Context) string {
+// deviceCredentialToken returns the device credential from the request. The iOS
+// VoiceAgent presents it as `X-API-Key`; other device clients may present it as
+// `Authorization: Bearer emt_…`. Both headers carry the same credential and are
+// validated identically, so accepting both is not a widening — it is the same
+// token through either channel (see the #818 design: "Authorization: Bearer
+// emt_… (or X-API-Key, which extractToken already accepts)").
+func deviceCredentialToken(c echo.Context) string {
 	auth := c.Request().Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		return strings.TrimPrefix(auth, "Bearer ")
 	}
-	return ""
+	return c.Request().Header.Get("X-API-Key")
 }
 
 // deviceSurfacePath reports whether a gateway request path/method is within the
@@ -588,13 +593,15 @@ func deviceSurfacePath(method, path string) bool {
 }
 
 // requireDeviceCredential accepts a scoped per-device credential on the device
-// surface. A missing bearer, a non-emt_* bearer, a token that fails
-// introspection (unknown/revoked/expired/store-down), a non-device emt_* token,
-// or a device token outside the surface all fail closed with 401/403 — never
-// proxied.
+// surface. The credential may arrive via `Authorization: Bearer emt_…` or the
+// `X-API-Key` header (the iOS client's convention); both are the same token,
+// validated identically. A missing credential, a non-emt_* value, a token that
+// fails introspection (unknown/revoked/expired/store-down), a non-device emt_*
+// token, or a device token outside the surface all fail closed with 401/403 —
+// never proxied.
 func (s *Server) requireDeviceCredential(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		tok := bearerToken(c)
+		tok := deviceCredentialToken(c)
 		if tok == "" || !strings.HasPrefix(tok, "emt_") {
 			return c.JSON(http.StatusUnauthorized, map[string]string{
 				"error":   "session_required",

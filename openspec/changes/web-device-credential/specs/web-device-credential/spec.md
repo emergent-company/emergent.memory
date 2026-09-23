@@ -6,7 +6,7 @@ Defines the scoped, revocable per-device credential that replaces the removed se
 
 ### Requirement: Device credential shape and mint path
 
-A device credential SHALL be an `emt_*` project API token stored in `core.api_tokens` with `user_id = NULL`, carrying the reserved `device:api` marker scope plus the hardcoded scope set `device:api`, `agents:read`, `data:read` — strictly below `project_viewer`, with no `schema:read`, `projects:read`, write, admin, org, or other marker scope. It SHALL be minted only by the internal `CreateDeviceToken(projectID, name, expiresAt)` path, which hardcodes the scope set and accepts no caller-supplied scopes; the plaintext is returned exactly once at creation and stored server-side only as a hash.
+A device credential SHALL be an `emt_*` project API token stored in `core.api_tokens` with `user_id = NULL`, carrying the reserved `device:api` marker scope plus the hardcoded **stored** scope set `device:api`, `agents:read`, `data:read` — strictly below `project_viewer`. By scope expansion (`ScopeImplies`), `agents:read` SHALL expand to `chat:use`/`skills:read` and `data:read` SHALL expand to the read family **including `schema:read`**; the **effective** scope set is therefore read-only and excludes only `projects:read` plus every write, admin, org, and other marker scope. It SHALL be minted only by the internal `CreateDeviceToken(projectID, name, expiresAt)` path, which hardcodes the stored scope set and accepts no caller-supplied scopes; the plaintext is returned exactly once at creation and stored server-side only as a hash.
 
 #### Scenario: Mint produces the exact ceiling
 

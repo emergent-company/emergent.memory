@@ -196,3 +196,74 @@ func TestSetupTokenClientReturnsDeviceCredential(t *testing.T) {
 		t.Errorf("apiKey = %q, want the stored device credential", got["apiKey"])
 	}
 }
+
+// TestMintSetupTokenDoesNotRevokeClaimedCredential guards against the reload
+// regression: once a device claims its credential (consumeSetupToken flips
+// used=true), a subsequent page reload (mintSetupToken rotation) must NOT revoke
+// the now-live credential — only an unclaimed orphan is revoked on rotation.
+func TestMintSetupTokenDoesNotRevokeClaimedCredential(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+
+	token, err := s.mintSetupToken(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.apiTokens) != 1 {
+		t.Fatalf("want 1 device credential after first mint, got %+v", f.apiTokens)
+	}
+	claimedID := f.apiTokens[0].ID
+
+	if _, ok := s.consumeSetupToken(t.Context(), token); !ok {
+		t.Fatal("freshly minted token should be consumable")
+	}
+
+	// Reload the devices page: mintSetupToken rotates (used=true) and mints a
+	// fresh credential. The claimed credential must survive.
+	if _, err := s.mintSetupToken(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := fakeAPITokenFind(f.apiTokens, claimedID)
+	if idx < 0 {
+		t.Fatalf("claimed credential %s disappeared from the store", claimedID)
+	}
+	if f.apiTokens[idx].IsRevoked {
+		t.Fatalf("claimed device credential %s was revoked by a page reload", claimedID)
+	}
+}
+
+// TestMintSetupTokenRevokesUnclaimedOrphanOnRotation asserts the intended
+// rotation behaviour: a credential minted at QR time but never claimed is
+// revoked when the QR rotates (an abandoned QR must not leak a live credential).
+func TestMintSetupTokenRevokesUnclaimedOrphanOnRotation(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+
+	if _, err := s.mintSetupToken(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	orphanID := f.apiTokens[0].ID
+
+	// Force rotation without claiming: expire the setup token so the reuse
+	// branch is skipped but used is still false.
+	_ = f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
+		"token":         f.settings[setupTokenCategory][setupTokenKey]["token"],
+		"createdAt":     time.Now().Add(-11 * time.Minute).UTC().Format(time.RFC3339),
+		"used":          false,
+		"deviceToken":   "emt_orphan",
+		"deviceTokenId": orphanID,
+	})
+
+	if _, err := s.mintSetupToken(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := fakeAPITokenFind(f.apiTokens, orphanID)
+	if idx < 0 {
+		t.Fatalf("orphan credential %s disappeared from the store", orphanID)
+	}
+	if !f.apiTokens[idx].IsRevoked {
+		t.Fatalf("unclaimed orphan credential %s should be revoked on rotation", orphanID)
+	}
+}

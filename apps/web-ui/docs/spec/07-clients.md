@@ -20,8 +20,9 @@ Three clients. One is the main UI (web); two are voice (iOS, Mac).
 
 - **Role:** voice conversation with a selected agent.
 - **Auth:** a scoped `emt_*` **device credential** (reserved `device:api` marker, read-only
-  `agents:read + data:read`), minted via QR onboarding and presented as
-  `Authorization: Bearer emt_…`; accepted only on the device surface (room token, agent
+  `agents:read + data:read`), minted via QR onboarding and presented as the `X-API-Key`
+  header (the iOS client's convention); the gateway accepts the same credential on either
+  `X-API-Key` or `Authorization: Bearer emt_…`, only on the device surface (room token, agent
   picker, chat/session relay, memory browsing).
 - **Shell lifted from Diane** (see 11-reuse-from-diane.md): shared Codable models, protocol-DI
   HTTP client, adaptive nav (`IOSContentView`), list views, `Components/`. Retargeted to the

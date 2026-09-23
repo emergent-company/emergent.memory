@@ -60,10 +60,16 @@ func (s *Server) mintSetupToken(ctx context.Context) (string, error) {
 		}
 	}
 
-	// Rotate: revoke any prior unclaimed device credential so it cannot linger.
+	// Rotate: revoke any prior UNCLAIMED device credential so an abandoned QR
+	// never leaks a live credential. A claimed credential (used=true) is a real
+	// device and must survive a page reload — only an unclaimed orphan is
+	// revoked here.
 	if ps, err := s.memory.GetProjectSetting(ctx, setupTokenCategory, setupTokenKey); err == nil && ps != nil {
-		if priorID, _ := ps.Value["deviceTokenId"].(string); priorID != "" {
-			_ = s.memory.RevokeAPIToken(ctx, priorID)
+		used, _ := ps.Value["used"].(bool)
+		if !used {
+			if priorID, _ := ps.Value["deviceTokenId"].(string); priorID != "" {
+				_ = s.memory.RevokeAPIToken(ctx, priorID)
+			}
 		}
 	}
 

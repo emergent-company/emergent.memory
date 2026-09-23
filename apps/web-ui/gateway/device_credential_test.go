@@ -109,6 +109,63 @@ func TestRequireDeviceCredentialFailClosed(t *testing.T) {
 	}
 }
 
+func TestRequireDeviceCredentialXAPIKeyHeader(t *testing.T) {
+	// The iOS VoiceAgent presents the device credential on X-API-Key; the
+	// gateway must accept it there exactly as on Authorization: Bearer.
+	device := &deviceTokenInfo{Type: "api_token", Scopes: []string{"device:api", "agents:read", "data:read"}, ProjectID: "proj-1", OrgID: "org-1"}
+
+	t.Run("accepted on X-API-Key", func(t *testing.T) {
+		f := &fakeMemory{introspectInfo: device}
+		_, e := deviceCredentialEcho(f)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+		req.Header.Set("X-API-Key", "emt_devicecredential")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		if len(f.introspectSeen) != 1 || f.introspectSeen[0] != "emt_devicecredential" {
+			t.Fatalf("introspection not performed with the X-API-Key token: %v", f.introspectSeen)
+		}
+	})
+
+	t.Run("non-device X-API-Key rejected", func(t *testing.T) {
+		f := &fakeMemory{introspectInfo: &deviceTokenInfo{Type: "api_token", Scopes: []string{"data:read"}, ProjectID: "proj-1"}}
+		_, e := deviceCredentialEcho(f)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+		req.Header.Set("X-API-Key", "emt_programmatic")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401 (non-device emt_* via X-API-Key)", rec.Code)
+		}
+	})
+
+	t.Run("off-surface X-API-Key rejected", func(t *testing.T) {
+		f := &fakeMemory{introspectInfo: device}
+		_, e := deviceCredentialEcho(f)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+		req.Header.Set("X-API-Key", "emt_x")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (off-surface via X-API-Key)", rec.Code)
+		}
+	})
+
+	t.Run("unknown X-API-Key rejected", func(t *testing.T) {
+		f := &fakeMemory{introspectInfo: nil}
+		_, e := deviceCredentialEcho(f)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+		req.Header.Set("X-API-Key", "emt_unknown")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401 (unknown X-API-Key)", rec.Code)
+		}
+	})
+}
+
 // A device credential that carries the marker but resolves to an empty project
 // must still be rejected on the surface (no project binding to act against).
 func TestRequireDeviceCredentialMissingProjectFailsClosed(t *testing.T) {
