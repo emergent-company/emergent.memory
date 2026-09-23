@@ -83,18 +83,7 @@ func (h *Handler) SaveProjectConfig(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
-	// Inject the project's org into context when the caller is using a project
-	// token (which doesn't carry an OrgID). This mirrors the pattern used for
-	// org-scoped endpoints and satisfies assertCallerOwnsProject.
-	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		orgID, err := h.creds.repo.GetOrgIDForProject(ctx, projectID)
-		if err == nil && orgID != "" {
-			ctx = auth.ContextWithOrgID(ctx, orgID)
-		}
-	}
-
-	resp, err := h.creds.UpsertProjectConfig(ctx, projectID, provider, req)
+	resp, err := h.creds.UpsertProjectConfig(c.Request().Context(), projectID, provider, req)
 	if err != nil {
 		return err
 	}
@@ -136,15 +125,7 @@ func (h *Handler) DeleteProjectConfig(c echo.Context) error {
 	projectID := c.Param("projectId")
 	provider := ProviderType(c.Param("provider"))
 
-	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		orgID, err := h.creds.repo.GetOrgIDForProject(ctx, projectID)
-		if err == nil && orgID != "" {
-			ctx = auth.ContextWithOrgID(ctx, orgID)
-		}
-	}
-
-	if err := h.creds.DeleteProjectConfig(ctx, projectID, provider); err != nil {
+	if err := h.creds.DeleteProjectConfig(c.Request().Context(), projectID, provider); err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
@@ -226,22 +207,12 @@ func (h *Handler) ListPricing(c echo.Context) error {
 func (h *Handler) GetProjectUsageSummary(c echo.Context) error {
 	projectID := c.Param("projectId")
 
-	// Inject the project's org into context when the caller is using a project
-	// token (which doesn't carry an OrgID). This satisfies assertCallerOwnsProject.
-	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		orgID, err := h.creds.repo.GetOrgIDForProject(ctx, projectID)
-		if err == nil && orgID != "" {
-			ctx = auth.ContextWithOrgID(ctx, orgID)
-		}
-	}
-
-	if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
+	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
 		return err
 	}
 
 	since, until := parseTimeRange(c)
-	rows, err := h.repo.GetProjectUsageSummary(ctx, projectID, since, until)
+	rows, err := h.repo.GetProjectUsageSummary(c.Request().Context(), projectID, since, until)
 	if err != nil {
 		return err
 	}
@@ -294,21 +265,13 @@ func (h *Handler) GetOrgUsageSummary(c echo.Context) error {
 func (h *Handler) GetProjectUsageTimeSeries(c echo.Context) error {
 	projectID := c.Param("projectId")
 
-	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		orgID, err := h.creds.repo.GetOrgIDForProject(ctx, projectID)
-		if err == nil && orgID != "" {
-			ctx = auth.ContextWithOrgID(ctx, orgID)
-		}
-	}
-
-	if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
+	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
 		return err
 	}
 
 	granularity := c.QueryParam("granularity")
 	since, until := parseTimeRange(c)
-	rows, err := h.repo.GetProjectUsageTimeSeries(ctx, projectID, granularity, since, until)
+	rows, err := h.repo.GetProjectUsageTimeSeries(c.Request().Context(), projectID, granularity, since, until)
 	if err != nil {
 		return err
 	}
@@ -364,20 +327,6 @@ type UpsertProjectPricingOverridesRequest struct {
 	OutputPrice     float64      `json:"outputPrice"`
 }
 
-// projectPricingOverrideCtx injects the project's org into the request context
-// when the caller is using a project token (which doesn't carry an OrgID),
-// mirroring the usage-handler pattern. It satisfies assertCallerOwnsProject.
-func (h *Handler) projectPricingOverrideCtx(c echo.Context) {
-	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		orgID, err := h.creds.repo.GetOrgIDForProject(ctx, c.Param("projectId"))
-		if err == nil && orgID != "" {
-			ctx = auth.ContextWithOrgID(ctx, orgID)
-		}
-	}
-	c.SetRequest(c.Request().WithContext(ctx))
-}
-
 // ListProjectPricingOverrides returns all pricing overrides for a project.
 // @Summary List project pricing overrides
 // @Param projectId path string true "Project ID"
@@ -391,7 +340,6 @@ func (h *Handler) ListProjectPricingOverrides(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("projectId is required")
 	}
 
-	h.projectPricingOverrideCtx(c)
 	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
 		return err
 	}
@@ -429,7 +377,6 @@ func (h *Handler) UpsertProjectPricingOverrides(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("model is required")
 	}
 
-	h.projectPricingOverrideCtx(c)
 	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
 		return err
 	}
@@ -470,7 +417,6 @@ func (h *Handler) DeleteProjectPricingOverride(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("provider and model are required")
 	}
 
-	h.projectPricingOverrideCtx(c)
 	if err := h.creds.assertCallerOwnsProject(c.Request().Context(), projectID); err != nil {
 		return err
 	}
@@ -593,14 +539,8 @@ func (h *Handler) TestProjectProvider(c echo.Context) error {
 
 	// Enforce project ownership before resolving credentials: the caller must
 	// own the project whose provider credentials drive this outbound test call.
-	// Project tokens don't carry an OrgID, so resolve the project's org first
-	// (mirrors SaveProjectConfig / GetProjectUsageSummary).
+	// Ownership is derived from real org membership (see assertCallerOwnsProject).
 	ctx := c.Request().Context()
-	if auth.OrgIDFromContext(ctx) == "" {
-		if orgID, orgErr := h.creds.repo.GetOrgIDForProject(ctx, projectID); orgErr == nil && orgID != "" {
-			ctx = auth.ContextWithOrgID(ctx, orgID)
-		}
-	}
 	if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
 		return err
 	}
@@ -701,13 +641,7 @@ func (h *Handler) TestProvider(c echo.Context) error {
 	ctx := c.Request().Context()
 	if projectID := c.QueryParam("projectId"); projectID != "" {
 		// Enforce project ownership before resolving credentials (mirrors
-		// TestProjectProvider). Project tokens don't carry an OrgID, so resolve
-		// the project's org first.
-		if auth.OrgIDFromContext(ctx) == "" {
-			if orgID, orgErr := h.creds.repo.GetOrgIDForProject(ctx, projectID); orgErr == nil && orgID != "" {
-				ctx = auth.ContextWithOrgID(ctx, orgID)
-			}
-		}
+		// TestProjectProvider). Ownership is derived from real org membership.
 		if err := h.creds.assertCallerOwnsProject(ctx, projectID); err != nil {
 			return err
 		}

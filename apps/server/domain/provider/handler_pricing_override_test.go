@@ -23,8 +23,10 @@ import (
 )
 
 // newPricingOverrideHandler builds a Handler wired to a real repository and
-// credential service backed by the test database.
-func newPricingOverrideHandler(t *testing.T) (*provider.Handler, *testutil.TestDB, string, string, string) {
+// credential service backed by the test database. It seeds orgA/projectA and a
+// foreign orgB/projectB, plus a user that is a member of orgA (returned as
+// userID), so callers can exercise the membership-based ownership guard.
+func newPricingOverrideHandler(t *testing.T) (*provider.Handler, *testutil.TestDB, string, string, string, string) {
 	t.Helper()
 
 	if testing.Short() {
@@ -52,15 +54,25 @@ func newPricingOverrideHandler(t *testing.T) (*provider.Handler, *testutil.TestD
 		Name:  "Project B",
 	}, testutil.AdminUser.ID))
 
+	// A caller who is a member of orgA (and not orgB).
+	userID := uuid.New().String()
+	require.NoError(t, testutil.CreateTestUser(ctx, testDB.GetDB(), testutil.TestUser{
+		ID:            userID,
+		ZitadelUserID: "sub-" + userID,
+		FirstName:     "Org",
+		LastName:      "AMember",
+	}))
+	require.NoError(t, testutil.CreateTestOrgMembership(ctx, testDB.GetDB(), orgA, userID, "org_admin"))
+
 	repo := provider.NewRepository(testDB.GetDB(), slog.Default())
 	credSvc := provider.NewCredentialService(repo, provider.NewRegistry(), nil, &config.Config{}, slog.Default())
 	h := provider.NewHandler(credSvc, nil, repo)
 
-	return h, testDB, orgA, projectA, projectB
+	return h, testDB, orgA, projectA, projectB, userID
 }
 
-// newOverrideContext builds an echo context for a caller scoped to orgID.
-func newOverrideContext(t *testing.T, e *echo.Echo, method, target, orgID string, body any) (echo.Context, *httptest.ResponseRecorder) {
+// newOverrideContext builds an echo context for an authenticated caller (userID).
+func newOverrideContext(t *testing.T, e *echo.Echo, method, target, userID string, body any) (echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	var reader io.Reader
@@ -73,17 +85,17 @@ func newOverrideContext(t *testing.T, e *echo.Echo, method, target, orgID string
 	if body != nil {
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	}
-	req = req.WithContext(auth.ContextWithOrgID(req.Context(), orgID))
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &auth.AuthUser{ID: userID}))
 	rec := httptest.NewRecorder()
 	return e.NewContext(req, rec), rec
 }
 
 func TestPricingOverrides_UpsertReturnsEntry(t *testing.T) {
-	h, testDB, orgA, projectA, _ := newPricingOverrideHandler(t)
+	h, testDB, _, projectA, _, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	e := echo.New()
-	c, rec := newOverrideContext(t, e, http.MethodPut, "/api/v1/projects/"+projectA+"/pricing-overrides", orgA,
+	c, rec := newOverrideContext(t, e, http.MethodPut, "/api/v1/projects/"+projectA+"/pricing-overrides", userID,
 		provider.UpsertProjectPricingOverridesRequest{
 			Provider:        provider.ProviderDeepSeek,
 			Model:           "deepseek-v4-pro",
@@ -113,11 +125,11 @@ func TestPricingOverrides_UpsertReturnsEntry(t *testing.T) {
 }
 
 func TestPricingOverrides_UpsertMissingProjectIDBadRequest(t *testing.T) {
-	h, testDB, orgA, _, _ := newPricingOverrideHandler(t)
+	h, testDB, _, _, _, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	e := echo.New()
-	c, _ := newOverrideContext(t, e, http.MethodPut, "/api/v1/projects//pricing-overrides", orgA,
+	c, _ := newOverrideContext(t, e, http.MethodPut, "/api/v1/projects//pricing-overrides", userID,
 		provider.UpsertProjectPricingOverridesRequest{Provider: provider.ProviderOpenAI, Model: "gpt-4o"})
 	c.SetParamNames("projectId")
 	c.SetParamValues("")
@@ -130,7 +142,7 @@ func TestPricingOverrides_UpsertMissingProjectIDBadRequest(t *testing.T) {
 }
 
 func TestPricingOverrides_ListReturnsOverrides(t *testing.T) {
-	h, testDB, orgA, projectA, _ := newPricingOverrideHandler(t)
+	h, testDB, _, projectA, _, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	// Seed two overrides directly via the repository.
@@ -150,7 +162,7 @@ func TestPricingOverrides_ListReturnsOverrides(t *testing.T) {
 	}))
 
 	e := echo.New()
-	c, rec := newOverrideContext(t, e, http.MethodGet, "/api/v1/projects/"+projectA+"/pricing-overrides", orgA, nil)
+	c, rec := newOverrideContext(t, e, http.MethodGet, "/api/v1/projects/"+projectA+"/pricing-overrides", userID, nil)
 	c.SetParamNames("projectId")
 	c.SetParamValues(projectA)
 
@@ -165,7 +177,7 @@ func TestPricingOverrides_ListReturnsOverrides(t *testing.T) {
 }
 
 func TestPricingOverrides_DeleteRemovesOverride(t *testing.T) {
-	h, testDB, orgA, projectA, _ := newPricingOverrideHandler(t)
+	h, testDB, _, projectA, _, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	repo := provider.NewRepository(testDB.GetDB(), slog.Default())
@@ -179,7 +191,7 @@ func TestPricingOverrides_DeleteRemovesOverride(t *testing.T) {
 
 	e := echo.New()
 	c, rec := newOverrideContext(t, e, http.MethodDelete,
-		"/api/v1/projects/"+projectA+"/pricing-overrides/deepseek/deepseek-v4-pro", orgA, nil)
+		"/api/v1/projects/"+projectA+"/pricing-overrides/deepseek/deepseek-v4-pro", userID, nil)
 	c.SetParamNames("projectId", "provider", "model")
 	c.SetParamValues(projectA, "deepseek", "deepseek-v4-pro")
 
@@ -192,13 +204,13 @@ func TestPricingOverrides_DeleteRemovesOverride(t *testing.T) {
 }
 
 func TestPricingOverrides_CrossProjectForbidden(t *testing.T) {
-	h, testDB, orgA, _, projectB := newPricingOverrideHandler(t)
+	h, testDB, _, _, projectB, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	e := echo.New()
-	// Caller is scoped to orgA but targets projectB (orgB) — must be forbidden.
+	// Caller is a member of orgA but targets projectB (orgB) — must be forbidden.
 	c, _ := newOverrideContext(t, e, http.MethodPut,
-		"/api/v1/projects/"+projectB+"/pricing-overrides", orgA,
+		"/api/v1/projects/"+projectB+"/pricing-overrides", userID,
 		provider.UpsertProjectPricingOverridesRequest{Provider: provider.ProviderOpenAI, Model: "gpt-4o", OutputPrice: 10.00})
 	c.SetParamNames("projectId")
 	c.SetParamValues(projectB)
@@ -217,13 +229,13 @@ func TestPricingOverrides_CrossProjectForbidden(t *testing.T) {
 }
 
 func TestPricingOverrides_UnknownProjectNotFound(t *testing.T) {
-	h, testDB, orgA, _, _ := newPricingOverrideHandler(t)
+	h, testDB, _, _, _, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	e := echo.New()
 	unknownProject := uuid.New().String()
 	c, _ := newOverrideContext(t, e, http.MethodGet,
-		"/api/v1/projects/"+unknownProject+"/pricing-overrides", orgA, nil)
+		"/api/v1/projects/"+unknownProject+"/pricing-overrides", userID, nil)
 	c.SetParamNames("projectId")
 	c.SetParamValues(unknownProject)
 
