@@ -5,13 +5,32 @@ memory's OpenAPI + the Go app's OpenAPI); this pins the *direction* of each call
 
 ## 1. Clients → Go app (gateway)
 
-Auth: a valid **session cookie** when `AUTH_MODE=session` (see §1b). The session-less
-`X-API-Key` / per-device key path was **removed** with the static `MEMORY_TOKEN`: it cannot
-mint a Memory credential, so `/api/*` now returns `401 {"error":"session_required"}` for a
-key-only caller instead of proxying an empty bearer. Issue #818 tracks a scoped replacement
-per-device credential. Per-device keys from the QR setup flow (see §1a) are no longer
-accepted for `/api/*`. In dev mode `/api/*` remains gated by `TOKEN_API_KEY` (open when
-unset) and has no Memory credential — local mock only.
+Auth: a valid **session cookie** when `AUTH_MODE=session` (see §1b), or a scoped
+**device credential** on the device surface. The session-less `X-API-Key` / registry-key path
+was **removed** with the static `MEMORY_TOKEN`: it cannot mint a Memory credential, so a
+key-only caller gets `401 {"error":"session_required"}` instead of proxying an empty bearer.
+Session-less **device** callers present an `emt_*` device credential (`Authorization: Bearer
+emt_…`) carrying the reserved `device:api` marker; the gateway recognises it by introspection
+(`GET /api/auth/me`), then accepts it on the device surface only (room-token mint, agent
+picker, chat/session relay, memory browsing) and proxies it verbatim. In dev mode `/api/*`
+remains gated by `TOKEN_API_KEY` (open when unset) and has no Memory credential — local mock
+only.
+
+The **device surface** (session-less, `Authorization: Bearer emt_…`):
+
+```
+POST   /api/token                      → {identity, agent, room?} → {server_url, participant_token}
+GET    /api/agents                     → list agents
+GET    /api/agents/{id}                → one agent
+POST   /api/chat        (SSE)          → chat relay
+GET    /api/sessions                   → session log
+GET    /api/session?room=…             → session records
+GET    /api/memories/capability?agent=…→ {agent, hasMemory}
+GET    /api/memories?agent=…&query=…   → memories
+```
+
+A device credential outside that surface → 403; a missing/invalid/non-device bearer → 401.
+The full session surface (below) is unchanged and remains session-only.
 
 ```
 GET    /api/agents                     → list agents
@@ -64,32 +83,32 @@ GET    /api/memories?agent=…&query=…   → memories
 The Project Settings page renders a QR encoding
 `{"setupURL": "<base>/api/setup", "token": "<one-time 32-hex>"}`. The current
 token is persisted in memory's settings (`ios_setup_token` / `current` /
-`{"token","createdAt","used"}`) so it survives gateway restarts (`air` hot-reload),
-and is reused across page reloads until consumed or expired (10 minutes), then a
-fresh one is minted — single use.
+`{"token","createdAt","used","deviceToken","deviceTokenId"}`) so it survives gateway
+restarts (`air` hot-reload), and is reused across page reloads until consumed or expired
+(10 minutes), then a fresh one is minted — single use. Minting the QR also mints the
+**device credential** server-side (the devices page is session-authenticated) and stores it
+for a single claim; an unclaimed credential is revoked when the QR rotates.
 
 The base URL is `PUBLIC_BASE_URL` (`scheme://host[:port]`, no trailing slash) when
 configured — pin it when the gateway sits behind a proxy/hostname so the phone
 hits the externally-reachable origin — else derived from the request Host (http).
 
 ```
-POST /api/setup   (no X-API-Key)       body {"token": "<one-time>"}
+POST /api/setup   (no auth)             body {"token": "<one-time>"}
 → 200 {"serverURL": "<ws url>", "tokenEndpoint": "<base>/api/token",
-        "apiBaseURL": "<base>/", "apiKey": "<per-device key>",
+        "apiBaseURL": "<base>/", "apiKey": "<emt_* device credential>",
         "ttsStrategy": "client|server"}
 → 400 {"error": "…"}   empty/invalid body
-→ 401 {"error": "…"}   unknown / expired / already-used token
+→ 401 {"error": "…"}   unknown / expired / already-used token, or no bound credential
 ```
 
 `ttsStrategy` tells the client whether to play server-side audio (`server`,
 `TTS_PROVIDER=cartesia`) or do local TTS from text (`client`, any other value).
 
-Device keys are stored in memory's project settings as a single registry:
-category `ios_device_keys`, key `registry`, value
-`{"devices": {"<key-hex>": {"createdAt": "<RFC3339>"}}}` (memory has no
-list-by-category route, so per-key settings could not be enumerated). The
-Project Settings page lists the registry (keys masked) and offers a revoke
-form: `POST /settings/devices/:key/revoke` (PRG → 303 back to `/settings`).
+Device credentials are project-scoped `core.api_tokens` rows carrying the `device:api`
+marker; the retired `ios_device_keys` registry authenticates nothing. The Project Settings
+page lists the project's device credentials (name + masked prefix) and offers a revoke form:
+`POST /settings/devices/:id/revoke` (PRG → 303 back to `/settings/devices`).
 
 ### 1b. Browser session (Zitadel OIDC, `AUTH_MODE=session`, opt-in)
 
@@ -107,7 +126,8 @@ The session cookie is stateless and HMAC-signed (`SESSION_SECRET`), carrying
 `{access_token, refresh_token, active_project_id, org_id, name, email, picture, avatar_override_url, exp}`
 (`avatar_override_url` is the uploaded photo's gateway-relative path, empty when not overridden).
 UI page routes require a valid session (else 302 → `/auth/login`); `/api/*` accepts a
-session **only** (session-less key access removed). Session-token calls to memory add
+session **or** a scoped device credential on the device surface (session-less key access
+removed). Session-token calls to memory add
 `X-Project-ID` (and `X-Org-ID` when known). Access tokens are refreshed server-side (`grant_type=refresh_token`,
 5-min grace window, expired-cookie recovery). The cookie's browser lifetime is
 `SESSION_MAX_AGE` (default 30 days), independent of the access-token `exp`, so the

@@ -6,7 +6,7 @@ Three clients. One is the main UI (web); two are voice (iOS, Mac).
 
 - **Role:** manage everything + text chat. No voice (D5).
 - **Surface:** agents, MCP servers, chat, sessions, settings (see 04-go-application.md).
-- **Auth:** `X-API-Key` to the Go gateway (same key as iOS).
+- **Auth:** Zitadel OIDC session to the Go gateway.
 - **Chat:** streams memory's chat SSE relayed by the Go gateway.
 - **Styles:** one gateway-compiled Tailwind + daisyUI sheet; go-daisy's components are
   `@source`d (vendored) and its custom CSS `@import`ed — go-daisy's monolithic `app.css`
@@ -19,10 +19,15 @@ Three clients. One is the main UI (web); two are voice (iOS, Mac).
 ## iOS — voice client
 
 - **Role:** voice conversation with a selected agent.
+- **Auth:** a scoped `emt_*` **device credential** (reserved `device:api` marker, read-only
+  `agents:read + data:read`), minted via QR onboarding and presented as
+  `Authorization: Bearer emt_…`; accepted only on the device surface (room token, agent
+  picker, chat/session relay, memory browsing).
 - **Shell lifted from Diane** (see 11-reuse-from-diane.md): shared Codable models, protocol-DI
   HTTP client, adaptive nav (`IOSContentView`), list views, `Components/`. Retargeted to the
   Go gateway:
-  - token via `POST /api/token` + QR onboarding (now served by the Go app); optionally the
+  - token via `POST /api/token` + QR onboarding (now served by the Go app, which exchanges the
+    one-time setup token for the device credential); optionally the
     Diane pairing-code flow (`POST /pair`) as a nicer onboarding path.
   - agent picker reads `GET /api/agents` (gateway) instead of a hardcoded list.
   - conversation/sessions views read gateway session endpoints (memory-backed).
