@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -172,11 +173,13 @@ func TestMintTokenSessionModeStoresBinding(t *testing.T) {
 	}
 }
 
-func TestMintTokenKeyModeStoresStaticBinding(t *testing.T) {
+// TestMintTokenWithoutSessionRejected guards that voice now requires a
+// session: the old key/device-mode static-token fallback is gone, so a
+// session-less mint must fail closed rather than hand out a binding.
+func TestMintTokenWithoutSessionRejected(t *testing.T) {
 	f := voiceAgentBackend()
 	cfg := tokenTestConfig()
 	cfg.MemoryProjectID = "static-proj"
-	cfg.MemoryToken = "emt-static"
 	s, e := newBindingTokenEcho(f, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/token",
@@ -185,25 +188,50 @@ func TestMintTokenKeyModeStoresStaticBinding(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("session-less mint status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
-	var got struct {
-		ParticipantToken string `json:"participant_token"`
+	if len(s.bindings.entries) != 0 {
+		t.Fatal("session-less mint must not store a binding")
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
+}
+
+// TestMintTokenDisabledAgentRejected asserts a disabled agent definition is
+// refused before a binding or worker is created, and any warm worker for it is
+// stopped (the removed background reconcile applied the same gate).
+func TestMintTokenDisabledAgentRejected(t *testing.T) {
+	f := voiceAgentBackend()
+	f.agents[0].Enabled = false
+	s, e := newBindingTokenEcho(f, tokenTestConfig())
+
+	bin, err := exec.LookPath("sleep")
+	if err == nil {
+		sup := NewSupervisor(bin, []string{"60"}, "", 0, 0, "k", "u")
+		sup.EnsureWorker("memory")
+		s.supervisor = sup
+		t.Cleanup(func() { sup.stopAll() })
 	}
-	room := decodeRoomGrant(t, got.ParticipantToken, "lksecret")
-	b, ok := s.bindings.Consume(room)
-	if !ok {
-		t.Fatal("binding not stored")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/token",
+		strings.NewReader(`{"identity":"u1","agent":"memory"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{Token: "sess", ProjectID: "proj-1"}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("disabled-agent mint status = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
-	if b.ProjectID != "static-proj" || b.Token != "emt-static" {
-		t.Fatalf("binding = %+v, want static project/token", b)
+	if len(s.bindings.entries) != 0 {
+		t.Fatal("disabled-agent mint must not store a binding")
 	}
-	if b.AgentDefinitionID != "a1" {
-		t.Fatalf("agent definition id = %q, want a1", b.AgentDefinitionID)
+	if s.supervisor != nil {
+		s.supervisor.mu.Lock()
+		_, running := s.supervisor.workers["memory"]
+		s.supervisor.mu.Unlock()
+		if running {
+			t.Fatal("existing worker for a disabled agent must be stopped")
+		}
 	}
 }
 
@@ -256,11 +284,11 @@ func TestResolveVoiceAgentPerProject(t *testing.T) {
 	}
 	s := &Server{memory: f, cfg: Config{}}
 
-	idA, langA, okA := s.resolveVoiceAgent(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-a"}), "memory")
+	idA, langA, _, okA := s.resolveVoiceAgent(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-a"}), "memory")
 	if !okA || idA != "a1" || langA != "en" {
 		t.Fatalf("proj-a: id=%q lang=%q ok=%v", idA, langA, okA)
 	}
-	idB, langB, okB := s.resolveVoiceAgent(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-b"}), "memory")
+	idB, langB, _, okB := s.resolveVoiceAgent(withSessionContext(context.Background(), &sessionContext{ProjectID: "proj-b"}), "memory")
 	if !okB || idB != "b2" || langB != "pl" {
 		t.Fatalf("proj-b: id=%q lang=%q ok=%v", idB, langB, okB)
 	}

@@ -27,7 +27,7 @@ func TestListSkills(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	skills, err := m.ListSkills(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestListSkillsError(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"code":"upstream","message":"down"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if _, err := m.ListSkills(context.Background()); err == nil {
 		t.Fatal("want error, got nil")
 	}
@@ -71,7 +71,7 @@ func TestGetSkill(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	sk, err := m.GetSkill(context.Background(), "s1")
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestCreateSkill(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	sk, err := m.CreateSkill(context.Background(), "summarize-email", "Condenses", "You summarize…")
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestUpdateSkill(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	sk, err := m.UpdateSkill(context.Background(), "s1", "New desc", "New content")
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestDeleteSkill(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj-1")
+	m := NewMemoryClient(srv.URL, "proj-1")
 	if err := m.DeleteSkill(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}

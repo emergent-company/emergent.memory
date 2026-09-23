@@ -23,7 +23,7 @@ func TestMemoryClientCreateSchemaPack(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	raw := json.RawMessage(`[{"name":"person","properties":{"name":{"type":"string"}}}]`)
 	pack, err := m.CreateSchemaPack(context.Background(), &SchemaPackWriteRequest{
 		Name: "my-pack", Version: "2.0.0", ObjectTypeSchemas: raw,
@@ -60,7 +60,7 @@ func TestMemoryClientUpdateSchemaPackPreservesUnrelatedTypes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	err := m.UpdateSchemaPack(context.Background(), "pack-1", ObjectTypeEdit{
 		Name:        "person",
 		Description: "new",
@@ -124,7 +124,7 @@ func TestMemoryClientAssignSchemaPack(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.AssignSchemaPack(context.Background(), "pack-override"); err != nil {
 		t.Fatalf("AssignSchemaPack: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestMemoryClientUpdateBlueprint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	rec, err := m.UpdateBlueprint(context.Background(), "bp1", &UpdateBlueprintRequest{
 		Name: "derived", Version: "2.0.0", Manifest: json.RawMessage(`{"packs":[{"name":"derived","version":"2.0.0"}]}`),
 	})
@@ -178,7 +178,7 @@ func TestMemoryClientCreateBlueprintVersion(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewMemoryClient(srv.URL, "tok", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 	rec, err := m.CreateBlueprintVersion(context.Background(), "bp1", &CreateBlueprintVersionRequest{Version: "2.0.0"})
 	if err != nil {
 		t.Fatalf("CreateBlueprintVersion: %v", err)

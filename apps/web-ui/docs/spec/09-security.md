@@ -4,39 +4,41 @@
 
 The gateway is designed to be served on a **public address** and authenticates
 fail-closed by default: `AUTH_MODE=session` (D17) requires a **Zitadel OIDC sign-in** for
-the browser UI and a valid session or `X-API-Key` for `/api/*`. `AUTH_MODE=dev` is an
-**explicit** local-development escape hatch only — it disables browser auth and is warned
-about loudly at startup. The trust boundary is Zitadel's identity provider, not the
-network.
+the browser UI and **a valid session for `/api/*`**. Session-less `X-API-Key`/device access
+was **removed** with the static `MEMORY_TOKEN` (issue #818 tracks a scoped replacement);
+`AUTH_MODE=dev` is an **explicit** local-development escape hatch only — it disables browser
+auth, carries no Memory credential, and is warned about loudly at startup. The trust boundary
+is Zitadel's identity provider, not the network.
 
 ```
 internet
-├─ clients (web/iOS/Mac)  ── session cookie | X-API-Key ──► Go app
-├─ Go app  ── emt_* token ──► memory
+├─ clients (web/iOS/Mac)  ── session cookie ──► Go app
+├─ Go app  ── session token | AGENT_TRIGGER_TOKEN ──► memory
 ├─ Go app  ── server key  ──► LiveKit (mint JWT)
-└─ bridge workers ── emt_* token ──► memory (chat)
+└─ bridge workers ── per-room scoped token ──► memory (chat)
 ```
 
 ## Authentication layers
 
-1. **Clients → Go app:** per-device `X-API-Key` (issued by the QR setup flow, stored in
-   memory under `ios_device_keys`), or the optional admin key `TOKEN_API_KEY`. In the default
-   session mode (`AUTH_MODE=session`) a request carries **either** a valid session cookie
-   **or** a valid `X-API-Key`; the browser uses the session (its access token is the bearer
-   sent to memory, with `X-Project-ID`/`X-Org-ID` headers scoping the active project/org).
-   In the explicit dev mode (`AUTH_MODE=dev`) every `/api/*` request must carry a valid key
-   (and is open when `TOKEN_API_KEY` is unset).
-2. **Go app → memory:** scoped `emt_*` token (server-side only, never sent to clients).
-   Scopes: `agents:read agents:write chat:use data:read data:write schema:read schema:write
-   projects:read projects:write admin`. Project is derived from the token.
+1. **Clients → Go app:** in the default session mode (`AUTH_MODE=session`) every `/api/*`
+   request must carry a valid session cookie (the browser's access token is the bearer sent
+   to memory, with `X-Project-ID`/`X-Org-ID` headers scoping the active project/org). The
+   former per-device `X-API-Key` / admin `TOKEN_API_KEY` path is **removed**: it could not
+   mint a Memory credential, so it now returns `401 session_required` rather than proxying an
+   empty bearer upstream. In the explicit dev mode (`AUTH_MODE=dev`) `/api/*` is gated by
+   `requireClientKey` (open when `TOKEN_API_KEY` is unset) and has no Memory credential — it
+   is for the local mock backend only.
+2. **Go app → memory:** the caller's scoped session token (server-side, never sent to
+   clients); the GitHub webhook uses the dedicated `AGENT_TRIGGER_TOKEN`. Project is derived
+   from the token.
 3. **iOS → LiveKit:** short-lived room-join JWT minted by the Go app. No LiveKit credentials
    in the iOS binary.
-4. **Bridge → memory:** `emt_*` token (chat scope), injected by the supervisor.
+4. **Bridge → memory:** short-lived per-room `emt_*` token (chat scope), fetched from the
+   internal binding endpoint.
 
 **Web UI:** served same-origin by the Go app. The default `AUTH_MODE=session` requires a
 browser sign-in via **Zitadel OIDC**; the explicit `AUTH_MODE=dev` escape hatch has no
-browser auth and is for local development only (`TOKEN_API_KEY` is an optional admin key
-gating non-browser clients). Session sign-in uses **Zitadel OIDC**
+browser auth and is for local development only, with no Memory credential. Session sign-in uses **Zitadel OIDC**
 (authorization-code + PKCE): the gateway issues a **stateless HMAC-signed session cookie**
 carrying `access_token`, `refresh_token`, `active_project_id`, `org_id`, and identity
 `name`/`email`/`picture` (decoded from the id_token after the gateway verifies the
@@ -89,7 +91,7 @@ redirects to the discovered Zitadel `end_session` endpoint with `id_token_hint`/
 
 | Threat | Mitigation |
 |---|---|
-| Unauthenticated client reads memory data | session auth required by default (`AUTH_MODE=session`); `dev` is explicit local-dev only, validated + warned at startup |
+| Unauthenticated client reads memory data | session auth required by default (`AUTH_MODE=session`); session-less `X-API-Key`/device access removed (401 `session_required`); `dev` is explicit local-dev only, validated + warned at startup, with no Memory credential |
 | Client steals LiveKit creds | clients only get short-lived room JWTs |
 | Rogue agent escalates via tools | memory tool policies (`ToolPolicies` confirm/disable) + tool allowlists per attachment |
 | Stolen one-time setup token | single-use + 10-min TTL; worst case one extra device key, revocable by deleting the setting row |

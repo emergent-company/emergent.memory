@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -149,13 +148,13 @@ func schedTestServer(t *testing.T, method, path, body string) (*MemoryClient, *h
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(srv.Close)
-	return NewMemoryClient(srv.URL, "tok123", "proj"), srv
+	return NewMemoryClient(srv.URL, "proj"), srv
 }
 
 func TestListScheduledAgentsClient(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodGet, "/api/projects/proj/agents",
 		`{"success":true,"data":[{"id":"a1","name":"Daily briefing","strategyType":"definition","cronSchedule":"0 0 8 * * *","enabled":true,"triggerType":"schedule"}]}`)
-	agents, err := m.ListScheduledAgents(context.Background())
+	agents, err := m.ListScheduledAgents(sessCtx("tok123"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +166,7 @@ func TestListScheduledAgentsClient(t *testing.T) {
 func TestGetScheduledAgentClient(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodGet, "/api/projects/proj/agents/a1",
 		`{"success":true,"data":{"id":"a1","name":"Daily briefing","enabled":false,"cronSchedule":"0 0 8 * * *"}}`)
-	a, err := m.GetScheduledAgent(context.Background(), "a1")
+	a, err := m.GetScheduledAgent(sessCtx("tok123"), "a1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,11 +189,11 @@ func TestCreateScheduledAgentClient(t *testing.T) {
 		_, _ = io.WriteString(w, `{"success":true,"data":{"id":"a9","name":"Daily briefing"}}`)
 	}))
 	defer srv.Close()
-	m := NewMemoryClient(srv.URL, "tok123", "proj")
+	m := NewMemoryClient(srv.URL, "proj")
 
 	prompt := "run it"
 	in := &ScheduledAgent{Name: "Daily briefing", StrategyType: "definition", Prompt: &prompt, CronSchedule: "0 0 8 * * *", Enabled: true, TriggerType: "schedule"}
-	a, err := m.CreateScheduledAgent(context.Background(), in)
+	a, err := m.CreateScheduledAgent(sessCtx("tok123"), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +213,7 @@ func TestUpdateScheduledAgentClient(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodPatch, "/api/projects/proj/agents/a1",
 		`{"success":true,"data":{"id":"a1","name":"Renamed"}}`)
 	in := &ScheduledAgent{Name: "Renamed", CronSchedule: "0 0 8 * * *"}
-	a, err := m.UpdateScheduledAgent(context.Background(), "a1", in)
+	a, err := m.UpdateScheduledAgent(sessCtx("tok123"), "a1", in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +225,7 @@ func TestUpdateScheduledAgentClient(t *testing.T) {
 func TestEnableScheduledAgentClient(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodPost, "/api/projects/proj/agents/a1/enable",
 		`{"success":true,"data":{"id":"a1","name":"Daily briefing","enabled":true}}`)
-	a, err := m.EnableScheduledAgent(context.Background(), "a1")
+	a, err := m.EnableScheduledAgent(sessCtx("tok123"), "a1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +237,7 @@ func TestEnableScheduledAgentClient(t *testing.T) {
 func TestSetScheduledAgentEnabledClient(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodPatch, "/api/projects/proj/agents/a1",
 		`{"success":true,"data":{"id":"a1","name":"Daily briefing","enabled":false}}`)
-	a, err := m.SetScheduledAgentEnabled(context.Background(), "a1", false)
+	a, err := m.SetScheduledAgentEnabled(sessCtx("tok123"), "a1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +248,7 @@ func TestSetScheduledAgentEnabledClient(t *testing.T) {
 
 func TestDeleteScheduledAgentClient(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodDelete, "/api/projects/proj/agents/a1", `{"success":true}`)
-	if err := m.DeleteScheduledAgent(context.Background(), "a1"); err != nil {
+	if err := m.DeleteScheduledAgent(sessCtx("tok123"), "a1"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -257,7 +256,7 @@ func TestDeleteScheduledAgentClient(t *testing.T) {
 func TestTriggerScheduledAgentClient(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodPost, "/api/projects/proj/agents/a1/trigger",
 		`{"success":true,"runId":"run-42","message":"queued"}`)
-	res, err := m.TriggerScheduledAgent(context.Background(), "a1")
+	res, err := m.TriggerScheduledAgent(sessCtx("tok123"), "a1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +268,7 @@ func TestTriggerScheduledAgentClient(t *testing.T) {
 func TestTriggerScheduledAgentFailure(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodPost, "/api/projects/proj/agents/a1/trigger",
 		`{"success":false,"error":"agent disabled"}`)
-	res, err := m.TriggerScheduledAgent(context.Background(), "a1")
+	res, err := m.TriggerScheduledAgent(sessCtx("tok123"), "a1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +286,7 @@ func TestGetRunQuestionsClient(t *testing.T) {
 			{"id":"q1","runId":"run-42","agentId":"a1","projectId":"proj","question":"Approve the deploy?","options":[{"label":"Yes","value":"yes","description":"go ahead"},{"label":"No","value":"no"}],"interactionType":"buttons","status":"pending","createdAt":"2026-08-26T08:00:01Z"},
 			{"id":"q2","runId":"run-42","agentId":"a1","projectId":"proj","question":"Confirm details","options":[],"interactionType":"text","response":"ok","status":"answered","resumeRunId":"run-43","createdAt":"2026-08-26T08:00:02Z"}
 		]}`)
-	qs, err := m.GetRunQuestions(context.Background(), "run-42")
+	qs, err := m.GetRunQuestions(sessCtx("tok123"), "run-42")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +315,7 @@ func TestGetRunQuestionsClient(t *testing.T) {
 func TestListScheduledAgentRunsClient(t *testing.T) {
 	m, _ := schedTestServer(t, http.MethodGet, "/api/projects/proj/agents/a1/runs",
 		`{"success":true,"data":[{"id":"r1","agentId":"a1","status":"completed","startedAt":"2026-08-26T08:00:00Z","summary":{"summary":"digest"}}]}`)
-	runs, err := m.ListScheduledAgentRuns(context.Background(), "a1")
+	runs, err := m.ListScheduledAgentRuns(sessCtx("tok123"), "a1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +342,7 @@ func TestGetRunFullClient(t *testing.T) {
 				{"id":"t1","runId":"run-42","toolName":"web_search","input":{"q":"x"},"output":{"result":"hits"},"status":"completed","stepNumber":1,"createdAt":"2026-08-26T08:00:03Z"}
 			]
 		}}`)
-	full, err := m.GetRunFull(context.Background(), "run-42")
+	full, err := m.GetRunFull(sessCtx("tok123"), "run-42")
 	if err != nil {
 		t.Fatal(err)
 	}
