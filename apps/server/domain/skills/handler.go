@@ -17,8 +17,9 @@ import (
 type Handler struct {
 	repo *Repository
 	log  *slog.Logger
-	// superadmin gates global skill creation; nil when the superadmin feature is
-	// disabled (global create then falls back to authenticated-user-only).
+	// superadmin gates global skill create/update/delete; nil when the superadmin
+	// feature is disabled. A nil module FAILS CLOSED — absence of the dependency
+	// is not permission, so global mutations are denied rather than let through.
 	superadmin *superadmin.Repository
 }
 
@@ -71,20 +72,8 @@ func (h *Handler) ListGlobalSkills(c echo.Context) error {
 // @Router       /api/skills [post]
 // @Security     bearerAuth
 func (h *Handler) CreateGlobalSkill(c echo.Context) error {
-	user := auth.MustGetUser(c)
-
-	// Creating a global skill requires superadmin_full privileges. IsSuperadmin
-	// returns the role alongside existence, so we enforce the same full/readonly
-	// boundary the superadmin routes enforce via requireSuperadminRole; a
-	// superadmin_readonly grant must not mint platform-global skills.
-	if h.superadmin != nil {
-		ok, role, err := h.superadmin.IsSuperadmin(c.Request().Context(), user.ID)
-		if err != nil {
-			return apperror.NewInternal("failed to check superadmin status", err)
-		}
-		if !ok || role != auth.RoleSuperadminFull {
-			return apperror.ErrForbidden
-		}
+	if err := h.requireSuperadminFull(c); err != nil {
+		return err
 	}
 
 	var dto CreateSkillDTO
@@ -138,9 +127,9 @@ func (h *Handler) GetSkill(c echo.Context) error {
 	return c.JSON(http.StatusOK, skill.ToDTO())
 }
 
-// UpdateSkill handles PATCH /api/skills/:id
-// @Summary      Update a skill
-// @Description  Partially update a skill. Regenerates embedding if description changes.
+// UpdateGlobalSkill handles PATCH /api/skills/:id
+// @Summary      Update a global skill
+// @Description  Partially update a global skill. Superadmin_full only. Regenerates embedding if description changes.
 // @Tags         skills
 // @Accept       json
 // @Produce      json
@@ -149,9 +138,19 @@ func (h *Handler) GetSkill(c echo.Context) error {
 // @Success      200 {object} SkillDTO
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
+// @Failure      403 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
 // @Router       /api/skills/{id} [patch]
 // @Security     bearerAuth
+func (h *Handler) UpdateGlobalSkill(c echo.Context) error {
+	if err := h.requireSuperadminFull(c); err != nil {
+		return err
+	}
+	return h.UpdateSkill(c)
+}
+
+// UpdateSkill implements the shared partial-update logic for org- and
+// project-scoped skill endpoints.
 func (h *Handler) UpdateSkill(c echo.Context) error {
 
 	id, err := parseSkillID(c)
@@ -175,18 +174,28 @@ func (h *Handler) UpdateSkill(c echo.Context) error {
 	return c.JSON(http.StatusOK, skill.ToDTO())
 }
 
-// DeleteSkill handles DELETE /api/skills/:id
-// @Summary      Delete a skill
-// @Description  Delete a skill by ID
+// DeleteGlobalSkill handles DELETE /api/skills/:id
+// @Summary      Delete a global skill
+// @Description  Delete a global skill by ID. Superadmin_full only.
 // @Tags         skills
 // @Produce      json
 // @Param        id path string true "Skill ID (UUID)"
 // @Success      204
 // @Failure      400 {object} apperror.Error
 // @Failure      401 {object} apperror.Error
+// @Failure      403 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
 // @Router       /api/skills/{id} [delete]
 // @Security     bearerAuth
+func (h *Handler) DeleteGlobalSkill(c echo.Context) error {
+	if err := h.requireSuperadminFull(c); err != nil {
+		return err
+	}
+	return h.DeleteSkill(c)
+}
+
+// DeleteSkill implements the shared delete logic for org- and project-scoped
+// skill endpoints.
 func (h *Handler) DeleteSkill(c echo.Context) error {
 
 	id, err := parseSkillID(c)
@@ -431,6 +440,25 @@ func (h *Handler) DeleteProjectSkill(c echo.Context) error {
 }
 
 // --- Helpers ---
+
+// requireSuperadminFull denies the request unless the authenticated user holds
+// an active superadmin_full grant. A nil superadmin module (feature disabled)
+// fails closed: the absence of the dependency is not permission, so the request
+// is denied rather than let through.
+func (h *Handler) requireSuperadminFull(c echo.Context) error {
+	if h.superadmin == nil {
+		return apperror.ErrForbidden
+	}
+	user := auth.MustGetUser(c)
+	ok, err := h.superadmin.IsSuperadminFull(c.Request().Context(), user.ID)
+	if err != nil {
+		return apperror.NewInternal("failed to check superadmin status", err)
+	}
+	if !ok {
+		return apperror.ErrForbidden
+	}
+	return nil
+}
 
 // parseSkillID extracts and parses the :id path parameter.
 func parseSkillID(c echo.Context) (uuid.UUID, error) {

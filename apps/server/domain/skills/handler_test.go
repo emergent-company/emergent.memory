@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/superadmin"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -43,6 +44,21 @@ func decodeResponse[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 	var out T
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	return out
+}
+
+// seedSuperadminUser creates a core.user_profiles row (FK target of
+// core.superadmins) and inserts a superadmin grant with the given role. A raw
+// INSERT is used so the test controls the role directly — the repository helper
+// (GrantSuperadminToUser) hardcodes superadmin_readonly.
+func seedSuperadminUser(t *testing.T, db bun.IDB, userID, role string) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `INSERT INTO core.user_profiles (id, zitadel_user_id, display_name) VALUES (?, ?, ?)`,
+		userID, "zitadel-"+userID, "Test User")
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO core.superadmins (user_id, role, granted_by) VALUES (?, ?, ?)`,
+		userID, role, userID)
+	require.NoError(t, err)
 }
 
 func TestHandler_ListProjectSkills_MergedAndShadowed(t *testing.T) {
@@ -107,21 +123,6 @@ func TestHandler_CreateGlobalSkill_SuperadminGated(t *testing.T) {
 	repo := NewRepository(db, slog.Default())
 	saRepo := superadmin.NewRepository(db)
 	h := NewHandler(repo, slog.Default(), saRepo)
-	ctx := context.Background()
-
-	// seedSuperadminUser creates a core.user_profiles row (FK target of
-	// core.superadmins) and inserts a superadmin grant with the given role. A
-	// raw INSERT is used so the test controls the role directly — the repository
-	// helper (GrantSuperadminToUser) hardcodes superadmin_readonly.
-	seedSuperadminUser := func(t *testing.T, userID, role string) {
-		t.Helper()
-		_, err := db.ExecContext(ctx, `INSERT INTO core.user_profiles (id, zitadel_user_id, display_name) VALUES (?, ?, ?)`,
-			userID, "zitadel-"+userID, "Test User")
-		require.NoError(t, err)
-		_, err = db.ExecContext(ctx, `INSERT INTO core.superadmins (user_id, role, granted_by) VALUES (?, ?, ?)`,
-			userID, role, userID)
-		require.NoError(t, err)
-	}
 
 	t.Run("non-superadmin rejected", func(t *testing.T) {
 		user := &auth.AuthUser{ID: uuid.NewString()}
@@ -142,7 +143,7 @@ func TestHandler_CreateGlobalSkill_SuperadminGated(t *testing.T) {
 
 	t.Run("superadmin_readonly rejected", func(t *testing.T) {
 		userID := uuid.NewString()
-		seedSuperadminUser(t, userID, auth.RoleSuperadminReadonly)
+		seedSuperadminUser(t, db, userID, auth.RoleSuperadminReadonly)
 
 		user := &auth.AuthUser{ID: userID}
 		body, err := json.Marshal(CreateSkillDTO{
@@ -162,7 +163,7 @@ func TestHandler_CreateGlobalSkill_SuperadminGated(t *testing.T) {
 
 	t.Run("superadmin_full accepted", func(t *testing.T) {
 		userID := uuid.NewString()
-		seedSuperadminUser(t, userID, auth.RoleSuperadminFull)
+		seedSuperadminUser(t, db, userID, auth.RoleSuperadminFull)
 
 		user := &auth.AuthUser{ID: userID}
 		body, err := json.Marshal(CreateSkillDTO{
@@ -180,7 +181,7 @@ func TestHandler_CreateGlobalSkill_SuperadminGated(t *testing.T) {
 		assert.Equal(t, "global", dto.Scope)
 	})
 
-	t.Run("no superadmin module configured falls back to authenticated create", func(t *testing.T) {
+	t.Run("no superadmin module configured denies create (fail closed)", func(t *testing.T) {
 		ungated := NewHandler(repo, slog.Default(), nil)
 		user := &auth.AuthUser{ID: uuid.NewString()}
 		body, err := json.Marshal(CreateSkillDTO{
@@ -190,9 +191,128 @@ func TestHandler_CreateGlobalSkill_SuperadminGated(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		c, rec := newEchoCtx(t, http.MethodPost, "/api/skills", body, user)
-		require.NoError(t, ungated.CreateGlobalSkill(c))
-		assert.Equal(t, http.StatusCreated, rec.Code)
+		c, _ := newEchoCtx(t, http.MethodPost, "/api/skills", body, user)
+		err = ungated.CreateGlobalSkill(c)
+		require.Error(t, err)
+		var apErr *apperror.Error
+		require.ErrorAs(t, err, &apErr)
+		assert.Equal(t, http.StatusForbidden, apErr.HTTPStatus, "nil superadmin module must fail closed (403), not fall back to authenticated create")
+	})
+}
+
+func TestHandler_GlobalSkillUpdateDelete_SuperadminGated(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	saRepo := superadmin.NewRepository(db)
+	h := NewHandler(repo, slog.Default(), saRepo)
+	ctx := context.Background()
+
+	newGlobalSkill := func(t *testing.T) *Skill {
+		t.Helper()
+		s := testSkill("global-"+uuid.NewString(), nil)
+		require.NoError(t, repo.Create(ctx, s))
+		return s
+	}
+
+	updateBody := func(t *testing.T) []byte {
+		t.Helper()
+		b, err := json.Marshal(map[string]any{"content": "updated content"})
+		require.NoError(t, err)
+		return b
+	}
+
+	assertForbidden := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		var apErr *apperror.Error
+		require.ErrorAs(t, err, &apErr)
+		assert.Equal(t, http.StatusForbidden, apErr.HTTPStatus)
+	}
+
+	t.Run("plain user update rejected", func(t *testing.T) {
+		s := newGlobalSkill(t)
+		user := &auth.AuthUser{ID: uuid.NewString()}
+		c, _ := newEchoCtx(t, http.MethodPatch, "/api/skills/"+s.ID.String(), updateBody(t), user)
+		c.SetParamNames("id")
+		c.SetParamValues(s.ID.String())
+		assertForbidden(t, h.UpdateGlobalSkill(c))
+	})
+
+	t.Run("plain user delete rejected", func(t *testing.T) {
+		s := newGlobalSkill(t)
+		user := &auth.AuthUser{ID: uuid.NewString()}
+		c, _ := newEchoCtx(t, http.MethodDelete, "/api/skills/"+s.ID.String(), nil, user)
+		c.SetParamNames("id")
+		c.SetParamValues(s.ID.String())
+		assertForbidden(t, h.DeleteGlobalSkill(c))
+	})
+
+	t.Run("superadmin_readonly update rejected", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadminUser(t, db, userID, auth.RoleSuperadminReadonly)
+		s := newGlobalSkill(t)
+		user := &auth.AuthUser{ID: userID}
+		c, _ := newEchoCtx(t, http.MethodPatch, "/api/skills/"+s.ID.String(), updateBody(t), user)
+		c.SetParamNames("id")
+		c.SetParamValues(s.ID.String())
+		assertForbidden(t, h.UpdateGlobalSkill(c))
+	})
+
+	t.Run("superadmin_readonly delete rejected", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadminUser(t, db, userID, auth.RoleSuperadminReadonly)
+		s := newGlobalSkill(t)
+		user := &auth.AuthUser{ID: userID}
+		c, _ := newEchoCtx(t, http.MethodDelete, "/api/skills/"+s.ID.String(), nil, user)
+		c.SetParamNames("id")
+		c.SetParamValues(s.ID.String())
+		assertForbidden(t, h.DeleteGlobalSkill(c))
+	})
+
+	t.Run("superadmin_full update succeeds", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadminUser(t, db, userID, auth.RoleSuperadminFull)
+		s := newGlobalSkill(t)
+		user := &auth.AuthUser{ID: userID}
+		c, rec := newEchoCtx(t, http.MethodPatch, "/api/skills/"+s.ID.String(), updateBody(t), user)
+		c.SetParamNames("id")
+		c.SetParamValues(s.ID.String())
+		require.NoError(t, h.UpdateGlobalSkill(c))
+		assert.Equal(t, http.StatusOK, rec.Code)
+		dto := decodeResponse[SkillDTO](t, rec)
+		assert.Equal(t, "updated content", dto.Content)
+	})
+
+	t.Run("superadmin_full delete succeeds", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadminUser(t, db, userID, auth.RoleSuperadminFull)
+		s := newGlobalSkill(t)
+		user := &auth.AuthUser{ID: userID}
+		c, rec := newEchoCtx(t, http.MethodDelete, "/api/skills/"+s.ID.String(), nil, user)
+		c.SetParamNames("id")
+		c.SetParamValues(s.ID.String())
+		require.NoError(t, h.DeleteGlobalSkill(c))
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+	})
+
+	t.Run("nil superadmin module update denied (fail closed)", func(t *testing.T) {
+		ungated := NewHandler(repo, slog.Default(), nil)
+		s := newGlobalSkill(t)
+		user := &auth.AuthUser{ID: uuid.NewString()}
+		c, _ := newEchoCtx(t, http.MethodPatch, "/api/skills/"+s.ID.String(), updateBody(t), user)
+		c.SetParamNames("id")
+		c.SetParamValues(s.ID.String())
+		assertForbidden(t, ungated.UpdateGlobalSkill(c))
+	})
+
+	t.Run("nil superadmin module delete denied (fail closed)", func(t *testing.T) {
+		ungated := NewHandler(repo, slog.Default(), nil)
+		s := newGlobalSkill(t)
+		user := &auth.AuthUser{ID: uuid.NewString()}
+		c, _ := newEchoCtx(t, http.MethodDelete, "/api/skills/"+s.ID.String(), nil, user)
+		c.SetParamNames("id")
+		c.SetParamValues(s.ID.String())
+		assertForbidden(t, ungated.DeleteGlobalSkill(c))
 	})
 }
 

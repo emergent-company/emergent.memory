@@ -8,14 +8,16 @@ import (
 
 // RegisterRoutes registers skill routes on the Echo instance.
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
-	// Global skill endpoints (read: all authenticated users; write: restricted to superadmin via route middleware)
+	// Global skill endpoints (read: all authenticated users; write: gated on
+	// superadmin_full inside the handler — create/update/delete fail closed when
+	// the superadmin module is absent).
 	global := e.Group("/api/skills")
 	global.Use(authMiddleware.RequireAuth())
 	global.GET("", h.ListGlobalSkills)
 	global.POST("", h.CreateGlobalSkill)
 	global.GET("/:id", h.GetSkill)
-	global.PATCH("/:id", h.UpdateSkill)
-	global.DELETE("/:id", h.DeleteSkill)
+	global.PATCH("/:id", h.UpdateGlobalSkill)
+	global.DELETE("/:id", h.DeleteGlobalSkill)
 
 	// Org-scoped skill endpoints
 	orgs := e.Group("/api/orgs/:orgId/skills")
