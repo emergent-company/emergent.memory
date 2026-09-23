@@ -1,5 +1,11 @@
 ## 1. Gateway — session-aware token mint + binding
 
+> **Superseded (shared-key model).** Tasks 1.5 and 3.1 below described a shared
+> `WORKER_INTERNAL_KEY` for the internal binding endpoint. That was replaced in
+> #821/#824 by a per-worker 256-bit credential bound to the worker's
+> authenticated agent, and the binding store is now keyed by `(room, agent)`
+> (#831). The `WORKER_INTERNAL_KEY` references below are historical.
+
 - [x] 1.1 Add `MemoryClient.CreateProjectToken(projectID, name, scopes)` proxying Memory `POST /api/projects/:projectId/tokens`, and verify a unit test against the fake memory backend covers the request shape (name + scopes) and returns the minted token — satisfied by the existing `MemoryClient.CreateAPIToken` (`gateway/api_tokens.go`), used by `voiceBindingFor`
 - [x] 1.2 Confirm the exact scopes the worker needs (`chat:use` + agent-question respond/cancel) against `emergent.memory` route guards and record them in the task notes; verify the fake-memory test asserts those scopes — confirmed `chat:use` (agent-questions routes have no extra scope)
 - [x] 1.3 Add a `voiceBinding` struct + short-TTL in-memory store keyed by room with one-time consume, and verify a unit test covers set/consume/expiry — `gateway/voice_binding.go` + `TestVoiceBindingStore*`

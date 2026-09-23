@@ -26,15 +26,15 @@ const voiceBindingTTL = 5 * time.Minute
 
 type voiceBindingEntry struct {
 	binding   voiceBinding
-	agent     string
 	expiresAt time.Time
 }
 
-// voiceConsumption is the audit record of a one-time binding consumption: which
-// authenticated agent took it and when.
-type voiceConsumption struct {
+// voiceBindingKey identifies a stored binding by its room plus the agent it was
+// minted for. Keying on both means a cross-agent mint cannot silently overwrite
+// an unexpired explicit-room binding owned by another agent.
+type voiceBindingKey struct {
+	room  string
 	agent string
-	at    time.Time
 }
 
 // voiceBindingStore is an in-memory, one-time-consume store of voice bindings
@@ -42,15 +42,13 @@ type voiceConsumption struct {
 // successful consume, so a room's credential is handed out exactly once — and
 // only to the worker whose authenticated agent matches the binding's agent.
 type voiceBindingStore struct {
-	mu       sync.Mutex
-	entries  map[string]voiceBindingEntry
-	consumed map[string]voiceConsumption
+	mu      sync.Mutex
+	entries map[voiceBindingKey]voiceBindingEntry
 }
 
 func newVoiceBindingStore() *voiceBindingStore {
 	return &voiceBindingStore{
-		entries:  map[string]voiceBindingEntry{},
-		consumed: map[string]voiceConsumption{},
+		entries: map[voiceBindingKey]voiceBindingEntry{},
 	}
 }
 
@@ -58,41 +56,27 @@ func newVoiceBindingStore() *voiceBindingStore {
 func (s *voiceBindingStore) Set(room, agent string, b voiceBinding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries[room] = voiceBindingEntry{binding: b, agent: agent, expiresAt: time.Now().Add(voiceBindingTTL)}
+	s.entries[voiceBindingKey{room, agent}] = voiceBindingEntry{binding: b, expiresAt: time.Now().Add(voiceBindingTTL)}
 }
 
-// Consume atomically returns and removes the binding for room, but only when
-// the authenticated agent matches the agent the binding was minted for. The
-// bool is false when the room is unknown, expired, or bound to a different
-// agent. A mismatched agent does NOT consume the binding — the rightful worker
-// can still take it later. A successful consume records the agent for audit.
+// Consume atomically returns and removes the binding for (room, agent), but
+// only when it exists and is unexpired. The bool is false when the room is
+// unknown, expired, or bound to a different agent. A mismatched agent does NOT
+// consume the binding — the rightful worker can still take it later.
 func (s *voiceBindingStore) Consume(room, agent string) (voiceBinding, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	e, ok := s.entries[room]
+	key := voiceBindingKey{room, agent}
+	e, ok := s.entries[key]
 	if !ok {
 		return voiceBinding{}, false
 	}
 	if time.Now().After(e.expiresAt) {
-		delete(s.entries, room)
+		delete(s.entries, key)
 		return voiceBinding{}, false
 	}
-	if e.agent != agent {
-		return voiceBinding{}, false
-	}
-	delete(s.entries, room)
-	s.consumed[room] = voiceConsumption{agent: agent, at: time.Now()}
+	delete(s.entries, key)
 	return e.binding, true
-}
-
-// LastConsumption reports the authenticated agent that consumed room, if any.
-// This is the "attributable" half of consumption: after the fact the gateway
-// can say which worker took a room's binding.
-func (s *voiceBindingStore) LastConsumption(room string) (voiceConsumption, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.consumed[room]
-	return c, ok
 }
 
 // workerIdentity is the authenticated identity behind a per-worker credential.

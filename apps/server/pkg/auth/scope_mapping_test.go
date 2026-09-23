@@ -67,6 +67,12 @@ func newTestMiddleware(t *testing.T) *Middleware {
 		cfg:     cfg,
 		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		userSvc: newFakeUserProfiles(),
+		// Default entitlement-tier seams: no superadmin grant, no project org
+		// context, no org_admin — so unit tests without an explicit seam exercise
+		// the project-role/default path only.
+		superadminLookup: func(ctx context.Context, u string) (string, error) { return "", nil },
+		projectOrgLookup: func(ctx context.Context, p string) (string, error) { return "", nil },
+		orgAdminLookup:   func(ctx context.Context, o, u string) (bool, error) { return false, nil },
 	}
 }
 
@@ -250,7 +256,7 @@ func TestResolveOIDCScopes(t *testing.T) {
 			m.cfg.Zitadel.OIDCDefaultScopes = tt.defaults
 			m.roleLookup = tt.roleLookup
 
-			got := m.resolveOIDCScopes(context.Background(), "user-uuid", tt.projectID, tt.rawScopes)
+			got := m.resolveOIDCScopes(context.Background(), "user-uuid", tt.projectID, tt.rawScopes, nil)
 			wantScopeSet(t, got, tt.want)
 		})
 	}
@@ -734,7 +740,7 @@ func TestLegacyCachedAllScopesAreNotAnExplicitGrant(t *testing.T) {
 	legacy := map[string]any{"scope": strings.Join(GetAllScopes(), " ")}
 	claims := claimsFromCacheData(legacy, time.Now().Add(time.Minute))
 
-	got := m.resolveOIDCScopes(context.Background(), "user-legacy", "44444444-4444-4444-4444-444444444444", claims.Scopes)
+	got := m.resolveOIDCScopes(context.Background(), "user-legacy", "44444444-4444-4444-4444-444444444444", claims.Scopes, nil)
 	if scopesEqual(got, GetAllScopes()) {
 		t.Fatal("legacy cached full catalogue must not be replayed as an explicit grant")
 	}

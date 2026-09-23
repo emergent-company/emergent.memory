@@ -35,7 +35,7 @@ func TestWarnIfOIDCAllGrantActive(t *testing.T) {
 				if out == "" {
 					t.Fatal("expected the all-grant warning to be logged, got nothing")
 				}
-				for _, want := range []string{"ZITADEL_CLIENT_JWT", "ZITADEL_USERINFO_GRANT_ALL_SCOPES=false", "GetAllScopes"} {
+				for _, want := range []string{"ZITADEL_CLIENT_JWT", "MEMORY_USERINFO_GRANT_ALL_SCOPES=false", "GetAllScopes"} {
 					if !strings.Contains(out, want) {
 						t.Errorf("warning missing %q; got: %s", want, out)
 					}

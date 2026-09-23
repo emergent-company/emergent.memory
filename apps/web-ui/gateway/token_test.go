@@ -54,7 +54,7 @@ func decodeRoomGrant(t *testing.T, raw, secret string) string {
 }
 
 // TestMintTokenDerivesRoom verifies an omitted room yields a fresh
-// <agent>-<client>-<8hex> room baked into the JWT grant, keyed off the
+// <agent>-<client>-<32hex> room baked into the JWT grant, keyed off the
 // request's client field (defaulting to "web" when omitted).
 func TestMintTokenDerivesRoom(t *testing.T) {
 	cases := []struct {

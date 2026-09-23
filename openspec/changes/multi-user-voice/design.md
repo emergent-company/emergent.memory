@@ -1,6 +1,15 @@
 ## Context
 
-See `proposal.md` — Why. The bridge worker (`memory_bridge/worker.py`) is a separate process spawned by the Go supervisor, keyed by agent name via LiveKit's `rtc_session(agent_name=…)` dispatch. It authenticates to Memory with process-global env (`MEMORY_TOKEN`, `MEMORY_PROJECT_ID`, `AGENT_DEFINITION_ID`) inherited at spawn, and holds no per-session identity. The gateway already resolves per-request credentials for the web path via `sessionContext` (`tokenFor`/`projectIDFor`/`sessionHeaders` in `gateway/memory.go`); the voice path bypasses that entirely and hits Memory directly with the static token.
+> **Superseded (shared-key model).** This design's internal binding
+> endpoint (D3) and its risk notes originally described a shared
+> `WORKER_INTERNAL_KEY` gating `/internal/voice-binding`. That model was
+> replaced in #821/#824 by a per-worker 256-bit credential bound to the
+> worker's authenticated agent (see `apps/web-ui/gateway/voice_binding.go`
+> and `supervisor.go`), and the binding store is now keyed by `(room, agent)`
+> (#831). The shared-key references below are historical and no longer
+> describe the implemented design.
+>
+> See `proposal.md` — Why. The bridge worker (`memory_bridge/worker.py`) is a separate process spawned by the Go supervisor, keyed by agent name via LiveKit's `rtc_session(agent_name=…)` dispatch. It authenticates to Memory with process-global env (`MEMORY_TOKEN`, `MEMORY_PROJECT_ID`, `AGENT_DEFINITION_ID`) inherited at spawn, and holds no per-session identity. The gateway already resolves per-request credentials for the web path via `sessionContext` (`tokenFor`/`projectIDFor`/`sessionHeaders` in `gateway/memory.go`); the voice path bypasses that entirely and hits Memory directly with the static token.
 
 Key constraints that shape the approach:
 

@@ -9,6 +9,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 )
@@ -264,20 +265,15 @@ func (r *Repository) GetUserProjectRole(ctx context.Context, projectID, userID s
 	return role, nil
 }
 
-// CanGrantAdminAll reports whether the user may grant the admin:all scope:
-// either an active full superadmin (core.superadmins, revoked_at IS NULL and
+// CanGrantAdminAll reports whether the user may grant the admin:all scope. It
+// delegates to the single app-side decision check (pkg/auth.CanGrantAdminAll):
+// an active full superadmin (core.superadmins, revoked_at IS NULL and
 // role = 'superadmin_full') or an org_admin in at least one organization
 // (kb.organization_memberships). A superadmin_readonly grant does not qualify,
 // so a read-only principal cannot escalate to full platform administration by
 // minting an admin:all token.
 func (r *Repository) CanGrantAdminAll(ctx context.Context, userID string) (bool, error) {
-	var allowed bool
-	err := r.db.NewRaw(`
-		SELECT
-			EXISTS(SELECT 1 FROM core.superadmins WHERE user_id = ? AND revoked_at IS NULL AND role = 'superadmin_full')
-			OR
-			EXISTS(SELECT 1 FROM kb.organization_memberships WHERE user_id = ? AND role = 'org_admin')
-	`, userID, userID).Scan(ctx, &allowed)
+	allowed, err := auth.CanGrantAdminAll(ctx, r.db, userID)
 	if err != nil {
 		return false, apperror.ErrDatabase.WithInternal(err)
 	}
