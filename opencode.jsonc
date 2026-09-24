@@ -35,17 +35,6 @@
         "CONTEXT7_API_KEY": "{env:CONTEXT7_API_KEY}"
       },
       "timeout": 60000
-    },
-    "chrome-devtools": {
-      "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--browserUrl",
-        "http://localhost:9222"
-      ],
-      "timeout": 120000
     }
   },
   "instructions": [

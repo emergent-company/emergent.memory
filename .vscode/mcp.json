@@ -43,16 +43,7 @@
         "LICENSE": "${env:DAISYUI_LICENSE}",
         "EMAIL": "${env:DAISYUI_EMAIL}"
       }
-    },
-    "chrome-devtools": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--browserUrl",
-        "http://127.0.0.1:9222"
-      ]
-    },
+    }
     // "kb": {
     //   "type": "http",
     //   "url": "${KB_MCP_URL:-https://admin.dev.emergent-company.ai/api/mcp/rpc}",
