@@ -469,6 +469,41 @@ func TestChat_ProjectIsolation(t *testing.T) {
 }
 
 // =============================================================================
+// Test: Cross-tenant membership enforcement (issue #864)
+// =============================================================================
+
+// TestChat_NonMemberForbidden proves a caller who is not a member of the owning
+// organization cannot reach a project's conversations by sending its id in the
+// X-Project-ID header. The attacker is a distinct authenticated principal
+// ("e2e-attacker" — resolved to a fresh user with no memberships) that has no
+// membership in the org that owns the project. Before the fix these returned
+// 200/201 because the handlers scoped by the header-derived project ID without
+// any membership check.
+func TestChat_NonMemberForbidden(t *testing.T) {
+	rl := newRunLog(t)
+	defer rl.Close()
+	skipIfServerDown(t, rl)
+
+	projectID, _ := setupProjectLogged(t, rl)
+	conv := createTestConversation(t, projectID, "Secret Conversation", "secret message")
+	convID := conv["id"].(string)
+
+	resp := doAPILogged(t, rl, "GET", "/api/chat/"+convID, "e2e-attacker", projectID, nil)
+	mustStatus(t, resp, http.StatusForbidden)
+
+	resp = doAPILogged(t, rl, "GET", "/api/chat/conversations", "e2e-attacker", projectID, nil)
+	mustStatus(t, resp, http.StatusForbidden)
+
+	resp = doAPILogged(t, rl, "POST", "/api/chat/conversations", "e2e-attacker", projectID,
+		jsonBody(map[string]any{"title": "stolen", "message": "hi"}))
+	mustStatus(t, resp, http.StatusForbidden)
+
+	resp = doAPILogged(t, rl, "POST", "/api/chat/"+convID+"/messages", "e2e-attacker", projectID,
+		jsonBody(map[string]any{"role": "user", "content": "hi"}))
+	mustStatus(t, resp, http.StatusForbidden)
+}
+
+// =============================================================================
 // Test: Stream Chat
 // =============================================================================
 
