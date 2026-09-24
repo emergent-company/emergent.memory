@@ -345,7 +345,7 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	// Update invite status
 	now := time.Now()
@@ -373,10 +373,10 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 
 	// Add user to org membership if needed
 	_, err = tx.NewRaw(`
-		INSERT INTO kb.org_memberships (user_id, org_id, role, created_at)
+		INSERT INTO kb.organization_memberships (organization_id, user_id, role, created_at)
 		VALUES (?, ?, 'member', NOW())
-		ON CONFLICT (user_id, org_id) DO NOTHING
-	`, userID, invite.OrganizationID).Exec(ctx)
+		ON CONFLICT (organization_id, user_id) DO NOTHING
+	`, invite.OrganizationID, userID).Exec(ctx)
 	if err != nil {
 		return apperror.ErrDatabase.WithInternal(err)
 	}
