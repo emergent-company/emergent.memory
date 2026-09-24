@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -15,21 +14,7 @@ import (
 
 // This file complements auth_test.go: auth_test.go covers the setup lifecycle
 // end-to-end, this file pins the lower-level edge cases (freshness boundaries,
-// manifest mapping, memory-failure paths, QR image encoding).
-
-// setupFailMemory wraps fakeMemory and fails SetProjectSetting for one chosen
-// category only, so a lifecycle can succeed halfway and fail at a chosen step.
-type setupFailMemory struct {
-	*fakeMemory
-	failSetCategory string
-}
-
-func (f *setupFailMemory) SetProjectSetting(ctx context.Context, category, key string, value map[string]any) error {
-	if category == f.failSetCategory {
-		return errTest
-	}
-	return f.fakeMemory.SetProjectSetting(ctx, category, key, value)
-}
+// memory-failure paths, QR image encoding).
 
 // TestSetupTokenFreshBoundary pins the TTL decision, including that empty and
 // unparsable timestamps are expired and a future timestamp is fresh.
@@ -56,77 +41,16 @@ func TestSetupTokenFreshBoundary(t *testing.T) {
 	}
 }
 
-// TestDeviceKeyManifestToMap asserts only non-empty fields are persisted, under
-// their camelCase JSON keys, and that an empty manifest yields an empty map.
-func TestDeviceKeyManifestToMap(t *testing.T) {
-	if got := (deviceManifest{}).toMap(); len(got) != 0 {
-		t.Errorf("empty manifest should map to no fields, got %+v", got)
-	}
-	full := deviceManifest{
-		Platform:     "ios",
-		FormFactor:   "phone",
-		Name:         "John's iPhone",
-		ModelID:      "iPhone15,2",
-		ModelDisplay: "iPhone 14 Pro",
-		OSName:       "iOS",
-		OSVersion:    "18.3.1",
-		AppVersion:   "1.2.0",
-		AppBuild:     "42",
-	}
-	got := full.toMap()
-	want := map[string]string{
-		"platform":     "ios",
-		"formFactor":   "phone",
-		"name":         "John's iPhone",
-		"modelId":      "iPhone15,2",
-		"modelDisplay": "iPhone 14 Pro",
-		"osName":       "iOS",
-		"osVersion":    "18.3.1",
-		"appVersion":   "1.2.0",
-		"appBuild":     "42",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("got %d fields %+v, want %d", len(got), got, len(want))
-	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("toMap[%q] = %v, want %q", k, got[k], v)
-		}
-	}
+// TestDeviceTokenErrorPaths asserts memory failures degrade safely: listing
+// surfaces a token-list error and revoking surfaces the revoke error.
+func TestDeviceTokenErrorPaths(t *testing.T) {
+	s := &Server{cfg: Config{}, memory: &fakeMemory{apiTokenErr: errTest}}
 
-	// whitespace-only values are non-empty strings and therefore persisted.
-	partial := deviceManifest{Name: "  ", Platform: "macos"}
-	pm := partial.toMap()
-	if pm["name"] != "  " {
-		t.Errorf("whitespace-only value should be persisted as-is, got %v", pm["name"])
+	if _, err := s.listDeviceTokens(t.Context()); err == nil {
+		t.Error("listDeviceTokens must surface a token-list error")
 	}
-	if pm["platform"] != "macos" {
-		t.Errorf("platform = %v, want macos", pm["platform"])
-	}
-	if _, present := pm["modelId"]; present {
-		t.Errorf("unset field must not be persisted: %+v", pm)
-	}
-}
-
-// TestDeviceKeyRegistryErrorPaths asserts memory failures degrade safely:
-// reads report the error/lookup-miss, writes propagate it.
-func TestDeviceKeyRegistryErrorPaths(t *testing.T) {
-	s := &Server{cfg: Config{}, memory: &fakeMemory{settingErr: errTest}}
-
-	if devs, err := s.deviceRegistry(t.Context()); err == nil || devs != nil {
-		t.Errorf("deviceRegistry on error = (%v, %v), want (nil, err)", devs, err)
-	}
-	if s.deviceKeyValid(t.Context(), "any") {
-		t.Error("deviceKeyValid must be false when the registry read fails")
-	}
-	if _, err := s.listDeviceKeys(t.Context()); err == nil {
-		t.Error("listDeviceKeys must surface a registry read error")
-	}
-	if err := s.revokeDeviceKey(t.Context(), "any"); err == nil {
-		t.Error("revokeDeviceKey must surface a registry read error")
-	}
-	if _, err := s.issueDeviceKey(t.Context(), nil); err == nil {
-		t.Error("issueDeviceKey must surface a registry read error")
+	if err := s.revokeDeviceToken(t.Context(), "any"); err == nil {
+		t.Error("revokeDeviceToken must surface a revoke error")
 	}
 }
 
@@ -134,12 +58,12 @@ func TestDeviceKeyRegistryErrorPaths(t *testing.T) {
 // memory error both reject consumption (and minting surfaces the error).
 func TestSetupTokenConsumeUnsetAndMemoryError(t *testing.T) {
 	empty := &Server{cfg: Config{}, memory: &fakeMemory{}}
-	if empty.consumeSetupToken(t.Context(), strings.Repeat("a", 32)) {
+	if _, ok := empty.consumeSetupToken(t.Context(), strings.Repeat("a", 32)); ok {
 		t.Error("consume with no stored token must be false")
 	}
 
 	broken := &Server{cfg: Config{}, memory: &fakeMemory{settingErr: errTest}}
-	if broken.consumeSetupToken(t.Context(), strings.Repeat("a", 32)) {
+	if _, ok := broken.consumeSetupToken(t.Context(), strings.Repeat("a", 32)); ok {
 		t.Error("consume must be false when memory read fails")
 	}
 	if _, err := broken.mintSetupToken(t.Context()); err == nil {
@@ -148,21 +72,27 @@ func TestSetupTokenConsumeUnsetAndMemoryError(t *testing.T) {
 }
 
 // TestSetupTokenMetadataPreservedOnConsume asserts the consume write-back keeps
-// the original token + createdAt and only flips used to true.
+// the original token + createdAt + device credential and only flips used to
+// true.
 func TestSetupTokenMetadataPreservedOnConsume(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{}, memory: f}
 	token := strings.Repeat("b", 32)
 	createdAt := time.Now().UTC().Format(time.RFC3339)
 	if err := f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token":     token,
-		"createdAt": createdAt,
-		"used":      false,
+		"token":       token,
+		"createdAt":   createdAt,
+		"used":        false,
+		"deviceToken": "emt_device_credential",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !s.consumeSetupToken(t.Context(), token) {
+	dc, ok := s.consumeSetupToken(t.Context(), token)
+	if !ok {
 		t.Fatal("freshly stored token should be consumable")
+	}
+	if dc != "emt_device_credential" {
+		t.Errorf("device credential = %q, want emt_device_credential", dc)
 	}
 	stored := f.settings[setupTokenCategory][setupTokenKey]
 	if stored["token"] != token {
@@ -173,6 +103,9 @@ func TestSetupTokenMetadataPreservedOnConsume(t *testing.T) {
 	}
 	if used, _ := stored["used"].(bool); !used {
 		t.Errorf("used flag not set after consume: %v", stored["used"])
+	}
+	if stored["deviceToken"] != "emt_device_credential" {
+		t.Errorf("deviceToken rewritten: %v", stored["deviceToken"])
 	}
 }
 
@@ -200,10 +133,11 @@ func TestSetupTokenQRImage(t *testing.T) {
 	}
 }
 
-// TestSetupTokenClientIssueMemoryError asserts a device-key write failure
-// after a valid token exchange yields 502 and does not register a device.
-func TestSetupTokenClientIssueMemoryError(t *testing.T) {
-	f := &setupFailMemory{fakeMemory: &fakeMemory{}, failSetCategory: deviceKeyRegistryCategory}
+// TestSetupTokenClientNoDeviceCredential asserts a setup token that was minted
+// without a device credential (e.g. dev mode, no session) yields 401 at the
+// exchange — fail closed, never an empty bearer.
+func TestSetupTokenClientNoDeviceCredential(t *testing.T) {
+	f := &fakeMemory{}
 	s := &Server{cfg: Config{}, memory: f}
 	token := strings.Repeat("c", 32)
 	if err := f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
@@ -221,31 +155,25 @@ func TestSetupTokenClientIssueMemoryError(t *testing.T) {
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502 (body=%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (no device credential available)", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "memory service unavailable") {
-		t.Errorf("body = %s, want memory-service error", rec.Body.String())
-	}
-	// the token was consumed before the failure, and no registry entry remains.
-	if used, _ := f.settings[setupTokenCategory][setupTokenKey]["used"].(bool); !used {
-		t.Error("token should have been marked used before the device-key write")
-	}
-	if _, ok := f.settings[deviceKeyRegistryCategory][deviceKeyRegistryKey]; ok {
-		t.Error("no registry entry should exist after the failed write")
+	if used, _ := f.settings[setupTokenCategory][setupTokenKey]["used"].(bool); used {
+		t.Error("token should not be marked used when no device credential is returned")
 	}
 }
 
-// TestSetupTokenClientAcceptsSerializedDevice verifies the handler binds the
-// optional device manifest JSON into the issued registry entry.
-func TestSetupTokenClientAcceptsSerializedDevice(t *testing.T) {
+// TestSetupTokenClientReturnsDeviceCredential asserts the exchange returns the
+// emt_* device credential minted at QR time, ignoring the optional manifest.
+func TestSetupTokenClientReturnsDeviceCredential(t *testing.T) {
 	f := &fakeMemory{}
 	s := &Server{cfg: Config{}, memory: f}
 	token := strings.Repeat("d", 32)
 	if err := f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
-		"token":     token,
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"used":      false,
+		"token":       token,
+		"createdAt":   time.Now().UTC().Format(time.RFC3339),
+		"used":        false,
+		"deviceToken": "emt_device_credential_1234",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -264,12 +192,78 @@ func TestSetupTokenClientAcceptsSerializedDevice(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	entry, ok := f.settings[deviceKeyRegistryCategory][deviceKeyRegistryKey]["devices"].(map[string]any)[got["apiKey"]].(map[string]any)
-	if !ok {
-		t.Fatalf("issued key not registered: %+v", f.settings)
+	if got["apiKey"] != "emt_device_credential_1234" {
+		t.Errorf("apiKey = %q, want the stored device credential", got["apiKey"])
 	}
-	dev, ok := entry["device"].(map[string]any)
-	if !ok || dev["platform"] != "ios" || dev["name"] != "Phone" {
-		t.Errorf("device manifest not persisted: %+v", entry)
+}
+
+// TestMintSetupTokenDoesNotRevokeClaimedCredential guards against the reload
+// regression: once a device claims its credential (consumeSetupToken flips
+// used=true), a subsequent page reload (mintSetupToken rotation) must NOT revoke
+// the now-live credential — only an unclaimed orphan is revoked on rotation.
+func TestMintSetupTokenDoesNotRevokeClaimedCredential(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+
+	token, err := s.mintSetupToken(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.apiTokens) != 1 {
+		t.Fatalf("want 1 device credential after first mint, got %+v", f.apiTokens)
+	}
+	claimedID := f.apiTokens[0].ID
+
+	if _, ok := s.consumeSetupToken(t.Context(), token); !ok {
+		t.Fatal("freshly minted token should be consumable")
+	}
+
+	// Reload the devices page: mintSetupToken rotates (used=true) and mints a
+	// fresh credential. The claimed credential must survive.
+	if _, err := s.mintSetupToken(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := fakeAPITokenFind(f.apiTokens, claimedID)
+	if idx < 0 {
+		t.Fatalf("claimed credential %s disappeared from the store", claimedID)
+	}
+	if f.apiTokens[idx].IsRevoked {
+		t.Fatalf("claimed device credential %s was revoked by a page reload", claimedID)
+	}
+}
+
+// TestMintSetupTokenRevokesUnclaimedOrphanOnRotation asserts the intended
+// rotation behaviour: a credential minted at QR time but never claimed is
+// revoked when the QR rotates (an abandoned QR must not leak a live credential).
+func TestMintSetupTokenRevokesUnclaimedOrphanOnRotation(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+
+	if _, err := s.mintSetupToken(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	orphanID := f.apiTokens[0].ID
+
+	// Force rotation without claiming: expire the setup token so the reuse
+	// branch is skipped but used is still false.
+	_ = f.SetProjectSetting(t.Context(), setupTokenCategory, setupTokenKey, map[string]any{
+		"token":         f.settings[setupTokenCategory][setupTokenKey]["token"],
+		"createdAt":     time.Now().Add(-11 * time.Minute).UTC().Format(time.RFC3339),
+		"used":          false,
+		"deviceToken":   "emt_orphan",
+		"deviceTokenId": orphanID,
+	})
+
+	if _, err := s.mintSetupToken(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := fakeAPITokenFind(f.apiTokens, orphanID)
+	if idx < 0 {
+		t.Fatalf("orphan credential %s disappeared from the store", orphanID)
+	}
+	if !f.apiTokens[idx].IsRevoked {
+		t.Fatalf("unclaimed orphan credential %s should be revoked on rotation", orphanID)
 	}
 }

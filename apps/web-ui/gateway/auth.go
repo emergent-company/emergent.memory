@@ -17,10 +17,9 @@ import (
 // validAPIKey reports whether the request carries a valid client API key.
 // When TOKEN_API_KEY is empty (dev), every request is valid (routes open) —
 // matching the memory standalone convention and keeping the browser UI usable
-// without a device key. Otherwise it accepts the admin key or a registered
-// per-device key (stored in memory under the ios_device_keys category).
+// without a device key. Otherwise it accepts the admin key.
 // This "open when TOKEN_API_KEY is unset" path is dev-mode only and is never
-// reached in session mode (session mode uses validAPIKeyValue).
+// reached in session mode.
 func (s *Server) validAPIKey(c echo.Context) bool {
 	if s.cfg.ClientAPIKey == "" {
 		return true
@@ -28,10 +27,9 @@ func (s *Server) validAPIKey(c echo.Context) bool {
 	return s.validAPIKeyValue(c)
 }
 
-// validAPIKeyValue reports whether the presented X-API-Key is the admin key or
-// a registered device key. Unlike validAPIKey it has no "open when unset"
-// semantics — used for the session-mode key fallback where an absent key must
-// deny.
+// validAPIKeyValue reports whether the presented X-API-Key is the admin key.
+// The per-device registry-key path was retired with the scoped device
+// credential (see #848): dev-mode /api/* is gated by the admin key alone.
 func (s *Server) validAPIKeyValue(c echo.Context) bool {
 	key := c.Request().Header.Get("X-API-Key")
 	if key == "" {
@@ -40,7 +38,7 @@ func (s *Server) validAPIKeyValue(c echo.Context) bool {
 	if s.cfg.ClientAPIKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.ClientAPIKey)) == 1 {
 		return true
 	}
-	return s.deviceKeyValid(c.Request().Context(), key)
+	return false
 }
 
 // requireClientKey gates client API routes (the programmatic / iOS path).
@@ -535,26 +533,114 @@ func (s *Server) requireSession(next echo.HandlerFunc) echo.HandlerFunc {
 }
 
 // requireSessionOrKey gates the /api routes. Session mode requires a valid
-// session (refreshed when needed, credentials attached). The former X-API-Key
-// fallback is gone: a device/admin key cannot mint a Memory credential, so
-// accepting one would only proxy an empty bearer upstream and surface a
-// confusing memory-side 401. Session-less access now fails closed with a 401
-// that names the removal instead.
+// session (refreshed when needed, credentials attached). When no session is
+// present a scoped per-device credential (an emt_* bearer carrying the
+// reserved device:api marker, verified by introspection) is accepted on the
+// device surface only. The former X-API-Key / registry-key fallback is gone:
+// anything else fails closed with a 401 that names the requirement.
 func (s *Server) requireSessionOrKey(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if s.cfg.AuthMode != "session" {
 			return s.requireClientKey(next)(c)
 		}
 		claims, err := s.ensureFreshSession(c)
-		if err != nil {
+		if err == nil {
+			s.attachSession(c, claims)
+			return next(c)
+		}
+		// No live session: fall back to the scoped device credential path.
+		return s.requireDeviceCredential(next)(c)
+	}
+}
+
+// deviceCredentialToken returns the device credential from the request. The iOS
+// VoiceAgent presents it as `X-API-Key`; other device clients may present it as
+// `Authorization: Bearer emt_…`. Both headers carry the same credential and are
+// validated identically, so accepting both is not a widening — it is the same
+// token through either channel (see the #818 design: "Authorization: Bearer
+// emt_… (or X-API-Key, which extractToken already accepts)").
+func deviceCredentialToken(c echo.Context) string {
+	auth := c.Request().Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	return c.Request().Header.Get("X-API-Key")
+}
+
+// deviceSurfacePath reports whether a gateway request path/method is within the
+// device surface: room-token mint, agent picker (list/detail), chat relay,
+// session log/records, and memory browsing. A device credential is rejected on
+// everything else (defence in depth over the server's own surface guard).
+func deviceSurfacePath(method, path string) bool {
+	switch method {
+	case http.MethodGet:
+		switch {
+		case path == "/api/agents":
+			return true
+		case strings.HasPrefix(path, "/api/agents/") && !strings.Contains(strings.TrimPrefix(path, "/api/agents/"), "/"):
+			return true
+		case path == "/api/sessions" || path == "/api/session":
+			return true
+		case path == "/api/memories" || path == "/api/memories/capability":
+			return true
+		}
+		return false
+	case http.MethodPost:
+		return path == "/api/token" || path == "/api/chat"
+	default:
+		return false
+	}
+}
+
+// requireDeviceCredential accepts a scoped per-device credential on the device
+// surface. The credential may arrive via `Authorization: Bearer emt_…` or the
+// `X-API-Key` header (the iOS client's convention); both are the same token,
+// validated identically. A missing credential, a non-emt_* value, a token that
+// fails introspection (unknown/revoked/expired/store-down), a non-device emt_*
+// token, or a device token outside the surface all fail closed with 401/403 —
+// never proxied.
+func (s *Server) requireDeviceCredential(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		tok := deviceCredentialToken(c)
+		if tok == "" || !strings.HasPrefix(tok, "emt_") {
 			return c.JSON(http.StatusUnauthorized, map[string]string{
 				"error":   "session_required",
-				"message": "Session-less API-key/device authentication was removed; sign in with your Memory account (scoped per-device credentials: see issue #818)",
+				"message": "Session-less API-key/device authentication was removed; sign in with your Memory account or present a scoped per-device credential (see issue #848)",
 			})
 		}
-		s.attachSession(c, claims)
+		info, err := s.memory.IntrospectDeviceToken(c.Request().Context(), tok)
+		if err != nil || info == nil || !info.hasDeviceMarker() {
+			return c.JSON(http.StatusUnauthorized, map[string]string{
+				"error":   "invalid_device_credential",
+				"message": "unknown, revoked, or expired device credential",
+			})
+		}
+		if !deviceSurfacePath(c.Request().Method, c.Request().URL.Path) {
+			return c.JSON(http.StatusForbidden, map[string]string{
+				"error":   "device_credential_surface",
+				"message": "device credentials are only valid on the device surface",
+			})
+		}
+		// Attach a device context: the credential is proxied verbatim and
+		// project/org come from introspection (the token binding), never from
+		// raw X-Project-ID / X-Org-ID headers.
+		attachDeviceContext(c, info, tok)
 		return next(c)
 	}
+}
+
+// attachDeviceContext threads a device credential through the request context
+// so the shared MemoryClient proxies it verbatim with the token-derived
+// project/org.
+func attachDeviceContext(c echo.Context, info *deviceTokenInfo, token string) {
+	sc := &sessionContext{
+		Token:     token,
+		ProjectID: info.ProjectID,
+		OrgID:     info.OrgID,
+		Device:    true,
+	}
+	ctx := withSessionContext(c.Request().Context(), sc)
+	c.SetRequest(c.Request().WithContext(ctx))
 }
 
 // projectScopePath reports whether a request path targets a project-scoped

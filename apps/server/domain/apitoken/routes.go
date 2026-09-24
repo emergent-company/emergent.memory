@@ -19,6 +19,11 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// new tokens for their project.
 	e.POST("/api/projects/:projectId/tokens", h.Create, authMiddleware.RequireAuth())
 
+	// Scoped per-device credential mint (see CreateDeviceToken). The scope set is
+	// hardcoded server-side; the route is session/token-authenticated like the
+	// token-mint route it sits beside.
+	e.POST("/api/projects/:projectId/device-tokens", h.CreateDeviceToken, authMiddleware.RequireAuth())
+
 	g.GET("", h.List)
 	g.GET("/:tokenId", h.Get)
 	g.PATCH("/:tokenId", h.UpdateScopes)

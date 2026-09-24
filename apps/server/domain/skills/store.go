@@ -218,6 +218,50 @@ func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*Skill, error)
 	return skill, nil
 }
 
+// IsUserOrgMember reports whether the given user is a member of the given
+// organization, consulting kb.organization_memberships. It is the authoritative
+// membership source for skills org/project authorization (issue #849): the
+// caller's org must be derived from real membership, never from a
+// request-controlled path parameter. Mirrors domain/provider.Repository.
+// IsUserOrgMember (issue #844).
+func (r *Repository) IsUserOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
+	exists, err := r.db.NewSelect().
+		TableExpr("kb.organization_memberships").
+		Where("organization_id = ?", orgID).
+		Where("user_id = ?", userID).
+		Exists(ctx)
+
+	if err != nil {
+		r.log.Error("failed to check org membership",
+			logger.Error(err),
+			slog.String("orgID", orgID),
+			slog.String("userID", userID))
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+	return exists, nil
+}
+
+// GetOrgIDForProject looks up the organization ID for a given project.
+func (r *Repository) GetOrgIDForProject(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Scan(ctx, &orgID)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", apperror.ErrNotFound.WithMessage("project not found")
+		}
+		r.log.Error("failed to get org ID for project",
+			logger.Error(err),
+			slog.String("projectID", projectID))
+		return "", apperror.ErrDatabase.WithInternal(err)
+	}
+	return orgID, nil
+}
+
 // Create inserts a new skill. Always uses Bun ORM for the INSERT (excluding the vector
 // column to avoid pgx binding issues with vector(768)), then issues a separate raw UPDATE
 // to set description_embedding when an embedding was generated.

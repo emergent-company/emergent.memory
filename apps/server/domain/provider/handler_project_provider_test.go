@@ -17,11 +17,11 @@ import (
 // the handler must reject with 403 before resolving (and spending) org B's
 // stored credentials.
 func TestProjectProvider_RejectsCrossOrgProject(t *testing.T) {
-	h, testDB, orgA, _, projectB := newPricingOverrideHandler(t)
+	h, testDB, _, _, projectB, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	e := echo.New()
-	c, _ := newOverrideContext(t, e, http.MethodPost, "/api/v1/projects/"+projectB+"/providers/deepseek/test", orgA, nil)
+	c, _ := newOverrideContext(t, e, http.MethodPost, "/api/v1/projects/"+projectB+"/providers/deepseek/test", userID, nil)
 	c.SetParamNames("projectId", "provider")
 	c.SetParamValues(projectB, "deepseek")
 
@@ -37,11 +37,11 @@ func TestProjectProvider_RejectsCrossOrgProject(t *testing.T) {
 // credential resolution, which reports 400 here because no credentials are
 // configured for the test project).
 func TestProjectProvider_AllowsOwnProject(t *testing.T) {
-	h, testDB, orgA, projectA, _ := newPricingOverrideHandler(t)
+	h, testDB, _, projectA, _, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	e := echo.New()
-	c, _ := newOverrideContext(t, e, http.MethodPost, "/api/v1/projects/"+projectA+"/providers/deepseek/test", orgA, nil)
+	c, _ := newOverrideContext(t, e, http.MethodPost, "/api/v1/projects/"+projectA+"/providers/deepseek/test", userID, nil)
 	c.SetParamNames("projectId", "provider")
 	c.SetParamValues(projectA, "deepseek")
 
@@ -57,11 +57,11 @@ func TestProjectProvider_AllowsOwnProject(t *testing.T) {
 // endpoint also enforces project ownership when a projectId query param is
 // supplied, so a caller cannot spend another org's credentials via query params.
 func TestProvider_RejectsCrossOrgProject(t *testing.T) {
-	h, testDB, orgA, _, projectB := newPricingOverrideHandler(t)
+	h, testDB, _, _, projectB, userID := newPricingOverrideHandler(t)
 	defer testDB.Close()
 
 	e := echo.New()
-	c, _ := newOverrideContext(t, e, http.MethodPost, "/api/v1/providers/deepseek/test?projectId="+projectB, orgA, nil)
+	c, _ := newOverrideContext(t, e, http.MethodPost, "/api/v1/providers/deepseek/test?projectId="+projectB, userID, nil)
 	c.SetParamNames("provider")
 	c.SetParamValues(string(provider.ProviderDeepSeek))
 

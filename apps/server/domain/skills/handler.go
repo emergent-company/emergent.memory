@@ -230,6 +230,10 @@ func (h *Handler) ListOrgSkills(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("orgId is required")
 	}
 
+	if err := h.requireOrgMember(c, orgID); err != nil {
+		return err
+	}
+
 	skills, err := h.repo.FindAll(c.Request().Context(), nil, &orgID)
 	if err != nil {
 		return err
@@ -261,6 +265,10 @@ func (h *Handler) CreateOrgSkill(c echo.Context) error {
 	orgID := c.Param("orgId")
 	if orgID == "" {
 		return apperror.ErrBadRequest.WithMessage("orgId is required")
+	}
+
+	if err := h.requireOrgMember(c, orgID); err != nil {
+		return err
 	}
 
 	var dto CreateSkillDTO
@@ -303,6 +311,13 @@ func (h *Handler) CreateOrgSkill(c echo.Context) error {
 // @Router       /api/orgs/{orgId}/skills/{id} [patch]
 // @Security     bearerAuth
 func (h *Handler) UpdateOrgSkill(c echo.Context) error {
+	orgID := c.Param("orgId")
+	if err := h.requireOrgMember(c, orgID); err != nil {
+		return err
+	}
+	if _, err := h.requireOrgSkill(c, orgID); err != nil {
+		return err
+	}
 	return h.UpdateSkill(c)
 }
 
@@ -320,6 +335,13 @@ func (h *Handler) UpdateOrgSkill(c echo.Context) error {
 // @Router       /api/orgs/{orgId}/skills/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteOrgSkill(c echo.Context) error {
+	orgID := c.Param("orgId")
+	if err := h.requireOrgMember(c, orgID); err != nil {
+		return err
+	}
+	if _, err := h.requireOrgSkill(c, orgID); err != nil {
+		return err
+	}
 	return h.DeleteSkill(c)
 }
 
@@ -341,6 +363,10 @@ func (h *Handler) ListProjectSkills(c echo.Context) error {
 	projectID := c.Param("projectId")
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	if err := h.requireProjectMember(c, projectID); err != nil {
+		return err
 	}
 
 	// Attempt to resolve org context (best-effort, non-fatal)
@@ -377,6 +403,10 @@ func (h *Handler) CreateProjectSkill(c echo.Context) error {
 	projectID := c.Param("projectId")
 	if projectID == "" {
 		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	if err := h.requireProjectMember(c, projectID); err != nil {
+		return err
 	}
 
 	var dto CreateSkillDTO
@@ -419,6 +449,13 @@ func (h *Handler) CreateProjectSkill(c echo.Context) error {
 // @Router       /api/projects/{projectId}/skills/{id} [patch]
 // @Security     bearerAuth
 func (h *Handler) UpdateProjectSkill(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if err := h.requireProjectMember(c, projectID); err != nil {
+		return err
+	}
+	if _, err := h.requireProjectSkill(c, projectID); err != nil {
+		return err
+	}
 	return h.UpdateSkill(c)
 }
 
@@ -436,10 +473,98 @@ func (h *Handler) UpdateProjectSkill(c echo.Context) error {
 // @Router       /api/projects/{projectId}/skills/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) DeleteProjectSkill(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if err := h.requireProjectMember(c, projectID); err != nil {
+		return err
+	}
+	if _, err := h.requireProjectSkill(c, projectID); err != nil {
+		return err
+	}
 	return h.DeleteSkill(c)
 }
 
 // --- Helpers ---
+
+// requireOrgMember asserts the authenticated caller is a member of orgID.
+// Returns 401 when no authenticated user is present, 403 when the caller is not
+// a member. The caller's org is derived from real membership (issue #849), never
+// from the :orgId path parameter.
+func (h *Handler) requireOrgMember(c echo.Context, orgID string) error {
+	ctx := c.Request().Context()
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return apperror.ErrUnauthorized.WithMessage("authentication required")
+	}
+	ok, err := h.repo.IsUserOrgMember(ctx, orgID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperror.ErrForbidden.WithMessage("access to organization skills denied")
+	}
+	return nil
+}
+
+// requireProjectMember asserts the authenticated caller is a member of the org
+// that owns projectID. Returns 401 when no user is present, 404 when the project
+// does not exist, 403 when the caller is not a member. The owning org is looked
+// up server-side (issue #849/#850), so a project addressed by a foreign caller
+// can never self-satisfy the check.
+func (h *Handler) requireProjectMember(c echo.Context, projectID string) error {
+	ctx := c.Request().Context()
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return apperror.ErrUnauthorized.WithMessage("authentication required")
+	}
+	orgID, err := h.repo.GetOrgIDForProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	ok, err := h.repo.IsUserOrgMember(ctx, orgID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperror.ErrForbidden.WithMessage("access to project skills denied")
+	}
+	return nil
+}
+
+// requireOrgSkill asserts the skill addressed by :id belongs to orgID. It
+// returns 404 when the skill does not exist OR belongs to a different org, so
+// the response does not leak the existence of a cross-tenant skill (issue #849).
+func (h *Handler) requireOrgSkill(c echo.Context, orgID string) (*Skill, error) {
+	id, err := parseSkillID(c)
+	if err != nil {
+		return nil, err
+	}
+	skill, err := h.repo.FindByID(c.Request().Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	if skill.OrgID == nil || *skill.OrgID != orgID {
+		return nil, apperror.NewNotFound("skill", id.String())
+	}
+	return skill, nil
+}
+
+// requireProjectSkill asserts the skill addressed by :id belongs to projectID.
+// It returns 404 when the skill does not exist OR belongs to a different
+// project, mirroring requireOrgSkill's existence-oracle avoidance.
+func (h *Handler) requireProjectSkill(c echo.Context, projectID string) (*Skill, error) {
+	id, err := parseSkillID(c)
+	if err != nil {
+		return nil, err
+	}
+	skill, err := h.repo.FindByID(c.Request().Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	if skill.ProjectID == nil || *skill.ProjectID != projectID {
+		return nil, apperror.NewNotFound("skill", id.String())
+	}
+	return skill, nil
+}
 
 // requireSuperadminFull denies the request unless the authenticated user holds
 // an active superadmin_full grant. A nil superadmin module (feature disabled)

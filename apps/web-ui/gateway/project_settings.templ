@@ -371,9 +371,9 @@ templ rememberDedupPanel(rememberAgent, dedupThreshold string, agents []AgentDef
 
 // iosSetupPanel shows the iOS client onboarding QR code. The QR encodes a
 // fresh one-time setup token that the app exchanges (POST /api/setup) for a
-// per-device API key. It renders whenever the QR can be generated; the image
-// sits on a light background because QR codes need high contrast against the
-// dark theme to scan reliably.
+// scoped per-device credential. It renders whenever the QR can be generated;
+// the image sits on a light background because QR codes need high contrast
+// against the dark theme to scan reliably.
 templ iosSetupPanel(qrImage string) {
 	@ui.Section("iOS setup", ui.SectionProps{
 		Margin:    "mb-6",
@@ -393,9 +393,9 @@ templ iosSetupPanel(qrImage string) {
 	}
 }
 
-// devicesPanel lists the registered devices (per-device keys issued via the
-// setup QR), each with a revoke form. Revoking a device cuts its /api/*
-// access immediately; the key is masked because it is a live credential.
+// devicesPanel lists the registered devices (per-device credentials issued via
+// the setup QR), each with a revoke form. Revoking a device cuts its /api/*
+// access immediately.
 templ devicesPanel(devices []device) {
 	@ui.Section("Devices", ui.SectionProps{
 		Margin:    "mb-6",
@@ -413,36 +413,23 @@ templ devicesPanel(devices []device) {
 	}
 }
 
-// deviceRow renders one registered device: the reported device name (else
-// modelDisplay/modelId, else the masked key for legacy entries without a
-// manifest), platform + OS version, and a revoke button (PRG → POST
-// /settings/devices/:key/revoke). Legacy entries render exactly the masked-key
-// + registration-time row.
+// deviceRow renders one registered device credential: its stored name (else the
+// masked token prefix), registration time, and a revoke button (PRG → POST
+// /settings/devices/:id/revoke).
 templ deviceRow(d device) {
 	@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-start justify-between gap-3"}) {
 		<div class="min-w-0">
-			if deviceDisplayName(d) != "" {
-				<p class="text-sm font-medium">{ deviceDisplayName(d) }</p>
-				<p class="text-base-content/55 mt-0.5 text-xs">
-					if deviceMetaLine(d) != "" {
-						{ deviceMetaLine(d) } · Registered { relTime(d.CreatedAt) }
-					} else {
-						Registered { relTime(d.CreatedAt) }
-					}
-				</p>
-			} else {
-				<p class="text-sm font-medium font-mono">{ maskDeviceKey(d.Key) }</p>
-				<p class="text-base-content/55 mt-0.5 text-xs">Registered { relTime(d.CreatedAt) }</p>
-			}
+			<p class="text-sm font-medium">{ deviceDisplayName(d) }</p>
+			<p class="text-base-content/55 mt-0.5 text-xs">Registered { relTime(d.CreatedAt) }</p>
 		</div>
-		<form method="post" action={ templ.URL("/settings/devices/" + d.Key + "/revoke") }>
+		<form method="post" action={ templ.URL("/settings/devices/" + d.ID + "/revoke") }>
 			@ui.Button(ui.ButtonProps{
 				Type:      ui.ButtonTypeSubmit,
 				Variant:   ui.ButtonError,
 				Style:     ui.ButtonStyleOutline,
 				Size:      ui.ButtonSM,
 				Icon:      "lucide--trash-2",
-				AriaLabel: "Revoke device " + maskDeviceKey(d.Key),
+				AriaLabel: "Revoke device " + deviceDisplayName(d),
 			}) {
 				Revoke
 			}

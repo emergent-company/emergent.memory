@@ -90,12 +90,14 @@ func TestHandler_ListProjectSkills_MergedAndShadowed(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, projectDeploy))
 	require.NoError(t, repo.Create(ctx, projectOnly))
 
-	user := &auth.AuthUser{ID: uuid.NewString(), ProjectID: projectID}
+	user := &auth.AuthUser{ID: seedOrgMember(t, db, orgID), ProjectID: projectID}
 	c, rec := newEchoCtx(t, http.MethodGet, "/api/projects/"+projectID+"/skills", nil, user)
 	c.SetParamNames("projectId")
 	c.SetParamValues(projectID)
-	// Provide org context so org-scoped skills are included in the merge.
-	c.SetRequest(c.Request().WithContext(auth.ContextWithOrgID(c.Request().Context(), orgID)))
+	// Provide org context so org-scoped skills are included in the merge, and
+	// embed the authenticated user so requireProjectMember resolves membership.
+	reqCtx := auth.ContextWithOrgID(c.Request().Context(), orgID)
+	c.SetRequest(c.Request().WithContext(auth.ContextWithUser(reqCtx, user)))
 
 	require.NoError(t, h.ListProjectSkills(c))
 	assert.Equal(t, http.StatusOK, rec.Code)
