@@ -14,14 +14,16 @@ a short-lived project-scoped token per room from the internal binding endpoint.
 `AGENT_TRIGGER_TOKEN` is the only static memory credential — used solely by the
 session-less GitHub webhook to trigger the review agent.
 
-> **Migration (session-less auth removed):** `MEMORY_TOKEN` is no longer read by
-> the gateway (startup warns if it is still set). Session-less `X-API-Key` /
-> per-device-key access to `/api/*` is removed — a key-only caller gets
-> `401 session_required`. Affected: iOS device/QR setup clients and any
-> programmatic `X-API-Key` caller. Replacement: sign in with Zitadel (session);
-> `AGENT_TRIGGER_TOKEN` for the GitHub webhook only. A scoped per-device
-> credential is tracked in issue #818. `AUTH_MODE=dev` is now local-mock-only
-> (it carries no memory credential).
+> **Migration (session-less auth):** `MEMORY_TOKEN` is no longer read by the gateway
+> (startup warns if it is still set). Session-less `X-API-Key` / registry-key access to
+> `/api/*` is removed — a key-only caller gets `401 session_required`. Replacement: sign in
+> with Zitadel (session); `AGENT_TRIGGER_TOKEN` for the GitHub webhook only; and for iOS
+> voice devices, a **scoped per-device credential** — an `emt_*` bearer carrying the
+> reserved `device:api` marker, minted via the Project Settings QR flow
+> (`POST /api/setup`), read-only (`agents:read + data:read`), 90-day expiry, individually
+> revocable from Project Settings → Devices. Devices re-onboard via a fresh QR (the old
+> 64-hex `ios_device_keys` registry authenticates nothing). `AUTH_MODE=dev` is now
+> local-mock-only (it carries no memory credential).
 
 MCP endpoint: `http://localhost:5300/api/mcp`
 

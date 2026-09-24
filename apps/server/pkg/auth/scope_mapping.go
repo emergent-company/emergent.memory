@@ -86,7 +86,7 @@ var memoryScopeVocabulary = func() map[string]bool {
 		// Coarse scopes accepted on API tokens.
 		"schema:write", "projects:read", "projects:write",
 		// Reserved internal marker scopes (never present on OIDC tokens).
-		"mcp:agent-call", "share:agent-chat",
+		"mcp:agent-call", "share:agent-chat", "device:api",
 	} {
 		m[s] = true
 	}

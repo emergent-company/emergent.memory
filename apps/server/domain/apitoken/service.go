@@ -113,6 +113,20 @@ const agentCallScope = "mcp:agent-call"
 // deliberately absent from user-facing token creation.
 const shareAgentChatScope = "share:agent-chat"
 
+// deviceAPIScope is the reserved marker scope minted only by the internal
+// scoped per-device credential lifecycle (Service.CreateDeviceToken). It is
+// deliberately absent from user-facing token creation. Its presence marks a
+// token as device-class so the gateway (surface allowlist) and the server
+// (exact-set ceiling + surface guard) can constrain it.
+const deviceAPIScope = "device:api"
+
+// deviceAPIScopes is the hardcoded scope set minted on every device credential.
+// It is the authoritative ceiling: the reserved device:api marker plus the
+// read-only agents/data families, strictly below project_viewer. No caller may
+// attach or widen this set — CreateDeviceToken hardcodes it and the server
+// enforces the exact set at validation time (rejectDeviceTokenOutsideSurface).
+var deviceAPIScopes = []string{deviceAPIScope, "agents:read", "data:read"}
+
 // shareChatScopes is the scope set minted on a public agent-share link key: only
 // the share:agent-chat marker, and nothing else. It must never carry a
 // project-scoped scope (e.g. projects:read) — project/org context is resolved
@@ -124,21 +138,21 @@ var shareChatScopes = []string{shareAgentChatScope}
 // marker scope; the internal per-agent share mint path uses
 // CreateAgentShareToken instead.
 func (s *Service) Create(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, &userID, name, scopes, false, false, nil)
+	return s.create(ctx, projectID, &userID, name, scopes, false, false, false, nil)
 }
 
 // CreateAgentShareToken mints a token that may carry the reserved
 // mcp:agent-call marker. It must only be called by the per-agent MCP share
 // lifecycle (domain/mcp/agent_mcp_share.go); all user-facing paths call Create.
 func (s *Service) CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, &userID, name, scopes, true, false, nil)
+	return s.create(ctx, projectID, &userID, name, scopes, true, false, false, nil)
 }
 
 // CreateAgentShareTokenWithExpiry is CreateAgentShareToken with an optional
 // token expiry. It backs the per-endpoint labeled keys, whose optional
 // expiresAt maps straight onto core.api_tokens.expires_at.
 func (s *Service) CreateAgentShareTokenWithExpiry(ctx context.Context, projectID, userID, name string, scopes []string, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, &userID, name, scopes, true, false, expiresAt)
+	return s.create(ctx, projectID, &userID, name, scopes, true, false, false, expiresAt)
 }
 
 // CreateAgentChatShareToken mints a public agent-share link key carrying the
@@ -147,13 +161,26 @@ func (s *Service) CreateAgentShareTokenWithExpiry(ctx context.Context, projectID
 // endpoints. It must only be called by the agent-share link lifecycle
 // (domain/agents); all user-facing paths call Create.
 func (s *Service) CreateAgentChatShareToken(ctx context.Context, projectID, name string, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, nil, name, shareChatScopes, false, true, expiresAt)
+	return s.create(ctx, projectID, nil, name, shareChatScopes, false, true, false, expiresAt)
+}
+
+// CreateDeviceToken mints a scoped per-device credential carrying the reserved
+// device:api marker and the hardcoded read-only device scope set. The token is
+// project-scoped with user_id = NULL (a device is not a user); name and
+// expiresAt carry the device's self-reported identity and the operator-configured
+// lifetime. The scope set is hardcoded — there is no scopes parameter — so no
+// caller can widen it. It must only be called by the device-provisioning
+// lifecycle (the gateway's session-authenticated setup flow); all user-facing
+// paths call Create.
+func (s *Service) CreateDeviceToken(ctx context.Context, projectID, name string, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
+	return s.create(ctx, projectID, nil, name, deviceAPIScopes, false, false, true, expiresAt)
 }
 
 // rejectReservedScopes returns an error when scopes carries a reserved marker
 // scope that the caller is not allowed to mint. allowAgentCall gates
-// mcp:agent-call; allowShareChat gates share:agent-chat.
-func rejectReservedScopes(scopes []string, allowAgentCall, allowShareChat bool) error {
+// mcp:agent-call; allowShareChat gates share:agent-chat; allowDeviceAPI gates
+// device:api.
+func rejectReservedScopes(scopes []string, allowAgentCall, allowShareChat, allowDeviceAPI bool) error {
 	for _, scope := range scopes {
 		if scope == agentCallScope && !allowAgentCall {
 			return apperror.NewBadRequest("scope " + agentCallScope + " is reserved for agent MCP shares")
@@ -161,18 +188,21 @@ func rejectReservedScopes(scopes []string, allowAgentCall, allowShareChat bool) 
 		if scope == shareAgentChatScope && !allowShareChat {
 			return apperror.NewBadRequest("scope " + shareAgentChatScope + " is reserved for public agent-share links")
 		}
+		if scope == deviceAPIScope && !allowDeviceAPI {
+			return apperror.NewBadRequest("scope " + deviceAPIScope + " is reserved for scoped device credentials")
+		}
 	}
 	return nil
 }
 
-// create is the shared implementation behind Create, CreateAgentShareToken and
-// CreateAgentChatShareToken. allowAgentCallScope gates the reserved
-// mcp:agent-call marker; allowShareChatScope gates share:agent-chat; expiresAt,
-// when non-nil, is persisted as the token's expiry. userID is nil for
-// non-user tokens (share keys): such tokens get user_id = NULL and skip the
-// user-scoped checks.
-func (s *Service) create(ctx context.Context, projectID string, userID *string, name string, scopes []string, allowAgentCallScope, allowShareChatScope bool, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
-	if err := rejectReservedScopes(scopes, allowAgentCallScope, allowShareChatScope); err != nil {
+// create is the shared implementation behind Create, CreateAgentShareToken,
+// CreateAgentChatShareToken and CreateDeviceToken. allowAgentCallScope gates the
+// reserved mcp:agent-call marker; allowShareChatScope gates share:agent-chat;
+// allowDeviceAPIScope gates device:api; expiresAt, when non-nil, is persisted
+// as the token's expiry. userID is nil for non-user tokens (share keys, device
+// credentials): such tokens get user_id = NULL and skip the user-scoped checks.
+func (s *Service) create(ctx context.Context, projectID string, userID *string, name string, scopes []string, allowAgentCallScope, allowShareChatScope, allowDeviceAPIScope bool, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
+	if err := rejectReservedScopes(scopes, allowAgentCallScope, allowShareChatScope, allowDeviceAPIScope); err != nil {
 		return nil, err
 	}
 	// Validate scopes
@@ -363,7 +393,7 @@ func (s *Service) Revoke(ctx context.Context, tokenID, projectID, userID string)
 
 // CreateAccountToken creates a new account-level (non-project-bound) API token
 func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
-	if err := rejectReservedScopes(scopes, false, false); err != nil {
+	if err := rejectReservedScopes(scopes, false, false, false); err != nil {
 		return nil, err
 	}
 	// Validate scopes
@@ -568,7 +598,7 @@ func (s *Service) RevokeEphemeral(ctx context.Context, tokenID string) {
 
 // UpdateScopes updates the scopes of a non-revoked project token.
 func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID string, scopes []string) (*ApiTokenDTO, error) {
-	if err := rejectReservedScopes(scopes, false, false); err != nil {
+	if err := rejectReservedScopes(scopes, false, false, false); err != nil {
 		return nil, err
 	}
 	// Validate scopes
@@ -631,7 +661,7 @@ func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID s
 
 // UpdateAccountTokenScopes updates the scopes of a non-revoked account-level token.
 func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID string, scopes []string) (*ApiTokenDTO, error) {
-	if err := rejectReservedScopes(scopes, false, false); err != nil {
+	if err := rejectReservedScopes(scopes, false, false, false); err != nil {
 		return nil, err
 	}
 	// Validate scopes

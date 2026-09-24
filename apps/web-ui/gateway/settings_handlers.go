@@ -376,7 +376,7 @@ func (s *Server) uiProjectDeviceSettings(c echo.Context) error {
 	data.FlashErr = flashError(c)
 	data.ProvidersMissing = s.projectHasNoProviders(ctx)
 	data.IOSQRImage = s.setupQRImage(c)
-	data.Devices, _ = s.listDeviceKeys(ctx) // list errors degrade to an empty list
+	data.Devices, _ = s.listDeviceTokens(ctx) // list errors degrade to an empty list
 	return s.page(c, pageTitle("Devices"), DevicesSettingsPage(data))
 }
 
@@ -488,14 +488,14 @@ func (s *Server) uiProjectSettingsOverrideDelete(c echo.Context) error {
 }
 
 // uiRevokeDevice handles the per-device revoke form (PRG → POST
-// /settings/devices/:key/revoke). Revoking a device key cuts that client's
-// access to the /api/* endpoints immediately.
+// /settings/devices/:id/revoke). Revoking a device credential cuts that
+// client's access to the /api/* endpoints immediately.
 func (s *Server) uiRevokeDevice(c echo.Context) error {
-	key := c.Param("key")
-	if key == "" {
-		return redirectWithError(c, "/settings/devices", fmt.Errorf("device key is required"))
+	tokenID := c.Param("id")
+	if tokenID == "" {
+		return redirectWithError(c, "/settings/devices", fmt.Errorf("device credential id is required"))
 	}
-	if err := s.revokeDeviceKey(c.Request().Context(), key); err != nil {
+	if err := s.revokeDeviceToken(c.Request().Context(), tokenID); err != nil {
 		return redirectWithError(c, "/settings/devices", err)
 	}
 	return c.Redirect(http.StatusSeeOther, "/settings/devices?updated=1")
@@ -1003,32 +1003,11 @@ func agentNameByID(agents []AgentDefinitionSummary, id string) string {
 	return ""
 }
 
-// deviceDisplayName returns the best human label for a registered device: the
-// user-assigned name, else the marketing model name, else the raw model id.
-// Empty for legacy entries (no manifest) — deviceRow falls back to the masked
-// key.
+// deviceDisplayName returns the human label for a device credential: its
+// stored name, else the masked token prefix.
 func deviceDisplayName(d device) string {
-	switch {
-	case d.Name != "":
+	if d.Name != "" {
 		return d.Name
-	case d.ModelDisplay != "":
-		return d.ModelDisplay
-	case d.ModelID != "":
-		return d.ModelID
 	}
-	return ""
-}
-
-// deviceMetaLine joins the platform and OS (name + version) a device reported,
-// e.g. "macos · macOS 15.0". Empty when the device reported neither — deviceRow
-// then renders the bare registration time.
-func deviceMetaLine(d device) string {
-	var parts []string
-	if d.Platform != "" {
-		parts = append(parts, d.Platform)
-	}
-	if os := strings.TrimSpace(d.OSName + " " + d.OSVersion); os != "" {
-		parts = append(parts, os)
-	}
-	return strings.Join(parts, " · ")
+	return d.Prefix
 }

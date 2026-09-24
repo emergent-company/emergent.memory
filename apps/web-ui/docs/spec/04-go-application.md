@@ -10,10 +10,12 @@ roles (D1, D4). It owns **no durable state** and **no agent logic**.
 
 ### 1. Gateway API (client-facing)
 
-Thin REST surface. It authenticates clients (session cookie) and proxies/relays to memory.
-The session-less `X-API-Key` path was removed with the static `MEMORY_TOKEN` (a key-only
-caller gets `401 session_required`); interactive/voice sessions are the only memory callers.
-The gateway holds no standing memory token.
+Thin REST surface. It authenticates clients (session cookie, or a scoped `emt_*` device
+credential on the device surface) and proxies/relays to memory. The session-less
+`X-API-Key` / registry-key path was removed with the static `MEMORY_TOKEN` (a key-only
+caller gets `401 session_required`); voice devices authenticate with a scoped per-device
+credential carrying the reserved `device:api` marker. The gateway holds no standing memory
+token.
 
 | Route | Action | Backs onto |
 |---|---|---|
@@ -26,7 +28,7 @@ The gateway holds no standing memory token.
 | `POST /api/chat` (SSE) | text chat with an agent | memory `/api/chat/stream` |
 | `GET /api/conversations`, `GET /api/conversations/{id}/messages` | session history | memory chat conversations |
 | `POST /api/token` | iOS room-join JWT | LiveKit API (server-side key) |
-| `POST /api/setup` | one-time-token → per-device key exchange (no auth) | in-memory setup tokens + memory settings |
+| `POST /api/setup` | one-time-token → device credential exchange (no auth) | one-time setup tokens + memory device-token mint |
 | `GET /api/sessions`, `GET /api/session` | iOS session log/records | memory conversations/history |
 | `GET /api/memories`, `GET /api/memories/capability` | iOS memory list/capability | memory search/entity-query |
 
@@ -116,9 +118,9 @@ Main user UI. Pages:
   selectors are credential-prefixed (`provider/model`) and grouped by configured provider;
   per-agent model override lives on the agent form (D16).
 - **Settings** — memory connection, LiveKit connection, iOS QR onboarding (renders a
-  fresh one-time setup token per page load; scanning it provisions a per-device key),
-  a read-only "Voice gateway" section (LiveKit, STT/TTS, turn tuning, exit keywords —
-  env-driven, display only), and the registered-device revoke list.
+  fresh one-time setup token per page load; scanning it provisions a scoped per-device
+  credential), a read-only "Voice gateway" section (LiveKit, STT/TTS, turn tuning, exit
+  keywords — env-driven, display only), and the registered-device revoke list.
 - **API Tokens** — project-scoped token management (`/settings/tokens`): create, revoke,
   regenerate, scope editing.
 - **Approvals** — pending-question approvals (`/settings/approvals`): approve, reject,

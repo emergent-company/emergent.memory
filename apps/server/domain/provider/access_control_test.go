@@ -107,3 +107,87 @@ func insertOrgAndUser(t *testing.T, ctx context.Context, db bun.IDB, orgID, user
 		t.Fatalf("insert user: %v", err)
 	}
 }
+
+// insertProjectForOrg seeds a project owned by orgID.
+func insertProjectForOrg(t *testing.T, ctx context.Context, db bun.IDB, projectID, orgID string) {
+	t.Helper()
+	if _, err := db.NewRaw(
+		`INSERT INTO kb.projects (id, organization_id, name, created_at, updated_at) VALUES (?, ?, 'p', NOW(), NOW())`,
+		projectID, orgID,
+	).Exec(ctx); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+}
+
+// TestAssertCallerOwnsProject_NoUserUnauthorized covers the no-user case: the
+// project ownership assertion must fail closed with 401 rather than consult a
+// request-controlled org (issue #850).
+func TestAssertCallerOwnsProject_NoUserUnauthorized(t *testing.T) {
+	repo, testDB := newAccessControlRepo(t)
+	defer testDB.Close()
+
+	svc := &CredentialService{repo: repo}
+	err := svc.assertCallerOwnsProject(context.Background(), uuid.New().String())
+	appErr, ok := err.(*apperror.Error)
+	if !ok {
+		t.Fatalf("expected *apperror.Error, got %T", err)
+	}
+	if appErr.HTTPStatus != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", appErr.HTTPStatus)
+	}
+}
+
+// TestAssertCallerOwnsProject_NonMemberForbidden verifies a caller whose user is
+// not a member of the project's owning org is rejected with 403, even though the
+// project exists (issue #850).
+func TestAssertCallerOwnsProject_NonMemberForbidden(t *testing.T) {
+	repo, testDB := newAccessControlRepo(t)
+	defer testDB.Close()
+
+	ctx := context.Background()
+	db := testDB.GetDB()
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	userID := uuid.New().String()
+	insertOrgAndUser(t, ctx, db, orgID, userID)
+	insertProjectForOrg(t, ctx, db, projectID, orgID)
+	// No membership row → the caller is not a member of orgID.
+
+	svc := &CredentialService{repo: repo}
+	err := svc.assertCallerOwnsProject(auth.ContextWithUser(ctx, &auth.AuthUser{ID: userID}), projectID)
+	appErr, ok := err.(*apperror.Error)
+	if !ok {
+		t.Fatalf("expected *apperror.Error, got %T", err)
+	}
+	if appErr.HTTPStatus != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", appErr.HTTPStatus)
+	}
+}
+
+// TestAssertCallerOwnsProject_MemberAllowed verifies a caller whose user is a
+// member of the project's owning org is admitted.
+func TestAssertCallerOwnsProject_MemberAllowed(t *testing.T) {
+	repo, testDB := newAccessControlRepo(t)
+	defer testDB.Close()
+
+	ctx := context.Background()
+	db := testDB.GetDB()
+
+	orgID := uuid.New().String()
+	projectID := uuid.New().String()
+	userID := uuid.New().String()
+	insertOrgAndUser(t, ctx, db, orgID, userID)
+	insertProjectForOrg(t, ctx, db, projectID, orgID)
+	if _, err := db.NewRaw(
+		`INSERT INTO kb.organization_memberships (organization_id, user_id, role, created_at) VALUES (?, ?, 'org_admin', NOW())`,
+		orgID, userID,
+	).Exec(ctx); err != nil {
+		t.Fatalf("insert membership: %v", err)
+	}
+
+	svc := &CredentialService{repo: repo}
+	if err := svc.assertCallerOwnsProject(auth.ContextWithUser(ctx, &auth.AuthUser{ID: userID}), projectID); err != nil {
+		t.Fatalf("expected member to pass, got %v", err)
+	}
+}
