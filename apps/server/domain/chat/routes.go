@@ -17,14 +17,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 
 	// Project authorization for the header-scoped /api/chat group (issue #864).
-	// RequireProjectTokenScope + RequireProjectMember are applied first in the
-	// canonical order; they key on the :projectId path parameter (absent here)
-	// and become effective for this group once they gain a user.ProjectID
-	// fallback. requireProjectAccess enforces the same contract against the
-	// header-derived project today: token binding, then org membership.
+	// RequireProjectTokenScope + RequireProjectMember are applied in canonical
+	// order (token binding first, then membership). This group carries no
+	// :projectId path param, so both middlewares fall back to user.ProjectID
+	// (normalised from the X-Project-ID header by RequireAuth).
 	g.Use(authMiddleware.RequireProjectTokenScope())
 	g.Use(authMiddleware.RequireProjectMember())
-	g.Use(h.requireProjectAccess)
 
 	// Streaming endpoint - POST /api/chat/stream
 	g.POST("/stream", h.StreamChat)
