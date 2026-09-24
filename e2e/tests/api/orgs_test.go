@@ -59,13 +59,17 @@ func TestOrgs_GetRequiresAuth(t *testing.T) {
 	mustStatus(t, resp, http.StatusUnauthorized)
 }
 
-func TestOrgs_GetNotFound(t *testing.T) {
+// TestOrgs_GetNonexistentForbidden covers the org-scoped membership contract
+// (issue #851): an authenticated caller who is not a member of the addressed
+// org receives 403 uniformly, whether the org exists or not, so the response
+// cannot disclose an org's existence.
+func TestOrgs_GetNonexistentForbidden(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
 	resp := doAPILogged(t, rl, "GET", "/api/orgs/00000000-0000-0000-0000-000000000000", e2eTestToken(), "", nil)
-	mustStatus(t, resp, http.StatusNotFound)
+	mustStatus(t, resp, http.StatusForbidden)
 }
 
 func TestOrgs_GetSuccess(t *testing.T) {
@@ -248,13 +252,16 @@ func TestOrgs_DeleteRequiresAuth(t *testing.T) {
 	mustStatus(t, resp, http.StatusUnauthorized)
 }
 
-func TestOrgs_DeleteNotFound(t *testing.T) {
+// TestOrgs_DeleteNonexistentForbidden covers the org-scoped membership contract
+// (issue #851): a non-member cannot delete an org, and the uniform 403 does not
+// disclose whether the addressed org exists.
+func TestOrgs_DeleteNonexistentForbidden(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
 	resp := doAPILogged(t, rl, "DELETE", "/api/orgs/00000000-0000-0000-0000-000000000000", e2eTestToken(), "", nil)
-	mustStatus(t, resp, http.StatusNotFound)
+	mustStatus(t, resp, http.StatusForbidden)
 }
 
 func TestOrgs_DeleteSuccess(t *testing.T) {
@@ -277,9 +284,10 @@ func TestOrgs_DeleteSuccess(t *testing.T) {
 		t.Errorf("expected status=deleted, got %v", result["status"])
 	}
 
-	// Verify gone
+	// Verify gone: after deleting the org, the caller's membership is also gone,
+	// so a follow-up GET is rejected 403 (uniform non-member) rather than 404.
 	getResp := doAPILogged(t, rl, "GET", "/api/orgs/"+orgID, e2eTestToken(), "", nil)
-	mustStatus(t, getResp, http.StatusNotFound)
+	mustStatus(t, getResp, http.StatusForbidden)
 	rl.Printf("org %s deleted and confirmed gone", orgID)
 }
 

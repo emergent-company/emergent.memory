@@ -182,10 +182,13 @@ func (s *Server) resolveVoiceAgent(ctx context.Context, name string) (defID, lan
 
 // voiceBindingFor builds the per-room voice binding for a minted token from the
 // signed-in user's active project/org, and mints a short-lived project-scoped
-// Memory token for the worker. Voice now requires a session: there is no
-// key/device-mode static-token fallback. A nil binding with a nil error means
-// the agent is not present in the active project; the enabled flag reports
-// whether the agent should get a warm bridge worker.
+// Memory token for the worker. Voice requires a session OR a scoped device
+// credential: there is no key/device-mode static-token fallback. For a device
+// caller the device credential itself is proxied verbatim as the worker token
+// (the device surface guard already forbids a device credential from minting a
+// new token), so no mint is attempted. A nil binding with a nil error means the
+// agent is not present in the active project; the enabled flag reports whether
+// the agent should get a warm bridge worker.
 func (s *Server) voiceBindingFor(ctx context.Context, agent, room string) (*voiceBinding, bool, error) {
 	sc, ok := sessionContextFrom(ctx)
 	if !ok || sc.ProjectID == "" {
@@ -198,15 +201,19 @@ func (s *Server) voiceBindingFor(ctx context.Context, agent, room string) (*voic
 	if !enabled {
 		return nil, false, errVoiceAgentDisabled
 	}
-	tok, err := s.memory.CreateAPIToken(ctx, "voice-"+room+"-"+randomHex(4), []string{"chat:use"})
-	if err != nil {
-		return nil, false, err
+	token := sc.Token
+	if !sc.Device {
+		tok, err := s.memory.CreateAPIToken(ctx, "voice-"+room+"-"+randomHex(4), []string{"chat:use"})
+		if err != nil {
+			return nil, false, err
+		}
+		token = tok.Token
 	}
 	return &voiceBinding{
 		ProjectID:         sc.ProjectID,
 		OrgID:             sc.OrgID,
 		AgentDefinitionID: defID,
 		Language:          lang,
-		Token:             tok.Token,
+		Token:             token,
 	}, enabled, nil
 }

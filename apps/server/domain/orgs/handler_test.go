@@ -12,10 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // runUpdateHandler invokes the Update handler directly with the given org id and
-// JSON body, returning the recorded response and the handler's error.
+// JSON body, returning the recorded response and the handler's error. The
+// authenticated user is injected into the echo context as "user-1".
 func runUpdateHandler(t *testing.T, repo orgRepository, id, body string) (*httptest.ResponseRecorder, error) {
 	t.Helper()
 
@@ -26,13 +28,14 @@ func runUpdateHandler(t *testing.T, repo orgRepository, id, body string) (*httpt
 	c := e.NewContext(req, rec)
 	c.SetParamNames("id")
 	c.SetParamValues(id)
+	c.Set(string(auth.UserContextKey), &auth.AuthUser{ID: "user-1"})
 
 	h := NewHandler(testOrgService(repo))
 	return rec, h.Update(c)
 }
 
 func TestHandlerUpdate_Success(t *testing.T) {
-	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}}
+	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true}
 	rec, err := runUpdateHandler(t, repo, "org-1", `{"name":"Renamed"}`)
 
 	require.NoError(t, err)
@@ -45,7 +48,7 @@ func TestHandlerUpdate_Success(t *testing.T) {
 }
 
 func TestHandlerUpdate_InvalidName(t *testing.T) {
-	repo := &fakeOrgRepo{}
+	repo := &fakeOrgRepo{member: true}
 	_, err := runUpdateHandler(t, repo, "org-1", `{"name":""}`)
 
 	require.Error(t, err)
@@ -56,7 +59,7 @@ func TestHandlerUpdate_InvalidName(t *testing.T) {
 }
 
 func TestHandlerUpdate_UnknownID(t *testing.T) {
-	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found")}
+	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found"), member: true}
 	_, err := runUpdateHandler(t, repo, "missing", `{"name":"New name"}`)
 
 	require.Error(t, err)
@@ -67,7 +70,7 @@ func TestHandlerUpdate_UnknownID(t *testing.T) {
 }
 
 func TestHandlerUpdate_MalformedBody(t *testing.T) {
-	repo := &fakeOrgRepo{}
+	repo := &fakeOrgRepo{member: true}
 	_, err := runUpdateHandler(t, repo, "org-1", `{`)
 
 	require.Error(t, err)

@@ -368,7 +368,7 @@ func main() {
 	e.POST("/settings/providers/model-config/test", s.uiProjectDefaultModelTest)
 	e.POST("/settings/providers/:provider/test", s.uiProjectProviderTest)
 	e.POST("/settings/providers/:provider/remove", s.uiProjectProviderRemove)
-	e.POST("/settings/devices/:key/revoke", s.uiRevokeDevice)
+	e.POST("/settings/devices/:id/revoke", s.uiRevokeDevice)
 	// Project API tokens (table list + standalone create/edit pages; see api_tokens_handlers.go).
 	e.GET("/settings/tokens", s.uiAPITokens)
 	e.GET("/settings/tokens/new", s.uiAPITokensNewPage)

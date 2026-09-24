@@ -188,6 +188,93 @@ func rejectShareTokenOutsideSurface(path string, scopes []string) error {
 	return apperror.NewForbidden("share:agent-chat credentials are only valid on share endpoints")
 }
 
+// deviceAPIScope is the reserved marker scope minted on scoped per-device
+// credentials (mirrors domain/apitoken.deviceAPIScope; pkg/auth cannot import
+// the domain package). Its presence classifies a token as device-class.
+const deviceAPIScope = "device:api"
+
+// deviceAPIScopes is the authoritative device ceiling: the marker plus the
+// read-only agents/data umbrella scopes. It must match domain/apitoken's
+// deviceAPIScopes exactly.
+var deviceAPIScopes = []string{deviceAPIScope, "agents:read", "data:read"}
+
+// hasDeviceAPIScope reports whether scopes contains the device:api marker.
+func hasDeviceAPIScope(scopes []string) bool {
+	for _, s := range scopes {
+		if s == deviceAPIScope {
+			return true
+		}
+	}
+	return false
+}
+
+// deviceScopesMatchCeiling reports whether scopes is EXACTLY the device ceiling
+// set (same members, same cardinality). It is the validate-time defence in
+// depth: even a DB-tampered device token whose scope set was widened must be
+// rejected, never trusted.
+func deviceScopesMatchCeiling(scopes []string) bool {
+	if len(scopes) != len(deviceAPIScopes) {
+		return false
+	}
+	for _, want := range deviceAPIScopes {
+		found := false
+		for _, got := range scopes {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// deviceSurfaceAllowed reports whether a server request path/method is within
+// the device surface: the voice/read paths the gateway relays on a device
+// credential's behalf (agent picker, chat/session relay, memory browsing, and
+// the /api/auth/me introspection the gateway uses to recognise the token).
+// Everything else — token mint, members, org/project admin, writes — is out.
+func deviceSurfaceAllowed(method, path string) bool {
+	switch method {
+	case http.MethodGet:
+		if path == "/api/auth/me" {
+			return true
+		}
+		if strings.HasPrefix(path, "/api/projects/") && strings.Contains(path, "/agent-definitions") {
+			return true
+		}
+		if path == "/api/chat/conversations" {
+			return true
+		}
+		if strings.HasPrefix(path, "/api/chat/") {
+			return true
+		}
+		if path == "/api/graph/objects/search" {
+			return true
+		}
+		return false
+	case http.MethodPost:
+		return path == "/api/chat/stream" || path == "/api/search/unified"
+	default:
+		return false
+	}
+}
+
+// rejectDeviceTokenOutsideSurface returns a 403 error when a device:api token
+// is used outside the device surface. It is a pure function so it can be
+// unit-tested independently of the auth pipeline.
+func rejectDeviceTokenOutsideSurface(method, path string, scopes []string) error {
+	if !hasDeviceAPIScope(scopes) {
+		return nil
+	}
+	if deviceSurfaceAllowed(method, path) {
+		return nil
+	}
+	return apperror.NewForbidden("device:api credentials are only valid on the device surface")
+}
+
 // RequireAuth returns middleware that requires authentication
 func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -219,9 +306,14 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 			if projectIDForOrg == "" {
 				projectIDForOrg = user.APITokenProjectID
 			}
-			// Last resort: use the :projectId URL path param (e.g. /api/projects/:projectId/remember).
-			// This covers standalone mode where neither header nor token carries a project ID.
-			if projectIDForOrg == "" {
+			// Last resort: use the :projectId URL path param (e.g.
+			// /api/projects/:projectId/remember). This covers standalone mode
+			// where neither header nor token carries a project ID. It is gated to
+			// standalone because the path param is caller-supplied and must never
+			// be treated as authorization truth — the org derived here is only a
+			// scope hint; route-level authorization resolves the caller's org from
+			// membership (issue #850).
+			if projectIDForOrg == "" && m.cfg.Standalone.IsEnabled() {
 				projectIDForOrg = c.Param("projectId")
 			}
 
@@ -264,6 +356,15 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 			// project/member endpoints. Owner-management routes use normal user
 			// tokens and are unaffected.
 			if err := rejectShareTokenOutsideSurface(c.Request().URL.Path, user.Scopes); err != nil {
+				return m.authError(c, err)
+			}
+
+			// Fail closed: a device:api token is only valid on the device
+			// surface. Reject it anywhere else (defense in depth — the token's
+			// exact-set ceiling already bounds its scopes, but the surface guard
+			// keeps a device credential off token-mint, member, org and write
+			// endpoints even when a route has no scope gate).
+			if err := rejectDeviceTokenOutsideSurface(c.Request().Method, c.Request().URL.Path, user.Scopes); err != nil {
 				return m.authError(c, err)
 			}
 
@@ -310,8 +411,15 @@ func (m *Middleware) RequireProjectID() echo.MiddlewareFunc {
 }
 
 // RequireProjectScope returns middleware that enforces API token project scope.
-// For emt_* tokens, it validates that the :projectId URL param matches the token's project.
-// For non-API-token auth (e.g. OAuth sessions), this is a no-op pass-through.
+// For emt_* API tokens it validates that the :projectId URL param matches the
+// token's bound project (rejecting a mismatch with 403).
+//
+// For non-API-token auth (OAuth/human sessions) this is a NO-OP pass-through:
+// it is a token-binding check, NOT a membership check, and does not by itself
+// authorize access to a project. Route handlers that need to authorize a human
+// caller against a project must assert real project/org membership themselves
+// (e.g. provider.assertCallerOwnsProject, skills.requireProjectMember) — the
+// name describes the token-scope guard only (issue #849/#850).
 func (m *Middleware) RequireProjectScope() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -796,10 +904,28 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		return nil, apperror.ErrInvalidToken.WithInternal(err)
 	}
 
+	// Validate-time ceiling for device credentials: a device:api token whose
+	// scope set is not EXACTLY the device ceiling is rejected fail-closed, even
+	// if the row was tampered in the DB. A device credential can never carry a
+	// write/admin/project-admin scope.
+	if hasDeviceAPIScope(result.Scopes) && !deviceScopesMatchCeiling(result.Scopes) {
+		m.log.Warn("device credential carries an out-of-ceiling scope set; rejecting",
+			slog.String("token_id", result.ID))
+		return nil, apperror.NewForbidden("device:api token scope set exceeds the device ceiling")
+	}
+
 	// Resolve project ID: account-level tokens have a nil project_id
 	projectID := ""
 	if result.ProjectID != nil {
 		projectID = *result.ProjectID
+	}
+
+	// Best-effort, non-blocking last_used_at touch for device credentials. The
+	// general "tokens never touch last_used_at" gap is tracked separately; this
+	// implements at least the device path without a synchronous write on the hot
+	// auth path.
+	if hasDeviceAPIScope(result.Scopes) {
+		m.touchDeviceTokenLastUsed(result.ID)
 	}
 
 	// Ephemeral sandbox tokens have user_id = NULL (no real user owner).
@@ -828,6 +954,25 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		APITokenProjectID: projectID,
 		APITokenID:        result.ID,
 	}, nil
+}
+
+// touchDeviceTokenLastUsed writes core.api_tokens.last_used_at for a device
+// credential in a detached goroutine. It is fire-and-forget: a failed touch is
+// never surfaced to the caller, and the hot auth path is never blocked on a
+// write. A short timeout bounds the goroutine so a slow store cannot leak it.
+func (m *Middleware) touchDeviceTokenLastUsed(tokenID string) {
+	if m.db == nil || tokenID == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, _ = m.db.NewUpdate().
+			Table("core.api_tokens").
+			Set("last_used_at = NOW()").
+			Where("id = ?", tokenID).
+			Exec(ctx)
+	}()
 }
 
 // checkTestToken checks for static test tokens (development only)

@@ -15,12 +15,17 @@ import (
 // fakeOrgRepo is an in-memory orgRepository double for service/handler tests.
 // Only the fields exercised by a given test need to be set.
 type fakeOrgRepo struct {
-	org *Org  // returned by UpdateName when updateErr is nil
-	err error // UpdateName failure
+	org    *Org  // returned by UpdateName/GetByID when err is nil
+	err    error // UpdateName/GetByID failure
+	member bool  // result returned by IsUserMember
 
 	updatedID   string // last id passed to UpdateName
 	updatedName string // last name passed to UpdateName
 	updateCalls int
+
+	deletedID    string
+	deleteCalls  int
+	deleteResult bool
 }
 
 func (f *fakeOrgRepo) List(context.Context, string) ([]OrgDTO, error) { return nil, nil }
@@ -44,7 +49,11 @@ func (f *fakeOrgRepo) UpdateName(_ context.Context, id, name string) (*Org, erro
 	return f.org, nil
 }
 
-func (f *fakeOrgRepo) Delete(context.Context, string) (bool, error) { return false, nil }
+func (f *fakeOrgRepo) Delete(_ context.Context, id string) (bool, error) {
+	f.deleteCalls++
+	f.deletedID = id
+	return f.deleteResult, nil
+}
 
 func (f *fakeOrgRepo) ListMembers(context.Context, string) ([]OrgMemberDTO, error) {
 	return nil, nil
@@ -53,7 +62,7 @@ func (f *fakeOrgRepo) ListMembers(context.Context, string) ([]OrgMemberDTO, erro
 func (f *fakeOrgRepo) CountUserMemberships(context.Context, string) (int, error) { return 0, nil }
 
 func (f *fakeOrgRepo) IsUserMember(context.Context, string, string) (bool, error) {
-	return false, nil
+	return f.member, nil
 }
 
 func (f *fakeOrgRepo) FindOrgToolSettings(context.Context, string) ([]OrgToolSetting, error) {
@@ -76,10 +85,10 @@ func testOrgService(repo orgRepository) *Service {
 }
 
 func TestServiceUpdate_Success(t *testing.T) {
-	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}}
+	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true}
 	svc := testOrgService(repo)
 
-	dto, err := svc.Update(context.Background(), "org-1", "  Renamed  ")
+	dto, err := svc.Update(context.Background(), "org-1", "user-1", "  Renamed  ")
 
 	require.NoError(t, err)
 	require.NotNil(t, dto)
@@ -102,10 +111,10 @@ func TestServiceUpdate_InvalidName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &fakeOrgRepo{}
+			repo := &fakeOrgRepo{member: true}
 			svc := testOrgService(repo)
 
-			dto, err := svc.Update(context.Background(), "org-1", tt.in)
+			dto, err := svc.Update(context.Background(), "org-1", "user-1", tt.in)
 
 			assert.Nil(t, dto)
 			require.Error(t, err)
@@ -119,10 +128,10 @@ func TestServiceUpdate_InvalidName(t *testing.T) {
 }
 
 func TestServiceUpdate_NotFound(t *testing.T) {
-	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found")}
+	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found"), member: true}
 	svc := testOrgService(repo)
 
-	dto, err := svc.Update(context.Background(), "missing", "New name")
+	dto, err := svc.Update(context.Background(), "missing", "user-1", "New name")
 
 	assert.Nil(t, dto)
 	require.Error(t, err)

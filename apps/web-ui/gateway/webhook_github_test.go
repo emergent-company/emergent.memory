@@ -34,15 +34,16 @@ func TestGitHubWebhook(t *testing.T) {
 	validBody := githubPayloadJSON("acme/widgets", "opened", 7)
 
 	tests := []struct {
-		name        string
-		secret      string
-		agentID     string
-		repos       string
-		event       string
-		body        string
-		signature   string // explicit override; "" = sign with secret (when set)
-		wantStatus  int
-		wantTrigger bool
+		name         string
+		secret       string
+		agentID      string
+		repos        string
+		event        string
+		body         string
+		signature    string // explicit override; "" = sign with secret (when set)
+		noAgentToken bool
+		wantStatus   int
+		wantTrigger  bool
 	}{
 		{
 			name:        "valid signature accepted",
@@ -137,6 +138,17 @@ func TestGitHubWebhook(t *testing.T) {
 			body:       `{"action": not-json`,
 			wantStatus: http.StatusBadRequest,
 		},
+		{
+			name:         "empty trigger token fails closed with 503",
+			secret:       "topsecret",
+			agentID:      "agent-1",
+			repos:        "acme/widgets",
+			event:        "pull_request",
+			body:         validBody,
+			noAgentToken: true,
+			wantStatus:   http.StatusServiceUnavailable,
+			wantTrigger:  false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -147,12 +159,16 @@ func TestGitHubWebhook(t *testing.T) {
 				calls = make(chan triggerAgentCall, 1)
 				fake.triggerAgentCalls = calls
 			}
+			agentToken := "mem-token"
+			if tc.noAgentToken {
+				agentToken = ""
+			}
 			s := &Server{
 				cfg: Config{
 					GitHubWebhookSecret: tc.secret,
 					GitHubReviewAgentID: tc.agentID,
 					GitHubReviewRepos:   tc.repos,
-					AgentTriggerToken:   "mem-token",
+					AgentTriggerToken:   agentToken,
 				},
 				memory: fake,
 			}
@@ -222,6 +238,34 @@ func TestGitHubReviewRepoAllowed(t *testing.T) {
 	for _, tc := range tests {
 		if got := githubReviewRepoAllowed(tc.allowlist, tc.fullName); got != tc.want {
 			t.Errorf("githubReviewRepoAllowed(%q, %q) = %v, want %v", tc.allowlist, tc.fullName, got, tc.want)
+		}
+	}
+}
+
+// TestVerifyGitHubSignature locks in the HMAC-SHA256 ingress gate: the
+// X-Hub-Signature-256 header is the webhook's only caller-facing credential, and
+// it must be verified in constant time. This guards against a regression where
+// the trigger token (the gateway→memory credential) is mistaken for the ingress
+// gate and the HMAC check is weakened or dropped.
+func TestVerifyGitHubSignature(t *testing.T) {
+	const secret = "topsecret"
+	body := []byte(`{"action":"opened"}`)
+	valid := signGitHubBody(secret, string(body))
+
+	tests := []struct {
+		name   string
+		header string
+		want   bool
+	}{
+		{"valid signature accepted", valid, true},
+		{"tampered signature rejected", "sha256=deadbeef", false},
+		{"missing prefix rejected", strings.TrimPrefix(valid, "sha256="), false},
+		{"empty header rejected", "", false},
+		{"non-hex digest rejected", "sha256=zzzz", false},
+	}
+	for _, tc := range tests {
+		if got := verifyGitHubSignature(secret, body, tc.header); got != tc.want {
+			t.Errorf("verifyGitHubSignature(%q) = %v, want %v", tc.header, got, tc.want)
 		}
 	}
 }
