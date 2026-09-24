@@ -571,28 +571,33 @@ func (m *Middleware) RequireProjectTokenScope() echo.MiddlewareFunc {
 }
 
 // RequireProjectMember returns middleware that enforces real project membership
-// for session (OAuth/human) callers. It is the membership counterpart to
-// RequireProjectTokenScope: that middleware binds an emt_* token to its project,
-// this one asserts that a session caller belongs to the organization that owns
-// the addressed project. Both are applied together on project-scoped route
-// groups so the group is protected for every caller type.
+// for every project-addressed caller except two bounded classes:
+//
+//   - Project-bound emt_* tokens (APITokenProjectID != ""): already bound to
+//     their project by RequireProjectTokenScope, so they pass through. Their
+//     owner need not be a member (an admin token may mint/act for a project the
+//     owner does not belong to) — unchanged.
+//   - Ownerless tokens (APITokenID != "" with user_id = NULL, e.g. server-minted
+//     ephemeral sandbox credentials): no owning user exists to resolve
+//     membership for, and they are unreachable through any user-facing mint
+//     path, so they pass through — unchanged.
+//
+// Every other caller — OAuth/human sessions AND project-unbound account tokens
+// (APITokenProjectID == "") that carry an owning user — must belong to the
+// organization that owns the addressed project (issue #877). The owning
+// organization is resolved server-side (kb.projects) and membership is checked
+// against kb.organization_memberships, so a caller-supplied :projectId or
+// X-Project-ID can never self-satisfy the check (the #849/#850 class). Fail
+// closed:
+//
+//   - no authenticated user → 401
+//   - addressed project does not exist → 404 (no existence oracle for a project
+//     ID the caller cannot see)
+//   - caller not a member of the project's owning org → 403
 //
 // The addressed project is the :projectId URL param when present; header-scoped
 // groups that carry no such param (e.g. /api/chat) fall back to user.ProjectID
-// (normalised from the X-Project-ID header by RequireAuth). The owning
-// organization is resolved server-side (kb.projects) and membership is checked
-// against kb.organization_memberships, so a caller-supplied :projectId can
-// never self-satisfy the check (the #849/#850 class). Fail closed:
-//
-//   - no authenticated user → 401
-//   - session caller, addressed project does not exist → 404 (no existence
-//     oracle for a project ID the caller cannot see)
-//   - session caller not a member of the project's owning org → 403
-//
-// API-token callers pass through: they are already bound to their project by
-// RequireProjectTokenScope, and their token owner is not necessarily a project
-// member (account-level/admin tokens). This mirrors the share read-endpoint
-// convention (oauthUserID) and preserves existing machine-caller behavior.
+// (normalised from the X-Project-ID header by RequireAuth).
 func (m *Middleware) RequireProjectMember() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -601,13 +606,20 @@ func (m *Middleware) RequireProjectMember() echo.MiddlewareFunc {
 				return apperror.ErrUnauthorized
 			}
 
-			// API-token callers are scoped by RequireProjectTokenScope; their
-			// token owner is not necessarily a project member.
-			if user.APITokenID != "" {
+			// Project-bound emt_* tokens are already bound to their project by
+			// RequireProjectTokenScope; their owner need not be a member.
+			if user.APITokenProjectID != "" {
 				return next(c)
 			}
 
-			// Session caller: require a real user identity.
+			// Ownerless tokens (user_id = NULL) are server-minted ephemeral
+			// credentials with no owning user to resolve membership for; they
+			// are unreachable through user-facing mint paths.
+			if user.APITokenID != "" && user.ID == "" {
+				return next(c)
+			}
+
+			// Session and account-token callers require a real user identity.
 			if user.ID == "" {
 				return apperror.ErrUnauthorized
 			}
