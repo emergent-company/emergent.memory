@@ -123,6 +123,17 @@ func (f *mintFixture) mintBoundToken(t *testing.T, projectID string) string {
 	return dto.Token
 }
 
+// mintAccountToken mints a project-unbound account token owned by userID via the
+// real service path and returns the raw token (never logged, only used as a
+// bearer).
+func (f *mintFixture) mintAccountToken(t *testing.T, userID string) string {
+	t.Helper()
+	dto, err := f.svc.CreateAccountToken(context.Background(), userID,
+		"account-"+uuid.NewString(), []string{"agents:write"})
+	require.NoError(t, err)
+	return dto.Token
+}
+
 // TestMintRoutesEnforceMembership is the fail-first reproducer for issue #870:
 // both credential-mint routes must enforce project membership. A member of the
 // addressed project's owning org mints successfully (201); a non-member is
@@ -156,4 +167,44 @@ func TestMintRoutesEnforceMembership(t *testing.T) {
 			require.Equal(t, http.StatusForbidden, rec.Code, "cross-project emt_* token must be 403")
 		})
 	}
+}
+
+// TestAccountTokenMintRequiresMembership is the fail-first reproducer for issue
+// #877: a project-unbound account token must only mint a project-scoped
+// credential for a project whose owning org its owner is a member of. A member's
+// account token mints for its own project (201) and is refused for a foreign
+// project (403). The device/webhook mint routes share the same guard shape and
+// are asserted alongside the primary token route.
+func TestAccountTokenMintRequiresMembership(t *testing.T) {
+	f := newMintFixture(t)
+
+	memberAccount := f.mintAccountToken(t, f.memberID)
+	strangerAccount := f.mintAccountToken(t, f.strangerID)
+
+	routes := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"tokens", "/api/projects/" + f.projectA + "/tokens", `{"name":"acct-token","scopes":["agents:write"]}`},
+		{"device-tokens", "/api/projects/" + f.projectA + "/device-tokens", `{"name":"acct-device"}`},
+		{"webhook-trigger-tokens", "/api/projects/" + f.projectA + "/webhook-trigger-tokens", `{"name":"acct-webhook"}`},
+	}
+
+	for _, r := range routes {
+		t.Run(r.name, func(t *testing.T) {
+			// The member's account token mints for a project its owner belongs to.
+			rec := f.mint(t, r.path, memberAccount, r.body)
+			require.Equal(t, http.StatusCreated, rec.Code, "account token for a member-owned project must mint 201")
+
+			// A stranger's account token cannot mint for the member's project.
+			rec = f.mint(t, r.path, strangerAccount, r.body)
+			require.Equal(t, http.StatusForbidden, rec.Code, "account token for a foreign project must be 403")
+		})
+	}
+
+	// Fail-first: the member's account token must be refused for a foreign
+	// project (project B, owned by an org the member does not belong to).
+	rec := f.mint(t, "/api/projects/"+f.projectB+"/tokens", memberAccount, `{"name":"foreign","scopes":["agents:write"]}`)
+	require.Equal(t, http.StatusForbidden, rec.Code, "account token minting for a foreign project must be 403")
 }
