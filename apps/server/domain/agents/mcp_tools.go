@@ -589,9 +589,17 @@ func (h *MCPToolHandler) ExecuteTriggerAgent(ctx context.Context, projectID stri
 		})
 	}
 
-	// Resolve org ID for the agent's project so the tracking model can attribute
-	// LLM usage events to the correct tenant. Prefer context (already set by
-	// auth middleware for HTTP paths) and fall back to a DB lookup.
+	// Resolve the org that owns the agent's project so the tracking model can
+	// attribute LLM usage events to the correct tenant.
+	//
+	// OrgIDFromContext is non-empty only when a caller has already resolved the
+	// org: the executor injects req.OrgID into context before a delegated child's
+	// trigger_agent tool call, and the auth middleware derives it from a
+	// token/project binding. It is empty for human/OAuth session callers with no
+	// project binding, so fall back to the authoritative kb.projects lookup. Both
+	// sources resolve the same owning org; the context read is a short-circuit
+	// that skips the DB round-trip on the loopback/token paths and is never the
+	// sole source of truth.
 	orgID := auth.OrgIDFromContext(ctx)
 	if orgID == "" {
 		orgID, _ = h.repo.GetOrgIDByProjectID(ctx, agent.ProjectID)
