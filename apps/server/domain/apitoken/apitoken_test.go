@@ -309,6 +309,7 @@ func TestValidApiTokenScopes(t *testing.T) {
 		"mcp:agent-call",
 		"share:agent-chat",
 		"device:api",
+		"webhook:trigger",
 	}
 	if len(ValidApiTokenScopes) != len(expected) {
 		t.Errorf("ValidApiTokenScopes has %d items, want %d", len(ValidApiTokenScopes), len(expected))
@@ -453,6 +454,66 @@ func TestDeviceAPIScopesIsTheExactCeiling(t *testing.T) {
 		if !found {
 			t.Fatalf("deviceAPIScopes is missing %q", w)
 		}
+	}
+}
+
+// The webhook trigger ceiling is a hardcoded four-scope set: the reserved
+// marker plus agents:read/agents:write (the trigger route's agents:write gate)
+// and the data:read read family. It must never be widened.
+func TestWebhookTriggerScopesIsTheExactCeiling(t *testing.T) {
+	want := []string{webhookTriggerScope, "agents:read", "agents:write", "data:read"}
+	if len(webhookTriggerScopes) != len(want) {
+		t.Fatalf("webhookTriggerScopes has %d items, want %d", len(webhookTriggerScopes), len(want))
+	}
+	for _, w := range want {
+		found := false
+		for _, got := range webhookTriggerScopes {
+			if got == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("webhookTriggerScopes is missing %q", w)
+		}
+	}
+}
+
+// The webhook:trigger marker must be reserved to the internal webhook mint
+// path: all user-facing token create/update entry points reject it. Non-DB.
+func TestUserFacingTokenPathsRejectReservedWebhookTriggerScope(t *testing.T) {
+	svc := &Service{}
+	scopes := []string{webhookTriggerScope}
+
+	cases := map[string]func() error{
+		"Create": func() error {
+			_, err := svc.Create(context.Background(), "", "", "test", scopes)
+			return err
+		},
+		"CreateAccountToken": func() error {
+			_, err := svc.CreateAccountToken(context.Background(), "", "test", scopes)
+			return err
+		},
+		"UpdateScopes": func() error {
+			_, err := svc.UpdateScopes(context.Background(), "tok", "", "", scopes)
+			return err
+		},
+		"UpdateAccountTokenScopes": func() error {
+			_, err := svc.UpdateAccountTokenScopes(context.Background(), "tok", "", scopes)
+			return err
+		},
+	}
+
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := call()
+			if err == nil {
+				t.Fatal("expected rejection of the reserved webhook:trigger scope")
+			}
+			if !strings.Contains(err.Error(), "reserved") {
+				t.Fatalf("error = %q, want it to mention reserved", err.Error())
+			}
+		})
 	}
 }
 
