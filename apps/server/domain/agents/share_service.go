@@ -235,10 +235,11 @@ func (s *ShareService) EnsureProjectAdmin(ctx context.Context, projectID, userID
 
 // EnsureProjectMember returns nil when userID holds any membership role in
 // projectID. Owner read endpoints call this for OAuth/session auth, because
-// RequireProjectScope and RequireAPITokenScopes are no-ops for OAuth sessions
-// and the caller-supplied :projectId would otherwise be trusted — letting a
-// member of one project read another project's shared sessions. API-token
-// requests are already scoped by RequireProjectScope and never pass a userID.
+// RequireProjectTokenScope and RequireAPITokenScopes are no-ops for OAuth
+// sessions and the caller-supplied :projectId would otherwise be trusted —
+// letting a member of one project read another project's shared sessions.
+// API-token requests are already scoped by RequireProjectTokenScope and never
+// pass a userID.
 func (s *ShareService) EnsureProjectMember(ctx context.Context, projectID, userID string) error {
 	role, err := s.apiTokens.GetUserProjectRole(ctx, projectID, userID)
 	if err != nil {

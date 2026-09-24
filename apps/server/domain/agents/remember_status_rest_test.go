@@ -158,7 +158,7 @@ func TestGetRunRememberStatus_MissingParamsReturn400(t *testing.T) {
 }
 
 // newRememberStatusEchoContext builds an authenticated Echo context with
-// projectId/runId path params set, simulating RequireAuth + RequireProjectScope.
+// projectId/runId path params set, simulating RequireAuth + RequireProjectTokenScope.
 func newRememberStatusEchoContext(projectID, runID string) (echo.Context, *httptest.ResponseRecorder) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/agent-runs/"+runID+"/remember-status", nil)

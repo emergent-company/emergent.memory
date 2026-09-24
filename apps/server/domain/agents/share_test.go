@@ -761,7 +761,7 @@ func TestGetSessionTranscriptByID_ForeignProject404(t *testing.T) {
 }
 
 // A non-member OAuth caller must be denied before any project session lookup,
-// closing the RequireProjectScope/RequireAPITokenScopes OAuth bypass.
+// closing the RequireProjectTokenScope/RequireAPITokenScopes OAuth bypass.
 func TestGetSessionTranscriptByID_NonMemberForbidden(t *testing.T) {
 	repo := newFakeShareRepo()
 	repo.shareSessionRow = &shareSessionProjectRow{ACPSessionID: "acp-1"}

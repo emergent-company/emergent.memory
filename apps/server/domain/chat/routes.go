@@ -38,7 +38,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Uses the internal graph-query-agent; no agent ID needed from the client.
 	queryGroup := e.Group("/api/projects/:projectId/query")
 	queryGroup.Use(authMiddleware.RequireAuth())
-	queryGroup.Use(authMiddleware.RequireProjectScope())
+	queryGroup.Use(authMiddleware.RequireProjectTokenScope())
+	queryGroup.Use(authMiddleware.RequireProjectMember())
 	queryGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	queryGroup.POST("", h.QueryStream)
 
@@ -47,7 +48,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// The agent is context-aware: it adapts responses based on auth state and project availability.
 	askProjectGroup := e.Group("/api/projects/:projectId/ask")
 	askProjectGroup.Use(authMiddleware.RequireAuth())
-	askProjectGroup.Use(authMiddleware.RequireProjectScope())
+	askProjectGroup.Use(authMiddleware.RequireProjectTokenScope())
+	askProjectGroup.Use(authMiddleware.RequireProjectMember())
 	askProjectGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	askProjectGroup.POST("", h.AskStream)
 
@@ -62,7 +64,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Uses the internal graph-insert-agent; understands NL, deduplicates, branches, and merges.
 	rememberGroup := e.Group("/api/projects/:projectId/remember")
 	rememberGroup.Use(authMiddleware.RequireAuth())
-	rememberGroup.Use(authMiddleware.RequireProjectScope())
+	rememberGroup.Use(authMiddleware.RequireProjectTokenScope())
+	rememberGroup.Use(authMiddleware.RequireProjectMember())
 	rememberGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	rememberGroup.POST("", h.RememberStream)
 	rememberGroup.POST("/file", h.RememberFile)
@@ -70,7 +73,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Project-scoped forget endpoint — NL soft-delete from the knowledge graph.
 	forgetGroup := e.Group("/api/projects/:projectId/forget")
 	forgetGroup.Use(authMiddleware.RequireAuth())
-	forgetGroup.Use(authMiddleware.RequireProjectScope())
+	forgetGroup.Use(authMiddleware.RequireProjectTokenScope())
+	forgetGroup.Use(authMiddleware.RequireProjectMember())
 	forgetGroup.Use(authMiddleware.RequireAPITokenScopes("chat:use"))
 	forgetGroup.POST("", h.ForgetStream)
 }

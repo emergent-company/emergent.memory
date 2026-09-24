@@ -30,7 +30,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Project-scoped skill endpoints
 	projects := e.Group("/api/projects/:projectId/skills")
 	projects.Use(authMiddleware.RequireAuth())
-	projects.Use(authMiddleware.RequireProjectScope())
+	projects.Use(authMiddleware.RequireProjectTokenScope())
 	projects.GET("", h.ListProjectSkills)
 	projects.POST("", h.CreateProjectSkill)
 	projects.PATCH("/:id", h.UpdateProjectSkill)

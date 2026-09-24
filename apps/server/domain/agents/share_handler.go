@@ -83,7 +83,8 @@ func RegisterShareRoutes(e *echo.Echo, h *ShareHandler, authMiddleware *auth.Mid
 	// --- Owner management (project-scoped) ---
 	owner := e.Group("/api/projects/:projectId")
 	owner.Use(authMiddleware.RequireAuth())
-	owner.Use(authMiddleware.RequireProjectScope())
+	owner.Use(authMiddleware.RequireProjectTokenScope())
+	owner.Use(authMiddleware.RequireProjectMember())
 
 	owner.GET("/agent-definitions/:id/share-links", h.ListLinks, authMiddleware.RequireAPITokenScopes("agents:read"))
 	owner.POST("/agent-definitions/:id/share-links", h.CreateLink, authMiddleware.RequireAPITokenScopes("agents:write"))
@@ -459,7 +460,7 @@ func (h *ShareHandler) GetProjectSession(c echo.Context) error {
 // oauthUserID returns the authenticated user's id for OAuth/session auth, or ""
 // for API-token auth. Owner read endpoints pass this to the service so it can
 // enforce project membership for OAuth callers only — API-token callers are
-// already scoped to their project by RequireProjectScope, and their token owner
+// already scoped to their project by RequireProjectTokenScope, and their token owner
 // id is not necessarily a project member.
 func oauthUserID(c echo.Context) string {
 	user := auth.MustGetUser(c)

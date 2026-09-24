@@ -20,7 +20,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Project-scoped template pack routes
 	projects := g.Group("/projects/:projectId")
-	projects.Use(authMiddleware.RequireProjectScope())
+	projects.Use(authMiddleware.RequireProjectTokenScope())
+	projects.Use(authMiddleware.RequireProjectMember())
 
 	// List the project-owned schema catalog (strictly project-scoped) —
 	// REST mirror of the MCP schema-list tool.
