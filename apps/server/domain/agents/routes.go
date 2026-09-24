@@ -13,7 +13,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Accessible via API tokens with agents:read / agents:write scopes.
 	agents := e.Group("/api/projects/:projectId/agents")
 	agents.Use(authMiddleware.RequireAuth())
-	agents.Use(authMiddleware.RequireProjectScope())
+	agents.Use(authMiddleware.RequireProjectTokenScope())
+	agents.Use(authMiddleware.RequireProjectMember())
 
 	// Read operations - require agents:read
 	agentsRead := agents.Group("")
@@ -41,7 +42,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Moved from /api/admin/agent-definitions to /api/projects/:projectId/agent-definitions.
 	defs := e.Group("/api/projects/:projectId/agent-definitions")
 	defs.Use(authMiddleware.RequireAuth())
-	defs.Use(authMiddleware.RequireProjectScope())
+	defs.Use(authMiddleware.RequireProjectTokenScope())
+	defs.Use(authMiddleware.RequireProjectMember())
 
 	defsRead := defs.Group("")
 	defsRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
@@ -65,7 +67,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// --- Generic project settings (key/value config) ---
 	settings := e.Group("/api/projects/:projectId/settings")
 	settings.Use(authMiddleware.RequireAuth())
-	settings.Use(authMiddleware.RequireProjectScope())
+	settings.Use(authMiddleware.RequireProjectTokenScope())
+	settings.Use(authMiddleware.RequireProjectMember())
 
 	settingsRead := settings.Group("")
 	settingsRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
@@ -79,7 +82,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// --- Project-scoped run history routes ---
 	runs := e.Group("/api/projects/:projectId/agent-runs")
 	runs.Use(authMiddleware.RequireAuth())
-	runs.Use(authMiddleware.RequireProjectScope())
+	runs.Use(authMiddleware.RequireProjectTokenScope())
+	runs.Use(authMiddleware.RequireProjectMember())
 	runs.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	runs.GET("", h.ListProjectRuns)
 	runs.GET("/stats", h.GetProjectRunStats)
@@ -95,7 +99,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// --- Project-scoped agent question routes ---
 	questions := e.Group("/api/projects/:projectId/agent-questions")
 	questions.Use(authMiddleware.RequireAuth())
-	questions.Use(authMiddleware.RequireProjectScope())
+	questions.Use(authMiddleware.RequireProjectTokenScope())
+	questions.Use(authMiddleware.RequireProjectMember())
 	questions.GET("", h.HandleListQuestionsByProject)
 	questions.POST("/:questionId/respond", h.HandleRespondToQuestion)
 	questions.POST("/:questionId/cancel", h.HandleCancelQuestion)
@@ -103,7 +108,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// --- Project-scoped tool-approval audit routes ---
 	approvals := e.Group("/api/projects/:projectId/agent-approvals")
 	approvals.Use(authMiddleware.RequireAuth())
-	approvals.Use(authMiddleware.RequireProjectScope())
+	approvals.Use(authMiddleware.RequireProjectTokenScope())
+	approvals.Use(authMiddleware.RequireProjectMember())
 	approvals.GET("", h.HandleListToolApprovals)
 
 	// --- Agent session status routes ---
@@ -123,7 +129,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// --- Project-scoped ADK session routes ---
 	adkSessions := e.Group("/api/projects/:projectId/adk-sessions")
 	adkSessions.Use(authMiddleware.RequireAuth())
-	adkSessions.Use(authMiddleware.RequireProjectScope())
+	adkSessions.Use(authMiddleware.RequireProjectTokenScope())
+	adkSessions.Use(authMiddleware.RequireProjectMember())
 	adkSessions.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	adkSessions.GET("", h.GetADKSessions)
 	adkSessions.GET("/:sessionId", h.GetADKSessionByID)

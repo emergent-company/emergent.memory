@@ -14,7 +14,8 @@
 //
 //	RequireAuth()                    → RequireAuth
 //	RequireAPITokenScopes("x:y")     → RequireAPITokenScopes
-//	RequireProjectScope()            → RequireProjectScope
+//	RequireProjectTokenScope()       → RequireProjectTokenScope
+//	RequireProjectMember()           → RequireProjectMember
 //	RequireProjectID()               → RequireProjectID
 //	RequireScopes(...)               → RequireScopes
 //	ToolAuditMiddleware(...)         → ToolAuditMiddleware
@@ -455,7 +456,8 @@ func parseRouteFileMiddleware(path, domain string) ([]routeMiddleware, error) {
 	// Middleware call patterns
 	requireAuthRe := regexp.MustCompile(`RequireAuth\(\)`)
 	requireAPITokenRe := regexp.MustCompile(`RequireAPITokenScopes\("([^"]+)"\)`)
-	requireProjectScopeRe := regexp.MustCompile(`RequireProjectScope\(\)`)
+	requireProjectTokenScopeRe := regexp.MustCompile(`RequireProjectTokenScope\(\)`)
+	requireProjectMemberRe := regexp.MustCompile(`RequireProjectMember\(\)`)
 	requireProjectIDRe := regexp.MustCompile(`RequireProjectID\(\)`)
 	requireScopesRe := regexp.MustCompile(`RequireScopes\(`)
 	toolAuditRe := regexp.MustCompile(`ToolAuditMiddleware\(`)
@@ -529,8 +531,11 @@ func parseRouteFileMiddleware(path, domain string) ([]routeMiddleware, error) {
 			names = append(names, "RequireAPITokenScopes")
 			scopes = append(scopes, m[1])
 		}
-		if requireProjectScopeRe.MatchString(line) {
-			names = append(names, "RequireProjectScope")
+		if requireProjectTokenScopeRe.MatchString(line) {
+			names = append(names, "RequireProjectTokenScope")
+		}
+		if requireProjectMemberRe.MatchString(line) {
+			names = append(names, "RequireProjectMember")
 		}
 		if requireProjectIDRe.MatchString(line) {
 			names = append(names, "RequireProjectID")

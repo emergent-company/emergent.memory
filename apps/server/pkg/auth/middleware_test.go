@@ -1,11 +1,14 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"testing"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 func TestMiddleware_extractToken(t *testing.T) {
@@ -161,7 +164,7 @@ func (f *fakeResponseWriter) Header() http.Header {
 func (f *fakeResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (f *fakeResponseWriter) WriteHeader(int)             {}
 
-func TestRequireProjectScope_AccountToken_AllowsAnyProject(t *testing.T) {
+func TestRequireProjectTokenScope_AccountToken_AllowsAnyProject(t *testing.T) {
 	m := &Middleware{}
 
 	// An account token has APITokenProjectID == "" (no project binding)
@@ -173,7 +176,7 @@ func TestRequireProjectScope_AccountToken_AllowsAnyProject(t *testing.T) {
 	}
 
 	called := false
-	handler := m.RequireProjectScope()(func(c echo.Context) error {
+	handler := m.RequireProjectTokenScope()(func(c echo.Context) error {
 		called = true
 		return nil
 	})
@@ -183,14 +186,14 @@ func TestRequireProjectScope_AccountToken_AllowsAnyProject(t *testing.T) {
 	err := handler(c)
 
 	if err != nil {
-		t.Errorf("RequireProjectScope() returned error %v for account token; want nil", err)
+		t.Errorf("RequireProjectTokenScope() returned error %v for account token; want nil", err)
 	}
 	if !called {
-		t.Error("RequireProjectScope() did not call next for account token")
+		t.Error("RequireProjectTokenScope() did not call next for account token")
 	}
 }
 
-func TestRequireProjectScope_ProjectToken_BlocksDifferentProject(t *testing.T) {
+func TestRequireProjectTokenScope_ProjectToken_BlocksDifferentProject(t *testing.T) {
 	m := &Middleware{}
 
 	user := &AuthUser{
@@ -200,7 +203,7 @@ func TestRequireProjectScope_ProjectToken_BlocksDifferentProject(t *testing.T) {
 		Scopes:            []string{"data:read"},
 	}
 
-	handler := m.RequireProjectScope()(func(c echo.Context) error {
+	handler := m.RequireProjectTokenScope()(func(c echo.Context) error {
 		return nil
 	})
 
@@ -209,15 +212,15 @@ func TestRequireProjectScope_ProjectToken_BlocksDifferentProject(t *testing.T) {
 	err := handler(c)
 
 	if err == nil {
-		t.Error("RequireProjectScope() should have returned an error for mismatched project, got nil")
+		t.Error("RequireProjectTokenScope() should have returned an error for mismatched project, got nil")
 	}
 	he, ok := err.(*echo.HTTPError)
 	if !ok || he.Code != http.StatusForbidden {
-		t.Errorf("RequireProjectScope() error = %v, want 403 HTTPError", err)
+		t.Errorf("RequireProjectTokenScope() error = %v, want 403 HTTPError", err)
 	}
 }
 
-func TestRequireProjectScope_ProjectToken_AllowsMatchingProject(t *testing.T) {
+func TestRequireProjectTokenScope_ProjectToken_AllowsMatchingProject(t *testing.T) {
 	m := &Middleware{}
 
 	user := &AuthUser{
@@ -228,7 +231,7 @@ func TestRequireProjectScope_ProjectToken_AllowsMatchingProject(t *testing.T) {
 	}
 
 	called := false
-	handler := m.RequireProjectScope()(func(c echo.Context) error {
+	handler := m.RequireProjectTokenScope()(func(c echo.Context) error {
 		called = true
 		return nil
 	})
@@ -237,14 +240,14 @@ func TestRequireProjectScope_ProjectToken_AllowsMatchingProject(t *testing.T) {
 	err := handler(c)
 
 	if err != nil {
-		t.Errorf("RequireProjectScope() returned error %v for matching project; want nil", err)
+		t.Errorf("RequireProjectTokenScope() returned error %v for matching project; want nil", err)
 	}
 	if !called {
-		t.Error("RequireProjectScope() did not call next for matching project")
+		t.Error("RequireProjectTokenScope() did not call next for matching project")
 	}
 }
 
-func TestRequireProjectScope_OAuthSession_PassesThrough(t *testing.T) {
+func TestRequireProjectTokenScope_OAuthSession_PassesThrough(t *testing.T) {
 	m := &Middleware{}
 
 	// OAuth session: APITokenProjectID is "" AND APITokenID is ""
@@ -256,7 +259,7 @@ func TestRequireProjectScope_OAuthSession_PassesThrough(t *testing.T) {
 	}
 
 	called := false
-	handler := m.RequireProjectScope()(func(c echo.Context) error {
+	handler := m.RequireProjectTokenScope()(func(c echo.Context) error {
 		called = true
 		return nil
 	})
@@ -265,10 +268,120 @@ func TestRequireProjectScope_OAuthSession_PassesThrough(t *testing.T) {
 	err := handler(c)
 
 	if err != nil {
-		t.Errorf("RequireProjectScope() returned error %v for OAuth session; want nil", err)
+		t.Errorf("RequireProjectTokenScope() returned error %v for OAuth session; want nil", err)
 	}
 	if !called {
-		t.Error("RequireProjectScope() did not call next for OAuth session")
+		t.Error("RequireProjectTokenScope() did not call next for OAuth session")
+	}
+}
+
+func TestRequireProjectMember_NoUser_Unauthorized(t *testing.T) {
+	m := &Middleware{}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error {
+		called = true
+		return nil
+	})
+
+	c := makeEchoCtx("project-1", nil)
+	err := handler(c)
+	if err == nil {
+		t.Fatal("RequireProjectMember() should have returned an error for a missing user")
+	}
+	if status, _ := apperror.ToHTTPError(err); status != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", status)
+	}
+	if called {
+		t.Error("RequireProjectMember() called next for a missing user")
+	}
+}
+
+func TestRequireProjectMember_APIToken_PassesThrough(t *testing.T) {
+	m := &Middleware{}
+	user := &AuthUser{ID: "user-1", APITokenID: "token-1", APITokenProjectID: "project-1"}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error {
+		called = true
+		return nil
+	})
+
+	c := makeEchoCtx("project-1", user)
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectMember() returned error %v for API token; want nil", err)
+	}
+	if !called {
+		t.Error("RequireProjectMember() did not call next for API token")
+	}
+}
+
+func TestRequireProjectMember_SessionMember_Allows(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "org-1", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return true, nil },
+	}
+	user := &AuthUser{ID: "user-1"}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error {
+		called = true
+		return nil
+	})
+
+	c := makeEchoCtx("project-1", user)
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectMember() returned error %v for a member; want nil", err)
+	}
+	if !called {
+		t.Error("RequireProjectMember() did not call next for a member")
+	}
+}
+
+func TestRequireProjectMember_SessionNonMember_Forbidden(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "org-1", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return false, nil },
+	}
+	user := &AuthUser{ID: "user-1"}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error {
+		called = true
+		return nil
+	})
+
+	c := makeEchoCtx("project-1", user)
+	err := handler(c)
+	if err == nil {
+		t.Fatal("RequireProjectMember() should have returned an error for a non-member")
+	}
+	if status, _ := apperror.ToHTTPError(err); status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", status)
+	}
+	if called {
+		t.Error("RequireProjectMember() called next for a non-member")
+	}
+}
+
+func TestRequireProjectMember_UnknownProject_NotFound(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return false, nil },
+	}
+	user := &AuthUser{ID: "user-1"}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error {
+		called = true
+		return nil
+	})
+
+	c := makeEchoCtx("project-unknown", user)
+	err := handler(c)
+	if err == nil {
+		t.Fatal("RequireProjectMember() should have returned an error for an unknown project")
+	}
+	if status, _ := apperror.ToHTTPError(err); status != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", status)
+	}
+	if called {
+		t.Error("RequireProjectMember() called next for an unknown project")
 	}
 }
 
