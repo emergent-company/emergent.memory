@@ -513,8 +513,11 @@ func (m *Middleware) RequireProjectID() echo.MiddlewareFunc {
 }
 
 // RequireProjectTokenScope returns middleware that enforces API token project
-// binding. For emt_* API tokens it validates that the :projectId URL param
-// matches the token's bound project (rejecting a mismatch with 403).
+// binding. For emt_* API tokens it validates that the addressed project matches
+// the token's bound project (rejecting a mismatch with 403). The addressed
+// project is the :projectId URL param when present; header-scoped groups that
+// carry no such param (e.g. /api/chat) fall back to user.ProjectID, which
+// RequireAuth normalises from the X-Project-ID header.
 //
 // For non-API-token auth (OAuth/human sessions) this is a NO-OP pass-through:
 // it is a token-binding check, NOT a membership check, and does not by itself
@@ -536,13 +539,19 @@ func (m *Middleware) RequireProjectTokenScope() echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			// Check if the route has a :projectId param
+			// The addressed project is the :projectId path param when present.
+			// Header-scoped groups (e.g. /api/chat) carry the project in
+			// X-Project-ID; RequireAuth normalises it onto user.ProjectID, so fall
+			// back to that only when the path param is empty.
 			projectID := c.Param("projectId")
+			if projectID == "" {
+				projectID = user.ProjectID
+			}
 			if projectID == "" {
 				return next(c)
 			}
 
-			// Validate the URL project matches the token's project
+			// Validate the addressed project matches the token's project
 			if projectID != user.APITokenProjectID {
 				return echo.NewHTTPError(http.StatusForbidden, map[string]any{
 					"error": map[string]any{
@@ -568,10 +577,12 @@ func (m *Middleware) RequireProjectTokenScope() echo.MiddlewareFunc {
 // the addressed project. Both are applied together on project-scoped route
 // groups so the group is protected for every caller type.
 //
-// The owning organization is resolved server-side (kb.projects) and membership
-// is checked against kb.organization_memberships, so a caller-supplied
-// :projectId can never self-satisfy the check (the #849/#850 class). Fail
-// closed:
+// The addressed project is the :projectId URL param when present; header-scoped
+// groups that carry no such param (e.g. /api/chat) fall back to user.ProjectID
+// (normalised from the X-Project-ID header by RequireAuth). The owning
+// organization is resolved server-side (kb.projects) and membership is checked
+// against kb.organization_memberships, so a caller-supplied :projectId can
+// never self-satisfy the check (the #849/#850 class). Fail closed:
 //
 //   - no authenticated user → 401
 //   - session caller, addressed project does not exist → 404 (no existence
@@ -602,6 +613,11 @@ func (m *Middleware) RequireProjectMember() echo.MiddlewareFunc {
 			}
 
 			projectID := c.Param("projectId")
+			if projectID == "" {
+				// Header-scoped groups (e.g. /api/chat) carry the project in
+				// X-Project-ID; RequireAuth normalises it onto user.ProjectID.
+				projectID = user.ProjectID
+			}
 			if projectID == "" {
 				return next(c)
 			}

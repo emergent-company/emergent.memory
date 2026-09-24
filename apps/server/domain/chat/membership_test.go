@@ -124,3 +124,36 @@ func (s *ChatMembershipSuite) TestChatUnknownProjectNotFound() {
 	s.Require().Equal(http.StatusNotFound, resp.StatusCode,
 		"unknown-project chat list must be 404, got %d: %s", resp.StatusCode, resp.String())
 }
+
+// TestChatTokenProjectBindingForbidden proves a project-bound emt_* token that
+// presents a different project's id via X-Project-ID is rejected 403 by the
+// shared RequireProjectTokenScope middleware before any membership resolution
+// (issue #869 — token binding must hold for the header-scoped /api/chat group).
+func (s *ChatMembershipSuite) TestChatTokenProjectBindingForbidden() {
+	projectB := s.newForeignProject()
+
+	token := "emt_test_869_binding"
+	s.Require().NoError(testutil.CreateTestAPIToken(s.Ctx, s.DB(),
+		testutil.AdminUser.ID, token, []string{"chat:use"}, s.ProjectID))
+
+	resp := s.Client.GET("/api/chat/conversations",
+		testutil.WithAuth(token), testutil.WithProjectID(projectB))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"project token addressing a different project via X-Project-ID must be 403, got %d: %s",
+		resp.StatusCode, resp.String())
+}
+
+// TestChatTokenProjectBindingOK proves a project-bound emt_* token presenting
+// its own project via X-Project-ID is still admitted (token binding passes, then
+// the API-token caller passes the membership middleware through).
+func (s *ChatMembershipSuite) TestChatTokenProjectBindingOK() {
+	token := "emt_test_869_binding_ok"
+	s.Require().NoError(testutil.CreateTestAPIToken(s.Ctx, s.DB(),
+		testutil.AdminUser.ID, token, []string{"chat:use"}, s.ProjectID))
+
+	resp := s.Client.GET("/api/chat/conversations",
+		testutil.WithAuth(token), testutil.WithProjectID(s.ProjectID))
+	s.Require().Equal(http.StatusOK, resp.StatusCode,
+		"project token addressing its own project must be 200, got %d: %s",
+		resp.StatusCode, resp.String())
+}
