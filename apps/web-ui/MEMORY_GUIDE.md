@@ -11,13 +11,15 @@ AGENT_TRIGGER_TOKEN=emt_<redacted — real value lives in .env, never commit>
 The gateway holds no standing memory token: interactive/API calls authenticate
 with the signed-in user's session (Zitadel) token, and voice bridge workers get
 a short-lived project-scoped token per room from the internal binding endpoint.
-`AGENT_TRIGGER_TOKEN` is the only static memory credential — used solely by the
-session-less GitHub webhook to trigger the review agent.
+`AGENT_TRIGGER_TOKEN` is the only standing memory credential — a scoped
+`webhook:trigger`-marked `emt_*` credential used solely by the session-less GitHub
+webhook to trigger the review agent.
 
 > **Migration (session-less auth):** `MEMORY_TOKEN` is no longer read by the gateway
 > (startup warns if it is still set). Session-less `X-API-Key` / registry-key access to
 > `/api/*` is removed — a key-only caller gets `401 session_required`. Replacement: sign in
-> with Zitadel (session); `AGENT_TRIGGER_TOKEN` for the GitHub webhook only; and for iOS
+> with Zitadel (session); `AGENT_TRIGGER_TOKEN` (a scoped `webhook:trigger` credential) for the
+GitHub webhook only; and for iOS
 > voice devices, a **scoped per-device credential** — an `emt_*` bearer carrying the
 > reserved `device:api` marker, minted via the Project Settings QR flow
 > (`POST /api/setup`), read-only (`agents:read + data:read`), 90-day expiry, individually

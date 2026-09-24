@@ -70,8 +70,8 @@ Memory requires org → project → user scoping (every entity carries `project_
 Memory no longer uses one standing back-end `emt_*` token: interactive calls carry the
 signed-in user's session token (scopes `agents:read/write`, `chat:use`, `data:read`,
 `schema:read`, `projects:read`), voice workers get a short-lived per-room `chat:use` token,
-and the GitHub webhook uses the dedicated `AGENT_TRIGGER_TOKEN`. Project is derived from the
-token. The gateway default is `AUTH_MODE=session` (public, Zitadel-authenticated; `dev` is an
+and the GitHub webhook uses the dedicated scoped `webhook:trigger` credential
+(`AGENT_TRIGGER_TOKEN`). Project is derived from the token. The gateway default is `AUTH_MODE=session` (public, Zitadel-authenticated; `dev` is an
 explicit local-only escape hatch with no Memory credential). In `AUTH_MODE=session`, the
 gateway surfaces memory's org/project tenancy — `ListOrgs`/`ListProjects`/`CreateProject`
 proxy `GET /api/orgs`, `GET/POST /api/projects`, and the web UI shows an org-grouped project

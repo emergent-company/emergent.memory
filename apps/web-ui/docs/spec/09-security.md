@@ -14,7 +14,7 @@ about loudly at startup. The trust boundary is Zitadel's identity provider, not 
 internet
 ├─ clients (web)  ── session cookie ──► Go app
 ├─ clients (iOS voice)  ── emt_* device credential ──► Go app (device surface only)
-├─ Go app  ── session token | device credential | AGENT_TRIGGER_TOKEN ──► memory
+├─ Go app  ── session token | device credential | webhook trigger credential ──► memory
 ├─ Go app  ── server key  ──► LiveKit (mint JWT)
 └─ bridge workers ── per-room scoped token ──► memory (chat)
 ```
@@ -36,8 +36,8 @@ internet
    `/api/*` is gated by `requireClientKey` (open when `TOKEN_API_KEY` is unset) and has no
    Memory credential — it is for the local mock backend only.
 2. **Go app → memory:** the caller's scoped session token or device credential (server-side,
-   never sent to clients); the GitHub webhook uses the dedicated `AGENT_TRIGGER_TOKEN`.
-   Project is derived from the token.
+   never sent to clients); the GitHub webhook uses the scoped `webhook:trigger` credential
+   (`AGENT_TRIGGER_TOKEN`). Project is derived from the token.
 3. **iOS → LiveKit:** short-lived room-join JWT minted by the Go app. No LiveKit credentials
    in the iOS binary.
 4. **Bridge → memory:** the per-room `emt_*` token bound at voice-token mint (for a device
@@ -103,45 +103,67 @@ redirects to the discovered Zitadel `end_session` endpoint with `id_token_hint`/
   revocable from Project Settings.
 - No secrets in git; compose `.env` is git-ignored.
 
-## GitHub webhook trigger credential (`AGENT_TRIGGER_TOKEN`)
+## GitHub webhook trigger credential (`webhook:trigger`)
 
-`AGENT_TRIGGER_TOKEN` is a single static `emt_*` bearer the gateway presents to memory
-to trigger the PR-review agent. It is a **deliberate, accepted decision** (issue #847),
-not an oversight. The rationale, the residual risk, and the future path are recorded here
-so the choice stays explicit.
+The gateway→memory forwarder bearer for the GitHub webhook is a **scoped per-integration
+credential**, not a shared static secret. It is an ordinary `core.api_tokens` row carrying
+the reserved `webhook:trigger` marker, with a per-integration name, a default expiry, and a
+hardcoded scope ceiling enforced at mint time and again at validate time. The gateway still
+holds the raw `emt_*` value in `AGENT_TRIGGER_TOKEN` (server-side only, never shipped to
+clients or the web UI) and presents it as `Authorization: Bearer …` on the trigger call.
 
-**Why a static shared secret is accepted for this surface:**
+**Operational model (mint → install → use → rotate/revoke).** An operator mints the
+credential through the HTTP mint surface — `POST /api/projects/:projectId/webhook-trigger-tokens`
+(`Handler.CreateWebhookTriggerToken`, gated by `RequireAuth()` exactly like the device-token
+route it mirrors) — which returns the raw `emt_*` value once. The operator installs that
+value as the gateway's `AGENT_TRIGGER_TOKEN`. The credential validates as marker-class and
+ceiling-bound, expires on its default 90-day schedule, and is rotated via the shared
+project-token `Regenerate` surface or revoked via `Revoke`; `last_used_at` attributes use.
+The gateway holds **one** forwarder credential today — simultaneous per-integration
+forwarding (one gateway-held credential per integration, selected per delivery) is not
+implemented.
 
-- **The webhook ingress is already HMAC-gated.** GitHub authenticates each delivery with an
-  `X-Hub-Signature-256` header (`HMAC-SHA256`, verified in constant time via `hmac.Equal` in
-  `verifyGitHubSignature`). `AGENT_TRIGGER_TOKEN` is *not* the ingress gate: webhook callers
-  never see or present it. It is the gateway→memory credential only, presented as
-  `Authorization: Bearer …` on the trigger call.
-- **It fails closed on unset/empty.** `Config.Validate` refuses startup when
-  `GITHUB_WEBHOOK_SECRET` is set but `AGENT_TRIGGER_TOKEN` is empty, and the handler returns
-  `503` (retryable) *before* spawning the async trigger when the token is missing — so a
-  missing token can never be accepted and then fail invisibly after the `202`. There is no
-  path where an empty token is treated as a valid credential.
-- **There is no gateway-side token comparison to be made constant-time** — the token is
-  forwarded to memory, which resolves it by SHA-256 hash lookup.
+**The ingress gate is unchanged — HMAC.** GitHub authenticates each delivery with an
+`X-Hub-Signature-256` header (`HMAC-SHA256`, verified in constant time via `hmac.Equal` in
+`verifyGitHubSignature`). The webhook credential is *not* the ingress gate: webhook callers
+never see or present it. It is the gateway→memory credential only, resolved server-side by
+SHA-256 hash lookup — there is no gateway-side token comparison to make constant-time.
 
-**Accepted residual risk** (why this is not yet a scoped marker credential):
+**It still fails closed on unset/empty.** `Config.Validate` refuses startup when
+`GITHUB_WEBHOOK_SECRET` is set but `AGENT_TRIGGER_TOKEN` is empty, and the handler returns
+`503` (retryable) *before* spawning the async trigger when the token is missing — so a
+missing token can never be accepted and then fail invisibly after the `202`.
 
-- The token is **shared** (no per-integration identity), **long-lived** (no expiry/forced
-  rotation), and carries **no reserved marker**, so no surface restriction can be enforced
-  against it server-side. A leaked token grants whatever scopes it was minted with, until an
-  operator rotates it.
-- Impact is bounded: the token's only use is the PR-review trigger; it is held server-side in
-  the gateway's env, never shipped to clients or the web UI, and never logged.
+**Scoped credential bounds (what #859 added over #847's accepted residual risk):**
 
-**Rotation:** rotate by minting a fresh `emt_*` token in memory and updating `AGENT_TRIGGER_TOKEN`
-in the gateway env (then restart). Rotation is manual; there is no automated expiry.
+- **Reserved marker + mint surface.** The credential carries `webhook:trigger`, reserved to
+  the internal mint path — no user-facing token endpoint can attach it (`Create`,
+  `CreateAccountToken`, `UpdateScopes`, `UpdateAccountTokenScopes` all reject it) — and is
+  minted via `POST /api/projects/:projectId/webhook-trigger-tokens` (mirroring the
+  device-token route's `RequireAuth()` gate).
+- **Hardcoded ceiling.** The stored scope set is exactly `webhook:trigger + agents:read +
+  agents:write + data:read` (the `agents:write` the trigger route's own gate requires, plus
+  the read family the review agent's in-process loopback uses). It is enforced at mint time
+  and again at validate time: a DB-tampered row whose scope set exceeds the ceiling is
+  rejected fail-closed, never trusted.
+- **Surface guard.** The server rejects the credential on any path outside the webhook
+  trigger surface (the trigger route plus its `search-knowledge`→`/query` loopback). Even a
+  leaked credential cannot reach token-mint, member, org, chat, skills or write endpoints.
+- **Per-integration identity, expiry, revocation, attribution.** Each integration gets its
+  own named `core.api_tokens` row (its own `last_used_at`), a default expiry, and an
+  individual `revoked_at`; rotation reuses the shared project-token `Regenerate` path.
+  Unknown/revoked/expired/store-down all deny (401), never proxied.
 
-**Future path:** promote this to a real scoped credential — an `emt_*` token minted via an
-internal mint path carrying a reserved marker scope (e.g. `webhook:trigger`, following the
-`mcp:agent-call` / `share:agent-chat` precedents in `apps/server/domain/apitoken/`), with an
-expiry, a per-integration name, and a scope ceiling enforced on the trigger-agent route. That
-is a server-side change and is deliberately out of scope for #847.
+**Effective-scope note.** `agents:write` is an umbrella scope that expands to `chat:admin`
+and `skills:write`, and `agents:read`/`data:read` expand to the read family. The
+credential's **effective** scope set therefore includes those implied scopes; they are
+reachable only through the review agent's own loopback (a trusted, bounded use), because the
+surface guard confines the credential to the trigger route and its query loopback.
+
+**Rotation:** rotate by minting a fresh webhook credential (mint surface), updating
+`AGENT_TRIGGER_TOKEN` in the gateway env, then restarting; or use the shared project-token
+`Regenerate`/`Revoke` surface. The credential carries a default 90-day expiry so it does not
+live forever.
 
 ## Room allow-list (iOS token)
 
@@ -159,7 +181,7 @@ is a server-side change and is deliberately out of scope for #847.
 | Stolen one-time setup token | single-use + 10-min TTL; worst case one extra device credential, revoked on QR rotation and revocable from Project Settings |
 | Device credential leaks | per-device credential is scoped to one client, read-only, expiring, and revocable; the exact-set ceiling + surface guard bound it even if tampered |
 | MCP server secrets (headers/env) stored **plaintext** in memory | scope by memory project isolation; do **not** store memory/LiveKit master creds as MCP headers; document the limitation |
-| `AGENT_TRIGGER_TOKEN` leaks (static, shared, no marker) | ingress is HMAC-gated (constant time); token held server-side only and never logged; fail-closed on unset; accepted risk with manual rotation, tracked for a reserved-marker scope ceiling (#847) |
+| `AGENT_TRIGGER_TOKEN` leaks (webhook trigger credential) | ingress is HMAC-gated (constant time); credential is scoped (`webhook:trigger` marker, exact-set ceiling, surface guard), per-integration, expiring, revocable; held server-side only and never logged; fail-closed on unset (#859) |
 
 ## Non-goals (explicitly out)
 

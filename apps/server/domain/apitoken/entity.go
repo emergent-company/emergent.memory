@@ -125,6 +125,13 @@ var ValidApiTokenScopes = []string{
 	// marker (see rejectDeviceTokenOutsideSurface); the server enforces the
 	// exact-set device ceiling at validation time.
 	"device:api",
+	// Marker scope minted on scoped webhook trigger credentials. Like the other
+	// marker scopes it is reserved for an internal mint path
+	// (Service.CreateWebhookTriggerToken) and deliberately absent from the
+	// user-facing oneof tags; Service.Create / CreateAccountToken / UpdateScopes
+	// reject it. The server enforces the exact-set webhook ceiling and the
+	// trigger-route surface guard at validation time.
+	"webhook:trigger",
 }
 
 // ToDTO converts an ApiToken entity to ApiTokenDTO

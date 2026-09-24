@@ -124,9 +124,12 @@ type Config struct {
 	GitHubWebhookSecret string
 	GitHubReviewAgentID string
 	GitHubReviewRepos   string
-	// AgentTriggerToken is a dedicated static Memory bearer token used ONLY by
-	// the session-less GitHub webhook to trigger the review agent
-	// (AGENT_TRIGGER_TOKEN). Every other memory call authenticates with the
+	// AgentTriggerToken is the webhook trigger credential the gateway forwards
+	// to memory to trigger the PR-review agent (AGENT_TRIGGER_TOKEN). It is a
+	// scoped per-integration `emt_*` credential carrying the reserved
+	// `webhook:trigger` marker, minted server-side via the internal
+	// CreateWebhookTriggerToken path (name + expiry + exact-set ceiling), not a
+	// shared static secret. Every other memory call authenticates with the
 	// request's session token; this is not a general gateway credential.
 	AgentTriggerToken string
 }
