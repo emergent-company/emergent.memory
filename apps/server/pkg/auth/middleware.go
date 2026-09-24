@@ -281,6 +281,92 @@ func rejectDeviceTokenOutsideSurface(method, path string, scopes []string) error
 	return apperror.NewForbidden("device:api credentials are only valid on the device surface")
 }
 
+// webhookTriggerScope is the reserved marker scope minted on scoped webhook
+// trigger credentials (mirrors domain/apitoken.webhookTriggerScope; pkg/auth
+// cannot import the domain package). Its presence classifies a token as
+// webhook-trigger-class.
+const webhookTriggerScope = "webhook:trigger"
+
+// webhookTriggerScopes is the authoritative webhook ceiling: the marker plus
+// agents:read/agents:write (the trigger route's own agents:write gate) and the
+// data:read read family the review agent's in-process loopback needs. It must
+// match domain/apitoken's webhookTriggerScopes exactly.
+var webhookTriggerScopes = []string{webhookTriggerScope, "agents:read", "agents:write", "data:read"}
+
+// hasWebhookTriggerScope reports whether scopes contains the webhook:trigger marker.
+func hasWebhookTriggerScope(scopes []string) bool {
+	for _, s := range scopes {
+		if s == webhookTriggerScope {
+			return true
+		}
+	}
+	return false
+}
+
+// webhookScopesMatchCeiling reports whether scopes is EXACTLY the webhook
+// ceiling set (same members, same cardinality). It is the validate-time defence
+// in depth: even a DB-tampered webhook credential whose scope set was widened
+// must be rejected, never trusted.
+func webhookScopesMatchCeiling(scopes []string) bool {
+	if len(scopes) != len(webhookTriggerScopes) {
+		return false
+	}
+	for _, want := range webhookTriggerScopes {
+		found := false
+		for _, got := range scopes {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// webhookTriggerRoute reports whether (method, path) is the agent-trigger route
+// the webhook credential exists to call: POST /api/projects/:projectId/agents/:id/trigger.
+func webhookTriggerRoute(method, path string) bool {
+	return method == http.MethodPost &&
+		strings.HasPrefix(path, "/api/projects/") &&
+		strings.Contains(path, "/agents/") &&
+		strings.HasSuffix(path, "/trigger")
+}
+
+// webhookQueryRoute reports whether (method, path) is the stateless query
+// loopback the review agent's search-knowledge tool uses during a run
+// (POST /api/projects/:projectId/query). It is read-only (chat:use) and part of
+// the webhook surface so the forwarded credential can drive the agent's own
+// in-process loopback.
+func webhookQueryRoute(method, path string) bool {
+	return method == http.MethodPost &&
+		strings.HasPrefix(path, "/api/projects/") &&
+		strings.HasSuffix(path, "/query")
+}
+
+// webhookSurfaceAllowed reports whether a server request path/method is within
+// the webhook trigger surface: the trigger route plus the query loopback. Every
+// other surface — token mint, members, org/project admin, chat, graph writes,
+// skills — is out.
+func webhookSurfaceAllowed(method, path string) bool {
+	return webhookTriggerRoute(method, path) || webhookQueryRoute(method, path)
+}
+
+// rejectWebhookTokenOutsideSurface returns a 403 error when a webhook:trigger
+// token is used outside the webhook trigger surface. It is a pure function so
+// it can be unit-tested independently of the auth pipeline.
+func rejectWebhookTokenOutsideSurface(method, path string, scopes []string) error {
+	if !hasWebhookTriggerScope(scopes) {
+		return nil
+	}
+	if webhookSurfaceAllowed(method, path) {
+		return nil
+	}
+	return apperror.NewForbidden("webhook:trigger credentials are only valid on the webhook trigger surface")
+}
+
 // RequireAuth returns middleware that requires authentication
 func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -371,6 +457,16 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 			// keeps a device credential off token-mint, member, org and write
 			// endpoints even when a route has no scope gate).
 			if err := rejectDeviceTokenOutsideSurface(c.Request().Method, c.Request().URL.Path, user.Scopes); err != nil {
+				return m.authError(c, err)
+			}
+
+			// Fail closed: a webhook:trigger token is only valid on the webhook
+			// trigger surface (the trigger route plus its query loopback). Reject
+			// it anywhere else (defense in depth — the token's exact-set ceiling
+			// bounds its scopes, but the surface guard keeps a leaked webhook
+			// credential off token-mint, member, org, chat and write endpoints
+			// even when a route has no scope gate).
+			if err := rejectWebhookTokenOutsideSurface(c.Request().Method, c.Request().URL.Path, user.Scopes); err != nil {
 				return m.authError(c, err)
 			}
 
@@ -984,6 +1080,16 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		m.log.Warn("device credential carries an out-of-ceiling scope set; rejecting",
 			slog.String("token_id", result.ID))
 		return nil, apperror.NewForbidden("device:api token scope set exceeds the device ceiling")
+	}
+
+	// Validate-time ceiling for webhook trigger credentials: a webhook:trigger
+	// token whose scope set is not EXACTLY the webhook ceiling is rejected
+	// fail-closed, even if the row was tampered in the DB. A webhook credential
+	// can never carry a scope beyond its hardcoded ceiling.
+	if hasWebhookTriggerScope(result.Scopes) && !webhookScopesMatchCeiling(result.Scopes) {
+		m.log.Warn("webhook trigger credential carries an out-of-ceiling scope set; rejecting",
+			slog.String("token_id", result.ID))
+		return nil, apperror.NewForbidden("webhook:trigger token scope set exceeds the webhook ceiling")
 	}
 
 	// Resolve project ID: account-level tokens have a nil project_id
