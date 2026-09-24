@@ -488,6 +488,190 @@ func TestExpandScopes_ProjectsWrite_NoAdminImplication(t *testing.T) {
 	}
 }
 
+// --- user.ProjectID fallback (header-scoped groups, e.g. /api/chat) ---
+
+func TestRequireProjectTokenScope_HeaderScopedFallback_BlocksMismatch(t *testing.T) {
+	m := &Middleware{}
+	user := &AuthUser{
+		ID:                "user-1",
+		APITokenID:        "token-1",
+		APITokenProjectID: "project-bound",
+		ProjectID:         "project-other", // from X-Project-ID header
+		Scopes:            []string{"data:read"},
+	}
+
+	handler := m.RequireProjectTokenScope()(func(c echo.Context) error { return nil })
+
+	c := makeEchoCtx("", user) // no :projectId path param
+	err := handler(c)
+	if err == nil {
+		t.Fatal("RequireProjectTokenScope() should block a header project mismatching the token project")
+	}
+	he, ok := err.(*echo.HTTPError)
+	if !ok || he.Code != http.StatusForbidden {
+		t.Errorf("RequireProjectTokenScope() error = %v, want 403 HTTPError", err)
+	}
+}
+
+func TestRequireProjectTokenScope_HeaderScopedFallback_AllowsMatch(t *testing.T) {
+	m := &Middleware{}
+	user := &AuthUser{
+		ID:                "user-1",
+		APITokenID:        "token-1",
+		APITokenProjectID: "project-bound",
+		ProjectID:         "project-bound",
+		Scopes:            []string{"data:read"},
+	}
+
+	called := false
+	handler := m.RequireProjectTokenScope()(func(c echo.Context) error { called = true; return nil })
+
+	c := makeEchoCtx("", user)
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectTokenScope() returned error %v for matching header project; want nil", err)
+	}
+	if !called {
+		t.Error("RequireProjectTokenScope() did not call next for matching header project")
+	}
+}
+
+func TestRequireProjectTokenScope_HeaderScopedFallback_EmptyHeaderPasses(t *testing.T) {
+	m := &Middleware{}
+	user := &AuthUser{
+		ID:                "user-1",
+		APITokenID:        "token-1",
+		APITokenProjectID: "project-bound",
+		ProjectID:         "", // no header, no path param
+		Scopes:            []string{"data:read"},
+	}
+
+	called := false
+	handler := m.RequireProjectTokenScope()(func(c echo.Context) error { called = true; return nil })
+
+	c := makeEchoCtx("", user)
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectTokenScope() returned error %v for empty header; want nil (no-op preserved)", err)
+	}
+	if !called {
+		t.Error("RequireProjectTokenScope() did not call next for empty header")
+	}
+}
+
+func TestRequireProjectTokenScope_PathParamWinsOverHeader(t *testing.T) {
+	m := &Middleware{}
+	user := &AuthUser{
+		ID:                "user-1",
+		APITokenID:        "token-1",
+		APITokenProjectID: "project-bound",
+		ProjectID:         "project-bound", // header matches token
+		Scopes:            []string{"data:read"},
+	}
+
+	handler := m.RequireProjectTokenScope()(func(c echo.Context) error { return nil })
+
+	// Path param mismatches the token even though the header matches; the
+	// path param must win (unchanged path-param semantics).
+	c := makeEchoCtx("project-other", user)
+	err := handler(c)
+	if err == nil {
+		t.Fatal("RequireProjectTokenScope() should block a mismatched :projectId path param even when the header matches")
+	}
+	he, ok := err.(*echo.HTTPError)
+	if !ok || he.Code != http.StatusForbidden {
+		t.Errorf("RequireProjectTokenScope() error = %v, want 403 HTTPError", err)
+	}
+}
+
+func TestRequireProjectMember_HeaderScopedFallback_AllowsMember(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "org-1", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return true, nil },
+	}
+	user := &AuthUser{ID: "user-1", ProjectID: "project-header"}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error { called = true; return nil })
+
+	c := makeEchoCtx("", user) // no :projectId path param
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectMember() returned error %v for a header-scoped member; want nil", err)
+	}
+	if !called {
+		t.Error("RequireProjectMember() did not call next for a header-scoped member")
+	}
+}
+
+func TestRequireProjectMember_HeaderScopedFallback_Forbidden(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "org-1", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return false, nil },
+	}
+	user := &AuthUser{ID: "user-1", ProjectID: "project-header"}
+	handler := m.RequireProjectMember()(func(c echo.Context) error { return nil })
+
+	c := makeEchoCtx("", user)
+	err := handler(c)
+	if err == nil {
+		t.Fatal("RequireProjectMember() should deny a header-scoped non-member")
+	}
+	if status, _ := apperror.ToHTTPError(err); status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", status)
+	}
+}
+
+func TestRequireProjectMember_HeaderScopedFallback_NotFound(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return false, nil },
+	}
+	user := &AuthUser{ID: "user-1", ProjectID: "project-unknown"}
+	handler := m.RequireProjectMember()(func(c echo.Context) error { return nil })
+
+	c := makeEchoCtx("", user)
+	err := handler(c)
+	if err == nil {
+		t.Fatal("RequireProjectMember() should 404 a header-scoped unknown project")
+	}
+	if status, _ := apperror.ToHTTPError(err); status != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", status)
+	}
+}
+
+func TestRequireProjectMember_HeaderScopedFallback_EmptyProjectPasses(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "org-1", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return true, nil },
+	}
+	user := &AuthUser{ID: "user-1", ProjectID: ""}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error { called = true; return nil })
+
+	c := makeEchoCtx("", user)
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectMember() returned error %v for empty header; want nil (no-op preserved)", err)
+	}
+	if !called {
+		t.Error("RequireProjectMember() did not call next for empty header")
+	}
+}
+
+func TestRequireProjectMember_PathParamWinsOverHeader(t *testing.T) {
+	var got string
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, p string) (string, error) { got = p; return "org-1", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return true, nil },
+	}
+	user := &AuthUser{ID: "user-1", ProjectID: "project-header"}
+	handler := m.RequireProjectMember()(func(c echo.Context) error { return nil })
+
+	c := makeEchoCtx("project-path", user)
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectMember() returned error %v; want nil", err)
+	}
+	if got != "project-path" {
+		t.Fatalf("membership lookup used %q, want path param %q (path param must win over header)", got, "project-path")
+	}
+}
+
 func TestRequireAPITokenScopes_OAuthSession_BypassesCheck(t *testing.T) {
 	m := &Middleware{}
 
