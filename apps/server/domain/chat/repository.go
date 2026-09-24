@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -305,6 +306,45 @@ func (r *Repository) GetConversationHistory(ctx context.Context, conversationID 
 	}
 
 	return messages, nil
+}
+
+// GetOrgIDForProject looks up the owning organization of a project. A missing
+// project returns ("", nil) so the caller can surface a 404 without leaking
+// project existence to a caller that cannot see it (issue #864). Mirrors
+// pkg/auth.Middleware.dbProjectOrg.
+func (r *Repository) GetOrgIDForProject(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := r.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &orgID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return orgID, nil
+}
+
+// IsUserOrgMember reports whether the user holds any membership role in the
+// given organization. It is the authoritative membership source for the
+// /api/chat authorization guard (issue #864) and mirrors
+// pkg/auth.Middleware.dbOrgMember.
+func (r *Repository) IsUserOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
+	var ok bool
+	err := r.db.NewRaw(`
+		SELECT EXISTS(
+			SELECT 1 FROM kb.organization_memberships
+			WHERE organization_id = ? AND user_id = ?
+		)
+	`, orgID, userID).Scan(ctx, &ok)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 // SetAgentDefinitionID updates the agent_definition_id on a conversation.
