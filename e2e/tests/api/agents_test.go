@@ -128,21 +128,31 @@ func TestAgents_ListAgents_Success(t *testing.T) {
 	}
 }
 
-func TestAgents_ListAgents_RequiresProjectID(t *testing.T) {
+func TestAgents_ListAgents_NonexistentProject_NotFound(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	// Non-existent projectID returns empty list (server does not validate project existence on list).
+	// Project-scoped routes now enforce membership: a non-existent project
+	// addressed by an authenticated caller is a 404 (no existence oracle).
 	fakeProjectID := uuid.New().String()
 	resp := doAPILogged(t, rl, "GET", agentPath(fakeProjectID, ""), e2eTestToken(), fakeProjectID, nil)
-	body := mustStatus(t, resp, http.StatusOK)
-	var result map[string]any
-	parseBodyJSON(t, body, &result)
-	data, _ := result["data"].([]any)
-	if len(data) != 0 {
-		t.Errorf("expected empty agents for fake project, got %d", len(data))
-	}
+	mustStatus(t, resp, http.StatusNotFound)
+}
+
+func TestAgents_ListAgents_NonMember_Forbidden(t *testing.T) {
+	rl := newRunLog(t)
+	defer rl.Close()
+	skipIfServerDown(t, rl)
+	skipIfStandaloneMode(t)
+
+	// Project owned by e2e-test-user.
+	projectID, _ := setupProjectLogged(t, rl)
+
+	// "all-scopes" is a distinct user with no membership in the project's org:
+	// the project-scoped route is denied with 403.
+	resp := doAPILogged(t, rl, "GET", agentPath(projectID, ""), "all-scopes", projectID, nil)
+	mustStatus(t, resp, http.StatusForbidden)
 }
 
 func TestAgents_GetAgent_Success(t *testing.T) {
@@ -387,17 +397,18 @@ func TestAgents_CreateDefinition_RequiresAuth(t *testing.T) {
 	mustStatus(t, resp, http.StatusUnauthorized)
 }
 
-func TestAgents_CreateDefinition_RequiresProjectID(t *testing.T) {
+func TestAgents_CreateDefinition_NonexistentProject_NotFound(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	// Server does not enforce project existence for definitions; creation succeeds.
+	// Project-scoped routes now enforce membership: a non-existent project
+	// addressed by an authenticated caller is a 404 (no existence oracle).
 	fakeProjectID := uuid.New().String()
 	resp := doAPILogged(t, rl, "POST", defPath(fakeProjectID, ""), e2eTestToken(), fakeProjectID, jsonBody(map[string]any{
 		"name": "Test Definition " + fakeProjectID[:8],
 	}))
-	mustStatus(t, resp, http.StatusCreated)
+	mustStatus(t, resp, http.StatusNotFound)
 }
 
 func TestAgents_CreateDefinition_MissingName(t *testing.T) {
@@ -437,21 +448,16 @@ func TestAgents_ListDefinitions_Success(t *testing.T) {
 	}
 }
 
-func TestAgents_ListDefinitions_RequiresProjectID(t *testing.T) {
+func TestAgents_ListDefinitions_NonexistentProject_NotFound(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	// Non-existent projectID returns empty list (server does not validate project existence on list).
+	// Project-scoped routes now enforce membership: a non-existent project
+	// addressed by an authenticated caller is a 404 (no existence oracle).
 	fakeProjectID := uuid.New().String()
 	resp := doAPILogged(t, rl, "GET", defPath(fakeProjectID, ""), e2eTestToken(), fakeProjectID, nil)
-	body := mustStatus(t, resp, http.StatusOK)
-	var result map[string]any
-	parseBodyJSON(t, body, &result)
-	data, _ := result["data"].([]any)
-	if len(data) != 0 {
-		t.Errorf("expected empty definitions for fake project, got %d", len(data))
-	}
+	mustStatus(t, resp, http.StatusNotFound)
 }
 
 func TestAgents_GetDefinition_Success(t *testing.T) {
