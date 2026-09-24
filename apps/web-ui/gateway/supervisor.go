@@ -16,7 +16,7 @@ import (
 // the parent environment (LIVEKIT_*, DEEPGRAM_*, CARTESIA_*, MEMORY_URL, …), so
 // these are explicitly stripped instead of allowlisting the whole child env.
 var gatewayOnlyEnvVars = []string{
-	"AGENT_TRIGGER_TOKEN",   // webhook-only static memory credential
+	"AGENT_TRIGGER_TOKEN",   // webhook trigger credential (scoped, webhook:trigger marker)
 	"SESSION_SECRET",        // browser session cookie HMAC key
 	"SHARE_COOKIE_SECRET",   // public-share cookie HMAC key
 	"SHARE_REF_SECRET",      // public-share ref secret

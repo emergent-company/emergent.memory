@@ -107,7 +107,7 @@ func (s *Server) githubWebhook(c echo.Context) error {
 
 	prompt := githubReviewPrompt(&payload)
 	ctxValues := githubReviewContext(&payload)
-	// Refuse before accepting (202) when the dedicated trigger credential is
+	// Refuse before accepting (202) when the webhook trigger credential is
 	// missing: the trigger runs asynchronously, so a missing token would
 	// otherwise be invisible to GitHub and unretryable. Config.Validate fails
 	// startup for the same reason; this covers a runtime-unset value.
@@ -119,9 +119,10 @@ func (s *Server) githubWebhook(c echo.Context) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		// The webhook is session-less, so it authenticates the trigger with the
-		// dedicated static AGENT_TRIGGER_TOKEN. The session context carries no
-		// project id, so project scope keeps coming from the MemoryClient (the
-		// project travels in the URL and X-Project-ID stays empty).
+		// scoped webhook trigger credential (a `webhook:trigger`-marked emt_*
+		// bearer). The session context carries no project id, so project scope
+		// keeps coming from the MemoryClient (the project travels in the URL and
+		// X-Project-ID stays empty).
 		ctx = withSessionContext(ctx, &sessionContext{Token: s.cfg.AgentTriggerToken})
 		if _, err := s.memory.TriggerAgent(ctx, agentID, prompt, ctxValues); err != nil {
 			log.Printf("github webhook: trigger agent %s for %s#%d failed: %v", agentID, repoFullName, payload.pullNumber(), err)

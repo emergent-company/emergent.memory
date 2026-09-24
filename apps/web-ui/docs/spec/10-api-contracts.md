@@ -155,6 +155,12 @@ Auth: `emt_*` token (Bearer). Project is **derived from the token** — no `X-Pr
 header. Scopes: `agents:read agents:write chat:use data:read data:write schema:read
 schema:write projects:read projects:write admin`.
 
+The **GitHub webhook trigger** is the one session-less caller; it presents a scoped
+`webhook:trigger` credential (`AGENT_TRIGGER_TOKEN`) whose scope set is the hardcoded ceiling
+`webhook:trigger + agents:read + agents:write + data:read`, confined by a server-side surface
+guard to the trigger route (`POST /api/projects/:projectId/agents/:id/trigger`) and its
+`search-knowledge`→`/query` loopback.
+
 ### Agent definition CRUD
 `POST /api/projects/:projectId/agent-definitions` (scope `agents:write`):
 ```json

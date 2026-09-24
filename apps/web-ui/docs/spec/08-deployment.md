@@ -60,12 +60,13 @@ The Dockerfile/compose above is the target packaging (go-daisy must be vendored 
 Secrets are injected via env (compose `.env`), never baked into the image. The Go app holds
 the LiveKit server keys and the session cookie/OIDC secrets. Interactive memory calls
 authenticate with the signed-in user's session token; the only static memory credential is the
-dedicated `AGENT_TRIGGER_TOKEN` used by the session-less GitHub webhook. Bridge workers get a
-short-lived per-room token from the gateway's internal binding endpoint.
+scoped `webhook:trigger` credential held in `AGENT_TRIGGER_TOKEN`, used by the session-less
+GitHub webhook. Bridge workers get a short-lived per-room token from the gateway's internal
+binding endpoint.
 
 | Secret | Holder | Notes |
 |---|---|---|
-| `AGENT_TRIGGER_TOKEN` (`emt_*`) | Go app (GitHub webhook only) | static memory token for the session-less PR-review trigger |
+| `AGENT_TRIGGER_TOKEN` (`emt_*`) | Go app (GitHub webhook only) | scoped `webhook:trigger` credential (marker + exact-set ceiling + surface guard) for the session-less PR-review trigger |
 | `LIVEKIT_API_KEY/SECRET` | Go app + bridge | server key for token mint + worker join |
 | `TOKEN_API_KEY` | Go app | **optional admin** client `X-API-Key`; dev-mode only (session mode rejects session-less key callers) |
 | `AUTH_MODE` | Go app | browser-auth posture: `session` (**default**) requires Zitadel; `dev` = explicit unauthenticated local dev |
