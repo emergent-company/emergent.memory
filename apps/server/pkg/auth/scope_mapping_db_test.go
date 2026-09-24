@@ -99,6 +99,23 @@ var authDBTestDDL = []string{
 		created_at timestamptz NOT NULL DEFAULT now(),
 		CONSTRAINT organization_memberships_organization_id_user_id_key UNIQUE (organization_id, user_id)
 	)`,
+	// core.api_tokens mirrors the real schema (see migrations/00001_baseline.sql,
+	// 00064_api_tokens_expires_at.sql, 00065_api_tokens_nullable_user_id.sql) but
+	// omits the project/user foreign keys so token rows can be seeded without
+	// first creating a project row. It is used by the last_used_at audit tests.
+	`CREATE TABLE core.api_tokens (
+		id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+		project_id uuid,
+		user_id uuid,
+		name text NOT NULL,
+		token_hash text NOT NULL UNIQUE,
+		token_prefix text NOT NULL,
+		scopes text[] NOT NULL DEFAULT '{}',
+		created_at timestamptz NOT NULL DEFAULT now(),
+		last_used_at timestamptz,
+		revoked_at timestamptz,
+		expires_at timestamptz
+	)`,
 }
 
 // setupAuthDBTest creates a throwaway database on the configured Postgres
