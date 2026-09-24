@@ -365,12 +365,10 @@ func (h *Handler) ListProjectSkills(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("projectId is required")
 	}
 
-	if err := h.requireProjectMember(c, projectID); err != nil {
+	orgID, err := h.requireProjectMember(c, projectID)
+	if err != nil {
 		return err
 	}
-
-	// Attempt to resolve org context (best-effort, non-fatal)
-	orgID := auth.OrgIDFromContext(c.Request().Context())
 
 	skills, err := h.repo.FindForAgent(c.Request().Context(), projectID, orgID)
 	if err != nil {
@@ -405,7 +403,7 @@ func (h *Handler) CreateProjectSkill(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("projectId is required")
 	}
 
-	if err := h.requireProjectMember(c, projectID); err != nil {
+	if _, err := h.requireProjectMember(c, projectID); err != nil {
 		return err
 	}
 
@@ -450,7 +448,7 @@ func (h *Handler) CreateProjectSkill(c echo.Context) error {
 // @Security     bearerAuth
 func (h *Handler) UpdateProjectSkill(c echo.Context) error {
 	projectID := c.Param("projectId")
-	if err := h.requireProjectMember(c, projectID); err != nil {
+	if _, err := h.requireProjectMember(c, projectID); err != nil {
 		return err
 	}
 	if _, err := h.requireProjectSkill(c, projectID); err != nil {
@@ -474,7 +472,7 @@ func (h *Handler) UpdateProjectSkill(c echo.Context) error {
 // @Security     bearerAuth
 func (h *Handler) DeleteProjectSkill(c echo.Context) error {
 	projectID := c.Param("projectId")
-	if err := h.requireProjectMember(c, projectID); err != nil {
+	if _, err := h.requireProjectMember(c, projectID); err != nil {
 		return err
 	}
 	if _, err := h.requireProjectSkill(c, projectID); err != nil {
@@ -509,25 +507,26 @@ func (h *Handler) requireOrgMember(c echo.Context, orgID string) error {
 // that owns projectID. Returns 401 when no user is present, 404 when the project
 // does not exist, 403 when the caller is not a member. The owning org is looked
 // up server-side (issue #849/#850), so a project addressed by a foreign caller
-// can never self-satisfy the check.
-func (h *Handler) requireProjectMember(c echo.Context, projectID string) error {
+// can never self-satisfy the check. It returns the resolved owning org so
+// callers (e.g. ListProjectSkills) can reuse it without a second lookup.
+func (h *Handler) requireProjectMember(c echo.Context, projectID string) (string, error) {
 	ctx := c.Request().Context()
 	user, err := auth.RequireUser(ctx)
 	if err != nil {
-		return apperror.ErrUnauthorized.WithMessage("authentication required")
+		return "", apperror.ErrUnauthorized.WithMessage("authentication required")
 	}
 	orgID, err := h.repo.GetOrgIDForProject(ctx, projectID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	ok, err := h.repo.IsUserOrgMember(ctx, orgID, user.ID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !ok {
-		return apperror.ErrForbidden.WithMessage("access to project skills denied")
+		return "", apperror.ErrForbidden.WithMessage("access to project skills denied")
 	}
-	return nil
+	return orgID, nil
 }
 
 // requireOrgSkill asserts the skill addressed by :id belongs to orgID. It
