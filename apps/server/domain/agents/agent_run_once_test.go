@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // ============================================================================
@@ -282,6 +283,35 @@ func TestRunAgentOnceUsesProvidedBudget(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, *runner.gotReq.MaxSteps)
 	assert.Equal(t, 5*time.Second, *runner.gotReq.Timeout)
+}
+
+// The org attached to the execute request must resolve correctly for every
+// caller type. A session caller has no org in context (OrgIDFromContext is
+// empty — the case the fallback exists for), so the owning org comes from the
+// kb.projects lookup. When a caller has already resolved the org into context
+// (executor loopback / token-bound middleware), that value wins and the DB
+// round-trip is skipped.
+func TestRunAgentTurnResolvesOrgForEveryCallerType(t *testing.T) {
+	t.Run("session caller falls back to project owner", func(t *testing.T) {
+		repo := &fakeOnceRepo{agent: enabledAgent(), msgs: assistantMessages("ok"), orgID: "org-123"}
+		runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
+		h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+		_, _, err := h.RunAgentOnce(context.Background(), "proj-1", "agent-1", "ping", mcp.AgentRunBudget{})
+		require.NoError(t, err)
+		assert.Equal(t, "org-123", runner.gotReq.OrgID)
+	})
+
+	t.Run("context org short-circuits the lookup", func(t *testing.T) {
+		repo := &fakeOnceRepo{agent: enabledAgent(), msgs: assistantMessages("ok"), orgID: "org-123"}
+		runner := &fakeRunner{result: &ExecuteResult{RunID: "r1", Status: RunStatusSuccess}}
+		h := &MCPToolHandler{onceRepo: repo, onceRunner: runner}
+
+		ctx := auth.ContextWithOrgID(context.Background(), "org-ctx")
+		_, _, err := h.RunAgentOnce(ctx, "proj-1", "agent-1", "ping", mcp.AgentRunBudget{})
+		require.NoError(t, err)
+		assert.Equal(t, "org-ctx", runner.gotReq.OrgID)
+	})
 }
 
 func TestRunAgentOnceMissingAgent(t *testing.T) {

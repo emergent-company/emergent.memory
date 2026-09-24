@@ -114,6 +114,14 @@ func (h *MCPToolHandler) runAgentTurn(ctx context.Context, projectID, agentID, s
 		return "", "", 0, &mcp.AgentRunError{Kind: mcp.AgentRunErrorFailed, Message: "failed to load agent definition: " + err.Error()}
 	}
 
+	// Resolve the org that owns the project so the executor can attribute LLM
+	// usage to the correct tenant. OrgIDFromContext is non-empty only when a
+	// caller has already resolved the org (executor loopback via
+	// ContextWithOrgID, or the auth middleware from a token/project binding); it
+	// is empty for human/OAuth session callers with no project binding. The
+	// fallback resolves the owning org authoritatively from kb.projects, so every
+	// caller type ends up with the same org. The context read is a short-circuit
+	// that avoids the DB round-trip when the org is already known.
 	orgID := auth.OrgIDFromContext(ctx)
 	if orgID == "" {
 		orgID, _ = repo.GetOrgIDByProjectID(ctx, projectID)
