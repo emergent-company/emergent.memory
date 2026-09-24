@@ -428,7 +428,7 @@ func (h *StreamableHTTPHandler) getSession(sessionID string) *MCPSession {
 func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
 	switch req.Method {
 	case "initialize":
-		return h.handleInitialize(c, req, session)
+		return h.handleInitialize(c, req, session, user)
 	case "tools/list":
 		return h.handleToolsList(c, req, session, user)
 	case "tools/call":
@@ -451,7 +451,7 @@ func (h *StreamableHTTPHandler) processRequest(c echo.Context, req *Request, ses
 }
 
 // handleInitialize handles initialize method
-func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, session *MCPSession) *Response {
+func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, session *MCPSession, user *auth.AuthUser) *Response {
 	var params InitializeParams
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -486,6 +486,13 @@ func (h *StreamableHTTPHandler) handleInitialize(c echo.Context, req *Request, s
 	session.ProtocolVersion = params.ProtocolVersion
 	if params.ProjectID != "" {
 		session.ProjectID = params.ProjectID
+	}
+
+	// Reconcile the initialize-claimed project against the authorized header
+	// (issue #868): session callers must be org members of the claimed project
+	// and project-bound tokens cannot claim a foreign project.
+	if err := h.svc.authorizeProjectClaim(c.Request().Context(), user, session.ProjectID); err != nil {
+		return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
 	}
 
 	// Store session

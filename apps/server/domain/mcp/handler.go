@@ -219,6 +219,13 @@ func (h *Handler) handleInitialize(c echo.Context, req *Request, user *auth.Auth
 		projectID = user.ProjectID // Fall back to header
 	}
 
+	// Reconcile the initialize-claimed project against the authorized header
+	// (issue #868): session callers must be org members of the claimed project
+	// and project-bound tokens cannot claim a foreign project.
+	if err := h.svc.authorizeProjectClaim(c.Request().Context(), user, projectID); err != nil {
+		return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
+	}
+
 	if token != "" {
 		h.sessionsMu.Lock()
 		h.sessions[token] = &Session{

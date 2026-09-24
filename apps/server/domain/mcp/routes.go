@@ -20,6 +20,16 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 
 	g := e.Group("/api/mcp")
 	g.Use(authMiddleware.RequireAuth())
+	// Project authorization for /api/mcp (issue #868, the #864 class). The group
+	// is session-bound with a header fallback: the SSE sub-routes address the
+	// project by :projectId, while the unified/rpc endpoints resolve it from the
+	// X-Project-ID header (normalised onto user.ProjectID) with an initialize-time
+	// session fallback. The shared pair keys on :projectId when present and
+	// otherwise falls back to user.ProjectID, enforcing token binding then session
+	// org-membership. The initialize-claimed project is additionally reconciled
+	// against the authorized header in the handlers (see authorizeProjectClaim).
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	// Unified MCP endpoint (Spec 2025-11-25)
 	// POST: Send JSON-RPC requests/notifications

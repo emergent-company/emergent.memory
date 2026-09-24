@@ -655,8 +655,12 @@ func TestMCP_SSE_Connect_InvalidProjectID(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
+	// The /api/mcp/sse/:projectId route now enforces project membership before
+	// the handler: an authenticated caller addressing a non-existent project is
+	// a 404 (no existence oracle), matching the project-scoped convention
+	// (refs #868).
 	resp := doAPILogged(t, rl, "GET", "/api/mcp/sse/invalid-uuid", e2eTestToken(), "", nil)
-	mustStatus(t, resp, http.StatusBadRequest)
+	mustStatus(t, resp, http.StatusNotFound)
 }
 
 func TestMCP_SSE_Message_RequiresAuth(t *testing.T) {
