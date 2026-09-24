@@ -24,6 +24,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/authinfo"
+	"github.com/emergent-company/emergent.memory/domain/blueprints"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chat"
 	"github.com/emergent-company/emergent.memory/domain/chunks"
@@ -556,6 +557,21 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	providerRepo := provider.NewRepository(db, log)
 	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil, nil, providerRepo, sandboxStore)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
+
+	// Register blueprints routes (issue #868: project-scoped via the header
+	// normalised onto user.ProjectID; membership enforced by the shared pair).
+	blueprintsRepo := blueprints.NewRepository(db, log)
+	blueprintsSvc := blueprints.NewService(blueprints.ServiceParams{
+		Repo:        blueprintsRepo,
+		SchemasSvc:  schemasSvc,
+		SchemasRepo: schemasRepo,
+		SkillsRepo:  skillsRepo,
+		GraphSvc:    graphSvc,
+		AgentRepo:   agentsRepo,
+		Log:         log,
+	})
+	blueprintsHandler := blueprints.NewHandler(blueprintsSvc)
+	blueprints.RegisterRoutes(e, blueprintsHandler, authMiddleware)
 
 	// Register extraction admin routes
 	extractionJobsSvc := extraction.NewObjectExtractionJobsService(db, log, extraction.DefaultObjectExtractionConfig())
