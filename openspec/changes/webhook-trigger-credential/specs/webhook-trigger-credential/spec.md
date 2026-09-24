@@ -37,6 +37,20 @@ The `webhook:trigger` marker SHALL be a member of the application's API-token vo
 - **WHEN** a token carrying `webhook:trigger` is minted
 - **THEN** it is minted exclusively through `CreateWebhookTriggerToken`
 
+### Requirement: Webhook trigger credential mint surface
+
+An operator SHALL be able to mint a webhook trigger credential without writing code, through an HTTP mint surface that mirrors the device-token analogue: `POST /api/projects/:projectId/webhook-trigger-tokens`, handled by `Handler.CreateWebhookTriggerToken`, which calls `CreateWebhookTriggerToken(projectID, name, expiresAt)` with the hardcoded ceiling and a default 90-day expiry. The route SHALL mirror the device-token mint route's authorization gate exactly — `RequireAuth()` — so any authenticated principal (session or API token) may mint a scoped, ceiling-bound, expiring, revocable credential for the named project; the credential's authority is bounded by the exact-set ceiling and the surface guard, so it can never exceed the trigger route plus its query loopback regardless of who minted it.
+
+#### Scenario: An operator mints through the HTTP surface
+
+- **WHEN** an authenticated principal POSTs to `/api/projects/:projectId/webhook-trigger-tokens` with a name
+- **THEN** a scoped webhook trigger credential is minted (exact ceiling, the operator name, a default expiry) and the raw `emt_*` value is returned once
+
+#### Scenario: Unauthenticated mint is refused
+
+- **WHEN** an unauthenticated request POSTs to the webhook-trigger-tokens route
+- **THEN** the request is denied with 401, mirroring the device-token route's `RequireAuth` gate
+
 ### Requirement: Exact-set ceiling and surface guard fail closed
 
 At validation time a token carrying the `webhook:trigger` marker whose scope set is not EXACTLY the ceiling SHALL be rejected. A `webhook:trigger` token used outside the webhook trigger surface (the trigger route plus its `search-knowledge`→`/query` loopback) SHALL be rejected with 403. Unknown, revoked, expired, or store-unavailable credentials SHALL deny (never open); the ceiling and surface guard SHALL apply even to a DB-tampered webhook token.
@@ -77,7 +91,7 @@ A webhook trigger credential SHALL have per-integration attribution (a distinct 
 
 ### Requirement: Gateway forwards the scoped credential with the HMAC gate unchanged
 
-The gateway SHALL forward `AGENT_TRIGGER_TOKEN` — now a `webhook:trigger`-marked scoped credential — as the `Authorization: Bearer` on the trigger call, and SHALL NOT weaken or bypass the HMAC ingress gate (`verifyGitHubSignature`, constant-time `hmac.Equal` on `X-Hub-Signature-256`). A missing or empty credential SHALL fail closed: `Config.Validate` SHALL refuse startup when `GITHUB_WEBHOOK_SECRET` is set but `AGENT_TRIGGER_TOKEN` is empty, and the handler SHALL return 503 before spawning the async trigger when the token is missing.
+The gateway SHALL forward `AGENT_TRIGGER_TOKEN` — now a `webhook:trigger`-marked scoped credential — as the `Authorization: Bearer` on the trigger call, and SHALL NOT weaken or bypass the HMAC ingress gate (`verifyGitHubSignature`, constant-time `hmac.Equal` on `X-Hub-Signature-256`). A missing or empty credential SHALL fail closed: `Config.Validate` SHALL refuse startup when `GITHUB_WEBHOOK_SECRET` is set but `AGENT_TRIGGER_TOKEN` is empty, and the handler SHALL return 503 before spawning the async trigger when the token is missing. The gateway holds **one** forwarder credential today; simultaneous per-integration forwarding (multiple integrations each with their own gateway-held credential, selected per delivery) is out of scope for this change and SHALL NOT be claimed as achieved.
 
 #### Scenario: HMAC remains the ingress gate
 
@@ -88,3 +102,8 @@ The gateway SHALL forward `AGENT_TRIGGER_TOKEN` — now a `webhook:trigger`-mark
 
 - **WHEN** the webhook secret is configured but `AGENT_TRIGGER_TOKEN` is empty
 - **THEN** startup validation fails and the handler returns 503 before the async trigger is spawned
+
+#### Scenario: Operational install
+
+- **WHEN** an operator mints a `webhook:trigger` credential through the mint surface and installs its `emt_*` value as `AGENT_TRIGGER_TOKEN`
+- **THEN** the credential validates as marker-class and ceiling-bound, expires on schedule, and is revocable and regenerable through the shared project-token surface; `last_used_at` attributes its use

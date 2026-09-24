@@ -133,6 +133,68 @@ func (h *Handler) CreateDeviceToken(c echo.Context) error {
 	return c.JSON(http.StatusCreated, result)
 }
 
+// webhookTriggerTokenLifetime is the default expiry minted on a webhook trigger
+// credential: 90 days, matching the device-credential default. An operator
+// rotates via the shared project-token Regenerate surface before expiry.
+const webhookTriggerTokenLifetime = 90 * 24 * time.Hour
+
+// createWebhookTriggerTokenRequest is the body for
+// POST /api/projects/:projectId/webhook-trigger-tokens. Only the integration
+// name is accepted — the scope set is hardcoded server-side.
+type createWebhookTriggerTokenRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateWebhookTriggerToken mints a scoped per-integration webhook trigger
+// credential for the project. The scope set is hardcoded (webhook:trigger +
+// agents:read + agents:write + data:read) — the request carries no scopes, so
+// the ceiling cannot be widened by any caller.
+// @Summary      Create webhook trigger credential
+// @Description  Mints a scoped webhook trigger credential (webhook:trigger marker + ceiling) for a project. Returns the full token value once.
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body createWebhookTriggerTokenRequest true "Webhook trigger credential request (name only)"
+// @Success      201 {object} CreateApiTokenResponseDTO "Webhook trigger credential created (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/webhook-trigger-tokens [post]
+// @Security     bearerAuth
+func (h *Handler) CreateWebhookTriggerToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	var req createWebhookTriggerTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "webhook-trigger"
+	}
+	if len(name) > 255 {
+		return apperror.NewBadRequest("name must be at most 255 characters")
+	}
+
+	expiresAt := time.Now().Add(webhookTriggerTokenLifetime)
+	result, err := h.svc.CreateWebhookTriggerToken(c.Request().Context(), projectID, name, &expiresAt)
+	if err != nil {
+		return err
+	}
+
+	if user.Email != "" && h.userProfile != nil {
+		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
 // List returns all API tokens for a project
 // @Summary      List API tokens
 // @Description  Returns all API tokens for a project (active and revoked). Token values are not returned.

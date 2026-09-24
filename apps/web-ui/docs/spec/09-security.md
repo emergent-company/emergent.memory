@@ -107,12 +107,21 @@ redirects to the discovered Zitadel `end_session` endpoint with `id_token_hint`/
 
 The gateway→memory forwarder bearer for the GitHub webhook is a **scoped per-integration
 credential**, not a shared static secret. It is an ordinary `core.api_tokens` row carrying
-the reserved `webhook:trigger` marker, minted server-side via the internal
-`CreateWebhookTriggerToken` path (issue #859), with a per-integration name, a default
-expiry, and a hardcoded scope ceiling enforced at mint time and again at validate time.
-The gateway still holds the raw `emt_*` value in `AGENT_TRIGGER_TOKEN` (server-side only,
-never shipped to clients or the web UI) and presents it as `Authorization: Bearer …` on the
-trigger call.
+the reserved `webhook:trigger` marker, with a per-integration name, a default expiry, and a
+hardcoded scope ceiling enforced at mint time and again at validate time. The gateway still
+holds the raw `emt_*` value in `AGENT_TRIGGER_TOKEN` (server-side only, never shipped to
+clients or the web UI) and presents it as `Authorization: Bearer …` on the trigger call.
+
+**Operational model (mint → install → use → rotate/revoke).** An operator mints the
+credential through the HTTP mint surface — `POST /api/projects/:projectId/webhook-trigger-tokens`
+(`Handler.CreateWebhookTriggerToken`, gated by `RequireAuth()` exactly like the device-token
+route it mirrors) — which returns the raw `emt_*` value once. The operator installs that
+value as the gateway's `AGENT_TRIGGER_TOKEN`. The credential validates as marker-class and
+ceiling-bound, expires on its default 90-day schedule, and is rotated via the shared
+project-token `Regenerate` surface or revoked via `Revoke`; `last_used_at` attributes use.
+The gateway holds **one** forwarder credential today — simultaneous per-integration
+forwarding (one gateway-held credential per integration, selected per delivery) is not
+implemented.
 
 **The ingress gate is unchanged — HMAC.** GitHub authenticates each delivery with an
 `X-Hub-Signature-256` header (`HMAC-SHA256`, verified in constant time via `hmac.Equal` in
@@ -127,9 +136,11 @@ missing token can never be accepted and then fail invisibly after the `202`.
 
 **Scoped credential bounds (what #859 added over #847's accepted residual risk):**
 
-- **Reserved marker.** The credential carries `webhook:trigger`, reserved to the internal
-  mint path — no user-facing token endpoint can attach it (`Create`, `CreateAccountToken`,
-  `UpdateScopes`, `UpdateAccountTokenScopes` all reject it).
+- **Reserved marker + mint surface.** The credential carries `webhook:trigger`, reserved to
+  the internal mint path — no user-facing token endpoint can attach it (`Create`,
+  `CreateAccountToken`, `UpdateScopes`, `UpdateAccountTokenScopes` all reject it) — and is
+  minted via `POST /api/projects/:projectId/webhook-trigger-tokens` (mirroring the
+  device-token route's `RequireAuth()` gate).
 - **Hardcoded ceiling.** The stored scope set is exactly `webhook:trigger + agents:read +
   agents:write + data:read` (the `agents:write` the trigger route's own gate requires, plus
   the read family the review agent's in-process loopback uses). It is enforced at mint time
@@ -149,10 +160,10 @@ credential's **effective** scope set therefore includes those implied scopes; th
 reachable only through the review agent's own loopback (a trusted, bounded use), because the
 surface guard confines the credential to the trigger route and its query loopback.
 
-**Rotation:** rotate by minting a fresh webhook credential (internal mint path), updating
+**Rotation:** rotate by minting a fresh webhook credential (mint surface), updating
 `AGENT_TRIGGER_TOKEN` in the gateway env, then restarting; or use the shared project-token
-`Regenerate`/`Revoke` surface. The credential carries a default expiry so it does not live
-forever.
+`Regenerate`/`Revoke` surface. The credential carries a default 90-day expiry so it does not
+live forever.
 
 ## Room allow-list (iOS token)
 

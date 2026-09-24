@@ -24,6 +24,13 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// token-mint route it sits beside.
 	e.POST("/api/projects/:projectId/device-tokens", h.CreateDeviceToken, authMiddleware.RequireAuth())
 
+	// Scoped webhook trigger credential mint (see CreateWebhookTriggerToken). The
+	// scope set is hardcoded server-side; the route mirrors the device-token mint
+	// surface exactly — session/token-authenticated via RequireAuth, so any
+	// authenticated principal may mint a scoped, ceiling-bound, expiring,
+	// revocable webhook trigger credential for the named project.
+	e.POST("/api/projects/:projectId/webhook-trigger-tokens", h.CreateWebhookTriggerToken, authMiddleware.RequireAuth())
+
 	g.GET("", h.List)
 	g.GET("/:tokenId", h.Get)
 	g.PATCH("/:tokenId", h.UpdateScopes)
