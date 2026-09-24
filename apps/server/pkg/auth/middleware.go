@@ -126,6 +126,10 @@ type Middleware struct {
 	superadminLookup superadminRoleLookup
 	projectOrgLookup projectOrgLookup
 	orgAdminLookup   orgAdminLookup
+
+	// tokenUsage records last_used_at for validated emt_* tokens (throttled,
+	// non-blocking; see tokenUsageTracker). Nil-safe when unset.
+	tokenUsage *tokenUsageTracker
 }
 
 // MiddlewareParams holds the dependencies for creating the auth middleware.
@@ -147,6 +151,7 @@ func NewMiddleware(p MiddlewareParams) *Middleware {
 		userSvc:          p.UserSvc,
 		zitadelSvc:       NewZitadelService(p.DB, p.Cfg, p.Log),
 		autoProvisionSvc: p.AutoProvisionSvc,
+		tokenUsage:       newTokenUsageTracker(p.DB, p.Log.With(logger.Scope("auth"))),
 	}
 
 	// Set up debug token for development
@@ -920,13 +925,12 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		projectID = *result.ProjectID
 	}
 
-	// Best-effort, non-blocking last_used_at touch for device credentials. The
-	// general "tokens never touch last_used_at" gap is tracked separately; this
-	// implements at least the device path without a synchronous write on the hot
-	// auth path.
-	if hasDeviceAPIScope(result.Scopes) {
-		m.touchDeviceTokenLastUsed(result.ID)
-	}
+	// Best-effort, non-blocking last_used_at touch for every successfully
+	// validated emt_* token (device credentials, project/account tokens,
+	// agent-share keys, sandbox tokens). Coalesced by a per-token throttle (see
+	// tokenUsageTracker); never fails the request and never adds a synchronous
+	// write to the hot auth path. Generalized from the #857 device-only touch.
+	m.tokenUsage.touch(result.ID)
 
 	// Ephemeral sandbox tokens have user_id = NULL (no real user owner).
 	// For these tokens we construct an AuthUser directly without a profile lookup.
@@ -954,25 +958,6 @@ func (m *Middleware) validateAPIToken(ctx context.Context, token string) (*AuthU
 		APITokenProjectID: projectID,
 		APITokenID:        result.ID,
 	}, nil
-}
-
-// touchDeviceTokenLastUsed writes core.api_tokens.last_used_at for a device
-// credential in a detached goroutine. It is fire-and-forget: a failed touch is
-// never surfaced to the caller, and the hot auth path is never blocked on a
-// write. A short timeout bounds the goroutine so a slow store cannot leak it.
-func (m *Middleware) touchDeviceTokenLastUsed(tokenID string) {
-	if m.db == nil || tokenID == "" {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_, _ = m.db.NewUpdate().
-			Table("core.api_tokens").
-			Set("last_used_at = NOW()").
-			Where("id = ?", tokenID).
-			Exec(ctx)
-	}()
 }
 
 // checkTestToken checks for static test tokens (development only)
