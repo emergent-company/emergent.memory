@@ -126,6 +126,7 @@ type Middleware struct {
 	superadminLookup superadminRoleLookup
 	projectOrgLookup projectOrgLookup
 	orgAdminLookup   orgAdminLookup
+	orgMemberLookup  orgMemberLookup
 
 	// tokenUsage records last_used_at for validated emt_* tokens (throttled,
 	// non-blocking; see tokenUsageTracker). Nil-safe when unset.
@@ -337,7 +338,7 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 				user.OrgID = projectOrgID
 				// A header that conflicts with the project's owning org is a
 				// forged/mismatched grant input. Reject it (403) so it can never
-				// widen access — the same convention as RequireProjectScope's
+				// widen access — the same convention as RequireProjectTokenScope's
 				// token-bound project mismatch.
 				if headerOrgID != "" && headerOrgID != projectOrgID {
 					return m.authError(c, apperror.NewForbidden("x-org-id header does not match the project's organization"))
@@ -415,17 +416,18 @@ func (m *Middleware) RequireProjectID() echo.MiddlewareFunc {
 	}
 }
 
-// RequireProjectScope returns middleware that enforces API token project scope.
-// For emt_* API tokens it validates that the :projectId URL param matches the
-// token's bound project (rejecting a mismatch with 403).
+// RequireProjectTokenScope returns middleware that enforces API token project
+// binding. For emt_* API tokens it validates that the :projectId URL param
+// matches the token's bound project (rejecting a mismatch with 403).
 //
 // For non-API-token auth (OAuth/human sessions) this is a NO-OP pass-through:
 // it is a token-binding check, NOT a membership check, and does not by itself
-// authorize access to a project. Route handlers that need to authorize a human
-// caller against a project must assert real project/org membership themselves
-// (e.g. provider.assertCallerOwnsProject, skills.requireProjectMember) — the
-// name describes the token-scope guard only (issue #849/#850).
-func (m *Middleware) RequireProjectScope() echo.MiddlewareFunc {
+// authorize access to a project. Route groups that must authorize a human
+// caller against a project must also apply RequireProjectMember (or assert
+// real project/org membership in the handler — e.g.
+// provider.assertCallerOwnsProject, skills.requireProjectMember). The name
+// states the token-scope guard only, never a membership guarantee (issue #861).
+func (m *Middleware) RequireProjectTokenScope() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			user := GetUser(c)
@@ -458,6 +460,71 @@ func (m *Middleware) RequireProjectScope() echo.MiddlewareFunc {
 				})
 			}
 
+			return next(c)
+		}
+	}
+}
+
+// RequireProjectMember returns middleware that enforces real project membership
+// for session (OAuth/human) callers. It is the membership counterpart to
+// RequireProjectTokenScope: that middleware binds an emt_* token to its project,
+// this one asserts that a session caller belongs to the organization that owns
+// the addressed project. Both are applied together on project-scoped route
+// groups so the group is protected for every caller type.
+//
+// The owning organization is resolved server-side (kb.projects) and membership
+// is checked against kb.organization_memberships, so a caller-supplied
+// :projectId can never self-satisfy the check (the #849/#850 class). Fail
+// closed:
+//
+//   - no authenticated user → 401
+//   - session caller, addressed project does not exist → 404 (no existence
+//     oracle for a project ID the caller cannot see)
+//   - session caller not a member of the project's owning org → 403
+//
+// API-token callers pass through: they are already bound to their project by
+// RequireProjectTokenScope, and their token owner is not necessarily a project
+// member (account-level/admin tokens). This mirrors the share read-endpoint
+// convention (oauthUserID) and preserves existing machine-caller behavior.
+func (m *Middleware) RequireProjectMember() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			user := GetUser(c)
+			if user == nil {
+				return apperror.ErrUnauthorized
+			}
+
+			// API-token callers are scoped by RequireProjectTokenScope; their
+			// token owner is not necessarily a project member.
+			if user.APITokenID != "" {
+				return next(c)
+			}
+
+			// Session caller: require a real user identity.
+			if user.ID == "" {
+				return apperror.ErrUnauthorized
+			}
+
+			projectID := c.Param("projectId")
+			if projectID == "" {
+				return next(c)
+			}
+
+			orgID, err := m.lookupProjectOrg(c.Request().Context(), projectID)
+			if err != nil {
+				return err
+			}
+			if orgID == "" {
+				return apperror.NewNotFound("project", projectID)
+			}
+
+			isMember, err := m.lookupOrgMember(c.Request().Context(), orgID, user.ID)
+			if err != nil {
+				return err
+			}
+			if !isMember {
+				return apperror.NewForbidden("access to project denied")
+			}
 			return next(c)
 		}
 	}

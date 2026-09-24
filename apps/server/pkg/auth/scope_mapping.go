@@ -444,6 +444,10 @@ type projectOrgLookup func(ctx context.Context, projectID string) (string, error
 // organization. Overridable in tests.
 type orgAdminLookup func(ctx context.Context, orgID, userID string) (bool, error)
 
+// orgMemberLookup reports whether the user holds any membership role in the
+// given organization. Overridable in tests.
+type orgMemberLookup func(ctx context.Context, orgID, userID string) (bool, error)
+
 // lookupSuperadminRole resolves the app-side superadmin role using the seam.
 func (m *Middleware) lookupSuperadminRole(ctx context.Context, userID string) (string, error) {
 	if m.superadminLookup != nil {
@@ -466,6 +470,14 @@ func (m *Middleware) lookupOrgAdmin(ctx context.Context, orgID, userID string) (
 		return m.orgAdminLookup(ctx, orgID, userID)
 	}
 	return m.dbOrgAdmin(ctx, orgID, userID)
+}
+
+// lookupOrgMember resolves org membership (any role) using the seam.
+func (m *Middleware) lookupOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
+	if m.orgMemberLookup != nil {
+		return m.orgMemberLookup(ctx, orgID, userID)
+	}
+	return m.dbOrgMember(ctx, orgID, userID)
 }
 
 // dbSuperadminRole reads the active superadmin role from core.superadmins. A
@@ -524,6 +536,28 @@ func (m *Middleware) dbOrgAdmin(ctx context.Context, orgID, userID string) (bool
 		SELECT EXISTS(
 			SELECT 1 FROM kb.organization_memberships
 			WHERE organization_id = ? AND user_id = ? AND role = 'org_admin'
+		)
+	`, orgID, userID).Scan(ctx, &ok)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+// dbOrgMember reports whether the user holds any membership role in the given
+// organization. It is the middleware-level counterpart to
+// orgs.Repository.IsUserMember (pkg/auth cannot import domain/orgs without an
+// import cycle), and the source org is always resolved server-side via
+// lookupProjectOrg — never from a request-controlled value.
+func (m *Middleware) dbOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
+	if m.db == nil {
+		return false, errors.New("auth: no database available for org membership lookup")
+	}
+	var ok bool
+	err := m.db.NewRaw(`
+		SELECT EXISTS(
+			SELECT 1 FROM kb.organization_memberships
+			WHERE organization_id = ? AND user_id = ?
 		)
 	`, orgID, userID).Scan(ctx, &ok)
 	if err != nil {
