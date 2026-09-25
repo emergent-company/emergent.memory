@@ -292,6 +292,16 @@ type ExecuteRequest struct {
 	// Used by the agentcompat layer to inject caller-supplied (client) tools.
 	ExtraTools []tool.Tool
 
+	// TrustedInternal marks a run started through a trusted surface (session UI,
+	// scheduler/worker runs, MCP tools, agent→agent delegation). It is set by the
+	// transport, never inferred from the agent's own visibility. The zero value is
+	// false = untrusted/external-facing (A2A message:send/stream, agentcompat,
+	// public share), which fails closed: a transport that forgets to declare
+	// itself cannot reach internal-visible agents. Trusted surfaces set it true to
+	// keep full internal coordination. The value is fixed at run creation and
+	// inherited unchanged through delegation and resume (issue #954).
+	TrustedInternal bool
+
 	// ShareToolDeny lists tool names hard-blocked on this run (public agent-share
 	// allowlist). beforeToolCb enforces it BEFORE the confirm gate, so an
 	// approval can never override a deny-listed tool.
@@ -474,6 +484,7 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		MaxSteps:        &maxSteps,
 		TriggerSource:   req.TriggerSource,
 		TriggerMetadata: req.TriggerMetadata,
+		TrustedInternal: req.TrustedInternal,
 	}
 	if req.AgentDefinition != nil {
 		createOpts.AgentDefinitionID = &req.AgentDefinition.ID
@@ -482,6 +493,15 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 	var run *AgentRun
 	if req.PreCreatedRun != nil {
 		run = req.PreCreatedRun
+		// The pre-created run was inserted by the caller without the trust marker;
+		// the request is authoritative here, so carry it onto the run row.
+		run.TrustedInternal = req.TrustedInternal
+		if err := ae.repo.UpdateRunTrustedInternal(dbCtx, run.ID, req.TrustedInternal); err != nil {
+			ae.log.Warn("failed to persist trusted_internal on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	} else {
 		var createErr error
 		run, createErr = ae.repo.CreateRunWithOptions(dbCtx, createOpts)
@@ -556,6 +576,16 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
 		}
 	}
+
+	// Propagate the run's originating principal into the run context so in-process
+	// authority checks (e.g. the MCP operator-tool superadmin gate in
+	// Service.ExecuteTool, issue #948) resolve the CALLER, not the agent
+	// definition or the ephemeral token. This deliberately overwrites any
+	// transport-injected user (notably the share-link owner, whose credentials
+	// must never confer authority on an anonymous share run): req.UserID is the
+	// authoritative principal, and when it is empty (anonymous/system runs) the
+	// overwritten empty-ID principal makes every operator-tool check fail closed.
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
@@ -676,6 +706,18 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 	startTime := time.Now()
 	dbCtx := context.Background()
 
+	// The pre-created run was inserted by the caller without the trust marker;
+	// the request is authoritative here, so persist it before the pipeline runs.
+	// This keeps the row fail-closed (trusted_internal defaults false) and makes
+	// the value recoverable on a later resume.
+	run.TrustedInternal = req.TrustedInternal
+	if err := ae.repo.UpdateRunTrustedInternal(dbCtx, run.ID, req.TrustedInternal); err != nil {
+		ae.log.Warn("failed to persist trusted_internal on agent run",
+			slog.String("run_id", run.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
 	// Validate depth
 	maxDepth := req.MaxDepth
 	if maxDepth <= 0 {
@@ -764,6 +806,9 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
 		}
 	}
+
+	// Propagate the run's originating principal into the run context (see Execute).
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
@@ -893,10 +938,21 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 	}
 
 	// Create a new run record that tracks the resume chain (or reuse pre-created run).
+	// The resumed run INHERITS the prior run's trust marker: trust is fixed at run
+	// creation and must never be re-derived (or upgraded) by a resume transport. A
+	// suspended external-facing run re-woken through a trusted path (parent wake,
+	// MCP respond, session UI) stays external-facing (issue #954).
 	var newRun *AgentRun
 	resumedFrom := priorRun.ID
 	if req.PreCreatedRun != nil {
 		newRun = req.PreCreatedRun
+		newRun.TrustedInternal = priorRun.TrustedInternal
+		if err := ae.repo.UpdateRunTrustedInternal(dbCtx, newRun.ID, priorRun.TrustedInternal); err != nil {
+			ae.log.Warn("failed to persist trusted_internal on resumed run",
+				slog.String("run_id", newRun.ID),
+				slog.String("error", err.Error()),
+			)
+		}
 	} else {
 		var err error
 		newRun, err = ae.repo.CreateRunWithOptions(dbCtx, CreateRunOptions{
@@ -906,6 +962,7 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			ResumedFrom:      &resumedFrom,
 			InitialStepCount: priorRun.StepCount,
 			TriggerMetadata:  priorRun.TriggerMetadata,
+			TrustedInternal:  priorRun.TrustedInternal,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resumed run: %w", err)
@@ -984,6 +1041,9 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
 		}
 	}
+
+	// Propagate the run's originating principal into the run context (see Execute).
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
@@ -1627,6 +1687,12 @@ func (ae *AgentExecutor) runPipeline(
 ) (*ExecuteResult, error) {
 	dbCtx := context.Background()
 
+	// The run row is the source of truth for the trust marker. Override the
+	// request with the persisted value so coordination tools (and any child they
+	// spawn) inherit the run's trust rather than whatever the current transport
+	// happened to carry — a resume or re-wake must never upgrade trust.
+	req.TrustedInternal = run.TrustedInternal
+
 	// Identify the ADK session ID.
 	// If the caller supplied a stable SessionID (cross-run conversation history),
 	// derive a namespaced key from it so triggers with the same SessionID share
@@ -1767,6 +1833,12 @@ func (ae *AgentExecutor) runPipeline(
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve tools: %w", err)
 	}
+
+	// Strip superadmin-only operator tools from non-superadmin runs (issue #948).
+	// Service.ExecuteTool also enforces the same authority at dispatch, so this is
+	// resolution-level defence in depth: a non-superadmin principal's agent never
+	// sees the operator tools in its toolset at all.
+	resolvedTools = ae.toolPool.StripOperatorTools(ctx, resolvedTools)
 
 	// Filter out banned tools
 	if req.AgentDefinition != nil && len(req.AgentDefinition.BannedTools) > 0 {
@@ -3159,16 +3231,17 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 	}
 
 	deps := CoordinationToolDeps{
-		Executor:       ae,
-		Repo:           ae.repo,
-		Logger:         ae.log,
-		ProjectID:      req.ProjectID,
-		ParentRunID:    runID,
-		RootRunID:      derefString(req.RootRunID),
-		Depth:          req.Depth,
-		MaxDepth:       maxDepth,
-		SpawnPolicy:    extractSpawnPolicy(req.AgentDefinition),
-		ParentMetadata: req.TriggerMetadata,
+		Executor:        ae,
+		Repo:            ae.repo,
+		Logger:          ae.log,
+		ProjectID:       req.ProjectID,
+		ParentRunID:     runID,
+		RootRunID:       derefString(req.RootRunID),
+		Depth:           req.Depth,
+		MaxDepth:        maxDepth,
+		SpawnPolicy:     extractSpawnPolicy(req.AgentDefinition),
+		TrustedInternal: req.TrustedInternal,
+		ParentMetadata:  req.TriggerMetadata,
 	}
 
 	var tools []tool.Tool

@@ -156,6 +156,7 @@ func (p *WorkerPool) executeJob(ctx context.Context, log *slog.Logger, job *Agen
 		ProjectID:       agent.ProjectID,
 		OrgID:           orgID,
 		UserMessage:     userMessage,
+		TrustedInternal: true, // queued/worker runs are a trusted surface (full internal coordination)
 	})
 	if result != nil && result.Cleanup != nil {
 		defer result.Cleanup()

@@ -338,6 +338,11 @@ type ToolDefinition struct {
 	// AgentOnly marks tools that are only available to internal memory agents,
 	// not to external MCP clients regardless of their scopes.
 	AgentOnly bool `json:"agentOnly,omitempty"`
+	// SuperadminOnly marks deployment-wide operator tools that require an active
+	// superadmin_full grant (resolved from core.superadmins) rather than a token
+	// scope. A bare admin / admin:all token cannot satisfy it, because neither is
+	// minted from the platform-admin authority (issue #948).
+	SuperadminOnly bool `json:"superadminOnly,omitempty"`
 }
 
 // InputSchema is a JSON schema for tool parameters

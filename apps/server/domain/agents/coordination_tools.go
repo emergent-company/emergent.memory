@@ -30,6 +30,16 @@ type CoordinationToolDeps struct {
 	// rejected and the catalog returned by list_available_agents is also filtered.
 	// When empty (nil/zero-length), all agents are reachable (open policy).
 	SpawnPolicy []string
+	// TrustedInternal is set by the transport that started the run (not inferred
+	// from the agent's own visibility). When false — the fail-closed zero value —
+	// this run was invoked through an external-facing surface (A2A
+	// message:send/stream, agentcompat, public share) and must not reach
+	// internal-visible agents — internal agents are "callable only by other
+	// agents, never via A2A" (entity.go). Trusted surfaces (session UI,
+	// scheduled/worker runs, MCP tools, agent→agent delegation) set it true and
+	// keep full internal coordination. The value is propagated unchanged to any
+	// spawned child so the gate holds for the whole delegation chain (issue #954).
+	TrustedInternal bool
 	// ParentMetadata is the TriggerMetadata of the parent run. It is merged with
 	// any per-spawn Context supplied by the LLM (per-spawn keys take precedence)
 	// to form the child run's TriggerMetadata.
@@ -84,6 +94,16 @@ func spawnAllowed(policy []string, agentName string) bool {
 		}
 	}
 	return false
+}
+
+// canReachInternal reports whether a coordination caller may list or spawn
+// internal-visible agents. Only trusted surfaces are allowed: an untrusted
+// (external-facing) caller is A2A/agentcompat/share-reachable, and internal
+// agents are "callable only by other agents, never via A2A". The signal is the
+// transport surface (TrustedInternal), not the caller's own visibility. The zero
+// value is false (untrusted), so an unspecified surface fails closed.
+func canReachInternal(trustedInternal bool) bool {
+	return trustedInternal
 }
 
 // mergeMaps returns a new map that contains all entries from base, with any
@@ -159,6 +179,36 @@ type ListAvailableAgentsResult struct {
 	Count  int            `json:"count"`
 }
 
+// buildAgentCatalog filters the project's definitions down to the agents a
+// coordination caller may list. It honors the spawn-policy allowlist (when set)
+// and hides internal-visible agents from untrusted (external-facing) callers,
+// since an external-facing caller is A2A/agentcompat-reachable and internal
+// agents are "never via A2A".
+func buildAgentCatalog(defs []*AgentDefinition, policy []string, trustedInternal bool) []AgentSummary {
+	agents := make([]AgentSummary, 0, len(defs))
+	for _, def := range defs {
+		if !spawnAllowed(policy, def.Name) {
+			continue
+		}
+		if !canReachInternal(trustedInternal) && def.Visibility == VisibilityInternal {
+			continue
+		}
+		desc := ""
+		if def.Description != nil {
+			desc = *def.Description
+		}
+		agents = append(agents, AgentSummary{
+			Name:        def.Name,
+			Description: desc,
+			Tools:       filterWorkspaceToolNames(def.Tools),
+			FlowType:    def.FlowType,
+			Visibility:  string(def.Visibility),
+			Config:      def.Config,
+		})
+	}
+	return agents
+}
+
 // BuildListAvailableAgentsTool creates the list_available_agents ADK tool.
 func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) {
 	return functiontool.New(
@@ -167,31 +217,15 @@ func BuildListAvailableAgentsTool(deps CoordinationToolDeps) (tool.Tool, error) 
 			Description: "List all available agents in the project's catalog. Returns name, description, tools list, flow_type, and visibility for each agent. Does not include system prompts.",
 		},
 		func(ctx tool.Context, args map[string]any) (map[string]any, error) {
-			// Query all definitions for the project (include internal — agents should see everything)
+			// Query all definitions for the project (include internal — non-external
+			// callers should see everything; buildAgentCatalog hides internal from
+			// external-facing callers).
 			defs, err := deps.Repo.FindAllDefinitions(ctx, deps.ProjectID, true)
 			if err != nil {
 				return map[string]any{"error": fmt.Sprintf("failed to list agents: %s", err.Error())}, nil
 			}
 
-			agents := make([]AgentSummary, 0, len(defs))
-			for _, def := range defs {
-				// Filter to the spawn policy allowlist when one is set
-				if !spawnAllowed(deps.SpawnPolicy, def.Name) {
-					continue
-				}
-				desc := ""
-				if def.Description != nil {
-					desc = *def.Description
-				}
-				agents = append(agents, AgentSummary{
-					Name:        def.Name,
-					Description: desc,
-					Tools:       filterWorkspaceToolNames(def.Tools),
-					FlowType:    def.FlowType,
-					Visibility:  string(def.Visibility),
-					Config:      def.Config,
-				})
-			}
+			agents := buildAgentCatalog(defs, deps.SpawnPolicy, deps.TrustedInternal)
 
 			deps.Logger.Info("list_available_agents called",
 				slog.String("project_id", deps.ProjectID),
@@ -320,6 +354,17 @@ func executeSpawns(ctx context.Context, deps *CoordinationToolDeps, requests []S
 	return results
 }
 
+// spawnTargetBlocked reports whether the coordination caller is forbidden from
+// spawning the given target definition, returning the rejection reason. Only
+// untrusted (external-facing) callers are blocked from spawning internal-visible
+// agents ("callable only by other agents, never via A2A").
+func spawnTargetBlocked(trustedInternal bool, def *AgentDefinition) (string, bool) {
+	if !canReachInternal(trustedInternal) && def.Visibility == VisibilityInternal {
+		return fmt.Sprintf("agent %q is internal and cannot be reached via A2A", def.Name), true
+	}
+	return "", false
+}
+
 // executeSingleSpawn handles a single sub-agent spawn request.
 func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req SpawnRequest) SpawnResult {
 	// Enforce spawn policy — reject if the target is not in the allowlist
@@ -346,6 +391,16 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 			AgentName: req.AgentName,
 			Status:    RunStatusError,
 			Error:     fmt.Sprintf("agent %q not found in project catalog", req.AgentName),
+		}
+	}
+
+	// Internal agents are "never via A2A" — an external-facing caller must not
+	// spawn one, even when the target is inside the spawn-policy allowlist.
+	if reason, blocked := spawnTargetBlocked(deps.TrustedInternal, def); blocked {
+		return SpawnResult{
+			AgentName: req.AgentName,
+			Status:    RunStatusError,
+			Error:     reason,
 		}
 	}
 
@@ -405,6 +460,9 @@ func executeSingleSpawn(ctx context.Context, deps *CoordinationToolDeps, req Spa
 		Depth:           deps.Depth + 1,
 		MaxDepth:        deps.MaxDepth,
 		TriggerMetadata: mergeMaps(deps.ParentMetadata, req.Context),
+		// Propagate the parent's trust marker unchanged: an external-facing parent
+		// must not reach internal agents one hop deeper through its child.
+		TrustedInternal: deps.TrustedInternal,
 	}
 
 	// Handle resume_run_id: resume a paused prior run instead of starting fresh

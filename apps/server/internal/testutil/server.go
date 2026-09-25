@@ -24,8 +24,10 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
 	"github.com/emergent-company/emergent.memory/domain/authinfo"
+	"github.com/emergent-company/emergent.memory/domain/blueprints"
 	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/chat"
+	"github.com/emergent-company/emergent.memory/domain/chunking"
 	"github.com/emergent-company/emergent.memory/domain/chunks"
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
 	"github.com/emergent-company/emergent.memory/domain/documents"
@@ -37,6 +39,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
@@ -44,6 +47,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/sandboximages"
 	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
@@ -447,6 +451,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	embPolicyHandler := embeddingpolicies.NewHandler(embPolicySvc)
 	embeddingpolicies.RegisterRoutes(e, embPolicyHandler, authMiddleware)
 
+	// Register model config routes (GET/PUT/DELETE /api/v1/projects/:projectId/model-config)
+	modelconfigStore := modelconfig.NewStore(db, log)
+	modelconfigSvc := modelconfig.NewService(modelconfigStore, log)
+	modelconfigHandler := modelconfig.NewHandler(modelconfigSvc)
+	modelconfig.RegisterRoutes(e, modelconfigHandler, authMiddleware)
+
 	// Register branches routes
 	branchesStore := branches.NewStore(db)
 	branchesSvc := branches.NewService(branchesStore)
@@ -458,6 +468,11 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	chunksSvc := chunks.NewService(chunksRepo, log)
 	chunksHandler := chunks.NewHandler(chunksSvc)
 	chunks.RegisterRoutes(e, chunksHandler, authMiddleware)
+
+	// Register chunking routes (POST /api/documents/:id/recreate-chunks)
+	chunkingSvc := chunking.NewService(db, testDB.Config, log)
+	chunkingHandler := chunking.NewHandler(chunkingSvc)
+	chunking.RegisterRoutes(e, chunkingHandler, authMiddleware)
 
 	// Register search routes
 	searchRepo := search.NewRepository(db, log)
@@ -496,6 +511,11 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	mcpRegistryHandler := mcpregistry.NewHandler(mcpRegistrySvc)
 	mcpregistry.RegisterRoutes(e, mcpRegistryHandler, authMiddleware)
 
+	// Register MCP relay routes (WebSocket connect + REST sessions/tools/call)
+	mcprelaySvc := mcprelay.NewService(log)
+	mcprelayHandler := mcprelay.NewHandler(mcprelaySvc, log)
+	mcprelay.RegisterRoutes(e, mcprelayHandler, authMiddleware)
+
 	// Register useraccess routes
 	useraccessSvc := useraccess.NewService(db)
 	useraccessHandler := useraccess.NewHandler(useraccessSvc)
@@ -503,12 +523,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register invites routes (nil email service in test mode — emails are no-op)
 	invitesSvc := invites.NewService(db, nil, &config.Config{}, log)
-	invitesHandler := invites.NewHandler(invitesSvc, &config.Config{})
+	invitesHandler := invites.NewHandler(invitesSvc, &config.Config{}, authMiddleware, orgsRepo, db)
 	invites.RegisterRoutes(e, invitesHandler, authMiddleware)
 
 	// Register events routes
 	eventsSvc := events.NewService(log)
-	eventsHandler := events.NewHandler(eventsSvc, log)
+	eventsHandler := events.NewHandler(eventsSvc, log, authMiddleware)
 	events.RegisterRoutesManual(e, eventsHandler, authMiddleware)
 
 	// Register tasks routes
@@ -557,6 +577,30 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil, nil, providerRepo, sandboxStore)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
 
+	// Register OpenAI-compatible agentcompat routes (/v1/chat/completions, /v1/models)
+	// unconditionally (issue #895). The executor is nil here because no LLM provider
+	// is wired; the handler still gates on auth first, so unauthenticated requests
+	// return 401 and GET /v1/models works against the repository. NewTestServerWithLLM
+	// re-registers these same routes with a live executor when credentials exist.
+	agentCompatSvc := agentcompat.NewService(agentRepo, nil, log)
+	agentCompatHandler := agentcompat.NewHandler(agentCompatSvc)
+	agentcompat.RegisterRoutes(e, agentCompatHandler, authMiddleware)
+
+	// Register blueprints routes (issue #868: project-scoped via the header
+	// normalised onto user.ProjectID; membership enforced by the shared pair).
+	blueprintsRepo := blueprints.NewRepository(db, log)
+	blueprintsSvc := blueprints.NewService(blueprints.ServiceParams{
+		Repo:        blueprintsRepo,
+		SchemasSvc:  schemasSvc,
+		SchemasRepo: schemasRepo,
+		SkillsRepo:  skillsRepo,
+		GraphSvc:    graphSvc,
+		AgentRepo:   agentsRepo,
+		Log:         log,
+	})
+	blueprintsHandler := blueprints.NewHandler(blueprintsSvc)
+	blueprints.RegisterRoutes(e, blueprintsHandler, authMiddleware)
+
 	// Register extraction admin routes
 	extractionJobsSvc := extraction.NewObjectExtractionJobsService(db, log, extraction.DefaultObjectExtractionConfig())
 	extractionAdminHandler := extraction.NewAdminHandler(extractionJobsSvc)
@@ -566,6 +610,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	monitoringRepo := monitoring.NewRepository(db, log)
 	monitoringHandler := monitoring.NewHandler(monitoringRepo)
 	monitoring.RegisterRoutes(e, monitoringHandler, authMiddleware)
+
+	// Register sandbox images routes (issue #968: project-scoped, membership-gated).
+	sandboxImagesStore := sandboximages.NewStore(db)
+	sandboxImagesSvc := sandboximages.NewService(sandboxImagesStore, log, sandboximages.ServiceConfig{})
+	sandboxImagesHandler := sandboximages.NewHandler(sandboxImagesSvc)
+	sandboximages.RegisterRoutes(e, sandboxImagesHandler, authMiddleware)
 
 	// Register provider routes (LLM credential management, model catalog, usage)
 	providerRegistry := provider.NewRegistry()

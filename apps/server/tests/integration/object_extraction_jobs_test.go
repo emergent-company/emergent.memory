@@ -196,34 +196,33 @@ func (s *ObjectExtractionJobsTestSuite) TestDequeue_ReturnsNilWhenEmpty() {
 
 func (s *ObjectExtractionJobsTestSuite) TestDequeue_RespectsOrder() {
 	// Create first job
-	job1, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+	job1, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
 		ProjectID: s.projectID,
 	})
+	s.Require().NoError(err)
 
 	// Create second job
-	job2, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+	job2, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
 		ProjectID: s.projectID,
 	})
+	s.Require().NoError(err)
 
 	// Dequeue one job - should get first (FIFO order)
 	dequeuedJob, err := s.jobsService.Dequeue(s.ctx)
-	s.NoError(err)
+	s.Require().NoError(err)
+	s.Require().NotNil(dequeuedJob, "dequeue must return a job while pending jobs remain")
 	s.Equal(job1.ID, dequeuedJob.ID, "Should dequeue jobs in FIFO order")
 
-	// Dequeue next - but wait, same project can only have one running job
-	// so the second dequeue should return nil
+	// Per-project serialisation is no longer enforced: DequeueBatch was
+	// rewritten to support worker concurrency (object_extraction_worker claims
+	// up to Concurrency jobs per poll and runs them in parallel), so a second
+	// pending job in the same project IS dequeued even while the first is still
+	// processing. Assert the current contract and fail cleanly on a nil result
+	// rather than panicking on a nil dereference.
 	dequeuedJob2, err := s.jobsService.Dequeue(s.ctx)
-	s.NoError(err)
-	s.Nil(dequeuedJob2, "Second job should not be dequeued while first is processing (same project)")
-
-	// Complete the first job
-	_ = s.jobsService.MarkCompleted(s.ctx, job1.ID, extraction.ObjectExtractionResults{})
-
-	// Now we should be able to dequeue the second
-	dequeuedJob2, err = s.jobsService.Dequeue(s.ctx)
-	s.NoError(err)
-	s.NotNil(dequeuedJob2)
-	s.Equal(job2.ID, dequeuedJob2.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(dequeuedJob2, "second same-project job must be dequeued while the first is processing")
+	s.Equal(job2.ID, dequeuedJob2.ID, "Should dequeue the second job while the first is processing")
 }
 
 func (s *ObjectExtractionJobsTestSuite) TestDequeue_DifferentProjectsCanRunInParallel() {
@@ -290,6 +289,40 @@ func (s *ObjectExtractionJobsTestSuite) TestMarkCompleted_UpdatesJob() {
 	s.Equal(5, updatedJob.RelationshipsCreated)
 	s.Equal(18, updatedJob.SuccessfulItems)
 	s.Equal(2, updatedJob.FailedItems)
+}
+
+// TestMarkCompleted_ZeroObjects verifies a job that completes with zero created
+// objects persists its terminal state. created_object_ids is NOT NULL, so an
+// empty result must be written as an empty array, not SQL NULL (issue #894).
+func (s *ObjectExtractionJobsTestSuite) TestMarkCompleted_ZeroObjects() {
+	job, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID: s.projectID,
+	})
+
+	_, _ = s.jobsService.Dequeue(s.ctx)
+
+	// Empty result: no objects created, and CreatedObjectIDs left nil.
+	err := s.jobsService.MarkCompleted(s.ctx, job.ID, extraction.ObjectExtractionResults{})
+	s.Require().NoError(err)
+
+	updatedJob, err := s.jobsService.FindByID(s.ctx, job.ID)
+	s.Require().NoError(err)
+	s.Equal(extraction.JobStatusCompleted, updatedJob.Status)
+	s.NotNil(updatedJob.CompletedAt)
+
+	var isNull bool
+	err = s.testDB.DB.NewRaw(
+		"SELECT (created_object_ids IS NULL) FROM kb.object_extraction_jobs WHERE id = ?",
+		job.ID).Scan(s.ctx, &isNull)
+	s.Require().NoError(err)
+	s.False(isNull, "created_object_ids must not be NULL for a zero-object completion")
+
+	var cardinality int
+	err = s.testDB.DB.NewRaw(
+		"SELECT cardinality(created_object_ids) FROM kb.object_extraction_jobs WHERE id = ?",
+		job.ID).Scan(s.ctx, &cardinality)
+	s.Require().NoError(err)
+	s.Equal(0, cardinality, "created_object_ids must be an empty array for a zero-object completion")
 }
 
 // =============================================================================
@@ -531,11 +564,11 @@ func (s *ObjectExtractionJobsTestSuite) TestStats_ReturnsCorrectCounts() {
 		ProjectID: s.projectID,
 	})
 
-	// Create and process job (set to processing)
+	// Create a second pending job (same project — per-project serialisation is
+	// no longer enforced, so both stay pending until explicitly dequeued).
 	_, _ = s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
 		ProjectID: s.projectID,
 	})
-	// Note: can't dequeue second while first is pending
 
 	// Create and complete job
 	job3, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{

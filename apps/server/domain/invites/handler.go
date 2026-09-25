@@ -1,12 +1,15 @@
 package invites
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 
 	"github.com/labstack/echo/v4"
+	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -14,13 +17,16 @@ import (
 
 // Handler handles HTTP requests for invitations
 type Handler struct {
-	svc *Service
-	cfg *config.Config
+	svc  *Service
+	cfg  *config.Config
+	auth *auth.Middleware
+	orgs *orgs.Repository
+	db   bun.IDB
 }
 
 // NewHandler creates a new invites handler
-func NewHandler(svc *Service, cfg *config.Config) *Handler {
-	return &Handler{svc: svc, cfg: cfg}
+func NewHandler(svc *Service, cfg *config.Config, authMiddleware *auth.Middleware, orgsRepo *orgs.Repository, db bun.IDB) *Handler {
+	return &Handler{svc: svc, cfg: cfg, auth: authMiddleware, orgs: orgsRepo, db: db}
 }
 
 // ListPending returns pending invitations for the current user
@@ -60,8 +66,6 @@ func (h *Handler) ListByProject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("project_id is required")
 	}
 
-	// TODO: Verify user has access to project
-
 	invites, err := h.svc.ListByProject(c.Request().Context(), projectID)
 	if err != nil {
 		return err
@@ -90,7 +94,62 @@ func (h *Handler) Create(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
-	// TODO: Verify user has admin access to project
+	if req.OrgID == "" {
+		return apperror.NewBadRequest("orgId is required")
+	}
+
+	// targetOrgID is the server-resolved organization the invitation will grant
+	// access to. It is derived from kb.projects (project-scoped) or from the body
+	// orgId only after a server-side membership check (org-scoped); it is never a
+	// trusted client value.
+	var targetOrgID string
+
+	if req.ProjectID != "" {
+		// Project-scoped: authorize the caller against the project's owning org
+		// (issue #926), then bind the body orgId to that server-resolved org
+		// (issue #960). Neither value is trusted: the owning org is derived from
+		// kb.projects and the supplied orgId must agree with it.
+		if err := h.auth.AuthorizeProject(c, req.ProjectID); err != nil {
+			return err
+		}
+		owningOrg, err := h.svc.ProjectOrg(c.Request().Context(), req.ProjectID)
+		if err != nil {
+			return err
+		}
+		if req.OrgID != owningOrg {
+			return apperror.NewBadRequest("orgId does not match the project's organization")
+		}
+		targetOrgID = owningOrg
+	} else {
+		// Org-scoped: the caller must be a member of the target org (issue #960).
+		// Membership is resolved server-side against kb.organization_memberships,
+		// so a foreign orgId cannot self-satisfy the check.
+		member, err := h.orgs.IsUserMember(c.Request().Context(), req.OrgID, user.ID)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return apperror.ErrForbidden
+		}
+		targetOrgID = req.OrgID
+	}
+
+	// Role-grant authorization (issue #967): an org_admin invitation grants the
+	// invitee org_admin membership, so only a caller who already holds org_admin
+	// authority over the target organization (or is an active superadmin_full)
+	// may mint it. A plain member may invite at or below their own level; a role
+	// above the caller's authority is refused, fail closed. The caller's
+	// authority is resolved server-side from kb.organization_memberships and
+	// core.superadmins — never from a request-controlled value.
+	if req.Role == "org_admin" {
+		allowed, err := h.mayGrantOrgAdmin(c.Request().Context(), targetOrgID, user.ID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return apperror.NewForbidden("only an org_admin may invite another org_admin")
+		}
+	}
 
 	// Attach inviter identity so the email template can show who sent the invite
 	req.InviterID = user.ID
@@ -104,6 +163,22 @@ func (h *Handler) Create(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, invite)
+}
+
+// mayGrantOrgAdmin reports whether the caller may grant org_admin membership in
+// orgID. A caller who is themselves an org_admin of orgID, or an active
+// superadmin_full, may; anyone else may not (issue #967). The caller's authority
+// is resolved server-side from kb.organization_memberships and core.superadmins,
+// never from a client-supplied value.
+func (h *Handler) mayGrantOrgAdmin(ctx context.Context, orgID, userID string) (bool, error) {
+	role, err := h.orgs.GetMembershipRole(ctx, orgID, userID)
+	if err != nil {
+		return false, err
+	}
+	if role == "org_admin" {
+		return true, nil
+	}
+	return auth.IsSuperadminFull(ctx, h.db)
 }
 
 // Accept accepts an invitation via POST (JSON body with token)
@@ -213,12 +288,29 @@ func (h *Handler) Decline(c echo.Context) error {
 // @Router       /api/invites/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
 	inviteID := c.Param("id")
 	if inviteID == "" {
 		return apperror.ErrBadRequest.WithMessage("invite_id is required")
 	}
 
-	// TODO: Verify user has admin access to the project this invite belongs to
+	// Resolve the invite server-side and require the caller to be a member of
+	// its organization before revoking (issue #960). A non-member receives 404,
+	// indistinguishable from a missing invite, so this endpoint is not an
+	// existence oracle.
+	invite, err := h.svc.GetByID(c.Request().Context(), inviteID)
+	if err != nil {
+		return err
+	}
+
+	member, err := h.orgs.IsUserMember(c.Request().Context(), invite.OrganizationID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return apperror.NewNotFound("invite", inviteID)
+	}
 
 	if err := h.svc.Revoke(c.Request().Context(), inviteID); err != nil {
 		return err
