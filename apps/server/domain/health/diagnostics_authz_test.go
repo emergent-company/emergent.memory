@@ -124,3 +124,59 @@ func TestDiagnosticsAuthz(t *testing.T) {
 			"non-superadmin /debug must be 403, got %d: %s", resp.StatusCode, resp.String())
 	})
 }
+
+// TestPlatformGateDoesNotLeakToUnrelatedPaths is the regression guard for the
+// Echo v4.15 group-middleware catch-all: registering the platform gate under an
+// EMPTY-prefix group (e.Group("")) auto-registers a global "/*" RouteNotFound
+// catch-all, so RequireAuth + RequireSuperadminFull would run on every
+// otherwise-unmatched request and leak 401/403 onto unrelated paths (including
+// the moved /api/admin/agents cancel route, which then stopped returning 404).
+// With the gate registered under its own non-empty prefix, unrelated paths must
+// fall through to the normal 404.
+func TestPlatformGateDoesNotLeakToUnrelatedPaths(t *testing.T) {
+	ctx := context.Background()
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "diagnostics_gate_no_leak")
+	defer testDB.Close()
+
+	dbc := testDB.GetDB()
+	require.NoError(t, testutil.SetupTestFixtures(ctx, dbc))
+	_, err := dbc.NewRaw(`INSERT INTO core.superadmins (user_id, role) VALUES (?, 'superadmin_full')`, testutil.AdminUser.ID).Exec(ctx)
+	require.NoError(t, err)
+
+	client := newDiagnosticsEcho(t, testDB)
+
+	// Unrelated unknown path must 404 — for both an unauthenticated caller AND
+	// an active superadmin_full caller (the catch-all must not swallow it).
+	t.Run("unrelated unknown path -> 404", func(t *testing.T) {
+		resp := client.GET("/api/this-does-not-exist")
+		require.Equal(t, http.StatusNotFound, resp.StatusCode,
+			"unauthenticated unrelated path must be 404, got %d: %s", resp.StatusCode, resp.String())
+
+		resp = client.GET("/api/this-does-not-exist", testutil.WithAuth(superadminToken))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode,
+			"superadmin unrelated path must still be 404, got %d: %s", resp.StatusCode, resp.String())
+	})
+
+	// The moved /api/admin/agents cancel route (now /api/projects/:projectId/
+	// agents/...) must keep its normal 404, not 401/403 from the platform gate.
+	t.Run("moved admin agents cancel route -> 404", func(t *testing.T) {
+		fakeAgentID := "00000000-0000-0000-0000-00000000aaaa"
+		fakeRunID := "00000000-0000-0000-0000-00000000bbbb"
+		path := "/api/admin/agents/" + fakeAgentID + "/runs/" + fakeRunID + "/cancel"
+
+		resp := client.POST(path)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode,
+			"unauthenticated moved cancel route must be 404, got %d: %s", resp.StatusCode, resp.String())
+
+		resp = client.POST(path, testutil.WithAuth(superadminToken))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode,
+			"superadmin moved cancel route must still be 404, got %d: %s", resp.StatusCode, resp.String())
+	})
+
+	// A public probe must remain public (not intercepted by the gate).
+	t.Run("public probe unaffected -> 200", func(t *testing.T) {
+		resp := client.GET("/healthz")
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"public /healthz must remain 200, got %d: %s", resp.StatusCode, resp.String())
+	})
+}

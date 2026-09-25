@@ -29,12 +29,19 @@ func RegisterRoutes(e *echo.Echo, h *Handler, m *MetricsHandler, authMiddleware 
 	e.GET("/ready", h.Ready)
 	e.GET("/api/health", h.Health)
 
-	// Platform-tier internal diagnostics.
-	platform := e.Group("")
-	platform.Use(authMiddleware.RequireAuth())
-	platform.Use(authMiddleware.RequireSuperadminFull())
-	platform.GET("/debug", h.Debug)
-	platform.GET("/api/diagnostics", h.Diagnose)
+	// Platform-tier internal diagnostics. Each surface is registered under its
+	// own non-empty prefix so the group-level middleware's auto-registered
+	// RouteNotFound catch-all is confined to that path. A group with an EMPTY
+	// prefix (e.Group("")) would register a global "/*" catch-all and run the
+	// superadmin guard — leaking 401/403 — onto every otherwise-unmatched
+	// request across the whole API. See TestPlatformGateDoesNotLeakToUnrelatedPaths.
+	debug := e.Group("/debug")
+	debug.Use(authMiddleware.RequireAuth(), authMiddleware.RequireSuperadminFull())
+	debug.GET("", h.Debug)
+
+	diagnostics := e.Group("/api/diagnostics")
+	diagnostics.Use(authMiddleware.RequireAuth(), authMiddleware.RequireSuperadminFull())
+	diagnostics.GET("", h.Diagnose)
 
 	// The scope-authority posture must not leak to anonymous callers (issue #812
 	// Q5; retroactive #808 removed the oidc_all_grant signal from the anonymous
