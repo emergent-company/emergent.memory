@@ -220,6 +220,25 @@ func callerRunIDFromContext(ctx context.Context) string {
 	return v
 }
 
+// inheritedTrust resolves the trust to apply to a run started through a
+// delegation/coordination tool (trigger_agent, call_agent) from the invoking
+// context, so these tools inherit the caller's trust exactly as spawn_agents
+// does via CoordinationToolDeps.TrustedInternal. A direct authenticated MCP
+// client has no parent run in context, so it resolves to untrusted (false): the
+// MCP surface is external-facing, not the session UI. Fail-closed: a missing or
+// unreadable parent run also resolves to false.
+func inheritedTrust(ctx context.Context, findRun func(context.Context, string) (*AgentRun, error)) bool {
+	callerRunID := callerRunIDFromContext(ctx)
+	if callerRunID == "" {
+		return false
+	}
+	run, err := findRun(ctx, callerRunID)
+	if err != nil || run == nil {
+		return false
+	}
+	return run.TrustedInternal
+}
+
 // acpSessionIDKey is the context key used to propagate the ACP session ID
 // through the execution pipeline so that built-in tools (e.g. set_session_title)
 // can update session metadata without needing it in their function signatures.
