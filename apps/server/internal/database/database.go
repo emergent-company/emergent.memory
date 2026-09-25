@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
+	"github.com/uptrace/bun/extra/bunotel"
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -87,6 +88,9 @@ func NewBunDB(lc fx.Lifecycle, pool *pgxpool.Pool, cfg *config.Config, log *slog
 	// Create Bun DB with PostgreSQL dialect
 	db := bun.NewDB(sqldb, pgdialect.New())
 
+	// Emit an OTel span per query when tracing is enabled (see addTracingHook).
+	addTracingHook(db, cfg)
+
 	// Add query logging hook if debug enabled
 	if cfg.Database.QueryDebug {
 		db.AddQueryHook(&queryLoggingHook{log: log})
@@ -103,6 +107,14 @@ func NewBunDB(lc fx.Lifecycle, pool *pgxpool.Pool, cfg *config.Config, log *slog
 	})
 
 	return db, nil
+}
+
+// addTracingHook registers the bunotel query hook when OTel tracing is enabled.
+// Inert (hook not registered) when tracing is disabled, so there is zero overhead.
+func addTracingHook(db *bun.DB, cfg *config.Config) {
+	if cfg.Otel.Enabled() {
+		db.AddQueryHook(bunotel.NewQueryHook(bunotel.WithDBName(cfg.Database.Database)))
+	}
 }
 
 // queryLoggingHook implements bun.QueryHook for query logging
