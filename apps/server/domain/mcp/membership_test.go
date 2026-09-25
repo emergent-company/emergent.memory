@@ -138,3 +138,89 @@ func (s *MCPMembershipSuite) TestInitializeClaimReconciled() {
 	s.Require().Equal(-32002, body.Error.Code,
 		"initialize claim for a foreign project must be forbidden (-32002), got %d", body.Error.Code)
 }
+
+// unifiedInit performs an initialize against the unified /api/mcp endpoint.
+// sessionID may be empty (fresh session); projectHeader sets X-Project-ID and
+// projectParam sets the initialize params' project_id.
+func (s *MCPMembershipSuite) unifiedInit(sessionID, projectHeader, projectParam string) *testutil.HTTPResponse {
+	opts := []testutil.RequestOption{
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithProjectID(projectHeader),
+		testutil.WithHeader("MCP-Protocol-Version", "2025-11-25"),
+		testutil.WithHeader("Accept", "application/json"),
+	}
+	if sessionID != "" {
+		opts = append(opts, testutil.WithHeader("Mcp-Session-Id", sessionID))
+	}
+	opts = append(opts, testutil.WithJSONBody(initBody(projectParam)))
+	return s.Client.POST("/api/mcp", opts...)
+}
+
+// unifiedToolsCall calls a tool on an existing unified /api/mcp session.
+func (s *MCPMembershipSuite) unifiedToolsCall(sessionID, toolName string) *testutil.HTTPResponse {
+	return s.Client.POST("/api/mcp",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithHeader("MCP-Protocol-Version", "2025-11-25"),
+		testutil.WithHeader("Accept", "application/json"),
+		testutil.WithHeader("Mcp-Session-Id", sessionID),
+		testutil.WithJSONBody(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "tools/call",
+			"id":      2,
+			"params": map[string]any{
+				"name":      toolName,
+				"arguments": map[string]any{},
+			},
+		}))
+}
+
+// TestReinitForeignProjectDoesNotPoisonSession is the mutation-before-check
+// regression reproducer: a session initialized on the caller's own project A
+// must remain bound to A after a DENIED re-init that names a foreign project B.
+// The unified handler used to assign session.ProjectID = B before authorizing,
+// poisoning the stored session so a later tools/call leaked B's data.
+func (s *MCPMembershipSuite) TestReinitForeignProjectDoesNotPoisonSession() {
+	_, err := s.DB().NewRaw("UPDATE kb.projects SET project_info = ? WHERE id = ?", "OWN-PROJECT-A", s.ProjectID).Exec(s.Ctx)
+	s.Require().NoError(err)
+	projectB := s.newForeignProject()
+	_, err = s.DB().NewRaw("UPDATE kb.projects SET project_info = ? WHERE id = ?", "SECRET-FOREIGN-PROJECT-B", projectB).Exec(s.Ctx)
+	s.Require().NoError(err)
+
+	// 1. Initialize a session bound to project A.
+	resp := s.unifiedInit("", s.ProjectID, s.ProjectID)
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	sessionID := resp.Headers.Get("Mcp-Session-Id")
+	s.Require().NotEqual("", sessionID, "fresh init must return a session id")
+
+	// 2. Denied re-init: claim foreign project B while the header still says A.
+	resp = s.unifiedInit(sessionID, s.ProjectID, projectB)
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "denial surfaces as a JSON-RPC error over HTTP 200")
+	var denied struct {
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	s.Require().NoError(json.Unmarshal(resp.Body, &denied))
+	s.Require().NotNil(denied.Error, "re-init must be denied, got %s", resp.String())
+	s.Require().Equal(-32002, denied.Error.Code, "re-init denial must be forbidden (-32002), got %d", denied.Error.Code)
+
+	// 3. tools/call project-get must still return project A's info, not B's.
+	call := s.unifiedToolsCall(sessionID, "project-get")
+	s.Require().Equal(http.StatusOK, call.StatusCode)
+	var result struct {
+		Result struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	s.Require().NoError(json.Unmarshal(call.Body, &result))
+	s.Require().Nil(result.Error, "tools/call must succeed on the still-valid session, got %s", call.String())
+	s.Require().NotEmpty(result.Result.Content, "tools/call project-get must return content")
+	s.Require().Equal("OWN-PROJECT-A", result.Result.Content[0].Text,
+		"session must remain bound to project A after a denied re-init; leaked: %s", result.Result.Content[0].Text)
+}
