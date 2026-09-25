@@ -383,10 +383,22 @@ func (s *Service) UpdateTool(ctx context.Context, projectID, toolID string, enab
 	return nil
 }
 
-// SyncServerTools discovers tools from an external MCP server and updates the registry.
-// For now this accepts tools directly (caller is responsible for connecting and calling tools/list).
-// In the future, the proxy layer will handle the connection.
-func (s *Service) SyncServerTools(ctx context.Context, serverID string, discoveredTools []DiscoveredTool) error {
+// SyncServerTools upserts discovered tools for a server and removes tools that
+// no longer exist. The server must belong to the caller's project: a foreign or
+// missing server returns ErrServerNotFound before any mutation (issue #978), so
+// kb.mcp_server_tools can never be mutated without an ownership predicate.
+// For now this accepts tools directly (caller is responsible for connecting and
+// calling tools/list). In the future, the proxy layer will handle the connection.
+func (s *Service) SyncServerTools(ctx context.Context, projectID, serverID string, discoveredTools []DiscoveredTool) error {
+	// Enforce server ownership before any mutation (issue #978).
+	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
+	if err != nil {
+		return fmt.Errorf("fetching server: %w", err)
+	}
+	if server == nil {
+		return ErrServerNotFound
+	}
+
 	// Upsert discovered tools
 	tools := make([]*MCPServerTool, 0, len(discoveredTools))
 	currentNames := make([]string, 0, len(discoveredTools))
@@ -419,11 +431,7 @@ func (s *Service) SyncServerTools(ctx context.Context, serverID string, discover
 		slog.Int("stale_removed", staleCount),
 	)
 
-	// Invalidate ToolPool cache — look up server to get project ID
-	server, err := s.repo.FindServerByID(ctx, serverID, nil)
-	if err == nil && server != nil {
-		s.invalidateToolPool(server.ProjectID)
-	}
+	s.invalidateToolPool(projectID)
 
 	return nil
 }
@@ -548,7 +556,7 @@ func (s *Service) DiscoverAndSyncTools(ctx context.Context, serverID string, pro
 	}
 
 	// Sync discovered tools to database
-	if err := s.SyncServerTools(ctx, serverID, discovered); err != nil {
+	if err := s.SyncServerTools(ctx, projectID, serverID, discovered); err != nil {
 		return nil, fmt.Errorf("syncing discovered tools: %w", err)
 	}
 

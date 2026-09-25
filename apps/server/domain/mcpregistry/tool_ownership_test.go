@@ -1,12 +1,15 @@
 package mcpregistry_test
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 )
 
@@ -74,6 +77,23 @@ func (s *MCPRegistryToolOwnershipSuite) readToolEnabled(toolID string) bool {
 	err := s.DB().NewRaw(`SELECT enabled FROM kb.mcp_server_tools WHERE id = ?`, toolID).Scan(s.Ctx, &enabled)
 	s.Require().NoError(err)
 	return enabled
+}
+
+// seedToolOnServer inserts an enabled tool row for an existing server.
+func (s *MCPRegistryToolOwnershipSuite) seedToolOnServer(serverID, toolName string) {
+	_, err := s.DB().NewRaw(`
+		INSERT INTO kb.mcp_server_tools (id, server_id, tool_name, enabled, created_at)
+		VALUES (?, ?, ?, true, NOW())
+	`, uuid.New().String(), serverID, toolName).Exec(s.Ctx)
+	s.Require().NoError(err)
+}
+
+// listToolNames returns the tool_name values for a server, sorted.
+func (s *MCPRegistryToolOwnershipSuite) listToolNames(serverID string) []string {
+	var names []string
+	err := s.DB().NewRaw(`SELECT tool_name FROM kb.mcp_server_tools WHERE server_id = ? ORDER BY tool_name`, serverID).Scan(s.Ctx, &names)
+	s.Require().NoError(err)
+	return names
 }
 
 // --- ToggleTool (PATCH /api/admin/mcp-servers/:id/tools/:toolId) ---
@@ -145,4 +165,45 @@ func (s *MCPRegistryToolOwnershipSuite) TestUpdateBuiltinOwnToolOK() {
 		"own-project builtin-tool PATCH must be 200, got %d: %s", resp.StatusCode, resp.String())
 	s.Require().False(s.readToolEnabled(toolAID),
 		"own-project builtin tool must be disabled after PATCH")
+}
+
+// --- SyncServerTools (MCP manual-sync branch) ---
+
+// TestSyncServerToolsForeignServerRefused proves the manual-sync branch of
+// SyncServerTools is project-scoped (issue #978): a member of A targeting
+// project B's server_id is refused and B's tool rows are untouched.
+func (s *MCPRegistryToolOwnershipSuite) TestSyncServerToolsForeignServerRefused() {
+	// Two more victim rows on project B's server (plus the existing "foreign-tool").
+	s.seedToolOnServer(s.serverBID, "victim-1")
+	s.seedToolOnServer(s.serverBID, "victim-2")
+
+	svc := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, nil, slog.Default())
+
+	err := svc.SyncServerTools(s.Ctx, s.ProjectID, s.serverBID, []mcpregistry.DiscoveredTool{{Name: "attacker-tool"}})
+
+	s.Require().Error(err, "foreign server sync must be refused")
+	s.Require().True(errors.Is(err, mcpregistry.ErrServerNotFound),
+		"foreign server sync must return ErrServerNotFound, got: %v", err)
+
+	names := s.listToolNames(s.serverBID)
+	s.Require().ElementsMatch([]string{"foreign-tool", "victim-1", "victim-2"}, names,
+		"victim tool rows must be unchanged, got: %v", names)
+}
+
+// TestSyncServerToolsOwnProjectOK proves the legitimate manual-sync path still
+// works for the caller's own server.
+func (s *MCPRegistryToolOwnershipSuite) TestSyncServerToolsOwnProjectOK() {
+	serverAID, _ := s.seedServerAndTool(s.ProjectID, "own-tool")
+
+	svc := mcpregistry.NewService(mcpregistry.NewRepository(s.DB()), nil, nil, nil, slog.Default())
+
+	err := svc.SyncServerTools(s.Ctx, s.ProjectID, serverAID, []mcpregistry.DiscoveredTool{
+		{Name: "own-tool"},
+		{Name: "new-tool"},
+	})
+	s.Require().NoError(err, "own-project sync must succeed: %v", err)
+
+	names := s.listToolNames(serverAID)
+	s.Require().ElementsMatch([]string{"own-tool", "new-tool"}, names,
+		"own-project sync must upsert the provided tools, got: %v", names)
 }

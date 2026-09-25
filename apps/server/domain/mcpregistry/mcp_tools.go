@@ -3,6 +3,7 @@ package mcpregistry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -321,8 +322,12 @@ func (h *MCPRegistryToolHandler) ExecuteSyncMCPServerTools(ctx context.Context, 
 	var toolCount int
 
 	if len(discoveredTools) > 0 {
-		// Manual sync with provided tools
-		if err := h.service.SyncServerTools(ctx, serverID, discoveredTools); err != nil {
+		// Manual sync with provided tools. The server is resolved project-scoped
+		// inside SyncServerTools, so a foreign server_id is refused (issue #978).
+		if err := h.service.SyncServerTools(ctx, projectID, serverID, discoveredTools); err != nil {
+			if errors.Is(err, ErrServerNotFound) {
+				return errResult(fmt.Sprintf("MCP server not found: %s", serverID))
+			}
 			return errResult("failed to sync tools: " + err.Error())
 		}
 		toolCount = len(discoveredTools)

@@ -372,7 +372,7 @@ func (h *Handler) SyncTools(c echo.Context) error {
 			toolCount = len(discovered)
 		} else {
 			// Manual sync with provided tools
-			if err := h.svc.SyncServerTools(ctx, serverID, discoveredTools); err != nil {
+			if err := h.svc.SyncServerTools(ctx, user.ProjectID, serverID, discoveredTools); err != nil {
 				return apperror.NewInternal("failed to sync tools", err)
 			}
 			toolCount = len(discoveredTools)
