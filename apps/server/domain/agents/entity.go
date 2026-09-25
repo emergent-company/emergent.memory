@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -278,6 +279,21 @@ const (
 	VisibilityProject  AgentVisibility = "project"  // Shown in the admin UI, not advertised in the A2A agent card
 	VisibilityInternal AgentVisibility = "internal" // Hidden from lists; callable only by other agents, never via A2A
 )
+
+// NormalizeVisibility trims and lowercases v and maps it to a canonical
+// AgentVisibility level. Empty (or whitespace-only) normalizes to project, the
+// server default. It returns ok=false for any value that is not one of the
+// three levels, so callers never persist an unmappable value (issue #889).
+func NormalizeVisibility(v AgentVisibility) (AgentVisibility, bool) {
+	switch s := AgentVisibility(strings.ToLower(strings.TrimSpace(string(v)))); s {
+	case "":
+		return VisibilityProject, true
+	case VisibilityExternal, VisibilityProject, VisibilityInternal:
+		return s, true
+	default:
+		return "", false
+	}
+}
 
 // AgentFlowType defines how an agent executes
 type AgentFlowType string
