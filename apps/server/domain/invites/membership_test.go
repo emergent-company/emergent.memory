@@ -189,6 +189,65 @@ func (s *InvitesMembershipSuite) TestCreateOrgOnlyMemberOK() {
 		"org-only invite by a member must succeed, got %d: %s", resp.StatusCode, resp.String())
 }
 
+// ─── Create role-grant authorization (issue #967) ────────────────────────────
+
+// seedMemberInOrg adds a plain member (not org_admin) to the suite org so a test
+// can authenticate as that member via their token ("read-only" → ReadOnlyUser).
+func (s *InvitesMembershipSuite) seedMemberInOrg() {
+	s.Require().NoError(testutil.CreateTestOrgMembership(
+		s.Ctx, s.DB(), s.OrgID, testutil.ReadOnlyUser.ID, "member"))
+}
+
+// TestCreateOrgAdminByMemberForbidden is the fail-first reproducer for the
+// self-escalation (issue #967): a plain member creating an org_admin invitation
+// for their own org must be refused with 403 and must write no invite row.
+func (s *InvitesMembershipSuite) TestCreateOrgAdminByMemberForbidden() {
+	s.seedMemberInOrg()
+
+	resp := s.Client.POST("/api/invites",
+		testutil.WithAuth("read-only"),
+		testutil.WithJSONBody(map[string]any{
+			"orgId": s.OrgID,
+			"email": "invitee@example.com",
+			"role":  "org_admin",
+		}))
+	s.Require().Equal(http.StatusForbidden, resp.StatusCode,
+		"member creating an org_admin invite must be 403, got %d: %s", resp.StatusCode, resp.String())
+	s.Require().Equal(0, s.inviteCountForOrg(s.OrgID),
+		"no invite row may be created when a member attempts an org_admin invite")
+}
+
+// TestCreateOrgAdminByOrgAdminOK proves an org_admin can still create an
+// org_admin invitation (the gate must not over-restrict legitimate admins).
+func (s *InvitesMembershipSuite) TestCreateOrgAdminByOrgAdminOK() {
+	resp := s.Client.POST("/api/invites",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"orgId": s.OrgID,
+			"email": "invitee@example.com",
+			"role":  "org_admin",
+		}))
+	s.Require().Equal(http.StatusCreated, resp.StatusCode,
+		"org_admin creating an org_admin invite must succeed, got %d: %s", resp.StatusCode, resp.String())
+}
+
+// TestCreateMemberRoleByMemberOK proves a plain member can still create an
+// ordinary member-granting (project_*) invitation — the gate must not
+// over-restrict non-org_admin roles.
+func (s *InvitesMembershipSuite) TestCreateMemberRoleByMemberOK() {
+	s.seedMemberInOrg()
+
+	resp := s.Client.POST("/api/invites",
+		testutil.WithAuth("read-only"),
+		testutil.WithJSONBody(map[string]any{
+			"orgId": s.OrgID,
+			"email": "invitee@example.com",
+			"role":  "project_user",
+		}))
+	s.Require().Equal(http.StatusCreated, resp.StatusCode,
+		"member creating a project_user invite must succeed, got %d: %s", resp.StatusCode, resp.String())
+}
+
 // ─── Revoke (DELETE /api/invites/:id) ────────────────────────────────────────
 
 // TestRevokeNonMemberNotFound proves a non-member cannot revoke another org's

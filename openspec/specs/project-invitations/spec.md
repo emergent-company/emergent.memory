@@ -34,6 +34,21 @@ The target project and organization are sourced from the request body (which the
 - **WHEN** a caller who is not a member of the supplied `orgId` (and no `projectId`) attempts to create an invitation
 - **THEN** the server responds with HTTP 403 and stores no invitation
 
+### Requirement: Role-grant authorization
+The system SHALL gate an invitation whose `role` is `org_admin` on the caller's own authority: only a caller who is an `org_admin` of the target organization (or an active `superadmin_full`) MAY create such an invitation. A plain member MAY invite at or below their own level, but a role above the caller's authority SHALL be refused with HTTP 403 and no invitation SHALL be stored. The caller's authority SHALL be resolved server-side from `kb.organization_memberships` and `core.superadmins`, never from a request-controlled value.
+
+#### Scenario: member cannot create an org_admin invitation
+- **WHEN** a member of an organization attempts to create an invitation with `role: "org_admin"` for that organization
+- **THEN** the server responds with HTTP 403 and stores no invitation
+
+#### Scenario: org_admin creates an org_admin invitation
+- **WHEN** an `org_admin` of an organization creates an invitation with `role: "org_admin"` for that organization
+- **THEN** the server stores the invitation and returns HTTP 201
+
+#### Scenario: member creates a member-granting invitation
+- **WHEN** a member of an organization creates an invitation with a project-scoped role (`project_admin`, `project_user`, or `project_viewer`)
+- **THEN** the server stores the invitation and returns HTTP 201
+
 ### Requirement: Invitation email delivery
 The system SHALL send a `project-invitation` email to the invited address. The email SHALL include the inviting user's name, the project name, the role being granted, and a single-use accept URL valid for 7 days.
 
@@ -56,11 +71,15 @@ The system SHALL provide a `GET /api/projects/:projectId/invites` endpoint (auth
 - **THEN** the server returns each invitation with its email, role, status, and creation time
 
 ### Requirement: Accept an invitation
-The system SHALL accept a pending invitation via `GET /invites/accept?token=...` (which redirects unauthenticated users to login) or `POST /api/invites/accept` with a JSON body `{"token":"..."}`. On acceptance the system SHALL mark the invitation `accepted`, grant the invitee project membership with the invited role when the invitation is project-scoped, and grant organization membership with the role the invitation carries (`org_admin` for `org_admin` invitations, `member` for `project_admin`/`project_user`/`project_viewer` invitations). If the stored role is not one of the allowed invitation roles, the system SHALL fail closed and grant no membership. If the token is invalid, expired, or already processed, the system SHALL return HTTP 404.
+The system SHALL accept a pending invitation via `GET /invites/accept?token=...` (which redirects unauthenticated users to login) or `POST /api/invites/accept` with a JSON body `{"token":"..."}`. On acceptance the system SHALL mark the invitation `accepted`, grant the invitee project membership with the invited role when the invitation is project-scoped, and grant organization membership with the role the invitation carries (`org_admin` for `org_admin` invitations, `member` for `project_admin`/`project_user`/`project_viewer` invitations). If the stored role is not one of the allowed invitation roles, the system SHALL fail closed and grant no membership. An `org_admin` grant SHALL additionally be refused (fail closed, no membership) unless the invitation's recorded inviter holds `org_admin` (or `superadmin_full`) authority over the invitation's organization — a pre-existing `org_admin` invitation minted by a plain member, or with no recorded inviter, cannot be used to self-escalate. If the token is invalid, expired, or already processed, the system SHALL return HTTP 404.
 
 #### Scenario: org_admin invitation grants org_admin membership
-- **WHEN** a user accepts an `org_admin` invitation addressed to them
+- **WHEN** a user accepts an `org_admin` invitation addressed to them, whose recorded inviter is an `org_admin` of the invitation's organization
 - **THEN** the invitee's `kb.organization_memberships` role is `org_admin` and the invitation is marked `accepted`
+
+#### Scenario: org_admin invitation minted by a non-admin is refused
+- **WHEN** a user accepts an `org_admin` invitation whose recorded inviter is not an `org_admin` (or `superadmin_full`), or has no recorded inviter
+- **THEN** the server responds with an error and grants no membership
 
 #### Scenario: project-scoped invitation grants member membership
 - **WHEN** a user accepts a `project_admin`, `project_user`, or `project_viewer` invitation addressed to them
