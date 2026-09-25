@@ -56,7 +56,7 @@ templ agentSubNav(agentID string, active string, section string) {
 templ agentSettingsNavGroup(agentID string, section string) {
 	<div class="flex shrink-0 flex-row gap-1 lg:flex-col lg:gap-1">
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
-		<div class="flex shrink-0 flex-row gap-1 rounded-lg border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
+		<div class="flex shrink-0 flex-row gap-1 rounded-box border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
@@ -494,7 +494,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 									:tabindex={ "active === " + strconv.Itoa(i) + " ? 0 : -1" }
 									@click={ "choose('" + opt.Value + "')" }
 									@mouseenter={ "setActive(" + strconv.Itoa(i) + ")" }
-									class={ "flex cursor-pointer flex-col gap-0.5 rounded-lg px-3 py-2 transition-colors hover:bg-base-200 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none", templ.KV("bg-primary/10 text-primary", agentVisibilityValue(data.Agent) == opt.Value) }
+									class={ "flex cursor-pointer flex-col gap-0.5 rounded-box px-3 py-2 transition-colors hover:bg-base-200 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none", templ.KV("bg-primary/10 text-primary", agentVisibilityValue(data.Agent) == opt.Value) }
 								>
 									<span class="text-sm font-medium">{ opt.Label }</span>
 									<span class="text-base-content/50 text-xs leading-snug">{ opt.Description }</span>

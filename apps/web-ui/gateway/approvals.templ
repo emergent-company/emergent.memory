@@ -66,7 +66,7 @@ templ approvalRow(a ToolApprovalItem) {
 				<p class="text-sm text-base-content/70">{ a.Message }</p>
 			}
 			if args := formatArgsJSON(a.ArgsSummary); args != "" {
-				<pre class="max-h-32 overflow-y-auto rounded-lg bg-base-200/60 p-2 font-mono text-xs whitespace-pre-wrap break-words">{ args }</pre>
+				<pre class="max-h-32 overflow-y-auto rounded-box bg-base-200/60 p-2 font-mono text-xs whitespace-pre-wrap break-words">{ args }</pre>
 			}
 			if a.Decision == "pending" {
 				@approvalActions(a.QuestionID)

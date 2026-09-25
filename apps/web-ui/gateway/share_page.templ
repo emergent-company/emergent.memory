@@ -394,8 +394,8 @@ templ shareAvatar(props ShareAgentPageProps, id string) {
 	<div id={ id }>
 		if props.AgentAvatarURL != "" {
 			<div class="avatar placeholder">
-				<div class="bg-base-200 size-9 rounded-lg">
-					<img class="rounded-lg" src={ templ.URL(props.AgentAvatarURL) } alt=""/>
+				<div class="bg-base-200 size-9 rounded-box">
+					<img class="rounded-box" src={ templ.URL(props.AgentAvatarURL) } alt=""/>
 				</div>
 			</div>
 		} else if props.AgentGlyph != "" {
@@ -459,7 +459,7 @@ templ ShareSessionList(items []ShareSessionItem) {
 // shareSessionRow is one resumable chat in the visitor's rail.
 templ shareSessionRow(s ShareSessionItem) {
 	{{
-		rowClass := "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-base-200/60"
+		rowClass := "flex w-full items-start gap-3 rounded-box px-3 py-2 text-left transition-colors hover:bg-base-200/60"
 		if s.Active {
 			rowClass += " bg-base-200/80 ring-1 ring-primary/30"
 		}

@@ -88,11 +88,11 @@ templ backupCreateForm() {
 				<input id="backup-retention" name="retentionDays" type="number" min="1" max="365" value="30" class="input w-full sm:max-w-40"/>
 			}
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-				<label class="bg-base-200/40 flex items-start justify-between gap-3 rounded-lg border border-base-content/10 p-3">
+				<label class="bg-base-200/40 flex items-start justify-between gap-3 rounded-box border border-base-content/10 p-3">
 					<span class="text-sm font-medium">Include deleted items</span>
 					<input name="includeDeleted" type="checkbox" class="checkbox checkbox-sm mt-0.5"/>
 				</label>
-				<label class="bg-base-200/40 flex items-start justify-between gap-3 rounded-lg border border-base-content/10 p-3">
+				<label class="bg-base-200/40 flex items-start justify-between gap-3 rounded-box border border-base-content/10 p-3">
 					<span class="text-sm font-medium">Include chat</span>
 					<input name="includeChat" type="checkbox" class="checkbox checkbox-sm mt-0.5"/>
 				</label>
@@ -433,13 +433,13 @@ templ backupDetailOverview(b *Backup) {
 			<div class="sm:col-span-2 lg:col-span-3">
 				<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Backup id</dt>
 				<dd class="mt-1">
-					<code class="rounded bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.ID }</code>
+					<code class="rounded-field bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.ID }</code>
 				</dd>
 			</div>
 			<div class="sm:col-span-2 lg:col-span-3">
 				<dt class="text-base-content/45 text-[11px] font-medium tracking-wide uppercase">Storage key</dt>
 				<dd class="mt-1">
-					<code class="rounded bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.StorageKey }</code>
+					<code class="rounded-field bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all select-all">{ b.StorageKey }</code>
 				</dd>
 			</div>
 		}
@@ -478,7 +478,7 @@ templ backupDetailSettings(b *Backup) {
 		{{ rows := backupIncludeRows(b.Includes) }}
 		<div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
 			for _, row := range rows {
-				<div class="flex items-center justify-between gap-3 rounded-lg border border-base-content/10 bg-base-200/40 px-3 py-2">
+				<div class="flex items-center justify-between gap-3 rounded-box border border-base-content/10 bg-base-200/40 px-3 py-2">
 					<span class="text-sm">{ row.Label }</span>
 					if row.On {
 						@ui.Badge(ui.BadgeProps{Label: "Included", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
@@ -502,7 +502,7 @@ templ backupDetailSettings(b *Backup) {
 templ backupDetailArchiveFormat(b *Backup) {
 	@ui.Section("Archive format", ui.SectionProps{Margin: "mb-6", BodyClass: "p-5"}) {
 		<p class="text-base-content/70 text-sm">
-			The archive is a ZIP stored at <code class="rounded bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all">{ b.StorageKey }</code>. It contains:
+			The archive is a ZIP stored at <code class="rounded-field bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all">{ b.StorageKey }</code>. It contains:
 		</p>
 		<ul class="text-base-content/70 mt-3 flex flex-col gap-2 text-sm">
 			<li class="flex gap-2">

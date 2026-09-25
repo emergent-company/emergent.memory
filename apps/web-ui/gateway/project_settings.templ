@@ -37,7 +37,7 @@ templ settingsSubNav(active string, providersMissing bool) {
 		@components.SubNavItem("/settings/overrides", active == "overrides", "lucide--wrench", "Overrides")
 		{{ activeP := active == "providers" }}
 		<a
-			class={ "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !activeP) }
+			class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", activeP), templ.KV("text-base-content/60 hover:bg-base-200/50 hover:text-base-content", !activeP) }
 			href="/settings/providers"
 			if activeP {
 				aria-current="page"

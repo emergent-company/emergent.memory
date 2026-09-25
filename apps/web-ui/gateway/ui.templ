@@ -180,7 +180,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 // memoryLogo is the brand mark used in the sidebar header.
 templ memoryLogo() {
 	<div class="flex items-center gap-2.5 select-none">
-		<div class="memory-monogram grid place-items-center rounded-lg font-bold">M</div>
+		<div class="memory-monogram grid place-items-center rounded-box font-bold">M</div>
 		<div class="leading-tight">
 			<span class="block text-[15px] font-semibold tracking-tight">Memory</span>
 		</div>
@@ -1023,7 +1023,7 @@ templ flashToasts(flashMsg string, flashErr error) {
 // selects h2 (default) or h3; children hold any extra content below the copy.
 templ chatWelcomeHero(id, icon, wrapClass, title string, headingLevel int, headingClass, subtitle, subClass string) {
 	<div id={ id } class={ "flex flex-col items-center justify-center", wrapClass, "text-center" }>
-		<div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-2xl border">
+		<div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-box border">
 			@ui.IconSpan(icon, "size-7")
 		</div>
 		<div>
