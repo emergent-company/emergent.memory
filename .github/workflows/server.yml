@@ -65,6 +65,12 @@ jobs:
         working-directory: apps/server
         run: ./scripts/lint-ratchet.sh
 
+      - name: Go test coverage guard
+        # Fails when a *_test.go package under apps/server is not referenced by
+        # any `go test` / `go list` glob in this workflow — the #923 class of
+        # bug where a package's tests silently rot because no job runs them.
+        run: .github/scripts/check-go-test-coverage.sh
+
   build:
     name: Build
     runs-on: [self-hosted, linux, x64, memory]
@@ -119,7 +125,14 @@ jobs:
       - name: Run unit tests
         working-directory: apps/server
         run: |
-          go test -short ./internal/... ./pkg/... ./domain/... -v -count=1 \
+          # ./cmd/... carries three pure-Go test packages — cmd/migrate
+          # (target/DSN resolution, no DB: its main() is never invoked under
+          # `go test`), cmd/swiftbridge (pure-Go internals behind the CGO
+          # exports; ships a !cgo main stub) and cmd/storage-init (bucket
+          # selection/ensure-bucket logic). None needs Postgres or CGO, so they
+          # run under -short here. Before this line they executed in no CI job
+          # at all (#923).
+          go test -short ./internal/... ./pkg/... ./domain/... ./cmd/... -v -count=1 \
             -coverprofile=coverage.out \
             -covermode=atomic
 
