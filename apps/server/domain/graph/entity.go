@@ -130,8 +130,10 @@ type Branch struct {
 	ID             uuid.UUID  `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
 	ProjectID      uuid.UUID  `bun:"project_id,type:uuid,notnull" json:"project_id"`
 	Name           string     `bun:"name,notnull" json:"name"`
+	Description    *string    `bun:"description" json:"description,omitempty"`
 	ParentBranchID *uuid.UUID `bun:"parent_branch_id,type:uuid" json:"parent_branch_id,omitempty"`
 	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()" json:"created_at"`
+	MergedAt       *time.Time `bun:"merged_at" json:"merged_at,omitempty"`
 }
 
 // BranchLineage stores the transitive closure of branch ancestry.
