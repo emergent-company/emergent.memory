@@ -9,7 +9,7 @@ This reverses the earlier decision recorded in #812 §4.3 (documented in `opensp
 - `apps/server/pkg/auth/entitlement.go` — `CanGrantAdminAll` narrows to active `superadmin_full` only (`core.superadmins`, `revoked_at IS NULL AND role = 'superadmin_full'`). The `org_admin` arm is removed.
 - `apps/server/domain/apitoken/service.go` — the `admin:all` denial message now states `superadmin_full` (no longer "org admin or superadmin").
 - `apps/server/domain/apitoken/repository_test.go` — the `org_admin can mint admin:all` case flips to assert denial.
-- Spec correction: `openspec/specs/scope-authority/spec.md` "Organization-scoped entitlement decisions" requirement and its "Organization administrator is authorized to mint an admin:all token" scenario, plus the recorded design decision in `openspec/changes/unify-scope-authority/design.md` D4 and `tasks.md` §4.3.
+- Spec correction: `openspec/specs/scope-authority/spec.md` — the "Organization-scoped entitlement decisions" requirement is removed and re-added as "Admin:all token minting decision", whose "Organization administrator is authorized to mint an admin:all token" scenario becomes "Organization administrator is refused an admin:all token", plus the recorded design decision in `openspec/changes/unify-scope-authority/design.md` D4 and `tasks.md` §4.3.
 
 ## Capabilities
 
