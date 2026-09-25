@@ -20,10 +20,13 @@ import (
 // keyed by object type name, so rows can render each type's icon.
 templ ObjectsPage(data objectsPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@objectsHeader(data)
+		@objectsHeader()
 		if data.LoadErr != nil {
 			@pageError("Failed to load objects", data.LoadErr)
 		} else {
+			if data.Query == "" {
+				@objectsStatsSection(data.Stats)
+			}
 			@objectsSearchForm(data)
 			@objectsFilters(data)
 			if data.Query != "" {
@@ -35,11 +38,8 @@ templ ObjectsPage(data objectsPageData) {
 	}
 }
 
-templ objectsHeader(data objectsPageData) {
+templ objectsHeader() {
 	@pageHeader("Knowledge", "Objects", "Entities in the knowledge graph — people, tasks, notes, and everything else memory stores.") {
-		if data.LoadErr == nil && data.Query == "" {
-			@objectsStatsSection(data.Stats)
-		}
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
 			Href:    "/objects/new",
@@ -52,22 +52,30 @@ templ objectsHeader(data objectsPageData) {
 	}
 }
 
-// objectsStatsSection renders the small stats section replacing the old object
-// count badge: total objects, embedding-queue pending, and embedding-queue
-// failed.
+// objectsStatsSection renders the browse overview as a three-up stat row:
+// total objects, embedding-queue pending, and embedding-queue failed. It only
+// renders in browse mode, so the global counts never compete with a search's
+// results.
 templ objectsStatsSection(s objectsStats) {
-	<div class="flex flex-wrap items-center gap-2">
-		@objectsStatTile("lucide--box", strconv.Itoa(s.TotalObjects), "objects")
-		@objectsStatTile("lucide--hourglass", strconv.FormatInt(s.PendingEmbed, 10), "pending")
-		@objectsStatTile("lucide--triangle-alert", strconv.FormatInt(s.FailedEmbed, 10), "failed")
-	</div>
-}
-
-templ objectsStatTile(icon, value, label string) {
-	<div class="flex items-center gap-1.5 rounded-box border border-base-content/10 bg-base-200/40 px-2.5 py-1">
-		@ui.IconSpan(icon, "size-3.5 shrink-0 text-base-content/50")
-		<span class="text-sm font-semibold">{ value }</span>
-		<span class="text-base-content/50 text-xs">{ label }</span>
+	<div class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+		@ui.StatCard(ui.StatCardProps{
+			Label:     "objects",
+			Value:     strconv.Itoa(s.TotalObjects),
+			Icon:      "lucide--box",
+			IconColor: "bg-base-200/60 text-base-content",
+		})
+		@ui.StatCard(ui.StatCardProps{
+			Label:     "pending embeddings",
+			Value:     strconv.FormatInt(s.PendingEmbed, 10),
+			Icon:      "lucide--hourglass",
+			IconColor: "bg-warning/10 text-warning",
+		})
+		@ui.StatCard(ui.StatCardProps{
+			Label:     "failed embeddings",
+			Value:     strconv.FormatInt(s.FailedEmbed, 10),
+			Icon:      "lucide--triangle-alert",
+			IconColor: "bg-error/10 text-error",
+		})
 	</div>
 }
 
@@ -75,20 +83,48 @@ templ objectsStatTile(icon, value, label string) {
 // selector (full-text vs hybrid). The active type/branch filters ride along as
 // hidden inputs so searching doesn't drop the filters.
 templ objectsSearchForm(data objectsPageData) {
-	<form class="mb-4 flex flex-wrap items-center gap-2" method="get" action="/objects">
-		<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="input input-bordered input-sm w-full max-w-xs"/>
-		<select name="mode" class="select select-bordered select-sm">
-			<option value="fulltext" selected?={ data.Mode == "" || data.Mode == "fulltext" }>Full-text</option>
-			<option value="hybrid" selected?={ data.Mode == "hybrid" }>Hybrid</option>
-		</select>
+	<form class="mb-4" method="get" action="/objects">
+		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+			<label class="input input-bordered flex w-full items-center gap-2 sm:max-w-md">
+				@ui.IconSpan("lucide--search", "size-4 shrink-0 opacity-50")
+				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off"/>
+			</label>
+			<div class="flex items-center gap-2">
+				<div class="join" role="radiogroup" aria-label="Search mode">
+					<input
+						type="radio"
+						name="mode"
+						value="fulltext"
+						aria-label="Full-text"
+						class="join-item btn btn-sm checked:btn-primary"
+						checked?={ data.Mode == "" || data.Mode == "fulltext" }
+						onchange="this.form.submit()"
+					/>
+					<input
+						type="radio"
+						name="mode"
+						value="hybrid"
+						aria-label="Hybrid"
+						class="join-item btn btn-sm checked:btn-primary"
+						checked?={ data.Mode == "hybrid" }
+						onchange="this.form.submit()"
+					/>
+				</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonSecondary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--search",
+				}) {
+					Search
+				}
+			</div>
+		</div>
 		if data.TypeFilter != "" {
 			<input type="hidden" name="type" value={ data.TypeFilter }/>
 		}
 		if data.BranchID != "" {
 			<input type="hidden" name="branch" value={ data.BranchID }/>
-		}
-		@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--search"}) {
-			Search
 		}
 	</form>
 }
@@ -98,6 +134,10 @@ templ objectsSearchForm(data objectsPageData) {
 templ objectsFilters(data objectsPageData) {
 	if len(data.Branches) > 0 || len(data.Types) > 0 {
 		<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects">
+			<span class="text-base-content/45 flex items-center gap-1.5">
+				@ui.IconSpan("lucide--sliders-horizontal", "size-3.5 shrink-0")
+				<span class="text-xs font-medium">Filter</span>
+			</span>
 			if data.Query != "" {
 				<input type="hidden" name="q" value={ data.Query }/>
 				<input type="hidden" name="mode" value={ data.Mode }/>
@@ -138,18 +178,16 @@ templ objectsBrowse(data objectsPageData) {
 	}
 }
 
-// objectsSearchResults renders the search-mode hits (with a score badge), or a
-// no-hits empty state.
+// objectsSearchResults renders the search-mode hits (ranked, each with a muted
+// relevance score), or a no-hits empty state with a clear-search escape hatch.
 templ objectsSearchResults(data objectsPageData) {
 	if len(data.Results) == 0 {
-		@ui.EmptyState(ui.EmptyStateProps{
-			Icon:        "lucide--search",
-			Title:       "No matching objects",
-			Description: "Nothing stored matches your search.",
-			Bordered:    true,
-			Class:       "py-12",
-		})
+		@objectsSearchEmpty()
 	} else {
+		<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+			<p class="text-base-content/50 min-w-0 truncate text-sm">{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"</p>
+			<span class="text-base-content/35 shrink-0 text-xs">Ranked by relevance</span>
+		</div>
 		<div class="card bg-base-100 card-border overflow-hidden">
 			<div class="card-body p-0">
 				<div class="divide-y divide-base-200">
@@ -159,6 +197,28 @@ templ objectsSearchResults(data objectsPageData) {
 				</div>
 			</div>
 		</div>
+	}
+}
+
+// objectsSearchEmpty is the no-hits state: an empty state with a clear-search
+// escape hatch back to the full browse list.
+templ objectsSearchEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--search-x",
+		Title:       "No matching objects",
+		Description: "Nothing stored matches your search. Try different words, or clear it to keep browsing.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear search
+		}
 	}
 }
 
@@ -175,10 +235,11 @@ templ objectsLoadMore(data objectsPageData) {
 // replacement carried by the partial response.
 templ objectsLoadMoreButton(data objectsPageData) {
 	@ui.Button(ui.ButtonProps{
-		Type:    ui.ButtonTypeButton,
-		Variant: ui.ButtonGhost,
-		Size:    ui.ButtonSM,
-		Icon:    "lucide--chevron-down",
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonOutline,
+		Size:       ui.ButtonSM,
+		Icon:       "lucide--chevron-down",
+		ExtraClass: "gap-2 px-6",
 		Attrs: templ.Attributes{
 			"hx-get":    objectsPartialURL(data),
 			"hx-target": "#objects-list",
@@ -207,22 +268,43 @@ templ objectsRowsPartial(data objectsPageData) {
 // replacement); py-12 keeps the panel present under the filter bar.
 templ objectsEmpty(typeFilter string) {
 	if typeFilter != "" {
-		@ui.EmptyState(ui.EmptyStateProps{
-			Icon:        "lucide--box",
-			Title:       "No objects of this type",
-			Description: "Nothing stored matches this type.",
-			Bordered:    true,
-			Class:       "py-12",
-		})
+		@objectsTypeEmpty()
 	} else {
-		@ui.EmptyState(ui.EmptyStateProps{
-			Icon:        "lucide--box",
-			Title:       "No objects yet",
-			Description: "Entities will show up here once memory stores something.",
-			Bordered:    true,
-			Class:       "py-12",
-		})
+		@objectsBrowseEmpty()
 	}
+}
+
+// objectsTypeEmpty is the filtered-browse empty state: no object of the
+// selected type, with a clear-filter escape hatch.
+templ objectsTypeEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--filter-x",
+		Title:       "No objects of this type",
+		Description: "Nothing stored matches this type. Try another type, or view everything.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/objects",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear filter
+		}
+	}
+}
+
+// objectsBrowseEmpty is the unfiltered browse empty state: nothing stored yet.
+templ objectsBrowseEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--box",
+		Title:       "No objects yet",
+		Description: "Entities will show up here once memory stores something.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
 }
 
 templ objectsList(objects []GraphObject, typeUIByType map[string]typeUI) {
@@ -239,22 +321,27 @@ templ objectsList(objects []GraphObject, typeUIByType map[string]typeUI) {
 
 // objectRow is one browse-mode object row.
 templ objectRow(o GraphObject, tui typeUI) {
-	@components.ListRow(templ.URL("/objects/"+url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(objectUpdatedAt(o))) {
-		@objectBadges(o)
-	}
+	<div class="memory-rise">
+		@components.ListRow(templ.URL("/objects/"+url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(objectUpdatedAt(o))) {
+			@objectBadges(o)
+		}
+	</div>
 }
 
-// objectSearchRow is one search-mode hit: the standard row plus a score badge.
+// objectSearchRow is one search-mode hit: the standard row plus a muted
+// relevance score. The score is deliberately quiet — a small sparkle + number
+// after the badges — so the type/status/embedding chips stay the primary
+// signal and ranked search results don't read as noisy.
 templ objectSearchRow(r ObjectSearchResult, tui typeUI) {
-	@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), relTime(objectUpdatedAt(r.Object))) {
-		@objectBadges(r.Object)
-		@ui.Badge(ui.BadgeProps{
-			Label:   searchScoreLabel(r.Score),
-			Variant: ui.BadgePrimary,
-			Size:    ui.BadgeSizeXS,
-			Icon:    "lucide--sparkles",
-		})
-	}
+	<div class="memory-rise">
+		@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), relTime(objectUpdatedAt(r.Object))) {
+			@objectBadges(r.Object)
+			<span class="text-base-content/40 flex shrink-0 items-center gap-1" title="Relevance score">
+				@ui.IconSpan("lucide--sparkles", "size-3 shrink-0")
+				<span class="text-xs font-medium tabular-nums">{ searchScoreLabel(r.Score) }</span>
+			</span>
+		}
+	</div>
 }
 
 // objectBadges renders the trailing type/status/embedding badges shared by the
