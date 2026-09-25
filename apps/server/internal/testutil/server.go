@@ -515,7 +515,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register events routes
 	eventsSvc := events.NewService(log)
-	eventsHandler := events.NewHandler(eventsSvc, log)
+	eventsHandler := events.NewHandler(eventsSvc, log, authMiddleware)
 	events.RegisterRoutesManual(e, eventsHandler, authMiddleware)
 
 	// Register tasks routes
