@@ -3159,16 +3159,17 @@ func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string
 	}
 
 	deps := CoordinationToolDeps{
-		Executor:       ae,
-		Repo:           ae.repo,
-		Logger:         ae.log,
-		ProjectID:      req.ProjectID,
-		ParentRunID:    runID,
-		RootRunID:      derefString(req.RootRunID),
-		Depth:          req.Depth,
-		MaxDepth:       maxDepth,
-		SpawnPolicy:    extractSpawnPolicy(req.AgentDefinition),
-		ParentMetadata: req.TriggerMetadata,
+		Executor:         ae,
+		Repo:             ae.repo,
+		Logger:           ae.log,
+		ProjectID:        req.ProjectID,
+		ParentRunID:      runID,
+		RootRunID:        derefString(req.RootRunID),
+		Depth:            req.Depth,
+		MaxDepth:         maxDepth,
+		SpawnPolicy:      extractSpawnPolicy(req.AgentDefinition),
+		CallerVisibility: callerVisibility(req.AgentDefinition),
+		ParentMetadata:   req.TriggerMetadata,
 	}
 
 	var tools []tool.Tool
