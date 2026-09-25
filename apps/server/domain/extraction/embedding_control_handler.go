@@ -1,12 +1,14 @@
 package extraction
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // EmbeddingControlHandler exposes HTTP endpoints to pause/resume/inspect
@@ -227,22 +229,64 @@ type EmbeddingProgressResponse struct {
 	Relationships EmbeddingQueueStats `json:"relationships"`
 }
 
-// Progress returns per-queue embedding job statistics.
+// Progress returns per-queue embedding job statistics, project-scoped when a
+// project context is present. A caller with no project context may only obtain
+// the deployment-wide view when they hold platform admin read authority
+// (admin:read); otherwise the request is refused. This closes the unprojected
+// aggregate-count disclosure of issue #940 while keeping the gateway's
+// project-scoped embeddings page working.
 // @Router /api/embeddings/progress [get]
 func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
 	ctx := c.Request().Context()
+	user := auth.MustGetUser(c)
 
+	projectID := user.APITokenProjectID
+	if projectID == "" {
+		projectID = user.ProjectID
+	}
+
+	if projectID == "" {
+		if !user.HasScope("admin:read") {
+			return c.JSON(http.StatusForbidden, map[string]any{
+				"error": "admin scope required for deployment-wide embedding progress",
+			})
+		}
+		return h.progressGlobal(ctx, c)
+	}
+	return h.progressByProject(ctx, c, projectID)
+}
+
+// progressByProject returns the queue statistics scoped to a single project.
+func (h *EmbeddingControlHandler) progressByProject(ctx context.Context, c echo.Context, projectID string) error {
+	objStats, err := h.objectJobsSvc.StatsByProject(ctx, projectID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	relStats, err := h.relJobsSvc.StatsByProject(ctx, projectID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, embeddingProgressResponse(objStats, relStats))
+}
+
+// progressGlobal returns the deployment-wide queue statistics. Callers must have
+// already been authorized (admin:read) by the Progress handler.
+func (h *EmbeddingControlHandler) progressGlobal(ctx context.Context, c echo.Context) error {
 	objStats, err := h.objectJobsSvc.Stats(ctx)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
-
 	relStats, err := h.relJobsSvc.Stats(ctx)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+	return c.JSON(http.StatusOK, embeddingProgressResponse(objStats, relStats))
+}
 
-	return c.JSON(http.StatusOK, EmbeddingProgressResponse{
+// embeddingProgressResponse folds object and relationship queue stats into the
+// wire shape shared by the project-scoped and global progress paths.
+func embeddingProgressResponse(objStats *GraphEmbeddingQueueStats, relStats *GraphRelationshipEmbeddingQueueStats) EmbeddingProgressResponse {
+	return EmbeddingProgressResponse{
 		Objects: EmbeddingQueueStats{
 			Pending:     objStats.Pending,
 			Processing:  objStats.Processing,
@@ -259,7 +303,7 @@ func (h *EmbeddingControlHandler) Progress(c echo.Context) error {
 			StaleFailed: relStats.StaleFailed,
 			DeadLetter:  relStats.DeadLetter,
 		},
-	})
+	}
 }
 
 // EmbeddingClearResponse is the response for DELETE /api/embeddings/queue.
