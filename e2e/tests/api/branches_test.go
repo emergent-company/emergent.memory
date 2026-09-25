@@ -56,9 +56,12 @@ func TestBranches_List_FiltersByProjectID(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	dummyProjectID := "00000000-0000-0000-0000-000000000001"
+	// Branches are project-scoped and membership-gated (issue #913): listing
+	// must use the caller's own project (via setupProjectLogged), not a foreign
+	// project id.
+	projectID, _ := setupProjectLogged(t, rl)
 
-	resp := doAPILogged(t, rl, "GET", "/api/graph/branches?project_id="+dummyProjectID, e2eTestToken(), "", nil)
+	resp := doAPILogged(t, rl, "GET", "/api/graph/branches?project_id="+projectID, e2eTestToken(), "", nil)
 	body := mustStatus(t, resp, http.StatusOK)
 
 	var branches []any
@@ -153,9 +156,11 @@ func TestBranches_Create_RequiresName(t *testing.T) {
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
-	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), "", jsonBody(map[string]any{
-		"project_id": "00000000-0000-0000-0000-000000000001",
-	}))
+	// Use the caller's own project so the membership gate (issue #913) passes
+	// and the request reaches name validation.
+	projectID, _ := setupProjectLogged(t, rl)
+
+	resp := doAPILogged(t, rl, "POST", "/api/graph/branches", e2eTestToken(), projectID, jsonBody(map[string]any{}))
 	body := mustStatus(t, resp, http.StatusBadRequest)
 
 	var result map[string]any

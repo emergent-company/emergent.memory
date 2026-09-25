@@ -39,6 +39,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/invites"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
@@ -503,6 +504,11 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	mcpRegistryHandler := mcpregistry.NewHandler(mcpRegistrySvc)
 	mcpregistry.RegisterRoutes(e, mcpRegistryHandler, authMiddleware)
 
+	// Register MCP relay routes (WebSocket connect + REST sessions/tools/call)
+	mcprelaySvc := mcprelay.NewService(log)
+	mcprelayHandler := mcprelay.NewHandler(mcprelaySvc, log)
+	mcprelay.RegisterRoutes(e, mcprelayHandler, authMiddleware)
+
 	// Register useraccess routes
 	useraccessSvc := useraccess.NewService(db)
 	useraccessHandler := useraccess.NewHandler(useraccessSvc)
@@ -563,6 +569,15 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	providerRepo := provider.NewRepository(db, log)
 	agentsHandler := agents.NewHandler(agentsRepo, nil, nil, "", nil, nil, providerRepo, sandboxStore)
 	agents.RegisterRoutes(e, agentsHandler, authMiddleware)
+
+	// Register OpenAI-compatible agentcompat routes (/v1/chat/completions, /v1/models)
+	// unconditionally (issue #895). The executor is nil here because no LLM provider
+	// is wired; the handler still gates on auth first, so unauthenticated requests
+	// return 401 and GET /v1/models works against the repository. NewTestServerWithLLM
+	// re-registers these same routes with a live executor when credentials exist.
+	agentCompatSvc := agentcompat.NewService(agentRepo, nil, log)
+	agentCompatHandler := agentcompat.NewHandler(agentCompatSvc)
+	agentcompat.RegisterRoutes(e, agentCompatHandler, authMiddleware)
 
 	// Register blueprints routes (issue #868: project-scoped via the header
 	// normalised onto user.ProjectID; membership enforced by the shared pair).

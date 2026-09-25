@@ -167,7 +167,7 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 
 // GetJobStatus retrieves the status of a discovery job
 func (s *Service) GetJobStatus(ctx context.Context, jobID uuid.UUID) (*JobStatusResponse, error) {
-	job, err := s.repo.GetByID(ctx, jobID)
+	job, err := s.requireJobAccess(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,27 @@ func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) (
 
 // CancelJob cancels a discovery job
 func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID) error {
+	if _, err := s.requireJobAccess(ctx, jobID); err != nil {
+		return err
+	}
 	return s.repo.CancelJob(ctx, jobID)
+}
+
+// requireJobAccess fetches the job and asserts the authenticated caller is a
+// member of the org owning the job's project. The job's project is resolved
+// server-side (kb.discovery_jobs), never from a client-supplied value, so a
+// caller addressing another project's job id can never self-satisfy the check
+// (issue #913). Returns 404 when the job does not exist and 403 when the
+// caller is not a member.
+func (s *Service) requireJobAccess(ctx context.Context, jobID uuid.UUID) (*DiscoveryJob, error) {
+	job, err := s.repo.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if err := auth.RequireProjectMembership(ctx, s.repo.db, job.ProjectID.String()); err != nil {
+		return nil, err
+	}
+	return job, nil
 }
 
 // FinalizeDiscovery finalizes discovery and creates/extends a memory schema
@@ -223,7 +243,7 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 		slog.Int("relationships_count", len(req.IncludedRelationships)))
 
 	// Validate includedTypes against discovered candidates
-	job, err := s.repo.GetByID(ctx, jobID)
+	job, err := s.requireJobAccess(ctx, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("finalize: fetch job: %w", err)
 	}

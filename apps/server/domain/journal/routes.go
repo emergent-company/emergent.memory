@@ -10,6 +10,8 @@ import (
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g := e.Group("/api/graph/journal")
 	g.Use(authMiddleware.RequireAuth())
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	g.GET("", h.ListJournal)
 	g.POST("/notes", h.AddNote)
