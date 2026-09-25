@@ -120,10 +120,10 @@ func TestAgentsAndObjectsSharePageContainer(t *testing.T) {
 		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 		nil, nil, "", nil,
 	))
-	objectsHTML := renderHTML(t, ObjectsPage(
-		[]GraphObject{{ID: "o1", Type: "person"}},
-		[]string{"person"}, "", nil, "", nil, nil,
-	))
+	objectsHTML := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects: []GraphObject{{ID: "o1", Type: "person"}},
+		Types:   []string{"person"},
+	}))
 
 	agentsClass := firstClass(agentsHTML)
 	objectsClass := firstClass(objectsHTML)

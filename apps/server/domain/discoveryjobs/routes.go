@@ -10,6 +10,8 @@ import (
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g := e.Group("/api/discovery-jobs")
 	g.Use(authMiddleware.RequireAuth())
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
 
 	// Read operations - require discovery:read scope
 	readGroup := g.Group("")
