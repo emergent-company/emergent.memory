@@ -57,13 +57,17 @@ func (h *Handler) List(c echo.Context) error {
 // @Failure      404 {object} apperror.Error
 // @Router       /api/admin/sandbox-images/{id} [get]
 func (h *Handler) Get(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
 
 	id := c.Param("id")
 	if id == "" {
 		return apperror.NewBadRequest("image ID is required")
 	}
 
-	img, err := h.svc.Get(c.Request().Context(), id)
+	img, err := h.svc.Get(c.Request().Context(), user.ProjectID, id)
 	if err != nil {
 		return apperror.NewInternal("failed to get workspace image", err)
 	}
@@ -125,13 +129,17 @@ func (h *Handler) Create(c echo.Context) error {
 // @Failure      404 {object} apperror.Error
 // @Router       /api/admin/sandbox-images/{id} [delete]
 func (h *Handler) Delete(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
 
 	id := c.Param("id")
 	if id == "" {
 		return apperror.NewBadRequest("image ID is required")
 	}
 
-	err := h.svc.Delete(c.Request().Context(), id)
+	err := h.svc.Delete(c.Request().Context(), user.ProjectID, id)
 	if err != nil {
 		if err == ErrNotFound {
 			return apperror.NewNotFound("workspace_image", id)

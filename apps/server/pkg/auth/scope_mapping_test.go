@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
 // --- fakes -----------------------------------------------------------------
@@ -673,7 +674,7 @@ func TestValidateTokenUserinfoPath(t *testing.T) {
 
 func TestValidateTokenUnknownIssuerFailsClosed(t *testing.T) {
 	m := newTestMiddleware(t)
-	// Both introspection and userinfo fail; JWT verification is not implemented.
+	// Both introspection and userinfo fail, so the token is denied fail-closed.
 	m.zitadelSvc = &fakeIntrospector{
 		introErr:    errors.New("introspection unavailable"),
 		userInfoErr: errors.New("unauthorized"),
@@ -683,6 +684,41 @@ func TestValidateTokenUnknownIssuerFailsClosed(t *testing.T) {
 	_, err := m.validateToken(context.Background(), "opaque-token", "33333333-3333-3333-3333-333333333333")
 	if err == nil {
 		t.Fatal("validateToken() = nil error, want failure for unknown issuer")
+	}
+}
+
+// TestValidateTokenFinalFallbackFailsClosed pins the post-stub behaviour of the
+// final auth fallback (issue #934): once every configured validation path is
+// exhausted, the token MUST be denied with a standard invalid-token error and
+// MUST NOT surface the retired "JWT verification not implemented" placeholder.
+func TestValidateTokenFinalFallbackFailsClosed(t *testing.T) {
+	clearZitadelEnv(t)
+	m := newTestMiddleware(t)
+	// Introspection is configured but errors, and userinfo rejects the token, so
+	// no configured path can validate it.
+	m.cfg.Zitadel.ClientJWT = "fake-client-jwt"
+	m.zitadelSvc = &fakeIntrospector{
+		introErr:    errors.New("introspection unavailable"),
+		userInfoErr: errors.New("unauthorized: token invalid or expired"),
+	}
+
+	user, err := m.validateToken(context.Background(), "opaque-token", "")
+	if err == nil {
+		t.Fatal("validateToken() returned nil error; the final fallback must deny")
+	}
+	if user != nil {
+		t.Fatalf("validateToken() returned a user %+v; the final fallback must not authenticate", user)
+	}
+
+	appErr, ok := err.(*apperror.Error)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *apperror.Error", err, err)
+	}
+	if appErr.Code != apperror.ErrInvalidToken.Code {
+		t.Fatalf("error code = %q, want %q", appErr.Code, apperror.ErrInvalidToken.Code)
+	}
+	if strings.Contains(err.Error(), "JWT verification not implemented") {
+		t.Fatalf("error still references the removed JWT stub: %v", err)
 	}
 }
 

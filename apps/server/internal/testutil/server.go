@@ -47,6 +47,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/sandboximages"
 	"github.com/emergent-company/emergent.memory/domain/schemaregistry"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/search"
@@ -609,6 +610,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	monitoringRepo := monitoring.NewRepository(db, log)
 	monitoringHandler := monitoring.NewHandler(monitoringRepo)
 	monitoring.RegisterRoutes(e, monitoringHandler, authMiddleware)
+
+	// Register sandbox images routes (issue #968: project-scoped, membership-gated).
+	sandboxImagesStore := sandboximages.NewStore(db)
+	sandboxImagesSvc := sandboximages.NewService(sandboxImagesStore, log, sandboximages.ServiceConfig{})
+	sandboxImagesHandler := sandboximages.NewHandler(sandboxImagesSvc)
+	sandboximages.RegisterRoutes(e, sandboxImagesHandler, authMiddleware)
 
 	// Register provider routes (LLM credential management, model catalog, usage)
 	providerRegistry := provider.NewRegistry()
