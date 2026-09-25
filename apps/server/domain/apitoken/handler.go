@@ -212,7 +212,18 @@ func (h *Handler) List(c echo.Context) error {
 
 	projectID := c.Param("projectId")
 	if projectID == "" {
-		return apperror.ErrBadRequest.WithMessage("projectId is required")
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	// Scope the enumeration to what the caller is authorized to see. A
+	// project-bound emt_* token always enumerates its own bound project, never a
+	// caller-supplied :projectId (RequireProjectTokenScope has already rejected
+	// any mismatch, but deriving from the binding keeps the enumeration trusting
+	// only the authorized context). Session and account-token callers use the
+	// :projectId that RequireProjectMember has already authorized against
+	// membership, so a foreign project cannot be enumerated at all.
+	if user.APITokenProjectID != "" {
+		projectID = user.APITokenProjectID
 	}
 
 	result, err := h.svc.ListByProject(c.Request().Context(), projectID, user.ID)

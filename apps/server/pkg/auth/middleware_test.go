@@ -296,7 +296,7 @@ func TestRequireProjectMember_NoUser_Unauthorized(t *testing.T) {
 	}
 }
 
-func TestRequireProjectMember_APIToken_PassesThrough(t *testing.T) {
+func TestRequireProjectMember_ProjectBoundToken_PassesThrough(t *testing.T) {
 	m := &Middleware{}
 	user := &AuthUser{ID: "user-1", APITokenID: "token-1", APITokenProjectID: "project-1"}
 	called := false
@@ -307,10 +307,74 @@ func TestRequireProjectMember_APIToken_PassesThrough(t *testing.T) {
 
 	c := makeEchoCtx("project-1", user)
 	if err := handler(c); err != nil {
-		t.Fatalf("RequireProjectMember() returned error %v for API token; want nil", err)
+		t.Fatalf("RequireProjectMember() returned error %v for project-bound token; want nil", err)
 	}
 	if !called {
-		t.Error("RequireProjectMember() did not call next for API token")
+		t.Error("RequireProjectMember() did not call next for project-bound token")
+	}
+}
+
+func TestRequireProjectMember_AccountTokenMember_Allows(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "org-1", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return true, nil },
+	}
+	user := &AuthUser{ID: "user-1", APITokenID: "token-1", APITokenProjectID: ""}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error {
+		called = true
+		return nil
+	})
+
+	c := makeEchoCtx("project-1", user)
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectMember() returned error %v for a member account token; want nil", err)
+	}
+	if !called {
+		t.Error("RequireProjectMember() did not call next for a member account token")
+	}
+}
+
+func TestRequireProjectMember_AccountTokenNonMember_Forbidden(t *testing.T) {
+	m := &Middleware{
+		projectOrgLookup: func(_ context.Context, _ string) (string, error) { return "org-1", nil },
+		orgMemberLookup:  func(_ context.Context, _, _ string) (bool, error) { return false, nil },
+	}
+	user := &AuthUser{ID: "user-1", APITokenID: "token-1", APITokenProjectID: ""}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error {
+		called = true
+		return nil
+	})
+
+	c := makeEchoCtx("project-1", user)
+	err := handler(c)
+	if err == nil {
+		t.Fatal("RequireProjectMember() should have returned an error for a non-member account token")
+	}
+	if status, _ := apperror.ToHTTPError(err); status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", status)
+	}
+	if called {
+		t.Error("RequireProjectMember() called next for a non-member account token")
+	}
+}
+
+func TestRequireProjectMember_OwnerlessAccountToken_PassesThrough(t *testing.T) {
+	m := &Middleware{}
+	user := &AuthUser{ID: "", APITokenID: "token-1", APITokenProjectID: ""}
+	called := false
+	handler := m.RequireProjectMember()(func(c echo.Context) error {
+		called = true
+		return nil
+	})
+
+	c := makeEchoCtx("project-1", user)
+	if err := handler(c); err != nil {
+		t.Fatalf("RequireProjectMember() returned error %v for an ownerless account token; want nil", err)
+	}
+	if !called {
+		t.Error("RequireProjectMember() did not call next for an ownerless account token")
 	}
 }
 

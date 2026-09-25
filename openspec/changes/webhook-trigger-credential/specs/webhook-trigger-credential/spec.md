@@ -39,12 +39,22 @@ The `webhook:trigger` marker SHALL be a member of the application's API-token vo
 
 ### Requirement: Webhook trigger credential mint surface
 
-An operator SHALL be able to mint a webhook trigger credential without writing code, through an HTTP mint surface that mirrors the device-token analogue: `POST /api/projects/:projectId/webhook-trigger-tokens`, handled by `Handler.CreateWebhookTriggerToken`, which calls `CreateWebhookTriggerToken(projectID, name, expiresAt)` with the hardcoded ceiling and a default 90-day expiry. The route SHALL mirror the device-token mint route's authorization gate exactly — `RequireAuth()` — so any authenticated principal (session or API token) may mint a scoped, ceiling-bound, expiring, revocable credential for the named project; the credential's authority is bounded by the exact-set ceiling and the surface guard, so it can never exceed the trigger route plus its query loopback regardless of who minted it.
+An operator SHALL be able to mint a webhook trigger credential without writing code, through an HTTP mint surface that mirrors the device-token analogue: `POST /api/projects/:projectId/webhook-trigger-tokens`, handled by `Handler.CreateWebhookTriggerToken`, which calls `CreateWebhookTriggerToken(projectID, name, expiresAt)` with the hardcoded ceiling and a default 90-day expiry. The route SHALL authorize the caller against the addressed project via the canonical middleware pair — `RequireAuth`, then `RequireProjectTokenScope`, then `RequireProjectMember` — so an unauthenticated caller is denied with 401, a session caller who is not a member of the project's owning organization is denied with 403, and a project-bound `emt_*` token minted for a different project is denied with 403. A member (or a token bound to the addressed project) may mint; the credential's authority remains bounded by the exact-set ceiling and the surface guard, so it can never exceed the trigger route plus its query loopback regardless of who minted it.
 
-#### Scenario: An operator mints through the HTTP surface
+#### Scenario: A member mints through the HTTP surface
 
-- **WHEN** an authenticated principal POSTs to `/api/projects/:projectId/webhook-trigger-tokens` with a name
+- **WHEN** a member of the addressed project's owning organization POSTs to `/api/projects/:projectId/webhook-trigger-tokens` with a name
 - **THEN** a scoped webhook trigger credential is minted (exact ceiling, the operator name, a default expiry) and the raw `emt_*` value is returned once
+
+#### Scenario: A non-member is refused
+
+- **WHEN** an authenticated session caller who is not a member of the addressed project's owning organization POSTs to the webhook-trigger-tokens route
+- **THEN** the request is denied with 403
+
+#### Scenario: A cross-project token is refused
+
+- **WHEN** a project-bound `emt_*` token minted for a different project POSTs to the webhook-trigger-tokens route
+- **THEN** the request is denied with 403
 
 #### Scenario: Unauthenticated mint is refused
 
