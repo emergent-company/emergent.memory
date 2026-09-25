@@ -352,6 +352,22 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 		)
 	}
 
+	// Defence in depth (issue #967): an org_admin membership grant must originate
+	// from an inviter who holds org_admin (or superadmin_full) authority over the
+	// invite's organization. Re-verify at acceptance time so a pre-existing
+	// invitation minted by a plain member before the create-side gate existed
+	// cannot be used to self-escalate. An invitation with no recorded inviter has
+	// no authority to assert, so it is refused (fail closed).
+	if orgRole == "org_admin" {
+		admin, err := s.inviterIsOrgAdmin(ctx, &invite)
+		if err != nil {
+			return apperror.NewDatabase("failed to verify inviter authority", err)
+		}
+		if !admin {
+			return apperror.NewForbidden("org_admin invitations require an org_admin inviter")
+		}
+	}
+
 	// Begin transaction
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -412,6 +428,42 @@ func orgMembershipRole(inviteRole string) (role string, ok bool) {
 	default:
 		return "", false
 	}
+}
+
+// inviterIsOrgAdmin reports whether the invitation's recorded inviter holds
+// org_admin authority over the invitation's organization, or is an active
+// superadmin_full. It is the acceptance-side defence-in-depth counterpart to the
+// create-side role gate: an org_admin grant is refused unless its inviter could
+// have minted it (issue #967).
+func (s *Service) inviterIsOrgAdmin(ctx context.Context, invite *Invite) (bool, error) {
+	if invite.InvitedByUserID == nil || *invite.InvitedByUserID == "" {
+		return false, nil
+	}
+	inviterID := *invite.InvitedByUserID
+
+	var superadminFull bool
+	if err := s.db.NewRaw(`
+		SELECT EXISTS(
+			SELECT 1 FROM core.superadmins
+			WHERE user_id = ? AND role = 'superadmin_full' AND revoked_at IS NULL
+		)
+	`, inviterID).Scan(ctx, &superadminFull); err != nil {
+		return false, err
+	}
+	if superadminFull {
+		return true, nil
+	}
+
+	var orgAdmin bool
+	if err := s.db.NewRaw(`
+		SELECT EXISTS(
+			SELECT 1 FROM kb.organization_memberships
+			WHERE organization_id = ? AND user_id = ? AND role = 'org_admin'
+		)
+	`, invite.OrganizationID, inviterID).Scan(ctx, &orgAdmin); err != nil {
+		return false, err
+	}
+	return orgAdmin, nil
 }
 
 // Decline declines an invitation
