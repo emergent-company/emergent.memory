@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -17,11 +18,12 @@ type Handler struct {
 	svc  *Service
 	cfg  *config.Config
 	auth *auth.Middleware
+	orgs *orgs.Repository
 }
 
 // NewHandler creates a new invites handler
-func NewHandler(svc *Service, cfg *config.Config, authMiddleware *auth.Middleware) *Handler {
-	return &Handler{svc: svc, cfg: cfg, auth: authMiddleware}
+func NewHandler(svc *Service, cfg *config.Config, authMiddleware *auth.Middleware, orgsRepo *orgs.Repository) *Handler {
+	return &Handler{svc: svc, cfg: cfg, auth: authMiddleware, orgs: orgsRepo}
 }
 
 // ListPending returns pending invitations for the current user
@@ -89,14 +91,35 @@ func (h *Handler) Create(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
-	// The project target is supplied in the request body, which the shared
-	// membership pair does not inspect, so authorize it here before acting on it
-	// (issue #926). The authoritative project is the token-bound project or the
-	// X-Project-ID header; a supplied projectId that disagrees with it fails
-	// closed, and the caller must be a member of the project's owning org.
+	if req.OrgID == "" {
+		return apperror.NewBadRequest("orgId is required")
+	}
+
 	if req.ProjectID != "" {
+		// Project-scoped: authorize the caller against the project's owning org
+		// (issue #926), then bind the body orgId to that server-resolved org
+		// (issue #960). Neither value is trusted: the owning org is derived from
+		// kb.projects and the supplied orgId must agree with it.
 		if err := h.auth.AuthorizeProject(c, req.ProjectID); err != nil {
 			return err
+		}
+		owningOrg, err := h.svc.ProjectOrg(c.Request().Context(), req.ProjectID)
+		if err != nil {
+			return err
+		}
+		if req.OrgID != owningOrg {
+			return apperror.NewBadRequest("orgId does not match the project's organization")
+		}
+	} else {
+		// Org-scoped: the caller must be a member of the target org (issue #960).
+		// Membership is resolved server-side against kb.organization_memberships,
+		// so a foreign orgId cannot self-satisfy the check.
+		member, err := h.orgs.IsUserMember(c.Request().Context(), req.OrgID, user.ID)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return apperror.ErrForbidden
 		}
 	}
 
@@ -221,12 +244,29 @@ func (h *Handler) Decline(c echo.Context) error {
 // @Router       /api/invites/{id} [delete]
 // @Security     bearerAuth
 func (h *Handler) Delete(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
 	inviteID := c.Param("id")
 	if inviteID == "" {
 		return apperror.ErrBadRequest.WithMessage("invite_id is required")
 	}
 
-	// TODO: Verify user has admin access to the project this invite belongs to
+	// Resolve the invite server-side and require the caller to be a member of
+	// its organization before revoking (issue #960). A non-member receives 404,
+	// indistinguishable from a missing invite, so this endpoint is not an
+	// existence oracle.
+	invite, err := h.svc.GetByID(c.Request().Context(), inviteID)
+	if err != nil {
+		return err
+	}
+
+	member, err := h.orgs.IsUserMember(c.Request().Context(), invite.OrganizationID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return apperror.NewNotFound("invite", inviteID)
+	}
 
 	if err := h.svc.Revoke(c.Request().Context(), inviteID); err != nil {
 		return err
