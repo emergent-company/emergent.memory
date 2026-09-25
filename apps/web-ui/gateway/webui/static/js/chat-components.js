@@ -197,10 +197,14 @@
       ".memory-tool-chip.memory-badge-open[data-status='ok'],.memory-tool-chip.memory-badge-open[data-status='error']{" +
       "border-color:color-mix(in oklab,var(--color-base-content) 10%,transparent)!important}" +
       // streaming shimmer: gradient sweep clipped to the label text
+      // streaming shimmer: gradient sweep clipped to the label text. The bright
+      // stop is a deliberate white — the theme has no "brighter than
+      // base-content" token — so it is documented as decorative rather than
+      // tokenised.
       ".memory-badge-live .memory-badge-label{" +
       "opacity:.72;color:transparent;" +
       "background-image:linear-gradient(90deg,var(--color-base-content) 40%," +
-      "color-mix(in oklab,#fff 50%,transparent) 50%,var(--color-base-content) 60%);" +
+      "color-mix(in oklab,oklch(1 0 0) 50%,transparent) 50%,var(--color-base-content) 60%);" +
       "background-size:200% 100%;background-position:-100% 0;" +
       "-webkit-background-clip:text;background-clip:text;" +
       "animation:memory-shimmer 1.6s linear infinite}" +

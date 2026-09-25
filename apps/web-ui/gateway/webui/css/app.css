@@ -290,6 +290,9 @@ div:has(> #_layout-topbar) {
 }
 
 /* ---------- Logo monogram ---------- */
+/* The monogram is a deliberate brand treatment: an amber gradient with its own
+   paired dark foreground and shadow, so it does not track the theme palette.
+   Documented as decorative rather than tokenised. */
 .memory-monogram {
   background: linear-gradient(140deg, oklch(0.82 0.14 85), oklch(0.62 0.16 62));
   color: oklch(0.16 0.03 60);
@@ -325,7 +328,7 @@ div:has(> #_layout-topbar) {
   box-shadow: 0 1px 2px oklch(0 0 0 / 0.2);
 }
 .chat-bubble.chat-bubble-neutral {
-  background: oklch(0.24 0.018 274);
+  background: var(--color-base-100);
   border: 1px solid oklch(1 0 0 / 0.06);
 }
 
@@ -996,10 +999,15 @@ div:has(> #_layout-topbar) {
 }
 
 /* fenced code blocks — raised, deeper surface, scrolls horizontally */
+/* Decorative literals in rendered markdown are intentional: the translucent
+   whites below are hairline/overlay tints on the dark base (not surfaces or
+   foregrounds), and the markdown heading sizes are a fixed type scale. They are
+   documented here rather than tokenised so the "colours derive from tokens" rule
+   has one explicit, reviewable exception list. */
 .memory-md pre {
   margin: 0.8em 0;
   padding: 0.8rem 1rem;
-  background: oklch(0.185 0.014 274);
+  background: var(--color-base-200);
   border: 1px solid oklch(1 0 0 / 0.07);
   border-radius: var(--radius-box);
   overflow-x: auto;
