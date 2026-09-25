@@ -69,3 +69,13 @@ func (s *EmbeddingPoliciesMembershipSuite) TestOwnProjectPolicyOK() {
 	s.Require().Equal(http.StatusCreated, resp.StatusCode,
 		"own-project policy create must succeed, got %d: %s", resp.StatusCode, resp.String())
 }
+
+// TestMalformedProjectIDBadRequest pins that a non-UUID body projectId is a 400
+// (format validation), not a 500 from the uuid column cast.
+func (s *EmbeddingPoliciesMembershipSuite) TestMalformedProjectIDBadRequest() {
+	resp := s.Client.POST("/api/graph/embedding-policies",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{"projectId": "not-a-uuid", "objectType": "Person"}))
+	s.Require().Equal(http.StatusBadRequest, resp.StatusCode,
+		"malformed projectId must be 400, got %d: %s", resp.StatusCode, resp.String())
+}
