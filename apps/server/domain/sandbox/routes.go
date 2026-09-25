@@ -9,6 +9,14 @@ import (
 )
 
 // RegisterRoutes registers sandbox HTTP routes.
+//
+// Authorization (issue #959, sibling): agent sandboxes are deployment-wide
+// infrastructure (host containers keyed by a workspace UUID in
+// kb.agent_sandboxes with no project/org linkage), so this surface is
+// platform-scoped and admits only an active superadmin_full principal. A scope
+// gate is deliberately NOT used: a bare `admin` scope is mintable by any
+// project member (#948/#949) and cannot authorize deployment-wide container
+// control.
 func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, log *slog.Logger) {
 	// Agent sandbox routes
 	g := e.Group("/api/v1/agent/sandboxes")
@@ -16,14 +24,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, l
 
 	// Read operations
 	readGroup := g.Group("")
-	readGroup.Use(authMiddleware.RequireAPITokenScopes("admin"))
+	readGroup.Use(authMiddleware.RequireSuperadminFull())
 	readGroup.GET("", h.ListWorkspaces)
 	readGroup.GET("/providers", h.ListProviders)
 	readGroup.GET("/:id", h.GetWorkspace)
 
 	// Write operations
 	writeGroup := g.Group("")
-	writeGroup.Use(authMiddleware.RequireAPITokenScopes("admin"))
+	writeGroup.Use(authMiddleware.RequireSuperadminFull())
 	writeGroup.POST("", h.CreateWorkspace)
 	writeGroup.POST("/from-snapshot", h.CreateFromSnapshot)
 	writeGroup.DELETE("/:id", h.DeleteWorkspace)
@@ -35,7 +43,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware, l
 
 	// Tool operations (require write scope + audit logging)
 	toolGroup := g.Group("/:id")
-	toolGroup.Use(authMiddleware.RequireAPITokenScopes("admin"))
+	toolGroup.Use(authMiddleware.RequireSuperadminFull())
 	toolGroup.Use(ToolAuditMiddleware(log))
 	toolGroup.POST("/bash", h.BashTool)
 	toolGroup.POST("/read", h.ReadTool)
