@@ -9,6 +9,8 @@ Defines the invitation flow for adding new members to an organization or project
 ### Requirement: Create invitation
 The system SHALL provide a `POST /api/invites` endpoint (authentication required). The request body SHALL include `orgId` (required), `email` (required, must contain an `@`), and `role` (required; one of `org_admin`, `project_admin`, `project_user`, `project_viewer`), and MAY include `projectId` to scope the invitation to a project. The system SHALL generate a random token, store the invitation in `kb.invites` with a 7-day expiry, and enqueue a `project-invitation` email job. If the role is not one of the allowed values, the server SHALL return HTTP 400. If a pending invitation already exists for the same email and scope, the server SHALL return HTTP 400.
 
+The target project, when `projectId` is supplied, is sourced from the request body (which the route membership middleware cannot inspect). The system SHALL therefore authorize it at the handler: the supplied `projectId` MUST agree with the caller's authenticated project context (the token-bound project or the `X-Project-ID` header), and the caller MUST be a member of the target project's owning organization. A non-member or mismatched `projectId` SHALL fail closed with HTTP 403; a caller addressing an unknown project SHALL receive HTTP 404.
+
 #### Scenario: Admin invites a new viewer
 - **WHEN** an authenticated user sends `POST /api/invites` with `{"orgId":"<org>","email":"alice@example.com","role":"project_viewer"}`
 - **THEN** the server stores a pending invitation, enqueues a `project-invitation` email job, and returns HTTP 201 with the invitation including its token and expiry
@@ -36,7 +38,7 @@ The system SHALL provide a `GET /api/invites/pending` endpoint (authentication r
 - **THEN** the server returns the pending invitations for the user's email addresses with their organization, project, and role
 
 ### Requirement: List invitations for a project
-The system SHALL provide a `GET /api/projects/:projectId/invites` endpoint (authentication required) that returns all invitations for a project, ordered by creation time.
+The system SHALL provide a `GET /api/projects/:projectId/invites` endpoint (authentication required) that returns all invitations for a project, ordered by creation time. The system SHALL authorize the caller against the `:projectId` path parameter (the shared project membership pair): a caller who is not a member of the project's owning organization SHALL receive HTTP 403, and a caller addressing an unknown project SHALL receive HTTP 404.
 
 #### Scenario: Project invitations listed
 - **WHEN** an authenticated user requests invitations for a project

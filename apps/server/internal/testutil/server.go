@@ -450,6 +450,12 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	embPolicyHandler := embeddingpolicies.NewHandler(embPolicySvc)
 	embeddingpolicies.RegisterRoutes(e, embPolicyHandler, authMiddleware)
 
+	// Register model config routes (GET/PUT/DELETE /api/v1/projects/:projectId/model-config)
+	modelconfigStore := modelconfig.NewStore(db, log)
+	modelconfigSvc := modelconfig.NewService(modelconfigStore, log)
+	modelconfigHandler := modelconfig.NewHandler(modelconfigSvc)
+	modelconfig.RegisterRoutes(e, modelconfigHandler, authMiddleware)
+
 	// Register branches routes
 	branchesStore := branches.NewStore(db)
 	branchesSvc := branches.NewService(branchesStore)
@@ -516,7 +522,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register invites routes (nil email service in test mode — emails are no-op)
 	invitesSvc := invites.NewService(db, nil, &config.Config{}, log)
-	invitesHandler := invites.NewHandler(invitesSvc, &config.Config{})
+	invitesHandler := invites.NewHandler(invitesSvc, &config.Config{}, authMiddleware)
 	invites.RegisterRoutes(e, invitesHandler, authMiddleware)
 
 	// Register events routes

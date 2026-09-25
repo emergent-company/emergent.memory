@@ -14,13 +14,14 @@ import (
 
 // Handler handles HTTP requests for invitations
 type Handler struct {
-	svc *Service
-	cfg *config.Config
+	svc  *Service
+	cfg  *config.Config
+	auth *auth.Middleware
 }
 
 // NewHandler creates a new invites handler
-func NewHandler(svc *Service, cfg *config.Config) *Handler {
-	return &Handler{svc: svc, cfg: cfg}
+func NewHandler(svc *Service, cfg *config.Config, authMiddleware *auth.Middleware) *Handler {
+	return &Handler{svc: svc, cfg: cfg, auth: authMiddleware}
 }
 
 // ListPending returns pending invitations for the current user
@@ -60,8 +61,6 @@ func (h *Handler) ListByProject(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("project_id is required")
 	}
 
-	// TODO: Verify user has access to project
-
 	invites, err := h.svc.ListByProject(c.Request().Context(), projectID)
 	if err != nil {
 		return err
@@ -90,7 +89,16 @@ func (h *Handler) Create(c echo.Context) error {
 		return apperror.ErrBadRequest.WithMessage("invalid request body")
 	}
 
-	// TODO: Verify user has admin access to project
+	// The project target is supplied in the request body, which the shared
+	// membership pair does not inspect, so authorize it here before acting on it
+	// (issue #926). The authoritative project is the token-bound project or the
+	// X-Project-ID header; a supplied projectId that disagrees with it fails
+	// closed, and the caller must be a member of the project's owning org.
+	if req.ProjectID != "" {
+		if err := h.auth.AuthorizeProject(c, req.ProjectID); err != nil {
+			return err
+		}
+	}
 
 	// Attach inviter identity so the email template can show who sent the invite
 	req.InviterID = user.ID
