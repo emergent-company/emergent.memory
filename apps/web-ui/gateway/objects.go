@@ -12,50 +12,206 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/sync/errgroup"
 )
 
 // --- objects browser ---
 
-// uiObjects renders the objects browser: graph objects, filterable by type and
-// by branch.
+// objectsStats is the small stats section's data shown on the objects browser.
+type objectsStats struct {
+	TotalObjects int   // via count endpoint
+	PendingEmbed int64 // embedding queue pending (objects)
+	FailedEmbed  int64 // embedding queue failed (objects)
+}
+
+// objectsPageData carries everything the objects browser renders, in one struct
+// so the page signature stays stable while its presentation evolves. Browse
+// mode fills Objects/HasMore/NextCursor/Stats; search mode fills Results.
+type objectsPageData struct {
+	Query        string
+	Mode         string // "" | "fulltext" | "hybrid"
+	TypeFilter   string
+	BranchID     string
+	Types        []string
+	Branches     []Branch
+	Objects      []GraphObject        // browse mode rows
+	Results      []ObjectSearchResult // search mode hits
+	HasMore      bool
+	NextCursor   string
+	Stats        objectsStats
+	TypeUIByType map[string]typeUI
+	LoadErr      error
+}
+
+// uiObjects renders the objects browser: searchable graph objects, filterable
+// by type and branch, with a small stats section and cursor-paginated browse.
 func (s *Server) uiObjects(c echo.Context) error {
 	ctx := c.Request().Context()
 	branchID := c.QueryParam("branch")
 	typeFilter := c.QueryParam("type")
+	query := c.QueryParam("q")
+	mode := c.QueryParam("mode")
+	cursor := c.QueryParam("cursor")
+
+	// Branches + compiled types feed the filter dropdowns regardless of mode
+	// (browse or search). Both are best-effort: a failure leaves the dropdowns
+	// empty rather than blanking the page.
 	var (
-		all         []GraphObject
-		objectsErr  error
 		branches    []Branch
 		branchesErr error
 		compiled    *CompiledSchemaTypes
 		compiledErr error
 	)
 	var g errgroup.Group
-	g.Go(func() error { all, objectsErr = s.memory.ListGraphObjects(ctx, branchID, "", nil); return nil })
 	g.Go(func() error { branches, branchesErr = s.memory.ListBranches(ctx); return nil })
 	g.Go(func() error { compiled, compiledErr = s.memory.GetCompiledTypes(ctx); return nil })
 	_ = g.Wait()
-	if objectsErr != nil {
-		return s.page(c, pageTitle("Objects"), ObjectsPage(nil, nil, typeFilter, nil, branchID, nil, objectsErr))
-	}
 	captureError(branchesErr)
 	captureError(compiledErr)
-	objects := all
-	if typeFilter != "" {
-		objects = nil
-		for _, o := range all {
-			if o.Type == typeFilter {
-				objects = append(objects, o)
-			}
+
+	data := objectsPageData{
+		Query:      query,
+		Mode:       mode,
+		TypeFilter: typeFilter,
+		BranchID:   branchID,
+		Branches:   branches,
+	}
+	if compiled != nil {
+		data.TypeUIByType = objectTypeUIMap(compiled.ObjectTypes)
+		for _, t := range compiled.ObjectTypes {
+			data.Types = append(data.Types, t.Name)
 		}
 	}
+
+	if query != "" {
+		if mode == "" {
+			mode = "fulltext"
+		}
+		data.Mode = mode
+		results, _, err := s.memory.SearchObjects(ctx, mode, query, typeFilter, branchID, 25, 0)
+		if err != nil {
+			data.LoadErr = err
+			return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+		}
+		data.Results = results
+		return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+	}
+
+	// Browse mode: one page of 25 (most-recent-first) plus, in parallel, the
+	// object count and embedding-queue stats for the small stats section.
+	var (
+		objects     []GraphObject
+		nextCursor  string
+		objectsErr  error
+		count       int
+		countErr    error
+		progress    *EmbeddingProgress
+		progressErr error
+	)
+	g = errgroup.Group{}
+	g.Go(func() error {
+		objects, nextCursor, objectsErr = s.memory.ListGraphObjectsPage(ctx, branchID, typeFilter, cursor, 25)
+		return nil
+	})
+	g.Go(func() error { count, countErr = s.memory.CountObjects(ctx, branchID); return nil })
+	g.Go(func() error { progress, progressErr = s.memory.GetEmbeddingProgress(ctx); return nil })
+	_ = g.Wait()
+	captureError(countErr)
+	captureError(progressErr)
+	if objectsErr != nil {
+		data.LoadErr = objectsErr
+		return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+	}
+	data.Objects = objects
+	data.HasMore = nextCursor != ""
+	data.NextCursor = nextCursor
+	data.Stats = objectsStats{TotalObjects: count}
+	if progress != nil {
+		data.Stats.PendingEmbed = progress.Objects.Pending
+		data.Stats.FailedEmbed = progress.Objects.Failed
+	}
+	return s.page(c, pageTitle("Objects"), ObjectsPage(data))
+}
+
+// uiObjectsPartial returns the next page of object rows plus a replacement
+// "Load more" button (or an empty slot when there are no more) as an HTMX
+// fragment for the browser's cursor pagination. It carries the search/filter
+// context forward so appended rows match the active view.
+func (s *Server) uiObjectsPartial(c echo.Context) error {
+	ctx := c.Request().Context()
+	branchID := c.QueryParam("branch")
+	typeFilter := c.QueryParam("type")
+	query := c.QueryParam("q")
+	mode := c.QueryParam("mode")
+	cursor := c.QueryParam("cursor")
+
+	// Search mode has no cursor pagination (it renders the top 25 only).
+	if query != "" {
+		render.RenderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(objectsPageData{}))
+		return nil
+	}
+
+	objects, nextCursor, err := s.memory.ListGraphObjectsPage(ctx, branchID, typeFilter, cursor, 25)
+	if err != nil {
+		captureError(err)
+		objects, nextCursor = nil, ""
+	}
+
+	compiled, _ := s.memory.GetCompiledTypes(ctx)
 	var typeUIByType map[string]typeUI
 	if compiled != nil {
 		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 	}
-	return s.page(c, pageTitle("Objects"), ObjectsPage(objects, distinctObjectTypes(all), typeFilter, branches, branchID, typeUIByType, nil))
+
+	render.RenderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(objectsPageData{
+		Query:        query,
+		Mode:         mode,
+		TypeFilter:   typeFilter,
+		BranchID:     branchID,
+		Objects:      objects,
+		HasMore:      nextCursor != "",
+		NextCursor:   nextCursor,
+		TypeUIByType: typeUIByType,
+	}))
+	return nil
+}
+
+// objectUpdatedAt returns the object's updated-at timestamp, falling back to
+// its created-at timestamp when it has never been updated.
+func objectUpdatedAt(o GraphObject) string {
+	if o.UpdatedAt != "" {
+		return o.UpdatedAt
+	}
+	return o.CreatedAt
+}
+
+// objectsPartialURL builds the /objects/partial URL for the "Load more" button,
+// carrying the cursor and the active search/filter context forward.
+func objectsPartialURL(data objectsPageData) string {
+	q := url.Values{}
+	if data.NextCursor != "" {
+		q.Set("cursor", data.NextCursor)
+	}
+	if data.Query != "" {
+		q.Set("q", data.Query)
+	}
+	if data.Mode != "" {
+		q.Set("mode", data.Mode)
+	}
+	if data.TypeFilter != "" {
+		q.Set("type", data.TypeFilter)
+	}
+	if data.BranchID != "" {
+		q.Set("branch", data.BranchID)
+	}
+	return "/objects/partial?" + q.Encode()
+}
+
+// searchScoreLabel formats a search hit's relevance score for the score badge.
+func searchScoreLabel(f float32) string {
+	return strconv.FormatFloat(float64(f), 'f', 2, 32)
 }
 
 // uiObject renders one object's detail: properties + relationships.

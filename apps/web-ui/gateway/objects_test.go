@@ -63,7 +63,11 @@ func TestRenderObjectsPage(t *testing.T) {
 		{ID: "o2", Type: "task", Key: "call dentist", CreatedAt: "2026-08-26T11:00:00Z"},
 	}
 	branches := []Branch{{ID: "b1", Name: "plan/next-gen"}}
-	html := renderHTML(t, ObjectsPage(objects, []string{"person", "task"}, "", branches, "", nil, nil))
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:  objects,
+		Types:    []string{"person", "task"},
+		Branches: branches,
+	}))
 	for _, want := range []string{
 		"Objects", "sam-lee", "call dentist", "person", "task",
 		`href="/objects/o1"`, `name="type"`, "All types",
@@ -75,14 +79,55 @@ func TestRenderObjectsPage(t *testing.T) {
 		}
 	}
 
-	htmlEmpty := renderHTML(t, ObjectsPage(nil, nil, "", nil, "", nil, nil))
+	htmlEmpty := renderHTML(t, ObjectsPage(objectsPageData{}))
 	if !strings.Contains(htmlEmpty, "No objects yet") {
 		t.Error("empty state missing")
 	}
 
-	htmlErr := renderHTML(t, ObjectsPage(nil, nil, "", nil, "", nil, errTest))
+	htmlErr := renderHTML(t, ObjectsPage(objectsPageData{LoadErr: errTest}))
 	if !strings.Contains(htmlErr, "Failed to load objects") {
 		t.Error("error state missing")
+	}
+}
+
+func TestRenderObjectsPageSearchStatsLoadMore(t *testing.T) {
+	// search mode: query input, mode selector, and result rows with a score badge.
+	searchHTML := renderHTML(t, ObjectsPage(objectsPageData{
+		Query: "sam",
+		Mode:  "hybrid",
+		Results: []ObjectSearchResult{
+			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.87},
+		},
+	}))
+	for _, want := range []string{
+		`name="q"`, `value="sam"`, `name="mode"`, "Full-text", "Hybrid",
+		"sam-lee", "0.87",
+	} {
+		if !strings.Contains(searchHTML, want) {
+			t.Errorf("search page missing %q", want)
+		}
+	}
+	if strings.Contains(searchHTML, "Load more") {
+		t.Error("search mode must not render a Load more button")
+	}
+
+	// search no-hits state
+	noHits := renderHTML(t, ObjectsPage(objectsPageData{Query: "zzz", Mode: "fulltext"}))
+	if !strings.Contains(noHits, "No matching objects") {
+		t.Error("search no-hits state missing")
+	}
+
+	// browse mode with stats + load-more
+	browseHTML := renderHTML(t, ObjectsPage(objectsPageData{
+		Objects:    []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
+		HasMore:    true,
+		NextCursor: "cur-1",
+		Stats:      objectsStats{TotalObjects: 42, PendingEmbed: 3, FailedEmbed: 1},
+	}))
+	for _, want := range []string{"42", "objects", "pending", "failed", "Load more", `hx-get="/objects/partial?cursor=cur-1"`, `hx-target="#objects-list"`} {
+		if !strings.Contains(browseHTML, want) {
+			t.Errorf("browse page missing %q", want)
+		}
 	}
 }
 
@@ -474,6 +519,11 @@ func TestObjectsRoutes(t *testing.T) {
 			{ID: "o2", CanonicalID: "o2", Type: "task", Key: "call dentist"},
 			{ID: "o3", CanonicalID: "o3", BranchID: "b1", Type: "person", Key: "branch-person"},
 		},
+		pageObjects: []GraphObject{
+			{ID: "o1", CanonicalID: "o1", Type: "person", Key: "sam-lee"},
+			{ID: "o2", CanonicalID: "o2", Type: "task", Key: "call dentist"},
+			{ID: "o3", CanonicalID: "o3", BranchID: "b1", Type: "person", Key: "branch-person"},
+		},
 		relns: []GraphRelationship{
 			{ID: "r1", Type: "assigned_to", SrcID: "o2", DstID: "o1"},
 		},
@@ -564,6 +614,61 @@ func TestUIObjectPartialIncludesTitle(t *testing.T) {
 	}
 	if strings.Contains(body, "<html") || strings.Contains(body, "<head") {
 		t.Fatalf("partial must not include the full HTML shell, got: %.200s", body)
+	}
+}
+
+func TestUIObjectsPartial(t *testing.T) {
+	f := &fakeMemory{
+		pageObjects: []GraphObject{
+			{ID: "o2", Type: "task", Key: "call dentist"},
+			{ID: "o3", Type: "task", Key: "write report"},
+		},
+		nextPageCursor: "nc-2",
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects/partial", s.uiObjectsPartial)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/partial?cursor=nc-1", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, body)
+	}
+	for _, want := range []string{"call dentist", "write report", `id="objects-load-more"`, "hx-swap-oob", "Load more", "cursor=nc-2"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("partial missing %q in:\n%s", want, body)
+		}
+	}
+	if f.lastPageCursor != "nc-1" {
+		t.Errorf("cursor = %q, want nc-1", f.lastPageCursor)
+	}
+}
+
+func TestUIObjectsSearchRoute(t *testing.T) {
+	f := &fakeMemory{
+		searchResults: []ObjectSearchResult{
+			{Object: GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}, Score: 0.9},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/objects", s.uiObjects)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects?q=sam&mode=hybrid", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, body)
+	}
+	if !strings.Contains(body, "sam-lee") || !strings.Contains(body, "0.90") {
+		t.Errorf("search body missing result: %s", body)
+	}
+	if f.lastSearchMode != "hybrid" || f.lastSearchQuery != "sam" {
+		t.Errorf("search = %q/%q, want hybrid/sam", f.lastSearchMode, f.lastSearchQuery)
+	}
+	if strings.Contains(body, "Load more") {
+		t.Error("search route must not render Load more")
 	}
 }
 
