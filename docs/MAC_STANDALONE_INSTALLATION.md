@@ -34,10 +34,10 @@ This guide helps you test the **Standalone Version** of Emergent using your loca
    POSTGRES_DB=emergent
    POSTGRES_PORT=15432
 
-   MINIO_ROOT_USER=minioadmin
-   MINIO_ROOT_PASSWORD=secure_minio_password_123
-   MINIO_API_PORT=19000
-   MINIO_CONSOLE_PORT=19001
+   OBJECT_STORE_ACCESS_KEY=emergent
+   OBJECT_STORE_SECRET_KEY=secure_object_store_secret_123
+   OBJECT_STORE_API_PORT=19000
+   STORAGE_REGION=us-east-1
 
    # Standalone Configuration
    STANDALONE_MODE=true
@@ -92,7 +92,7 @@ docker compose -f docker-compose.local.yml --env-file .env.local up -d
 
 - **Server + CLI**: Port 13002 (mapped to internal 3002)
 - **Postgres**: Port 15432
-- **MinIO**: Ports 19000/19001
+- **SeaweedFS S3**: Port 19000
 - **Kreuzberg**: Port 18000
 
 ## Step 4: Verify Installation
@@ -164,11 +164,10 @@ docker compose -f docker-compose.local.yml down -v
 
 | Service   | Local Port | Internal Port |
 | --------- | ---------- | ------------- |
-| Server    | **13002**  | 3002          |
-| Postgres  | **15432**  | 5432          |
-| Kreuzberg | **18000**  | 8000          |
-| MinIO API | **19000**  | 9000          |
-| MinIO UI  | **19001**  | 9001          |
+| Server         | **13002**  | 3002          |
+| Postgres       | **15432**  | 5432          |
+| Kreuzberg      | **18000**  | 8000          |
+| SeaweedFS S3   | **19000**  | 8333          |
 
 These non-standard ports prevent conflicts with any other development environment you might be running.
 
