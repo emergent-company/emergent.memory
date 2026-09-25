@@ -401,7 +401,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 		} else if len(objectTypes) == 0 {
 			@ui.Section("New object", ui.SectionProps{
 				Margin:    "mt-6",
-				BodyClass: "p-5",
+				BodyClass: "memory-density-comfortable",
 			}) {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--box",
@@ -429,7 +429,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 			if form.Type != "" {
 				@ui.Section("Details", ui.SectionProps{
 					Margin:    "mt-6",
-					BodyClass: "p-5",
+					BodyClass: "memory-density-comfortable",
 				}) {
 					<form class="flex flex-col gap-4" method="post" action="/objects">
 						<input type="hidden" name="type" value={ form.Type }/>
@@ -592,7 +592,7 @@ templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
 templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, labelSuggestions []string) {
 	@ui.Section("Properties", ui.SectionProps{
 		Margin:    "mt-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) }>
 			@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
@@ -636,7 +636,7 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 	@ui.Section("Relationships", ui.SectionProps{
 		Margin:    "mt-6",
 		CardClass: "card-border overflow-hidden",
-		BodyClass: "p-0",
+		BodyClass: "memory-density-flush",
 	}) {
 		if len(edges) == 0 {
 			@ui.EmptyState(ui.EmptyStateProps{

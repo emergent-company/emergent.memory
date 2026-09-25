@@ -73,7 +73,7 @@ templ ExternalMCPNodesPage(data externalMCPNodesPageData) {
 // shows its tools in the tools panel below.
 templ mcpNodesList(data externalMCPNodesPageData) {
 	@ui.Section("Nodes", ui.SectionProps{
-		BodyClass: "flex flex-col gap-2 p-5",
+		BodyClass: "flex flex-col gap-2 memory-density-comfortable",
 	}) {
 		for _, node := range data.Nodes {
 			@mcpNodeRow(node, data.Selected != nil && data.Selected.Session.InstanceID == node.InstanceID)
@@ -219,7 +219,7 @@ func mcpNodeMetaLine(node mcpNodeView) string {
 // the registry, or the tools fetch failed.
 templ mcpNodeToolsPanel(data externalMCPNodesPageData) {
 	@ui.Section("Tools", ui.SectionProps{
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 	}) {
 		{{ sel := data.Selected }}
 		if sel != nil {

@@ -56,7 +56,7 @@ templ agentSubNav(agentID string, active string, section string) {
 templ agentSettingsNavGroup(agentID string, section string) {
 	<div class="flex shrink-0 flex-row gap-1 lg:flex-col lg:gap-1">
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
-		<div class="flex shrink-0 flex-row gap-1 rounded-lg border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
+		<div class="flex shrink-0 flex-row gap-1 rounded-box border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
@@ -231,7 +231,7 @@ templ agentSummaryField(label string) {
 templ agentToolsSection(data agentDashboardData) {
 	@ui.Section("Configured tools", ui.SectionProps{
 		Margin:    "mt-6",
-		BodyClass: "p-5",
+		BodyClass: "memory-density-comfortable",
 		Empty:     len(data.Agent.Tools) == 0 && len(data.Agent.BannedTools) == 0,
 		EmptyIcon: "lucide--wrench", EmptyTitle: "No tools configured", EmptyDesc: "This agent has no tool overrides — it uses the platform defaults.",
 	}) {
@@ -371,7 +371,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general") }>
 		@ui.Section("General", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-4">
 				@form.FormControl("agent-settings-name", "Name", form.LabelAbove, "", "", nil) {
@@ -392,7 +392,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 		}
 		@ui.Section("Appearance", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
 				<div class="flex min-w-0 flex-col [&>fieldset]:min-w-0 [&>fieldset]:grow [&_.label-text-alt]:whitespace-normal">
@@ -423,7 +423,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 		}
 		@ui.Section("Visibility", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-4">
 				<p class="text-base-content/70 text-sm">Controls who can discover this agent. Changes take effect after you save.</p>
@@ -494,7 +494,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 									:tabindex={ "active === " + strconv.Itoa(i) + " ? 0 : -1" }
 									@click={ "choose('" + opt.Value + "')" }
 									@mouseenter={ "setActive(" + strconv.Itoa(i) + ")" }
-									class={ "flex cursor-pointer flex-col gap-0.5 rounded-lg px-3 py-2 transition-colors hover:bg-base-200 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none", templ.KV("bg-primary/10 text-primary", agentVisibilityValue(data.Agent) == opt.Value) }
+									class={ "flex cursor-pointer flex-col gap-0.5 rounded-box px-3 py-2 transition-colors hover:bg-base-200 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none", templ.KV("bg-primary/10 text-primary", agentVisibilityValue(data.Agent) == opt.Value) }
 								>
 									<span class="text-sm font-medium">{ opt.Label }</span>
 									<span class="text-base-content/50 text-xs leading-snug">{ opt.Description }</span>
@@ -531,7 +531,7 @@ templ agentModelSettingsForm(data agentSettingsData) {
 	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/model") }>
 		@ui.Section("Model", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-4">
 				@agentModelSettingsWarning(data)
@@ -550,7 +550,7 @@ templ agentToolsSettingsForm(data agentSettingsData) {
 	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/tools") }>
 		@ui.Section("Tools", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 				<span class="text-sm font-medium">Default approval</span>
@@ -572,7 +572,7 @@ templ agentSkillsSettingsForm(data agentSettingsData) {
 	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/skills") }>
 		@ui.Section("Skills", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			@form.FormControl("agent-settings-skills", "", form.LabelAbove, "Reusable capabilities this agent can call.", "", nil) {
 				@checkboxPicker(checkboxPickerProps{
@@ -598,7 +598,7 @@ templ agentDelegationSettingsForm(data agentSettingsData) {
 	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/delegation") }>
 		@ui.Section("Delegation", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			@form.FormControl("agent-settings-delegation", "", form.LabelAbove, "If on, this agent can hand off to the agents you select.", "", nil) {
 				<label class="label flex w-full justify-between gap-3">
@@ -689,7 +689,7 @@ templ agentSandboxForm(data agentSandboxData) {
 	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/sandbox/update") }>
 		@ui.Section("Provider", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-4">
 				@form.FormControl("agent-sandbox-enabled", "", form.LabelAbove, "Enable a sandboxed workspace for this agent.", "", nil) {
@@ -727,7 +727,7 @@ templ agentSandboxForm(data agentSandboxData) {
 		}
 		@ui.Section("Repository", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-4">
 				@form.FormControl("agent-sandbox-repo-type", "Source", form.LabelAbove, "", "", nil) {
@@ -747,7 +747,7 @@ templ agentSandboxForm(data agentSandboxData) {
 		}
 		@ui.Section("Tools", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-2.5">
 				for _, tool := range sandboxToolNames {
@@ -761,7 +761,7 @@ templ agentSandboxForm(data agentSandboxData) {
 		}
 		@ui.Section("Resources", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
 				@form.FormControl("agent-sandbox-cpu", "CPU", form.LabelAbove, "", "", nil) {
@@ -777,7 +777,7 @@ templ agentSandboxForm(data agentSandboxData) {
 		}
 		@ui.Section("Setup & environment", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-4">
 				@form.FormControl("agent-sandbox-setup", "Setup commands", form.LabelAbove, "Run on workspace start, one per line.", "", nil) {

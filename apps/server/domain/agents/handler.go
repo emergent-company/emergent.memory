@@ -1482,7 +1482,11 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 
 	visibility := VisibilityProject
 	if dto.Visibility != "" {
-		visibility = dto.Visibility
+		nv, ok := NormalizeVisibility(dto.Visibility)
+		if !ok {
+			return apperror.NewBadRequest("visibility must be one of project, external, internal")
+		}
+		visibility = nv
 	}
 
 	isDefault := false
@@ -1634,7 +1638,11 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		def.DefaultTimeout = dto.DefaultTimeout
 	}
 	if dto.Visibility != nil {
-		def.Visibility = *dto.Visibility
+		nv, ok := NormalizeVisibility(*dto.Visibility)
+		if !ok {
+			return apperror.NewBadRequest("visibility must be one of project, external, internal")
+		}
+		def.Visibility = nv
 	}
 	if dto.DispatchMode != nil {
 		def.DispatchMode = *dto.DispatchMode

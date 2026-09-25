@@ -798,29 +798,29 @@ func flowLabel(flow string) string {
 	}
 }
 
-// visibilityIntent maps visibility to a badge color. Valid memory values are
-// external (ACP + admin UI), project (admin UI only), and internal (other
-// agents only); the widest reach reads as the strongest intent.
+// visibilityIntent maps visibility to a badge color. It resolves through
+// normalizedVisibility (the same single source as the label and the Settings
+// control), so a project badge can never render with a ghost intent and the
+// intent always agrees with the label.
 func visibilityIntent(v string) ui.BadgeIntent {
-	switch strings.ToLower(v) {
-	case "external":
+	switch normalizedVisibility(v) {
+	case agentVisibilityExternal:
 		return ui.BadgeSuccess
-	case "project":
+	case agentVisibilityProject:
 		return ui.BadgeInfo
-	case "internal":
+	case agentVisibilityInternal:
 		return ui.BadgeNeutral
 	default:
 		return ui.BadgeGhost
 	}
 }
 
-// visibilityLabel displays a friendly visibility label. Memory defaults an
-// agent to project visibility, so an empty value renders as "project".
+// visibilityLabel displays a friendly visibility label. It normalizes the
+// stored value through the same single source as the Settings control
+// (normalizedVisibility), so the dashboard badge and Settings can never
+// disagree: empty or unknown reads as "project" (the server default).
 func visibilityLabel(v string) string {
-	if v == "" {
-		return "project"
-	}
-	return v
+	return normalizedVisibility(v)
 }
 
 // Valid agent visibility levels, mirroring memory's AgentVisibility enum.
@@ -873,6 +873,20 @@ func agentVisibilityNormalize(v string) (string, bool) {
 	}
 }
 
+// normalizedVisibility is the single source that maps a stored visibility to
+// its canonical level for display. It is shared by the dashboard badge label
+// (visibilityLabel), the badge intent (visibilityIntent), and the Settings
+// control (agentVisibilityValue), so all three surfaces agree for every input.
+// Empty or unknown falls back to project (the server default), matching the
+// Settings control.
+func normalizedVisibility(v string) string {
+	nv, ok := agentVisibilityNormalize(v)
+	if !ok {
+		return agentVisibilityProject
+	}
+	return nv
+}
+
 // agentVisibilityValue returns the agent's visibility normalized to a known
 // level: empty or unknown reads as project (the server default), so an older
 // server or a malformed value still preselects a valid option.
@@ -880,10 +894,7 @@ func agentVisibilityValue(a *AgentDefinition) string {
 	if a == nil {
 		return agentVisibilityProject
 	}
-	if v, ok := agentVisibilityNormalize(a.Visibility); ok {
-		return v
-	}
-	return agentVisibilityProject
+	return normalizedVisibility(a.Visibility)
 }
 
 // agentVisibilityDescription returns the one-line description for a visibility

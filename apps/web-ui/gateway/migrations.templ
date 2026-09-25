@@ -268,7 +268,7 @@ templ previewSection(data migrationData) {
 	if data.Preview != nil {
 		@ui.Section("Dry-run plan", ui.SectionProps{
 			Margin:    "mt-6",
-			BodyClass: "p-5",
+			BodyClass: "memory-density-comfortable",
 		}) {
 			<p class="text-base-content/55 text-sm">What the migration will change. Nothing is executed until you press Execute.</p>
 			<div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -291,7 +291,7 @@ templ previewSection(data migrationData) {
 					if len(data.Preview.Plan.TypeRenames) > 0 {
 						@chipRow("Type renames", "mb-1.5", true) {
 							for _, it := range data.Preview.Plan.TypeRenames {
-								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+								<span class="rounded-field border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
 									<span class="text-base-content/70">{ it.From }</span>
 									<span class="text-base-content/35"> → </span>
 									<span class="text-base-content">{ it.To }</span>
@@ -302,7 +302,7 @@ templ previewSection(data migrationData) {
 					if len(data.Preview.Plan.PropertyRenames) > 0 {
 						@chipRow("Property renames", "mb-1.5", true) {
 							for _, it := range data.Preview.Plan.PropertyRenames {
-								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+								<span class="rounded-field border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
 									<span class="text-base-content/70">{ it.TypeName }.{ it.From }</span>
 									<span class="text-base-content/35"> → </span>
 									<span class="text-base-content">{ it.To }</span>
@@ -313,7 +313,7 @@ templ previewSection(data migrationData) {
 					if len(data.Preview.Plan.RemovedProperties) > 0 {
 						@chipRow("Removed properties", "mb-1.5", true) {
 							for _, it := range data.Preview.Plan.RemovedProperties {
-								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+								<span class="rounded-field border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
 									<span class="text-base-content/60">{ it.TypeName }.{ it.Name }</span>
 									<span class="text-base-content/40"> archived</span>
 								</span>
@@ -323,7 +323,7 @@ templ previewSection(data migrationData) {
 					if len(data.Preview.Plan.AddedTypes) > 0 {
 						@chipRow("Added types", "mb-1.5", true) {
 							for _, t := range data.Preview.Plan.AddedTypes {
-								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+								<span class="rounded-field border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
 									<span class="text-success">+</span> { t }
 								</span>
 							}
@@ -332,7 +332,7 @@ templ previewSection(data migrationData) {
 					if len(data.Preview.Plan.AddedProperties) > 0 {
 						@chipRow("Added properties", "mb-1.5", true) {
 							for _, it := range data.Preview.Plan.AddedProperties {
-								<span class="rounded-md border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
+								<span class="rounded-field border border-base-content/10 bg-base-200/40 px-2 py-1 font-mono text-xs">
 									<span class="text-success">+</span> { it.TypeName }.{ it.Name }
 								</span>
 							}
