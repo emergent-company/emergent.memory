@@ -121,6 +121,10 @@ chmod 600 ~/.memory/memory-acp.env
 # MEMORY_PROJECT_TOKEN / MEMORY_AGENT / MEMORY_PROJECT_ID
 ```
 
+> **Installing to `/usr/local/bin` requires root/sudo.** The `install` command
+> above writes a system-wide path, so prefix it with `sudo` when running as an
+> unprivileged user.
+
 The wrapper loads that env file and execs `memory acp`:
 
 ```sh
