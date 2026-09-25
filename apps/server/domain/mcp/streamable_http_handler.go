@@ -542,6 +542,11 @@ func (h *StreamableHTTPHandler) handleToolsList(c echo.Context, req *Request, se
 
 	tools := h.svc.GetToolDefinitionsForProject(c.Request().Context(), session.ProjectID)
 	tools = FilterToolsForScopes(tools, session.Scopes)
+	isSuper, superErr := h.svc.IsSuperadminCaller(c.Request().Context())
+	if superErr != nil {
+		isSuper = false
+	}
+	tools = FilterToolsForSuperadmin(tools, isSuper)
 	scope, serr := h.svc.ResolveInstanceScope(c.Request().Context(), user.APITokenID)
 	if serr != nil {
 		// Fail closed on allowlist resolution failure.
@@ -581,6 +586,21 @@ func (h *StreamableHTTPHandler) handleToolsCall(c echo.Context, req *Request, se
 		if toolDef.AgentOnly {
 			return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
 				"Tool not found: "+params.Name, nil)
+		}
+		if toolDef.SuperadminOnly {
+			ok, err := h.svc.IsSuperadminCaller(c.Request().Context())
+			if err != nil {
+				h.log.Error("superadmin authorization failed",
+					slog.String("tool", params.Name),
+					logger.Error(err),
+				)
+				return NewErrorResponse(req.ID, ErrCodeInternalError,
+					"Failed to authorize tool", nil)
+			}
+			if !ok {
+				return NewErrorResponse(req.ID, ErrCodeMethodNotFound,
+					"Tool not found: "+params.Name, nil)
+			}
 		}
 		if toolDef.RequiredScope != "" {
 			expanded := expandScopesSet(user.Scopes)

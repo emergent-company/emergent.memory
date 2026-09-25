@@ -486,6 +486,27 @@ func (s *Service) Revoke(ctx context.Context, inviteID string) error {
 	return nil
 }
 
+// ProjectOrg resolves the owning organization of a project server-side
+// (kb.projects.organization_id). It is the authoritative org source for the
+// orgId-binding check in Create: neither the body orgId nor the body projectId
+// is trusted, the owning org is derived and compared (issue #960).
+func (s *Service) ProjectOrg(ctx context.Context, projectID string) (string, error) {
+	var orgID string
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		Column("organization_id").
+		Where("id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &orgID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", apperror.NewNotFound("project", projectID)
+		}
+		return "", apperror.NewDatabase("failed to resolve project organization", err)
+	}
+	return orgID, nil
+}
+
 // GetByID retrieves an invite by ID
 func (s *Service) GetByID(ctx context.Context, inviteID string) (*Invite, error) {
 	var invite Invite

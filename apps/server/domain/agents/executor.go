@@ -566,6 +566,16 @@ func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*Exec
 		}
 	}
 
+	// Propagate the run's originating principal into the run context so in-process
+	// authority checks (e.g. the MCP operator-tool superadmin gate in
+	// Service.ExecuteTool, issue #948) resolve the CALLER, not the agent
+	// definition or the ephemeral token. This deliberately overwrites any
+	// transport-injected user (notably the share-link owner, whose credentials
+	// must never confer authority on an anonymous share run): req.UserID is the
+	// authoritative principal, and when it is empty (anonymous/system runs) the
+	// overwritten empty-ID principal makes every operator-tool check fail closed.
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
+
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
 		req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0
@@ -773,6 +783,9 @@ func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req 
 			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
 		}
 	}
+
+	// Propagate the run's originating principal into the run context (see Execute).
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
@@ -993,6 +1006,9 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
 		}
 	}
+
+	// Propagate the run's originating principal into the run context (see Execute).
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
 
 	// Provision workspace if configured
 	hasSandboxConfig := ae.wsEnabled && ae.provisioner != nil &&
@@ -1776,6 +1792,12 @@ func (ae *AgentExecutor) runPipeline(
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve tools: %w", err)
 	}
+
+	// Strip superadmin-only operator tools from non-superadmin runs (issue #948).
+	// Service.ExecuteTool also enforces the same authority at dispatch, so this is
+	// resolution-level defence in depth: a non-superadmin principal's agent never
+	// sees the operator tools in its toolset at all.
+	resolvedTools = ae.toolPool.StripOperatorTools(ctx, resolvedTools)
 
 	// Filter out banned tools
 	if req.AgentDefinition != nil && len(req.AgentDefinition.BannedTools) > 0 {
