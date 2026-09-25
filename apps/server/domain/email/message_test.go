@@ -30,7 +30,10 @@ func TestBuildMessageParsesIntoTextAndHTMLParts(t *testing.T) {
 		HTML:    "<a href=\"" + acceptURL + "\">Accept invitation</a>",
 	}
 
-	msg, _ := buildMessage(cfg, opts)
+	msg, _, err := buildMessage(cfg, opts)
+	if err != nil {
+		t.Fatalf("buildMessage: %v", err)
+	}
 
 	m, err := mail.ReadMessage(bytes.NewReader(msg))
 	if err != nil {
@@ -126,12 +129,15 @@ func TestInviteEmailMessageContainsAcceptLinkInBothParts(t *testing.T) {
 	html := fmt.Sprintf("<a href=\"%s\">Accept invitation</a><code>curl -fsSL https://get.emergent.memory/install.sh | sh</code>", acceptURL)
 
 	cfg := &Config{FromName: "Memory", FromEmail: "noreply@example.com"}
-	msg, _ := buildMessage(cfg, SendOptions{
+	msg, _, err := buildMessage(cfg, SendOptions{
 		To:      "invitee@example.com",
 		Subject: "You've been invited to join the project on emergent.memory",
 		Text:    plainText,
 		HTML:    html,
 	})
+	if err != nil {
+		t.Fatalf("buildMessage: %v", err)
+	}
 
 	m, err := mail.ReadMessage(bytes.NewReader(msg))
 	if err != nil {

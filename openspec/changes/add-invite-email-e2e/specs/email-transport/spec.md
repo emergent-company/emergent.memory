@@ -44,3 +44,14 @@ The system SHALL reject an unrecognised `SMTP_TLS` value (fail closed) rather th
 #### Scenario: Silent server bounded by deadline
 - **WHEN** the SMTP server accepts the connection but stops responding
 - **THEN** the sender aborts once the send deadline is reached instead of blocking a worker goroutine indefinitely
+
+### Requirement: Header injection defense
+The system SHALL parse the `From` and `To` header values with `net/mail` and Q-encode the `Subject` with `mime.QEncoding` before writing them into the message header block. A header value (address, display name, or subject) containing a CR or LF SHALL cause the send to fail closed rather than be written raw, so no caller-influenced value can inject additional headers.
+
+#### Scenario: CR/LF in subject or display name rejected
+- **WHEN** a caller-influenced subject, recipient address, or display name contains `\r` or `\n`
+- **THEN** the sender does not build or deliver the message, and the injected header (for example `Bcc:`) is not present
+
+#### Scenario: Non-ASCII subject encoded
+- **WHEN** the subject contains non-ASCII characters
+- **THEN** the subject is emitted as an RFC 2047 encoded-word that decodes back to the original
