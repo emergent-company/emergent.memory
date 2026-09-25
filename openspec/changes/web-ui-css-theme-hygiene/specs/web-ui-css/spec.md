@@ -1,19 +1,5 @@
 ## ADDED Requirements
 
-### Requirement: Runtime-injected styles are not a second stylesheet
-
-The gateway SHALL NOT maintain two divergent sources for the same component styles. Any styles a script injects into the document SHALL be reduced to a minimal, documented subset that an automated check keeps in sync with the compiled stylesheet. Removing the injected block entirely is not an option for the badge rules, whose retention is separately required by the badge-sync contract; that contract stays authoritative for them.
-
-#### Scenario: No undocumented duplicated rule sets
-
-- **WHEN** the styles injected by `webui/static/js/chat-components.js` are compared with the compiled stylesheet
-- **THEN** no rule is declared in both places except the documented, tested subset, and that subset matches the compiled source
-
-#### Scenario: Injected subset stays in sync
-
-- **WHEN** the unit/style tests run
-- **THEN** a test fails if the injected subset and the compiled stylesheet disagree, and the badge rules retained by the badge-sync contract are covered by that test rather than removed
-
 ### Requirement: Colours derive from theme tokens
 
 Surfaces and foregrounds in the gateway's own CSS SHALL derive from the daisyUI theme tokens, so the app's palette has a single source of truth.

@@ -56,17 +56,18 @@ those elements render with **zero** radius today), and `@theme inline` is real T
 
 **CSS consolidation and theming.**
 
-- Make radius theme-driven: migrate the 31 literal sites to `rounded-box`/`rounded-field`/`rounded-selector`
-  (containers and tiles vs controls and chips), convert the 8 card-like `app.css` radius literals to
-  `var(--radius-*)`, and add a temporary `@theme inline` alias so the literals still present in library
-  markup follow the theme until upstream converts them.
+- Make radius theme-driven: migrate the literal sites to `rounded-box`/`rounded-field` (measured: 53 across 28
+  templates, not the 31 the audit listed), convert the app.css radius literals to `var(--radius-*)`, and add a
+  temporary `@theme inline` alias so the literals still present in library markup follow the theme until
+  upstream converts them.
 - Make density one central edit: remove the component-local padding overrides on daisyUI roots and declare
   density in one documented block, noting that no daisyUI padding token exists and that the block uses
   component-internal variables and layered overrides.
 - Give the page background one source, keeping the background/surface token pairs distinct
   (`background_color` vs `theme_color`).
-- Collapse the JS-injected stylesheet duplication to a documented, tested subset; introduce the muted-text
-  and icon-size scale; move page-local `<style>` blocks that duplicate shared idioms into the shared sheet.
+- (The stylesheet-consolidation group — the injected-sheet subset, the muted-text/icon scale, the page-local
+  `<style>` blocks, and the hand-rolled component classes — is **not** in this unit. See the fourth-unit note
+  under Scope: measurement showed it is neither small nor appearance-neutral.)
 
 ## Capabilities
 
@@ -76,21 +77,26 @@ None.
 
 ### Modified Capabilities
 
-- `web-ui-css`: adds radius-derives-from-theme, density-has-one-central-source, and
-  page-background-has-one-source requirements; scopes the injected-stylesheet requirement to a documented
-  tested subset; and adds the CSS-build-input-matches-the-pin requirement.
+- `web-ui-css`: adds radius-derives-from-theme, density-has-one-central-source, page-background-has-one-source
+  and CSS-build-input-matches-the-pin requirements.
 
 ## Scope
 
 - **Unit 1** (`web-ui-component-conventions`, PR #874) landed the conventions these changes enforce.
 - **Unit 3** (`web-ui-component-consolidation`) carries the component consolidation and the UX/IA/a11y/copy
   work, including the guard-test narrowing. This unit does not touch component structure.
-- **Deferred to a fourth unit: the muted-text and icon-size scale.** An earlier draft of this change
-  required muted emphasis and icon sizes to come from a small shared scale. That is a ~500-site sweep across
-  essentially every template, and because the rule admits no opacity outside the scale, a partial migration
-  would leave it unsatisfied. The requirement has been removed from this change's `web-ui-css` delta rather
-  than shipped half-done; the scale's definition and the migration belong together in their own unit. This
-  is recorded here so the deferral is visible, not silent.
+- **Deferred to a fourth unit: the stylesheet-consolidation group.** An earlier draft of this change also
+  required reducing the JS-injected stylesheet duplication to a documented, tested subset; introducing the
+  muted-text and icon-size scale; moving page-local `<style>` blocks into the shared sheet; and replacing the
+  hand-rolled badge/button/card/drawer classes. Measurement showed the group is neither small nor
+  appearance-neutral: **47 of the injected sheet's 84 selectors are also defined in `app.css`**, and several
+  exist precisely to override it (they win on equal specificity because the sheet loads after the compiled
+  one), so each needs its rule body diffed and classified before anything is removed; the scale is a
+  ~500-site migration whose rule admits no opacity outside it, so partial work leaves it unsatisfied; and the
+  hand-rolled classes are ~10 individual design decisions, three applied from JS and two defined nowhere in
+  `app.css`. The injected-stylesheet requirement has therefore been removed from this change's `web-ui-css`
+  delta, so this unit lands as a coherent, fully-implemented piece instead of a half-done one. The
+  measurements are retained in task 5.x for the follow-up unit, so the deferral is visible rather than silent.
 - **go-daisy upstream** (§7 of the audit record, PR #854) stays a cross-repo dependency: the library's own
   radius literals, its padding overrides, the dead `rounded-btn` class, and its global `--text-*` redefinition
   are fixed there, then re-pinned here. The `@theme inline` bridge exists so this unit does not block on it.
